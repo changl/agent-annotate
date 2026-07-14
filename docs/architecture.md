@@ -36,8 +36,9 @@ contain only the settings necessary to connect their host to the shared core.
 The Codex adapter uses the locally installed `codex app-server` JSON-RPC
 protocol. It lists durable threads, reads the selected thread, steers an active
 turn when possible, and otherwise starts a new turn in that thread. Push
-delivery is retried from the append-only event stream when the provider call
-fails.
+delivery is acknowledged only after app-server emits `turn/completed`; the
+client connection stays alive for the full turn. Failed or interrupted turns
+leave the event unread so the monitor can retry from the append-only stream.
 
 Thread selection is explicit. Directory or title matching can help the user
 find a session, but it must never silently choose a recipient.
@@ -47,4 +48,3 @@ find a session, but it must never silently choose a recipient.
 The Python package is canonical. Agent skills are concise workflow wrappers;
 the Codex plugin bundles the Codex skill and MCP registration. Neither wrapper
 owns the comment data or browser implementation.
-
