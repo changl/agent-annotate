@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>annotate</title>
+<link rel="stylesheet" href="shell.css">
+</head>
+<body>
+
+<!-- ── Header (version-stable chrome) ──────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="hdr-title" id="hdr-title">annotate</div>
+    <div class="hdr-sub" id="hdr-sub">&nbsp;</div>
+  </div>
+  <div class="hdr-right">
+    <span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span>
+    <button class="push-session-btn" id="push-session-btn" title="Send comments to an armed session monitor, or queue them for the next turn">
+      <span>&#128238; Push to session</span><span class="push-session-counter" id="push-session-counter">0</span>
+    </button>
+  </div>
+</header>
+
+<!-- ── Main ─────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Version rail -->
+  <aside class="vrail" id="vrail">
+    <button class="rail-strip" id="vrail-strip" title="Expand the versions rail">&raquo;</button>
+    <div class="vrail-hdr">Versions
+      <button class="rail-collapse" id="vrail-collapse" title="Collapse the versions rail (more room for the document)">&laquo;</button>
+    </div>
+    <div class="vrail-body" id="vrail-body">
+      <div class="vrail-empty">Loading&hellip;</div>
+    </div>
+  </aside>
+
+  <!-- Content iframe -->
+  <div class="frame-area" id="frame-area">
+    <div class="repin-banner" id="repin-banner" style="display:none">
+      <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>
+      <button class="repin-banner-cancel" id="repin-cancel">Cancel (Esc)</button>
+    </div>
+    <iframe id="content-frame" class="content-frame" title="Document content"></iframe>
+  </div>
+
+  <!-- Comment drawer -->
+  <aside class="drawer" id="drawer">
+    <button class="rail-strip" id="drawer-strip" title="Expand the feedback rail">&laquo;<span class="rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
+    <div class="drawer-hdr">
+      <div class="drawer-hdr-top">
+        <span class="drawer-title">Feedback</span>
+        <span class="unread-badge" id="unread-badge" style="display:none" title="Comments with activity you haven't seen yet">0 unread</span>
+        <span class="cnt-badge" id="cnt-badge">0</span>
+        <button class="rail-collapse" id="drawer-collapse" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)">&raquo;</button>
+      </div>
+      <div class="chip-row" id="chip-row">
+        <button class="chip chip-review" data-filter="review">Needs my review <span class="chip-n">0</span></button>
+        <button class="chip chip-waiting" data-filter="waiting">Waiting on agent <span class="chip-n">0</span></button>
+        <button class="chip chip-done" data-filter="done">Done <span class="chip-n">0</span></button>
+        <button class="chip chip-all active" data-filter="all">All <span class="chip-n">0</span></button>
+      </div>
+      <div class="drawer-controls">
+        <button class="tgl" id="allversions-toggle" title="Show comments from every version, not just the version being viewed">All versions</button>
+        <button class="tgl" id="unreadfirst-toggle" title="Sort unread comments to the top">Unread first</button>
+        <button class="tgl tgl-action" id="markallread-btn" title="Mark every comment in the current view as read">Mark all read</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="drawer-body">
+      <div class="drawer-empty" id="drawer-empty">
+        <div class="drawer-empty-ico">&#x1F4AC;</div>
+        <div style="font-weight:600;color:#64748B">No comments yet</div>
+        <div>Click any element in the document to add feedback.</div>
+      </div>
+      <div id="comment-list" style="display:none"></div>
+    </div>
+    <div class="drawer-footer">
+      <button class="footer-link" id="general-feedback-toggle">+ General feedback</button>
+      <button class="footer-link" id="archived-toggle">Archived (<span id="archived-count">0</span>)</button>
+    </div>
+    <div class="general-feedback-box" id="general-feedback-box" style="display:none">
+      <textarea class="gf-ta" id="gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea>
+      <div class="gf-ft">
+        <button class="btn btn-sec btn-sm" id="gf-cancel">Cancel</button>
+        <button class="btn btn-pri btn-sm" id="gf-save">Save</button>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Pin popover (reverse lookup: shown when a numbered pin is clicked;
+     lists the pin's existing comment(s) and focuses the sidebar card) -->
+<div id="pin-popover">
+  <div class="pop-hdr">
+    <span class="pop-node" id="pinpop-title"></span>
+    <span class="pinpop-hdr-actions">
+      <button class="btn btn-sec btn-sm" id="pinpop-add" title="Add another comment on this element">+ Comment</button>
+      <button class="pop-x" id="pinpop-close" title="Close (Esc)">&times;</button>
+    </span>
+  </div>
+  <div class="pinpop-body" id="pinpop-body"></div>
+</div>
+
+<!-- Create-comment popover (shown when an anchor element is clicked in the iframe) -->
+<div id="popover">
+  <div class="pop-hdr">
+    <span class="pop-node" id="pop-node-name"></span>
+    <button class="pop-x" id="pop-close" title="Close (Esc)">&times;</button>
+  </div>
+  <div class="pop-body">
+    <textarea class="pop-ta" id="pop-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="4"></textarea>
+  </div>
+  <div class="pop-ft">
+    <button class="btn btn-sec btn-sm" id="pop-cancel">Cancel</button>
+    <button class="btn btn-pri btn-sm" id="pop-save">Save</button>
+  </div>
+</div>
+
+<script src="shell.js"></script>
+</body>
+</html>

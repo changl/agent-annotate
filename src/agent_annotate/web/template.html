@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;background:#F8FAFC;color:#0F172A;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Header ─────────────────────────────────────────── */
+.hdr{background:#FFF;border-bottom:1px solid #E2E8F0;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-shrink:0}
+.hdr-left{display:flex;flex-direction:column;gap:3px}
+.hdr-title{font-size:14px;font-weight:600;color:#0F172A;line-height:1.3}
+.hdr-sub{font-size:11px;color:#475569}
+.hdr-date{font-size:10px;font-weight:600;color:#B45309;letter-spacing:.06em}
+.hdr-hint{font-size:11px;color:#64748B;font-style:italic}
+.hdr-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+
+.mode-ind{font-size:11px;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.mode-ind .dot{font-size:8px}
+.mode-live{color:#15803D}
+.mode-local{color:#94A3B8}
+.author-ind{font-size:11px;color:#475569;display:flex;align-items:center;gap:5px}
+
+.btn{font-size:12px;font-weight:600;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-family:inherit}
+.btn-pri{background:#4338CA;color:#FFF}
+.btn-pri:hover{background:#3730A3}
+.btn-sec{background:#F1F5F9;color:#475569;border:1px solid #E2E8F0}
+.btn-sec:hover{background:#E2E8F0}
+.btn-sm{font-size:11px;padding:4px 8px}
+.btn-confirm{background:#16A34A;color:#FFF}
+.btn-confirm:hover{background:#15803D}
+.btn-reopen{background:#F1F5F9;color:#7C2D12;border:1px solid #FED7AA}
+.btn-reopen:hover{background:#FED7AA}
+.btn-archive{background:#F1F5F9;color:#475569;border:1px solid #E2E8F0}
+.kbd{background:#F1F5F9;border:1px solid #CBD5E1;border-radius:3px;padding:1px 5px;font-size:10px;font-family:'Helvetica Neue',monospace;color:#475569}
+
+/* ── Layout ─────────────────────────────────────────── */
+.main{display:flex;flex:1;overflow:hidden}
+
+/* Version rail (left) */
+.vrail{width:180px;flex-shrink:0;background:#FFF;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;overflow:hidden}
+.vrail-hdr{padding:12px 14px;border-bottom:1px solid #E2E8F0;font-size:11px;font-weight:600;color:#475569;letter-spacing:.04em;text-transform:uppercase}
+.vrail-body{flex:1;overflow-y:auto;padding:8px}
+.vrow{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;border-radius:6px;cursor:pointer;color:#475569}
+.vrow:hover{background:#F8FAFC}
+.vrow.current{background:#EEF2FF;color:#4338CA;font-weight:600}
+.vrow-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#CBD5E1}
+.vrow.current .vrow-dot{background:#4338CA}
+.vrow-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vrow-cnt{font-size:10px;color:#94A3B8;font-variant-numeric:tabular-nums}
+.vrow.current .vrow-cnt{color:#4338CA}
+
+.canvas-area{flex:1;overflow:auto;padding:24px 32px 32px;background:#FAFAFA;position:relative}
+.canvas-wrapper{position:relative;max-width:1400px;margin:0 auto}
+.canvas-wrapper svg{width:100%;height:auto;display:block}
+
+/* Click targets */
+.no, [data-anchor-id]{cursor:pointer}
+svg .no{fill:transparent}
+svg .no:hover{fill:rgba(67,56,202,.06)}
+svg .no.active{fill:rgba(67,56,202,.10)}
+[data-anchor-id]:hover{background:rgba(67,56,202,.04)}
+[data-anchor-id].active{background:rgba(67,56,202,.10);outline:2px solid #4338CA;outline-offset:1px}
+[data-anchor-id].parent-target{outline:2px dashed #7C3AED;outline-offset:2px}
+
+/* Badge layer */
+#badge-layer{position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:10}
+.bpin{position:absolute;width:18px;height:18px;color:#FFF;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none;transform:translate(0,-100%);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.bpin.open{background:#4338CA}
+.bpin.addressed_by_agent{background:#9333EA}
+.bpin.user_confirmed{background:#16A34A}
+
+/* ── Side panel ─────────────────────────────────────── */
+.panel{width:368px;flex-shrink:0;background:#FFF;border-left:1px solid #E2E8F0;display:flex;flex-direction:column;overflow:hidden}
+.panel-hdr{padding:12px 16px;border-bottom:1px solid #E2E8F0;display:flex;flex-direction:column;gap:8px}
+.panel-hdr-top{display:flex;align-items:center;justify-content:space-between}
+.panel-title{font-size:13px;font-weight:600;color:#0F172A}
+.cnt-badge{font-size:11px;color:#64748B;background:#F1F5F9;padding:2px 8px;border-radius:10px}
+.panel-toggles{display:flex;gap:6px;font-size:10px;color:#64748B}
+.ptog{cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.ptog input{margin:0}
+.panel-body{flex:1;overflow-y:auto;padding:10px}
+.panel-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:#94A3B8;font-size:12px;text-align:center;padding:24px}
+.panel-empty-ico{font-size:28px}
+.cgroup{margin-bottom:14px}
+.cgroup-lbl{font-size:10px;font-weight:600;color:#64748B;letter-spacing:.06em;text-transform:uppercase;padding:0 6px 5px}
+.cgroup-lbl.orphan{color:#B45309}
+.citem{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s}
+.citem:hover{border-color:#C7D2FE;background:#EEF2FF}
+.citem.hl{border-color:#4338CA;background:#EEF2FF}
+.citem.s-addressed_by_agent{border-left:3px solid #9333EA}
+.citem.s-user_confirmed{border-left:3px solid #16A34A;opacity:.85}
+.citem.s-archived{opacity:.55}
+.citem-node{font-size:11px;font-weight:600;color:#4338CA;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.citem-status{font-size:9px;padding:1px 6px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em}
+.cstatus-open{background:#EEF2FF;color:#4338CA}
+.cstatus-addressed_by_agent{background:#F5F3FF;color:#7C3AED}
+.cstatus-user_confirmed{background:#DCFCE7;color:#15803D}
+.cstatus-archived{background:#F1F5F9;color:#64748B}
+.citem-txt{font-size:12px;color:#0F172A;margin-bottom:5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.citem-meta{font-size:10px;color:#94A3B8;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.citem-meta-l{display:flex;flex-direction:column;gap:1px;min-width:0}
+.citem-author{font-weight:600;color:#475569}
+.citem-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.alink{font-size:10px;color:#64748B;cursor:pointer;background:none;border:none;padding:2px 4px;font-family:inherit}
+.alink:hover{color:#4338CA}
+.alink.del:hover{color:#B91C1C}
+.agent-reply{background:#FAF5FF;border:1px solid #E9D5FF;border-radius:6px;padding:8px;margin:6px 0;font-size:11px;color:#581C87;line-height:1.4}
+.agent-reply-hdr{font-size:9px;font-weight:600;color:#7C3AED;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+.thread-reply{background:#F8FAFC;border-left:2px solid #CBD5E1;padding:4px 8px;margin:3px 0 3px 8px;font-size:11px}
+.thread-reply-hdr{font-size:9px;font-weight:600;color:#475569;margin-bottom:2px}
+
+/* ── Popover ─────────────────────────────────────────── */
+#popover{position:fixed;width:332px;background:#FFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.13);z-index:1000;display:none;flex-direction:column}
+#popover.vis{display:flex}
+.pop-hdr{padding:11px 14px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pop-node{font-size:12px;font-weight:600;color:#4338CA;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pop-x{background:none;border:none;cursor:pointer;color:#94A3B8;font-size:18px;line-height:1;padding:2px 4px;font-family:inherit}
+.pop-x:hover{color:#475569}
+.pop-body{padding:11px 14px}
+.pop-ta{width:100%;min-height:72px;padding:9px;border:1px solid #E2E8F0;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;color:#0F172A;background:#FAFAFA;line-height:1.5}
+.pop-ta:focus{outline:none;border-color:#4338CA;background:#FFF}
+.pop-ta::placeholder{color:#94A3B8}
+.pop-ft{padding:9px 14px;border-top:1px solid #F1F5F9;display:flex;justify-content:flex-end;gap:8px}
+
+.leg-tog{position:fixed;bottom:20px;left:200px;z-index:200}
+#legend{position:fixed;bottom:58px;left:200px;width:340px;background:#FFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.10);z-index:200;display:none;padding:16px;font-size:11px;max-height:70vh;overflow-y:auto}
+#legend.vis{display:block}
+.leg-title{font-size:13px;font-weight:600;color:#0F172A;margin-bottom:12px}
+
+/* ── F1: Push-to-session button ─────────────────────────────────── */
+.push-session-btn{background:#7C3AED;color:#FFF;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap}
+.push-session-btn:hover{background:#6D28D9}
+.push-session-btn:disabled{opacity:.6;cursor:not-allowed}
+.push-session-btn.success{background:#16A34A}
+.push-session-btn.queued{background:#B45309}
+.push-session-counter{background:rgba(255,255,255,.25);color:#FFF;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;min-width:18px;text-align:center}
+.citem-actions .alink.push-one{color:#7C3AED;font-weight:600}
+.citem-actions .alink.push-one:hover{color:#5B21B6}
+
+/* ── F6: Sortable / resizable / separated tables ────────────────── */
+table.tbl th,table.tbl td{border-right:1px solid #F1F5F9}
+table.tbl th{position:relative;border-right:1px solid #E2E8F0;user-select:none}
+table.tbl th:last-child,table.tbl td:last-child{border-right:none}
+table.tbl th.sortable{cursor:pointer;padding-right:22px}
+table.tbl th.sortable:hover{background:#E2E8F0}
+table.tbl th.sortable::after{content:"⇅";position:absolute;right:8px;top:50%;transform:translateY(-50%);opacity:.35;font-size:10px;color:#64748B}
+table.tbl th.sortable.sort-asc::after{content:"▲";opacity:1;color:#4338CA}
+table.tbl th.sortable.sort-desc::after{content:"▼";opacity:1;color:#4338CA}
+table.tbl tr:hover td{background:#F8FAFC}
+.col-resize-handle{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;z-index:2;background:transparent;user-select:none}
+.col-resize-handle:hover,.col-resize-handle.dragging{background:rgba(67,56,202,.35)}
+
+/* ── F2: Mermaid diagrams ────────────────────────────────────────── */
+.mermaid-host{background:#FFF;border:1px solid #E2E8F0;border-radius:8px;padding:18px;margin:10px 0;overflow-x:auto}
+.mermaid-host svg{max-width:100%;height:auto;display:block;margin:0 auto}
+.mermaid-host .node[data-anchor-id],.mermaid-host .edge[data-anchor-id]{cursor:pointer}
+.mermaid-host .node[data-anchor-id]:hover rect,.mermaid-host .node[data-anchor-id]:hover circle,.mermaid-host .node[data-anchor-id]:hover polygon{stroke:#4338CA!important;stroke-width:2px!important}
+.mermaid-host .node[data-anchor-id].active rect,.mermaid-host .node[data-anchor-id].active circle,.mermaid-host .node[data-anchor-id].active polygon{stroke:#4338CA!important;stroke-width:3px!important}
+
+/* ── F3: Collapsible title block ────────────────────────────────── */
+.doc-title-block.collapsed{padding:8px 18px;margin-bottom:10px;cursor:pointer}
+.doc-title-block.collapsed .doc-h1{font-size:13px;font-weight:600;margin:0;color:#475569;display:inline-block}
+.doc-title-block.collapsed .doc-meta{display:none}
+.title-collapse-toggle{position:absolute;top:6px;right:10px;background:#F1F5F9;color:#64748B;border:1px solid #E2E8F0;border-radius:4px;font-size:10px;font-weight:600;padding:3px 8px;cursor:pointer;font-family:inherit;z-index:5}
+.title-collapse-toggle:hover{background:#E2E8F0;color:#0F172A}
+
+/* ── Task 2: Pin drift fix — anchor-relative positioning ─────────── */
+/* HTML (non-SVG) anchors become position:relative so bpin children co-move */
+[data-anchor-id]:not(svg [data-anchor-id]){position:relative}
+/* bpin-inline: pin rendered as absolute child inside the anchor element */
+.bpin-inline{position:absolute;top:0;right:0;width:18px;height:18px;color:#FFF;border-radius:50%;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none;transform:translate(50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.25);z-index:20}
+.bpin-inline.open{background:#4338CA}
+.bpin-inline.addressed_by_agent{background:#9333EA}
+.bpin-inline.user_confirmed{background:#16A34A}
+
+/* ── Task 3: Reply form ──────────────────────────────────────────── */
+.reply-form{margin-top:8px;border-top:1px solid #F1F5F9;padding-top:8px;display:flex;flex-direction:column;gap:5px}
+.reply-ta{width:100%;min-height:48px;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:11px;font-family:inherit;resize:vertical;color:#0F172A;background:#FAFAFA;line-height:1.4}
+.reply-ta:focus{outline:none;border-color:#4338CA;background:#FFF}
+.reply-ta::placeholder{color:#94A3B8}
+.reply-submit{align-self:flex-end;font-size:10px;font-weight:600;padding:4px 10px;border-radius:5px;border:none;cursor:pointer;background:#4338CA;color:#FFF;font-family:inherit}
+.reply-submit:hover{background:#3730A3}
+.reply-submit:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── Task 3: Observable Plot diagram host ───────────────────────── */
+.annotate-diagram-host{background:#FFF;border:1px solid #E2E8F0;border-radius:8px;padding:16px;margin:12px 0;overflow-x:auto}
+.annotate-diagram-host svg{max-width:100%;height:auto;display:block;margin:0 auto}
+.annotate-plot-node[data-anchor-id]{cursor:pointer}
+.annotate-plot-node[data-anchor-id]:hover rect:first-child{stroke-width:2.5}
+.annotate-plot-node[data-anchor-id].active rect:first-child{stroke-width:3}
+
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js" integrity="sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js" integrity="sha384-XzQ+KW4LBWHv6FLjiPA1vjDz//oGlY8We4XROgpir5jHgg2+Qvo/6fT5TjbnqyYi" crossorigin="anonymous"></script>
+<script src="diagram-plot.js"></script>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="hdr-date">{{DATE}}</div>
+    <div class="hdr-title">{{TITLE}}</div>
+    <div class="hdr-sub">{{SUBTITLE}}</div>
+    <div class="hdr-hint">Click any element &middot; <span class="kbd">Shift+Click</span> selects parent anchor &middot; <span class="kbd">Esc</span> closes &middot; <span class="kbd">Ctrl+Enter</span> saves</div>
+  </div>
+  <div class="hdr-right">
+    <span class="author-ind" id="author-ind" title="Authenticated user / agent">&nbsp;</span>
+    <span class="mode-ind mode-local" id="mode-ind"><span class="dot">○</span> <span id="mode-txt">Local (export to share)</span></span>
+    <button class="push-session-btn" id="push-session-btn" onclick="pushAllToSession()" title="Send comments to an armed session monitor, or queue them for the next turn"><span>&#128238; Push to session</span><span class="push-session-counter" id="push-session-counter">0</span></button>
+    <button class="btn btn-sec" onclick="toggleLeg()" id="leg-btn" style="display:none">&#9432; Legend</button>
+    <button class="btn btn-pri" onclick="exportFeedback()">Export feedback &darr;</button>
+  </div>
+</header>
+
+<!-- ── Main ── -->
+<div class="main">
+
+  <!-- Version timeline rail -->
+  <aside class="vrail" id="vrail">
+    <div class="vrail-hdr">Versions</div>
+    <div class="vrail-body" id="vrail-body">
+      <!-- populated by JS from current.meta.json -->
+    </div>
+  </aside>
+
+  <!-- Canvas -->
+  <div class="canvas-area" id="canvas-area">
+    <div class="canvas-wrapper" id="canvas-wrapper">
+
+      <!-- CANVAS CONTENT — injected by Claude ── -->
+      {{CANVAS}}
+      <!-- END CANVAS CONTENT ──────────────────── -->
+
+      <div id="badge-layer"></div>
+    </div>
+  </div>
+
+  <!-- Side panel -->
+  <aside class="panel">
+    <div class="panel-hdr">
+      <div class="panel-hdr-top">
+        <span class="panel-title">Feedback</span>
+        <span class="cnt-badge" id="cnt-badge">0</span>
+      </div>
+      <div class="panel-toggles">
+        <label class="ptog"><input type="checkbox" id="tog-archived"> Show archived</label>
+        <label class="ptog"><input type="checkbox" id="tog-orphans" checked> Show orphans</label>
+        <label class="ptog"><input type="checkbox" id="tog-allver"> All versions</label>
+      </div>
+    </div>
+    <div class="panel-body" id="panel-body">
+      <div class="panel-empty" id="panel-empty">
+        <div class="panel-empty-ico">&#x1F4AC;</div>
+        <div style="font-weight:600;color:#64748B">No comments yet</div>
+        <div>Click any element to add feedback.</div>
+        <div style="margin-top:8px;font-size:10px">Comments persist locally and export to Markdown. Enable live-sync for Claude to read them directly.</div>
+      </div>
+      <div id="comment-list" style="display:none"></div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Comment popover -->
+<div id="popover">
+  <div class="pop-hdr">
+    <span class="pop-node" id="pop-node-name"></span>
+    <button class="pop-x" onclick="closePopover()" title="Close (Esc)">&times;</button>
+  </div>
+  <div class="pop-body">
+    <textarea class="pop-ta" id="pop-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="4"></textarea>
+  </div>
+  <div class="pop-ft">
+    <button class="btn btn-sec btn-sm" onclick="closePopover()">Cancel</button>
+    <button class="btn btn-pri btn-sm" onclick="saveComment()">Save</button>
+  </div>
+</div>
+
+<div id="legend">
+  <div class="leg-title">Legend</div>
+  <div id="legend-body">{{LEGEND}}</div>
+</div>
+<button class="btn btn-sec leg-tog" onclick="toggleLeg()" id="leg-float" style="display:none">&#9432; Legend</button>
+
+<script>
+// ── Anchor registry ───────────────────────────────────────────────
+// Format: { 'anchor-id': { name, grp, parent?, kind? }, ... }
+const ANCHOR_REGISTRY = {{ANCHOR_REGISTRY}};
+
+// ── Doc + version ─────────────────────────────────────────────────
+const DOC_ID = '{{DOC_ID}}';
+const LS_KEY = 'annotate-' + DOC_ID;
+const CURRENT_VERSION_FALLBACK = '{{VERSION}}' || 'v1';
+
+let CURRENT_VERSION = CURRENT_VERSION_FALLBACK;
+let META = { current: CURRENT_VERSION, history: [{version: CURRENT_VERSION, ts: '', label: ''}] };
+let STORE = { schema_version: 2, anchors: {}, archived: {} };
+let isLiveMode = false;
+let isLiveAuthor = 'anonymous';
+let activeAnchorId = null;
+let editingCtx = null;
+let showArchived = false;
+let showOrphans = true;
+let showAllVersions = false;
+
+// ── HTTP helpers ──────────────────────────────────────────────────
+async function tryLiveLoad() {
+  try {
+    const [storeR, metaR] = await Promise.all([
+      fetch('./comments.json', {cache: 'no-store'}),
+      fetch('./current.meta.json', {cache: 'no-store'}),
+    ]);
+    if (!storeR.ok) return false;
+    const store = await storeR.json();
+    if (store && store.schema_version === 2) {
+      STORE = store;
+    } else if (store && typeof store === 'object') {
+      // legacy shape; coerce client-side too
+      STORE = coerceClient(store);
+    }
+    if (metaR.ok) {
+      META = await metaR.json();
+      if (META.current) CURRENT_VERSION = META.current;
+    }
+    return true;
+  } catch { return false; }
+}
+
+function coerceClient(raw) {
+  const out = {schema_version: 2, anchors: {}, archived: {}};
+  if (Array.isArray(raw)) {
+    raw.forEach(c => {
+      const aid = c.sectionId || c.anchor_id || 'unknown';
+      out.anchors[aid] = out.anchors[aid] || [];
+      out.anchors[aid].push({
+        id: c.id || ('c' + Math.random().toString(36).slice(2,8)),
+        anchor_id: aid,
+        anchor_label: c.sectionLabel || c.anchor_label,
+        text: c.text || '',
+        author: c.author || 'anonymous',
+        created_at: c.timestamp || c.created_at || new Date().toISOString(),
+        version: c.version || CURRENT_VERSION,
+        status: (c.status === 'addressed' ? 'addressed_by_agent' : (c.status || 'open')),
+        response_text: c.response_text || null,
+        replies: c.replies || [],
+      });
+    });
+    return out;
+  }
+  // node→list map
+  Object.entries(raw).forEach(([nid, items]) => {
+    if (!Array.isArray(items)) return;
+    items.forEach(c => {
+      out.anchors[nid] = out.anchors[nid] || [];
+      out.anchors[nid].push({
+        id: c.id || ('c' + Math.random().toString(36).slice(2,8)),
+        anchor_id: nid,
+        anchor_label: c.nodeLabel || null,
+        text: c.text || '',
+        author: c.author || 'anonymous',
+        created_at: c.createdAt || c.created_at || new Date().toISOString(),
+        version: c.version || CURRENT_VERSION,
+        status: c.status || 'open',
+        response_text: c.response_text || null,
+        replies: c.replies || [],
+      });
+    });
+  });
+  return out;
+}
+
+async function liveCreateComment(anchorId, text) {
+  const body = {
+    anchor_id: anchorId,
+    anchor_label: (ANCHOR_REGISTRY[anchorId] || {}).name,
+    text: text,
+    version: CURRENT_VERSION,
+  };
+  try {
+    const r = await fetch('./api/comments', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (r.ok) return await r.json();
+  } catch {}
+  return null;
+}
+
+async function livePutComment(commentId, patch) {
+  try {
+    const r = await fetch('./api/comments/' + encodeURIComponent(commentId), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(patch),
+    });
+    if (r.ok) return await r.json();
+  } catch {}
+  return null;
+}
+
+async function liveArchiveComment(commentId) {
+  try {
+    const r = await fetch('./api/comments/' + encodeURIComponent(commentId) + '/archive', {
+      method: 'POST',
+    });
+    if (r.ok) return await r.json();
+  } catch {}
+  return null;
+}
+
+// ── Local persistence ────────────────────────────────────────────
+function localSave() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(STORE)); } catch {}
+}
+function localLoad() {
+  try {
+    const v = localStorage.getItem(LS_KEY);
+    if (v) {
+      const parsed = JSON.parse(v);
+      STORE = (parsed && parsed.schema_version === 2) ? parsed : coerceClient(parsed || {});
+    }
+  } catch { STORE = {schema_version: 2, anchors: {}, archived: {}}; }
+}
+
+function persist() {
+  localSave();
+  updateModeIndicator();
+}
+
+function updateModeIndicator() {
+  const ind = document.getElementById('mode-ind');
+  const txt = document.getElementById('mode-txt');
+  if (isLiveMode) {
+    ind.className = 'mode-ind mode-live';
+    ind.querySelector('.dot').textContent = '●';
+    txt.textContent = 'Live-sync';
+  } else {
+    ind.className = 'mode-ind mode-local';
+    ind.querySelector('.dot').textContent = '○';
+    txt.textContent = 'Local (export to share)';
+  }
+  document.getElementById('author-ind').textContent = '👤 ' + truncAuthor(isLiveAuthor);
+}
+
+function truncAuthor(s) {
+  if (!s) return 'anonymous';
+  if (s.length <= 22) return s;
+  return s.slice(0, 18) + '…';
+}
+
+// ── Utilities ────────────────────────────────────────────────────
+function anchorLabel(aid) {
+  const e = ANCHOR_REGISTRY[aid];
+  if (e && e.name) return e;
+  return {name: aid, grp: 'Ungrouped'};
+}
+
+function findParentAnchor(el) {
+  let cur = el;
+  while (cur && cur !== document.body) {
+    if (cur.dataset && cur.dataset.anchorId) return cur;
+    if (cur.classList && cur.classList.contains('no') && cur.id) {
+      // legacy: treat id as anchor_id
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+function getAnchorIdFromEl(el) {
+  if (!el) return null;
+  if (el.dataset && el.dataset.anchorId) return el.dataset.anchorId;
+  if (el.id) return el.id;
+  return null;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtTs(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+  } catch { return String(iso).slice(0, 16).replace('T', ' '); }
+}
+
+// ── Popover ──────────────────────────────────────────────────────
+function openPopover(anchorId, clientX, clientY) {
+  activeAnchorId = anchorId;
+  editingCtx = null;
+  const pop = document.getElementById('popover');
+  const ta = document.getElementById('pop-ta');
+  document.getElementById('pop-node-name').textContent = anchorLabel(anchorId).name;
+  ta.value = '';
+  positionPopover(clientX, clientY);
+  pop.classList.add('vis');
+  ta.focus();
+  document.querySelectorAll('[data-anchor-id].active, .no.active').forEach(el => el.classList.remove('active'));
+  const target = document.querySelector('[data-anchor-id="' + cssEsc(anchorId) + '"]') || document.getElementById(anchorId);
+  if (target) target.classList.add('active');
+}
+
+function cssEsc(s) {
+  return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
+}
+
+function openPopoverEdit(anchorId, commentId) {
+  const list = STORE.anchors[anchorId] || [];
+  const c = list.find(c => c.id === commentId);
+  if (!c) return;
+  activeAnchorId = anchorId;
+  editingCtx = {anchorId, commentId};
+  const pop = document.getElementById('popover');
+  const ta = document.getElementById('pop-ta');
+  document.getElementById('pop-node-name').textContent = anchorLabel(anchorId).name + ' — edit';
+  ta.value = c.text;
+  positionPopover(window.innerWidth / 2, window.innerHeight / 2);
+  pop.classList.add('vis');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function positionPopover(cx, cy) {
+  const pop = document.getElementById('popover');
+  const pw = 332, ph = 220;
+  let left = cx + 12, top = cy + 12;
+  if (left + pw > window.innerWidth - 8) left = cx - pw - 12;
+  if (top + ph > window.innerHeight - 8) top = cy - ph - 12;
+  if (left < 8) left = 8;
+  if (top < 8) top = 8;
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+}
+
+function closePopover() {
+  document.getElementById('popover').classList.remove('vis');
+  document.querySelectorAll('[data-anchor-id].active, .no.active').forEach(el => el.classList.remove('active'));
+  activeAnchorId = null;
+  editingCtx = null;
+}
+
+async function saveComment() {
+  const ta = document.getElementById('pop-ta');
+  const text = ta.value.trim();
+  if (!text || !activeAnchorId) return;
+
+  if (editingCtx) {
+    const list = STORE.anchors[editingCtx.anchorId] || [];
+    const c = list.find(c => c.id === editingCtx.commentId);
+    if (c) { c.text = text; c.edited_at = new Date().toISOString(); }
+    STORE.anchors[editingCtx.anchorId] = list;
+    if (isLiveMode) {
+      await livePutComment(editingCtx.commentId, {text});
+    }
+  } else {
+    if (isLiveMode) {
+      const created = await liveCreateComment(activeAnchorId, text);
+      if (created) {
+        STORE.anchors[activeAnchorId] = STORE.anchors[activeAnchorId] || [];
+        STORE.anchors[activeAnchorId].push(created);
+      } else {
+        // fall back to local
+        addLocalComment(activeAnchorId, text);
+      }
+    } else {
+      addLocalComment(activeAnchorId, text);
+    }
+  }
+  persist();
+  renderAll();
+  closePopover();
+}
+
+function addLocalComment(anchorId, text) {
+  STORE.anchors[anchorId] = STORE.anchors[anchorId] || [];
+  STORE.anchors[anchorId].push({
+    id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    anchor_id: anchorId,
+    anchor_label: (ANCHOR_REGISTRY[anchorId] || {}).name,
+    text,
+    author: isLiveAuthor,
+    created_at: new Date().toISOString(),
+    version: CURRENT_VERSION,
+    status: 'open',
+    response_text: null,
+    replies: [],
+  });
+}
+
+async function setStatus(anchorId, commentId, newStatus) {
+  const list = STORE.anchors[anchorId] || [];
+  const c = list.find(c => c.id === commentId);
+  if (!c) return;
+  c.status = newStatus;
+  if (isLiveMode) await livePutComment(commentId, {status: newStatus});
+  persist();
+  renderAll();
+}
+
+async function archiveComment(anchorId, commentId) {
+  if (!confirm('Archive this comment?')) return;
+  if (isLiveMode) {
+    await liveArchiveComment(commentId);
+  } else {
+    const list = STORE.anchors[anchorId] || [];
+    const idx = list.findIndex(c => c.id === commentId);
+    if (idx >= 0) {
+      const c = list[idx];
+      c.status = 'archived';
+      STORE.archived = STORE.archived || {};
+      STORE.archived[anchorId] = STORE.archived[anchorId] || [];
+      STORE.archived[anchorId].push(c);
+      list.splice(idx, 1);
+      if (!list.length) delete STORE.anchors[anchorId];
+    }
+  }
+  // Reload from server in live mode to capture canonical state
+  if (isLiveMode) {
+    await tryLiveLoad();
+  }
+  persist();
+  renderAll();
+}
+
+async function deleteComment(anchorId, commentId) {
+  if (!confirm('Delete this comment? (archive is usually safer)')) return;
+  STORE.anchors[anchorId] = (STORE.anchors[anchorId] || []).filter(c => c.id !== commentId);
+  if (!STORE.anchors[anchorId].length) delete STORE.anchors[anchorId];
+  // In live mode, delete is not exposed server-side; treat as archive
+  if (isLiveMode) {
+    await liveArchiveComment(commentId);
+    await tryLiveLoad();
+  }
+  persist();
+  renderAll();
+}
+
+// ── Badges (Task 2: drift-free pin positioning) ───────────────────
+// Strategy:
+//   HTML anchors → pin rendered as CHILD of the anchor element
+//     (position:relative is set by CSS; pin uses position:absolute).
+//     Co-moves with the element on reflow, tab switch, title collapse.
+//   SVG anchors → existing getBBox() approach via the #badge-layer,
+//     but we also hook MutationObserver + rAF so it re-runs after
+//     Mermaid renders or dict-table replacement mutates the DOM.
+function renderBadges() {
+  // ── 1. Remove any existing inline pins ──────────────────────────
+  document.querySelectorAll('.bpin-inline').forEach(p => p.remove());
+
+  // ── 2. Clear SVG badge layer ─────────────────────────────────────
+  const layer = document.getElementById('badge-layer');
+  if (layer) layer.innerHTML = '';
+
+  for (const [anchorId, list] of Object.entries(STORE.anchors || {})) {
+    if (!list.length) continue;
+
+    const has_open = list.some(c => c.status === 'open');
+    const has_addressed = list.some(c => c.status === 'addressed_by_agent');
+    const has_confirmed = list.some(c => c.status === 'user_confirmed');
+    let cls = 'open';
+    if (!has_open && has_addressed) cls = 'addressed_by_agent';
+    else if (!has_open && !has_addressed && has_confirmed) cls = 'user_confirmed';
+
+    const el = document.querySelector('[data-anchor-id="' + cssEsc(anchorId) + '"]') || document.getElementById(anchorId);
+    if (!el) continue;
+
+    const isSvgEl = !!(el.ownerSVGElement || el.tagName.toLowerCase() === 'svg');
+
+    if (isSvgEl) {
+      // SVG element: use getBBox() + badge-layer (position relative to canvas-wrapper)
+      if (!layer) continue;
+      const svgEl = document.querySelector('svg');
+      if (!svgEl) continue;
+      const svgW = svgEl.getBoundingClientRect().width;
+      const vbWidth = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width) || 1920;
+      const scale = svgW / vbWidth;
+      let bbox;
+      try { bbox = el.getBBox(); } catch { continue; }
+      const b = document.createElement('div');
+      b.className = 'bpin ' + cls;
+      b.textContent = list.length;
+      b.title = anchorLabel(anchorId).name + ': ' + list.length + ' comment(s)';
+      b.style.left = ((bbox.x + bbox.width) * scale) + 'px';
+      b.style.top = (bbox.y * scale) + 'px';
+      layer.appendChild(b);
+    } else {
+      // HTML element: insert pin INSIDE the anchor so it co-moves with reflow.
+      // The CSS rule `[data-anchor-id]{position:relative}` is already set.
+      const b = document.createElement('div');
+      b.className = 'bpin-inline ' + cls;
+      b.textContent = list.length;
+      b.title = anchorLabel(anchorId).name + ': ' + list.length + ' comment(s)';
+      // Avoid inserting twice (idempotent)
+      el.appendChild(b);
+    }
+  }
+}
+
+// ── MutationObserver: re-run renderBadges after any DOM mutation
+// inside the canvas (covers tab switches, Mermaid render, dict→table
+// swaps, collapsible title animate). Installed in init() after DOM ready.
+let _badgeMutTimer = null;
+function _scheduleBadgeRefresh() {
+  clearTimeout(_badgeMutTimer);
+  _badgeMutTimer = setTimeout(renderBadges, 80);
+}
+function _installBadgeMutObs() {
+  const target = document.getElementById('canvas-wrapper') || document.body;
+  const obs = new MutationObserver(_scheduleBadgeRefresh);
+  obs.observe(target, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
+}
+
+// ── Version rail ─────────────────────────────────────────────────
+function renderVersionRail() {
+  const body = document.getElementById('vrail-body');
+  if (!body) return;
+  const history = (META.history || []).slice().reverse();
+  if (!history.length) {
+    history.push({version: CURRENT_VERSION, ts: '', label: ''});
+  }
+  const countsByVersion = {};
+  for (const items of Object.values(STORE.anchors || {})) {
+    for (const c of items) {
+      const v = c.version || CURRENT_VERSION;
+      countsByVersion[v] = (countsByVersion[v] || 0) + 1;
+    }
+  }
+  body.innerHTML = history.map(h => {
+    const cnt = countsByVersion[h.version] || 0;
+    const isCur = h.version === CURRENT_VERSION;
+    return `<div class="vrow ${isCur ? 'current' : ''}" onclick="switchVersion('${esc(h.version)}')" title="${esc(h.label || '')}">
+      <span class="vrow-dot"></span>
+      <span class="vrow-label">${esc(h.version)}${h.label ? ' · ' + esc(h.label) : ''}</span>
+      <span class="vrow-cnt">${cnt > 0 ? '+' + cnt : ''}</span>
+    </div>`;
+  }).join('');
+}
+
+function switchVersion(v) {
+  if (v === CURRENT_VERSION) return;
+  // HARD RELOAD (Figma style)
+  const u = new URL(window.location.href);
+  u.searchParams.set('v', v);
+  window.location.href = u.toString();
+}
+
+// ── Side panel ───────────────────────────────────────────────────
+function renderPanel() {
+  const listEl = document.getElementById('comment-list');
+  const empty = document.getElementById('panel-empty');
+  const cntBadge = document.getElementById('cnt-badge');
+
+  // Flatten
+  let all = [];
+  for (const [aid, items] of Object.entries(STORE.anchors || {})) {
+    for (const c of items) all.push({...c, anchor_id: aid});
+  }
+  if (showArchived) {
+    for (const [aid, items] of Object.entries(STORE.archived || {})) {
+      for (const c of items) all.push({...c, anchor_id: aid, status: 'archived'});
+    }
+  }
+  // Version filter
+  if (!showAllVersions) {
+    all = all.filter(c => !c.version || c.version === CURRENT_VERSION);
+  }
+
+  // Split orphans
+  const orphan = [];
+  const grouped = {};
+  for (const c of all) {
+    if (!ANCHOR_REGISTRY[c.anchor_id]) {
+      orphan.push(c);
+    } else {
+      const grp = anchorLabel(c.anchor_id).grp;
+      grouped[grp] = grouped[grp] || [];
+      grouped[grp].push(c);
+    }
+  }
+
+  const totalShown = all.length;
+  cntBadge.textContent = totalShown + (totalShown === 1 ? ' comment' : ' comments');
+
+  if (totalShown === 0) {
+    empty.style.display = 'flex';
+    listEl.style.display = 'none';
+    listEl.innerHTML = '';
+    return;
+  }
+  empty.style.display = 'none';
+  listEl.style.display = 'block';
+
+  const sortedGrps = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+  let html = sortedGrps.map(grp => {
+    const items = grouped[grp].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    return `<div class="cgroup">
+      <div class="cgroup-lbl">${esc(grp)}</div>
+      ${items.map(renderCItem).join('')}
+    </div>`;
+  }).join('');
+
+  if (showOrphans && orphan.length) {
+    html += `<div class="cgroup">
+      <div class="cgroup-lbl orphan">Comments without anchor</div>
+      ${orphan.sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map(renderCItem).join('')}
+    </div>`;
+  }
+
+  listEl.innerHTML = html;
+}
+
+function renderCItem(c) {
+  const ts = fmtTs(c.created_at);
+  const lbl = anchorLabel(c.anchor_id);
+  const isOrphan = !ANCHOR_REGISTRY[c.anchor_id];
+  const versionTag = c.version && c.version !== CURRENT_VERSION ? ` <span class="citem-status cstatus-archived">${esc(c.version)}</span>` : '';
+  let actions = '';
+  if (c.status === 'open') {
+    const flagged = c.flagged_for_session ? ' (flagged)' : '';
+    actions += `<button class="alink push-one" onclick="event.stopPropagation();pushSingleToSession('${esc(c.id)}')" title="Send just this comment to the active Claude session">&#128238; Send${flagged}</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();openPopoverEdit('${esc(c.anchor_id)}','${esc(c.id)}')">Edit</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();setStatus('${esc(c.anchor_id)}','${esc(c.id)}','user_confirmed')">Mark resolved</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();archiveComment('${esc(c.anchor_id)}','${esc(c.id)}')">Archive</button>`;
+  } else if (c.status === 'addressed_by_agent') {
+    actions += `<button class="alink" style="color:#15803D" onclick="event.stopPropagation();setStatus('${esc(c.anchor_id)}','${esc(c.id)}','user_confirmed')">✓ Confirm fix</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();setStatus('${esc(c.anchor_id)}','${esc(c.id)}','open')">Reopen</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();archiveComment('${esc(c.anchor_id)}','${esc(c.id)}')">Archive</button>`;
+  } else if (c.status === 'user_confirmed') {
+    actions += `<button class="alink" onclick="event.stopPropagation();archiveComment('${esc(c.anchor_id)}','${esc(c.id)}')">Archive</button>`;
+    actions += `<button class="alink" onclick="event.stopPropagation();setStatus('${esc(c.anchor_id)}','${esc(c.id)}','open')">Reopen</button>`;
+  }
+  const replyHtml = (c.replies || []).map(r => `
+    <div class="thread-reply">
+      <div class="thread-reply-hdr">${esc(r.author)} &middot; ${esc(fmtTs(r.ts))}</div>
+      <div>${esc(r.text)}</div>
+    </div>`).join('');
+  const agentReplyHtml = c.response_text ? `
+    <div class="agent-reply">
+      <div class="agent-reply-hdr">Agent response</div>
+      <div>${esc(c.response_text)}</div>
+    </div>` : '';
+  const statusBadge = `<span class="citem-status cstatus-${esc(c.status)}">${esc(c.status.replace(/_/g, ' '))}</span>`;
+
+  // Task 3: Reopen button on addressed_by_agent comments
+  const reopenBtn = c.status === 'addressed_by_agent'
+    ? `<button class="alink btn-reopen" style="font-size:10px;padding:3px 7px;border-radius:4px;margin-top:4px" onclick="event.stopPropagation();reopenComment('${esc(c.anchor_id)}','${esc(c.id)}')">&#8635; Reopen</button>`
+    : '';
+
+  // Task 3: Reply form (shown on all non-archived comments)
+  const replyFormHtml = c.status !== 'archived' ? `
+    <div class="reply-form">
+      <textarea class="reply-ta" id="reply-ta-${esc(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
+      <button class="reply-submit" onclick="event.stopPropagation();postReply('${esc(c.anchor_id)}','${esc(c.id)}')">Post reply</button>
+    </div>` : '';
+
+  return `<div class="citem s-${esc(c.status)}" onclick="scrollToAnchor('${esc(c.anchor_id)}')" id="citem-${esc(c.id)}">
+    <div class="citem-node">
+      <span>${esc(lbl.name)}${versionTag}</span>
+      ${statusBadge}
+    </div>
+    <div class="citem-txt">${esc(c.text)}</div>
+    ${agentReplyHtml}
+    ${replyHtml}
+    <div class="citem-meta">
+      <div class="citem-meta-l">
+        <span class="citem-author">${esc(c.author || 'anonymous')}</span>
+        <span>${ts}${c.edited_at ? ' (edited)' : ''}${isOrphan ? ' &middot; orphan' : ''}</span>
+      </div>
+    </div>
+    <div class="citem-actions">${actions}${reopenBtn}</div>
+    ${replyFormHtml}
+  </div>`;
+}
+
+function scrollToAnchor(anchorId) {
+  const el = document.querySelector('[data-anchor-id="' + cssEsc(anchorId) + '"]') || document.getElementById(anchorId);
+  if (!el) return;
+  document.querySelectorAll('.citem.hl').forEach(e => e.classList.remove('hl'));
+  const area = document.getElementById('canvas-area');
+  if (!area) return;
+  if (el.ownerSVGElement) {
+    const svg = document.querySelector('svg');
+    const svgW = svg.getBoundingClientRect().width;
+    const vbWidth = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width || 1920;
+    const scale = svgW / vbWidth;
+    let bbox;
+    try { bbox = el.getBBox(); } catch { return; }
+    area.scrollTo({top: Math.max(0, bbox.y * scale - 120), behavior: 'smooth'});
+  } else {
+    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+  }
+  el.classList.add('active');
+  setTimeout(() => el.classList.remove('active'), 1800);
+}
+
+function renderAll() {
+  renderBadges();
+  renderPanel();
+  renderVersionRail();
+  if (typeof updatePushCounter === 'function') updatePushCounter();
+}
+
+// ── F1: Push-to-session helpers ──────────────────────────────────
+function countOpenComments() {
+  let n = 0;
+  for (const items of Object.values(STORE.anchors || {})) {
+    for (const c of items) if (c.status === 'open') n++;
+  }
+  return n;
+}
+
+function updatePushCounter() {
+  const btn = document.getElementById('push-session-btn');
+  const cnt = document.getElementById('push-session-counter');
+  if (!btn || !cnt) return;
+  const n = countOpenComments();
+  cnt.textContent = String(n);
+  btn.disabled = (n === 0);
+}
+
+async function pushAllToSession() {
+  if (!isLiveMode) { alert('Push to session requires live-sync mode.'); return; }
+  const n = countOpenComments();
+  if (n === 0) { alert('No open comments to push.'); return; }
+  const btn = document.getElementById('push-session-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('./api/push-session', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    if (!r.ok) { alert('Push failed: HTTP ' + r.status); btn.disabled = false; return; }
+    const j = await r.json();
+    const delivered = j.delivery === 'active_monitor';
+    btn.classList.add(delivered ? 'success' : 'queued');
+    btn.querySelector('span:first-child').textContent = delivered
+      ? '✅ Sent ' + j.flagged_count + ' to active session'
+      : '⏳ Queued ' + j.flagged_count + ' — no monitor armed';
+    await tryLiveLoad();
+    renderAll();
+    setTimeout(() => {
+      btn.classList.remove('success', 'queued');
+      btn.querySelector('span:first-child').textContent = '📨 Push to session';
+      btn.disabled = false;
+      updatePushCounter();
+    }, 3000);
+  } catch (err) { alert('Push failed: ' + err.message); btn.disabled = false; }
+}
+
+async function pushSingleToSession(commentId) {
+  if (!isLiveMode) { alert('Push to session requires live-sync mode.'); return; }
+  try {
+    const r = await fetch('./api/comments/' + encodeURIComponent(commentId) + '/push', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    if (!r.ok) { alert('Push failed: HTTP ' + r.status); return; }
+    const j = await r.json();
+    await tryLiveLoad();
+    renderAll();
+    alert(j.delivery === 'active_monitor'
+      ? 'Sent to the active session.'
+      : 'Queued. No live session monitor is armed.');
+  } catch (err) { alert('Push failed: ' + err.message); }
+}
+
+// ── Task 3: Reply + Reopen ───────────────────────────────────────
+async function postReply(anchorId, commentId) {
+  const ta = document.getElementById('reply-ta-' + commentId);
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) { ta.focus(); return; }
+
+  const btn = ta.nextElementSibling;
+  if (btn) btn.disabled = true;
+
+  if (isLiveMode) {
+    try {
+      const r = await fetch('./api/comments/' + encodeURIComponent(commentId) + '/reply', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text, author: isLiveAuthor}),
+      });
+      if (!r.ok) {
+        alert('Reply failed: HTTP ' + r.status);
+        if (btn) btn.disabled = false;
+        return;
+      }
+      const updated = await r.json();
+      // Update local STORE with the returned comment (has new reply)
+      const list = STORE.anchors[anchorId] || [];
+      const idx = list.findIndex(c => c.id === commentId);
+      if (idx >= 0) list[idx] = updated;
+      else {
+        STORE.anchors[anchorId] = list;
+        list.push(updated);
+      }
+    } catch (err) {
+      alert('Reply failed: ' + err.message);
+      if (btn) btn.disabled = false;
+      return;
+    }
+  } else {
+    // Local mode: append to in-memory STORE
+    const list = STORE.anchors[anchorId] || [];
+    const c = list.find(c => c.id === commentId);
+    if (c) {
+      c.replies = c.replies || [];
+      c.replies.push({author: isLiveAuthor, text, ts: new Date().toISOString()});
+    }
+    localSave();
+  }
+
+  ta.value = '';
+  if (btn) btn.disabled = false;
+  renderAll();
+}
+
+async function reopenComment(anchorId, commentId) {
+  const list = STORE.anchors[anchorId] || [];
+  const c = list.find(c => c.id === commentId);
+  if (!c) return;
+  c.status = 'open';
+  if (isLiveMode) {
+    const updated = await livePutComment(commentId, {status: 'open'});
+    if (updated) {
+      const idx = list.findIndex(x => x.id === commentId);
+      if (idx >= 0) list[idx] = updated;
+    }
+  }
+  persist();
+  renderAll();
+}
+
+// ── F6: Sortable + resizable tables ──────────────────────────────
+function _cellSortValue(td) {
+  const txt = (td.textContent || '').trim();
+  const num = Number(txt.replace(/[,$%\s]/g, ''));
+  if (!isNaN(num) && txt !== '') return num;
+  return txt.toLowerCase();
+}
+function _sortTable(table, colIdx, dir) {
+  const tbody = table.tBodies[0]; if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const va = _cellSortValue(a.cells[colIdx] || {});
+    const vb = _cellSortValue(b.cells[colIdx] || {});
+    if (va < vb) return dir === 'asc' ? -1 : 1;
+    if (va > vb) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+function _enhanceTable(table) {
+  if (table._enhanced) return; table._enhanced = true;
+  const ths = table.querySelectorAll('thead th');
+  ths.forEach((th, idx) => {
+    th.classList.add('sortable');
+    th.addEventListener('click', (e) => {
+      if (e.target.classList && e.target.classList.contains('col-resize-handle')) return;
+      e.stopPropagation();
+      const cur = th.classList.contains('sort-asc') ? 'asc' : th.classList.contains('sort-desc') ? 'desc' : null;
+      const next = cur === 'asc' ? 'desc' : 'asc';
+      ths.forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
+      th.classList.add('sort-' + next);
+      _sortTable(table, idx, next);
+    });
+    if (idx < ths.length - 1) {
+      const handle = document.createElement('span');
+      handle.className = 'col-resize-handle';
+      handle.addEventListener('mousedown', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        handle.classList.add('dragging');
+        const startX = ev.clientX, startW = th.getBoundingClientRect().width;
+        function onMove(mv) {
+          const newW = Math.max(40, startW + (mv.clientX - startX));
+          th.style.width = newW + 'px'; th.style.minWidth = newW + 'px';
+        }
+        function onUp() { handle.classList.remove('dragging'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+        document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+      });
+      th.appendChild(handle);
+    }
+  });
+}
+function enhanceAllTables() {
+  document.querySelectorAll('table.tbl').forEach(_enhanceTable);
+}
+
+// ── F2: Mermaid lazy-init + node anchors ────────────────────────
+let _mermaidConfigured = false;
+let _mermaidRenderedHosts = new WeakSet();
+function _captureMermaidSources() {
+  document.querySelectorAll('.mermaid-deferred, .mermaid').forEach(blk => { if (!blk.dataset.mermaidSrc) blk.dataset.mermaidSrc = blk.textContent; });
+}
+function _walkMermaidAnchors() {
+  document.querySelectorAll('.mermaid-host').forEach(host => {
+    const diagramId = host.dataset.diagramId || (host.id || 'd');
+    const svg = host.querySelector('svg'); if (!svg) return;
+    svg.querySelectorAll('g.node').forEach(g => {
+      const m = (g.id || '').match(/flowchart-([^-]+)-/);
+      const key = m ? m[1] : (g.id || '');
+      const aid = 'mmd:' + diagramId + ':node:' + key;
+      g.setAttribute('data-anchor-id', aid);
+      if (!ANCHOR_REGISTRY[aid]) ANCHOR_REGISTRY[aid] = {name: 'Mermaid node ' + key, grp: 'Diagrams'};
+    });
+    svg.querySelectorAll('g.edgePath').forEach((g, idx) => {
+      const aid = 'mmd:' + diagramId + ':edge:' + idx;
+      g.setAttribute('data-anchor-id', aid);
+      if (!ANCHOR_REGISTRY[aid]) ANCHOR_REGISTRY[aid] = {name: 'Mermaid edge #' + idx, grp: 'Diagrams'};
+    });
+  });
+}
+async function _initMermaid() {
+  if (typeof mermaid === 'undefined') return;
+  if (!_mermaidConfigured) { mermaid.initialize({startOnLoad: false, securityLevel: 'loose', theme: 'default'}); _mermaidConfigured = true; }
+  _captureMermaidSources();
+  for (const blk of document.querySelectorAll('.mermaid-deferred, .mermaid')) {
+    if (_mermaidRenderedHosts.has(blk)) continue;
+    if (!blk.offsetParent) continue;
+    try {
+      const src = blk.dataset.mermaidSrc || blk.textContent;
+      const id = 'mmd-render-' + Math.random().toString(36).slice(2, 9);
+      const { svg, bindFunctions } = await mermaid.render(id, src);
+      blk.innerHTML = svg;
+      if (bindFunctions) bindFunctions(blk);
+      _mermaidRenderedHosts.add(blk);
+    } catch (e) { console.warn('Mermaid render failed:', e); }
+  }
+  setTimeout(() => { _walkMermaidAnchors(); renderBadges(); }, 60);
+}
+
+// ── F3: Title-block collapse ─────────────────────────────────────
+function toggleTitleCollapse() {
+  const block = document.getElementById('doc-title-block');
+  if (!block) return;
+  block.classList.toggle('collapsed');
+  const t = document.getElementById('title-collapse-toggle');
+  if (t) t.textContent = block.classList.contains('collapsed') ? '+ expand' : '− collapse';
+  requestAnimationFrame(renderBadges);
+}
+
+// ── Export ───────────────────────────────────────────────────────
+function exportFeedback() {
+  let all = [];
+  for (const [aid, items] of Object.entries(STORE.anchors || {})) {
+    for (const c of items) all.push({...c, anchor_id: aid});
+  }
+  if (!all.length) { alert('No comments to export yet.'); return; }
+
+  const title = document.title || DOC_ID;
+  let md = `# ${title} — Review Feedback\n`;
+  md += `**Exported:** ${new Date().toISOString()}\n`;
+  md += `**Total:** ${all.length} comment${all.length === 1 ? '' : 's'}\n\n---\n\n`;
+
+  const grouped = {};
+  for (const c of all) {
+    const grp = anchorLabel(c.anchor_id).grp;
+    grouped[grp] = grouped[grp] || {};
+    grouped[grp][c.anchor_id] = grouped[grp][c.anchor_id] || {name: anchorLabel(c.anchor_id).name, cs: []};
+    grouped[grp][c.anchor_id].cs.push(c);
+  }
+  for (const grp of Object.keys(grouped).sort()) {
+    md += `## ${grp}\n\n`;
+    for (const [aid, {name, cs}] of Object.entries(grouped[grp])) {
+      md += `### ${name}\n`;
+      for (const c of cs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))) {
+        const ts = fmtTs(c.created_at);
+        md += `- **[${ts}]** (${c.author}) [${c.status}] ${(c.text || '').replace(/\n/g, '  \n  ')}\n`;
+        if (c.response_text) md += `  - Agent: ${c.response_text}\n`;
+      }
+      md += '\n';
+    }
+  }
+  md += `---\n*Exported from ${title} (annotate v2)*\n`;
+
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([md], {type: 'text/markdown'}));
+  a.download = DOC_ID + '-feedback-' + new Date().toISOString().slice(0, 10) + '.md';
+  a.click();
+
+  navigator.clipboard.writeText(md).then(() => {
+    const btn = document.querySelector('.btn-pri');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied + Downloaded';
+    setTimeout(() => btn.textContent = orig, 2200);
+  }).catch(() => {});
+}
+
+function toggleLeg() { document.getElementById('legend').classList.toggle('vis'); }
+
+// ── Init ─────────────────────────────────────────────────────────
+(async function init() {
+  // Capture Mermaid source text before any CDN auto-init can mutate it.
+  if (typeof _captureMermaidSources === 'function') _captureMermaidSources();
+
+  const legBody = document.getElementById('legend-body');
+  if (legBody && legBody.innerHTML.trim()) {
+    document.getElementById('leg-btn').style.display = '';
+    document.getElementById('leg-float').style.display = '';
+  }
+
+  // Inspect URL for ?v=
+  const urlV = new URL(window.location.href).searchParams.get('v');
+  if (urlV) CURRENT_VERSION = urlV;
+
+  const live = await tryLiveLoad();
+  if (live) {
+    isLiveMode = true;
+    // Author hint: live mode + no CF Access header → "anonymous"; agent: ID via reply
+    // (We don't know the user's email client-side; rely on the server.)
+    isLiveAuthor = 'live-sync';
+  } else {
+    localLoad();
+    isLiveMode = false;
+    isLiveAuthor = 'local';
+  }
+  updateModeIndicator();
+  renderAll();
+
+  // F6: enhance tables
+  if (typeof enhanceAllTables === 'function') enhanceAllTables();
+  // F2: lazy-render Mermaid
+  if (typeof _initMermaid === 'function') _initMermaid();
+  // Task 1: mount Observable Plot diagram placeholders
+  if (typeof AnnotateDiagrams !== 'undefined' && typeof AnnotateDiagrams.mountDiagrams === 'function') {
+    AnnotateDiagrams.mountDiagrams();
+  }
+  // Task 2: install MutationObserver for badge drift fix
+  _installBadgeMutObs();
+
+  // Wire click handlers — combined anchor + .no
+  document.addEventListener('click', e => {
+    // Skip clicks inside the panel or popover
+    const pop = document.getElementById('popover');
+    const panel = document.querySelector('.panel');
+    const rail = document.getElementById('vrail');
+    if (pop.contains(e.target) || panel.contains(e.target) || rail.contains(e.target)) return;
+
+    const wrapper = document.getElementById('canvas-wrapper');
+    if (!wrapper.contains(e.target)) return;
+
+    // F4: bail on controls so the popover doesn't hijack their clicks
+    if (e.target.closest('.col-resize-handle, .title-collapse-toggle, .alink, a[href], button, th.sortable')) return;
+
+    let target = findParentAnchor(e.target);
+    if (!target) return;
+    if (e.shiftKey) {
+      // Walk up one anchor level
+      const reg = ANCHOR_REGISTRY[getAnchorIdFromEl(target)];
+      if (reg && reg.parent) {
+        const parentEl = document.querySelector('[data-anchor-id="' + cssEsc(reg.parent) + '"]') || document.getElementById(reg.parent);
+        if (parentEl) target = parentEl;
+      }
+    }
+    const aid = getAnchorIdFromEl(target);
+    if (!aid) return;
+    e.stopPropagation();
+    openPopover(aid, e.clientX, e.clientY);
+  }, true);
+
+  // Toggles
+  document.getElementById('tog-archived').addEventListener('change', e => {
+    showArchived = e.target.checked;
+    renderAll();
+  });
+  document.getElementById('tog-orphans').addEventListener('change', e => {
+    showOrphans = e.target.checked;
+    renderAll();
+  });
+  document.getElementById('tog-allver').addEventListener('change', e => {
+    showAllVersions = e.target.checked;
+    renderAll();
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closePopover();
+    if ((e.key === 'Enter' && (e.ctrlKey || e.metaKey)) && document.getElementById('popover').classList.contains('vis')) {
+      saveComment();
+    }
+  });
+
+  // Outside-click popover close
+  document.addEventListener('click', e => {
+    const pop = document.getElementById('popover');
+    const leg = document.getElementById('legend');
+    if (pop.classList.contains('vis') && !pop.contains(e.target)) {
+      const parent = findParentAnchor(e.target);
+      if (!parent) closePopover();
+    }
+    if (leg.classList.contains('vis') && !leg.contains(e.target) && !e.target.dataset.legToggle) {
+      leg.classList.remove('vis');
+    }
+  });
+
+  // Poll live mode for new comments every 8s
+  if (isLiveMode) {
+    setInterval(async () => {
+      const ok = await tryLiveLoad();
+      if (ok) renderAll();
+    }, 8000);
+  }
+
+  requestAnimationFrame(() => requestAnimationFrame(renderAll));
+  window.addEventListener('resize', () => {
+    clearTimeout(window._rbt);
+    window._rbt = setTimeout(renderBadges, 120);
+  });
+  document.getElementById('canvas-area')?.addEventListener('scroll', () => {
+    clearTimeout(window._rbs);
+    window._rbs = setTimeout(renderBadges, 60);
+  });
+})();
+</script>
+</body>
+</html>

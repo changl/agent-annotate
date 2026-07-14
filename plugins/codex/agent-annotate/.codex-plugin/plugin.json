@@ -1,0 +1,28 @@
+{
+  "name": "agent-annotate",
+  "version": "0.1.0",
+  "description": "Interactive annotation pages and feedback delivery for Codex sessions",
+  "author": {
+    "name": "Chang Lee",
+    "url": "https://github.com/changl"
+  },
+  "homepage": "https://github.com/changl/agent-annotate",
+  "repository": "https://github.com/changl/agent-annotate",
+  "license": "Apache-2.0",
+  "keywords": ["annotation", "feedback", "coding-agents"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Annotate",
+    "shortDescription": "Review visual artifacts with pinned feedback",
+    "longDescription": "Publish versioned annotation pages, inspect exact feedback anchors, and route push events to an explicitly selected Codex thread.",
+    "developerName": "Chang Lee",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/changl/agent-annotate",
+    "defaultPrompt": [
+      "Publish this as an annotatable review page.",
+      "Show me feedback for the active annotation page."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
