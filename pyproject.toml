@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local-first interactive annotation and feedback coordination for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "MIT"
 authors = [{ name = "Chang Lee" }]
 keywords = ["annotation", "coding-agents", "codex", "claude", "mcp"]
 classifiers = [

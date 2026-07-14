@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/changl/agent-annotate",
   "repository": "https://github.com/changl/agent-annotate",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": ["annotation", "feedback", "coding-agents"],
   "skills": "./skills/",
   "interface": {
