@@ -16,7 +16,7 @@ Codex, and future providers connect through replaceable session adapters.
 ## Target installation
 
 ```sh
-uv tool install "agent-annotate @ git+https://github.com/changl/agent-annotate.git"
+uv tool install "agent-annotate[mcp] @ git+https://github.com/changl/agent-annotate.git"
 annotate doctor
 ```
 
