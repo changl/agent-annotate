@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -523,8 +524,49 @@ def cmd_unpublish(args) -> int:
     return 0
 
 
+def _running_servers() -> dict:
+    """Map resolved slug_dir -> [{pid, port}] for every live page server.
+
+    The recorded pid is not authoritative: a server restarted outside the CLI
+    (a supervisor, a manual relaunch, a peer session) keeps the ORIGINAL pid in
+    the state file forever, so a live page reads as dead everywhere slugs are
+    enumerated. slug_dir is the stable identity — pid and port both move.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10
+        ).stdout
+    except Exception:
+        return {}
+    found: dict[str, list[dict]] = {}
+    for line in out.splitlines():
+        if "sync_server" not in line or "--slug-dir" not in line:
+            continue
+        pid_str, _, rest = line.strip().partition(" ")
+        try:
+            argv = shlex.split(rest)
+            pid = int(pid_str)
+        except ValueError:
+            continue
+
+        def _arg(flag, argv=argv):
+            return argv[argv.index(flag) + 1] if flag in argv else None
+
+        slug_dir = _arg("--slug-dir")
+        if not slug_dir:
+            continue
+        try:
+            key = str(Path(slug_dir).resolve())
+        except OSError:
+            continue
+        port = _arg("--port")
+        found.setdefault(key, []).append({"pid": pid, "port": int(port) if port else None})
+    return found
+
+
 def cmd_status(args) -> int:
     rows = []
+    live = _running_servers()
     for sf in _all_state_files():
         st = json.loads(sf.read_text(encoding="utf-8"))
         project = st.get("project")
@@ -532,8 +574,25 @@ def cmd_status(args) -> int:
             if args.slug and slug != args.slug:
                 continue
             pid = rec.get("pid", 0)
-            alive = _is_process_alive(pid)
-            rows.append((project, slug, pid, rec.get("port"), rec.get("url"), "alive" if alive else "dead"))
+            port = rec.get("port")
+            if _is_process_alive(pid):
+                state = "alive"
+            else:
+                # Recorded pid is gone. Before calling it dead, look for the
+                # process by slug_dir — reporting a serving page as dead is
+                # the more damaging error, and it sends people chasing an
+                # ingress problem that does not exist.
+                slug_dir = rec.get("slug_dir")
+                procs = live.get(str(Path(slug_dir).resolve())) if slug_dir else None
+                if procs and len(procs) == 1:
+                    pid = procs[0]["pid"]
+                    port = procs[0]["port"] or port
+                    state = "alive*"
+                elif procs:
+                    state = "dup"
+                else:
+                    state = "dead"
+            rows.append((project, slug, pid, port, rec.get("url"), state))
     if not rows:
         print("(no active slugs)")
         return 0
@@ -541,6 +600,12 @@ def cmd_status(args) -> int:
     print(f"  {'-'*15} {'-'*24} {'-'*8} {'-'*6} {'-'*7} {'-'*40}")
     for project, slug, pid, port, url, state in rows:
         print(f"  {project[:15]:<15} {slug[:24]:<24} {pid!s:<8} {port!s:<6} {state:<7} {url}")
+    if any(r[5] == "alive*" for r in rows):
+        print("\n  alive* = serving, but the state file's pid is stale (restarted "
+              "outside the CLI). Re-publish to refresh the registry.")
+    if any(r[5] == "dup" for r in rows):
+        print("\n  dup    = several live servers share this slug_dir. They will fight "
+              "over comments.json; stop the ones you did not intend.")
     return 0
 
 
