@@ -67,6 +67,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
 """
 
 import argparse
+import fcntl
 import hashlib
 import http.server
 import json
@@ -823,18 +824,41 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """
         with _STORE_LOCK:  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
-            stamps = meta.setdefault("content_stamps", {})
-            existing = stamps.get(version)
+            existing = (meta.get("content_stamps") or {}).get(version)
             mtime = content_path.stat().st_mtime
             if existing and existing.get("_mtime") == mtime:
                 return  # up to date
             computed = compute_content_stamps(html)
             computed["_mtime"] = mtime
-            stamps[version] = computed
             try:
-                self._v2_save_meta(meta)
+                self._merge_content_stamp(version, computed)
             except OSError:
                 pass  # best-effort; ↑NEW detection degrades gracefully, not fatal
+
+    def _merge_content_stamp(self, version: str, computed: dict) -> None:
+        """Persist one content stamp without clobbering a concurrent writer.
+
+        current.meta.json is not owned by this server: the CLI rewrites it too
+        (`publish-version` swaps `current`). Reading the whole document,
+        mutating it, and writing it back would race that — a request that read
+        the meta before a version swap would write back the OLD `current`,
+        silently reverting the page and making it appear to change on every
+        reload. Re-read and write inside an exclusive file lock, and touch only
+        our own key, so nothing this server does can revert someone else's
+        edit. The window still needs the CLI to take the same lock to close
+        completely; this removes the long read-to-write gap that made it easy
+        to hit.
+        """
+        path = self._meta_path()
+        lock_path = path.with_suffix(".json.lock")
+        with open(lock_path, "a+") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                fresh = self._read_meta()
+                fresh.setdefault("content_stamps", {})[version] = computed
+                _atomic_write_json(path, fresh)
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     def _v2_save_meta(self, meta: dict) -> None:
         _atomic_write_json(self._meta_path(), meta)
