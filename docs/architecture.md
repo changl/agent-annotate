@@ -22,6 +22,37 @@ claims a page, receives feedback events, verifies its session is reachable, and
 releases the lease. One session may own several pages; each page has at most one
 owner.
 
+## Reviewer chrome is served, never baked
+
+The reviewer UI — `shell.html`, `shell.css`, `shell.js`, `adapter.js` — is
+loaded from the package on every request and injected into the served
+document. Published pages therefore carry content, not chrome, and a UI fix
+reaches every page at once with nothing regenerated.
+
+Earlier artifacts were produced by substituting an author's canvas into
+`template.html`, which froze a copy of the chrome into each published version.
+That copy could never be updated in place, so the two front-ends drifted until
+baked pages began suppressing clicks on their own form controls.
+
+`extract.py` closes that gap. `template.html` brackets its canvas with
+`<!-- CANVAS CONTENT -->` sentinels, so the server recovers the author's
+content from a baked artifact by string slice — no HTML parsing — re-encodes
+the anchor registry into the JSON form `adapter.js` reads, and serves the
+result through the shell. This happens at request time and writes nothing to
+disk, which is what keeps it universal: a page picks up the current chrome on
+its next request, with no migration to run and no duplicate to go stale. An
+explicit `content/<version>.html` overrides the extraction when a document
+needs hand-tuning.
+
+Copying a baked page into `content/` verbatim is not a migration and must not
+be done: the artifact's own chrome script has no iframe guard, so it would
+keep running beside `adapter.js` — two click handlers, two comment paths — and
+the older baked handler would go on swallowing clicks on native controls.
+
+A baked artifact remains a valid standalone document. Opened straight off the
+filesystem it still renders its own chrome, which is what offline reviewers
+and `Export feedback` recipients get.
+
 ## Storage
 
 The alpha package retains the proven v2.11 JSON comment store and NDJSON event

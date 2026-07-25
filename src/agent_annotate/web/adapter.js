@@ -258,6 +258,33 @@ function wireClicks() {
   }, true);
 }
 
+// Compatibility shim for content recovered from a baked legacy artifact.
+// Those documents were authored against template.html, whose chrome defined a
+// global openPopover(); in-canvas affordances ("comment on this row" buttons)
+// call it directly. The chrome no longer ships with the content, so without
+// this the buttons would silently no-op — they are guarded by
+// `typeof openPopover === 'function'`, which fails quietly rather than loudly.
+// Route them through the same pin-click path a normal click takes.
+if (typeof window.openPopover !== 'function') {
+  window.openPopover = function (anchorId, x, y) {
+    if (!anchorId) return;
+    const el = findAnchorEl(anchorId);
+    if (el) {
+      document.querySelectorAll('[data-anchor-id].active, .no.active')
+        .forEach(n => n.classList.remove('active'));
+      el.classList.add('active');
+    }
+    window.parent.postMessage({
+      type: 'annotate:pin-click',
+      anchorId: anchorId,
+      anchorLabel: anchorName(anchorId),
+      target: null,
+      x: typeof x === 'number' ? x : 0,
+      y: typeof y === 'number' ? y : 0,
+    }, '*');
+  };
+}
+
 // ── Pin badges (dual SVG / HTML strategy — mirrors template.html renderBadges) ──
 function ensureBadgeLayer() {
   let layer = document.getElementById('badge-layer');

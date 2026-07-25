@@ -41,8 +41,17 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 
 /* Version rail (left) */
 .vrail{width:180px;flex-shrink:0;background:#FFF;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;overflow:hidden}
-.vrail-hdr{padding:12px 14px;border-bottom:1px solid #E2E8F0;font-size:11px;font-weight:600;color:#475569;letter-spacing:.04em;text-transform:uppercase}
+.vrail-hdr{padding:12px 14px;border-bottom:1px solid #E2E8F0;font-size:11px;font-weight:600;color:#475569;letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vrail-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vrail-body{flex:1;overflow-y:auto;padding:8px}
+/* Mirror of the feedback rail toggle. The versions rail is a LEFT panel, so
+   the direction reverses: collapse points LEFT (toward its own edge), expand
+   points RIGHT — hence the Lucide panel-left-* family rather than panel-right-*. */
+.vrail.collapsed{width:44px}
+.vrail.collapsed .vrail-hdr{padding:12px 8px;justify-content:center}
+.vrail.collapsed .vrail-title,
+.vrail.collapsed .vrail-body{display:none}
+@media (prefers-reduced-motion: no-preference){.vrail{transition:width .15s ease}}
 .vrow{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;border-radius:6px;cursor:pointer;color:#475569}
 .vrow:hover{background:#F8FAFC}
 .vrow.current{background:#EEF2FF;color:#4338CA;font-weight:600}
@@ -88,18 +97,18 @@ svg .no.active{fill:rgba(67,56,202,.10)}
    only JS is flipping one attribute. Target is >=24px per WCAG 2.2 SC 2.5.8.
    The header stays visible while collapsed, so the affordance and its
    keyboard focus are never destroyed by the collapse itself. */
-.panel-toggle{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:2px;border:none;background:none;color:#94A3B8;cursor:pointer;border-radius:4px;font-family:inherit}
-.panel-toggle:hover{color:#4338CA;background:#F1F5F9}
-.panel-toggle:focus-visible{outline:2px solid #4338CA;outline-offset:1px}
-.panel-toggle svg{display:block;width:18px;height:18px}
-.panel-toggle[aria-expanded="true"] .i-expand{display:none}
-.panel-toggle[aria-expanded="false"] .i-collapse{display:none}
+.rail-toggle{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:2px;border:none;background:none;color:#94A3B8;cursor:pointer;border-radius:4px;font-family:inherit}
+.rail-toggle:hover{color:#4338CA;background:#F1F5F9}
+.rail-toggle:focus-visible{outline:2px solid #4338CA;outline-offset:1px}
+.rail-toggle svg{display:block;width:18px;height:18px}
+.rail-toggle[aria-expanded="true"] .i-expand{display:none}
+.rail-toggle[aria-expanded="false"] .i-collapse{display:none}
 /* Collapsed: a slim rail that still carries the toggle and the comment
    count. display:none on the rest also takes it out of the tab order. */
 .panel.collapsed{width:44px}
 .panel.collapsed .panel-hdr{padding:12px 8px}
 .panel.collapsed .panel-hdr-top{flex-direction:column;gap:8px}
-.panel.collapsed .panel-toggle{order:-1}
+.panel.collapsed .rail-toggle{order:-1}
 .panel.collapsed .panel-title,
 .panel.collapsed .panel-toggles,
 .panel.collapsed .panel-body,
@@ -250,8 +259,26 @@ table.tbl tr:hover td{background:#F8FAFC}
 <div class="main">
 
   <!-- Version timeline rail -->
-  <aside class="vrail" id="vrail">
-    <div class="vrail-hdr">Versions</div>
+  <aside class="vrail" id="vrail" aria-label="Versions">
+    <div class="vrail-hdr">
+      <span class="vrail-title">Versions</span>
+      <button type="button" class="rail-toggle" id="vrail-toggle"
+              aria-expanded="true" aria-controls="vrail-body"
+              aria-label="Collapse versions rail" title="Collapse versions rail">
+        <!-- Lucide panel-left-close (ISC) — shown while expanded -->
+        <svg class="i-collapse" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>
+        </svg>
+        <!-- Lucide panel-left-open (ISC) — shown while collapsed -->
+        <svg class="i-expand" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>
+        </svg>
+      </button>
+    </div>
     <div class="vrail-body" id="vrail-body">
       <!-- populated by JS from current.meta.json -->
     </div>
@@ -275,7 +302,7 @@ table.tbl tr:hover td{background:#F8FAFC}
       <div class="panel-hdr-top">
         <span class="panel-title">Feedback</span>
         <span class="cnt-badge" id="cnt-badge" title="Open comments">0</span>
-        <button type="button" class="panel-toggle" id="panel-toggle"
+        <button type="button" class="rail-toggle" id="panel-toggle"
                 aria-expanded="true" aria-controls="panel-body"
                 aria-label="Collapse feedback panel" title="Collapse feedback panel">
           <!-- Lucide panel-right-close (ISC) — shown while expanded -->
@@ -1364,29 +1391,36 @@ function toggleLeg() { document.getElementById('legend').classList.toggle('vis')
   // the CSS hook that swaps the icon. The accessible name flips with state
   // because it is also the tooltip — the only visible hint on an icon-only
   // control. The comment count stays visible while collapsed.
-  const panelEl = document.getElementById('panel');
-  const panelToggle = document.getElementById('panel-toggle');
+  // One wiring serves both rails.
+  function wireRail(railId, toggleId, storageKey, noun) {
+    const rail = document.getElementById(railId);
+    const toggle = document.getElementById(toggleId);
+    if (!rail || !toggle) return;
 
-  function setPanelCollapsed(collapsed, persist) {
-    panelEl.classList.toggle('collapsed', collapsed);
-    panelToggle.setAttribute('aria-expanded', String(!collapsed));
-    const label = collapsed ? 'Expand feedback panel' : 'Collapse feedback panel';
-    panelToggle.setAttribute('aria-label', label);
-    panelToggle.setAttribute('title', label);
-    if (persist !== false) {
-      try { localStorage.setItem('annotate:panelCollapsed', collapsed ? '1' : '0'); } catch {}
+    function setCollapsed(collapsed, persist) {
+      rail.classList.toggle('collapsed', collapsed);
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      const label = (collapsed ? 'Expand ' : 'Collapse ') + noun;
+      toggle.setAttribute('aria-label', label);
+      toggle.setAttribute('title', label);
+      if (persist !== false) {
+        try { localStorage.setItem(storageKey, collapsed ? '1' : '0'); } catch {}
+      }
+      // Pin badges are positioned from the canvas geometry, which just resized.
+      requestAnimationFrame(renderBadges);
     }
-    // Pin badges are positioned from the canvas geometry, which just resized.
-    requestAnimationFrame(renderBadges);
+
+    toggle.addEventListener('click', () => {
+      setCollapsed(!rail.classList.contains('collapsed'));
+    });
+
+    try {
+      if (localStorage.getItem(storageKey) === '1') setCollapsed(true, false);
+    } catch {}
   }
 
-  panelToggle.addEventListener('click', () => {
-    setPanelCollapsed(!panelEl.classList.contains('collapsed'));
-  });
-
-  try {
-    if (localStorage.getItem('annotate:panelCollapsed') === '1') setPanelCollapsed(true, false);
-  } catch {}
+  wireRail('panel', 'panel-toggle', 'annotate:panelCollapsed', 'feedback panel');
+  wireRail('vrail', 'vrail-toggle', 'annotate:vrailCollapsed', 'versions rail');
 
   // Keyboard
   document.addEventListener('keydown', e => {

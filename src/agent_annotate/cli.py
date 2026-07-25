@@ -563,11 +563,9 @@ def cmd_migrate(args) -> int:
     parent = legacy_path.parent
     slug_dir = parent / slug
     versions_dir = slug_dir / "versions"
-    content_dir = slug_dir / "content"
     archive_dir = slug_dir / "archive"
     slug_dir.mkdir(exist_ok=True)
     versions_dir.mkdir(exist_ok=True)
-    content_dir.mkdir(exist_ok=True)
     archive_dir.mkdir(exist_ok=True)
 
     initial_version = args.version or "v1"
@@ -579,7 +577,15 @@ def cmd_migrate(args) -> int:
     else:
         os.replace(legacy_path, target_html)
         action = "moved"
-    (content_dir / f"{initial_version}.html").write_bytes(target_html.read_bytes())
+
+    # Deliberately no content/ dir. Copying the baked page here verbatim would
+    # be worse than leaving it absent: the artifact's own chrome script has no
+    # iframe guard, so it would keep running inside the content frame beside
+    # adapter.js — two click handlers, two comment paths — and the older baked
+    # handler would go on swallowing clicks on native controls. The server
+    # extracts a chrome-free document from versions/ at request time instead
+    # (see extract.py), so a fix to the chrome reaches this page immediately
+    # and forever. Write content/<v>.html only to override that extraction.
 
     current_symlink = slug_dir / "current.html"
     if current_symlink.exists() or current_symlink.is_symlink():

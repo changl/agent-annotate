@@ -19,8 +19,13 @@ These behaviors are release gates, not visual preferences.
     artifact chrome act natively on click. Authors opt a custom widget out with
     `data-annotate-interactive`; Alt/Option-click forces a comment on any excluded
     element.
-14. The feedback rail can be collapsed and expanded, that state persists across
-    reloads, and the collapsed rail still reports its outstanding comment count.
+14. Both rails can be collapsed and expanded independently, that state persists
+    across reloads, and the collapsed feedback rail still reports its
+    outstanding comment count.
+15. Reviewer chrome is served, never baked. A fix to the chrome reaches every
+    published page on its next request, with nothing regenerated and no
+    per-page edit. A page whose content the server cannot recover is the only
+    exception, and it serves its own baked chrome unchanged.
 
 All browser releases must test long and short tabs at supported desktop
 viewports with the feedback rail both open and collapsed. Collapsed rail state

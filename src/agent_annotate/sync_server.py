@@ -82,6 +82,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .extract import ExtractionError, build_content_document, has_canvas_sentinels
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, STATE_DIR, WEB_DIR
 
 SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server code
@@ -729,14 +730,48 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _has_content_dir(self) -> bool:
         return (self.artifact_dir / "content").is_dir()
 
-    def _v2_serve_root(self, parsed):
-        # Universal-shell slugs (have a content/ dir with extracted,
-        # chrome-free per-version docs) serve the shared shell.html at root;
-        # the shell reads ?v= client-side and loads the right iframe src.
-        # Legacy slugs without content/ (not yet migrated, e.g. prem-fin
-        # until the user re-publishes) keep the old behavior: serve
-        # current.html / versions/<v>.html directly, chrome baked in.
+    def _version_path(self, version: str | None):
+        if version:
+            return self.artifact_dir / "versions" / f"{version}.html"
+        return self.artifact_dir / "current.html"
+
+    def _extractable_version(self, version: str | None) -> bool:
+        """True when a baked legacy version can be served through the shell.
+
+        Chrome baked into versions/<v>.html at generation time is why a fix to
+        the artifact chrome never reached an already-published page. When the
+        canvas sentinels are present the server can recover the author's
+        content and serve it through the universal shell instead, so chrome
+        comes from the skill dir on every request like it does for every other
+        slug. Nothing is written to disk — see _v2_serve_content.
+        """
+        target = self._version_path(version)
+        if not target.exists() or not target.is_file():
+            return False
+        try:
+            return has_canvas_sentinels(target.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return False
+
+    def _shell_eligible(self, parsed=None) -> bool:
         if self._has_content_dir():
+            return True
+        version = None
+        if parsed is not None:
+            params = urllib.parse.parse_qs(parsed.query)
+            version = (params.get("v") or [None])[0]
+        if version is None:
+            version = self._read_meta().get("current")
+        return self._extractable_version(version)
+
+    def _v2_serve_root(self, parsed):
+        # Universal-shell slugs serve the shared shell.html at root; the shell
+        # reads ?v= client-side and loads the right iframe src. A slug earns
+        # that path either by having a content/ dir of chrome-free docs, or by
+        # being a baked legacy artifact the server can extract on the fly.
+        # Anything else (no sentinels, e.g. hand-written HTML that never went
+        # through template.html) still gets the old direct-serve behavior.
+        if self._shell_eligible(parsed):
             shell_path = (self.skill_dir / "shell.html") if self.skill_dir else None
             if shell_path and shell_path.exists():
                 try:
@@ -818,16 +853,40 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
             return
         target = self.artifact_dir / "content" / f"{v}.html"
-        if not target.exists() or not target.is_file():
-            self._respond(404, f'{{"error":"content not found for version {v}"}}'.encode())
-            return
-        try:
-            html = target.read_text(encoding="utf-8")
-        except OSError:
-            self._respond(500, b"Read error")
-            return
-
-        self._ensure_content_stamp(v, html, target)
+        if target.exists() and target.is_file():
+            try:
+                html = target.read_text(encoding="utf-8")
+            except OSError:
+                self._respond(500, b"Read error")
+                return
+            self._ensure_content_stamp(v, html, target)
+        else:
+            # No content/ doc: recover one from the baked legacy artifact.
+            # Doing this at request time rather than as a one-off migration is
+            # what keeps chrome fixes universal — a legacy page picks up the
+            # current adapter.js on its next request exactly like a migrated
+            # slug, with no file to re-generate and no stale duplicate on
+            # disk. An explicit content/<v>.html always wins, so a hand-tuned
+            # extraction is never overridden.
+            baked = self._version_path(v)
+            if not baked.exists() or not baked.is_file():
+                self._respond(404, f'{{"error":"content not found for version {v}"}}'.encode())
+                return
+            try:
+                raw = baked.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                self._respond(500, b"Read error")
+                return
+            try:
+                html = build_content_document(raw, title=self.slug or "Annotate content")
+            except ExtractionError as exc:
+                self._respond(
+                    500,
+                    json.dumps({"error": f"could not extract content for {v}: {exc}"}).encode(),
+                    "application/json",
+                )
+                return
+            self._ensure_content_stamp(v, html, baked)
 
         # Inject adapter.js (served from /adapter.js, which _strip_base +
         # do_GET route to the skill dir) plus a small bootstrap so the

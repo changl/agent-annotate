@@ -1,21 +1,20 @@
-"""Conformance tests for the legacy single-file artifact (template.html).
+"""Conformance tests for the standalone single-file artifact (template.html).
 
-Legacy slugs have no content/ directory, so sync_server serves
-versions/<v>.html directly with the chrome baked in — a completely separate
-front-end from the universal shell + adapter.js. It had no coverage at all,
-which is how its click-to-comment bail-out drifted behind adapter.js and
-started swallowing clicks on native <select> dropdowns.
+A page baked from template.html is a self-contained document that opens
+straight off the filesystem with no server — that is what `Export feedback`
+recipients and offline reviewers get. These tests therefore load the rendered
+artifact over file:// rather than through sync_server, which now prefers the
+universal shell for any slug it can extract (see test_legacy_extraction.py).
+
+This chrome had no coverage at all, which is how its click-to-comment bail-out
+drifted behind adapter.js and started swallowing clicks on native <select>
+dropdowns.
 
 Covers interaction-contract items 13 (native controls) and 14 (rail collapse).
 """
 
 import json
-import os
 import socket
-import subprocess
-import sys
-import time
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -86,35 +85,23 @@ def _render_legacy_slug(tmp_path):
 
 
 def _serve(tmp_path):
+    """Return the artifact as a file:// URL — no server involved.
+
+    Returns a (closer, url) pair so callers keep the same shape as the
+    server-backed suites.
+    """
     slug_dir = _render_legacy_slug(tmp_path)
-    port = _free_port()
-    env = os.environ.copy()
-    env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
-    process = subprocess.Popen(
-        [
-            sys.executable, "-m", "agent_annotate.sync_server",
-            "--slug-dir", str(slug_dir),
-            "--slug", "legacy",
-            "--bus-dir", str(tmp_path / "bus"),
-            "--port", str(port),
-        ],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    base = f"http://127.0.0.1:{port}/"
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        try:
-            urllib.request.urlopen(base, timeout=1).close()
-            break
-        except OSError:
-            time.sleep(0.05)
-    else:
-        process.terminate()
-        raise AssertionError("legacy server did not become ready")
-    return process, base
+    return _NullProcess(), "file://" + str(slug_dir / "versions" / "v1.html")
+
+
+class _NullProcess:
+    """Stand-in so the tests' teardown stays uniform across suites."""
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        pass
 
 
 def _page(browser):
@@ -244,6 +231,52 @@ def test_feedback_rail_collapses_expands_and_persists(tmp_path):
             assert "collapsed" not in (panel.get_attribute("class") or "")
             assert toggle.get_attribute("aria-expanded") == "true"
             assert page.evaluate("localStorage.getItem('annotate:panelCollapsed')") == "0"
+
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_versions_rail_collapses_independently(tmp_path):
+    process, base = _serve(tmp_path)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = _page(browser)
+            page.set_default_timeout(5_000)
+            page.goto(base, wait_until="networkidle")
+
+            vrail = page.locator("#vrail")
+            toggle = page.locator("#vrail-toggle")
+
+            assert toggle.get_attribute("aria-expanded") == "true"
+            assert toggle.get_attribute("aria-controls") == "vrail-body"
+            assert toggle.get_attribute("aria-label") == "Collapse versions rail"
+            box = toggle.bounding_box()
+            assert box["width"] >= 24 and box["height"] >= 24
+
+            expanded_width = vrail.bounding_box()["width"]
+            toggle.click()
+            page.wait_for_timeout(300)
+
+            assert "collapsed" in (vrail.get_attribute("class") or "")
+            assert toggle.get_attribute("aria-expanded") == "false"
+            assert toggle.get_attribute("aria-label") == "Expand versions rail"
+            assert vrail.bounding_box()["width"] < expanded_width
+            assert not page.locator("#vrail-body").is_visible()
+            assert toggle.is_visible()
+            assert page.evaluate("localStorage.getItem('annotate:vrailCollapsed')") == "1"
+
+            # The two rails are independent — collapsing versions must not
+            # touch the feedback panel.
+            assert "collapsed" not in (page.locator("#panel").get_attribute("class") or "")
+
+            toggle.click()
+            page.wait_for_timeout(300)
+            assert "collapsed" not in (vrail.get_attribute("class") or "")
+            assert page.evaluate("localStorage.getItem('annotate:vrailCollapsed')") == "0"
 
             browser.close()
     finally:
