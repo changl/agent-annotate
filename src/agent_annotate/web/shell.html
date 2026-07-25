@@ -27,9 +27,9 @@
 
   <!-- Version rail -->
   <aside class="vrail" id="vrail">
-    <button class="rail-strip" id="vrail-strip" title="Expand the versions rail">&raquo;</button>
+    <button type="button" class="rail-strip" id="vrail-strip" aria-expanded="false" aria-controls="vrail-body" aria-label="Expand the versions rail" title="Expand the versions rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg></button>
     <div class="vrail-hdr">Versions
-      <button class="rail-collapse" id="vrail-collapse" title="Collapse the versions rail (more room for the document)">&laquo;</button>
+      <button type="button" class="rail-collapse" id="vrail-collapse" aria-expanded="true" aria-controls="vrail-body" aria-label="Collapse the versions rail" title="Collapse the versions rail (more room for the document)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg></button>
     </div>
     <div class="vrail-body" id="vrail-body">
       <div class="vrail-empty">Loading&hellip;</div>
@@ -47,13 +47,13 @@
 
   <!-- Comment drawer -->
   <aside class="drawer" id="drawer">
-    <button class="rail-strip" id="drawer-strip" title="Expand the feedback rail">&laquo;<span class="rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
+    <button type="button" class="rail-strip" id="drawer-strip" aria-expanded="false" aria-controls="drawer-body" aria-label="Expand the feedback rail" title="Expand the feedback rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg><span class="rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
     <div class="drawer-hdr">
       <div class="drawer-hdr-top">
         <span class="drawer-title">Feedback</span>
         <span class="unread-badge" id="unread-badge" style="display:none" title="Comments with activity you haven't seen yet">0 unread</span>
         <span class="cnt-badge" id="cnt-badge">0</span>
-        <button class="rail-collapse" id="drawer-collapse" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)">&raquo;</button>
+        <button type="button" class="rail-collapse" id="drawer-collapse" aria-expanded="true" aria-controls="drawer-body" aria-label="Collapse the feedback rail" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg></button>
       </div>
       <div class="chip-row" id="chip-row">
         <button class="chip chip-review" data-filter="review">Needs my review <span class="chip-n">0</span></button>

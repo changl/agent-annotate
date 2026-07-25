@@ -41,6 +41,16 @@ The server remains running when ownership changes. Use `annotate connect ...
 --takeover` for an explicit handoff and `annotate disconnect <slug>` to release
 the monitor without stopping the page.
 
+## Reviewing a page
+
+Click any element to pin a comment to it. Interactive elements — links, form
+controls, ARIA widgets, contenteditable and focusable regions — keep their
+native behavior instead, so dropdowns, buttons, and inputs stay usable inside
+an annotatable document. Mark a custom widget `data-annotate-interactive` to
+give it the same treatment, and Alt/Option-click to comment on an excluded
+element anyway. The feedback rail collapses to give the document full width;
+that choice persists across reloads.
+
 ## Repository layout
 
 - `src/agent_annotate/` — provider-neutral CLI, server, state, web assets, and transports

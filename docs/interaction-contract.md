@@ -14,8 +14,17 @@ These behaviors are release gates, not visual preferences.
 10. Ownership takeover stops only the previous monitor. It never stops the page server or discards feedback.
 11. Feedback activity is append-audited before delivery and can be replayed after a provider outage.
 12. Public-delivery acceptance is tested through the actual edge path; localhost success alone is insufficient.
+13. Click-to-comment never suppresses a native control's own behavior. Links, form
+    controls, ARIA widget roles, contenteditable regions, focusable elements, and
+    artifact chrome act natively on click. Authors opt a custom widget out with
+    `data-annotate-interactive`; Alt/Option-click forces a comment on any excluded
+    element.
+14. The feedback rail can be collapsed and expanded, that state persists across
+    reloads, and the collapsed rail still reports its outstanding comment count.
 
 All browser releases must test long and short tabs at supported desktop
-viewports with the feedback rail open. Monitor tests must cover claim conflict,
-explicit takeover, queued push, replay, and provider failure.
+viewports with the feedback rail both open and collapsed. Collapsed rail state
+persists across reloads, so pin placement must be re-verified after the canvas
+resizes in each direction. Monitor tests must cover claim conflict, explicit
+takeover, queued push, replay, and provider failure.
 

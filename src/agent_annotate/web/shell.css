@@ -43,6 +43,14 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 /* ── Collapsible rails (T7: chrome must never squeeze the document) ── */
 .rail-collapse{flex-shrink:0;font-size:12px;font-weight:700;color:#94A3B8;background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:4px;font-family:inherit;line-height:1}
 .rail-collapse:hover{color:#4338CA;background:#F1F5F9}
+/* Icon-only rail toggles: Lucide panel-left-*/panel-right-* (ISC License,
+   (c) Lucide Icons and Contributors). The chevron points toward the rail's
+   own edge to collapse and away from it to expand — the convention shared
+   by Material Symbols, Primer Octicons, Lucide, Fluent and Carbon.
+   >=24px target per WCAG 2.2 SC 2.5.8. */
+.rail-collapse{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px}
+.rail-collapse svg,.rail-strip svg{display:block;width:18px;height:18px}
+.rail-collapse:focus-visible,.rail-strip:focus-visible{outline:2px solid #4338CA;outline-offset:1px}
 .rail-strip{display:none;flex-direction:column;align-items:center;gap:8px;padding:12px 0;background:#FFF;border:none;cursor:pointer;width:100%;height:100%;font-size:13px;font-weight:700;color:#64748B;font-family:inherit}
 .rail-strip:hover{background:#F1F5F9;color:#4338CA}
 .rail-strip-badge{background:#DC2626;color:#FFF;border-radius:8px;font-size:9px;font-weight:700;padding:1px 5px;min-width:16px;text-align:center}

@@ -20,6 +20,26 @@
 'use strict';
 
 const META = window.__ANNOTATE_CONTENT_META__ || {};
+
+// Elements whose own click behavior must win over click-to-comment: native
+// form controls, links, ARIA widgets, and the artifact chrome. Anything NOT
+// matched here stays fully annotatable, so click-anywhere-to-comment is
+// unchanged everywhere else. Add [data-annotate-interactive] to opt a custom
+// widget in; Alt/Option-click opts back out for a one-off comment.
+const INTERACTIVE_SEL = [
+  'a[href]', 'button', 'input', 'select', 'textarea', 'option', 'optgroup',
+  'label', 'summary', 'audio[controls]', 'video[controls]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[tabindex]:not([tabindex="-1"])',
+  '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+  '[role="combobox"]', '[role="listbox"]', '[role="option"]', '[role="menu"]',
+  '[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]',
+  '[role="slider"]', '[role="spinbutton"]', '[role="switch"]', '[role="tab"]',
+  '[role="textbox"]', '[role="searchbox"]',
+  '[data-annotate-interactive]',
+  '.col-resize-handle', '.title-collapse-toggle', '.alink', 'th.sortable',
+].join(',');
+
 let ANCHOR_REGISTRY = {};
 try {
   const el = document.getElementById('anchor-registry-data');
@@ -200,8 +220,12 @@ function wireClicks() {
       return;
     }
 
-    // Don't hijack clicks on real interactive controls.
-    if (e.target.closest('a[href], button, input, textarea, select, .col-resize-handle, th.sortable')) return;
+    // Don't hijack clicks on real interactive controls. This listener runs in
+    // the CAPTURE phase and calls stopPropagation() below, so anything it
+    // claims never receives its own click at all — a native <select> would
+    // never open its dropdown, a checkbox would never toggle. Alt/Option-click
+    // overrides the bail-out so a control can still be annotated deliberately.
+    if (!e.altKey && e.target.closest(INTERACTIVE_SEL)) return;
 
     let target = findParentAnchor(e.target);
     if (!target) return;

@@ -15,6 +15,10 @@ runtime, and the temporary coding-agent owner as separate concerns.
    `annotate migrate <file> --copy --slug <slug>`.
 3. Give every commentable element a stable `data-anchor-id`. Use an entity or
    section identity, never a viewport position, as the stable portion.
+   Interactive elements — links, form controls, ARIA widgets, contenteditable
+   and focusable regions — keep their native click behavior instead of opening
+   a comment. Mark a custom widget `data-annotate-interactive` to get the same
+   treatment; Alt/Option-click forces a comment on any excluded element.
 4. Run `annotate publish <slug-dir>` and report both its local and configured
    public URL.
 5. Use `annotate sessions --cwd <project>` to show candidate Codex threads.

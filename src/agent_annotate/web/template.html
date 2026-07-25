@@ -75,8 +75,37 @@ svg .no.active{fill:rgba(67,56,202,.10)}
 /* ── Side panel ─────────────────────────────────────── */
 .panel{width:368px;flex-shrink:0;background:#FFF;border-left:1px solid #E2E8F0;display:flex;flex-direction:column;overflow:hidden}
 .panel-hdr{padding:12px 16px;border-bottom:1px solid #E2E8F0;display:flex;flex-direction:column;gap:8px}
-.panel-hdr-top{display:flex;align-items:center;justify-content:space-between}
-.panel-title{font-size:13px;font-weight:600;color:#0F172A}
+.panel-hdr-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.panel-title{font-size:13px;font-weight:600;color:#0F172A;flex:1;min-width:0}
+
+/* Collapse/expand the feedback rail — WAI-ARIA APG disclosure pattern.
+   Icons are Lucide panel-right-close / panel-right-open (ISC License,
+   (c) Lucide Icons and Contributors). Convention, unanimous across Material
+   Symbols, Primer Octicons, Lucide, Fluent and Carbon: for a RIGHT-hand
+   panel the collapse chevron points RIGHT ("push it away") and the expand
+   chevron points LEFT ("pull it out"), and the glyph flips with state.
+   Both icons stay in the DOM; CSS swaps them off [aria-expanded] so the
+   only JS is flipping one attribute. Target is >=24px per WCAG 2.2 SC 2.5.8.
+   The header stays visible while collapsed, so the affordance and its
+   keyboard focus are never destroyed by the collapse itself. */
+.panel-toggle{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:2px;border:none;background:none;color:#94A3B8;cursor:pointer;border-radius:4px;font-family:inherit}
+.panel-toggle:hover{color:#4338CA;background:#F1F5F9}
+.panel-toggle:focus-visible{outline:2px solid #4338CA;outline-offset:1px}
+.panel-toggle svg{display:block;width:18px;height:18px}
+.panel-toggle[aria-expanded="true"] .i-expand{display:none}
+.panel-toggle[aria-expanded="false"] .i-collapse{display:none}
+/* Collapsed: a slim rail that still carries the toggle and the comment
+   count. display:none on the rest also takes it out of the tab order. */
+.panel.collapsed{width:44px}
+.panel.collapsed .panel-hdr{padding:12px 8px}
+.panel.collapsed .panel-hdr-top{flex-direction:column;gap:8px}
+.panel.collapsed .panel-toggle{order:-1}
+.panel.collapsed .panel-title,
+.panel.collapsed .panel-toggles,
+.panel.collapsed .panel-body,
+.panel.collapsed .cnt-w{display:none}
+.panel.collapsed .cnt-badge{padding:2px 6px}
+@media (prefers-reduced-motion: no-preference){.panel{transition:width .15s ease}}
 .cnt-badge{font-size:11px;color:#64748B;background:#F1F5F9;padding:2px 8px;border-radius:10px}
 .panel-toggles{display:flex;gap:6px;font-size:10px;color:#64748B}
 .ptog{cursor:pointer;display:inline-flex;align-items:center;gap:4px}
@@ -241,11 +270,27 @@ table.tbl tr:hover td{background:#F8FAFC}
   </div>
 
   <!-- Side panel -->
-  <aside class="panel">
+  <aside class="panel" id="panel" aria-label="Feedback">
     <div class="panel-hdr">
       <div class="panel-hdr-top">
         <span class="panel-title">Feedback</span>
-        <span class="cnt-badge" id="cnt-badge">0</span>
+        <span class="cnt-badge" id="cnt-badge" title="Open comments">0</span>
+        <button type="button" class="panel-toggle" id="panel-toggle"
+                aria-expanded="true" aria-controls="panel-body"
+                aria-label="Collapse feedback panel" title="Collapse feedback panel">
+          <!-- Lucide panel-right-close (ISC) — shown while expanded -->
+          <svg class="i-collapse" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/>
+          </svg>
+          <!-- Lucide panel-right-open (ISC) — shown while collapsed -->
+          <svg class="i-expand" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/>
+          </svg>
+        </button>
       </div>
       <div class="panel-toggles">
         <label class="ptog"><input type="checkbox" id="tog-archived"> Show archived</label>
@@ -291,6 +336,26 @@ table.tbl tr:hover td{background:#F8FAFC}
 // ── Anchor registry ───────────────────────────────────────────────
 // Format: { 'anchor-id': { name, grp, parent?, kind? }, ... }
 const ANCHOR_REGISTRY = {{ANCHOR_REGISTRY}};
+
+// ── Interactive controls ──────────────────────────────────────────
+// Elements whose own click behavior must win over click-to-comment: native
+// form controls, links, ARIA widgets, and the artifact chrome. Anything NOT
+// matched here stays fully annotatable, so click-anywhere-to-comment is
+// unchanged everywhere else. Add [data-annotate-interactive] to opt a custom
+// widget in; Alt/Option-click opts back out for a one-off comment.
+const INTERACTIVE_SEL = [
+  'a[href]', 'button', 'input', 'select', 'textarea', 'option', 'optgroup',
+  'label', 'summary', 'audio[controls]', 'video[controls]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[tabindex]:not([tabindex="-1"])',
+  '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+  '[role="combobox"]', '[role="listbox"]', '[role="option"]', '[role="menu"]',
+  '[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]',
+  '[role="slider"]', '[role="spinbutton"]', '[role="switch"]', '[role="tab"]',
+  '[role="textbox"]', '[role="searchbox"]',
+  '[data-annotate-interactive]',
+  '.col-resize-handle', '.title-collapse-toggle', '.alink', 'th.sortable',
+].join(',');
 
 // ── Doc + version ─────────────────────────────────────────────────
 const DOC_ID = '{{DOC_ID}}';
@@ -790,7 +855,18 @@ function renderPanel() {
   }
 
   const totalShown = all.length;
-  cntBadge.textContent = totalShown + (totalShown === 1 ? ' comment' : ' comments');
+  // Split the number from the word so the collapsed rail can show just the
+  // count (contract item 14) without the label overflowing the slim rail.
+  // The aria-label keeps the full phrase in both states.
+  cntBadge.textContent = '';
+  const cntNum = document.createElement('span');
+  cntNum.className = 'cnt-n';
+  cntNum.textContent = String(totalShown);
+  const cntWord = document.createElement('span');
+  cntWord.className = 'cnt-w';
+  cntWord.textContent = totalShown === 1 ? ' comment' : ' comments';
+  cntBadge.append(cntNum, cntWord);
+  cntBadge.setAttribute('aria-label', totalShown + (totalShown === 1 ? ' open comment' : ' open comments'));
 
   if (totalShown === 0) {
     empty.style.display = 'flex';
@@ -1245,8 +1321,13 @@ function toggleLeg() { document.getElementById('legend').classList.toggle('vis')
     const wrapper = document.getElementById('canvas-wrapper');
     if (!wrapper.contains(e.target)) return;
 
-    // F4: bail on controls so the popover doesn't hijack their clicks
-    if (e.target.closest('.col-resize-handle, .title-collapse-toggle, .alink, a[href], button, th.sortable')) return;
+    // F4: bail on controls so the popover doesn't hijack their clicks.
+    // This listener runs in the CAPTURE phase and calls stopPropagation()
+    // below, so anything it claims never receives its own click at all — a
+    // native <select> would never open its dropdown, a checkbox would never
+    // toggle. Alt/Option-click overrides the bail-out so a control can still
+    // be annotated deliberately.
+    if (!e.altKey && e.target.closest(INTERACTIVE_SEL)) return;
 
     let target = findParentAnchor(e.target);
     if (!target) return;
@@ -1277,6 +1358,35 @@ function toggleLeg() { document.getElementById('legend').classList.toggle('vis')
     showAllVersions = e.target.checked;
     renderAll();
   });
+
+  // ── Feedback rail collapse/expand (APG disclosure) ──────────────
+  // aria-expanded lives on the BUTTON, never on the panel, and doubles as
+  // the CSS hook that swaps the icon. The accessible name flips with state
+  // because it is also the tooltip — the only visible hint on an icon-only
+  // control. The comment count stays visible while collapsed.
+  const panelEl = document.getElementById('panel');
+  const panelToggle = document.getElementById('panel-toggle');
+
+  function setPanelCollapsed(collapsed, persist) {
+    panelEl.classList.toggle('collapsed', collapsed);
+    panelToggle.setAttribute('aria-expanded', String(!collapsed));
+    const label = collapsed ? 'Expand feedback panel' : 'Collapse feedback panel';
+    panelToggle.setAttribute('aria-label', label);
+    panelToggle.setAttribute('title', label);
+    if (persist !== false) {
+      try { localStorage.setItem('annotate:panelCollapsed', collapsed ? '1' : '0'); } catch {}
+    }
+    // Pin badges are positioned from the canvas geometry, which just resized.
+    requestAnimationFrame(renderBadges);
+  }
+
+  panelToggle.addEventListener('click', () => {
+    setPanelCollapsed(!panelEl.classList.contains('collapsed'));
+  });
+
+  try {
+    if (localStorage.getItem('annotate:panelCollapsed') === '1') setPanelCollapsed(true, false);
+  } catch {}
 
   // Keyboard
   document.addEventListener('keydown', e => {
