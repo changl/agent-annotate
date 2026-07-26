@@ -76,7 +76,6 @@ import re
 import socket
 import sys
 import threading
-import time
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
@@ -154,14 +153,16 @@ def _cache_control_for(suffix: str) -> str:
 
 
 def _mtime_stamp(path) -> str:
-    """Integer-mtime cache-buster for an asset URL. Falls back to 'now' if
-    the file can't be statted — the bypass still works, just never caches."""
+    """Integer-mtime cache-buster for an asset URL. Falls back to a CONSTANT
+    ('0') when the file can't be statted: a clock-based fallback minted a new
+    stamp every second, so any document referencing a missing asset came back
+    byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
         try:
             return str(int(Path(path).stat().st_mtime))
         except OSError:
             pass
-    return str(int(time.time()))
+    return "0"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -929,13 +930,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         else:
             html = html + bootstrap
 
-        # Fix relative asset refs (e.g. src="../diagram-plot.js" from the
-        # old versions/ layout) so they resolve correctly when served from
-        # the /content route rather than a versions/ sibling path.
-        # diagram-plot.js is slug-local (served by _serve_static from the
-        # artifact dir), so the stamp comes from that copy.
-        dgplot_v = _mtime_stamp(self.artifact_dir / "diagram-plot.js")
-        html = html.replace('src="../diagram-plot.js"', f'src="{base}/assets/{dgplot_v}/diagram-plot.js"')
+        # Resolve the relative diagram-plot.js ref (src="../diagram-plot.js"
+        # from the old versions/ layout). It is served by
+        # _serve_versioned_asset, which prefers the slug-local copy and falls
+        # back to the skill dir. When NEITHER dir has the file the tag can only
+        # 404, and re-stamping a missing asset used to pull the stamp from the
+        # clock — making the whole document byte-different on every request.
+        # Strip the tag in that case; otherwise stamp it from the copy that
+        # will actually be served.
+        dgplot_local = self.artifact_dir / "diagram-plot.js"
+        dgplot_skill = (self.skill_dir / "diagram-plot.js") if self.skill_dir else None
+        dgplot = dgplot_local if dgplot_local.exists() else (
+            dgplot_skill if (dgplot_skill and dgplot_skill.exists()) else None)
+        if dgplot is not None:
+            html = html.replace(
+                'src="../diagram-plot.js"',
+                f'src="{base}/assets/{_mtime_stamp(dgplot)}/diagram-plot.js"')
+        else:
+            html = html.replace('<script src="../diagram-plot.js"></script>', "")
 
         self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
