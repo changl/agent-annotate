@@ -128,12 +128,36 @@ def _project_config(project: str) -> dict:
 
 
 def _find_free_port_after(start: int) -> int:
+    """Lowest bindable port at or after `start`.
+
+    The probe must bind EXACTLY what the sync server binds — ("localhost", p)
+    with allow_reuse_address — or it answers a different question than the one
+    asked.
+
+    Both halves matter, and getting either wrong is dangerous:
+
+    * Binding ("", p) with no option: a loopback socket left in TIME_WAIT
+      refuses a 0.0.0.0 bind, so re-publishing a slug whose port had just
+      served traffic always skipped to the next port. A moving local port makes
+      every port-keyed route (a `tailscale serve` mapping) leak a new entry on
+      every publish.
+    * Adding SO_REUSEADDR while still binding ("", p) is WORSE: on BSD/macOS
+      that option lets a wildcard bind sit on top of a DIFFERENT local address,
+      so 0.0.0.0:8813 binds cleanly while a live server is listening on
+      127.0.0.1:8813 — allocation would hand out a port already in use and two
+      servers would fight over one slug. Verified 2026-07-31 against live
+      servers.
+
+    Binding the same address the server does makes SO_REUSEADDR safe: it
+    reuses TIME_WAIT but is still refused by an active LISTEN on that address.
+    """
     import socket
     p = start
     while p < start + 50:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                s.bind(("", p))
+                s.bind(("localhost", p))
                 return p
             except OSError:
                 p += 1
@@ -347,6 +371,254 @@ def _check_js_lint(html_path: Path, skip: bool = False) -> tuple[bool, list[str]
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Slug-directory preflight
+# ────────────────────────────────────────────────────────────────────────────
+def _available_versions(slug_dir: Path) -> list[str]:
+    versions_dir = slug_dir / "versions"
+    if not versions_dir.is_dir():
+        return []
+    return sorted(p.stem for p in versions_dir.glob("*.html"))
+
+
+def _read_meta(slug_dir: Path) -> dict:
+    path = slug_dir / "current.meta.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_meta_locked(slug_dir: Path, mutate) -> None:
+    """Re-read + mutate + write current.meta.json under the server's own lock.
+
+    The sync server caches content stamps into this file while it runs, so a
+    read-modify-write here would silently drop whatever it wrote in between.
+    It takes `current.meta.json.lock`; so must we.
+    """
+    import fcntl
+
+    path = slug_dir / "current.meta.json"
+    lock_path = path.with_suffix(".json.lock")
+    with open(lock_path, "a+") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            meta = _read_meta(slug_dir)
+            mutate(meta)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_current_symlink(slug_dir: Path) -> tuple[str | None, list[str]]:
+    """Guarantee current.html resolves to a real versions/<v>.html.
+
+    `ln -sf v1.html ../current.html` run from inside versions/ produces a link
+    whose target resolves against the SLUG dir, not versions/ — it dangles, the
+    page 404s, and the only symptom publish ever showed was
+    "JS lint: skipped (no current.html found yet)". Repair it here rather than
+    serve a broken page: the correct target is always `versions/<v>.html`.
+
+    Returns (current_version, notes).
+    """
+    notes: list[str] = []
+    versions = _available_versions(slug_dir)
+    if not versions:
+        return None, ["no versions/*.html — nothing to publish"]
+
+    current = slug_dir / "current.html"
+    is_link = current.is_symlink()
+    resolves = current.exists()  # follows symlinks; False for a dangling link
+
+    if resolves and not is_link:
+        # A real file, not a link. Legal layout; leave it alone.
+        return (_read_meta(slug_dir).get("current") or versions[-1]), notes
+
+    if resolves and is_link:
+        target = os.readlink(current)
+        if target == f"versions/{Path(target).stem}.html":
+            return Path(target).stem, notes
+        notes.append(f"current.html pointed at {target!r}; rewrote it as "
+                     f"versions/{Path(target).stem}.html")
+
+    # Missing, dangling, or pointing somewhere odd. Pick the intended version.
+    wanted = None
+    reasons = []
+    if is_link:
+        stem = Path(os.readlink(current)).stem
+        if stem in versions:
+            wanted = stem
+            reasons.append(f"recovered from the dangling link target {stem!r}")
+    if wanted is None:
+        meta_current = _read_meta(slug_dir).get("current")
+        if meta_current in versions:
+            wanted = meta_current
+            reasons.append("taken from current.meta.json")
+    if wanted is None and len(versions) == 1:
+        wanted = versions[0]
+        reasons.append("the only version present")
+    if wanted is None:
+        return None, [
+            "current.html is missing or dangling and the intended version is "
+            f"ambiguous — versions/ holds {', '.join(versions)}. Run "
+            f"`annotate publish-version {slug_dir} <vN>` to choose one."
+        ]
+
+    if current.exists() or current.is_symlink():
+        current.unlink()
+    current.symlink_to(Path("versions") / f"{wanted}.html")
+    notes.append(f"current.html → versions/{wanted}.html ({'; '.join(reasons)})")
+    return wanted, notes
+
+
+def _ensure_meta_history(slug_dir: Path, version: str) -> list[str]:
+    """Make sure current.meta.json names a current version AND has history.
+
+    Without a history entry the version rail renders "No versions found" —
+    a page that looks broken to the reviewer while every byte of content is
+    served correctly. Publish registers the initial version itself rather than
+    leaving that to a `publish-version` call nobody knew was required.
+    """
+    meta = _read_meta(slug_dir)
+    history = meta.get("history") or []
+    has_entry = any(h.get("version") == version for h in history if isinstance(h, dict))
+    if meta.get("current") == version and has_entry:
+        return []
+
+    def _mutate(m: dict) -> None:
+        m["current"] = version
+        entries = m.setdefault("history", [])
+        if not any(isinstance(h, dict) and h.get("version") == version for h in entries):
+            entries.append({"version": version, "ts": _now_iso(), "label": "initial"})
+
+    _write_meta_locked(slug_dir, _mutate)
+    return [f"current.meta.json: registered {version} (current + history entry)"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Publish verification gate
+# ────────────────────────────────────────────────────────────────────────────
+def _verify_published(record: dict, transport_details: dict, base_path: str,
+                      timeout: float):
+    """Walk origin → tailscale → public, stopping at the first broken hop.
+
+    Continuing past a failure only buys another timeout and a second, noisier
+    error for the same cause.
+    """
+    from .verify import VerifyReport, probe_browser, probe_http
+
+    report = VerifyReport()
+    base = base_path or ""
+    hop_timeout = min(timeout, 30.0)
+
+    report.stages.append(
+        probe_http("origin", f"http://127.0.0.1:{record['port']}{base}/", timeout=hop_timeout)
+    )
+    if report.failed:
+        return report
+
+    details = transport_details or {}
+    ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
+    if ts is None and details.get("transport") == "tailscale":
+        ts = details
+    if ts and ts.get("hostname") and ts.get("https_port"):
+        report.stages.append(
+            probe_http("tailscale",
+                       f"https://{ts['hostname']}:{ts['https_port']}{base}/",
+                       timeout=hop_timeout)
+        )
+        if report.failed:
+            return report
+
+    url = record.get("url") or ""
+    if record.get("transport") != "local" and url.startswith("https://"):
+        report.stages.append(probe_browser("public", url, timeout=timeout))
+    return report
+
+
+def _run_gate(record: dict, args):
+    """Verify `record` in place. Returns the report, or None when skipped."""
+    if getattr(args, "no_verify", False):
+        return None
+    report = _verify_published(
+        record,
+        record.get("transport_details") or {},
+        record.get("public_base_path") or "",
+        timeout=getattr(args, "verify_timeout", 45.0),
+    )
+    record["verified"] = report.fully_verified
+    record["verify_stages"] = [
+        {"name": s.name, "status": s.status, "url": s.url, "detail": s.detail}
+        for s in report.stages
+    ]
+    return report
+
+
+def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
+                   report, skip_verify: bool, headline: str | None = None) -> int:
+    """Render the publish result. Returns the process exit code.
+
+    Both the fresh-publish and already-running paths come through here so that
+    neither can print a URL the gate has not cleared.
+    """
+    from .verify import format_report
+
+    print()
+    print(f"  annotate publish — {project}/{slug}")
+    print("  ─────────────────────────────────────────────")
+
+    if report is not None and report.failed:
+        print("  NOT PUBLISHED — the page does not render.")
+        print()
+        for line in format_report(report):
+            print(line)
+        print()
+        print(f"  Local URL:     {record['local_url']}   (server is still running)")
+        print(f"  PID:           {record['pid']}")
+        print(f"  Port:          {record['port']}")
+        print(f"  Transport:     {record.get('transport')}")
+        if record.get("transport_error"):
+            print(f"  Transport err: {record['transport_error']}")
+        print(f"  Slug dir:      {slug_dir}")
+        print("  ─────────────────────────────────────────────")
+        print(f"  No URL is printed for {slug!r}: the {report.failed[0].name} stage failed.")
+        print(f"  Fix that stage and re-run `annotate publish {slug_dir}`, or")
+        print(f"  `annotate unpublish {slug}` to tear the whole thing down.")
+        print()
+        return 1
+
+    if headline:
+        print(f"  {headline}")
+    if skip_verify:
+        print("  UNVERIFIED     --no-verify was passed; nothing below has been checked")
+    elif report is not None and report.unavailable:
+        print("  UNVERIFIED     could not reach the authenticated browser — the public")
+        print("                 URL below is UNCONFIRMED, not known-good")
+
+    print(f"  URL:           {record['url']}")
+    print(f"  Local URL:     {record['local_url']}")
+    print(f"  PID:           {record['pid']}")
+    print(f"  Port:          {record['port']}")
+    print(f"  Transport:     {record.get('transport')}")
+    if record.get("transport_error"):
+        print(f"  Transport err: {record['transport_error']}")
+    print(f"  Slug dir:      {slug_dir}")
+    print(f"  NDJSON bus:    {record.get('bus_file')}")
+    print(f"  State file:    {STATE_DIR / (project + '.json')}")
+    if report is not None:
+        print("  ─────────────────────────────────────────────")
+        for line in format_report(report):
+            print(line)
+    print("  ─────────────────────────────────────────────")
+    print("  Agent adapter: explicit; run `annotate sessions` or arm a provider monitor")
+    print()
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
 def cmd_publish(args) -> int:
@@ -356,6 +628,17 @@ def cmd_publish(args) -> int:
         return 2
     project, slug = _slug_project(slug_dir, args.project)
     cfg = _project_config(project)
+
+    # ── Slug-dir preflight: a resolvable current.html + registered history ──
+    current_version, notes = _ensure_current_symlink(slug_dir)
+    if current_version is None:
+        print(f"ERROR: {slug_dir} is not publishable:", file=sys.stderr)
+        for n in notes:
+            print(f"  {n}", file=sys.stderr)
+        return 2
+    notes += _ensure_meta_history(slug_dir, current_version)
+    for n in notes:
+        print(f"  Repaired:      {n}")
 
     # ── Task 4: Build-time JS lint ──────────────────────────────────
     skip_lint = getattr(args, "skip_js_lint", False)
@@ -390,12 +673,18 @@ def cmd_publish(args) -> int:
     state = _load_state_for_project(project)
     existing = state["slugs"].get(slug)
     if existing and _is_process_alive(existing.get("pid", 0)):
-        print(f"  Slug {slug!r} already running:")
-        print(f"    pid:  {existing['pid']}")
-        print(f"    port: {existing['port']}")
-        print(f"    url:  {existing.get('url')}")
-        print(f"  (use `annotate unpublish {slug}` first to re-publish)")
-        return 0
+        # A live process is not proof the page renders. Re-running publish on a
+        # slug that already failed the gate used to print its URL and exit 0 —
+        # exactly the "you were told it was fixed" failure, one command later.
+        report = _run_gate(existing, args)
+        state["slugs"][slug] = existing
+        _save_state_for_project(project, state)
+        return _print_publish(
+            project, slug, slug_dir, existing, report,
+            getattr(args, "no_verify", False),
+            headline=f"Already running (pid {existing['pid']}); re-verified in place. "
+                     f"`annotate unpublish {slug}` to re-publish from scratch.",
+        )
 
     # Pick port (use config base; auto-bump; allow override)
     if args.port:
@@ -425,6 +714,16 @@ def cmd_publish(args) -> int:
             opts = {}
             if hostname:
                 opts["hostname"] = hostname
+            if existing:
+                # What this slug was routed through last time. A transport
+                # whose route key can move between publishes (a `tailscale
+                # serve` mapping is keyed on the local port) needs this to
+                # reclaim the entry it is about to orphan. Transports that
+                # replace in place ignore it.
+                opts["previous"] = {
+                    "port": existing.get("port"),
+                    "details": existing.get("transport_details") or {},
+                }
             slug_for_route = path_prefix.lstrip("/")
             result = tmod.publish(slug_for_route, port, **opts)
             transport_url = result.get("url")
@@ -456,26 +755,22 @@ def cmd_publish(args) -> int:
         "transport_details": transport_details,
         "transport_error": transport_error,
     }
+    # Record state before verifying: a page that fails the gate is still
+    # running, and `annotate status` / `annotate unpublish` have to be able to
+    # find it in order to diagnose or tear it down.
     state["slugs"][slug] = record
     _save_state_for_project(project, state)
 
-    print()
-    print(f"  annotate publish — {project}/{slug}")
-    print("  ─────────────────────────────────────────────")
-    print(f"  URL:           {record['url']}")
-    print(f"  Local URL:     {record['local_url']}")
-    print(f"  PID:           {pid}")
-    print(f"  Port:          {port}")
-    print(f"  Transport:     {transport_name}")
-    if transport_error:
-        print(f"  Transport err: {transport_error}")
-    print(f"  Slug dir:      {slug_dir}")
-    print(f"  NDJSON bus:    {record['bus_file']}")
-    print(f"  State file:    {STATE_DIR / (project + '.json')}")
-    print("  ─────────────────────────────────────────────")
-    print("  Agent adapter: explicit; run `annotate sessions` or arm a provider monitor")
-    print()
-    return 0
+    # ── Verification gate ────────────────────────────────────────────
+    # No URL is printed until the page has been proven to render. Being told
+    # "it's fixed" over a broken page is the failure this gate exists to stop.
+    skip_verify = getattr(args, "no_verify", False)
+    report = _run_gate(record, args)
+    if report is not None:
+        state["slugs"][slug] = record
+        _save_state_for_project(project, state)
+
+    return _print_publish(project, slug, slug_dir, record, report, skip_verify)
 
 
 def cmd_unpublish(args) -> int:
@@ -505,10 +800,20 @@ def cmd_unpublish(args) -> int:
         try:
             from .transports import load as _load_transport
             tmod = _load_transport(transport_name)
+            details = record.get("transport_details", {}) or {}
             opts = {}
-            host = record.get("transport_details", {}).get("hostname")
+            host = details.get("hostname")
             if host:
                 opts["hostname"] = host
+            # A tailscale serve mapping is addressed by port, not by slug: pass
+            # both the recorded serve port and the local port so teardown can
+            # identify the mapping and refuse to remove a recycled one.
+            if record.get("port"):
+                opts["port"] = record["port"]
+            https_port = details.get("https_port") or \
+                (details.get("tailscale") or {}).get("https_port")
+            if https_port:
+                opts["https_port"] = https_port
             r = tmod.unpublish(pbp, **opts)
             print(f"  Transport {transport_name}: {r.get('details', {}).get('action', 'ok')}")
         except NotImplementedError as e:
@@ -1292,7 +1597,10 @@ def main():
     sp_pub.add_argument("slug_dir")
     sp_pub.add_argument("--project", default=None)
     sp_pub.add_argument("--port", type=int, default=None)
-    sp_pub.add_argument("--transport", default=None, choices=["local", "cloudflare", "tailscale"])
+    sp_pub.add_argument(
+        "--transport", default=None,
+        choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"],
+    )
     sp_pub.add_argument("--hostname", default=None)
     sp_pub.add_argument("--path-prefix", default=None)
     sp_pub.add_argument(
@@ -1301,6 +1609,20 @@ def main():
         action="store_true",
         default=False,
         help="EMERGENCY ONLY: skip inline JS syntax check (not recommended)",
+    )
+    sp_pub.add_argument(
+        "--no-verify",
+        dest="no_verify",
+        action="store_true",
+        default=False,
+        help="EMERGENCY ONLY: print the URL without proving the page renders",
+    )
+    sp_pub.add_argument(
+        "--verify-timeout",
+        dest="verify_timeout",
+        type=float,
+        default=45.0,
+        help="seconds to wait for each verification stage (default 45)",
     )
     sp_pub.set_defaults(func=cmd_publish)
 

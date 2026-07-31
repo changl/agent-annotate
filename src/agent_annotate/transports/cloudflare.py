@@ -101,13 +101,20 @@ def _backup(current_full: dict) -> Path:
 
 
 def publish(slug: str, port: int, **opts) -> dict:
-    """Insert or replace a hostname+path → http://localhost:<port> ingress rule.
+    """Insert or replace a hostname+path → origin ingress rule.
+
+    The origin defaults to `http://localhost:<port>`, which only works when the
+    connector can reach the sync server over loopback. Pass `service=<url>` to
+    front the page with something the connector can actually reach — a
+    `tailscale serve` HTTPS endpoint, for instance. See the
+    `cloudflare_tailscale` transport.
 
     Returns {"url": str, "details": {...}}.
     """
     slug = slug.strip().lstrip("/")
     if not slug:
         raise ValueError("slug is empty")
+    service = (opts.get("service") or "").strip() or f"http://localhost:{port}"
     account_id, tunnel_id, hostname, token = _auth(opts)
     api_url = _config_url(account_id, tunnel_id)
 
@@ -119,7 +126,7 @@ def publish(slug: str, port: int, **opts) -> dict:
     target_path = f"/{slug}/.*"
     new_rule = {
         "path": target_path,
-        "service": f"http://localhost:{port}",
+        "service": service,
         "hostname": hostname,
         "originRequest": {},
     }
@@ -150,6 +157,7 @@ def publish(slug: str, port: int, **opts) -> dict:
             "tunnel_id": tunnel_id,
             "path": target_path,
             "port": port,
+            "service": service,
             "action": "replaced" if replaced else "inserted",
             "backup": str(backup_path),
         },

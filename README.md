@@ -70,9 +70,36 @@ Cloudflare publishing has no embedded account or project defaults. Set
 `ANNOTATE_CLOUDFLARE_TUNNEL_ID`, and `ANNOTATE_CLOUDFLARE_HOSTNAME`, or point
 `ANNOTATE_CLOUDFLARE_ENV_FILE` at a private env file containing those values.
 
+## Transports
+
+| Name | Public origin |
+|---|---|
+| `local` | none; `http://localhost:<port>/` |
+| `tailscale` | `tailscale serve` HTTPS endpoint on the tailnet |
+| `cloudflare` | Cloudflare Tunnel ingress rule; origin defaults to loopback, override with `service=` |
+| `cloudflare_tailscale` | Cloudflare Tunnel whose origin is the tailnet endpoint |
+
+Prefer `cloudflare_tailscale` for a tunnel whose connector cannot dial loopback
+— a common configuration, and one that answers 502 rather than failing at
+registration time.
+
+## Publish verification
+
+`annotate publish` does not print a URL until it has loaded the page and found
+rendered content. It checks the local origin, the tailnet hop, and the public
+URL as separate stages and names the one that broke. The public stage runs
+inside the authenticated browser via `orca`, because an unauthenticated request
+to a healthy route and to a broken one both answer 302, and an authenticated
+request to a dead origin answers 200 with an error page — status codes carry no
+information behind an access proxy. When the browser is unreachable the stage
+reports UNVERIFIED rather than success. `--no-verify` skips the gate and says so
+in the output.
+
 ## Safety defaults
 
 - Local transport binds to the local machine by default.
+- A published URL is printed only after the page has been read back and found
+  to contain commentable anchors.
 - A page reports feedback as delivered only when a live owner lease exists.
 - Feedback is append-audited and is never silently archived during publishing.
 - Public ingress and identity are explicit transport concerns, not core-runtime assumptions.
