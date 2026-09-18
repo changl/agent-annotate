@@ -67,6 +67,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
+from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
     BUS_ROOT,
@@ -2808,6 +2809,8 @@ def main():
 
     sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
     sp_doc.set_defaults(func=cmd_doctor)
+
+    _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
