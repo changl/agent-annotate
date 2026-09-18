@@ -1,81 +1,112 @@
 # Architecture
 
+The detailed reference (data shapes, HTTP surface, event list) is
+[skills/claude/annotate/references/architecture.md](../skills/claude/annotate/references/architecture.md).
+This page is the map.
+
 ## Runtime boundary
 
 ```text
-Browser annotation shell
+Browser annotation shell (served chrome: shell.*, adapter.js)
         |
-Persistent local HTTP runtime
-        +-- versioned HTML and web assets
-        +-- comment store
-        +-- append-only NDJSON event bus
-        +-- exclusive owner lease per project/page
+Persistent local HTTP runtime (sync_server.py, one process per page)
+        +-- versioned HTML, content extracted at request time
+        +-- comment store          <slug-dir>/comments.json
+        +-- append-only event bus  <bus root>/<project>/<slug>.ndjson
+        +-- page owner stamp       registry + current.meta.json
+        +-- exclusive monitor lease per project/page
         |
-Provider adapter
-        +-- attached stdout monitor for Claude Code
-        +-- Codex app-server thread/turn delivery
-        +-- future adapters implementing the same contract
+Session side
+        +-- Claude Code: UserPromptSubmit hook (attended), Monitor tool (unattended)
+        +-- Codex: `annotate inbox`, optionally an app-server relay into a thread
+        +-- MCP server over the same runtime
 ```
 
-The runtime never restarts during an ordinary agent handoff. A provider adapter
-claims a page, receives feedback events, verifies its session is reachable, and
-releases the lease. One session may own several pages; each page has at most one
-owner.
+The runtime never restarts during an ordinary agent handoff. A session
+publishes a page and becomes its owner; a later session `claim`s it. One
+session may own several pages; each page has at most one owner. Comments
+persist to `comments.json` whether or not anything is listening, so no
+lease, monitor or notice is load-bearing for not losing feedback.
+
+## Two buckets
+
+Everything on disk is either **system** (this package) or **user data**
+(pages, buses, cursors, configuration). `paths.py` is the only module that
+knows where user data lives, and its defaults are the roots the pre-package
+skill directory used, so an install sees the pages that already exist:
+
+| Root | Default | Override |
+|---|---|---|
+| state: registry, cursors, leases, locks, logs | `~/.claude/annotate-state/state` | `ANNOTATE_STATE_DIR` |
+| buses | `~/.claude/annotate-bus` | `ANNOTATE_BUS_ROOT` |
+| `projects.toml` | `~/.claude/annotate-state/` (then the skill symlink) | `ANNOTATE_CONFIG_DIR` |
+| hook registration | `~/.claude/settings.json` | `ANNOTATE_CLAUDE_SETTINGS` |
+| launcher | `~/.local/bin/annotate` | `ANNOTATE_SHIM_PATH` |
+
+Slug directories are user data and stay wherever the author put them. Moving
+state to platform directories is a future migration command, never an
+install side effect. The test suite sandboxes every root in
+`tests/conftest.py`.
+
+## The round model
+
+The unit of review is a **round**, not a click.
+
+1. The agent poses cards with `annotate ask` — one batch call, idempotent by
+   anchor, each card carrying a `decision_request` with prompt, context,
+   recommendation, per-option consequences, evidence, impact and blocking.
+2. The reviewer answers on the page. In round mode (the server advertises
+   `rounds` on `GET /api/capabilities`) each verdict is parked with
+   `round_pending` and emits no push; "Finish review" submits the round,
+   which emits one `round_submitted` and exactly one `session_push
+   {round: true}`. "Discard pending" clears the flags with no push; "Send
+   now" pushes one card.
+3. The session learns about it from the hook notice (`ROUND SUBMITTED: …`)
+   or from `annotate inbox <slug> --unread`, which is compact and keeps one
+   cursor per session, and never acts on a partial round.
+4. The agent replies and marks comments `addressed_by_agent`; confirming and
+   archiving belong to the reviewer.
+
+Old chrome against a new server, and new chrome against an old server, both
+behave exactly as before the round model existed.
 
 ## Reviewer chrome is served, never baked
 
-The reviewer UI — `shell.html`, `shell.css`, `shell.js`, `adapter.js` — is
-loaded from the package on every request and injected into the served
-document. Published pages therefore carry content, not chrome, and a UI fix
-reaches every page at once with nothing regenerated.
+`shell.html`, `shell.css`, `shell.js` and `adapter.js` are loaded from the
+package on every request and injected into the served document. Published
+pages carry content, not chrome, so a UI fix reaches every page at once.
+`extract.py` recovers the authored canvas from a page that was generated
+with the chrome baked in, using the `<!-- CANVAS CONTENT -->` sentinels in
+`template.html`; an explicit `content/<version>.html` overrides that
+extraction. Copying a baked page into `content/` verbatim is not a migration:
+its own chrome script would run beside `adapter.js`.
 
-Earlier artifacts were produced by substituting an author's canvas into
-`template.html`, which froze a copy of the chrome into each published version.
-That copy could never be updated in place, so the two front-ends drifted until
-baked pages began suppressing clicks on their own form controls.
+## Telemetry
 
-`extract.py` closes that gap. `template.html` brackets its canvas with
-`<!-- CANVAS CONTENT -->` sentinels, so the server recovers the author's
-content from a baked artifact by string slice — no HTML parsing — re-encodes
-the anchor registry into the JSON form `adapter.js` reads, and serves the
-result through the shell. This happens at request time and writes nothing to
-disk, which is what keeps it universal: a page picks up the current chrome on
-its next request, with no migration to run and no duplicate to go stale. An
-explicit `content/<version>.html` overrides the extraction when a document
-needs hand-tuning.
-
-Copying a baked page into `content/` verbatim is not a migration and must not
-be done: the artifact's own chrome script has no iframe guard, so it would
-keep running beside `adapter.js` — two click handlers, two comment paths — and
-the older baked handler would go on swallowing clicks on native controls.
-
-A baked artifact remains a valid standalone document. Opened straight off the
-filesystem it still renders its own chrome, which is what offline reviewers
-and `Export feedback` recipients get.
-
-## Storage
-
-The alpha package retains the proven v2.11 JSON comment store and NDJSON event
-bus. The next storage milestone introduces SQLite for transactional indexes and
-leases while retaining NDJSON as the portable audit and replay format.
-
-Runtime state is not stored under `.claude` or `.codex`. Provider installers
-contain only the settings necessary to connect their host to the shared core.
+Every request the CLI makes carries `X-Annotate-Session`, and every bus
+event that request emits carries `session_id`. Publish, claim, inbox reads,
+monitor arming and exit, hook notices, decision requests, batch seeds and
+rounds are all events. `annotate eval` reads the buses, the comment stores
+and the Claude transcripts without touching a cursor and reports seven
+sections with five regression thresholds — see
+[telemetry-and-eval.md](../skills/claude/annotate/references/telemetry-and-eval.md).
 
 ## Codex delivery
 
 The Codex adapter uses the locally installed `codex app-server` JSON-RPC
-protocol. It lists durable threads, reads the selected thread, steers an active
-turn when possible, and otherwise starts a new turn in that thread. Push
-delivery is acknowledged only after app-server emits `turn/completed`; the
-client connection stays alive for the full turn. Failed or interrupted turns
-leave the event unread so the monitor can retry from the append-only stream.
-
-Thread selection is explicit. Directory or title matching can help the user
-find a session, but it must never silently choose a recipient.
+protocol: it lists durable threads, resumes the selected thread, steers an
+active turn when possible and otherwise starts a new turn, and acknowledges
+delivery only after `turn/completed`. `annotate monitor --provider
+codex-app-server` delivers each submitted round before advancing its cursor,
+so a failed turn is retried from the bus. It reaches an idle thread as a new
+turn; it is not a way to interrupt a running Codex session, and thread
+selection is always explicit. A Codex agent reads its feedback with
+`annotate inbox` like any other session.
 
 ## Distribution
 
-The Python package is canonical. Agent skills are concise workflow wrappers;
-the Codex plugin bundles the Codex skill and MCP registration. Neither wrapper
-owns the comment data or browser implementation.
+The Python package is canonical. `skills/claude/annotate` is the Claude Code
+skill and holds the one set of references; `skills/codex/annotate` and the
+Codex plugin say the same thing in Codex wording and point at those
+references. Neither wrapper owns the comment data or the browser
+implementation.
