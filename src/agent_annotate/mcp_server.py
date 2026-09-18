@@ -47,6 +47,8 @@ def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author
         headers={
             "Content-Type": "application/json",
             "Cf-Access-Authenticated-User-Email": author,
+            # Every event this request emits is attributed to this session.
+            "X-Annotate-Session": cli._session_id(),
         },
     )
     with urllib.request.urlopen(request, timeout=5) as response:

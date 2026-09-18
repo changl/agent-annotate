@@ -116,11 +116,22 @@ def test_cloudflare_502_body_is_named_not_just_rejected():
     assert "tailscale" in result.detail
 
 
-def test_access_login_page_is_not_mistaken_for_a_healthy_page():
+def test_access_login_page_is_unverified_not_failed():
+    """v2.19: a login page says nothing about the page behind it. Calling it a
+    failure printed NOT PUBLISHED over five healthy pages; calling it healthy
+    would be the original bug. It is UNAVAILABLE with reason access_login, and
+    the probe answers at once rather than polling for a login that cannot
+    happen from here."""
     with _Server({"/": (200, CF_LOGIN)}) as s:
         result = verify.probe_http("public", s.base, timeout=2)
-    assert result.status == verify.FAIL
+    assert result.status == verify.UNAVAILABLE
+    assert result.reason == verify.ACCESS_LOGIN
     assert "Access" in result.detail
+    assert not result.ok
+    report = verify.VerifyReport([result])
+    assert report.access_blocked == [result]
+    assert report.failed == []
+    assert "LOGIN" in verify.format_report(report)[0]
 
 
 def test_unreachable_origin_fails_with_the_connection_error():

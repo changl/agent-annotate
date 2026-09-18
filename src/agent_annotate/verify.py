@@ -32,6 +32,14 @@ PASS = "pass"
 FAIL = "fail"
 UNAVAILABLE = "unavailable"
 
+# Why a stage came back UNAVAILABLE. "access_login" means the probe met
+# Cloudflare Access's login page: this session cannot see the page, which says
+# nothing at all about whether the page renders. Reporting that as FAIL is what
+# printed "NOT PUBLISHED — the page does not render" over five live pages and
+# cost 5-10 recovery tool calls each time.
+ACCESS_LOGIN = "access_login"
+NO_BROWSER = "no_browser"
+
 # Attribute form only. `[data-anchor-id]` inside a script would match a bare
 # substring search, and shell.js is full of those selectors.
 _ANCHOR_ATTR_RE = re.compile(r"data-anchor-id\s*=", re.IGNORECASE)
@@ -60,6 +68,7 @@ class StageResult:
     detail: str
     anchors: int | None = None
     content_len: int | None = None
+    reason: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -79,6 +88,11 @@ class VerifyReport:
         return [s for s in self.stages if s.status == UNAVAILABLE]
 
     @property
+    def access_blocked(self) -> list[StageResult]:
+        """Stages this session was not authenticated for. Not failures."""
+        return [s for s in self.stages if s.reason == ACCESS_LOGIN]
+
+    @property
     def ok(self) -> bool:
         """True only when nothing failed. UNAVAILABLE is not a failure, but
         callers must still refuse to describe the result as verified."""
@@ -91,6 +105,11 @@ class VerifyReport:
 
 def count_anchors(html: str) -> int:
     return len(_ANCHOR_ATTR_RE.findall(html or ""))
+
+
+def _is_access_login(html: str) -> bool:
+    head = (html or "")[:4000].lower()
+    return "cloudflareaccess.com" in head or "/cdn-cgi/access/login" in head
 
 
 def _diagnose_html(html: str) -> str | None:
@@ -140,6 +159,15 @@ def probe_http(name: str, base_url: str, timeout: float = 20.0,
             if code >= 400:
                 last = f"HTTP {code} at {base}"
             else:
+                if _is_access_login(html):
+                    # Polling cannot turn an unauthenticated probe into an
+                    # authenticated one. Answer now, and answer honestly.
+                    return StageResult(
+                        name, base, UNAVAILABLE,
+                        "Cloudflare Access login page — not verified from this "
+                        "session. Open the URL in the authenticated browser to "
+                        "confirm; nothing here says the page is broken.",
+                        reason=ACCESS_LOGIN)
                 diagnosis = _diagnose_html(html)
                 if diagnosis:
                     last = diagnosis
@@ -203,9 +231,10 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
     except FileNotFoundError:
         return StageResult(name, url, UNAVAILABLE,
                            "`orca` is not on PATH — the authenticated browser could "
-                           "not be reached")
+                           "not be reached", reason=NO_BROWSER)
     except (RuntimeError, json.JSONDecodeError, subprocess.SubprocessError) as e:
-        return StageResult(name, url, UNAVAILABLE, f"could not open a browser tab: {e}")
+        return StageResult(name, url, UNAVAILABLE,
+                           f"could not open a browser tab: {e}", reason=NO_BROWSER)
 
     try:
         deadline = time.monotonic() + timeout
@@ -218,8 +247,15 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
                 data = json.loads(payload) if isinstance(payload, str) else (payload or {})
                 anchors = int(data.get("anchors") or 0)
                 content_len = int(data.get("contentLen") or 0)
-                diagnosis = _diagnose_html(
-                    f"{data.get('title', '')} {data.get('text', '')}")
+                blob = f"{data.get('title', '')} {data.get('text', '')}"
+                if _is_access_login(blob):
+                    return StageResult(
+                        name, url, UNAVAILABLE,
+                        "Cloudflare Access login page — this browser profile is "
+                        "not signed in, so the page could not be verified from "
+                        "this session. It is not evidence of a broken page.",
+                        reason=ACCESS_LOGIN)
+                diagnosis = _diagnose_html(blob)
                 if diagnosis:
                     last = diagnosis
                 elif anchors > 0 and content_len > 0:
@@ -249,6 +285,7 @@ def format_report(report: VerifyReport) -> list[str]:
     mark = {PASS: "PASS", FAIL: "FAIL", UNAVAILABLE: "SKIP"}
     lines = []
     for s in report.stages:
-        lines.append(f"  {mark[s.status]:<5} {s.name:<10} {s.url}")
+        label = "LOGIN" if s.reason == ACCESS_LOGIN else mark[s.status]
+        lines.append(f"  {label:<5} {s.name:<10} {s.url}")
         lines.append(f"        {s.detail}")
     return lines
