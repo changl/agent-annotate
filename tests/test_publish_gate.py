@@ -32,7 +32,7 @@ def published(tmp_path, monkeypatch):
                         lambda project: {"project": project, "slugs": {}})
     monkeypatch.setattr(cli, "_save_state_for_project",
                         lambda project, state: saved.update(state["slugs"]))
-    monkeypatch.setattr(cli, "_find_free_port_after", lambda start: 8900)
+    monkeypatch.setattr(cli, "_find_free_port_after", lambda start, registered_pid=None: 8900)
     monkeypatch.setattr(cli, "_start_server", lambda *a, **k: 4242)
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
 

@@ -21,6 +21,7 @@ _SANDBOX_ENV = {
     "ANNOTATE_CLAUDE_SETTINGS": _SANDBOX / "claude" / "settings.json",
     "ANNOTATE_SHIM_PATH": _SANDBOX / "bin" / "annotate",
     "ANNOTATE_BUS_ARCHIVE_ROOT": _SANDBOX / "bus-archive",
+    "ANNOTATE_TRANSCRIPT_GLOB": _SANDBOX / "no-transcripts" / "*.jsonl",
 }
 for _name, _path in _SANDBOX_ENV.items():
     os.environ[_name] = str(_path)

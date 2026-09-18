@@ -19,6 +19,7 @@ a package. Every root can be overridden:
     ANNOTATE_CLAUDE_SETTINGS  the settings.json the hook installer edits
     ANNOTATE_SHIM_PATH        where `install-shim` writes the launcher
     ANNOTATE_BUS_ARCHIVE_ROOT where prune-bus moves quiet buses
+    ANNOTATE_TRANSCRIPT_GLOB  the Claude Code transcripts `eval` scans
 
 The hook and eval scripts are also runnable as bare files; they carry the
 same defaults so the two never disagree about where a cursor lives.
@@ -88,7 +89,8 @@ LOG_DIR = STATE_DIR / "logs"
 HOOK_SCRIPT = HOOKS_DIR / "check-comment-bus.sh"
 SETTINGS_JSON = _override("ANNOTATE_CLAUDE_SETTINGS", CLAUDE_HOME / "settings.json")
 SHIM_PATH = _override("ANNOTATE_SHIM_PATH", HOME / ".local" / "bin" / "annotate")
-TRANSCRIPT_GLOB = str(CLAUDE_HOME / "projects" / "*" / "*.jsonl")
+TRANSCRIPT_GLOB = os.environ.get("ANNOTATE_TRANSCRIPT_GLOB") or str(
+    CLAUDE_HOME / "projects" / "*" / "*.jsonl")   # Claude Code transcripts, read by eval
 
 
 def ensure_runtime_dirs() -> None:

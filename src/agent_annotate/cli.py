@@ -1,23 +1,54 @@
 #!/usr/bin/env python3
 """annotate — single CLI entry point for Agent Annotate.
 
-Subcommands:
-    annotate publish <slug-dir>                      start sync_server + register transport
-    annotate unpublish <slug>                        tear down route + stop server
-    annotate status [<slug>]                         list active slugs / health
-    annotate migrate <legacy.html>                   one-shot v1→v2 migration
-    annotate inbox <slug> [--unread]                 dump new comments
-    annotate watch <slug>                            tail comments to stdout (sidecar)
-    annotate monitor <slug> [--owner ID]             exclusive session monitor + live lease
-    annotate publish-version <slug-dir> <vN>         add new version + swap symlink
-    annotate archive-comment <slug> <comment-id>
-    annotate addressed <slug> <comment-id> [--response "<text>"]
+Invocation:
 
-State uses platform-standard application directories. Set ANNOTATE_CONFIG_DIR,
-ANNOTATE_DATA_DIR, and ANNOTATE_STATE_DIR to override them.
+    annotate <cmd> ...                       the `annotate` entry point / shim
+    python -m agent_annotate.cli <cmd> ...   always works once the package imports
+
+`publish` and `install-shim` write ~/.local/bin/annotate when no entry point is
+there yet. A bare `annotate` that resolves to something else (on at least one
+machine the name belongs to libgd's image tool) is the single most expensive
+line this CLI has ever printed, so every message uses the module form unless
+`command -v annotate` really is this package.
+
+Subcommands:
+    publish <slug-dir>                    start sync_server, route, claim ownership
+    unpublish <slug>                      tear down route + stop server
+    claim <slug>                          take ownership of a page for this session
+    install-shim [--force]                (re)write ~/.local/bin/annotate
+    status [<slug>]                       list active slugs / health
+    doctor                                validate the installation
+    migrate <legacy.html>                 one-shot v1→v2 migration
+    inbox <slug> [--unread] [--json]      read this session's unseen bus events
+    cards <slug>                          list decision cards and their verdicts
+    ask <slug> --from cards.json          create/refresh decision cards in one call
+    eval [--since DATE]                   read-only baseline of the review loop
+    prune-bus [--days N] [--apply]        archive quiet buses and their cursors
+    watch <slug>                          tail comments to stdout (sidecar)
+    monitor <slug> [--owner ID]           exclusive session monitor + live lease
+    sessions [--cwd DIR]                  list Codex threads available for ownership
+    connect <slug> --thread ID            detached Codex delivery monitor
+    disconnect <slug>                     release a monitor, keep the server
+    send --thread ID <message>            one message to a Codex thread
+    publish-version <slug-dir> <vN>       add new version + swap symlink
+    archive-comment <slug> <comment-id>
+    addressed <slug> <comment-id> [--response "<text>"]
+    hook-check                            the UserPromptSubmit hook, in-process
+    mcp                                   MCP server over stdio
+
+Every slug argument accepts `<slug>` or `<project>/<slug>`, and `--project`
+is honoured wherever a slug is taken.
+
+Every location comes from paths.py: the registry at <state>/<project>.json,
+buses at <bus root>/<project>/<slug>.ndjson. Both default to the roots the
+skill-directory install used (~/.claude/annotate-state/state and
+~/.claude/annotate-bus); ANNOTATE_STATE_DIR and ANNOTATE_BUS_ROOT relocate them.
 """
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -29,6 +60,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -36,18 +68,49 @@ from pathlib import Path
 
 from . import __version__
 from .paths import (
+    BUS_OFFSET_ROOT,
     BUS_ROOT,
     CONFIG_DIR,
-    DATA_DIR,
     HOOK_SCRIPT,
+    LOCK_DIR,
     LOG_DIR,
     MONITOR_OFFSET_ROOT,
     MONITOR_ROOT,
+    PACKAGE_DIR,
     PROJECTS_TOML,
+    SETTINGS_JSON,
+    SHIM_PATH,
     STATE_DIR,
     WEB_DIR,
     ensure_runtime_dirs,
 )
+
+SHIM_MARKER = "agent-annotate shim"
+
+def _env_heartbeat_interval() -> float:
+    """Seconds between quiet-branch heartbeats. Default 0: disabled.
+
+    Claude Code's Monitor tool expires only at its timeout (<= 30 min); arm
+    `annotate monitor <slug>` inside the Monitor tool with timeout_ms 1800000
+    and re-arm on expiry; the 2026-07 idle-reap no longer occurs (verified
+    2026-09-17, 150 s silent stream delivered).
+
+    The heartbeat existed only to keep that reaper away, and it cost a wakeup
+    every 30 s — about 120 lines an hour of nothing happening — on a stream
+    whose whole value is that a line means something. Set
+    ANNOTATE_MONITOR_HEARTBEAT_INTERVAL to a positive number of seconds to opt
+    back in under a supervisor that really does need liveness output.
+    """
+    raw = os.environ.get("ANNOTATE_MONITOR_HEARTBEAT_INTERVAL")
+    if raw is None or raw == "":
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"WARN: invalid ANNOTATE_MONITOR_HEARTBEAT_INTERVAL={raw!r}, disabling", file=sys.stderr)
+        return 0.0
+
+MONITOR_HEARTBEAT_INTERVAL = _env_heartbeat_interval()
 
 MONITOR_EVENTS = {
     "comment_created",
@@ -58,7 +121,224 @@ MONITOR_EVENTS = {
     "comment_reanchored",
     "comment_restored",
     "session_push",
+    "round_submitted",
+    "round_discarded",
 }
+
+# What the monitor actually prints. Everything else in MONITOR_EVENTS is
+# advertised in the lease but stays off stdout: a monitored stream is read by
+# an agent one line at a time, so a line has to be worth a turn. A verdict now
+# arrives as part of a round, and the round is the actionable unit.
+MONITOR_PRINT_EVENTS = {"session_push", "round_submitted"}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Session identity
+# ────────────────────────────────────────────────────────────────────────────
+def _session_id() -> str:
+    """This agent session's id, in the order the harnesses actually set it.
+
+    CLAUDE_SESSION_ID is empty under Claude Code — the variable carrying the id
+    is CLAUDE_CODE_SESSION_ID. Reading the wrong one is why every monitor lease
+    was labelled `interactive-ppid-<n>` and why no page could be attributed to
+    the session that published it.
+    """
+    for var in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID"):
+        val = os.environ.get(var)
+        if val and val.strip():
+            return val.strip()
+    return "unknown"
+
+
+def _session_agent() -> str:
+    if (os.environ.get("CLAUDE_CODE_SESSION_ID")
+            or os.environ.get("CLAUDE_SESSION_ID")
+            or os.environ.get("CLAUDE_AGENT_ID")):
+        return "claude-code"
+    if os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_HOME"):
+        return "codex"
+    return "coding-agent"
+
+
+def _session_label(session_id: str | None = None) -> str:
+    """Owner label a human can read at a glance: working dir + short id."""
+    sid = session_id or _session_id()
+    try:
+        cwd = Path.cwd().name or "session"
+    except OSError:
+        cwd = "session"
+    return f"{cwd}:{sid[:8] if sid != 'unknown' else 'unknown'}"
+
+
+def _safe_component(value: str) -> str:
+    """One path segment that cannot escape its parent, whatever the id holds."""
+    out = "".join(ch if (ch.isalnum() or ch in "._-") else "-" for ch in (value or ""))
+    return out.strip("-") or "unknown"
+
+
+def _offset_file(project: str, slug: str, session_id: str | None = None) -> Path:
+    """This session's read cursor for one slug's bus.
+
+    v2.18 kept a single cursor per slug, shared with the hook, so whichever
+    session was asked first consumed everybody's delta — 22 of 22 observed
+    `inbox --unread` calls answered "(no new events)". Only a session with no
+    discoverable id falls back to that shared path.
+    """
+    sid = session_id or _session_id()
+    if sid == "unknown":
+        return BUS_OFFSET_ROOT / project / f"{slug}.offset"
+    return BUS_OFFSET_ROOT / _safe_component(sid) / project / f"{slug}.offset"
+
+
+def _legacy_offset(project: str, slug: str) -> int:
+    """The v2.18 shared cursor for a slug, or 0.
+
+    It was advanced by the old hook on every prompt from any session, so for
+    every page that exists today its value is effectively "now". That makes it
+    the right seed for a per-session cursor that does not exist yet: seeding at
+    0 would replay every page's whole history into every live session at once.
+    """
+    path = BUS_OFFSET_ROOT / project / f"{slug}.offset"
+    if not path.exists():
+        return 0
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def _bus_emit(bus_file, event: dict) -> None:
+    """Append one NDJSON event to a slug's bus. Never raises: telemetry must
+    not be able to fail a publish."""
+    if not bus_file:
+        return
+    try:
+        path = Path(bus_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"ts": _now_iso()}
+        payload.update(event)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False,
+                                separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
+def _clip(text: str, n: int = 80) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1] + "\u2026"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# CLI shim — ~/.local/bin/annotate
+# ────────────────────────────────────────────────────────────────────────────
+def _module_invocation() -> str:
+    """The interpreter-module form, which works wherever the package imports."""
+    return f"{sys.executable} -m agent_annotate.cli"
+
+
+def _shim_body() -> str:
+    return (
+        "#!/bin/sh\n"
+        "# agent-annotate shim — written by `annotate install-shim`, and by\n"
+        "# `annotate publish`. Safe to delete; re-create with:\n"
+        f"#   {_module_invocation()} install-shim\n"
+        f'exec "{sys.executable}" -m agent_annotate.cli "$@"\n'
+    )
+
+
+def _is_ours(body: str) -> bool:
+    """True for anything that runs this package: the shim written here, a
+    `uv tool install` / pip entry point (which imports agent_annotate), or the
+    skill-directory shim that predates packaging."""
+    return SHIM_MARKER in body or "agent_annotate" in body
+
+
+def _shim_state() -> tuple[str, str]:
+    """('absent'|'shim'|'entrypoint'|'foreign', body).
+
+    `shim` is a launcher this function's sibling wrote (any version);
+    `entrypoint` is a console script that already runs this package and is
+    never overwritten without --force.
+    """
+    if not SHIM_PATH.exists() and not SHIM_PATH.is_symlink():
+        return "absent", ""
+    try:
+        body = SHIM_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return "foreign", str(e)
+    if SHIM_MARKER in body:
+        return "shim", body
+    if "agent_annotate" in body:
+        return "entrypoint", body
+    return "foreign", body
+
+
+def _shim_target_alive(body: str) -> bool:
+    """Does the interpreter/script a shim execs still exist?"""
+    for line in body.splitlines():
+        if line.startswith("exec "):
+            try:
+                argv = shlex.split(line[len("exec "):])
+            except ValueError:
+                return False
+            paths = [a for a in argv if a.startswith("/")]
+            return all(Path(p).exists() for p in paths) if paths else True
+    return False
+
+
+def _ensure_shim_installed(force: bool = False, refresh: bool = False) -> tuple[bool, str]:
+    """Idempotently write the `annotate` launcher. Returns (changed, message).
+
+    Writes only when the path is absent or holds a shim of ours whose target is
+    gone. `refresh` (install-shim) also rewrites a shim of ours that points
+    somewhere else, e.g. at the pre-package skill directory; `force` overwrites
+    a file this package did not write. A console-script entry point is never
+    touched without `force`: it already runs this package.
+    """
+    state, body = _shim_state()
+    wanted = _shim_body()
+    if state == "foreign" and not force:
+        return False, (f"{SHIM_PATH} exists and was not written by this package — "
+                       f"left alone (`install-shim --force` overwrites it)")
+    if state == "entrypoint" and not force:
+        return False, f"entry point already at {SHIM_PATH}"
+    if state == "shim" and body == wanted and os.access(SHIM_PATH, os.X_OK):
+        return False, f"already current at {SHIM_PATH}"
+    if state == "shim" and not (force or refresh) and _shim_target_alive(body):
+        return False, (f"{SHIM_PATH} runs a different annotate install — left alone "
+                       f"(`install-shim` repoints it here)")
+    try:
+        SHIM_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SHIM_PATH.with_name(SHIM_PATH.name + ".tmp")
+        tmp.write_text(wanted, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, SHIM_PATH)
+    except OSError as e:
+        return False, f"could not write {SHIM_PATH}: {e}"
+    return True, f"wrote {SHIM_PATH} → {_module_invocation()}"
+
+
+_INV_CACHE: str | None = None
+
+
+def _inv() -> str:
+    """The invocation to print in messages.
+
+    The shim name when typing it actually reaches this CLI, the absolute
+    python3 form otherwise. A printed `annotate …` that resolves to libgd is
+    the single most expensive line this CLI has ever emitted.
+    """
+    global _INV_CACHE
+    if _INV_CACHE is None:
+        _INV_CACHE = _module_invocation()
+        try:
+            found = shutil.which("annotate")
+            if found and _is_ours(Path(found).read_text(encoding="utf-8", errors="replace")):
+                _INV_CACHE = "annotate"
+        except (OSError, ValueError):
+            pass
+    return _INV_CACHE
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -91,6 +371,48 @@ def _all_state_files() -> list[Path]:
     if not STATE_DIR.exists():
         return []
     return sorted(STATE_DIR.glob("*.json"))
+
+
+@contextlib.contextmanager
+def _flock(lock_path: Path):
+    """Advisory exclusive lock spanning a read-modify-write cycle.
+
+    Only coordinates with other processes going through this same helper.
+    Tries non-blocking first; if held, polls for up to 30s before failing
+    loudly rather than blocking forever on a peer that crashed mid-write.
+    """
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a+")
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            deadline = time.monotonic() + 30
+            acquired = False
+            while time.monotonic() < deadline:
+                time.sleep(0.5)
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except OSError:
+                    continue
+            if not acquired:
+                raise TimeoutError(
+                    f"timed out after 30s waiting for lock {lock_path} — "
+                    "check for a stuck annotate process holding it"
+                )
+        yield
+    finally:
+        fh.close()
+
+
+def _state_lock_path(project: str) -> Path:
+    return LOCK_DIR / f"{project}.json.lock"
+
+
+def _tunnel_lock_path() -> Path:
+    return LOCK_DIR / "tunnel.lock"
 
 
 def _load_projects_toml() -> dict:
@@ -127,8 +449,29 @@ def _project_config(project: str) -> dict:
     return cfg
 
 
-def _find_free_port_after(start: int) -> int:
-    """Lowest bindable port at or after `start`.
+def _port_listen_pid(port: int) -> int | None:
+    """Return the PID of the first process LISTENing on TCP `port`, or None.
+
+    Raises on lsof failure/absence — callers must catch and fall back rather
+    than trusting an unchecked port as free.
+    """
+    result = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("p"):
+            try:
+                return int(line[1:])
+            except ValueError:
+                continue
+    return None
+
+
+def _find_free_port_after(start: int, registered_pid: int | None = None) -> int:
+    """Lowest usable port at or after `start`.
 
     The probe must bind EXACTLY what the sync server binds — ("localhost", p)
     with allow_reuse_address — or it answers a different question than the one
@@ -136,31 +479,60 @@ def _find_free_port_after(start: int) -> int:
 
     Both halves matter, and getting either wrong is dangerous:
 
-    * Binding ("", p) with no option: a loopback socket left in TIME_WAIT
-      refuses a 0.0.0.0 bind, so re-publishing a slug whose port had just
-      served traffic always skipped to the next port. A moving local port makes
-      every port-keyed route (a `tailscale serve` mapping) leak a new entry on
-      every publish.
+    * The old probe bound ("", p) with no option. A loopback socket left in
+      TIME_WAIT refuses a 0.0.0.0 bind, so re-publishing a slug whose port had
+      just served traffic always skipped to the next port. A moving local port
+      makes every port-keyed route (a `tailscale serve` mapping) leak a new
+      entry on every publish.
     * Adding SO_REUSEADDR while still binding ("", p) is WORSE: on BSD/macOS
       that option lets a wildcard bind sit on top of a DIFFERENT local address,
       so 0.0.0.0:8813 binds cleanly while a live server is listening on
       127.0.0.1:8813 — allocation would hand out a port already in use and two
-      servers would fight over one slug. Verified 2026-07-31 against live
-      servers.
+      servers would fight over one slug. Verified 2026-07-31 against the live
+      8800/8812/8813 servers.
 
     Binding the same address the server does makes SO_REUSEADDR safe: it
-    reuses TIME_WAIT but is still refused by an active LISTEN on that address.
+    reuses TIME_WAIT but is still refused by an active LISTEN on that exact
+    address. The lsof cross-check below stays as the second opinion.
     """
     import socket
     p = start
+    lsof_ok = True
+    conflicting_pids: set[int] = set()
     while p < start + 50:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("localhost", p))
-                return p
             except OSError:
                 p += 1
+                continue
+        if lsof_ok:
+            try:
+                listen_pid = _port_listen_pid(p)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(
+                    f"WARN: port-liveness check unavailable ({e}); trusting OS bind test only",
+                    file=sys.stderr,
+                )
+                lsof_ok = False
+                listen_pid = None
+            if (
+                listen_pid is not None
+                and listen_pid != registered_pid
+                and registered_pid is not None
+                and not _is_process_alive(registered_pid)
+                and _is_process_alive(listen_pid)
+            ):
+                conflicting_pids.add(listen_pid)
+                p += 1
+                continue
+        return p
+    if conflicting_pids:
+        raise RuntimeError(
+            f"No free port found in [{start}, {start+50}) — "
+            f"held by other process(es): {', '.join(str(pid) for pid in sorted(conflicting_pids))}"
+        )
     raise RuntimeError(f"No free port found in [{start}, {start+50})")
 
 
@@ -179,7 +551,7 @@ def _resolve_author(cli_value: str | None) -> str:
     1. CLI --author flag
     2. $ANNOTATE_AUTHOR env var
     3. $CLAUDE_AGENT_ID env var
-    4. Default 'agent:opus-4-7'
+    4. Default 'agent:claude'
     """
     if cli_value:
         return cli_value
@@ -189,13 +561,69 @@ def _resolve_author(cli_value: str | None) -> str:
     env_val = os.environ.get("CLAUDE_AGENT_ID")
     if env_val:
         return env_val
-    return "agent:opus-4-7"
+    return "agent:claude"
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Provider integration
+# Hook installer (UserPromptSubmit → check-comment-bus.sh)
 # ────────────────────────────────────────────────────────────────────────────
 HOOK_COMMAND = str(HOOK_SCRIPT)
+
+
+def _is_our_hook_command(command: str) -> bool:
+    """Any registered command that runs this hook — the packaged script, the
+    skill-directory copy it replaces, or `annotate hook-check`. Registering a
+    second spelling would fire the hook twice per prompt."""
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    if cmd == HOOK_COMMAND or cmd.endswith("/check-comment-bus.sh"):
+        return True
+    return cmd.endswith(" hook-check") and "annotate" in cmd
+
+
+def _ensure_hook_installed() -> tuple[bool, str]:
+    """Idempotently merge the check-comment-bus.sh hook into settings.json.
+
+    Returns (was_added, message).
+    """
+    if not SETTINGS_JSON.exists():
+        return False, f"settings.json not found at {SETTINGS_JSON}"
+    try:
+        raw = SETTINGS_JSON.read_text(encoding="utf-8")
+        settings = json.loads(raw)
+    except Exception as e:
+        return False, f"could not parse settings.json: {e}"
+
+    settings.setdefault("hooks", {})
+    ups = settings["hooks"].setdefault("UserPromptSubmit", [])
+    # Look for an existing entry matching our command
+    for group in ups:
+        if not isinstance(group, dict):
+            continue
+        for h in group.get("hooks", []) or []:
+            if isinstance(h, dict) and _is_our_hook_command(h.get("command", "")):
+                return False, "hook already present in settings.json (no change)"
+
+    ups.append({
+        "hooks": [
+            {
+                "command": HOOK_COMMAND,
+                "type": "command",
+                # Claude Code's own default for a UserPromptSubmit command hook.
+                # The previous explicit 5 bought nothing and cost notices: on a
+                # loaded machine the hook was killed mid-scan, discarding that
+                # turn's reminder and stranding the lock for other sessions.
+                "timeout": 30,
+            }
+        ]
+    })
+
+    # Atomic write
+    tmp = SETTINGS_JSON.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, SETTINGS_JSON)
+    return True, f"added UserPromptSubmit hook → {HOOK_COMMAND}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -397,8 +825,6 @@ def _write_meta_locked(slug_dir: Path, mutate) -> None:
     read-modify-write here would silently drop whatever it wrote in between.
     It takes `current.meta.json.lock`; so must we.
     """
-    import fcntl
-
     path = slug_dir / "current.meta.json"
     lock_path = path.with_suffix(".json.lock")
     with open(lock_path, "a+") as fh:
@@ -464,7 +890,7 @@ def _ensure_current_symlink(slug_dir: Path) -> tuple[str | None, list[str]]:
         return None, [
             "current.html is missing or dangling and the intended version is "
             f"ambiguous — versions/ holds {', '.join(versions)}. Run "
-            f"`annotate publish-version {slug_dir} <vN>` to choose one."
+            f"`{_inv()} publish-version {slug_dir} <vN>` to choose one."
         ]
 
     if current.exists() or current.is_symlink():
@@ -496,6 +922,61 @@ def _ensure_meta_history(slug_dir: Path, version: str) -> list[str]:
 
     _write_meta_locked(slug_dir, _mutate)
     return [f"current.meta.json: registered {version} (current + history entry)"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Page ownership
+# ────────────────────────────────────────────────────────────────────────────
+def _owner_fields(session_id: str | None = None) -> dict:
+    """The four keys that say which session a page belongs to.
+
+    The hook reads the registry copy to decide whose comments these are; the
+    shell reads the current.meta.json copy to draw the owner chip. Both are
+    written, because a page can outlive the state file it was registered in.
+    """
+    sid = session_id or _session_id()
+    return {
+        "owner_session": sid,
+        "owner_agent": _session_agent(),
+        "owner_label": _session_label(sid),
+        "owner_claimed_at": _now_iso(),
+    }
+
+
+def _write_owner_meta(slug_dir: Path, fields: dict) -> str | None:
+    """Stamp `owner` into current.meta.json under the server's own lock.
+
+    Returns an error string rather than raising: losing the chip must not fail
+    a publish that otherwise worked.
+    """
+    def _mutate(meta: dict) -> None:
+        # Key names are L1's contract for the owner chip: owner_label is shown,
+        # owner_session is the tooltip, claimed_at drives "claimed <ago>".
+        meta["owner"] = {
+            "owner_session": fields["owner_session"],
+            "owner_agent": fields["owner_agent"],
+            "owner_label": fields["owner_label"],
+            "claimed_at": fields["owner_claimed_at"],
+        }
+
+    try:
+        _write_meta_locked(slug_dir, _mutate)
+    except OSError as e:
+        return str(e)
+    return None
+
+
+def _stamp_owner_in_registry(project: str, slug: str, fields: dict) -> str | None:
+    try:
+        with _flock(_state_lock_path(project)):
+            state = _load_state_for_project(project)
+            if slug not in state.get("slugs", {}):
+                return f"{project}/{slug} is not registered"
+            state["slugs"][slug].update(fields)
+            _save_state_for_project(project, state)
+    except TimeoutError as e:
+        return str(e)
+    return None
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -539,6 +1020,19 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
     return report
 
 
+class _AlreadyRunning(Exception):
+    """A live server for this slug was found while holding the state lock.
+
+    Raised rather than returned so the slow verification below happens OUTSIDE
+    the lock — the flock helper gives up after 30s and a browser stage can take
+    longer than that, so holding it would fail an unrelated concurrent publish.
+    """
+
+    def __init__(self, record: dict):
+        super().__init__("already running")
+        self.record = record
+
+
 def _run_gate(record: dict, args):
     """Verify `record` in place. Returns the report, or None when skipped."""
     if getattr(args, "no_verify", False):
@@ -558,7 +1052,10 @@ def _run_gate(record: dict, args):
 
 
 def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
-                   report, skip_verify: bool, headline: str | None = None) -> int:
+                   report, skip_verify: bool, headline: str | None = None,
+                   hook_msg: str | None = None, hook_added: bool = False,
+                   shim_msg: str | None = None,
+                   publish_ms: float | None = None) -> int:
     """Render the publish result. Returns the process exit code.
 
     Both the fresh-publish and already-running paths come through here so that
@@ -571,6 +1068,15 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     print("  ─────────────────────────────────────────────")
 
     if report is not None and report.failed:
+        stage = report.failed[0]
+        _bus_emit(record.get("bus_file"), {
+            "event": "page_publish_failed",
+            "slug": slug,
+            "stage": stage.name,
+            "detail": stage.detail,
+            "url": stage.url,
+            "owner_session": record.get("owner_session") or _session_id(),
+        })
         print("  NOT PUBLISHED — the page does not render.")
         print()
         for line in format_report(report):
@@ -585,8 +1091,8 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         print(f"  Slug dir:      {slug_dir}")
         print("  ─────────────────────────────────────────────")
         print(f"  No URL is printed for {slug!r}: the {report.failed[0].name} stage failed.")
-        print(f"  Fix that stage and re-run `annotate publish {slug_dir}`, or")
-        print(f"  `annotate unpublish {slug}` to tear the whole thing down.")
+        print(f"  Fix that stage and re-run `{_inv()} publish {slug_dir}`, or")
+        print(f"  `{_inv()} unpublish {slug}` to tear the whole thing down.")
         print()
         return 1
 
@@ -595,8 +1101,23 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     if skip_verify:
         print("  UNVERIFIED     --no-verify was passed; nothing below has been checked")
     elif report is not None and report.unavailable:
-        print("  UNVERIFIED     could not reach the authenticated browser — the public")
-        print("                 URL below is UNCONFIRMED, not known-good")
+        # A Cloudflare Access login page is not a broken page. It is this
+        # session failing to prove anything about a page that is very probably
+        # fine — five sessions burned 5-10 tool calls each re-checking a live
+        # page that publish had called NOT PUBLISHED.
+        access = [s for s in report.unavailable
+                  if getattr(s, "reason", None) == "access_login"]
+        passed = ", ".join(s.name for s in report.stages if s.status == "pass")
+        if access:
+            for s in access:
+                print(f"  UNVERIFIED     {s.name}: not verified from this session "
+                      f"(Access login)"
+                      + (f"; {passed} stage(s) PASS" if passed else ""))
+            print("                 The URL below is live for an authenticated reviewer;")
+            print("                 open it in the authenticated browser to confirm.")
+        if len(access) < len(report.unavailable):
+            print("  UNVERIFIED     could not reach the authenticated browser — the public")
+            print("                 URL below is UNCONFIRMED, not known-good")
 
     print(f"  URL:           {record['url']}")
     print(f"  Local URL:     {record['local_url']}")
@@ -613,15 +1134,70 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         for line in format_report(report):
             print(line)
     print("  ─────────────────────────────────────────────")
-    print("  Agent adapter: explicit; run `annotate sessions` or arm a provider monitor")
+    if record.get("owner_label"):
+        print(f"  Owner:         {record['owner_label']}  "
+              f"(session {record.get('owner_session')})")
+    if hook_msg:
+        print(f"  Hook install:  {hook_msg}")
+        if hook_added:
+            print(f"  (NEW: added UserPromptSubmit hook → {HOOK_COMMAND})")
+    if shim_msg:
+        print(f"  CLI shim:      {shim_msg}")
+    print(f"  Invocation:    {_inv()} inbox {slug} --unread")
     print()
+
+    _bus_emit(record.get("bus_file"), {
+        "event": "page_published",
+        "slug": slug,
+        "owner_session": record.get("owner_session") or _session_id(),
+        "owner_agent": record.get("owner_agent") or _session_agent(),
+        "version": _read_meta(slug_dir).get("current"),
+        "url": record.get("url"),
+        "transport": record.get("transport"),
+        "verified": bool(record.get("verified")),
+        "verify_stages": [
+            {"name": s["name"], "status": s["status"]}
+            for s in (record.get("verify_stages") or [])
+        ],
+        "transport_error": record.get("transport_error"),
+        "publish_ms": int(publish_ms) if publish_ms is not None else None,
+    })
     return 0
+
+
+def _publish_already_running(project: str, slug: str, slug_dir: Path,
+                             record: dict, args) -> int:
+    """Re-verify a slug that is already serving, then report it.
+
+    A live process is not proof the page renders. This path used to print the
+    recorded URL and exit 0, so re-running publish on a page that had just
+    failed the gate reported it as fine one command later.
+    """
+    report = _run_gate(record, args)
+    if report is not None:
+        try:
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                if slug in state.get("slugs", {}):
+                    # Re-read and merge only our own keys: a peer may have
+                    # rewritten this record while the gate was running.
+                    state["slugs"][slug]["verified"] = record["verified"]
+                    state["slugs"][slug]["verify_stages"] = record["verify_stages"]
+                    _save_state_for_project(project, state)
+        except TimeoutError as e:
+            print(f"WARN: verification result not recorded: {e}", file=sys.stderr)
+    return _print_publish(
+        project, slug, slug_dir, record, report, getattr(args, "no_verify", False),
+        headline=f"Already running (pid {record['pid']}); re-verified in place. "
+                 f"`{_inv()} unpublish {slug}` to re-publish from scratch.",
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
 def cmd_publish(args) -> int:
+    started_at = time.monotonic()
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
         print(f"ERROR: slug-dir not found or not a directory: {slug_dir}", file=sys.stderr)
@@ -639,6 +1215,11 @@ def cmd_publish(args) -> int:
     notes += _ensure_meta_history(slug_dir, current_version)
     for n in notes:
         print(f"  Repaired:      {n}")
+
+    # Install the shim before anything can print an `annotate …` line.
+    shim_changed, shim_msg = _ensure_shim_installed()
+    if shim_changed:
+        globals()["_INV_CACHE"] = None
 
     # ── Task 4: Build-time JS lint ──────────────────────────────────
     skip_lint = getattr(args, "skip_js_lint", False)
@@ -662,7 +1243,7 @@ def cmd_publish(args) -> int:
             for e in lint_errors:
                 print(e, file=sys.stderr)
             print(
-                "\nFix the JS errors above and re-run `annotate publish`.\n"
+                f"\nFix the JS errors above and re-run `{_inv()} publish`.\n"
                 "  Use --skip-js-lint ONLY for emergency deploys (not recommended).",
                 file=sys.stderr,
             )
@@ -670,96 +1251,106 @@ def cmd_publish(args) -> int:
     else:
         print("  JS lint:       skipped (no current.html found yet)")
 
-    state = _load_state_for_project(project)
-    existing = state["slugs"].get(slug)
-    if existing and _is_process_alive(existing.get("pid", 0)):
-        # A live process is not proof the page renders. Re-running publish on a
-        # slug that already failed the gate used to print its URL and exit 0 —
-        # exactly the "you were told it was fixed" failure, one command later.
-        report = _run_gate(existing, args)
-        state["slugs"][slug] = existing
-        _save_state_for_project(project, state)
-        return _print_publish(
-            project, slug, slug_dir, existing, report,
-            getattr(args, "no_verify", False),
-            headline=f"Already running (pid {existing['pid']}); re-verified in place. "
-                     f"`annotate unpublish {slug}` to re-publish from scratch.",
-        )
+    # Cheap unlocked liveness read first: the gate below can take tens of
+    # seconds and must not run while holding the project state lock.
+    pre_existing = _load_state_for_project(project)["slugs"].get(slug)
+    if pre_existing and _is_process_alive(pre_existing.get("pid", 0)):
+        return _publish_already_running(project, slug, slug_dir, pre_existing, args)
 
-    # Pick port (use config base; auto-bump; allow override)
-    if args.port:
-        port = args.port
-    else:
-        port_base = existing.get("port") if existing else cfg.get("port_base", 8800)
-        port = _find_free_port_after(int(port_base))
+    try:
+        with _flock(_state_lock_path(project)):
+            state = _load_state_for_project(project)
+            existing = state["slugs"].get(slug)
+            if existing and _is_process_alive(existing.get("pid", 0)):
+                # A peer published this slug between the read above and this
+                # lock. Verify it too — never return an unchecked URL.
+                raise _AlreadyRunning(existing)
 
-    bus_dir = BUS_ROOT / project
-    bus_dir.mkdir(parents=True, exist_ok=True)
+            # Pick port (use config base; auto-bump; allow override)
+            if args.port:
+                port = args.port
+            else:
+                port_base = existing.get("port") if existing else cfg.get("port_base", 8800)
+                registered_pid = existing.get("pid") if existing else None
+                port = _find_free_port_after(int(port_base), registered_pid=registered_pid)
 
-    # Transport: publish (insert public route)
-    transport_name = args.transport or cfg.get("transport", "local")
-    hostname = args.hostname or cfg.get("hostname")
-    path_prefix = args.path_prefix or cfg.get("path_prefix") or f"/{slug}"
-    if path_prefix and not path_prefix.startswith("/"):
-        path_prefix = "/" + path_prefix
-    path_prefix = path_prefix.rstrip("/")
+            bus_dir = BUS_ROOT / project
+            bus_dir.mkdir(parents=True, exist_ok=True)
 
-    transport_url = None
-    transport_details: dict = {}
-    transport_error: str | None = None
-    if transport_name != "local":
-        try:
-            from .transports import load as _load_transport
-            tmod = _load_transport(transport_name)
-            opts = {}
-            if hostname:
-                opts["hostname"] = hostname
-            if existing:
-                # What this slug was routed through last time. A transport
-                # whose route key can move between publishes (a `tailscale
-                # serve` mapping is keyed on the local port) needs this to
-                # reclaim the entry it is about to orphan. Transports that
-                # replace in place ignore it.
-                opts["previous"] = {
-                    "port": existing.get("port"),
-                    "details": existing.get("transport_details") or {},
-                }
-            slug_for_route = path_prefix.lstrip("/")
-            result = tmod.publish(slug_for_route, port, **opts)
-            transport_url = result.get("url")
-            transport_details = result.get("details", {})
-        except NotImplementedError as e:
-            transport_error = str(e)
-            print(f"WARN: transport {transport_name!r}: {e}", file=sys.stderr)
-        except Exception as e:
-            transport_error = str(e)
-            print(f"ERROR: transport {transport_name!r} publish failed: {e}", file=sys.stderr)
+            # Transport: publish (insert public route)
+            transport_name = args.transport or cfg.get("transport", "local")
+            hostname = args.hostname or cfg.get("hostname")
+            path_prefix = args.path_prefix or cfg.get("path_prefix") or f"/{slug}"
+            if path_prefix and not path_prefix.startswith("/"):
+                path_prefix = "/" + path_prefix
+            path_prefix = path_prefix.rstrip("/")
 
-    # Start server (with public_base_path if transport set a sub-path mount)
-    pbp = path_prefix if transport_name != "local" and transport_url else ""
-    pid = _start_server(slug_dir, port, bus_dir, pbp)
+            transport_url = None
+            transport_details: dict = {}
+            transport_error: str | None = None
+            if transport_name != "local":
+                try:
+                    from .transports import load as _load_transport
+                    tmod = _load_transport(transport_name)
+                    opts = {}
+                    if hostname:
+                        opts["hostname"] = hostname
+                    if existing:
+                        # What this slug was routed through last time. A
+                        # transport whose route key can move between publishes
+                        # (a `tailscale serve` mapping is keyed on the local
+                        # port) needs this to reclaim the entry it is about to
+                        # orphan. Transports that replace in place ignore it.
+                        opts["previous"] = {
+                            "port": existing.get("port"),
+                            "details": existing.get("transport_details") or {},
+                        }
+                    slug_for_route = path_prefix.lstrip("/")
+                    with _flock(_tunnel_lock_path()):
+                        result = tmod.publish(slug_for_route, port, **opts)
+                    transport_url = result.get("url")
+                    transport_details = result.get("details", {})
+                except NotImplementedError as e:
+                    transport_error = str(e)
+                    print(f"WARN: transport {transport_name!r}: {e}", file=sys.stderr)
+                except Exception as e:
+                    transport_error = str(e)
+                    print(f"ERROR: transport {transport_name!r} publish failed: {e}", file=sys.stderr)
 
-    # Record state
-    record = {
-        "slug": slug,
-        "slug_dir": str(slug_dir),
-        "project": project,
-        "pid": pid,
-        "port": port,
-        "transport": transport_name,
-        "public_base_path": pbp or None,
-        "url": transport_url or f"http://localhost:{port}/",
-        "local_url": f"http://localhost:{port}/",
-        "bus_file": str(bus_dir / f"{slug}.ndjson"),
-        "started_at": _now_iso(),
-        "transport_details": transport_details,
-        "transport_error": transport_error,
-    }
-    # Record state before verifying: a page that fails the gate is still
-    # running, and `annotate status` / `annotate unpublish` have to be able to
-    # find it in order to diagnose or tear it down.
-    state["slugs"][slug] = record
-    _save_state_for_project(project, state)
+            # Start server (with public_base_path if transport set a sub-path mount)
+            pbp = path_prefix if transport_name != "local" and transport_url else ""
+            pid = _start_server(slug_dir, port, bus_dir, pbp)
+
+            # Record state
+            record = {
+                "slug": slug,
+                "slug_dir": str(slug_dir),
+                "project": project,
+                "pid": pid,
+                "port": port,
+                "transport": transport_name,
+                "public_base_path": pbp or None,
+                "url": transport_url or f"http://localhost:{port}/",
+                "local_url": f"http://localhost:{port}/",
+                "bus_file": str(bus_dir / f"{slug}.ndjson"),
+                "started_at": _now_iso(),
+                "transport_details": transport_details,
+                "transport_error": transport_error,
+                **_owner_fields(),
+            }
+            state["slugs"][slug] = record
+            _save_state_for_project(project, state)
+    except _AlreadyRunning as e:
+        return _publish_already_running(project, slug, slug_dir, e.record, args)
+    except TimeoutError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 4
+
+    # Hook install (idempotent)
+    hook_added, hook_msg = _ensure_hook_installed()
+    owner_err = _write_owner_meta(slug_dir, record)
+    if owner_err:
+        print(f"WARN: owner not written to current.meta.json: {owner_err}", file=sys.stderr)
 
     # ── Verification gate ────────────────────────────────────────────
     # No URL is printed until the page has been proven to render. Being told
@@ -767,10 +1358,20 @@ def cmd_publish(args) -> int:
     skip_verify = getattr(args, "no_verify", False)
     report = _run_gate(record, args)
     if report is not None:
-        state["slugs"][slug] = record
-        _save_state_for_project(project, state)
+        try:
+            with _flock(_state_lock_path(project)):
+                st = _load_state_for_project(project)
+                if slug in st.get("slugs", {}):
+                    st["slugs"][slug]["verified"] = record["verified"]
+                    st["slugs"][slug]["verify_stages"] = record["verify_stages"]
+                    _save_state_for_project(project, st)
+        except TimeoutError as e:
+            print(f"WARN: verification result not recorded: {e}", file=sys.stderr)
 
-    return _print_publish(project, slug, slug_dir, record, report, skip_verify)
+    return _print_publish(project, slug, slug_dir, record, report, skip_verify,
+                          hook_msg=hook_msg, hook_added=hook_added,
+                          shim_msg=shim_msg,
+                          publish_ms=(time.monotonic() - started_at) * 1000.0)
 
 
 def cmd_unpublish(args) -> int:
@@ -814,17 +1415,25 @@ def cmd_unpublish(args) -> int:
                 (details.get("tailscale") or {}).get("https_port")
             if https_port:
                 opts["https_port"] = https_port
-            r = tmod.unpublish(pbp, **opts)
+            with _flock(_tunnel_lock_path()):
+                r = tmod.unpublish(pbp, **opts)
             print(f"  Transport {transport_name}: {r.get('details', {}).get('action', 'ok')}")
         except NotImplementedError as e:
             print(f"WARN: transport {transport_name}: {e}", file=sys.stderr)
+        except TimeoutError as e:
+            print(f"WARN: transport {transport_name} unpublish skipped: {e}", file=sys.stderr)
         except Exception as e:
             print(f"WARN: transport {transport_name} unpublish failed: {e}", file=sys.stderr)
 
     # Remove from state
-    state = _load_state_for_project(project)
-    state["slugs"].pop(slug, None)
-    _save_state_for_project(project, state)
+    try:
+        with _flock(_state_lock_path(project)):
+            state = _load_state_for_project(project)
+            state["slugs"].pop(slug, None)
+            _save_state_for_project(project, state)
+    except TimeoutError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 4
     print(f"  Removed from state file: {STATE_DIR / (project + '.json')}")
     return 0
 
@@ -948,15 +1557,6 @@ def cmd_migrate(args) -> int:
         os.replace(legacy_path, target_html)
         action = "moved"
 
-    # Deliberately no content/ dir. Copying the baked page here verbatim would
-    # be worse than leaving it absent: the artifact's own chrome script has no
-    # iframe guard, so it would keep running inside the content frame beside
-    # adapter.js — two click handlers, two comment paths — and the older baked
-    # handler would go on swallowing clicks on native controls. The server
-    # extracts a chrome-free document from versions/ at request time instead
-    # (see extract.py), so a fix to the chrome reaches this page immediately
-    # and forever. Write content/<v>.html only to override that extraction.
-
     current_symlink = slug_dir / "current.html"
     if current_symlink.exists() or current_symlink.is_symlink():
         current_symlink.unlink()
@@ -991,7 +1591,7 @@ def cmd_migrate(args) -> int:
             print(f"WARN: could not parse {src_comments}: {e}", file=sys.stderr)
             raw = []
 
-        # Reuse the canonical v2 coercion logic.
+        # Reuse _coerce_v2 from sync_server
         from .sync_server import _coerce_v2
         store = _coerce_v2(raw)
         # Stamp version on every comment
@@ -1015,12 +1615,11 @@ def cmd_migrate(args) -> int:
 
     print(f"  Migrated {legacy_path} → {slug_dir}/")
     print(f"    HTML:          {action} → versions/{initial_version}.html")
-    print(f"    review content: copied → content/{initial_version}.html")
     print(f"    current.html:  symlink → versions/{initial_version}.html")
     print("    meta:          current.meta.json")
     print(f"    comments:      comments.json (from {src_comments or 'fresh'})")
     print()
-    print(f"  Next: annotate publish {slug_dir}")
+    print(f"  Next: {_inv()} publish {slug_dir}")
     return 0
 
 
@@ -1040,72 +1639,478 @@ def cmd_publish_version(args) -> int:
         current_symlink.unlink()
     current_symlink.symlink_to(Path("versions") / f"{new_version}.html")
 
-    meta_path = slug_dir / "current.meta.json"
-    meta = {}
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {}
-    meta.setdefault("history", [])
-    meta["current"] = new_version
-    meta["history"].append({
-        "version": new_version,
-        "ts": _now_iso(),
-        "label": args.label or "",
-    })
-    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    # History is a set keyed on version, not a log of calls. Appending
+    # unconditionally is what listed every version of every observed page
+    # twice: `publish` registers the version through _ensure_meta_history and
+    # a later `publish-version` for the same vN appended a second entry, as did
+    # any re-run of this command. The raw read-modify-write also dropped
+    # whatever the running server had cached into the file in between, so this
+    # now goes through the same lock the server takes.
+    added = []
+
+    def _mutate(meta: dict) -> None:
+        meta["current"] = new_version
+        history = meta.setdefault("history", [])
+        for h in history:
+            if isinstance(h, dict) and h.get("version") == new_version:
+                if args.label:
+                    h["label"] = args.label
+                h["ts"] = _now_iso()
+                added.append(False)
+                return
+        history.append({
+            "version": new_version,
+            "ts": _now_iso(),
+            "label": args.label or "",
+        })
+        added.append(True)
+
+    _write_meta_locked(slug_dir, _mutate)
+    entries = len((_read_meta(slug_dir).get("history") or []))
     print(f"  Swapped current.html → versions/{new_version}.html")
     print(f"  meta:current = {new_version}")
+    print(f"  history:       {'added' if added and added[0] else 'updated in place'} "
+          f"{new_version} ({entries} entr{'y' if entries == 1 else 'ies'} total)")
+
+    resolved = _resolve_slug(slug_dir.name, getattr(args, "project", None))
+    if resolved:
+        _project, _slug, record = resolved
+        bus_file = record.get("bus_file")
+    else:
+        _project, _slug = _slug_project(slug_dir)
+        bus_file = BUS_ROOT / _project / f"{_slug}.ndjson"
+        record = {}
+    _bus_emit(bus_file, {
+        "event": "version_published",
+        "slug": _slug,
+        "version": new_version,
+        "label": args.label or "",
+        "owner_session": record.get("owner_session") or _session_id(),
+    })
     return 0
+
+
+# Machinery, not something a reviewer said. Shown only with --all-events.
+_INBOX_HIDDEN = {"seen_updated", "notice_emitted", "inbox_read"}
+
+
+def _comment_texts(store: dict) -> dict:
+    """{comment_id: (body, verdict_note)} — bus events carry ids, not words.
+
+    Without this the compact listing shows that a reviewer said something but
+    not what, and the session has to go and read comments.json anyway. The two
+    are kept apart so a verdict line shows the note attached to the verdict and
+    a create line shows the card, not a sentence written minutes later.
+    """
+    out = {}
+    for _anchor, c in _iter_comments(store):
+        cid = c.get("id")
+        if not cid:
+            continue
+        d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+        out[cid] = (c.get("text") or "", d.get("text") or "")
+    return out
+
+
+def _inbox_line(ev: dict, texts: dict | None = None) -> str:
+    """ts  event  comment_id  anchor  author  verdict/status  text[:120]"""
+    verdict = (ev.get("decision") or ev.get("new_status")
+               or ev.get("delivery") or "")
+    body, note = (texts or {}).get(ev.get("comment_id")) or ("", "")
+    text = (ev.get("text") or ev.get("response_text") or ev.get("note")
+            or ev.get("detail") or (note if ev.get("decision") else "") or body)
+    return "  %-20s %-17s %-10s %-18s %-24s %-9s %s" % (
+        ev.get("ts") or "",
+        (ev.get("event") or "")[:17],
+        (ev.get("comment_id") or "")[:10],
+        (ev.get("anchor_id") or "")[:18],
+        (str(ev.get("author") or ev.get("by") or ""))[:24],
+        str(verdict)[:9],
+        _clip(text, 120),
+    )
 
 
 def cmd_inbox(args) -> int:
-    slug = args.slug
-    # Locate state record
-    record = None
-    project = None
-    for sf in _all_state_files():
-        st = json.loads(sf.read_text(encoding="utf-8"))
-        if slug in st.get("slugs", {}):
-            record = st["slugs"][slug]
-            project = st["project"]
-            break
-    if not record:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
-    bus_file = Path(record["bus_file"])
-    if not bus_file.exists():
-        print("(no events)")
-        return 0
-    offset_file = STATE_DIR / "bus-offsets" / project / f"{slug}.offset"
+    project, slug, record = resolved
+    session_id = _session_id()
+    bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
+    offset_file = _offset_file(project, slug, session_id)
     offset_file.parent.mkdir(parents=True, exist_ok=True)
+
     offset = 0
-    if args.unread and offset_file.exists():
-        try:
-            offset = int(offset_file.read_text().strip())
-        except Exception:
-            offset = 0
-    with bus_file.open("r", encoding="utf-8") as f:
-        f.seek(offset)
-        lines = f.readlines()
-        new_offset = f.tell()
-    if not lines:
-        print("(no new events)")
-        return 0
-    for line in lines:
-        line = line.rstrip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
-        print(f"  [{ev.get('ts')}] {ev.get('event'):<18} {ev.get('anchor_id') or ''} "
-              f"by {ev.get('author', 'anonymous')}")
     if args.unread:
-        offset_file.write_text(str(new_offset))
+        if offset_file.exists():
+            try:
+                offset = int(offset_file.read_text(encoding="utf-8").strip())
+            except Exception:
+                offset = 0
+        elif offset_file != BUS_OFFSET_ROOT / project / f"{slug}.offset":
+            # First read of this slug by this session. The session that owns
+            # the page starts at 0 and gets the whole backlog once — it asked
+            # for it. Anyone else starts where the old shared cursor had
+            # reached, so a takeover or a bystander does not replay months.
+            if record.get("owner_session") == session_id:
+                offset = 0
+            else:
+                offset = _legacy_offset(project, slug)
+
+    events: list[dict] = []
+    new_offset = offset
+    if bus_file.exists():
+        size = bus_file.stat().st_size
+        with bus_file.open("r", encoding="utf-8") as f:
+            f.seek(min(offset, size))
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(ev, dict):
+                    events.append(ev)
+            new_offset = f.tell()
+
+    shown = events if getattr(args, "all_events", False) else [
+        e for e in events if e.get("event") not in _INBOX_HIDDEN]
+    store = _load_store(record)
+    texts = _comment_texts(store)
+    cards = _decision_cards(store)
+    counts = _verdict_counts(cards)
+    undecided = [c["anchor_id"] or c["id"] for c in cards if not c["verdict"]]
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "project": project,
+            "slug": slug,
+            "session_id": session_id,
+            "offset_from": offset,
+            "offset_to": new_offset,
+            "event_count": len(shown),
+            "events": shown,
+            "decisions": counts,
+            "card_count": len(cards),
+            "undecided": undecided,
+        }, ensure_ascii=False, indent=2))
+    else:
+        if not shown:
+            print("(no new events)" if args.unread else "(no events)")
+        for ev in shown:
+            print(_inbox_line(ev, texts))
+        if cards:
+            print("  decisions: %d accept, %d reject, %d comment; undecided: %s"
+                  % (counts["accept"], counts["reject"], counts["comment"],
+                     ", ".join(undecided) if undecided else "none"))
+
+    if args.unread and new_offset > offset:
+        _bus_emit(bus_file, {
+            "event": "inbox_read",
+            "slug": slug,
+            "session_id": session_id,
+            "offset_from": offset,
+            "offset_to": new_offset,
+            "event_count": len(shown),
+        })
+        try:
+            new_offset = bus_file.stat().st_size
+        except OSError:
+            pass
+        tmp = offset_file.with_name(offset_file.name + ".tmp")
+        tmp.write_text(str(new_offset), encoding="utf-8")
+        os.replace(tmp, offset_file)
     return 0
+
+
+def cmd_cards(args) -> int:
+    """List decision cards and their verdicts straight from comments.json."""
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    cards = _decision_cards(_load_store(record))
+    if getattr(args, "json", False):
+        print(json.dumps(cards, ensure_ascii=False, indent=2))
+        return 0
+    if not cards:
+        print(f"  {project}/{slug}: no decision cards "
+              f"(create some with `{_inv()} ask {slug} --from cards.json`)")
+        return 0
+    print(f"  {project}/{slug} — {len(cards)} decision card(s)")
+    print("  %-12s %-20s %-6s %-9s %s" % ("id", "anchor", "ver", "verdict", "prompt"))
+    for c in cards:
+        verdict = c["verdict"] or ("pending" if c["pending"] else "—")
+        line = "  %-12s %-20s %-6s %-9s %s" % (
+            c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
+            verdict, _clip(c["prompt"], 64))
+        if c["verdict_text"]:
+            line += f'  “{_clip(c["verdict_text"], 48)}”'
+        print(line)
+    counts = _verdict_counts(cards)
+    undecided = [c["anchor_id"] or c["id"] for c in cards if not c["verdict"]]
+    print("  decisions: %d accept, %d reject, %d comment; undecided: %s"
+          % (counts["accept"], counts["reject"], counts["comment"],
+             ", ".join(undecided) if undecided else "none"))
+    return 0
+
+
+def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[list, int, int]:
+    """Create the cards one at a time on a server without the batch route.
+
+    Keeps the same anchor-idempotency contract: an existing non-archived card
+    by this author on the same anchor is updated, not duplicated.
+    """
+    code, existing = _api(record, "GET", "/api/comments", None, author)
+    by_anchor: dict = {}
+    if code == 200 and isinstance(existing, list):
+        for c in existing:
+            if not isinstance(c, dict) or c.get("status") == "archived":
+                continue
+            if c.get("author") != author or not c.get("decision_request"):
+                continue
+            by_anchor.setdefault(c.get("anchor_id"), c)
+
+    ids, created, updated = [], 0, 0
+    for item in items:
+        prior = by_anchor.get(item["anchor_id"])
+        if prior:
+            body = {"text": item["text"]}
+            if "decision_request" in item:
+                body["decision_request"] = item["decision_request"]
+            code, payload = _api(record, "PUT", f"/api/comments/{prior['id']}",
+                                 body, author)
+            if code >= 400 or code == 0:
+                raise RuntimeError(f"PUT {prior['id']} → HTTP {code}: {payload}")
+            ids.append(prior["id"])
+            updated += 1
+            continue
+        code, payload = _api(record, "POST", "/api/comments", item, author)
+        if code >= 400 or code == 0 or not isinstance(payload, dict):
+            raise RuntimeError(f"POST {item['anchor_id']} → HTTP {code}: {payload}")
+        cid = payload.get("id")
+        ids.append(cid)
+        created += 1
+        # A 2.19 server stores decision_request on create; an older one ignores
+        # it, so the card needs the PUT that used to be mandatory.
+        if item.get("decision_request") and not payload.get("decision_request"):
+            code, payload = _api(record, "PUT", f"/api/comments/{cid}",
+                                 {"decision_request": item["decision_request"]}, author)
+            if code >= 400 or code == 0:
+                raise RuntimeError(f"PUT {cid} (decision_request) → HTTP {code}: {payload}")
+    return ids, created, updated
+
+
+def cmd_ask(args) -> int:
+    """Post a whole round of decision cards from one cards.json."""
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    src = Path(args.from_file).expanduser()
+    try:
+        raw = json.loads(src.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"ERROR: could not read cards file {src}: {e}", file=sys.stderr)
+        return 2
+    cards = raw.get("cards") if isinstance(raw, dict) else raw
+    if not isinstance(cards, list) or not cards:
+        print("ERROR: cards file must be a JSON array (or {\"cards\": [...]}) of "
+              "{anchor_id, text, decision_request} objects", file=sys.stderr)
+        return 2
+
+    version = args.version
+    if not version and record.get("slug_dir"):
+        version = _read_meta(Path(record["slug_dir"])).get("current")
+
+    items = []
+    for i, c in enumerate(cards):
+        if not isinstance(c, dict) or not c.get("anchor_id"):
+            print(f"ERROR: card #{i} has no anchor_id", file=sys.stderr)
+            return 2
+        dr = c.get("decision_request") if isinstance(c.get("decision_request"), dict) else None
+        item = {
+            "anchor_id": c["anchor_id"],
+            "text": (c.get("text") or (dr or {}).get("prompt") or "").strip(),
+        }
+        if not item["text"]:
+            print(f"ERROR: card #{i} ({c['anchor_id']}) has neither text nor a "
+                  f"decision_request.prompt", file=sys.stderr)
+            return 2
+        if version:
+            item["version"] = version
+        if c.get("anchor_label"):
+            item["anchor_label"] = c["anchor_label"]
+        if dr:
+            item["decision_request"] = dr
+        items.append(item)
+
+    author = _resolve_author(getattr(args, "author", None))
+    route = "batch"
+    code, payload = _api(record, "POST", "/api/comments/batch",
+                         {"items": items, "idempotency": "anchor"}, author)
+    if code in (404, 405, 501):
+        print(f"  batch route absent (HTTP {code}) — falling back to per-card POST + PUT")
+        route = "fallback"
+        try:
+            ids, created, updated = _ask_fallback(record, slug, items, author)
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+    elif code == 0:
+        print(f"ERROR: no server answering for {project}/{slug}: {payload}\n"
+              f"  Start it with `{_inv()} publish {record.get('slug_dir', '<slug-dir>')}`",
+              file=sys.stderr)
+        return 2
+    elif code >= 400 or not isinstance(payload, dict):
+        print(f"ERROR: batch create failed (HTTP {code}): {payload}", file=sys.stderr)
+        return 2
+    else:
+        ids = payload.get("ids") or []
+        created = int(payload.get("created") or 0)
+        updated = int(payload.get("updated") or 0)
+
+    if getattr(args, "json", False):
+        print(json.dumps({"slug": slug, "route": route, "ids": ids,
+                          "created": created, "updated": updated,
+                          "version": version}, ensure_ascii=False))
+        return 0
+    print(f"  {project}/{slug}: {created} created, {updated} updated "
+          f"({route} route, version {version or 'default'})")
+    for cid, item in zip(ids, items):
+        print(f"    {cid}  {item['anchor_id']}  {_clip(item['text'], 70)}")
+    print(f"  Read verdicts with: {_inv()} cards {slug}")
+    return 0
+
+
+def _eval_headline(payload: dict) -> list[str]:
+    """Sections 1-3 in the fewest lines that still decide something."""
+    meta = payload.get("meta") or {}
+    s1 = payload.get("s1_aggregate") or {}
+    s2 = payload.get("s2_summary") or {}
+    s3 = (payload.get("s3") or {}).get("latency") or {}
+    v = s1.get("verdicts") or {}
+
+    def num(x, suffix=""):
+        return "—" if x is None else f"{x}{suffix}"
+
+    return [
+        f"  window            since {meta.get('since')} — "
+        f"{meta.get('slugs_in_window')} of {meta.get('slugs_total')} slugs",
+        f"  cards             {s1.get('decision_requests')} decision requests "
+        f"over {s1.get('comments')} comments, {s1.get('versions')} versions",
+        f"  verdicts          {v.get('accept', 0)} accept, {v.get('reject', 0)} reject, "
+        f"{v.get('comment', 0)} comment, {v.get('none', 0)} undecided",
+        f"  time to verdict   median {num(s1.get('time_to_verdict_median'), 'm')}, "
+        f"p90 {num(s1.get('time_to_verdict_p90'), 'm')}",
+        f"  event mix         agent {s1.get('agent_events')} "
+        f"({num(s1.get('agent_share_pct'), '%')}), reviewer {s1.get('reviewer_events')}",
+        f"  rounds            {s2.get('rounds')} over {s2.get('slugs')} slugs, "
+        f"median {num(s2.get('median_verdicts_per_round'))} verdicts / "
+        f"{num(s2.get('median_duration_min'), 'm')}; "
+        f"acted mid-round {s2.get('reacted_mid_round')} of {s2.get('multi_rounds')} "
+        f"({num(s2.get('reacted_mid_round_pct'), '%')})",
+        f"  verdict→reaction  n={s3.get('n')}, median {num(s3.get('median_min'), 'm')}, "
+        f"p90 {num(s3.get('p90_min'), 'm')}, no reaction {s3.get('no_reaction')}",
+    ]
+
+
+def cmd_eval(args) -> int:
+    """Run the read-only baseline in a subprocess and print its headline.
+
+    eval.py is exec'd, never imported, and never calls back into this CLI:
+    `inbox` advances a read cursor, so a measurement that ran through it would
+    change the thing it measures.
+    """
+    script = PACKAGE_DIR / "eval.py"
+    if not script.exists():
+        print(f"ERROR: {script} is missing", file=sys.stderr)
+        return 2
+    out_dir = (Path(args.out_dir).expanduser() if args.out_dir else LOG_DIR.resolve())
+    argv = [sys.executable, "-m", "agent_annotate.eval", "--out-dir", str(out_dir)]
+    if args.since:
+        argv += ["--since", args.since]
+    if getattr(args, "refresh_transcripts", False):
+        argv.append("--refresh-transcripts")
+    try:
+        proc = subprocess.run(argv)
+    except OSError as e:
+        print(f"ERROR: could not run {script}: {e}", file=sys.stderr)
+        return 2
+    if proc.returncode != 0:
+        return proc.returncode
+
+    md = out_dir / "eval-baseline.md"
+    js = out_dir / "eval-baseline.json"
+    try:
+        payload = json.loads(js.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  report: {md}")
+        print(f"WARN: could not read {js}: {e}", file=sys.stderr)
+        return 0
+    print()
+    print(f"  annotate eval — {md}")
+    print("  ─────────────────────────────────────────────")
+    for line in _eval_headline(payload):
+        print(line)
+    print()
+    return 0
+
+
+def cmd_claim(args) -> int:
+    """Take ownership of a page for this session, without a monitor.
+
+    The hook only notifies the owning session; a handoff (or a page published
+    before ownership existed) needs a way to say "this one is mine now".
+    """
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    prior = record.get("owner_session")
+    fields = _owner_fields()
+    err = _stamp_owner_in_registry(project, slug, fields)
+    if err:
+        print(f"ERROR: could not claim {project}/{slug}: {err}", file=sys.stderr)
+        return 2
+    if record.get("slug_dir"):
+        meta_err = _write_owner_meta(Path(record["slug_dir"]), fields)
+        if meta_err:
+            print(f"WARN: owner chip not updated: {meta_err}", file=sys.stderr)
+    print(f"  {project}/{slug} claimed by {fields['owner_label']} "
+          f"(session {fields['owner_session']})")
+    if prior and prior != fields["owner_session"]:
+        print(f"  previous owner: {prior}")
+    _bus_emit(record.get("bus_file"), {
+        "event": "page_claimed",
+        "slug": slug,
+        "owner_session": fields["owner_session"],
+        "owner_agent": fields["owner_agent"],
+        "previous_owner": prior,
+    })
+    return 0
+
+
+def cmd_install_shim(args) -> int:
+    changed, msg = _ensure_shim_installed(force=getattr(args, "force", False), refresh=True)
+    print(f"  {msg}")
+    globals()["_INV_CACHE"] = None
+    found = shutil.which("annotate")
+    if found:
+        try:
+            ours = _is_ours(Path(found).read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            ours = False
+        print(f"  `annotate` on PATH → {found}" + ("" if ours else "   (NOT this package)"))
+        if not ours:
+            print(f"  Put {SHIM_PATH.parent} ahead of {Path(found).parent} on PATH, "
+                  f"or call `{_module_invocation()}` directly.")
+    else:
+        print(f"  `annotate` is not on PATH — add {SHIM_PATH.parent} to it, or call "
+              f"`{_module_invocation()}`.")
+    return 0 if (changed or "already" in msg) else 1
 
 
 def cmd_watch(args) -> int:
@@ -1174,21 +2179,47 @@ def _stop_monitor_leases(leases: list[tuple[Path, dict]]) -> bool:
     return True
 
 
-def _monitor_owner_label(explicit: str | None) -> tuple[str, str]:
-    owner = (
-        explicit
-        or os.environ.get("ANNOTATE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or os.environ.get("CODEX_THREAD_ID")
-        or f"interactive-ppid-{os.getppid()}"
-    )
-    if os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_AGENT_ID"):
-        agent = "claude-code"
-    elif os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_HOME"):
-        agent = "codex"
-    else:
-        agent = "coding-agent"
-    return owner, agent
+def _monitor_owner_label(explicit: str | None) -> tuple[str, str, str]:
+    """(session, agent, label) for the lease.
+
+    v2.18 read CLAUDE_SESSION_ID, which Claude Code leaves empty, so every
+    lease on this machine was labelled `interactive-ppid-<n>` and no lease
+    could be matched to the session that took it.
+    """
+    owner = explicit or os.environ.get("ANNOTATE_SESSION_ID") or _session_id()
+    if owner == "unknown":
+        owner = f"interactive-ppid-{os.getppid()}"
+    return owner, _session_agent(), _session_label(owner)
+
+
+def _monitor_line(ev: dict) -> str:
+    """One actionable event, compact: ts, event, ids, verdict counts."""
+    ids = ev.get("comment_ids")
+    if not isinstance(ids, list) or not ids:
+        ids = [ev["comment_id"]] if ev.get("comment_id") else []
+    counts = ev.get("verdict_counts")
+    if not isinstance(counts, dict):
+        counts = {ev["decision"]: 1} if ev.get("decision") else {}
+
+    bits = [ev.get("ts") or "", ev.get("event") or ""]
+    if ids:
+        head = [str(i) for i in ids[:12]]
+        bits.append("ids=" + ",".join(head)
+                    + (f"+{len(ids) - 12}" if len(ids) > 12 else ""))
+    tally = " ".join(f"{k}={v}" for k, v in sorted(counts.items()) if v)
+    if tally:
+        bits.append(tally)
+    undecided = ev.get("undecided_ids")
+    if isinstance(undecided, list) and undecided:
+        bits.append("undecided=%d" % len(undecided))
+    if ev.get("delivery"):
+        bits.append("delivery=%s" % ev["delivery"])
+    author = ev.get("author") or ev.get("by")
+    if author:
+        bits.append("by=%s" % author)
+    if ev.get("note"):
+        bits.append('note="%s"' % _clip(ev["note"], 80))
+    return "ANNOTATE_EVENT " + " ".join(b for b in bits if b)
 
 
 def cmd_monitor(args) -> int:
@@ -1199,18 +2230,10 @@ def cmd_monitor(args) -> int:
     queued event; the shared byte offset lets a newly armed monitor replay any
     events that arrived while no session monitor was active.
     """
-    slug = args.slug
-    record = None
-    project = None
-    for sf in _all_state_files():
-        st = json.loads(sf.read_text(encoding="utf-8"))
-        if slug in st.get("slugs", {}):
-            record = st["slugs"][slug]
-            project = st["project"]
-            break
-    if not record or not project:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
+    project, slug, record = resolved
 
     bus_file = Path(record["bus_file"])
     bus_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1234,8 +2257,8 @@ def cmd_monitor(args) -> int:
             return 3
 
     lease_path = lease_dir / "owner.json"
-    owner_session, owner_agent = _monitor_owner_label(args.owner)
-    provider_name = getattr(args, "provider", "stdout")
+    owner_session, owner_agent, owner_label = _monitor_owner_label(args.owner)
+    provider_name = getattr(args, "provider", None) or "stdout"
     provider_session = getattr(args, "session_id", None) or owner_session
     lease = {
         "schema_version": 2,
@@ -1245,6 +2268,7 @@ def cmd_monitor(args) -> int:
         "bus_file": str(bus_file),
         "owner_session": owner_session,
         "owner_agent": owner_agent,
+        "owner_label": owner_label,
         "provider": provider_name,
         "provider_session": provider_session,
         "host": socket.gethostname(),
@@ -1260,14 +2284,36 @@ def cmd_monitor(args) -> int:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(lease, fh, indent=2)
 
+    # A SIGTERM must run the finally block below. Claude Code's Monitor tool
+    # reaps a stream that has been quiet for ~60s, and the default disposition
+    # kills the process outright: all eight leases found on this machine were
+    # left behind pointing at dead pids, and every one of them made the web UI
+    # believe a session was listening when none was.
+    def _on_term(signum, frame):
+        raise KeyboardInterrupt
+
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(_sig, _on_term)
+        except (ValueError, OSError):
+            pass
+
     print("ANNOTATE_MONITOR_ARMED " + json.dumps({
         "project": project,
         "slug": slug,
         "owner_session": owner_session,
         "owner_agent": owner_agent,
+        "owner_label": owner_label,
         "provider": provider_name,
         "pid": os.getpid(),
     }, ensure_ascii=False, separators=(",", ":")), flush=True)
+    _bus_emit(bus_file, {
+        "event": "monitor_armed",
+        "slug": slug,
+        "owner_session": owner_session,
+        "owner_agent": owner_agent,
+        "pid": os.getpid(),
+    })
 
     offset_file = MONITOR_OFFSET_ROOT / project / f"{slug}.offset"
     offset_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1276,6 +2322,11 @@ def cmd_monitor(args) -> int:
     except Exception:
         offset = bus_file.stat().st_size
 
+    next_heartbeat_at = (
+        time.monotonic() + MONITOR_HEARTBEAT_INTERVAL
+        if MONITOR_HEARTBEAT_INTERVAL > 0
+        else float("inf")
+    )
     try:
         with bus_file.open("r", encoding="utf-8") as f:
             f.seek(min(offset, bus_file.stat().st_size))
@@ -1283,6 +2334,15 @@ def cmd_monitor(args) -> int:
                 line_start = f.tell()
                 line = f.readline()
                 if not line:
+                    now = time.monotonic()
+                    if now >= next_heartbeat_at:
+                        print("ANNOTATE_MONITOR_HEARTBEAT " + json.dumps({
+                            "ts": _now_iso(),
+                            "pid": os.getpid(),
+                            "slug": slug,
+                            "project": project,
+                        }, ensure_ascii=False, separators=(",", ":")), flush=True)
+                        next_heartbeat_at = now + MONITOR_HEARTBEAT_INTERVAL
                     time.sleep(0.25)
                     continue
                 next_offset = f.tell()
@@ -1291,25 +2351,13 @@ def cmd_monitor(args) -> int:
                 except Exception:
                     offset_file.write_text(str(next_offset), encoding="utf-8")
                     continue
-                if ev.get("event") not in MONITOR_EVENTS:
-                    offset_file.write_text(str(next_offset), encoding="utf-8")
-                    continue
-                print("ANNOTATE_EVENT " + json.dumps(ev, ensure_ascii=False, separators=(",", ":")), flush=True)
+                if ev.get("event") in MONITOR_PRINT_EVENTS:
+                    print(_monitor_line(ev), flush=True)
                 if provider_name == "codex-app-server" and ev.get("event") == "session_push":
+                    # Deliver before advancing the cursor: a failed turn leaves
+                    # the event unread so it is retried from the durable bus.
                     try:
-                        from .providers.codex_app_server import CodexAppServerAdapter
-
-                        comment_ids = ev.get("comment_ids") or ev.get("comments") or []
-                        count = ev.get("count") or len(comment_ids)
-                        page_url = record.get("url") or record.get("local_url")
-                        message = (
-                            f"[Agent Annotate] The user pushed {count} feedback item(s) from "
-                            f"{project}/{slug} to this session. Page: {page_url}. "
-                            f"Comment IDs: {comment_ids}. Run `annotate inbox {slug} --unread`, "
-                            "review the exact comments and anchors, then reply through the annotation API."
-                        )
-                        result = CodexAppServerAdapter().deliver(provider_session, message)
-                        print("ANNOTATE_DELIVERED " + json.dumps(result.__dict__, separators=(",", ":")), flush=True)
+                        _deliver_to_codex(provider_session, record, project, slug, ev)
                     except Exception as exc:
                         print(f"ANNOTATE_DELIVERY_ERROR {exc}", file=sys.stderr, flush=True)
                         f.seek(line_start)
@@ -1319,69 +2367,218 @@ def cmd_monitor(args) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        released = False
         try:
             current = json.loads(lease_path.read_text(encoding="utf-8"))
             if int(current.get("pid", 0)) == os.getpid():
                 lease_path.unlink(missing_ok=True)
+                released = True
         except Exception:
             pass
+        _bus_emit(bus_file, {
+            "event": "monitor_exited",
+            "slug": slug,
+            "owner_session": owner_session,
+            "pid": os.getpid(),
+            "lease_released": released,
+        })
+
+
+def _comment_call(args, method: str, path: str, body: dict) -> int:
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    _project, _slug, record = resolved
+    author = _resolve_author(getattr(args, "author", None))
+    code, payload = _api(record, method, path, body, author)
+    if code == 0 or code >= 400:
+        print(f"ERROR: {method} {path} → HTTP {code}: {payload}", file=sys.stderr)
+        return 2
+    print(json.dumps(payload, ensure_ascii=False) if payload is not None else "ok")
+    return 0
 
 
 def cmd_archive_comment(args) -> int:
-    author = _resolve_author(getattr(args, "author", None))
-    return _http_post_local(args.slug, f"/api/comments/{args.comment_id}/archive", {}, author)
+    return _comment_call(args, "POST", f"/api/comments/{args.comment_id}/archive", {})
 
 
 def cmd_addressed(args) -> int:
     body = {"status": "addressed_by_agent"}
     if args.response:
         body["response_text"] = args.response
-    author = _resolve_author(getattr(args, "author", None))
-    return _http_put_local(args.slug, f"/api/comments/{args.comment_id}", body, author)
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
 
 
-def _http_post_local(slug: str, path: str, body: dict, author: str) -> int:
-    rec = _find_record(slug)
-    if not rec:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
-        return 2
-    base = rec["local_url"].rstrip("/")
-    pbp = rec.get("public_base_path") or ""
+def _registry_entries() -> list[tuple[str, str, dict]]:
+    """Every registered (project, slug, record), newest state file last."""
+    out: list[tuple[str, str, dict]] = []
+    for sf in _all_state_files():
+        try:
+            st = json.loads(sf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project = st.get("project") or sf.stem
+        for slug, record in (st.get("slugs") or {}).items():
+            if isinstance(record, dict):
+                out.append((project, slug, record))
+    return sorted(out, key=lambda e: (e[0], e[1]))
+
+
+def _registered_listing() -> str:
+    entries = _registry_entries()
+    if not entries:
+        return f"    (nothing registered — run `{_inv()} publish <slug-dir>` first)"
+    lines = []
+    for project, slug, record in entries:
+        try:
+            live = "live" if _is_process_alive(int(record.get("pid") or 0)) else "stopped"
+        except (TypeError, ValueError):
+            live = "stopped"
+        lines.append(f"    {project}/{slug}  ({live})")
+    return "\n".join(lines)
+
+
+def _resolve_slug(raw: str, project_hint: str | None = None):
+    """(project, slug, record) for `slug`, `project/slug`, or `--project p slug`.
+
+    Also survives the two being swapped, which is what sessions actually typed,
+    and names the registered slugs on a miss instead of answering with a bare
+    "no state record for slug".
+    """
+    entries = _registry_entries()
+    project = project_hint
+    slug = (raw or "").strip().strip("/")
+    if "/" in slug:
+        head, tail = slug.split("/", 1)
+        if tail:
+            project, slug = head, tail
+
+    def _by_slug(name):
+        return [e for e in entries if e[1] == name]
+
+    candidates = []
+    if project:
+        candidates = [e for e in _by_slug(slug)
+                      if e[0] == project or e[0].endswith(project)]
+        if not candidates:
+            # The hint named no project. It was probably the slug, or noise.
+            candidates = _by_slug(slug) or _by_slug(project)
+    else:
+        candidates = _by_slug(slug)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        print(f"ERROR: {slug!r} is registered under more than one project — "
+              f"pass <project>/<slug>:", file=sys.stderr)
+        for p, s, _ in candidates:
+            print(f"    {p}/{s}", file=sys.stderr)
+        return None
+    print(f"ERROR: no page registered as {raw!r}. Registered slugs:", file=sys.stderr)
+    print(_registered_listing(), file=sys.stderr)
+    return None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# comments.json — the one place its shape is decoded
+# ────────────────────────────────────────────────────────────────────────────
+def _load_store(record: dict) -> dict:
+    """Read a slug's comment store.
+
+    The shape is {"schema_version":…, "anchors": {anchor_id: [comment, …]},
+    "archived": […]}. Every observed first-attempt parse reached for
+    store["comments"], which does not exist and never has.
+    """
+    slug_dir = record.get("slug_dir")
+    if not slug_dir:
+        return {"anchors": {}, "archived": []}
+    try:
+        data = json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {"anchors": {}, "archived": []}
+    if not isinstance(data, dict):
+        return {"anchors": {}, "archived": []}
+    anchors = data.get("anchors")
+    if not isinstance(anchors, dict):
+        # v1 store: {anchor_id: [comment, …]} at the top level.
+        anchors = {k: v for k, v in data.items() if isinstance(v, list)}
+    archived = data.get("archived")
+    return {"anchors": anchors, "archived": archived if isinstance(archived, list) else []}
+
+
+def _iter_comments(store: dict):
+    for anchor_id, items in (store.get("anchors") or {}).items():
+        if isinstance(items, list):
+            for c in items:
+                if isinstance(c, dict):
+                    yield anchor_id, c
+
+
+def _decision_cards(store: dict) -> list[dict]:
+    """Every live decision card, flattened for printing."""
+    cards = []
+    for anchor_id, c in _iter_comments(store):
+        dr = c.get("decision_request")
+        if not isinstance(dr, dict) or c.get("status") == "archived":
+            continue
+        d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+        cards.append({
+            "id": c.get("id") or "?",
+            "anchor_id": c.get("anchor_id") or anchor_id,
+            "prompt": dr.get("prompt") or c.get("text") or "",
+            "verdict": d.get("verdict"),
+            "verdict_text": d.get("text") or "",
+            "pending": bool(d.get("round_pending")),
+            "by": d.get("by") or "",
+            "decided_at": d.get("ts") or "",
+            "version": c.get("version") or "",
+            "status": c.get("status") or "",
+        })
+    return sorted(cards, key=lambda c: (c["anchor_id"], c["id"]))
+
+
+def _verdict_counts(cards: list[dict]) -> dict:
+    counts = {"accept": 0, "reject": 0, "comment": 0}
+    for c in cards:
+        if c["verdict"] in counts:
+            counts[c["verdict"]] += 1
+    return counts
+
+
+def _api(record: dict, method: str, path: str, body, author: str,
+         timeout: float = 15.0) -> tuple[int, object]:
+    """One local API call against a running server. Returns (status, parsed).
+
+    Status 0 means the request never reached a server; the payload is then the
+    error string.
+    """
+    base = (record.get("local_url") or "").rstrip("/")
+    pbp = record.get("public_base_path") or ""
     url = f"{base}{pbp}{path}"
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(url, method="POST", data=data, headers={
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, method=method, data=data, headers={
         "Content-Type": "application/json",
         "Cf-Access-Authenticated-User-Email": author,
+        "X-Annotate-Session": _session_id(),
     })
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            print(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            code = resp.status
+    except urllib.error.HTTPError as e:
+        code = e.code
+        try:
+            raw = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            raw = ""
     except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
-    return 0
-
-
-def _http_put_local(slug: str, path: str, body: dict, author: str) -> int:
-    rec = _find_record(slug)
-    if not rec:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
-        return 2
-    base = rec["local_url"].rstrip("/")
-    pbp = rec.get("public_base_path") or ""
-    url = f"{base}{pbp}{path}"
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(url, method="PUT", data=data, headers={
-        "Content-Type": "application/json",
-        "Cf-Access-Authenticated-User-Email": author,
-    })
+        return 0, f"{type(e).__name__}: {e}"
+    if not raw.strip():
+        return code, None
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            print(resp.read().decode())
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
-    return 0
+        return code, json.loads(raw)
+    except ValueError:
+        return code, raw
 
 
 def _find_record(slug: str) -> dict | None:
@@ -1392,29 +2589,84 @@ def _find_record(slug: str) -> dict | None:
     return None
 
 
-def cmd_doctor(args) -> int:
-    """Validate the portable installation without changing provider config."""
+# ────────────────────────────────────────────────────────────────────────────
+# Installation, providers, hook and MCP
+# ────────────────────────────────────────────────────────────────────────────
+def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev: dict) -> None:
+    """Push one session_push into a Codex thread through the app-server."""
+    from .providers.codex_app_server import CodexAppServerAdapter
 
+    comment_ids = ev.get("comment_ids") or ev.get("comments") or []
+    count = ev.get("comment_count") or ev.get("count") or len(comment_ids)
+    page_url = record.get("url") or record.get("local_url")
+    counts = ev.get("verdict_counts") if isinstance(ev.get("verdict_counts"), dict) else None
+    tally = (" Verdicts: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v) + "."
+             if counts else "")
+    message = (
+        f"[Agent Annotate] The reviewer pushed {count} feedback item(s) from "
+        f"{project}/{slug} to this session. Page: {page_url}. "
+        f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {slug} --unread`, "
+        "review the exact comments and anchors, then reply through the annotation API."
+    )
+    result = CodexAppServerAdapter().deliver(thread_id, message)
+    print("ANNOTATE_DELIVERED " + json.dumps(result.__dict__, separators=(",", ":")), flush=True)
+
+
+def cmd_doctor(args) -> int:
+    """Validate the installation without changing provider config."""
     ensure_runtime_dirs()
+    found = shutil.which("annotate")
+    ours = False
+    if found:
+        try:
+            ours = _is_ours(Path(found).read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            ours = False
+    node = shutil.which("node")
+    codex = shutil.which("codex")
+    lsof = shutil.which("lsof")
     checks = [
         ("version", True, __version__),
+        ("invocation", True, _inv()),
+        ("annotate", ours,
+         (found + ("" if ours else "   (NOT this package — run install-shim)"))
+         if found else f"not on PATH; run `{_module_invocation()} install-shim`"),
         ("config_dir", CONFIG_DIR.is_dir(), str(CONFIG_DIR)),
-        ("data_dir", DATA_DIR.is_dir(), str(DATA_DIR)),
+        ("projects_toml", True, str(PROJECTS_TOML) + ("" if PROJECTS_TOML.is_file() else "   (absent; local transport only)")),
         ("state_dir", STATE_DIR.is_dir(), str(STATE_DIR)),
-        ("web_assets", all((WEB_DIR / name).is_file() for name in ("shell.html", "shell.js", "shell.css", "adapter.js")), str(WEB_DIR)),
-        ("node", shutil.which("node") is not None, shutil.which("node") or "not found; inline JS lint unavailable"),
-        ("codex", shutil.which("codex") is not None, shutil.which("codex") or "not found; Codex adapter unavailable"),
+        ("bus_root", BUS_ROOT.is_dir(), str(BUS_ROOT)),
+        ("web_assets", all((WEB_DIR / n).is_file() for n in
+                           ("shell.html", "shell.js", "shell.css", "adapter.js", "template.html")),
+         str(WEB_DIR)),
+        ("hook_script", HOOK_SCRIPT.is_file() and os.access(HOOK_SCRIPT, os.X_OK), str(HOOK_SCRIPT)),
+        ("hook_installed", _hook_registered(), str(SETTINGS_JSON)),
+        ("node", node is not None, node or "not found; inline JS lint unavailable"),
+        ("lsof", lsof is not None, lsof or "not found; port liveness falls back to the bind test"),
+        ("codex", codex is not None, codex or "not found; Codex adapter unavailable"),
+        ("session", _session_id() != "unknown", _session_id()),
     ]
     failed = False
     for name, ok, detail in checks:
-        failed = failed or not ok
-        print(f"{'PASS' if ok else 'FAIL'}  {name:<12} {detail}")
+        hard = name in ("state_dir", "bus_root", "web_assets", "hook_script")
+        failed = failed or (hard and not ok)
+        print(f"{'PASS' if ok else ('FAIL' if hard else 'WARN')}  {name:<15} {detail}")
     return 1 if failed else 0
+
+
+def _hook_registered() -> bool:
+    try:
+        settings = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    for group in (settings.get("hooks") or {}).get("UserPromptSubmit") or []:
+        for h in (group.get("hooks") if isinstance(group, dict) else None) or []:
+            if isinstance(h, dict) and _is_our_hook_command(h.get("command", "")):
+                return True
+    return False
 
 
 def cmd_sessions(args) -> int:
     """List Codex sessions that can be assigned to an annotation page."""
-
     from .providers.codex_app_server import CodexAppServerAdapter
 
     try:
@@ -1441,7 +2693,6 @@ def cmd_sessions(args) -> int:
 
 def cmd_send(args) -> int:
     """Deliver a coordination message to one existing Codex thread."""
-
     from .providers.codex_app_server import CodexAppServerAdapter
 
     try:
@@ -1455,49 +2706,36 @@ def cmd_send(args) -> int:
 
 def cmd_connect(args) -> int:
     """Run the Codex page monitor as a detached delivery worker."""
-
-    if not _find_record(args.slug):
-        print(f"ERROR: no state record for slug {args.slug!r}", file=sys.stderr)
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
+    project, slug, _record = resolved
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / f"{args.slug}-codex-monitor.log"
+    log_path = LOG_DIR / f"{slug}-codex-monitor.log"
     cmd = [
-        sys.executable,
-        "-m",
-        "agent_annotate.cli",
-        "monitor",
-        args.slug,
-        "--owner",
-        args.thread,
-        "--provider",
-        "codex-app-server",
-        "--session-id",
-        args.thread,
+        sys.executable, "-m", "agent_annotate.cli",
+        "monitor", f"{project}/{slug}",
+        "--owner", args.thread,
+        "--provider", "codex-app-server",
+        "--session-id", args.thread,
     ]
     if args.takeover:
         cmd.append("--takeover")
     with log_path.open("ab", buffering=0) as log:
         proc = subprocess.Popen(
-            cmd,
-            stdout=log,
-            stderr=log,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
+            cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
         )
     deadline = time.time() + 4
+    lease = MONITOR_ROOT / project / slug / "owner.json"
     while time.time() < deadline:
         if proc.poll() is not None:
             print(f"ERROR: monitor stopped; inspect {log_path}", file=sys.stderr)
             return 2
-        rec = _find_record(args.slug)
-        if rec:
-            project = rec["project"]
-            lease = MONITOR_ROOT / project / args.slug / "owner.json"
-            if lease.exists():
-                print(f"Connected {project}/{args.slug} to Codex thread {args.thread}")
-                print(f"Monitor PID: {proc.pid}")
-                print(f"Log: {log_path}")
-                return 0
+        if lease.exists():
+            print(f"Connected {project}/{slug} to Codex thread {args.thread}")
+            print(f"Monitor PID: {proc.pid}")
+            print(f"Log: {log_path}")
+            return 0
         time.sleep(0.1)
     proc.terminate()
     print(f"ERROR: monitor did not acquire its lease; inspect {log_path}", file=sys.stderr)
@@ -1505,48 +2743,43 @@ def cmd_connect(args) -> int:
 
 
 def cmd_disconnect(args) -> int:
-    rec = _find_record(args.slug)
-    if not rec:
-        print(f"ERROR: no state record for slug {args.slug!r}", file=sys.stderr)
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
-    lease_dir = MONITOR_ROOT / rec["project"] / args.slug
-    leases = _live_monitor_leases(lease_dir, Path(rec["bus_file"]))
+    project, slug, rec = resolved
+    lease_dir = MONITOR_ROOT / project / slug
+    leases = _live_monitor_leases(lease_dir, Path(rec["bus_file"])) if lease_dir.is_dir() else []
     if not leases:
-        print(f"No live monitor owns {rec['project']}/{args.slug}")
+        print(f"No live monitor owns {project}/{slug}")
         return 0
     if not _stop_monitor_leases(leases):
-        print(f"ERROR: could not stop monitor for {rec['project']}/{args.slug}", file=sys.stderr)
+        print(f"ERROR: could not stop monitor for {project}/{slug}", file=sys.stderr)
         return 2
-    print(f"Disconnected monitor for {rec['project']}/{args.slug}; server remains running")
+    print(f"Disconnected monitor for {project}/{slug}; server remains running")
     return 0
 
 
 def cmd_hook_check(args) -> int:
-    """Provider hook fallback: report bus activity since the previous call."""
+    """The UserPromptSubmit hook, in-process: same code as check-comment-bus.sh
+    execs, reading Claude Code's payload from stdin. Always exits 0."""
+    from .hooks.check_comment_bus import main as hook_main
 
-    offset_root = STATE_DIR / "hook-offsets"
-    summaries = []
-    for bus_file in sorted(BUS_ROOT.glob("*/*.ndjson")):
-        project = bus_file.parent.name
-        slug = bus_file.stem
-        offset_file = offset_root / project / f"{slug}.offset"
-        offset_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            previous = int(offset_file.read_text(encoding="utf-8")) if offset_file.exists() else 0
-        except ValueError:
-            previous = 0
-        size = bus_file.stat().st_size
-        if size > previous:
-            with bus_file.open("r", encoding="utf-8") as handle:
-                handle.seek(previous)
-                count = sum(1 for line in handle if line.strip())
-            if count:
-                summaries.append(f"{project}/{slug}: {count} new event(s)")
-            offset_file.write_text(str(size), encoding="utf-8")
-    if summaries:
-        print("[annotate] " + "; ".join(summaries))
-        print("Run `annotate inbox <slug> --unread` to inspect them.")
+    try:
+        hook_main()
+    except SystemExit:
+        pass
+    except Exception:
+        pass
     return 0
+
+
+def cmd_prune_bus(args) -> int:
+    from .prune_bus import main as prune_main
+
+    argv = ["--days", str(args.days)]
+    if args.apply:
+        argv.append("--apply")
+    return int(prune_main(argv) or 0)
 
 
 def cmd_mcp(args) -> int:
@@ -1560,38 +2793,12 @@ def cmd_mcp(args) -> int:
 # Argparse
 # ────────────────────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(prog="annotate", description="annotate v2 CLI")
+    p = argparse.ArgumentParser(prog="annotate", description="Agent Annotate CLI")
     p.add_argument("--version", action="version", version=f"agent-annotate {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp_doc = sub.add_parser("doctor", help="validate installation and local integrations")
+    sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
     sp_doc.set_defaults(func=cmd_doctor)
-
-    sp_sessions = sub.add_parser("sessions", help="list Codex sessions available for page ownership")
-    sp_sessions.add_argument("--cwd", default=None, help="only list sessions with this exact working directory")
-    sp_sessions.add_argument("--json", action="store_true")
-    sp_sessions.set_defaults(func=cmd_sessions)
-
-    sp_send = sub.add_parser("send", help="send one coordination message to a Codex thread")
-    sp_send.add_argument("--thread", required=True)
-    sp_send.add_argument("message")
-    sp_send.set_defaults(func=cmd_send)
-
-    sp_connect = sub.add_parser("connect", help="connect one page to a Codex thread in the background")
-    sp_connect.add_argument("slug")
-    sp_connect.add_argument("--thread", required=True)
-    sp_connect.add_argument("--takeover", action="store_true")
-    sp_connect.set_defaults(func=cmd_connect)
-
-    sp_disconnect = sub.add_parser("disconnect", help="release a page monitor without stopping its server")
-    sp_disconnect.add_argument("slug")
-    sp_disconnect.set_defaults(func=cmd_disconnect)
-
-    sp_hook = sub.add_parser("hook-check", help=argparse.SUPPRESS)
-    sp_hook.set_defaults(func=cmd_hook_check)
-
-    sp_mcp = sub.add_parser("mcp", help="run the Agent Annotate MCP server over stdio")
-    sp_mcp.set_defaults(func=cmd_mcp)
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
@@ -1646,19 +2853,65 @@ def main():
     sp_pv.add_argument("slug_dir")
     sp_pv.add_argument("version")
     sp_pv.add_argument("--label", default=None)
+    sp_pv.add_argument("--project", default=None)
     sp_pv.set_defaults(func=cmd_publish_version)
 
-    sp_in = sub.add_parser("inbox", help="dump new comments since last call")
-    sp_in.add_argument("slug")
-    sp_in.add_argument("--unread", action="store_true")
+    sp_in = sub.add_parser("inbox", help="read this session's unseen bus events")
+    sp_in.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_in.add_argument("--project", default=None)
+    sp_in.add_argument("--unread", action="store_true",
+                       help="only events this session has not read, and advance its cursor")
+    sp_in.add_argument("--json", action="store_true", help="raw events as one JSON object")
+    sp_in.add_argument("--all-events", dest="all_events", action="store_true",
+                       help="include bookkeeping events (seen_updated, notice_emitted, …)")
     sp_in.set_defaults(func=cmd_inbox)
+
+    sp_cards = sub.add_parser("cards", aliases=["open-cards"],
+                              help="list decision cards and their verdicts")
+    sp_cards.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_cards.add_argument("--project", default=None)
+    sp_cards.add_argument("--json", action="store_true")
+    sp_cards.set_defaults(func=cmd_cards)
+
+    sp_ask = sub.add_parser("ask", help="create/refresh decision cards from a cards.json")
+    sp_ask.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_ask.add_argument("--from", dest="from_file", required=True,
+                        metavar="cards.json",
+                        help="JSON array of {anchor_id, text, decision_request}")
+    sp_ask.add_argument("--version", default=None,
+                        help="bind the cards to this version (default: meta current)")
+    sp_ask.add_argument("--project", default=None)
+    sp_ask.add_argument("--author", default=None)
+    sp_ask.add_argument("--json", action="store_true")
+    sp_ask.set_defaults(func=cmd_ask)
+
+    sp_claim = sub.add_parser("claim", help="take ownership of a page for this session")
+    sp_claim.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_claim.add_argument("--project", default=None)
+    sp_claim.set_defaults(func=cmd_claim)
+
+    sp_eval = sub.add_parser("eval", help="read-only baseline of the review loop")
+    sp_eval.add_argument("--since", default=None,
+                         help="recency cutoff YYYY-MM-DD (eval.py default: 2026-09-01)")
+    sp_eval.add_argument("--out-dir", dest="out_dir", default=None,
+                         help="where to write eval-baseline.{md,json} "
+                              "(default: <state>/logs)")
+    sp_eval.add_argument("--refresh-transcripts", dest="refresh_transcripts",
+                         action="store_true", help="ignore the transcript scan cache")
+    sp_eval.set_defaults(func=cmd_eval)
+
+    sp_shim = sub.add_parser("install-shim", help="(re)write ~/.local/bin/annotate")
+    sp_shim.add_argument("--force", action="store_true",
+                         help="overwrite a file this skill did not write")
+    sp_shim.set_defaults(func=cmd_install_shim)
 
     sp_w = sub.add_parser("watch", help="tail comments to stdout")
     sp_w.add_argument("slug")
     sp_w.set_defaults(func=cmd_watch)
 
     sp_mon = sub.add_parser("monitor", help="tail actionable events and advertise an active session monitor")
-    sp_mon.add_argument("slug")
+    sp_mon.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_mon.add_argument("--project", default=None)
     sp_mon.add_argument("--owner", default=None,
                         help="interactive session/thread label stored in the ownership lease")
     sp_mon.add_argument("--takeover", action="store_true",
@@ -1669,19 +2922,55 @@ def main():
                         help="provider session/thread id used by an automatic delivery backend")
     sp_mon.set_defaults(func=cmd_monitor)
 
+    sp_sessions = sub.add_parser("sessions", help="list Codex sessions available for page ownership")
+    sp_sessions.add_argument("--cwd", default=None, help="only list sessions with this exact working directory")
+    sp_sessions.add_argument("--json", action="store_true")
+    sp_sessions.set_defaults(func=cmd_sessions)
+
+    sp_send = sub.add_parser("send", help="send one coordination message to a Codex thread")
+    sp_send.add_argument("--thread", required=True)
+    sp_send.add_argument("message")
+    sp_send.set_defaults(func=cmd_send)
+
+    sp_connect = sub.add_parser("connect", help="connect one page to a Codex thread in the background")
+    sp_connect.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_connect.add_argument("--project", default=None)
+    sp_connect.add_argument("--thread", required=True)
+    sp_connect.add_argument("--takeover", action="store_true")
+    sp_connect.set_defaults(func=cmd_connect)
+
+    sp_disconnect = sub.add_parser("disconnect", help="release a page monitor without stopping its server")
+    sp_disconnect.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_disconnect.add_argument("--project", default=None)
+    sp_disconnect.set_defaults(func=cmd_disconnect)
+
+    sp_hook = sub.add_parser("hook-check",
+                             help="run the UserPromptSubmit hook in-process (reads the Claude Code payload on stdin)")
+    sp_hook.set_defaults(func=cmd_hook_check)
+
+    sp_prune = sub.add_parser("prune-bus", help="archive buses quiet for N days, with their cursors")
+    sp_prune.add_argument("--days", type=int, default=30)
+    sp_prune.add_argument("--apply", action="store_true", help="actually move files (default: dry run)")
+    sp_prune.set_defaults(func=cmd_prune_bus)
+
+    sp_mcp = sub.add_parser("mcp", help="run the Agent Annotate MCP server over stdio")
+    sp_mcp.set_defaults(func=cmd_mcp)
+
     sp_arc = sub.add_parser("archive-comment", help="archive a comment")
     sp_arc.add_argument("slug")
     sp_arc.add_argument("comment_id")
+    sp_arc.add_argument("--project", default=None)
     sp_arc.add_argument("--author", default=None,
-                        help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:opus-4-7)")
+                        help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:claude)")
     sp_arc.set_defaults(func=cmd_archive_comment)
 
     sp_addr = sub.add_parser("addressed", help="mark comment as addressed_by_agent")
     sp_addr.add_argument("slug")
     sp_addr.add_argument("comment_id")
     sp_addr.add_argument("--response", default=None)
+    sp_addr.add_argument("--project", default=None)
     sp_addr.add_argument("--author", default=None,
-                         help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:opus-4-7)")
+                         help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:claude)")
     sp_addr.set_defaults(func=cmd_addressed)
 
     args = p.parse_args()
