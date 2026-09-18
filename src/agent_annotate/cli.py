@@ -2307,18 +2307,24 @@ def _archive_comment_in_store(store: dict, comment_id: str, author: str, now: st
     return False
 
 
-def _server_reachable(record: dict, timeout: float = 3.0) -> bool:
-    """True when something answers on the page's own local URL.
+def _live_server_for(record: dict) -> dict | None:
+    """The live server serving THIS slug_dir, with the port `ps` reports.
 
-    The registry pid lies after a restart outside the CLI, so the HTTP surface
-    is the only honest test of whether writing comments.json directly would
-    race a live server.
+    Identity is the slug_dir, never the port: ports are reused across the
+    registry (a dead row and a live one routinely share 8801), so "something
+    answers on that URL" would happily point `close` at another page's server.
+    The recorded pid is equally unreliable after a restart outside the CLI,
+    which is why `status` locates servers the same way.
     """
-    if not record.get("local_url"):
-        return False
-    code, _ = _api(record, "GET", "/api/capabilities", None,
-                   _resolve_author(None), timeout=timeout)
-    return code != 0
+    slug_dir = record.get("slug_dir")
+    if not slug_dir:
+        return None
+    try:
+        key = str(Path(slug_dir).resolve())
+    except OSError:
+        return None
+    procs = _running_servers().get(key) or []
+    return procs[0] if procs else None
 
 
 def cmd_close(args) -> int:
@@ -2378,21 +2384,22 @@ def cmd_close(args) -> int:
     author = _resolve_author(getattr(args, "author", None))
     ids = [row["id"] for row in stale]
     archived_ids, failures = [], []
-    if _server_reachable(record):
-        # The page is live: its server owns comments.json, so go through the
-        # route it already has rather than writing the file underneath it.
+    live = _live_server_for(record)
+    if live:
+        # The page is serving: its server owns comments.json, so go through
+        # the route it already has rather than writing the file underneath it.
+        # The port comes from the running process, not the registry, which may
+        # still name the port this page had two restarts ago.
+        target = dict(record)
+        if live.get("port"):
+            target["local_url"] = f"http://localhost:{live['port']}/"
         for cid in ids:
-            code, payload = _api(record, "POST", f"/api/comments/{cid}/archive", {}, author)
+            code, payload = _api(target, "POST", f"/api/comments/{cid}/archive", {}, author)
             if code == 200:
                 archived_ids.append(cid)
             else:
                 failures.append((cid, code, payload))
     else:
-        live = _running_servers().get(str(Path(record["slug_dir"]).resolve()))
-        if live:
-            print("ERROR: a server is running for this slug_dir but its URL did not "
-                  "answer; refusing to write comments.json underneath it.", file=sys.stderr)
-            return 2
         stamp = _now_iso()
         try:
             with _flock(_store_lock_path(project, slug)):

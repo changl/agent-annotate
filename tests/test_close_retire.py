@@ -281,3 +281,29 @@ def test_status_does_not_guess_when_ps_is_unavailable(estate, monkeypatch, capsy
 
     assert cli.cmd_status(SimpleNamespace(slug=None, retired=False)) == 0
     assert "(gone)" not in capsys.readouterr().out
+
+
+def test_close_goes_through_the_api_when_a_server_holds_the_slug_dir(page, monkeypatch, capsys):
+    """Identity is the slug_dir, not the port: the registry reuses ports
+    across dead and live rows, so "something answers there" would point
+    `close` at another page's server. When a server really is serving this
+    slug_dir, the CLI must not write comments.json underneath it."""
+    calls = []
+    monkeypatch.setattr(cli, "_running_servers",
+                        lambda: {str(page.slug_dir.resolve()): [{"pid": 4242, "port": 8877}]})
+
+    def _fake_api(record, method, path, body, author, timeout=15.0):
+        calls.append((record.get("local_url"), method, path))
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(cli, "_api", _fake_api)
+    before = _store(page)
+
+    assert cli.cmd_close(_close()) == 0
+    assert [c[2] for c in calls] == [
+        "/api/comments/aaaaaaaaaaaa/archive", "/api/comments/bbbbbbbbbbbb/archive"]
+    # The port comes from the running process, not the stale registry row.
+    assert {c[0] for c in calls} == {"http://localhost:8877/"}
+    assert _store(page) == before        # the CLI wrote nothing itself
+    ev = _events(page)[0]
+    assert ev["event"] == "page_closed" and ev["archived_count"] == 2
