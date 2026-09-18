@@ -255,6 +255,7 @@ next hook notice. A deferred verdict inside an open round reports
 | `archive-comment <slug> <id>` | `POST /api/comments/<id>/archive`. |
 | `migrate <legacy.html> [--slug] [--version] [--label] [--copy]` | Builds a `<slug-dir>/` beside the file: `versions/v1.html`, `current.html`, `current.meta.json`, v2 `comments.json`, legacy store backed up as `comments.<stem>.v1.bak.json`. |
 | `install-shim [--force]` | See §1. |
+| `install-skill --provider claude\|codex --dest <dir>` | Writes `SKILL.md` (invocation section rewritten to `annotate <cmd>` with the `python3 -m agent_annotate.cli` fallback), `references/`, a `hooks/check-comment-bus.sh` shim that execs the packaged hook, and for Codex `agents/openai.yaml`, from the package's own skill text. Atomic, idempotent, prints `wrote`/`updated`/`unchanged` per file, never deletes anything in `<dir>`. A skill directory is a deployment of the package, not a copy of its code. |
 | `doctor` | Version, invocation, what `annotate` on PATH resolves to, every root, the hook script and whether it is registered, `node`/`lsof`/`codex`, and the session id. Exit 1 only on a missing root or asset. |
 | `sessions [--cwd DIR] [--json]` | Lists Codex app-server threads that can own a page. |
 | `connect <slug> --thread <id> [--takeover]` | Detached `monitor --provider codex-app-server` for that thread; waits for the lease. |

@@ -38,7 +38,7 @@ Issues = "https://github.com/changl/agent-annotate/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_annotate = ["web/*", "hooks/*"]
+agent_annotate = ["web/*", "hooks/*", "skills/*/*", "skills/*/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

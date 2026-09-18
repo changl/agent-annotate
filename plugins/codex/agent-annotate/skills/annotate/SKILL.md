@@ -126,7 +126,7 @@ to confirm. Never curl a page. Never call one live off a 200.
 ## 9. References
 
 The references are shared with the Claude skill and live in the repository at
-`skills/claude/annotate/references/`: `building-pages.md`,
+`src/agent_annotate/skills/claude/references/`: `building-pages.md`,
 `decision-cards.md`, `cli-reference.md`, `architecture.md`,
 `telemetry-and-eval.md`, `interaction-contract.md`
-(https://github.com/changl/agent-annotate/tree/main/skills/claude/annotate/references).
+(https://github.com/changl/agent-annotate/tree/main/src/agent_annotate/skills/claude/references).

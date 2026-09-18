@@ -1,7 +1,7 @@
 # Architecture
 
 The detailed reference (data shapes, HTTP surface, event list) is
-[skills/claude/annotate/references/architecture.md](../skills/claude/annotate/references/architecture.md).
+[src/agent_annotate/skills/claude/references/architecture.md](../src/agent_annotate/skills/claude/references/architecture.md).
 This page is the map.
 
 ## Runtime boundary
@@ -89,7 +89,7 @@ monitor arming and exit, hook notices, decision requests, batch seeds and
 rounds are all events. `annotate eval` reads the buses, the comment stores
 and the Claude transcripts without touching a cursor and reports seven
 sections with five regression thresholds — see
-[telemetry-and-eval.md](../skills/claude/annotate/references/telemetry-and-eval.md).
+[telemetry-and-eval.md](../src/agent_annotate/skills/claude/references/telemetry-and-eval.md).
 
 ## Codex delivery
 
@@ -105,8 +105,9 @@ selection is always explicit. A Codex agent reads its feedback with
 
 ## Distribution
 
-The Python package is canonical. `skills/claude/annotate` is the Claude Code
-skill and holds the one set of references; `skills/codex/annotate` and the
+The Python package is canonical. `src/agent_annotate/skills/claude` is the Claude Code
+skill and holds the one set of references, shipped as package data and written
+into a skill directory by `annotate install-skill`; `src/agent_annotate/skills/codex` and the
 Codex plugin say the same thing in Codex wording and point at those
 references. Neither wrapper owns the comment data or the browser
 implementation.

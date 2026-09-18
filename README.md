@@ -34,7 +34,7 @@ an install sees the pages that already exist: `~/.claude/annotate-state/state`
 for the registry, cursors, leases and logs, `~/.claude/annotate-bus` for the
 event buses. `ANNOTATE_STATE_DIR`, `ANNOTATE_BUS_ROOT`, `ANNOTATE_CONFIG_DIR`
 and friends relocate them; see the environment table in
-[cli-reference.md](skills/claude/annotate/references/cli-reference.md).
+[cli-reference.md](src/agent_annotate/skills/claude/references/cli-reference.md).
 
 ## A round
 
@@ -52,7 +52,7 @@ annotate publish-version ./review v2 --label "round 2"
 `decision_request` carries the prompt, the context, a recommendation, what
 each option costs, evidence anchors, impact and blocking. Cards that
 recommend get answered; cards that only ask mostly do not. The schema is in
-[decision-cards.md](skills/claude/annotate/references/decision-cards.md).
+[decision-cards.md](src/agent_annotate/skills/claude/references/decision-cards.md).
 
 In Claude Code the `UserPromptSubmit` hook (installed by `publish`) announces
 new reviewer activity on the next turn, to the session that owns the page
@@ -77,8 +77,8 @@ request, so a fix reaches every published page at once.
 
 - `src/agent_annotate/` — CLI, page server, `paths.py`, verify/extract/eval,
   hooks, providers, transports, web assets
-- `skills/claude/annotate/` — the Claude Code skill and the one set of references
-- `skills/codex/annotate/`, `plugins/codex/` — the same skill in Codex wording
+- `src/agent_annotate/skills/claude/` — the Claude Code skill and the one set of references, shipped as package data; `annotate install-skill` writes a skill directory from them
+- `src/agent_annotate/skills/codex/`, `plugins/codex/` — the same skill in Codex wording
 - `tests/` — unit suite (sandboxed roots) and browser suite
 - `docs/` — architecture map, contract map, handoffs, incidents
 

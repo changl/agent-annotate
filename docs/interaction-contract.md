@@ -1,7 +1,7 @@
 # Interaction contract
 
 The contract has one home:
-[skills/claude/annotate/references/interaction-contract.md](../skills/claude/annotate/references/interaction-contract.md).
+[src/agent_annotate/skills/claude/references/interaction-contract.md](../src/agent_annotate/skills/claude/references/interaction-contract.md).
 Every behavior listed there is a release gate, and the tests under `tests/`
 and `tests/browser/` are named after them. The headings, so a reader knows
 what is covered:
@@ -24,6 +24,6 @@ what is covered:
   version history registered once.
 
 The schema those gates apply to is in
-[decision-cards.md](../skills/claude/annotate/references/decision-cards.md),
+[decision-cards.md](../src/agent_annotate/skills/claude/references/decision-cards.md),
 and the event list in
-[telemetry-and-eval.md](../skills/claude/annotate/references/telemetry-and-eval.md).
+[telemetry-and-eval.md](../src/agent_annotate/skills/claude/references/telemetry-and-eval.md).

@@ -17,6 +17,7 @@ Subcommands:
     unpublish <slug>                      tear down route + stop server
     claim <slug>                          take ownership of a page for this session
     install-shim [--force]                (re)write ~/.local/bin/annotate
+    install-skill --provider P --dest D   write a skill directory from the packaged text
     status [<slug>]                       list active slugs / health
     doctor                                validate the installation
     migrate <legacy.html>                 one-shot v1→v2 migration
@@ -2121,6 +2122,16 @@ def cmd_install_shim(args) -> int:
     return 0 if (changed or "already" in msg) else 1
 
 
+def cmd_install_skill(args) -> int:
+    """Write a provider skill directory (SKILL.md, references/, hook shim)
+    from the packaged skill text. Idempotent; never deletes."""
+    from .skillgen import install_skill
+
+    for line in install_skill(args.provider, Path(args.dest)):
+        print(line)
+    return 0
+
+
 def cmd_watch(args) -> int:
     slug = args.slug
     record = None
@@ -2913,6 +2924,12 @@ def main():
     sp_shim.add_argument("--force", action="store_true",
                          help="overwrite a file this skill did not write")
     sp_shim.set_defaults(func=cmd_install_shim)
+
+    sp_skill = sub.add_parser("install-skill",
+                              help="write a provider skill directory from the packaged skill text")
+    sp_skill.add_argument("--provider", choices=["claude", "codex"], required=True)
+    sp_skill.add_argument("--dest", required=True, help="the skill directory to write into")
+    sp_skill.set_defaults(func=cmd_install_skill)
 
     sp_w = sub.add_parser("watch", help="tail comments to stdout")
     sp_w.add_argument("slug")
