@@ -166,7 +166,7 @@ every line carrying `ts` and `slug`:
 ```json
 {"ts":"2026-06-28T15:00:00Z","event":"comment_created","slug":"schema","comment_id":"abc","anchor_id":"tbl:x:row:1","author":"user@example.com","version":"v3"}
 {"ts":"2026-06-28T15:02:00Z","event":"comment_updated","slug":"schema","comment_id":"abc","decision":"accept","latency_s":412.0,"author":"user@example.com"}
-{"ts":"2026-06-28T15:04:00Z","event":"round_submitted","slug":"schema","comment_ids":["abc","def"],"verdict_counts":{"accept":2,"reject":0,"comment":0},"undecided_ids":[],"by":"user@example.com"}
+{"ts":"2026-06-28T15:04:00Z","event":"round_submitted","slug":"schema","comment_ids":["abc","def"],"verdict_counts":{"accept":2,"reject":0,"changes":0,"comment":0},"undecided_ids":[],"by":"user@example.com"}
 ```
 
 The bus is append-only and durable. Comments persist to `comments.json`

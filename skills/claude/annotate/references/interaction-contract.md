@@ -23,6 +23,7 @@ this file lives here; the Codex skill and plugin point at it.
 13. Version changes retain comments and preserve explicit version association.
 14. A decision card renders its prompt, context, recommendation, each option's consequence, impact and blocking chips, and evidence links on both the rail card and the inline body strip. A card the server would not store (malformed, or over the 8192-byte cap) is refused with HTTP 400/413, never silently dropped.
 15. A verdict can be changed; the prior verdict is kept in `decision_history` and both bus events mark the reversal.
+15a. The third verdict is "Request changes" (`changes`) wherever the server advertises it in `GET /api/capabilities` `verdicts`, and it submits only with a non-empty note. A server that does not advertise it still shows the pre-D2 "Comment" button, and the server accepts that verdict from such a page indefinitely.
 16. In round mode (server capabilities report `rounds`) a verdict click is parked with `round_pending` and emits no push. "Submit review" clears every pending flag and emits exactly one `round_submitted` and one `session_push {round: true}`; "Discard pending" emits `round_discarded` and no push; "Send now" pushes that one card. Against a server without capabilities the chrome behaves exactly as v2.18.
 17. `ask` is idempotent by anchor: re-posing a round updates existing cards by the same author on the same anchor instead of duplicating them.
 

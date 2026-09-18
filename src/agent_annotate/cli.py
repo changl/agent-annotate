@@ -1810,8 +1810,8 @@ def cmd_inbox(args) -> int:
         for ev in shown:
             print(_inbox_line(ev, texts))
         if cards:
-            print("  decisions: %d accept, %d reject, %d comment; undecided: %s"
-                  % (counts["accept"], counts["reject"], counts["comment"],
+            print("  decisions: %d accept, %d reject, %d changes; undecided: %s"
+                  % (counts["accept"], counts["reject"], counts["changes"],
                      ", ".join(undecided) if undecided else "none"))
 
     if args.unread and new_offset > offset:
@@ -1859,8 +1859,8 @@ def cmd_cards(args) -> int:
         print(line)
     counts = _verdict_counts(cards)
     undecided = [c["anchor_id"] or c["id"] for c in cards if not c["verdict"]]
-    print("  decisions: %d accept, %d reject, %d comment; undecided: %s"
-          % (counts["accept"], counts["reject"], counts["comment"],
+    print("  decisions: %d accept, %d reject, %d changes; undecided: %s"
+          % (counts["accept"], counts["reject"], counts["changes"],
              ", ".join(undecided) if undecided else "none"))
     return 0
 
@@ -2010,7 +2010,8 @@ def _eval_headline(payload: dict) -> list[str]:
         f"  cards             {s1.get('decision_requests')} decision requests "
         f"over {s1.get('comments')} comments, {s1.get('versions')} versions",
         f"  verdicts          {v.get('accept', 0)} accept, {v.get('reject', 0)} reject, "
-        f"{v.get('comment', 0)} comment, {v.get('none', 0)} undecided",
+        f"{v.get('changes', 0)} changes, {v.get('none', 0)} undecided, "
+        f"{v.get('closed', 0)} closed",
         f"  time to verdict   median {num(s1.get('time_to_verdict_median'), 'm')}, "
         f"p90 {num(s1.get('time_to_verdict_p90'), 'm')}",
         f"  event mix         agent {s1.get('agent_events')} "
@@ -2545,11 +2546,27 @@ def _decision_cards(store: dict) -> list[dict]:
     return sorted(cards, key=lambda c: (c["anchor_id"], c["id"]))
 
 
+# D2: "changes" (Request changes) replaced "comment" as the third verdict.
+# Both are counted in the same column — a page answered before D2, or by a
+# still-loaded pre-D2 chrome, reads the same as one answered after it.
+VERDICT_COLUMNS = ("accept", "reject", "changes")
+_VERDICT_ALIAS = {"comment": "changes"}
+
+
+def _verdict_column(verdict) -> str | None:
+    """The counting column for a stored verdict, or None if it has no verdict."""
+    if not verdict:
+        return None
+    col = _VERDICT_ALIAS.get(verdict, verdict)
+    return col if col in VERDICT_COLUMNS else None
+
+
 def _verdict_counts(cards: list[dict]) -> dict:
-    counts = {"accept": 0, "reject": 0, "comment": 0}
+    counts = {k: 0 for k in VERDICT_COLUMNS}
     for c in cards:
-        if c["verdict"] in counts:
-            counts[c["verdict"]] += 1
+        col = _verdict_column(c["verdict"])
+        if col:
+            counts[col] += 1
     return counts
 
 

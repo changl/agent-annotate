@@ -14,9 +14,9 @@ Validated identically by `POST /api/comments`, `PUT /api/comments/<id>` and
 |---|---|---|---|
 | `prompt` | str | **yes** | The question. Keep it under ~200 chars; it is the card title on both surfaces. An empty or missing prompt is HTTP 400. |
 | `context` | str | no | What is being decided and why it matters. ≤600 chars recommended. |
-| `recommendation` | `"accept"` \| `"reject"` \| option id \| `null` | no | Puts a "Recommended" badge on that button. |
-| `options` | list | no | Strings (legacy: any subset of `accept`/`reject`/`comment`) **or** objects `{id, label, consequence, style}`. `id` must be a non-empty string. `style` is `primary`/`default`/`danger`. Defaults to all three string options. |
-| `consequences` | `{accept, reject}` | no | Shortcut when `options` are strings. |
+| `recommendation` | `"accept"` \| `"reject"` \| `"changes"` \| option id \| `null` | no | Puts a "Recommended" badge on that button. |
+| `options` | list | no | Strings (any subset of `accept`/`reject`/`changes`; `comment` is the pre-D2 spelling of `changes` and still parses) **or** objects `{id, label, consequence, style}`. `id` must be a non-empty string. `style` is `primary`/`default`/`danger`. Defaults to `["accept", "reject", "changes"]`. |
+| `consequences` | `{accept, reject, changes}` | no | Shortcut when `options` are strings. |
 | `evidence` | `[{label, anchor}]` | no | `anchor` is a `data-anchor-id` on the page. Rendered as a link that scrolls to it and flashes it. |
 | `impact` | `low`\|`medium`\|`high` | no | Anything else is HTTP 400. |
 | `blocking` | bool | no | Renders a chip. |
@@ -29,6 +29,16 @@ returned 200, so agents believed cards existed that had never been posed.
 `GET /api/capabilities` reports the live cap as `decision_request_cap`.
 
 **Withdrawing.** `PUT` with `decision_request: null` clears an unanswered card.
+
+**The three verdicts.** `accept` closes the card (`status: user_confirmed`).
+`reject` and `changes` leave it open, because the agent still owes an answer.
+`changes` ("Request changes") **requires** `text`: a request with no note is
+HTTP 400, and the note is the instruction — the auto reply reads
+`↻ Changes requested: <text>`. `GET /api/capabilities` advertises the live set
+as `verdicts`, and a chrome that does not find `changes` there renders the
+pre-D2 "Comment" button instead. The server still accepts verdict `comment`
+from such a page forever; `annotate cards` and `annotate inbox` count it in
+the same `changes` column.
 
 **Verdict shape.** `comment.decision = {verdict, text, ts, by}` plus server-set
 `latency_s` (seconds since `requested_at`; absent on pre-2.19 cards) and
@@ -67,11 +77,13 @@ overlay where neither is possible, e.g. inside `<svg>`).
 
 Unanswered cards also mark their page pin in pulsing indigo, so a reviewer can
 find a pending decision without opening the drawer. Under Accept/Reject there
-is an "+ Add a note" toggle that attaches text to that verdict.
+is an "+ Add a note" toggle that attaches text to that verdict. "Request
+changes" opens the same textarea, but there the note is required: the Send
+button does nothing while it is empty.
 
-**Object options with custom ids.** The verdict enum is unchanged. When an
-option's `id` is not `accept`/`reject`/`comment`, the reviewer's click posts
-verdict `comment` with text `Selected: <label>`. Read `decision.text`, not just
+**Object options with custom ids.** Unchanged by D2. When an option's `id` is
+not one of the known ids, the reviewer's click posts verdict `comment` with
+text `Selected: <label>`. Read `decision.text`, not just
 `decision.verdict`, whenever a card used custom ids — `annotate cards <slug>`
 prints it.
 

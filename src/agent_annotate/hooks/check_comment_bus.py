@@ -80,9 +80,16 @@ TEXT_CLIP = 60
 # with twenty verdicts must not spend two kilobytes of context saying so; the
 # ids are there to be acted on, and `inbox --unread` has the rest.
 MAX_VERDICTS = 6
+# Verdicts whose note carries the instruction, so the notice prints it.
+# "comment" is the pre-D2 spelling of "changes" and still arrives from a
+# page that was loaded before the server was upgraded.
+TEXT_VERDICTS = ("changes", "comment")
 
 # Events that are machinery, not a reviewer saying something.
 BOOKKEEPING_EVENTS = {
+    # D7: `annotate close` archiving stale unanswered cards. Nobody decided
+    # anything, so it must not read as reviewer activity.
+    "page_closed",
     "seen_updated",
     "comments_seeded",
     "decision_requested",
@@ -354,8 +361,11 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
             continue
         seen.add(cid)
         text = (cards.get(cid) or {}).get("text") or ev.get("text") or ""
-        if verdict == "comment" and text:
-            verdict_bits.append('%s comment("%s")' % (cid, _clip(text)))
+        # D2: "changes" (Request changes) is the text verdict; "comment" is
+        # its pre-D2 spelling and still arrives from an already-loaded page.
+        # Both are shown with their note — the note IS the instruction.
+        if verdict in TEXT_VERDICTS and text:
+            verdict_bits.append('%s %s("%s")' % (cid, verdict, _clip(text)))
         else:
             verdict_bits.append("%s %s" % (cid, verdict))
 

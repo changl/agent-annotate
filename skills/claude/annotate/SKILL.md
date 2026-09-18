@@ -85,6 +85,11 @@ Anchors absent from the registry surface as "Comments without anchor".
 
 Every card states the context, a recommendation, and what each option costs.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
+
+The three verdicts are `accept`, `reject` and `changes` ("Request changes"),
+which is the default option list when a card names none. `accept` closes the
+card; `reject` and `changes` leave it open. `changes` requires a note, and
+that note is the instruction — read `decision.text`, not just the verdict.
 Full schema, rendering and round mode: `references/decision-cards.md`.
 
 ## 6. Comment lifecycle

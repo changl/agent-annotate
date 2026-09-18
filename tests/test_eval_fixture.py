@@ -103,4 +103,4 @@ def test_cli_eval_prints_a_headline(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "annotate eval" in out
     assert "2 decision requests" in out
-    assert "1 accept, 0 reject, 0 comment, 1 undecided" in out
+    assert "1 accept, 0 reject, 0 changes, 1 undecided, 0 closed" in out

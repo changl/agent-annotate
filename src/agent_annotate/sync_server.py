@@ -41,7 +41,10 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
                 "response_text": str | null,
                 "replies": [ { "author": str, "text": str, "ts": iso } ],
                 "decision_request": { "prompt": str, "options": [str, ...] } | null,
-                "decision": { "verdict": "accept"|"reject"|"comment",
+                "decision": { "verdict": "accept"|"reject"|"changes"|"comment",
+                              # "changes" = Request changes (text required);
+                              # "comment" is the pre-D2 spelling, still
+                              # accepted from an already-loaded chrome
                               "text": str | null, "ts": iso, "by": str } | null,
                 "decision_history": [ { "verdict": ..., "text": ..., "ts": ..., "by": ... }, ... ]
                                      # prior decisions, oldest first; a comment
@@ -63,7 +66,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       POST /api/comments/<id>/reply         → append a thread reply
       POST /api/comments/<id>/archive       → move comment to archived
       POST /api/comments/<id>/decision      → resolve a posed decision_request
-                                              (accept/reject/comment); pushes to session.
+                                              (accept/reject/changes); pushes to session.
                                               Re-posting on an already-decided
                                               comment REVISES it: the prior
                                               decision moves to decision_history,
@@ -72,7 +75,8 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       POST /api/comments                    → v1-compatible whole-store POST OR
                                               v2-compatible single-comment create
                                               (may carry decision_request; v2.19)
-      GET  /api/capabilities                → {"version","batch","rounds","decision_schema"}
+      GET  /api/capabilities                → {"version","batch","rounds","decision_schema",
+                                               "verdicts"}
                                               (v2.19; 404 on older servers → legacy chrome)
       POST /api/comments/batch              → {"items":[...], "idempotency":"anchor"|null}
                                               creates/updates many decision cards at once
@@ -835,6 +839,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "rounds": True,
             "decision_schema": 2,
             "decision_request_cap": _DECISION_REQUEST_CAP,
+            # D2: the verdicts a current chrome should OFFER. A chrome that
+            # does not find "changes" here renders the pre-D2 "Comment"
+            # button; the server still accepts that verdict either way.
+            "verdicts": list(self._DECISION_VERDICTS_OFFERED),
         }).encode(), "application/json")
 
     # ── V1 routes (backward compat) ─────────────────────────────────
@@ -1802,16 +1810,29 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
 
-    _DECISION_VERDICTS = ("accept", "reject", "comment")
-    _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open", "comment": "open"}
+    # D2: "changes" (Request changes) replaces "comment" as the third verdict.
+    # "comment" stays accepted forever — an already-loaded page, a baked
+    # archive copy of the chrome, or a script written against 2.19 keeps
+    # posting it — but no new surface offers it.
+    _DECISION_VERDICTS = ("accept", "reject", "changes", "comment")
+    # The advertised set: what a current chrome should render as buttons.
+    _DECISION_VERDICTS_OFFERED = ("accept", "reject", "changes")
+    # Both text verdicts leave the card open: the agent still owes an answer.
+    _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open",
+                            "changes": "open", "comment": "open"}
     _DECISION_REPLY_TEXT = {"accept": "✓ Accepted", "reject": "✗ Rejected"}
+    # Verdicts whose reply text IS the reviewer's note (so the note is
+    # mandatory). "changes" prefixes it; "comment" never did.
+    _DECISION_TEXT_VERDICTS = ("changes", "comment")
+    _DECISION_CHANGES_PREFIX = "↻ Changes requested: "
     # Prior-verdict label used in revision reply text ("was ✗ Rejected"). Kept
-    # distinct from _DECISION_REPLY_TEXT (which has no "comment" entry) since
-    # a revision's PRIOR verdict can be any of the three.
-    _DECISION_PRIOR_LABEL = {"accept": "✓ Accepted", "reject": "✗ Rejected", "comment": "Commented"}
+    # distinct from _DECISION_REPLY_TEXT (which has no text-verdict entry)
+    # since a revision's PRIOR verdict can be any of the four.
+    _DECISION_PRIOR_LABEL = {"accept": "✓ Accepted", "reject": "✗ Rejected",
+                             "changes": "↻ Changes requested", "comment": "Commented"}
 
     def _v2_post_decision(self, comment_id: str, parsed):
-        """Resolve a one-click decision_request: accept / reject / comment.
+        """Resolve a one-click decision_request: accept / reject / changes.
 
         Sets c["decision"], appends a thread reply so the agent sees the
         verdict in-thread, transitions status, and performs the same
@@ -1844,8 +1865,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, b'{"error":"invalid verdict"}')
             return
         text = (payload.get("text") or "").strip() or None
-        if verdict == "comment" and not text:
-            self._respond(400, b'{"error":"text required for comment verdict"}')
+        if verdict in self._DECISION_TEXT_VERDICTS and not text:
+            self._respond(
+                400,
+                json.dumps({"error": f"text required for {verdict} verdict"}).encode())
             return
         # v2.19 round mode: the chrome batches verdicts into a review round.
         # Everything below is identical except that NO session_push fires;
@@ -1886,7 +1909,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if defer_push:
                 c["decision"]["round_pending"] = True
 
-            if verdict == "comment":
+            if verdict == "changes":
+                reply_text = self._DECISION_CHANGES_PREFIX + text
+            elif verdict == "comment":
                 reply_text = text
             else:
                 reply_text = self._DECISION_REPLY_TEXT[verdict]
@@ -1895,7 +1920,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if is_revision:
                 prior_label = self._DECISION_PRIOR_LABEL.get(
                     prior_decision.get("verdict"), prior_decision.get("verdict"))
-                if verdict == "comment":
+                if verdict in self._DECISION_TEXT_VERDICTS:
                     reply_text = reply_text + "\n\n(revised verdict; was " + prior_label + ")"
                 else:
                     reply_text = "↺ Changed to " + reply_text + " (was " + prior_label + ")"
@@ -1970,7 +1995,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             store = self._v2_load()
             now = _now_iso()
             comment_ids = []
-            verdict_counts = {"accept": 0, "reject": 0, "comment": 0}
+            verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
             undecided_ids = []
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
