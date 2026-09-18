@@ -65,6 +65,27 @@ each option costs, evidence anchors, impact and blocking. Cards that
 recommend get answered; cards that only ask mostly do not. The schema is in
 [decision-cards.md](src/agent_annotate/skills/claude/references/decision-cards.md).
 
+## Keeping the estate readable
+
+```sh
+annotate status                                # health, owners, "(gone)" owners
+annotate close review --older-than 30d --dry-run   # cards nobody ever answered
+annotate retire --dead --dry-run               # registry rows whose server died
+annotate eval --since 2026-09-01               # read-only baseline, by hand
+```
+
+`close` archives unanswered decision cards past an age; it never touches a
+card that has a verdict or an ordinary reviewer comment. `retire` moves dead
+registry rows to `state/retired/`, keeping every field, and leaves the slug
+directory, the bus and the transport config alone. Both take `--dry-run`, and
+neither deletes anything.
+
+`eval` is a **manual** step, not a scheduled one: run it once before an
+improvement round and once after, and compare. Its thresholds are guidance for
+reading the two reports against each other, not gates that fail anything.
+Sections and thresholds:
+[telemetry-and-eval.md](skills/claude/annotate/references/telemetry-and-eval.md).
+
 In Claude Code the `UserPromptSubmit` hook (installed by `publish`) announces
 new reviewer activity on the next turn, to the session that owns the page
 only, without consuming the inbox. `annotate monitor` is for a session with
@@ -80,8 +101,9 @@ same treatment, and Alt/Option-click to comment on an excluded element
 anyway. Decision cards show their prompt, context, recommendation and
 consequences on the rail and inline next to the anchored element. In round
 mode a verdict is parked until "Finish review"; "Send now" pushes a single
-card. Both rails collapse; below 1160px the page becomes a phone layout with
-a bottom-sheet drawer. The chrome is served from the package on every
+card. The three verdicts are Accept, Reject and Request changes; the last one
+requires a note, and that note is what the agent acts on. Both rails collapse;
+below 1160px the page becomes a phone layout with a bottom-sheet drawer. The chrome is served from the package on every
 request, so a fix reaches every published page at once.
 
 ## Repository layout

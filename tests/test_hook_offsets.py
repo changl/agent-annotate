@@ -172,3 +172,37 @@ def test_the_shell_wrapper_runs_the_same_hook(tmp_path):
 def test_the_bare_script_form_matches_the_module_form(tmp_path):
     bus_root, state, _ = _estate(tmp_path)
     assert "2 reviewer event(s)" in _run(bus_root, state, "sess-A", as_script=True)
+
+
+def test_a_changes_verdict_shows_its_note_in_the_notice(tmp_path):
+    """D2: "Request changes" carries the instruction in its note, so the
+    one-line notice must print the note, not just the word. The pre-D2
+    spelling `comment` reads the same way — an already-loaded page keeps
+    posting it."""
+    bus_root, state, bus = _estate(tmp_path)
+    store = json.loads((Path(state) / "proj.json").read_text())
+    slug_dir = Path(store["slugs"]["demo"]["slug_dir"])
+    comments = json.loads((slug_dir / "comments.json").read_text())
+    comments["anchors"]["s:b"][0]["decision"] = {
+        "verdict": "changes", "text": "cite the source for row 3",
+        "ts": "2026-09-17T11:00:00Z", "by": "r@x"}
+    (slug_dir / "comments.json").write_text(json.dumps(comments))
+    with bus.open("a") as fh:
+        fh.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "comment_updated",
+                             "slug": "demo", "comment_id": "bbbbbbbbbbbb", "anchor_id": "s:b",
+                             "author": "r@x", "decision": "changes"}) + "\n")
+
+    out = _run(bus_root, state, "sess-changes")
+    assert 'bbbbbbbbbbbb changes("cite the source for row 3")' in out, out
+    assert "undecided: 0 of 2 cards" in out
+
+
+def test_page_closed_is_bookkeeping_for_the_notice(tmp_path):
+    """D7: `annotate close` archiving stale cards is not reviewer activity."""
+    bus_root, state, bus = _estate(tmp_path)
+    _run(bus_root, state, "sess-quiet")  # drain the existing delta
+    with bus.open("a") as fh:
+        fh.write(json.dumps({"ts": "2026-09-17T12:00:00Z", "event": "page_closed",
+                             "slug": "demo", "archived_ids": ["bbbbbbbbbbbb"],
+                             "archived_count": 1, "by": "agent:test"}) + "\n")
+    assert _run(bus_root, state, "sess-quiet").strip() == ""

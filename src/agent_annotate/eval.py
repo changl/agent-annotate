@@ -24,7 +24,7 @@ Outputs (default <state>/logs/, override with --out-dir)
 Sections
 --------
   1 per-slug shape          2 reviewer round shape       3 verdict->reaction latency
-  4 'comment' verdict taxonomy                           5 decision-prompt quality
+  4 text-verdict taxonomy                                 5 decision-prompt quality
   6 trace join (bus verdict -> transcript sighting)      7 hook notice owner/bystander
 
 Usage
@@ -92,8 +92,32 @@ def _rebind_roots(state_dir=None, bus_dir=None, transcript_glob=None):
     if transcript_glob:
         TRANSCRIPT_GLOB = str(transcript_glob)
 
-VERDICTS = ("accept", "reject", "comment")
+# D2 replaced the "comment" verdict with "changes" (Request changes). The
+# corpus holds both — everything answered before D2 says "comment" — so they
+# fold into one column here; splitting them would break every trend line this
+# file exists to draw.
+VERDICTS = ("accept", "reject", "changes")
+VERDICT_ALIAS = {"comment": "changes"}
+TEXT_VERDICTS = ("changes", "comment")
 AGENT_PREFIX = "agent:"
+
+
+def verdict_column(v):
+    """The counting column for a stored verdict, or None if there is none."""
+    if not v:
+        return None
+    col = VERDICT_ALIAS.get(v, v)
+    return col if col in VERDICTS else None
+
+
+def is_archived(c):
+    """True for a comment `annotate close` (or the archive route) retired.
+
+    D7: a closed card was never answered and never will be. Counting it as
+    unanswered would keep a retired page's backlog in the numbers forever,
+    which is the opposite of what closing it was for.
+    """
+    return (c.get("status") == "archived") or bool(c.get("archived_at"))
 
 # Events that describe the machinery rather than a person. v2.19 added most of
 # them, and every one carries either no author or the agent's; counting them as
@@ -116,6 +140,9 @@ BOOKKEEPING_EVENTS = frozenset({
     "round_submitted",
     "round_discarded",
     "session_push",
+    # D7: `annotate close` archived stale unanswered cards. Bookkeeping by
+    # definition — the point of the command is that nobody answered.
+    "page_closed",
 })
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
 # Two notice formats in the corpus: v2.18's "New comments since last turn — …"
@@ -262,9 +289,18 @@ def iter_comments(store):
                 yield c, False
     arch = store.get("archived") or {}
     if isinstance(arch, dict):
-        for c in arch.values():
-            if isinstance(c, dict):
-                yield c, True
+        for value in arch.values():
+            # The server writes {anchor_id: [comment, …]}; only some older
+            # stores hold {comment_id: comment}. Reading just the second shape
+            # made every archived comment invisible here, which is how a
+            # closed card could vanish from the numbers instead of counting
+            # as closed.
+            if isinstance(value, dict):
+                yield value, True
+            elif isinstance(value, list):
+                for c in value:
+                    if isinstance(c, dict):
+                        yield c, True
     elif isinstance(arch, list):
         for c in arch:
             if isinstance(c, dict):
@@ -429,7 +465,9 @@ def section1(slugs, since):
         for c in drs:
             d = c.get("decision") or {}
             v = d.get("verdict")
-            vcount[v if v in VERDICTS else "none"] += 1
+            # D7: an archived card with no verdict is "closed", not "none" —
+            # it is out of the unanswered denominator on purpose.
+            vcount[verdict_column(v) or ("closed" if is_archived(c) else "none")] += 1
             t0 = parse_ts(c.get("created_at"))
             t1 = parse_ts(d.get("ts"))
             m = mins(t0, t1)
@@ -458,7 +496,7 @@ def section1(slugs, since):
             "in_window": bool(created and since and created >= since),
             "comments": len(comments),
             "decision_requests": len(drs),
-            "verdicts": {k: vcount.get(k, 0) for k in list(VERDICTS) + ["none"]},
+            "verdicts": {k: vcount.get(k, 0) for k in list(VERDICTS) + ["none", "closed"]},
             "time_to_verdict_min": {"n": len(ttv), "median": r1(med(ttv)), "p90": r1(pct(ttv, 0.9))},
             "agent_events": n_agent,
             "reviewer_events": n_reviewer,
@@ -534,11 +572,18 @@ def section3(slugs, now):
 
     buckets = collections.Counter()
     unanswered = []
+    closed = 0
     for slug, info in sorted(slugs.items()):
         for c in info["comments"]:
             if not c.get("decision_request"):
                 continue
-            if (c.get("decision") or {}).get("verdict") in VERDICTS:
+            if verdict_column((c.get("decision") or {}).get("verdict")) is not None:
+                continue
+            # D7: closed cards leave the backlog. They are reported as their
+            # own number so the drop in the age buckets is explained, not
+            # silent.
+            if is_archived(c):
+                closed += 1
                 continue
             t0 = parse_ts(c.get("created_at"))
             age = mins(t0, now)
@@ -562,12 +607,13 @@ def section3(slugs, now):
             "per_slug_median": {k: r1(med(v)) for k, v in sorted(per_slug.items())},
         },
         "unanswered_by_age": dict(buckets),
+        "closed_cards": closed,
         "unanswered": sorted(unanswered, key=lambda r: -r["age_days"]),
     }
 
 
 # --------------------------------------------------------------------------- #
-# section 4 — 'comment' verdict taxonomy
+# section 4 — text-verdict ('changes') taxonomy
 # --------------------------------------------------------------------------- #
 
 BOILERPLATE = ("✓ Accepted", "✗ Rejected", "✓ accepted", "✗ rejected")
@@ -625,7 +671,7 @@ def section4(slugs):
             has_dr = bool(c.get("decision_request"))
             prompt = (c.get("decision_request") or {}).get("prompt") or ""
             d = c.get("decision") or {}
-            if d.get("verdict") == "comment" and (d.get("text") or "").strip():
+            if d.get("verdict") in TEXT_VERDICTS and (d.get("text") or "").strip():
                 label, ev = classify_reviewer_text(prompt, d["text"], has_dr)
                 items.append({
                     "slug": slug, "comment_id": c.get("id"), "kind": "verdict-text",
@@ -640,7 +686,7 @@ def section4(slugs):
                     continue
                 if any(txt.startswith(b) for b in BOILERPLATE):
                     continue
-                if d.get("verdict") == "comment" and txt[:160] == (d.get("text") or "").strip()[:160]:
+                if d.get("verdict") in TEXT_VERDICTS and txt[:160] == (d.get("text") or "").strip()[:160]:
                     continue  # the auto-mirrored copy of the verdict text
                 label, ev = classify_reviewer_text(prompt, txt, has_dr)
                 items.append({
@@ -681,8 +727,8 @@ def section5(slugs):
                 "names_options": bool(OPTIONS_RE.search(prompt)),
                 "states_recommendation": bool(RECO_RE.search(prompt)),
                 "cites_evidence": bool(EVIDENCE_RE.search(prompt)),
-                "answered": v in VERDICTS,
-                "verdict": v if v in VERDICTS else "none",
+                "answered": verdict_column(v) is not None,
+                "verdict": verdict_column(v) or "none",
                 "prompt": prompt[:120],
             })
 
@@ -694,7 +740,7 @@ def section5(slugs):
             "feature": name,
             "n": len(sub),
             "answered_pct": round(100 * sum(r["answered"] for r in sub) / len(sub), 1),
-            "comment_pct": round(100 * sum(r["verdict"] == "comment" for r in sub) / len(sub), 1),
+            "changes_pct": round(100 * sum(r["verdict"] == "changes" for r in sub) / len(sub), 1),
             "accept_pct": round(100 * sum(r["verdict"] == "accept" for r in sub) / len(sub), 1),
             "median_words": round(statistics.median([r["words"] for r in sub]), 1),
         }
@@ -1073,7 +1119,7 @@ def render_md(res):
         rows.append([
             ("**" if r["in_window"] else "") + r["slug"] + ("**" if r["in_window"] else ""),
             (r["created"] or "")[:10], r["comments"], r["decision_requests"],
-            f"{v['accept']}/{v['reject']}/{v['comment']}/{v['none']}",
+            f"{v['accept']}/{v['reject']}/{v['changes']}/{v['none']}/{v['closed']}",
             fmt_min(r["time_to_verdict_min"]["median"]),
             fmt_min(r["time_to_verdict_min"]["p90"]),
             f"{r['agent_events']}/{r['reviewer_events']}",
@@ -1082,7 +1128,7 @@ def render_md(res):
             r["versions"],
         ])
     A(md_table(["slug (bold = in window)", "created", "cmts", "DRs",
-                "acc/rej/cmt/none", "t→verdict med", "p90", "agent/rev evts",
+                "acc/rej/chg/none/closed", "t→verdict med", "p90", "agent/rev evts",
                 "burst 15m", "pushes", "delivery", "vers"], rows))
     A("")
     a = res["s1_aggregate"]
@@ -1128,6 +1174,9 @@ def render_md(res):
     A(md_table(["bucket", "count"],
                [[k, v] for k, v in sorted(res["s3"]["unanswered_by_age"].items())]))
     A("")
+    A(f"{res['s3']['closed_cards']} card(s) were closed (archived unanswered by "
+      f"`annotate close`) and are excluded from the buckets above.")
+    A("")
     if res["s3"]["unanswered"][:15]:
         A("Oldest unanswered (top 15):")
         A("")
@@ -1136,7 +1185,7 @@ def render_md(res):
                     for u in res["s3"]["unanswered"][:15]]))
         A("")
 
-    A("## 4. 'comment' verdict taxonomy (auditable)")
+    A("## 4. Text-verdict taxonomy — 'changes' (pre-D2: 'comment') (auditable)")
     A("")
     A(md_table(["class", "all free-text", "verdict-text only"],
                [[k, res["s4"]["counts"].get(k, 0), res["s4"]["counts_verdict_text_only"].get(k, 0)]
@@ -1152,8 +1201,8 @@ def render_md(res):
 
     A("## 5. Decision-prompt quality vs outcome")
     A("")
-    A(md_table(["prompt feature", "n", "answered %", "comment %", "accept %", "median words"],
-               [[t["feature"], t.get("n"), t.get("answered_pct"), t.get("comment_pct"),
+    A(md_table(["prompt feature", "n", "answered %", "changes %", "accept %", "median words"],
+               [[t["feature"], t.get("n"), t.get("answered_pct"), t.get("changes_pct"),
                  t.get("accept_pct"), t.get("median_words")] for t in res["s5"]["table"]]))
     A("")
 
@@ -1236,7 +1285,7 @@ def main(argv=None):
     for slug in window:
         for c in slugs[slug]["comments"]:
             d = c.get("decision") or {}
-            if not c.get("decision_request") or d.get("verdict") not in VERDICTS:
+            if not c.get("decision_request") or verdict_column(d.get("verdict")) is None:
                 continue
             m = mins(parse_ts(c.get("created_at")), parse_ts(d.get("ts")))
             if m is not None and m >= 0:

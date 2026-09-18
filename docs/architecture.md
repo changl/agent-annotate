@@ -88,7 +88,9 @@ event that request emits carries `session_id`. Publish, claim, inbox reads,
 monitor arming and exit, hook notices, decision requests, batch seeds and
 rounds are all events. `annotate eval` reads the buses, the comment stores
 and the Claude transcripts without touching a cursor and reports seven
-sections with five regression thresholds — see
+sections. It is run by hand, once before an improvement round and once after,
+and its five thresholds are guidance for comparing the two runs rather than
+gates — see
 [telemetry-and-eval.md](../src/agent_annotate/skills/claude/references/telemetry-and-eval.md).
 
 ## Codex delivery

@@ -89,6 +89,8 @@ def test_capabilities_advertise_batch_and_rounds(server):
     assert caps["batch"] is True and caps["rounds"] is True
     assert caps["decision_schema"] == 2
     assert caps["decision_request_cap"] == 8192
+    # D2: the chrome renders "Request changes" only when the server says so.
+    assert caps["verdicts"] == ["accept", "reject", "changes"]
 
 
 # ── create with decision_request ──────────────────────────────────────────
@@ -224,7 +226,7 @@ def test_deferred_verdicts_then_submit_emit_exactly_one_session_push(server):
                               author="reviewer@example.com")
     assert status == 200
     assert submitted["comment_count"] == 2
-    assert submitted["verdict_counts"] == {"accept": 1, "reject": 1, "comment": 0}
+    assert submitted["verdict_counts"] == {"accept": 1, "reject": 1, "changes": 0, "comment": 0}
     assert submitted["undecided_ids"] == [c]
 
     pushes = _events(bus, "session_push")
@@ -281,3 +283,77 @@ def test_send_now_leaves_the_round(server):
     assert len(_events(bus, "session_push")) == 1
     _, submitted = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
     assert submitted["comment_count"] == 0
+
+
+# ── D2: the "changes" verdict ─────────────────────────────────────────────
+
+def test_request_changes_records_the_verdict_and_keeps_the_card_open(server):
+    """D2 replaced "Comment" with "Request changes": the note is mandatory,
+    the card stays open, and the auto reply names the verdict so a session
+    reading the thread sees an instruction, not an anonymous remark."""
+    httpd, slug_dir, bus = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                         {"verdict": "changes", "text": "split step 3 in two"},
+                         author="reviewer@example.com")
+
+    assert status == 200
+    assert resp["decision"]["verdict"] == "changes"
+    assert resp["decision"]["text"] == "split step 3 in two"
+    assert resp["status"] == "open"
+    assert resp["replies"][-1]["text"] == "↻ Changes requested: split step 3 in two"
+
+    stored = _store(slug_dir)["anchors"]["s:a"][0]
+    assert stored["decision"]["verdict"] == "changes"
+
+    updated = _events(bus, "comment_updated")
+    assert updated[-1]["decision"] == "changes"
+    assert updated[-1]["new_status"] == "open"
+    assert _events(bus, "session_push")[-1]["decision"] == "changes"
+
+
+def test_request_changes_without_text_is_a_400_and_writes_nothing(server):
+    httpd, slug_dir, bus = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    before = len(_events(bus))
+    status, err = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                        {"verdict": "changes", "text": "   "})
+    assert status == 400
+    assert "text required for changes verdict" in err["error"]
+    assert "decision" not in _store(slug_dir)["anchors"]["s:a"][0]
+    assert len(_events(bus)) == before
+
+
+def test_legacy_comment_verdict_is_still_accepted(server):
+    """A page loaded before D2 keeps posting `comment`. It must keep working:
+    the reply is the bare note, exactly as it always was."""
+    httpd, slug_dir, _ = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                         {"verdict": "comment", "text": "old chrome"})
+    assert status == 200
+    assert resp["decision"]["verdict"] == "comment"
+    assert resp["replies"][-1]["text"] == "old chrome"
+    assert _store(slug_dir)["anchors"]["s:a"][0]["status"] == "open"
+
+
+def test_revising_into_changes_keeps_the_prior_verdict_in_the_reply(server):
+    httpd, _, bus = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    _call(httpd, "POST", f"/api/comments/{comment['id']}/decision", {"verdict": "accept"})
+    status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                         {"verdict": "changes", "text": "on reflection, narrow it"})
+    assert status == 200
+    assert resp["replies"][-1]["text"] == (
+        "↻ Changes requested: on reflection, narrow it\n\n(revised verdict; was ✓ Accepted)")
+    assert resp["decision_history"][0]["verdict"] == "accept"
+    assert _events(bus, "comment_updated")[-1]["prior_verdict"] == "accept"
+
+
+def test_an_unknown_verdict_is_still_rejected(server):
+    httpd, _, _ = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    status, err = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                        {"verdict": "maybe", "text": "x"})
+    assert status == 400
+    assert err["error"] == "invalid verdict"

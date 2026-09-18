@@ -384,6 +384,22 @@ async function loadCapabilities() {
 function roundsEnabled() {
   return !!(CAPS && CAPS.rounds);
 }
+// D2: true when the live server advertises the "changes" verdict. A legacy
+// server (no /api/capabilities, or one that predates D2) leaves this false
+// and every decision card keeps its pre-D2 "Comment" button.
+function changesEnabled() {
+  return !!(CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('changes') !== -1);
+}
+// The third verdict's id on THIS server: 'changes' where advertised,
+// 'comment' otherwise. Both spellings in a decision_request map onto it, so
+// an old cards.json saying "comment" shows "Request changes" on a new server
+// and a new one saying "changes" still works against an old server.
+function textVerdictId() {
+  return changesEnabled() ? 'changes' : 'comment';
+}
+function canonicalOptionId(id) {
+  return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
+}
 async function apiRoundSubmit(note) {
   try {
     const r = await fetch(apiUrl('./api/rounds/submit' + authorQuery()), {
@@ -419,11 +435,13 @@ function hasDecisionRequest(c) {
 // acceptable degraded behavior, documented in CHANGELOG.
 async function apiDecisionFallback(id, verdict, text) {
   const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
-  let replyText = verdict === 'comment' ? text : verdictText[verdict];
-  if (verdict !== 'comment' && text) replyText += '\n\n' + text;
+  const isText = verdict === 'comment' || verdict === 'changes';
+  let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
+    : verdict === 'comment' ? text : verdictText[verdict];
+  if (!isText && text) replyText += '\n\n' + text;
   const replied = await apiReply(id, replyText);
   if (!replied) return null;
-  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open' };
+  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open', changes: 'open' };
   await apiPutComment(id, { status: statusMap[verdict] });
   return await apiPushSingle(id);
 }
@@ -815,18 +833,25 @@ function isGeneralAnchor(anchorId) {
   return typeof anchorId === 'string' && anchorId.indexOf('general:') === 0;
 }
 
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', comment: 'Commented' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented' };
 // Prior-verdict text for the rail's "Changing verdict — currently X" note,
 // checkmark-prefixed to match the reply text sync_server.py generates on a
 // revision (_DECISION_PRIOR_LABEL) so the card and the bus event read the
 // same way.
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', comment: 'Commented' };
-const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment'];
-// Default button labels/classes. These are byte-identical to the pre-2.19
-// markup so a legacy decision_request (string options, nothing else) renders
-// exactly as it always has.
-const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Comment' };
-const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment' };
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented' };
+// Every option id this chrome knows how to render. "comment" and "changes"
+// are the same slot: which one a page shows is decided by the server's
+// advertised verdicts, never by both appearing at once.
+const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
+// D2: the third verdict is "Request changes" (note required) on any server
+// that advertises it; a server that does not still gets the pre-D2 "Comment".
+const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
+const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
+// Default button labels/classes. accept/reject/comment are byte-identical to
+// the pre-2.19 markup so a legacy decision_request (string options, nothing
+// else) against a legacy server renders exactly as it always has.
+const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Comment', changes: '&#8635; Request changes' };
+const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // Context up to this many chars renders as a muted paragraph; longer context
 // goes behind the "Why / details" WAI-ARIA disclosure.
 const DECISION_CONTEXT_INLINE_MAX = 160;
@@ -847,24 +872,28 @@ const decisionNoteOpen = {};
 // v2.19 schema: dr.options may be the legacy string list or
 // [{id, label, consequence, style}]; dr.consequences {accept, reject} is the
 // shortcut for string options. Returns a uniform list. A string option that is
-// not accept/reject/comment is dropped (as before); an OBJECT option with an
-// unknown id is kept as a "custom" choice, which the chrome posts as a
-// `comment` verdict whose text names the selected option (the server verdict
-// enum is fixed at accept|reject|comment).
+// not accept/reject/comment/changes is dropped (as before); an OBJECT option
+// with an unknown id is kept as a "custom" choice, which the chrome posts as
+// a `comment` verdict whose text names the selected option — unchanged by D2,
+// so a card with custom ids behaves exactly as it did.
 function decisionOptions(dr) {
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_ALL;
+  const fallback = changesEnabled() ? DECISION_OPTIONS_DEFAULT_CHANGES : DECISION_OPTIONS_DEFAULT;
+  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : fallback;
   const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
   const out = [];
   for (const o of raw) {
     if (typeof o === 'string') {
       if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
-      out.push({ id: o, labelHtml: DECISION_BTN_LABEL[o], labelText: o, consequence: typeof cons[o] === 'string' ? cons[o] : '', style: null, custom: false });
+      const id = canonicalOptionId(o);
+      const cq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[id] === 'string' ? cons[id] : '');
+      out.push({ id, labelHtml: DECISION_BTN_LABEL[id], labelText: id, consequence: cq, style: null, custom: false });
     } else if (o && typeof o === 'object' && typeof o.id === 'string' && o.id) {
-      const known = DECISION_OPTIONS_ALL.indexOf(o.id) !== -1;
+      const id = canonicalOptionId(o.id);
+      const known = DECISION_OPTIONS_ALL.indexOf(id) !== -1;
       const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : null;
       out.push({
-        id: o.id,
-        labelHtml: label ? esc(label) : (known ? DECISION_BTN_LABEL[o.id] : esc(o.id)),
+        id: known ? id : o.id,
+        labelHtml: label ? esc(label) : (known ? DECISION_BTN_LABEL[id] : esc(o.id)),
         labelText: label || o.id,
         consequence: typeof o.consequence === 'string' ? o.consequence : (typeof cons[o.id] === 'string' ? cons[o.id] : ''),
         style: (o.style === 'primary' || o.style === 'danger' || o.style === 'default') ? o.style : null,
@@ -914,9 +943,10 @@ function renderDecisionPending(c) {
     </div>`;
 }
 
-// One-click decision block: an agent poses accept/reject/comment via
-// c.decision_request; a click on Accept/Reject submits immediately, Comment
-// reveals an inline textarea. Once c.decision exists, the same slot renders
+// One-click decision block: an agent poses accept/reject/changes via
+// c.decision_request; a click on Accept/Reject submits immediately, Request
+// changes (Comment on a pre-D2 server) reveals an inline textarea whose text
+// is mandatory. Once c.decision exists, the same slot renders
 // a resolved verdict chip (plus a "Change verdict" link, unless the card is
 // mid-correction, in which case it shows the buttons again).
 // v2.19 additions (all optional, all absent on a legacy request): context
@@ -937,11 +967,14 @@ function renderDecisionBlock(c) {
     </div>`;
   }
   const opts = decisionOptions(dr);
+  // D2: the free-text slot posts `changes` (note mandatory) when this card
+  // carries the Request-changes option, `comment` otherwise.
+  const wantsChanges = opts.some(o => o.id === 'changes');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
   let btns = '';
   for (const o of opts) {
-    const isRec = !!rec && rec === o.id;
+    const isRec = !!rec && canonicalOptionId(rec) === o.id;
     const cls = o.custom
       ? ('decision-custom' + (o.style ? ' decision-style-' + o.style : ''))
       : DECISION_BTN_CLASS[o.id];
@@ -971,8 +1004,8 @@ function renderDecisionBlock(c) {
     ${renderDecisionEvidence(dr)}
     ${noteHtml}
     <div class="decision-comment-form" data-decision-comment-for="${escAttr(c.id)}" style="display:none">
-      <textarea class="decision-comment-ta" data-decision-comment-ta="${escAttr(c.id)}" placeholder="Add your comment&hellip;" rows="2"></textarea>
-      <button class="decision-comment-submit" data-decision-action="comment-submit" data-id="${escAttr(c.id)}">Send</button>
+      <textarea class="decision-comment-ta" data-decision-comment-ta="${escAttr(c.id)}" placeholder="${wantsChanges ? 'What needs to change&hellip;' : 'Add your comment&hellip;'}" rows="2"></textarea>
+      <button class="decision-comment-submit" data-decision-action="comment-submit" data-id="${escAttr(c.id)}"${wantsChanges ? ' data-verdict="changes"' : ''}>Send</button>
     </div>
     <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div>
   </div>`;
@@ -1263,7 +1296,9 @@ function wireDecisionActions(root) {
     await refreshStore();
     markReadAfterAction(btn.dataset.id);
   }));
-  root.querySelectorAll('[data-decision-action="comment"]').forEach(btn => btn.addEventListener('click', (e) => {
+  // "Comment" (legacy server) and "Request changes" (D2) share one slot: both
+  // reveal the inline textarea, and neither submits without text.
+  root.querySelectorAll('[data-decision-action="comment"], [data-decision-action="changes"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const form = root.querySelector('[data-decision-comment-for="' + cssEsc(btn.dataset.id) + '"]');
     if (!form) return;
@@ -1277,7 +1312,7 @@ function wireDecisionActions(root) {
     const ta = root.querySelector('[data-decision-comment-ta="' + cssEsc(id) + '"]');
     const text = (ta && ta.value || '').trim();
     if (!text) { if (ta) ta.focus(); return; }
-    submitDecision(root, id, 'comment', text);
+    submitDecision(root, id, btn.dataset.verdict || 'comment', text);
   }));
   root.querySelectorAll('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2141,8 +2176,9 @@ function sendCommentCountsToFrame() {
       })
       .sort((a, b) => a.n - b.n);
   }
-  // `rounds` tells the adapter to post its own verdicts with defer_push.
-  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, rounds: roundsEnabled() }, '*');
+  // `rounds` tells the adapter to post its own verdicts with defer_push;
+  // `changes` tells it the server offers the D2 "Request changes" verdict.
+  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, rounds: roundsEnabled(), changes: changesEnabled() }, '*');
 }
 
 function scrollToAnchorInFrame(anchorId, target) {

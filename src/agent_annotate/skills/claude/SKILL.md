@@ -17,21 +17,18 @@ image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
 
 ## 2. The round, end to end
 
-1. Write the page as markdown; `annotate new <slug-dir> --from page.md` turns
-   front matter, `##` sections, tables, `kpi:` lines and a ` ```cards ` block
-   into anchored HTML plus `cards.json`. `annotate new --example` prints a
-   worked document; hand-build from `template.html` only for what markdown
-   cannot express — `references/building-pages.md`.
-2. `annotate publish <slug-dir>` — serves it, claims ownership, prints a URL
-   only once it is proven to render.
-3. `annotate ask <slug> --from cards.json` — the whole round in one call.
-   Steps 1-3 collapse into `annotate new … --publish --ask`.
-4. Stop and hand the URL over. Wait for the hook notice (§7).
-5. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
+1. `annotate new <slug-dir> --from page.md --publish --ask` — markdown (front
+   matter, `##` sections, tables, `kpi:` lines, a ` ```cards ` block) becomes
+   an anchored page plus `cards.json`, published and posed in one call.
+   `annotate new --example` prints a worked document; hand-build from
+   `template.html` only for what markdown cannot express
+   (`references/building-pages.md`). `publish` prints a URL only once the page
+   is proven to render, and claims the page for this session.
+2. Stop and hand the URL over. Wait for the hook notice (§7).
+3. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
    for verdicts only.
-6. Act, then `annotate addressed <slug> <id> --response "…"`.
-7. Next round: `annotate new <slug-dir> --from page.md --version v2
-   --label "round 2" --publish` (or `publish-version` for a hand-built page).
+4. Act, then `annotate addressed <slug> <id> --response "…"`.
+5. Next round: the same `new` line with `--version v2 --label "round 2"`.
 
 ## 3. Commands
 
@@ -41,7 +38,7 @@ image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
 | `new <slug-dir> --from page.md [--version vN] [--publish] [--ask]` | markdown → `versions/vN.html` + `cards.json`; `--example` prints one |
 | `publish <slug-dir>` | serve, route, claim owner, verify, install shim + hook |
 | `unpublish <slug>` | tear down the route, stop the server |
-| `status [<slug>]` | running slugs and their health |
+| `status [<slug>] [--retired]` | running slugs, health, owner; `(gone)` = owner session dead |
 | `claim <slug>` | make this session the owner |
 | `ask <slug> --from cards.json [--version vN]` | create or refresh a whole round |
 | `cards <slug>` | cards, verdicts, undecided anchors |
@@ -49,25 +46,25 @@ image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
 | `monitor <slug> [--owner ID] [--takeover]` | exclusive lease + event stream |
 | `publish-version <slug-dir> <vN> [--label …]` | swap `current.html`, register history |
 | `addressed <slug> <id> [--response …]` | mark a comment addressed_by_agent |
+| `close <slug> [--older-than 30d] [--dry-run]` | archive cards nobody answered |
+| `retire <slug>\|--dead [--dry-run]` | move dead registry rows to `state/retired/` |
 
-Also `eval` (baseline of the loop), `watch`, `install-shim`,
-`archive-comment`, `migrate`, `prune-bus`, `sessions`/`connect`/`disconnect`/
-`send` — `references/cli-reference.md`.
-Every slug argument takes `<slug>` or `<project>/<slug>`; `--project` works too.
+Also `eval`, `watch`, `install-shim`, `archive-comment`, `migrate`,
+`prune-bus`, `sessions`/`connect`/`disconnect`/`send` —
+`references/cli-reference.md`. Every slug argument takes `<slug>` or
+`<project>/<slug>`.
 
 ## 4. Anchor ids
 
-```
-<scope>:<key>[:<sub-key>][:<row-or-id>]   on every commentable element
-s:intro · s:intro:p2 · d:1 · kpi:net-equity · tbl:items · tbl:items:row:42
-tbl:items:col:status · dgm:schema:node:premiums · chart:funnel:bar:tier-a
-Shift+click promotes the target to its ANCHOR_REGISTRY `parent`; anchors
-absent from the registry surface as "Comments without anchor".
-```
+`<scope>:<key>[:<sub-key>][:<row-or-id>]` on every commentable element:
+`s:intro` · `s:intro:p2` · `d:1` · `kpi:net-equity` · `tbl:items` ·
+`tbl:items:row:42` · `tbl:items:col:status` · `dgm:schema:node:premiums`.
+Shift+click promotes the target to its `ANCHOR_REGISTRY` parent; unregistered
+anchors surface as "Comments without anchor".
 
 ## 5. Decision cards
 
-`cards.json` and a page's ` ```cards ` block take the same array:
+`cards.json` and a page's ` ```cards ` block share one array:
 
 ```json
 [{"anchor_id": "tbl:items:col:status",
@@ -81,14 +78,20 @@ absent from the registry surface as "Comments without anchor".
 
 Every card states the context, a recommendation, and what each option costs.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
-`text` defaults to `prompt`. Option `style`, `evidence`, full schema and round
-mode: `references/decision-cards.md`.
+`text` defaults to `prompt`. Verdicts are `accept`, `reject` and `changes`
+("Request changes", the default third option): `accept` closes the card, the
+other two leave it open, and `changes` requires a note — read `decision.text`,
+not just the verdict. Option `style`, `evidence`, full schema and round mode:
+`references/decision-cards.md`.
+
+A serving page marked `(gone)` in `status` is notifying nobody — `claim` it
+first. `close` and `retire` never delete: they archive and set aside.
 
 ## 6. Comment lifecycle
 
 `open` (blue) → `addressed_by_agent` (purple) → `user_confirmed` (green) →
 `archived` (hidden). You may only set `addressed_by_agent`; confirming and
-archiving belong to the reviewer, never to you.
+archiving are the reviewer's.
 
 ## 7. Getting feedback back — one policy
 
@@ -103,10 +106,9 @@ It speaks only to the owning session, counts reviewer events only, and never
 advances the `inbox --unread` cursor.
 
 **Unattended only:** with no user turn coming, run `annotate monitor <slug>`
-inside Claude Code's Monitor tool, `timeout_ms: 1800000`, re-armed on expiry.
-Heartbeats are off (the idle-reap that needed them is gone). One lease per
-slug, `--takeover` only for an explicit handoff. Never arm a monitor for a page
-a human is reviewing while you still have turns.
+in Claude Code's Monitor tool, `timeout_ms: 1800000`, re-armed on expiry.
+Heartbeats are off. One lease per slug; `--takeover` only for a handoff. Never
+arm one for a page a human is reviewing while you still have turns.
 
 **Never act on a partial round.** Wait for `ROUND SUBMITTED` in the notice (bus
 event `round_submitted`), or for every card to carry a verdict.
@@ -114,11 +116,11 @@ event `round_submitted`), or for every card to carry a verdict.
 ## 8. Verification
 
 `publish` asserts rendered anchors at the `origin`, `tailscale` and `public`
-hops. Behind Cloudflare Access a status code proves nothing: a healthy route
-and a dead one both answer 302. `UNVERIFIED … (Access login)` means live but
-unproven from here — check it with `orca tab create --url <url> --json` plus
-`orca eval` on the authenticated profile. Never curl a page, never call one
-live off a 200.
+hops. Behind Cloudflare Access a status code proves nothing: healthy and dead
+routes both answer 302. `UNVERIFIED … (Access login)` means live but unproven
+from here — check it with `orca tab create --url <url> --json` plus `orca
+eval` on the authenticated profile. Never curl a page; never call one live off
+a 200.
 
 ## 9. References
 

@@ -67,7 +67,7 @@ def test_inbox_is_compact_and_hides_bookkeeping(registry, capsys):
     assert "seen_updated" not in out
     assert "comment_created" in lines[0] and "aaaaaaaaaa" in lines[0] and "Rename status?" in lines[0]
     assert "comment_updated" in lines[1] and "accept" in lines[1]
-    assert lines[2].strip() == "decisions: 1 accept, 0 reject, 0 comment; undecided: s:b"
+    assert lines[2].strip() == "decisions: 1 accept, 0 reject, 0 changes; undecided: s:b"
 
 
 def test_inbox_all_events_shows_bookkeeping(registry, capsys):
@@ -79,7 +79,7 @@ def test_inbox_json_keeps_raw_events(registry, capsys):
     cli.cmd_inbox(_inbox(json=True))
     payload = json.loads(capsys.readouterr().out)
     assert payload["event_count"] == 2
-    assert payload["decisions"] == {"accept": 1, "reject": 0, "comment": 0}
+    assert payload["decisions"] == {"accept": 1, "reject": 0, "changes": 0}
     assert payload["undecided"] == ["s:b"]
     assert payload["events"][0]["event"] == "comment_created"
 

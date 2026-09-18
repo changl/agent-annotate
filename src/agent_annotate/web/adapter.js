@@ -56,6 +56,10 @@ let latestPins = {};
 // v2.19: true when the shell said the server supports review rounds; strip
 // verdicts are then posted with defer_push (parked until "Finish review").
 let latestRounds = false;
+// D2: true when the shell said the server offers the "changes" verdict, so
+// the strip's third button is "Request changes" instead of "Comment". Absent
+// from an old shell's message → false → the pre-D2 strip, unchanged.
+let latestChanges = false;
 
 function cssEsc(s) {
   return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
@@ -667,13 +671,23 @@ function wireHoverLinking() {
 // a fresh 'annotate:comment-counts' message (see wireBridge) — NOT on every
 // resize/scroll-driven badge refresh, so DOM insertion here can never
 // feed back into the MutationObserver above and loop.
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', comment: 'Commented' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented' };
 // Checkmark-prefixed variant for the plain-text "currently X" changing-note
 // (the resolved chip itself is color-coded so it doesn't need one; the note
 // has no color coding, so it gets the same symbol shell.js's rail card and
 // sync_server.py's revision reply text use, for a consistent read).
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', comment: 'Commented' };
-const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment'];
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented' };
+const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
+const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
+const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
+// D2: mirrors shell.js textVerdictId()/canonicalOptionId(). "comment" and
+// "changes" are one slot; which spelling this page uses follows the server.
+function stripTextVerdictId() {
+  return latestChanges ? 'changes' : 'comment';
+}
+function stripCanonicalOptionId(id) {
+  return (id === 'comment' || id === 'changes') ? stripTextVerdictId() : id;
+}
 // Comment ids currently mid-flight (POST sent, no response yet): rendered
 // disabled with "Sending…" even across a rebuild triggered by an unrelated
 // counts message arriving before the response does.
@@ -693,8 +707,8 @@ const stripChanging = {};
 const stripDetailsOpen = {};
 const stripNoteOpen = {};
 const stripNoteText = {};
-const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Comment' };
-const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment' };
+const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Comment', changes: '↻ Request changes' };
+const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment', changes: 'annotate-decision-changes' };
 const DECISION_CONTEXT_INLINE_MAX = 160;
 const DECISION_IMPACTS = ['low', 'medium', 'high'];
 
@@ -703,19 +717,23 @@ const DECISION_IMPACTS = ['low', 'medium', 'high'];
 // style; an object option with an id outside accept/reject/comment is a
 // "custom" choice posted as a comment verdict naming the selection.
 function stripDecisionOptions(dr) {
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_ALL;
+  const fallback = latestChanges ? DECISION_OPTIONS_DEFAULT_CHANGES : DECISION_OPTIONS_DEFAULT;
+  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : fallback;
   const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
   const out = [];
   for (const o of raw) {
     if (typeof o === 'string') {
       if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
-      out.push({ id: o, label: DECISION_BTN_TEXT[o], consequence: typeof cons[o] === 'string' ? cons[o] : '', style: null, custom: false });
+      const sid = stripCanonicalOptionId(o);
+      const scq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[sid] === 'string' ? cons[sid] : '');
+      out.push({ id: sid, label: DECISION_BTN_TEXT[sid], consequence: scq, style: null, custom: false });
     } else if (o && typeof o === 'object' && typeof o.id === 'string' && o.id) {
-      const known = DECISION_OPTIONS_ALL.indexOf(o.id) !== -1;
+      const oid = stripCanonicalOptionId(o.id);
+      const known = DECISION_OPTIONS_ALL.indexOf(oid) !== -1;
       const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : null;
       out.push({
-        id: o.id,
-        label: label || (known ? DECISION_BTN_TEXT[o.id] : o.id),
+        id: known ? oid : o.id,
+        label: label || (known ? DECISION_BTN_TEXT[oid] : o.id),
         consequence: typeof o.consequence === 'string' ? o.consequence : (typeof cons[o.id] === 'string' ? cons[o.id] : ''),
         style: (o.style === 'primary' || o.style === 'danger' || o.style === 'default') ? o.style : null,
         custom: !known,
@@ -763,6 +781,8 @@ function ensureStripStyle() {
     .annotate-decision-accept { background: #16A34A !important; }
     .annotate-decision-reject { background: #DC2626 !important; }
     .annotate-decision-comment, .annotate-decision-submit { background: #4338CA !important; }
+    /* D2 "Request changes": amber, deliberately not Reject's red. */
+    .annotate-decision-changes { background: #B45309 !important; }
     /* display is intentionally NOT set here: it's driven entirely by the
        inline style.setProperty(..., 'important') toggle in JS (open/closed),
        which an author-stylesheet !important rule here would permanently
@@ -790,6 +810,7 @@ function ensureStripStyle() {
     .annotate-verdict-chip.verdict-accept { background: #DCFCE7 !important; color: #15803D !important; }
     .annotate-verdict-chip.verdict-reject { background: #FEF2F2 !important; color: #DC2626 !important; }
     .annotate-verdict-chip.verdict-comment { background: #E0E7FF !important; color: #4338CA !important; }
+    .annotate-verdict-chip.verdict-changes { background: #FEF3C7 !important; color: #B45309 !important; }
     .annotate-decision-change, .annotate-decision-cancel {
       background: none !important; color: #4338CA !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 6px !important; text-decoration: none !important;
@@ -965,11 +986,13 @@ async function stripApiPushSingle(id) {
 // way against an un-upgraded server.
 async function stripApiDecisionFallback(id, verdict, text) {
   const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
-  let replyText = verdict === 'comment' ? text : verdictText[verdict];
-  if (verdict !== 'comment' && text) replyText += '\n\n' + text;
+  const isText = verdict === 'comment' || verdict === 'changes';
+  let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
+    : verdict === 'comment' ? text : verdictText[verdict];
+  if (!isText && text) replyText += '\n\n' + text;
   const replied = await stripApiReply(id, replyText);
   if (!replied) return null;
-  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open' };
+  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open', changes: 'open' };
   await stripApiPutComment(id, { status: statusMap[verdict] });
   return await stripApiPushSingle(id);
 }
@@ -1187,7 +1210,7 @@ function buildDecisionItemEl(entry) {
   const ta = document.createElement('textarea');
   ta.className = 'annotate-decision-ta';
   ta.rows = 2;
-  ta.placeholder = 'Add your comment…';
+  ta.placeholder = latestChanges ? 'What needs to change…' : 'Add your comment…';
   ta.value = stripDraftText[id] || '';
   ta.addEventListener('input', () => { stripDraftText[id] = ta.value; });
   const submitBtn = makeStripBtn('Send', 'annotate-decision-submit');
@@ -1219,7 +1242,7 @@ function buildDecisionItemEl(entry) {
   };
 
   const mountOption = (b, o) => {
-    if (rec && rec === o.id) {
+    if (rec && stripCanonicalOptionId(rec) === o.id) {
       b.classList.add('is-recommended');
       b.title = 'Recommended by the agent';
       const badge = document.createElement('span');
@@ -1245,8 +1268,10 @@ function buildDecisionItemEl(entry) {
       const b = makeStripBtn(o.label, DECISION_BTN_CLASS[o.id]);
       b.addEventListener('click', () => submitStripDecision(id, o.id, noteText(), item));
       mountOption(b, o);
-    } else if (o.id === 'comment') {
-      const b = makeStripBtn(o.label, DECISION_BTN_CLASS.comment);
+    } else if (o.id === 'comment' || o.id === 'changes') {
+      // One slot, two spellings: "Comment" pre-D2, "Request changes" after.
+      // Both reveal the textarea; neither submits empty.
+      const b = makeStripBtn(o.label, DECISION_BTN_CLASS[o.id]);
       b.addEventListener('click', () => {
         stripFormOpen[id] = true;
         form.style.setProperty('display', 'flex', 'important');
@@ -1266,7 +1291,7 @@ function buildDecisionItemEl(entry) {
   submitBtn.addEventListener('click', () => {
     const text = (ta.value || '').trim();
     if (!text) { ta.focus(); return; }
-    submitStripDecision(id, 'comment', text, item);
+    submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
   });
 
   // v2.19: evidence links → scroll + flash the referenced anchor in THIS
@@ -1583,6 +1608,7 @@ function wireBridge() {
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
       latestRounds = data.rounds === true; // absent from an old shell → legacy posting
+      latestChanges = data.changes === true; // absent from an old shell → "Comment"
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
