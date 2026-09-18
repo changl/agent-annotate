@@ -10,3 +10,7 @@ build/
 *.local.json
 *.local.toml
 
+
+# annotate slug dirs are runtime state, never source
+reviews/
+.playwright-mcp/

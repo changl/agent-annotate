@@ -70,6 +70,7 @@ import argparse
 import fcntl
 import hashlib
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -96,6 +97,10 @@ def find_free_port(start: int) -> int:
     port = start
     while port < start + 20:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Match HTTPServer.allow_reuse_address so a coordinated same-port
+            # restart is not mistaken for a collision while old connections
+            # remain in TIME_WAIT. An active listener still makes bind fail.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("", port))
                 return port
@@ -509,6 +514,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     bus_dir: Path | None = None
     v2_mode: bool = False
     skill_dir: Path | None = None  # packaged web asset directory
+    local_author: str | None = None
+    local_author_name: str | None = None
 
     # ── Path normalization ──────────────────────────────────────────
     def _strip_base(self, path: str) -> str:
@@ -522,11 +529,40 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return stripped or "/"
         return path
 
+    def _is_direct_loopback_request(self) -> bool:
+        """Accept local identity only on a direct loopback URL.
+
+        Reverse proxies on this host can also connect from loopback, so the
+        peer address alone is insufficient. Requiring a localhost/loopback
+        Host keeps Cloudflare and Tailscale routes on their normal auth path.
+        """
+        try:
+            peer_is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+        if not peer_is_loopback:
+            return False
+
+        host_header = (self.headers.get("Host") or "").strip()
+        try:
+            hostname = urllib.parse.urlsplit("//" + host_header).hostname
+        except ValueError:
+            return False
+        if not hostname:
+            return False
+        if hostname.lower() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+
     def _identity(self) -> dict:
-        """Return identity supplied by the trusted OAuth/access proxy.
+        """Return identity supplied by OAuth or the configured local fallback.
 
         Client query parameters and JSON bodies are deliberately excluded:
-        they are display input, not authentication evidence.
+        they are display input, not authentication evidence. The fallback is
+        available only to direct loopback URLs and never to public/proxy Hosts.
         """
         email = (
             self.headers.get("Cf-Access-Authenticated-User-Email")
@@ -543,6 +579,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             encoding = self.headers.get("oai-authenticated-user-full-name-encoding", "")
             name = urllib.parse.unquote(oai_name) if encoding == "percent-encoded-utf-8" else oai_name
             name = name.strip()
+        if not email and self.local_author and self._is_direct_loopback_request():
+            email = self.local_author
+            name = self.local_author_name or name
         return {
             "email": email or None,
             "name": name or None,
@@ -1617,6 +1656,8 @@ def make_handler(
     bus_dir: Path | None = None,
     v2_mode: bool = False,
     skill_dir: Path | None = None,
+    local_author: str | None = None,
+    local_author_name: str | None = None,
 ) -> type:
     class BoundHandler(AnnotateHandler):
         pass
@@ -1627,6 +1668,8 @@ def make_handler(
     BoundHandler.bus_dir = bus_dir
     BoundHandler.v2_mode = v2_mode
     BoundHandler.skill_dir = skill_dir
+    BoundHandler.local_author = local_author
+    BoundHandler.local_author_name = local_author_name
     return BoundHandler
 
 
@@ -1670,6 +1713,16 @@ def main():
         help='Public URL prefix to strip from incoming requests (e.g. "/schema-v4-2"). '
              "Default: empty (no stripping).",
     )
+    parser.add_argument(
+        "--local-author",
+        default="",
+        help="Identity fallback for direct localhost/loopback URLs only.",
+    )
+    parser.add_argument(
+        "--local-author-name",
+        default="",
+        help="Optional display name paired with --local-author.",
+    )
     args = parser.parse_args()
 
     # Normalize public_base_path: ensure leading slash, no trailing slash
@@ -1678,6 +1731,14 @@ def main():
         if not public_base_path.startswith("/"):
             public_base_path = "/" + public_base_path
         public_base_path = public_base_path.rstrip("/")
+
+    local_author = (args.local_author or "").strip() or None
+    local_author_name = (args.local_author_name or "").strip() or None
+    for label, value in (("--local-author", local_author), ("--local-author-name", local_author_name)):
+        if value and ("\r" in value or "\n" in value):
+            parser.error(f"{label} must be a single-line value")
+    if local_author_name and not local_author:
+        parser.error("--local-author-name requires --local-author")
 
     if args.slug_dir:
         # V2 mode
@@ -1697,6 +1758,8 @@ def main():
             bus_dir=bus_dir,
             v2_mode=True,
             skill_dir=skill_dir,
+            local_author=local_author,
+            local_author_name=local_author_name,
         )
         server = http.server.ThreadingHTTPServer(("localhost", port), handler)
         if public_base_path:
@@ -1714,6 +1777,8 @@ def main():
         print(f"  NDJSON bus:        {bus_dir / (slug + '.ndjson')}")
         if public_base_path:
             print(f"  Public base path:  {public_base_path}")
+        if local_author:
+            print(f"  Local identity:    {local_author} (direct loopback Host only)")
         print("  ─────────────────────────────────────────────")
         print()
         print("  Ctrl-C to stop. POST/PUT log appears below:")
@@ -1740,6 +1805,8 @@ def main():
             artifact_file=artifact_file,
             public_base_path=public_base_path,
             v2_mode=False,
+            local_author=local_author,
+            local_author_name=local_author_name,
         )
         server = http.server.HTTPServer(("localhost", port), handler)
         if public_base_path:
