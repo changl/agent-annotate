@@ -39,14 +39,25 @@ and friends relocate them; see the environment table in
 ## A round
 
 ```sh
-annotate publish ./review                      # serve, claim, verify, print the URL
-annotate ask review --from cards.json          # pose the whole round in one call
+annotate new --example > page.md               # a worked markdown document
+annotate new ./review --from page.md --publish --ask
+# serve, claim, verify, print the URL — and pose the whole round
 # ... the reviewer answers the cards and clicks "Finish review" ...
 annotate inbox review --unread                 # compact, per-session, no double-reads
 annotate cards review                          # verdicts only
 annotate addressed review <comment-id> --response "fixed in v2"
-annotate publish-version ./review v2 --label "round 2"
+annotate new ./review --from page.md --version v2 --label "round 2" --publish
 ```
+
+`annotate new` is the whole page in one write: `---` front matter, `##`
+sections, pipe tables, `kpi:` lines, fenced code and a ` ```cards ` block
+become `versions/vN.html` with a `data-anchor-id` on every element, plus
+`cards.json`, the `current.html` symlink and the version history. It refuses
+to write a page with duplicate anchors, no anchors, or CSS outside its
+`<style>` block. The format is in
+[building-pages.md](skills/claude/annotate/references/building-pages.md) §1;
+`annotate publish ./review` and `annotate ask review --from cards.json` remain
+separate commands for a page built by hand.
 
 `cards.json` is a list of `{anchor_id, text, decision_request}`; each
 `decision_request` carries the prompt, the context, a recommendation, what

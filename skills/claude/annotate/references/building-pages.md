@@ -6,7 +6,90 @@ package on every request and recovers your content from the artifact, so a UI
 fix reaches every published page at once. Anything you hand-build into a
 published page freezes at publish time and goes stale.
 
-## 1. Template placeholders
+Write the document as markdown and let `annotate new` render it (§1). Reach for
+the template and a `build.py` (§4) only for a page the markdown cannot express —
+an inline SVG diagram, a plotted chart, a bespoke layout.
+
+## 1. Writing a page in markdown
+
+```bash
+annotate new --example > page.md                  # a worked document, every construct
+annotate new <slug-dir> --from page.md            # → versions/vN.html + cards.json
+annotate new <slug-dir> --from page.md --publish --ask     # …and serve it, and pose the round
+annotate new <slug-dir> --from page.md --version v2 --label "round 2" --publish
+```
+
+One run writes `versions/<vN>.html`, the `current.html` symlink, the
+`current.meta.json` entry (idempotent by version — a re-run never appends a
+second history row), `cards.json`, `comments.json` and a copy of the source at
+`source/<vN>.md`. It prints the anchor count and the commands that follow. The
+parser is part of the package; there is no markdown dependency and no rendering
+you cannot predict from the table below.
+
+### Front matter
+
+`---` fenced `key: value` lines. Every key is optional.
+
+| Key | Default |
+|---|---|
+| `title` | the slug-dir name |
+| `subtitle` | empty |
+| `date` | today, ISO |
+| `slug` | the slug-dir name (this is `DOC_ID`, the localStorage key) |
+| `version` | `v1` — `--version` wins |
+| `label` | `generated from <file>` — `--label` wins |
+| `legend` | empty; renders into the legend drawer |
+
+An unknown key is an error, not a silent typo.
+
+### Body constructs and the anchors they mint
+
+| Markdown | HTML | Anchor |
+|---|---|---|
+| `# Title` equal to the front-matter title | dropped (the header already shows it) | — |
+| `## Scope` | `<section>` + `<h2>` | `s:scope` |
+| `### Out of scope` | `<h3>` | `s:scope:out-of-scope` |
+| paragraph | `<p>` (the first in a section gets `.lede`) | `s:scope:p1` |
+| `- item` / `1. item` | `<ul>` / `<ol>` + `<li>` | `s:scope:li1` |
+| pipe table | `<table>` inside a scroll wrapper | `tbl:scope`, `tbl:scope:col:<header>`, `tbl:scope:row:<first-cell>` |
+| `kpi: 64% \| of 201 cards unanswered \| bad` | one `.kpi` tile; consecutive lines form one grid; tone is `bad`, `warn` or `ok` | `kpi:of-201-cards-unanswered` |
+| ` ```sql ` fence | `<pre><code>`, escaped | `s:scope:code1` |
+| ` ```cards ` fence | a visible `.card` per entry | `d:1`, or the entry's `anchor_id` |
+
+Inline: `` `code` ``, `**bold**`, `*italic*`, `[text](url)`. Everything else is
+escaped, and a `javascript:` URL is dropped.
+
+Content before the first `##` lands in an implicit section anchored
+`s:overview`. Repeated keys are deduped with `-2`, `-3` — two rows whose first
+cell is `status` become `tbl:scope:row:status` and `…:status-2` — so a table
+never silently loses a row anchor. Every anchor is written into
+`ANCHOR_REGISTRY` with `{name, grp, parent, kind}`: `grp` is the section title,
+`parent` is the enclosing element, so shift-click walks row → table → section.
+
+### The cards block
+
+A ` ```cards ` fence holds the same JSON array `annotate ask --from` takes:
+`[{anchor_id, text, decision_request}]`, schema in `decision-cards.md`. The
+generator writes it to `<slug-dir>/cards.json` **and** renders each card in the
+body — title, context, one line per option, a "Recommended" badge on the
+recommended one, impact and blocking chips. The reviewer sees the question
+where the evidence is, not only in the drawer.
+
+`anchor_id` is optional; omitted, the card owns a fresh `d:<n>`. Name an anchor
+the prose already mints (`tbl:columns:row:tier`) and the card is pinned to that
+element instead: the body card renders bound, with a link, and no second
+element claims the id. Order does not matter — a card may name an anchor
+defined later in the document.
+
+### Lint
+
+The run fails, writes nothing, and names the problem when the page would carry
+duplicate anchor ids, no anchors at all, or text between `</style>` and the
+first element. That last one is the rule that nine published versions broke:
+all CSS lives in the single `<style>` the generator emits at the top of the
+canvas, and nothing else does.
+
+## 2. Template placeholders
 
 Substitute these in `template.html` (they are literal `{{NAME}}` tokens). The
 file ships in the package as `agent_annotate/web/template.html`;
@@ -26,7 +109,7 @@ the directory.
 
 `{{TITLE}}` appears twice. Replace every occurrence, not the first.
 
-## 2. The CANVAS sentinels
+## 3. The CANVAS sentinels
 
 ```html
 <!-- CANVAS CONTENT — injected by Claude ── -->
@@ -44,7 +127,7 @@ widgets, `contenteditable` and focusable regions do not open a comment. Mark a
 custom widget `data-annotate-interactive` for the same treatment. Alt/Option
 click comments on an excluded element anyway.
 
-## 3. The build.py pattern
+## 4. The build.py pattern — for what markdown cannot express
 
 Write a small generator next to the slug dir and run it. Do not hand-edit a
 `versions/vN.html` after it is published.
@@ -105,7 +188,7 @@ the meta `current` and the history append. Do not write `history` by hand.
 server stamps `owner` and `content_stamp` into the same file under its own
 lock. Read, mutate your own keys, write back — or let the CLI do it.
 
-## 4. The lint caveat
+## 5. The lint caveat
 
 `publish` runs `node --check` over every inline `<script>` block that is not
 `src=`, not self-closing, not empty, and not a non-JS `type`. A failure names
@@ -117,7 +200,7 @@ error, and that is the most common reason a publish stops before the URL is
 printed. `<style>` content is not linted, so it is also where anything
 CSS-shaped belongs. `--skip-js-lint` exists and is for emergencies only.
 
-## 5. Verify in the browser, not on a status code
+## 6. Verify in the browser, not on a status code
 
 Publish's own gate asserts rendered anchors at `origin`, `tailscale` and
 `public`, and the public hop runs inside the authenticated Orca browser.
@@ -137,10 +220,17 @@ authenticated request to a dead origin answers 200 with a "Bad gateway" body,
 so **a status code carries no information here**. Never `curl` a published URL
 to decide whether it works, and never ask the user to check for you.
 
-## 6. Cost baseline
+## 7. Cost baseline
 
-Building and publishing a page currently costs a median of **6 minutes and 31
-tool calls** end to end. Target under 15 tool calls: one read of
-`template.html`, one write of `build.py`, one run, one `publish`, one `ask`.
-Most of the overrun is hand-patching chrome into a published page and
+A hand-built page cost a median of **6 minutes and 31 tool calls** end to end,
+a bespoke `build.py` every time (one slug accumulated fifteen) and a separate
+`cards.json` for the round. Through `annotate new` it is **two calls**:
+
+```bash
+annotate new reviews/items-model --from page.md --publish --ask
+```
+
+one write of `page.md`, one run. Reserve the `build.py` path for a page
+markdown cannot express, and keep its cost in mind when you reach for it. Most
+of the old overrun was hand-patching chrome into a published page and
 re-checking a URL that was already verified. Neither is work.
