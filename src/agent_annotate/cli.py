@@ -595,6 +595,14 @@ def _ensure_hook_installed() -> tuple[bool, str]:
     except Exception as e:
         return False, f"could not parse settings.json: {e}"
 
+    # A wheel does not always preserve the execute bit; the hook is registered
+    # as a bare path, so make sure the shell can run it.
+    try:
+        if not os.access(HOOK_SCRIPT, os.X_OK):
+            os.chmod(HOOK_SCRIPT, 0o755)
+    except OSError:
+        pass
+
     settings.setdefault("hooks", {})
     ups = settings["hooks"].setdefault("UserPromptSubmit", [])
     # Look for an existing entry matching our command
@@ -2638,7 +2646,8 @@ def cmd_doctor(args) -> int:
         ("web_assets", all((WEB_DIR / n).is_file() for n in
                            ("shell.html", "shell.js", "shell.css", "adapter.js", "template.html")),
          str(WEB_DIR)),
-        ("hook_script", HOOK_SCRIPT.is_file() and os.access(HOOK_SCRIPT, os.X_OK), str(HOOK_SCRIPT)),
+        ("hook_script", HOOK_SCRIPT.is_file(),
+         str(HOOK_SCRIPT) + ("" if os.access(HOOK_SCRIPT, os.X_OK) else "   (not executable; publish fixes the mode)")),
         ("hook_installed", _hook_registered(), str(SETTINGS_JSON)),
         ("node", node is not None, node or "not found; inline JS lint unavailable"),
         ("lsof", lsof is not None, lsof or "not found; port liveness falls back to the bind test"),

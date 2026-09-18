@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-annotate"
-version = "0.1.0"
+version = "2.19.0"
 description = "Local-first interactive annotation and feedback coordination for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
