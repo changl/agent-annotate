@@ -450,6 +450,16 @@ def _project_config(project: str) -> dict:
     return cfg
 
 
+_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix"})
+
+
+def _transport_opts(cfg: dict) -> dict:
+    """Every projects.toml key the CLI does not consume itself goes to the
+    transport as an option (`env_file`, `tunnel_id`, `binary`, …), so a
+    machine's credentials live in its config, not in the transport source."""
+    return {k: v for k, v in (cfg or {}).items() if k not in _PROJECT_CORE_KEYS}
+
+
 def _port_listen_pid(port: int) -> int | None:
     """Return the PID of the first process LISTENing on TCP `port`, or None.
 
@@ -1301,7 +1311,7 @@ def cmd_publish(args) -> int:
                 try:
                     from .transports import load as _load_transport
                     tmod = _load_transport(transport_name)
-                    opts = {}
+                    opts = _transport_opts(cfg)
                     if hostname:
                         opts["hostname"] = hostname
                     if existing:
@@ -1411,7 +1421,7 @@ def cmd_unpublish(args) -> int:
             from .transports import load as _load_transport
             tmod = _load_transport(transport_name)
             details = record.get("transport_details", {}) or {}
-            opts = {}
+            opts = _transport_opts(_project_config(project))
             host = details.get("hostname")
             if host:
                 opts["hostname"] = host

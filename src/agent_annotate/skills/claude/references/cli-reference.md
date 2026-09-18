@@ -275,7 +275,7 @@ skill-directory install used, so a packaged install sees the same pages.
 |---|---|
 | `ANNOTATE_STATE_DIR` (alias `ANNOTATE_STATE_ROOT`) | Relocates the registry, every cursor, the leases, the locks and the logs. Default `~/.claude/annotate-state/state`. |
 | `ANNOTATE_BUS_ROOT` | Relocates the buses. Default `~/.claude/annotate-bus`. |
-| `ANNOTATE_CONFIG_DIR`, `ANNOTATE_PROJECTS_TOML` | Where `projects.toml` is read from. Default `~/.claude/annotate-state/projects.toml`, then the live skill's `~/.claude/skills/annotate/projects.toml`. |
+| `ANNOTATE_CONFIG_DIR`, `ANNOTATE_PROJECTS_TOML` | Where `projects.toml` is read from. Default `~/.claude/annotate-state/projects.toml`, then the live skill's `~/.claude/skills/annotate/projects.toml`. A section's keys other than `transport`, `hostname`, `port_base` and `path_prefix` (for example `env_file`, `tunnel_id`) are passed to the transport as options. |
 | `ANNOTATE_DATA_DIR` | Bus root becomes `<data>/bus` when `ANNOTATE_BUS_ROOT` is unset. |
 | `ANNOTATE_CLAUDE_SETTINGS` | The settings.json the hook installer edits. Default `~/.claude/settings.json`. |
 | `ANNOTATE_SHIM_PATH` | Where `install-shim` writes. Default `~/.local/bin/annotate`. |

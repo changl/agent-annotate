@@ -93,8 +93,10 @@ request, so a fix reaches every published page at once.
 
 Prefer `cloudflare_tailscale` for a tunnel whose connector cannot dial
 loopback. The transport is configured per project in `projects.toml`
-(`transport`, `hostname`, `port_base`, `path_prefix`). Cloudflare credentials
-come from `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+(`transport`, `hostname`, `port_base`, `path_prefix`); every other key in a
+project's section is passed to the transport as an option, so a section can
+carry `env_file = "/path/.env.local"` and `tunnel_id = "…"`. Cloudflare
+credentials otherwise come from `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
 `ANNOTATE_CLOUDFLARE_TUNNEL_ID` and `ANNOTATE_CLOUDFLARE_HOSTNAME`, or from a
 private env file named by `ANNOTATE_CLOUDFLARE_ENV_FILE`; nothing is embedded.
 
