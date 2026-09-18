@@ -12,9 +12,8 @@ annotate <cmd>                       # agent-annotate entry point
 python -m agent_annotate.cli <cmd>   # always works once the package imports
 ```
 
-`annotate doctor` says which form this machine has; use `python -m` whenever
-`command -v annotate` is not this package (the name is also libgd's image
-tool). `publish` writes a `~/.local/bin/annotate` shim if no entry point exists.
+`annotate doctor` says which form this machine has — the name is also libgd's
+image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
 
 ## 2. The round, end to end
 
