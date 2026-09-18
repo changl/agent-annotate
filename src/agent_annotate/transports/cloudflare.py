@@ -66,7 +66,9 @@ def _auth(opts: dict) -> tuple[str, str, str, str]:
 
     tunnel_id = opts.get("tunnel_id") or env.get("ANNOTATE_CLOUDFLARE_TUNNEL_ID")
     hostname = opts.get("hostname") or env.get("ANNOTATE_CLOUDFLARE_HOSTNAME")
-    token = opts.get("token") or env.get("CLOUDFLARE_API_TOKEN")
+    # `cloudflare_api_key` is the spelling the pre-package env file used;
+    # honoured as a fallback so an existing private env file keeps working.
+    token = opts.get("token") or env.get("CLOUDFLARE_API_TOKEN") or env.get("cloudflare_api_key")
     if not token:
         raise RuntimeError("CLOUDFLARE_API_TOKEN is required for the cloudflare transport")
     if not tunnel_id:
@@ -76,6 +78,13 @@ def _auth(opts: dict) -> tuple[str, str, str, str]:
 
     account_id = opts.get("account_id") or env.get("CLOUDFLARE_ACCOUNT_ID")
     encoded_credentials = env.get("CLOUDFLARED_CREDENTIALS")
+    if not encoded_credentials:
+        # The pre-package env file stored the connector credentials as
+        # `<project>_cloudflared=<base64 json>`; any such key will do.
+        for key, value in env.items():
+            if key.endswith("_cloudflared") and value:
+                encoded_credentials = value
+                break
     if not account_id and encoded_credentials:
         account_id = _decode_account_id(encoded_credentials)
     if not account_id:
@@ -114,7 +123,7 @@ def publish(slug: str, port: int, **opts) -> dict:
     slug = slug.strip().lstrip("/")
     if not slug:
         raise ValueError("slug is empty")
-    service = (opts.get("service") or "").strip() or f"http://localhost:{port}"
+    requested_service = (opts.get("service") or "").strip()
     account_id, tunnel_id, hostname, token = _auth(opts)
     api_url = _config_url(account_id, tunnel_id)
 
@@ -124,6 +133,21 @@ def publish(slug: str, port: int, **opts) -> dict:
     backup_path = _backup(current)
 
     target_path = f"/{slug}/.*"
+    existing_rule = next(
+        (rule for rule in ingress
+         if rule.get("hostname") == hostname and rule.get("path") == target_path),
+        None,
+    )
+    existing_service = (existing_rule or {}).get("service") or ""
+    if requested_service:
+        service = requested_service
+    elif existing_service and not existing_service.startswith("http://localhost:"):
+        # A route may intentionally use a connector-independent private origin
+        # when multiple cloudflared replicas share one tunnel. Preserve that
+        # explicit origin across routine re-publishes.
+        service = existing_service
+    else:
+        service = f"http://localhost:{port}"
     new_rule = {
         "path": target_path,
         "service": service,
