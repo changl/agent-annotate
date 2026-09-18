@@ -6,6 +6,34 @@ this repository.
 
 ## Unreleased
 
+- **`annotate new <slug-dir> --from page.md` — a page costs one write** (D9).
+  A small dependency-free markdown parser turns front matter, `##`/`###`
+  headings, paragraphs, bullet and numbered lists, pipe tables, `kpi:` lines,
+  fenced code and a ` ```cards ` block into `versions/<vN>.html` from the
+  packaged `template.html`, with a `data-anchor-id` on every element and a
+  matching `ANCHOR_REGISTRY` (`name`, `grp`, `parent`, `kind`). One run also
+  writes `cards.json`, the `current.html` symlink, an idempotent
+  `current.meta.json` history entry, `comments.json` and a copy of the source
+  at `source/<vN>.md`, then prints the anchor count and the next commands.
+  `--publish` and `--ask` run the real `publish` / `ask` code paths, so the
+  markdown file to a published page with a posed round is two tool calls
+  against a baseline of 6 minutes and 31, a bespoke `build.py` per page (one
+  slug had fifteen) and a hand-written `cards.json`.
+  - Anchor grammar is generated, not remembered: `s:<section>`,
+    `s:<section>:<sub>`, `s:<section>:p<n>` / `li<n>` / `code<n>`,
+    `tbl:<section>` with `:col:<header>` and `:row:<first-cell>`,
+    `kpi:<label>`, `d:<n>`. Repeated keys dedupe with `-2`, `-3`.
+  - A ` ```cards ` entry is rendered as a visible `.card` in the body — title,
+    context, one line per option, a "Recommended" badge, impact and blocking
+    chips — as well as written to `cards.json`. An entry that names an anchor
+    the prose already mints is pinned to that element instead of duplicating
+    the id, in either document order.
+  - The run fails and writes nothing on duplicate anchor ids, zero anchors, or
+    text between `</style>` and the first element — the CSS-outside-`<style>`
+    mistake that shipped in nine published versions.
+  - `annotate new --example > page.md` prints a document exercising every
+    construct (32 anchors, 3 cards). Format reference:
+    `references/building-pages.md` §1.
 - **`install-skill --provider claude|codex --dest <dir>`** writes a skill
   directory from the package's own skill text, which now ships as package
   data under `src/agent_annotate/skills/`: `SKILL.md` with the invocation
