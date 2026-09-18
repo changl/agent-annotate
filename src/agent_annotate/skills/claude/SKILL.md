@@ -8,14 +8,13 @@ description: Publish an interactive HTML review page the user annotates in the b
 ## 1. Invocation
 
 ```bash
-annotate <cmd>                    # the agent-annotate entry point (uv tool install / pip)
+annotate <cmd>                       # agent-annotate entry point
 python -m agent_annotate.cli <cmd>   # always works once the package imports
 ```
 
-`annotate doctor` says which form this machine has. Use the `python -m` form
-whenever `command -v annotate` is not this package — on some machines the
-name is libgd's image tool. `publish` and `install-shim` write a
-`~/.local/bin/annotate` shim when no entry point is there yet.
+`annotate doctor` says which form this machine has; use `python -m` whenever
+`command -v annotate` is not this package (the name is also libgd's image
+tool). `publish` writes a `~/.local/bin/annotate` shim if no entry point exists.
 
 ## 2. The round, end to end
 
@@ -25,8 +24,8 @@ name is libgd's image tool. `publish` and `install-shim` write a
    session, prints a URL only once the page is proven to render.
 3. `annotate ask <slug> --from cards.json` — pose the whole round in one call.
 4. Stop and hand the URL over. Wait for the hook notice (§7).
-5. `annotate inbox <slug> --unread` for everything new,
-   `annotate cards <slug>` for verdicts only.
+5. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
+   for verdicts only.
 6. Act, then `annotate addressed <slug> <id> --response "…"`.
 7. Next round: write `versions/v2.html`, then
    `annotate publish-version <slug-dir> v2 --label "round 2"`.
@@ -35,27 +34,26 @@ name is libgd's image tool. `publish` and `install-shim` write a
 
 | Command | Effect |
 |---|---|
-| `doctor` | invocation, roots, hook registration, `node`/`lsof`/`codex`, session id |
-| `publish <slug-dir>` | start server, register route, claim owner, verify, install shim + hook |
+| `doctor` | invocation, roots, hook registration, tools, session id |
+| `publish <slug-dir>` | serve, route, claim owner, verify, install shim + hook |
 | `unpublish <slug>` | tear down route and stop the server |
 | `status [<slug>]` | list running slugs and their health |
-| `claim <slug>` | make this session the owner (handoff, or a pre-ownership page) |
+| `claim <slug>` | make this session the owner (handoff, or an unowned page) |
 | `install-shim [--force]` | (re)write `~/.local/bin/annotate` |
-| `ask <slug> --from cards.json [--version vN]` | create or refresh a whole round of cards |
+| `ask <slug> --from cards.json [--version vN]` | create or refresh a round of cards |
 | `cards <slug>` (`open-cards`) | list cards, verdicts, undecided anchors |
-| `inbox <slug> [--unread] [--json] [--all-events]` | this session's unread bus events, compact |
+| `inbox <slug> [--unread] [--json] [--all-events]` | this session's new bus events |
 | `watch <slug>` | tail the bus to stdout |
 | `monitor <slug> [--owner ID] [--takeover]` | exclusive lease + actionable-event stream |
-| `publish-version <slug-dir> <vN> [--label …]` | swap `current.html`, register history once |
+| `publish-version <slug-dir> <vN> [--label …]` | swap `current.html`, log history |
 | `addressed <slug> <id> [--response …]` | mark a comment addressed_by_agent |
 | `archive-comment <slug> <id>` | archive a comment |
 | `migrate <legacy.html>` | one-shot v1 → v2 conversion |
 | `eval [--since YYYY-MM-DD]` | read-only baseline of the whole review loop |
 | `prune-bus [--days N] [--apply]` | archive quiet buses with their cursors |
-| `sessions` · `connect` · `disconnect` · `send` | Codex thread delivery (`references/cli-reference.md` §10) |
+| `sessions` · `connect` · `disconnect` · `send` | Codex thread delivery |
 
-Every slug argument takes `<slug>` or `<project>/<slug>`; `--project` is
-honoured wherever a slug is.
+Every slug argument takes `<slug>` or `<project>/<slug>`; `--project` works too.
 
 ## 4. Anchor ids
 
@@ -77,21 +75,21 @@ Anchors absent from the registry surface as "Comments without anchor".
     "prompt": "Rename status → lifecycle_state?",
     "context": "Three services read this column, so the rename needs a dual-write window before v3 ships.",
     "recommendation": "accept",
-    "options": [{"id": "accept", "label": "Rename", "consequence": "One week of dual writes.", "style": "primary"},
-                {"id": "reject", "label": "Keep status", "consequence": "The name stays ambiguous in v3.", "style": "default"}],
+    "consequences": {"accept": "One week of dual writes.",
+                     "reject": "The name stays ambiguous in v3."},
     "evidence": [{"label": "current column", "anchor": "tbl:items:col:status"}],
-    "impact": "medium", "blocking": true}}]
+    "impact": "medium"}}]
 ```
 
-Every card states the context, a recommendation, and what each option costs.
-Cards that recommend are answered 74% of the time; cards that only ask, 34%.
+Every card states its context, a recommendation, and what each option costs:
+cards that recommend are answered 74% of the time, cards that only ask 34%.
 Full schema, rendering and round mode: `references/decision-cards.md`.
 
 ## 6. Comment lifecycle
 
 `open` (blue pin) → `addressed_by_agent` (purple) → `user_confirmed` (green) →
-`archived` (hidden). You may only move a comment to `addressed_by_agent`;
-confirming and archiving belong to the reviewer, never to you.
+`archived` (hidden). You may only set `addressed_by_agent`; confirming and
+archiving belong to the reviewer, never to you.
 
 ## 7. Getting feedback back — one policy
 
@@ -102,15 +100,14 @@ user turn and costs nothing while quiet:
 [annotate] <project>/<slug>: N reviewer event(s) since your last read — verdicts: …; undecided: N of M cards. Read: annotate inbox <slug> --unread
 ```
 
-It speaks only to the session that published or claimed the slug, counts only
-reviewer events, and never advances the `inbox --unread` cursor.
+It speaks only to the owning session, counts reviewer events only, and never
+advances the `inbox --unread` cursor.
 
-**Unattended only:** when no user turn is coming, run `annotate monitor <slug>`
-inside Claude Code's Monitor tool with `timeout_ms: 1800000`, re-armed when it
-expires. Heartbeats are off by default: the July idle-reap no longer occurs, so
-they were pure turn noise. One lease per slug, `--takeover` only for an explicit
-handoff. Do not arm a monitor for a page a human is reviewing while you still
-have turns.
+**Unattended only:** with no user turn coming, run `annotate monitor <slug>`
+inside Claude Code's Monitor tool, `timeout_ms: 1800000`, re-armed on expiry.
+Heartbeats are off (the idle-reap that needed them is gone). One lease per
+slug, `--takeover` only for an explicit handoff. Never arm a monitor for a page
+a human is reviewing while you still have turns.
 
 **Never act on a partial round.** Wait for `ROUND SUBMITTED` in the notice (bus
 event `round_submitted`), or for every card to carry a verdict.
@@ -118,15 +115,15 @@ event `round_submitted`), or for every card to carry a verdict.
 ## 8. Verification
 
 `publish` asserts rendered anchors at the `origin`, `tailscale` and `public`
-hops. A status code proves nothing behind Cloudflare Access: a healthy route
-and a dead one both answer 302 to the login page. `UNVERIFIED … (Access login)`
-means live but unproven from here — open it with `orca tab create --url <url>
---json` plus `orca eval` in the authenticated default profile. Never curl a
-page. Never call one live off a 200.
+hops. Behind Cloudflare Access a status code proves nothing: a healthy route
+and a dead one both answer 302. `UNVERIFIED … (Access login)` means live but
+unproven from here — check it with `orca tab create --url <url> --json` plus
+`orca eval` on the authenticated profile. Never curl a page, never call one
+live off a 200.
 
 ## 9. References
 
 `references/building-pages.md` · `references/decision-cards.md` ·
 `references/cli-reference.md` · `references/architecture.md` ·
 `references/telemetry-and-eval.md` · `references/interaction-contract.md` ·
-`CHANGELOG.md`
+release history in the repo's `CHANGELOG.md` (`annotate doctor` prints the path).
