@@ -21,7 +21,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
 ────────────────────────────────────────────────────────────────────────────
 
     python sync_server.py --slug-dir <slug-dir>/ [--port N] [--public-base-path /slug] \\
-        [--bus-dir <platform data dir>/agent-annotate/bus/<project>]
+        [--bus-dir ~/.claude/annotate-bus/<project>]
 
     Expected layout under <slug-dir>:
         current.html         (symlink → versions/vN.html)
@@ -39,7 +39,14 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
                 "created_at": iso, "version": "vN",
                 "status": "open" | "addressed_by_agent" | "user_confirmed" | "archived",
                 "response_text": str | null,
-                "replies": [ { "author": str, "text": str, "ts": iso } ]
+                "replies": [ { "author": str, "text": str, "ts": iso } ],
+                "decision_request": { "prompt": str, "options": [str, ...] } | null,
+                "decision": { "verdict": "accept"|"reject"|"comment",
+                              "text": str | null, "ts": iso, "by": str } | null,
+                "decision_history": [ { "verdict": ..., "text": ..., "ts": ..., "by": ... }, ... ]
+                                     # prior decisions, oldest first; a comment
+                                     # gains an entry here each time a NEW
+                                     # decision overwrites an existing one
               },
               ...
             ]
@@ -52,12 +59,32 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       GET  /current.meta.json               → current meta JSON
       GET  /comments.json                   → entire v2 comment store
       GET  /api/comments?status=&version=   → filtered comments
-      PUT  /api/comments/<id>               → set status / response_text
+      PUT  /api/comments/<id>               → set status / response_text / decision_request
       POST /api/comments/<id>/reply         → append a thread reply
       POST /api/comments/<id>/archive       → move comment to archived
+      POST /api/comments/<id>/decision      → resolve a posed decision_request
+                                              (accept/reject/comment); pushes to session.
+                                              Re-posting on an already-decided
+                                              comment REVISES it: the prior
+                                              decision moves to decision_history,
+                                              and the reply + both bus events
+                                              carry the reversal explicitly.
       POST /api/comments                    → v1-compatible whole-store POST OR
                                               v2-compatible single-comment create
+                                              (may carry decision_request; v2.19)
+      GET  /api/capabilities                → {"version","batch","rounds","decision_schema"}
+                                              (v2.19; 404 on older servers → legacy chrome)
+      POST /api/comments/batch              → {"items":[...], "idempotency":"anchor"|null}
+                                              creates/updates many decision cards at once
+      POST /api/rounds/submit               → close a review round: clears
+                                              decision.round_pending on every deferred
+                                              verdict and emits ONE session_push{round:true}
+      POST /api/rounds/discard              → clear round_pending flags without pushing
       *                                     → serve static files from <slug-dir>
+
+    Optional request header X-Annotate-Session: <id> — when present, every bus
+    event the request emits carries session_id (agents/CLIs send it, browsers
+    never do).
 
     NDJSON bus: every comment event appends to <bus-dir>/<slug>.ndjson.
     Author extraction reads Cf-Access-Authenticated-User-Email header.
@@ -206,6 +233,94 @@ def _comment_needs_push(comment: dict) -> bool:
         if not str(reply.get("author") or "").startswith("agent:"):
             latest = max(latest, _iso_timestamp(reply.get("ts")))
     return latest > flagged_at
+
+
+# ── decision_request validation (shared by POST create, PUT, batch) ──────
+# v2.19 schema (all optional except prompt):
+#   prompt, context, recommendation, options (strings or {id,label,
+#   consequence,style}), consequences {accept,reject}, evidence [{label,
+#   anchor}], impact low|medium|high, blocking bool, requested_at (server-set).
+# The serialized cap is enforced HERE and surfaced as HTTP 413 — the old
+# 2048-byte check silently dropped an oversized request and still returned
+# 200, which left agents believing a card had been posed when it had not.
+_DECISION_REQUEST_CAP = 8192
+_DECISION_IMPACTS = ("low", "medium", "high")
+
+
+class DecisionRequestError(ValueError):
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def _normalize_decision_request(dr: Any) -> dict:
+    """Validate an incoming decision_request and stamp requested_at.
+
+    Raises DecisionRequestError(status=400) on a malformed shape and
+    (status=413) when the serialized form exceeds _DECISION_REQUEST_CAP.
+    Returns a fresh dict (never the caller's object).
+    """
+    if not isinstance(dr, dict):
+        raise DecisionRequestError("decision_request must be an object")
+    out = dict(dr)
+    prompt = out.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise DecisionRequestError("decision_request.prompt is required")
+    out["prompt"] = prompt.strip()
+    if "context" in out and out["context"] is not None and not isinstance(out["context"], str):
+        raise DecisionRequestError("decision_request.context must be a string")
+    if "options" in out and out["options"] is not None:
+        opts = out["options"]
+        if not isinstance(opts, list):
+            raise DecisionRequestError("decision_request.options must be a list")
+        for o in opts:
+            if isinstance(o, str):
+                continue
+            if isinstance(o, dict) and isinstance(o.get("id"), str) and o["id"]:
+                continue
+            raise DecisionRequestError("decision_request.options entries must be strings or {id,...} objects")
+    if "consequences" in out and out["consequences"] is not None and not isinstance(out["consequences"], dict):
+        raise DecisionRequestError("decision_request.consequences must be an object")
+    if "evidence" in out and out["evidence"] is not None:
+        ev = out["evidence"]
+        if not isinstance(ev, list) or any(not isinstance(e, dict) for e in ev):
+            raise DecisionRequestError("decision_request.evidence must be a list of {label, anchor}")
+    if "impact" in out and out["impact"] is not None and out["impact"] not in _DECISION_IMPACTS:
+        raise DecisionRequestError("decision_request.impact must be low|medium|high")
+    if "blocking" in out and out["blocking"] is not None and not isinstance(out["blocking"], bool):
+        raise DecisionRequestError("decision_request.blocking must be a boolean")
+    out["requested_at"] = _now_iso()
+    try:
+        size = len(json.dumps(out, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        raise DecisionRequestError("decision_request is not JSON-serializable")
+    if size > _DECISION_REQUEST_CAP:
+        raise DecisionRequestError(
+            f"decision_request too large: {size} bytes > {_DECISION_REQUEST_CAP}", status=413)
+    return out
+
+
+def _decision_requested_event(comment: dict, author: str) -> dict:
+    dr = comment.get("decision_request") or {}
+    opts = dr.get("options")
+    return {
+        "event": "decision_requested",
+        "comment_id": comment.get("id"),
+        "anchor_id": comment.get("anchor_id"),
+        "has_context": bool(dr.get("context")),
+        "options_n": len(opts) if isinstance(opts, list) else 3,
+        "prompt_len": len(dr.get("prompt") or ""),
+        "by": author,
+    }
+
+
+def _decision_latency_s(comment: dict, now_iso: str) -> float | None:
+    """Seconds between decision_request.requested_at and the verdict; None
+    when the request predates v2.19 and carries no requested_at."""
+    requested = _iso_timestamp((comment.get("decision_request") or {}).get("requested_at"))
+    if not requested:
+        return None
+    return round(max(0.0, _iso_timestamp(now_iso) - requested), 1)
 
 
 def _coerce_v2(raw: Any) -> dict:
@@ -513,7 +628,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     public_base_path: str = ""
     bus_dir: Path | None = None
     v2_mode: bool = False
-    skill_dir: Path | None = None  # packaged web asset directory
+    skill_dir: Path | None = None  # packaged web asset directory (shell.*, adapter.js)
     local_author: str | None = None
     local_author_name: str | None = None
 
@@ -607,6 +722,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_identity(parsed)
             if route_path == "/api/session-monitor":
                 return self._v2_get_session_monitor(parsed)
+            if route_path == "/api/capabilities":
+                return self._v2_get_capabilities(parsed)
             if route_path == "/comments.json":
                 return self._v2_get_store()
             if route_path == "/current.meta.json":
@@ -639,6 +756,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if self.v2_mode:
             if route_path == "/api/comments":
                 return self._v2_post_comments(parsed)
+            if route_path == "/api/comments/batch":
+                return self._v2_post_comments_batch(parsed)
+            if route_path == "/api/rounds/submit":
+                return self._v2_post_rounds_submit(parsed)
+            if route_path == "/api/rounds/discard":
+                return self._v2_post_rounds_discard(parsed)
             if route_path == "/api/push-session":
                 return self._v2_post_push_session(parsed)
             if route_path == "/api/seen":
@@ -660,6 +783,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if route_path.startswith("/api/comments/") and route_path.endswith("/push"):
                 cid = route_path[len("/api/comments/"):-len("/push")]
                 return self._v2_post_push_single(cid, parsed)
+            if route_path.startswith("/api/comments/") and route_path.endswith("/decision"):
+                cid = route_path[len("/api/comments/"):-len("/decision")]
+                return self._v2_post_decision(cid, parsed)
             self._respond(404, b'{"error":"Not found"}')
             return
         else:
@@ -679,8 +805,37 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Cf-Access-Authenticated-User-Email")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Cf-Access-Authenticated-User-Email, X-Annotate-Session")
         self.end_headers()
+
+    # ── v2.19: agent session attribution ─────────────────────────────
+    def _session_fields(self) -> dict:
+        """{"session_id": ...} when the caller sent X-Annotate-Session, else {}.
+        Spread into every bus event a request emits so agent-authored events
+        can be attributed to the session that produced them. Browsers never
+        send the header, so reviewer events are unaffected."""
+        sid = (self.headers.get("X-Annotate-Session") or "").strip()
+        return {"session_id": sid} if sid else {}
+
+    def _read_json_body(self):
+        """Parse the request body as JSON. Returns (payload, None) or
+        (None, error_bytes) after having ALREADY responded 400."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(body) if body else {}, None
+        except json.JSONDecodeError as exc:
+            self._respond(400, json.dumps({"error": f"invalid json: {exc}"}).encode())
+            return None, b"bad"
+
+    def _v2_get_capabilities(self, parsed):
+        self._respond(200, json.dumps({
+            "version": "2.19",
+            "batch": True,
+            "rounds": True,
+            "decision_schema": 2,
+            "decision_request_cap": _DECISION_REQUEST_CAP,
+        }).encode(), "application/json")
 
     # ── V1 routes (backward compat) ─────────────────────────────────
     def _v1_get_comments(self, parsed):
@@ -1073,41 +1228,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         identity = self._identity()
         author = identity["email"] or "anonymous"
-        author_name = identity["name"] or (payload.get("author_name") if identity["authenticated"] else None)
 
-        version = payload.get("version", "v1")
         try:
             with _STORE_LOCK:
                 meta = self._read_meta()
-                if meta.get("current"):
-                    version = payload.get("version") or meta["current"]
                 store = self._v2_load()
-                comment = {
-                    "id": payload.get("id") or _new_id(),
-                    "anchor_id": anchor_id,
-                    "anchor_label": payload.get("anchor_label") or payload.get("sectionLabel"),
-                    "text": text,
-                    "author": author,
-                    "author_email": identity["email"],
-                    "author_name": author_name,
-                    "created_at": _now_iso(),
-                    "version": version,
-                    "status": "open",
-                    "response_text": None,
-                    "replies": [],
-                }
-                # Granular sub-anchor selector captured client-side at click
-                # time (inner element id / relative CSS path / text quote /
-                # click offset). Stored verbatim; size-capped defensively.
-                target = payload.get("target")
-                if isinstance(target, dict) and len(json.dumps(target)) <= 4096:
-                    comment["target"] = target
+                comment = self._new_comment_from_payload(payload, identity, meta)
                 store["anchors"].setdefault(anchor_id, []).append(comment)
                 self._v2_save(store)
+        except DecisionRequestError as exc:
+            self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
+            return
         except OSError as exc:
             self._respond(500, f'{{"error":"write error: {exc}"}}'.encode())
             return
 
+        version = comment["version"]
+        session = self._session_fields()
         _bus_append(self.bus_dir, self.slug, {
             "event": "comment_created",
             "comment_id": comment["id"],
@@ -1115,9 +1252,177 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "author": author,
             "version": version,
             "target": comment.get("target"),
+            **({"decision_requested": True} if comment.get("decision_request") else {}),
+            **session,
         })
-        print(f"  POST /api/comments → {comment['id']} by {author} on {anchor_id} ({version})", flush=True)
+        if comment.get("decision_request"):
+            _bus_append(self.bus_dir, self.slug, {**_decision_requested_event(comment, author), **session})
+        print(f"  POST /api/comments → {comment['id']} by {author} on {anchor_id} ({version})"
+              + (" [decision card]" if comment.get("decision_request") else ""), flush=True)
         self._respond(201, json.dumps(comment, ensure_ascii=False).encode(), "application/json")
+
+    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict) -> dict:
+        """Build a fresh v2 comment from a create payload (single or batch).
+
+        Caller validates anchor_id/text and holds _STORE_LOCK. Raises
+        DecisionRequestError (400/413) when the payload's decision_request is
+        malformed or oversized — nothing is written in that case.
+        """
+        anchor_id = payload.get("anchor_id") or payload.get("sectionId") or payload.get("nodeId")
+        author = identity["email"] or "anonymous"
+        author_name = identity["name"] or (payload.get("author_name") if identity["authenticated"] else None)
+        version = payload.get("version", "v1")
+        if meta.get("current"):
+            version = payload.get("version") or meta["current"]
+        comment = {
+            "id": payload.get("id") or _new_id(),
+            "anchor_id": anchor_id,
+            "anchor_label": payload.get("anchor_label") or payload.get("sectionLabel"),
+            "text": (payload.get("text") or "").strip(),
+            "author": author,
+            "author_email": identity["email"],
+            "author_name": author_name,
+            "created_at": _now_iso(),
+            "version": version,
+            "status": "open",
+            "response_text": None,
+            "replies": [],
+        }
+        # Granular sub-anchor selector captured client-side at click
+        # time (inner element id / relative CSS path / text quote /
+        # click offset). Stored verbatim; size-capped defensively.
+        target = payload.get("target")
+        if isinstance(target, dict) and len(json.dumps(target)) <= 4096:
+            comment["target"] = target
+        # v2.19: a card can be posed in the same call that creates the
+        # comment (previously a mandatory second PUT). Same validation as PUT.
+        if payload.get("decision_request") is not None:
+            comment["decision_request"] = _normalize_decision_request(payload["decision_request"])
+        return comment
+
+    def _v2_post_comments_batch(self, parsed):
+        """POST /api/comments/batch — create (or idempotently update) many
+        comments under ONE store lock.
+
+        Body: {"items": [{anchor_id, text, version?, decision_request?,
+                          anchor_label?, target?}, ...],
+               "idempotency": "anchor" | null}
+        With idempotency == "anchor", an existing non-archived comment by the
+        SAME author on the SAME anchor_id that already carries a
+        decision_request is updated in place (text + decision_request) rather
+        than duplicated — so an agent can re-run `cli.py ask` safely.
+        Validation is all-or-nothing: a bad item (400/413) rejects the whole
+        batch before anything is written.
+        """
+        payload, err = self._read_json_body()
+        if err:
+            return
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            self._respond(400, b'{"error":"items list required"}')
+            return
+        items = payload["items"]
+        if not items:
+            self._respond(400, b'{"error":"items must not be empty"}')
+            return
+        if len(items) > 200:
+            self._respond(413, b'{"error":"too many items (max 200)"}')
+            return
+        idempotency = payload.get("idempotency")
+        if idempotency not in (None, "anchor"):
+            self._respond(400, b'{"error":"idempotency must be \\"anchor\\" or null"}')
+            return
+        for i, it in enumerate(items):
+            if not isinstance(it, dict):
+                self._respond(400, json.dumps({"error": f"items[{i}] must be an object"}).encode())
+                return
+            aid = it.get("anchor_id") or it.get("sectionId") or it.get("nodeId")
+            if not aid or not (it.get("text") or "").strip():
+                self._respond(400, json.dumps({"error": f"items[{i}]: anchor_id and text required"}).encode())
+                return
+
+        identity = self._identity()
+        author = identity["email"] or "anonymous"
+        created_events = []
+        ids = []
+        created = 0
+        updated = 0
+        try:
+            with _STORE_LOCK:
+                meta = self._read_meta()
+                store = self._v2_load()
+                # Validate everything first so a 413 on item 3 never leaves
+                # items 1-2 half-committed.
+                built = []
+                for it in items:
+                    built.append(self._new_comment_from_payload(it, identity, meta))
+                now = _now_iso()
+                for it, fresh in zip(items, built):
+                    aid = fresh["anchor_id"]
+                    existing = None
+                    if idempotency == "anchor" and fresh.get("decision_request"):
+                        for c in store["anchors"].get(aid, []):
+                            if (c.get("status") != "archived" and c.get("author") == author
+                                    and c.get("decision_request")):
+                                existing = c
+                                break
+                    if existing is not None:
+                        existing["text"] = fresh["text"]
+                        existing["decision_request"] = fresh["decision_request"]
+                        if fresh.get("anchor_label"):
+                            existing["anchor_label"] = fresh["anchor_label"]
+                        existing["edited_at"] = now
+                        existing["edited_by"] = author
+                        existing["edited_by_email"] = identity["email"]
+                        existing["edited_by_name"] = fresh.get("author_name")
+                        updated += 1
+                        ids.append(existing["id"])
+                        created_events.append(("comment_updated", existing))
+                    else:
+                        store["anchors"].setdefault(aid, []).append(fresh)
+                        created += 1
+                        ids.append(fresh["id"])
+                        created_events.append(("comment_created", fresh))
+                self._v2_save(store)
+        except DecisionRequestError as exc:
+            self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
+            return
+        except OSError as exc:
+            self._respond(500, f'{{"error":"write error: {exc}"}}'.encode())
+            return
+
+        session = self._session_fields()
+        for kind, c in created_events:
+            ev = {
+                "event": kind,
+                "comment_id": c["id"],
+                "anchor_id": c["anchor_id"],
+                "author": author,
+                "version": c.get("version"),
+                "batch": True,
+                **session,
+            }
+            if kind == "comment_created":
+                ev["target"] = c.get("target")
+            else:
+                ev["old_status"] = c.get("status")
+                ev["new_status"] = c.get("status")
+            if c.get("decision_request"):
+                ev["decision_requested"] = True
+            _bus_append(self.bus_dir, self.slug, ev)
+            if c.get("decision_request"):
+                _bus_append(self.bus_dir, self.slug, {**_decision_requested_event(c, author), **session})
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "comments_seeded",
+            "comment_ids": ids,
+            "created": created,
+            "updated": updated,
+            "by": author,
+            **session,
+        })
+        print(f"  POST /api/comments/batch → created={created} updated={updated} by {author}", flush=True)
+        self._respond(200, json.dumps({
+            "ids": ids, "created": created, "updated": updated,
+        }, ensure_ascii=False).encode(), "application/json")
 
     def _v2_put_comment(self, comment_id: str, parsed):
         length = int(self.headers.get("Content-Length", 0))
@@ -1172,6 +1477,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     repinned = True
             if isinstance(payload.get("reanchor"), dict) and len(json.dumps(payload["reanchor"])) <= 2048:
                 c["reanchor"] = payload["reanchor"]
+            # decision_request: an agent posing a one-click accept/reject/
+            # comment question on this card. Explicit null clears it (e.g.
+            # the agent withdraws the question). v2.19: validated by the
+            # shared normalizer (same as POST create/batch); an oversized
+            # or malformed request is REJECTED (413/400) instead of being
+            # silently dropped with a 200.
+            decision_posed = False
+            if "decision_request" in payload:
+                dr = payload["decision_request"]
+                if dr is None:
+                    c.pop("decision_request", None)
+                else:
+                    try:
+                        c["decision_request"] = _normalize_decision_request(dr)
+                    except DecisionRequestError as exc:
+                        self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
+                        return
+                    decision_posed = True
             new_anchor = payload.get("anchor_id")
             if isinstance(new_anchor, str) and new_anchor and new_anchor != anchor_id:
                 store["anchors"][anchor_id].remove(c)
@@ -1189,6 +1512,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             c["edited_by_name"] = identity["name"] or (payload.get("author_name") if identity["authenticated"] else None)
             self._v2_save(store)
 
+        session = self._session_fields()
         _bus_append(self.bus_dir, self.slug, {
             "event": "comment_updated",
             "comment_id": comment_id,
@@ -1197,7 +1521,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "new_status": c.get("status"),
             "author": author,
             **({"repinned": True, "target": c.get("target")} if repinned else {}),
+            **({"decision_requested": True} if decision_posed else {}),
+            **session,
         })
+        if decision_posed:
+            _bus_append(self.bus_dir, self.slug, {**_decision_requested_event(c, author), **session})
         print(f"  PUT /api/comments/{comment_id} → status={c.get('status')} by {author}", flush=True)
         self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
 
@@ -1257,6 +1585,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "author": author,
             **({"auto_reopened": True, "old_status": "addressed_by_agent",
                 "new_status": "open"} if auto_reopened else {}),
+            **self._session_fields(),
         })
         if auto_reopened:
             print(f"  POST /api/comments/{comment_id}/reply → user reply auto-reopened (by {author})", flush=True)
@@ -1291,6 +1620,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_id": comment_id,
             "anchor_id": moved[0],
             "author": author,
+            **self._session_fields(),
         })
         self._respond(200, json.dumps(moved[1], ensure_ascii=False).encode(), "application/json")
 
@@ -1331,6 +1661,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_id": comment_id,
             "anchor_id": moved[0],
             "author": author,
+            **self._session_fields(),
         })
         print(f"  POST /api/comments/{comment_id}/accept → archived by {author}", flush=True)
         self._respond(200, json.dumps(moved[1], ensure_ascii=False).encode(), "application/json")
@@ -1367,10 +1698,31 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_id": comment_id,
             "anchor_id": moved[0],
             "author": author,
+            **self._session_fields(),
         })
         self._respond(200, json.dumps(moved[1], ensure_ascii=False).encode(), "application/json")
 
     # ── F1: Push-to-session routes ───────────────────────────────────
+    def _compute_delivery(self) -> dict:
+        """Monitor-lease/delivery mechanics shared by every push path (bulk,
+        single, and decision). Callers append their own bus event with these
+        fields spread in, then return the same dict (spread again) as the
+        delivery portion of their HTTP response — keeps the wire contract
+        (delivery/monitor_count/monitor_owner/delivery_id) identical across
+        all three routes without duplicating the lease lookup three times.
+        """
+        _ensure_monitor_offset_baseline(self.bus_dir, self.slug)
+        monitors = _active_monitor_leases(self.bus_dir, self.slug)
+        monitor_count = len(monitors)
+        monitor_owner = _public_monitor_owner(monitors[0] if monitors else None)
+        delivery = "active_monitor" if monitor_count else "queued"
+        return {
+            "delivery": delivery,
+            "monitor_count": monitor_count,
+            "monitor_owner": monitor_owner,
+            "delivery_id": uuid.uuid4().hex[:12],
+        }
+
     def _v2_post_push_session(self, parsed):
         """Flag open comments with new activity and emit one session_push.
 
@@ -1393,29 +1745,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         flagged_ids.append(c.get("id"))
             self._v2_save(store)
 
-        _ensure_monitor_offset_baseline(self.bus_dir, self.slug)
-        monitors = _active_monitor_leases(self.bus_dir, self.slug)
-        monitor_count = len(monitors)
-        monitor_owner = _public_monitor_owner(monitors[0] if monitors else None)
-        delivery = "active_monitor" if monitor_count else "queued"
-        delivery_id = uuid.uuid4().hex[:12]
+        delivery = self._compute_delivery()
         _bus_append(self.bus_dir, self.slug, {
             "event": "session_push",
-            "delivery_id": delivery_id,
-            "delivery": delivery,
-            "monitor_count": monitor_count,
-            "monitor_owner": monitor_owner,
+            **delivery,
             "comment_count": flagged_count,
             "comment_ids": flagged_ids,
             "author": author,
         })
-        print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery}, monitors={monitor_count}, by {author}", flush=True)
+        print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
-            "delivery_id": delivery_id,
-            "delivery": delivery,
-            "monitor_count": monitor_count,
-            "monitor_owner": monitor_owner,
+            **delivery,
             "flagged_count": flagged_count,
             "comment_ids": flagged_ids,
         }, ensure_ascii=False).encode(), "application/json")
@@ -1432,6 +1773,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         c["flagged_for_session"] = True
                         c["flagged_at"] = _now_iso()
                         c["flagged_by"] = author
+                        # v2.19 "Send now": a deferred verdict pushed on its
+                        # own leaves the pending round.
+                        if isinstance(c.get("decision"), dict):
+                            c["decision"].pop("round_pending", None)
                         found = (anchor_id, c)
                         break
                 if found:
@@ -1440,33 +1785,273 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(404, b'{"error":"not found"}')
                 return
             self._v2_save(store)
-        _ensure_monitor_offset_baseline(self.bus_dir, self.slug)
-        monitors = _active_monitor_leases(self.bus_dir, self.slug)
-        monitor_count = len(monitors)
-        monitor_owner = _public_monitor_owner(monitors[0] if monitors else None)
-        delivery = "active_monitor" if monitor_count else "queued"
-        delivery_id = uuid.uuid4().hex[:12]
+        delivery = self._compute_delivery()
         _bus_append(self.bus_dir, self.slug, {
             "event": "session_push",
-            "delivery_id": delivery_id,
-            "delivery": delivery,
-            "monitor_count": monitor_count,
-            "monitor_owner": monitor_owner,
+            **delivery,
             "comment_count": 1,
             "comment_ids": [comment_id],
             "anchor_id": found[0],
             "author": author,
         })
-        print(f"  POST /api/comments/{comment_id}/push → {delivery}, monitors={monitor_count}, by {author}", flush=True)
+        print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
-            "delivery_id": delivery_id,
-            "delivery": delivery,
-            "monitor_count": monitor_count,
-            "monitor_owner": monitor_owner,
+            **delivery,
             "flagged_count": 1,
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
+
+    _DECISION_VERDICTS = ("accept", "reject", "comment")
+    _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open", "comment": "open"}
+    _DECISION_REPLY_TEXT = {"accept": "✓ Accepted", "reject": "✗ Rejected"}
+    # Prior-verdict label used in revision reply text ("was ✗ Rejected"). Kept
+    # distinct from _DECISION_REPLY_TEXT (which has no "comment" entry) since
+    # a revision's PRIOR verdict can be any of the three.
+    _DECISION_PRIOR_LABEL = {"accept": "✓ Accepted", "reject": "✗ Rejected", "comment": "Commented"}
+
+    def _v2_post_decision(self, comment_id: str, parsed):
+        """Resolve a one-click decision_request: accept / reject / comment.
+
+        Sets c["decision"], appends a thread reply so the agent sees the
+        verdict in-thread, transitions status, and performs the same
+        monitor-lease/push mechanics as a single-comment push (the reviewer
+        never has to hit a separate "Push to session" button for this).
+
+        REVISION (user-reported incident: clicked Reject by mistake with no
+        way to reverse it): if the comment already carries a c["decision"]
+        when this fires, that prior decision is archived to
+        c["decision_history"] before being overwritten, and the reply text
+        plus both bus events explicitly mark the correction (revised=True,
+        prior_verdict=<old verdict>) so an agent watching the bus sees an
+        explicit reversal, not an ordinary first vote. A comment's FIRST
+        decision (the common case) is completely unaffected by this branch —
+        behavior there is byte-identical to before.
+        """
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            self._respond(400, f'{{"error":"invalid json: {exc}"}}'.encode())
+            return
+        if not isinstance(payload, dict):
+            self._respond(400, b'{"error":"expected object"}')
+            return
+
+        verdict = payload.get("verdict")
+        if verdict not in self._DECISION_VERDICTS:
+            self._respond(400, b'{"error":"invalid verdict"}')
+            return
+        text = (payload.get("text") or "").strip() or None
+        if verdict == "comment" and not text:
+            self._respond(400, b'{"error":"text required for comment verdict"}')
+            return
+        # v2.19 round mode: the chrome batches verdicts into a review round.
+        # Everything below is identical except that NO session_push fires;
+        # the verdict is parked with decision.round_pending=true until
+        # POST /api/rounds/submit (one push for the whole round) or a
+        # per-card POST /api/comments/<id>/push ("Send now").
+        defer_push = bool(payload.get("defer_push"))
+
+        identity = self._identity()
+        author = identity["email"] or "anonymous"
+
+        with _STORE_LOCK:
+            store = self._v2_load()
+            found = None
+            for anchor_id, items in store.get("anchors", {}).items():
+                for c in items:
+                    if c.get("id") == comment_id:
+                        found = (anchor_id, c)
+                        break
+                if found:
+                    break
+            if not found:
+                self._respond(404, b'{"error":"not found"}')
+                return
+            anchor_id, c = found
+            now = _now_iso()
+            old_status = c.get("status")
+
+            prior_decision = c.get("decision")
+            is_revision = prior_decision is not None
+            if is_revision:
+                c.setdefault("decision_history", []).append(prior_decision)
+
+            latency_s = _decision_latency_s(c, now)
+            c["decision"] = {"verdict": verdict, "text": text, "ts": now, "by": author}
+            if latency_s is not None:
+                c["decision"]["latency_s"] = latency_s
+            if defer_push:
+                c["decision"]["round_pending"] = True
+
+            if verdict == "comment":
+                reply_text = text
+            else:
+                reply_text = self._DECISION_REPLY_TEXT[verdict]
+                if text:
+                    reply_text = reply_text + "\n\n" + text
+            if is_revision:
+                prior_label = self._DECISION_PRIOR_LABEL.get(
+                    prior_decision.get("verdict"), prior_decision.get("verdict"))
+                if verdict == "comment":
+                    reply_text = reply_text + "\n\n(revised verdict; was " + prior_label + ")"
+                else:
+                    reply_text = "↺ Changed to " + reply_text + " (was " + prior_label + ")"
+            c.setdefault("replies", []).append({
+                "author": author,
+                "author_email": identity["email"],
+                "author_name": identity["name"] or (payload.get("author_name") if identity["authenticated"] else None),
+                "text": reply_text,
+                "ts": now,
+            })
+
+            c["status"] = self._DECISION_STATUS_MAP[verdict]
+            c["flagged_for_session"] = True
+            c["flagged_at"] = now
+            c["flagged_by"] = author
+            self._v2_save(store)
+
+        revision_bus_fields = (
+            {"revised": True, "prior_verdict": prior_decision.get("verdict")}
+            if is_revision else {}
+        )
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "comment_updated",
+            "comment_id": comment_id,
+            "anchor_id": anchor_id,
+            "old_status": old_status,
+            "new_status": c.get("status"),
+            "author": author,
+            "decision": verdict,
+            **({"latency_s": latency_s} if latency_s is not None else {}),
+            **({"deferred": True} if defer_push else {}),
+            **revision_bus_fields,
+        })
+        if defer_push:
+            delivery = {"delivery": "deferred", "monitor_count": 0, "monitor_owner": None, "delivery_id": None}
+        else:
+            delivery = self._compute_delivery()
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "session_push",
+                **delivery,
+                "comment_count": 1,
+                "comment_ids": [comment_id],
+                "anchor_id": anchor_id,
+                "author": author,
+                "decision": verdict,
+                **revision_bus_fields,
+            })
+        revision_log_suffix = f" (revised, was {prior_decision.get('verdict')})" if is_revision else ""
+        deferred_suffix = " [deferred: round pending]" if defer_push else ""
+        print(f"  POST /api/comments/{comment_id}/decision → verdict={verdict} by {author}{revision_log_suffix}{deferred_suffix}", flush=True)
+        resp = dict(c)
+        resp.update(delivery)
+        self._respond(200, json.dumps(resp, ensure_ascii=False).encode(), "application/json")
+
+    # ── v2.19: review rounds ─────────────────────────────────────────
+    def _v2_post_rounds_submit(self, parsed):
+        """POST /api/rounds/submit {"note": str?} — close the reviewer's round.
+
+        Collects every comment whose decision is round_pending, clears the
+        flag, and emits `round_submitted` plus exactly ONE session_push
+        {round: true, ...} so the agent sees the whole set of verdicts at
+        once instead of reacting to the first click.
+        """
+        payload, err = self._read_json_body()
+        if err:
+            return
+        if not isinstance(payload, dict):
+            payload = {}
+        note = (payload.get("note") or "").strip() or None
+        author = self._author(parsed)
+        with _STORE_LOCK:
+            store = self._v2_load()
+            now = _now_iso()
+            comment_ids = []
+            verdict_counts = {"accept": 0, "reject": 0, "comment": 0}
+            undecided_ids = []
+            for anchor_id, items in store.get("anchors", {}).items():
+                for c in items:
+                    if c.get("status") == "archived":
+                        continue
+                    d = c.get("decision")
+                    if c.get("decision_request") and not d:
+                        undecided_ids.append(c.get("id"))
+                        continue
+                    if isinstance(d, dict) and d.get("round_pending"):
+                        d.pop("round_pending", None)
+                        c["flagged_for_session"] = True
+                        c["flagged_at"] = now
+                        c["flagged_by"] = author
+                        comment_ids.append(c.get("id"))
+                        v = d.get("verdict")
+                        if v in verdict_counts:
+                            verdict_counts[v] += 1
+            self._v2_save(store)
+
+        session = self._session_fields()
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "round_submitted",
+            "comment_ids": comment_ids,
+            "verdict_counts": verdict_counts,
+            "undecided_ids": undecided_ids,
+            "note": note,
+            "by": author,
+            **session,
+        })
+        delivery = self._compute_delivery()
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "session_push",
+            **delivery,
+            "round": True,
+            "comment_count": len(comment_ids),
+            "comment_ids": comment_ids,
+            "verdict_counts": verdict_counts,
+            "undecided_ids": undecided_ids,
+            "note": note,
+            "author": author,
+            **session,
+        })
+        print(f"  POST /api/rounds/submit → {len(comment_ids)} verdict(s) {verdict_counts}, "
+              f"{len(undecided_ids)} undecided, {delivery['delivery']}, by {author}", flush=True)
+        self._respond(200, json.dumps({
+            "ok": True,
+            **delivery,
+            "comment_count": len(comment_ids),
+            "comment_ids": comment_ids,
+            "verdict_counts": verdict_counts,
+            "undecided_count": len(undecided_ids),
+            "undecided_ids": undecided_ids,
+        }, ensure_ascii=False).encode(), "application/json")
+
+    def _v2_post_rounds_discard(self, parsed):
+        """POST /api/rounds/discard — drop the round_pending flags WITHOUT
+        pushing. The verdicts themselves stay recorded (reversible via
+        "Change verdict"); they simply never go out as a round. Emits
+        `round_discarded`, never a session_push."""
+        author = self._author(parsed)
+        with _STORE_LOCK:
+            store = self._v2_load()
+            comment_ids = []
+            for anchor_id, items in store.get("anchors", {}).items():
+                for c in items:
+                    d = c.get("decision")
+                    if isinstance(d, dict) and d.get("round_pending"):
+                        d.pop("round_pending", None)
+                        comment_ids.append(c.get("id"))
+            self._v2_save(store)
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "round_discarded",
+            "comment_ids": comment_ids,
+            "by": author,
+            **self._session_fields(),
+        })
+        print(f"  POST /api/rounds/discard → {len(comment_ids)} pending flag(s) cleared by {author}", flush=True)
+        self._respond(200, json.dumps({
+            "ok": True, "comment_count": len(comment_ids), "comment_ids": comment_ids,
+        }).encode(), "application/json")
 
     def _read_meta(self) -> dict:
         p = self._meta_path()
@@ -1698,7 +2283,7 @@ def main():
         "--bus-dir",
         type=str,
         default="",
-        help="V2 mode: directory for the NDJSON event bus",
+        help="V2 mode: directory for the NDJSON event bus (default: <bus root>/default/)",
     )
     parser.add_argument(
         "--port",
