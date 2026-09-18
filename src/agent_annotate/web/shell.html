@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>annotate</title>
 <link rel="stylesheet" href="shell.css">
 </head>
@@ -13,11 +13,15 @@
   <div class="hdr-left">
     <div class="hdr-title" id="hdr-title">annotate</div>
     <div class="hdr-sub" id="hdr-sub">&nbsp;</div>
+    <select class="mobile-version-select" id="mobile-version-select" aria-label="Select version"></select>
   </div>
   <div class="hdr-right">
+    <!-- v2.19 owner chip: which agent session published/claimed this page.
+         Filled from current.meta.json `owner`; hidden when absent. -->
+    <span class="owner-chip" id="owner-chip" style="display:none"></span>
     <span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span>
     <button class="push-session-btn" id="push-session-btn" title="Send comments to an armed session monitor, or queue them for the next turn">
-      <span>&#128238; Push to session</span><span class="push-session-counter" id="push-session-counter">0</span>
+      <span class="push-session-text"><span class="push-session-icon">&#128238;</span><span class="push-session-label"> Push to session</span></span><span class="push-session-counter" id="push-session-counter">0</span>
     </button>
   </div>
 </header>
@@ -75,6 +79,19 @@
       </div>
       <div id="comment-list" style="display:none"></div>
     </div>
+    <!-- v2.19 round bar (desktop slot: above the rail footer). On mobile
+         shell.js moves the #round-bar node to <body> so it stays visible
+         above the closed bottom sheet. Hidden unless the server reports
+         capabilities.rounds AND at least one verdict is pending. -->
+    <div class="round-bar-slot" id="round-bar-slot">
+      <div class="round-bar" id="round-bar" style="display:none" role="status" aria-live="polite">
+        <div class="round-bar-txt">
+          <span class="round-bar-main" id="round-bar-main">0 of 0 decided</span>
+          <span class="round-bar-sub" id="round-bar-sub"></span>
+        </div>
+        <button type="button" class="round-bar-btn" id="round-finish-btn">Finish review (<span id="round-pending-n">0</span>)</button>
+      </div>
+    </div>
     <div class="drawer-footer">
       <button class="footer-link" id="general-feedback-toggle">+ General feedback</button>
       <button class="footer-link" id="archived-toggle">Archived (<span id="archived-count">0</span>)</button>
@@ -90,6 +107,19 @@
 
 </div>
 
+<!-- Mobile-only floating action button: opens the feedback bottom sheet.
+     Hidden entirely outside the mobile breakpoint (shell.css). -->
+<button class="mobile-fab" id="mobile-fab" title="Open feedback" aria-label="Open feedback panel">
+  <span class="mobile-fab-icon">&#128172;</span>
+  <span class="mobile-fab-count" id="mobile-fab-count">0</span>
+  <span class="mobile-fab-badge" id="mobile-fab-badge" style="display:none">0</span>
+</button>
+
+<!-- Mobile-only dimming backdrop behind the create-comment / pin popovers
+     when they render as bottom sheets. Inert (display:none) outside the
+     mobile breakpoint. -->
+<div id="mobile-dialog-backdrop"></div>
+
 <!-- Pin popover (reverse lookup: shown when a numbered pin is clicked;
      lists the pin's existing comment(s) and focuses the sidebar card) -->
 <div id="pin-popover">
@@ -101,6 +131,22 @@
     </span>
   </div>
   <div class="pinpop-body" id="pinpop-body"></div>
+</div>
+
+<!-- v2.19 round submit confirm (rounds capability only) -->
+<div id="round-confirm-backdrop">
+  <div id="round-confirm" role="dialog" aria-modal="true" aria-labelledby="round-confirm-title">
+    <div class="round-confirm-title" id="round-confirm-title">Finish review</div>
+    <div class="round-confirm-sub" id="round-confirm-sub"></div>
+    <div class="round-confirm-warn" id="round-confirm-warn" style="display:none"></div>
+    <label class="round-confirm-label" for="round-note-ta">Note to the agent (optional)</label>
+    <textarea class="round-note-ta" id="round-note-ta" rows="3" placeholder="Anything the agent should know about this round&hellip;"></textarea>
+    <div class="round-confirm-ft">
+      <button type="button" class="btn btn-sec btn-sm" id="round-cancel-btn">Cancel</button>
+      <button type="button" class="btn btn-danger btn-sm" id="round-discard-btn" title="Clear the pending verdicts without sending them as a round (each card keeps its recorded verdict)">Discard pending</button>
+      <button type="button" class="btn btn-pri btn-sm" id="round-submit-btn">Submit review</button>
+    </div>
+  </div>
 </div>
 
 <!-- Create-comment popover (shown when an anchor element is clicked in the iframe) -->
