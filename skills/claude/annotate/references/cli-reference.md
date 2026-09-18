@@ -249,7 +249,9 @@ next hook notice. A deferred verdict inside an open round reports
 | Subcommand | Notes |
 |---|---|
 | `unpublish <slug>` | Tears down the route, stops the server, clears the registry entry. Leaves `<slug-dir>` alone. |
-| `status [<slug>]` | Registry plus liveness. A slug whose port is actually being served is not reported dead just because the recorded pid moved. |
+| `status [<slug>] [--retired]` | Registry plus liveness. A slug whose port is actually being served is not reported dead just because the recorded pid moved. Every serving row also names its owner and how long ago it was claimed, and marks `(gone)` when no process carrying that session id is running — that is the cue to `claim` it. The last line counts retired entries; `--retired` lists them. |
+| `close <slug> [--older-than 30d] [--dry-run]` | Archives every decision card whose `decision_request` was never answered and whose `created_at` is older than the threshold. A decided card and an ordinary reviewer comment are never touched. Goes through the page's own archive route while it is serving, and writes `comments.json` directly (under the store lock, same archive shape) only when nothing answers on its URL. Appends exactly one `page_closed {slug, archived_ids, archived_count, remaining_open, by, session_id, older_than}`. |
+| `retire <slug>\|--dead [--dry-run]` | Moves registry rows whose pid is dead and whose slug_dir has no live server to `state/retired/<project>.json`, keeping every field and adding `retired_at`. Refuses a slug that is still serving. Never touches a slug directory, a bus or the transport config, so a retired page can be re-published and pick its history back up. |
 | `publish-version <slug-dir> <vN> [--label …]` | Atomically swaps `current.html` to `versions/<vN>.html` and appends to `current.meta.json.history`, exactly once per version even when re-run. Emits `version_published`. Fails if `versions/<vN>.html` is missing. |
 | `addressed <slug> <id> [--response …]` | `PUT /api/comments/<id>` with `status=addressed_by_agent`. |
 | `archive-comment <slug> <id>` | `POST /api/comments/<id>/archive`. |

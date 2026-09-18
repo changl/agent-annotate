@@ -17,7 +17,9 @@ Subcommands:
     unpublish <slug>                      tear down route + stop server
     claim <slug>                          take ownership of a page for this session
     install-shim [--force]                (re)write ~/.local/bin/annotate
-    status [<slug>]                       list active slugs / health
+    status [<slug>] [--retired]           list active slugs / health / retired rows
+    close <slug> [--older-than 30d]       archive decision cards nobody answered
+    retire <slug>|--dead                  move dead registry rows to state/retired/
     doctor                                validate the installation
     migrate <legacy.html>                 one-shot v1→v2 migration
     inbox <slug> [--unread] [--json]      read this session's unseen bus events
@@ -1486,9 +1488,59 @@ def _running_servers() -> dict:
     return found
 
 
+def _ps_command_snapshot() -> str:
+    """One `ps` read, reused for every owner check in a `status` run.
+
+    Cheap and deliberately loose: an agent session id appears in its own
+    process's command line, so finding the id anywhere in the table is enough
+    to say the owner is still around. An empty snapshot (ps refused, or a
+    sandbox without process visibility) means "cannot tell" — never "gone".
+    """
+    try:
+        return subprocess.run(["ps", "-ww", "-eo", "command="],
+                              capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return ""
+
+
+OWNER_COL = 38
+
+
+def _owner_note(record: dict, ps_snapshot: str, width: int = OWNER_COL) -> str:
+    """"<label> claimed 3h", plus "(gone)" when nothing is running for it.
+
+    "(gone)" is the successor's cue: the page is serving, the hook is
+    notifying a session that no longer exists, and someone has to run
+    `annotate claim` before a verdict reaches anybody. The LABEL absorbs the
+    truncation, never the marker — a column narrow enough to hide the alarm
+    would be worse than no column.
+    """
+    session = record.get("owner_session")
+    label = str(record.get("owner_label") or session or "")
+    if not label:
+        return "unclaimed"
+    age = _age_seconds(record.get("owner_claimed_at"))
+    suffix = f" claimed {_fmt_age(age)}" if age is not None else ""
+    if session and session != "unknown" and ps_snapshot and session not in ps_snapshot:
+        suffix += " (gone)"
+    return label[:max(1, width - len(suffix))] + suffix
+
+
 def cmd_status(args) -> int:
+    if getattr(args, "retired", False):
+        retired = _retired_entries()
+        if not retired:
+            print("(no retired entries)")
+            return 0
+        print(f"  {'PROJECT':<15} {'SLUG':<24} {'RETIRED':<21} URL")
+        print(f"  {'-' * 15} {'-' * 24} {'-' * 21} {'-' * 40}")
+        for project, slug, record in retired:
+            print(f"  {project[:15]:<15} {slug[:24]:<24} "
+                  f"{str(record.get('retired_at'))[:21]:<21} {record.get('url')}")
+        return 0
     rows = []
     live = _running_servers()
+    ps_snapshot = _ps_command_snapshot()
     for sf in _all_state_files():
         st = json.loads(sf.read_text(encoding="utf-8"))
         project = st.get("project")
@@ -1514,21 +1566,42 @@ def cmd_status(args) -> int:
                     state = "dup"
                 else:
                     state = "dead"
-            rows.append((project, slug, pid, port, rec.get("url"), state))
+            # An owner only matters while the page is serving: a dead row's
+            # owner is a fact about history, not about who should act.
+            owner = _owner_note(rec, ps_snapshot) if state != "dead" else ""
+            rows.append((project, slug, pid, port, rec.get("url"), state, owner))
     if not rows:
         print("(no active slugs)")
+        _print_retired_count()
         return 0
-    print(f"  {'PROJECT':<15} {'SLUG':<24} {'PID':<8} {'PORT':<6} {'STATE':<7} URL")
-    print(f"  {'-'*15} {'-'*24} {'-'*8} {'-'*6} {'-'*7} {'-'*40}")
-    for project, slug, pid, port, url, state in rows:
-        print(f"  {project[:15]:<15} {slug[:24]:<24} {pid!s:<8} {port!s:<6} {state:<7} {url}")
+    print(f"  {'PROJECT':<12} {'SLUG':<22} {'PID':<8} {'PORT':<6} {'STATE':<7} "
+          f"{'OWNER':<{OWNER_COL}} URL")
+    print(f"  {'-'*12} {'-'*22} {'-'*8} {'-'*6} {'-'*7} {'-'*OWNER_COL} {'-'*40}")
+    for project, slug, pid, port, url, state, owner in rows:
+        print(f"  {project[:12]:<12} {slug[:22]:<22} {pid!s:<8} {port!s:<6} {state:<7} "
+              f"{owner:<{OWNER_COL}} {url}")
+    if any("(gone)" in r[6] for r in rows):
+        print("\n  (gone) = the page is serving but the session that claimed it is no "
+              f"longer running. Take it over with `{_inv()} claim <slug>`.")
     if any(r[5] == "alive*" for r in rows):
         print("\n  alive* = serving, but the state file's pid is stale (restarted "
               "outside the CLI). Re-publish to refresh the registry.")
     if any(r[5] == "dup" for r in rows):
         print("\n  dup    = several live servers share this slug_dir. They will fight "
               "over comments.json; stop the ones you did not intend.")
+    _print_retired_count()
     return 0
+
+
+def _print_retired_count() -> None:
+    """The last line of `status`, so retired rows are discoverable.
+
+    Silent when there are none: a line saying zero on every run is the kind of
+    noise that gets a command stopped being read.
+    """
+    n = len(_retired_entries())
+    if n:
+        print(f"\n  {n} retired entries (`{_inv()} status --retired` to list)")
 
 
 def cmd_migrate(args) -> int:
@@ -2099,6 +2172,390 @@ def cmd_claim(args) -> int:
         "owner_agent": fields["owner_agent"],
         "previous_owner": prior,
     })
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# D7 — closing stale work, retiring dead registry entries
+#
+# Two different kinds of rot, deliberately kept apart. `close` retires the
+# QUESTIONS on a page nobody ever answered; `retire` retires the REGISTRY ROW
+# of a page whose server is long gone. Neither ever deletes anything: close
+# archives (the comment keeps every field and moves to `archived`), retire
+# moves the row to state/retired/<project>.json with a `retired_at` stamp.
+# ────────────────────────────────────────────────────────────────────────────
+_AGE_UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def _parse_age(text: str) -> int:
+    """`30d`, `12h`, `90m`, `2w` → seconds. A bare number means days."""
+    raw = (text or "").strip().lower()
+    if not raw:
+        raise ValueError("empty age")
+    unit = raw[-1]
+    if unit.isdigit():
+        number, seconds = raw, _AGE_UNITS["d"]
+    else:
+        number, seconds = raw[:-1], _AGE_UNITS.get(unit)
+    if seconds is None or not number.isdigit():
+        raise ValueError(f"cannot read {text!r} as an age — use 30d, 12h, 90m or 2w")
+    return int(number) * seconds
+
+
+def _fmt_age(seconds) -> str:
+    """A width-stable age a human reads without converting anything."""
+    if seconds is None:
+        return "?"
+    s = max(0, int(seconds))
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h"
+    return f"{s // 86400}d"
+
+
+def _age_seconds(iso: str | None, now: datetime | None = None) -> float | None:
+    if not iso or not isinstance(iso, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(iso.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return ((now or datetime.now(UTC)) - parsed).total_seconds()
+
+
+def _store_file(record: dict) -> Path | None:
+    slug_dir = record.get("slug_dir")
+    return Path(slug_dir) / "comments.json" if slug_dir else None
+
+
+def _store_lock_path(project: str, slug: str) -> Path:
+    return LOCK_DIR / f"{_safe_component(project)}.{_safe_component(slug)}.store.lock"
+
+
+def _read_store_file(path: Path) -> dict:
+    """The store exactly as written, not the flattened view `_load_store` gives.
+
+    `close` has to write this back, so it may not lose `schema_version` or
+    turn the `archived` map into a list on the way through.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"schema_version": 2, "anchors": {}, "archived": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("anchors"), dict):
+        # v1 store: {anchor_id: [comment, …]} at the top level.
+        anchors = {k: v for k, v in (data or {}).items() if isinstance(v, list)}
+        return {"schema_version": 2, "anchors": anchors, "archived": {}}
+    data.setdefault("anchors", {})
+    if not isinstance(data.get("archived"), (dict, list)):
+        data["archived"] = {}
+    return data
+
+
+def _unanswered_cards(store: dict) -> list[tuple[str, dict]]:
+    """(anchor_id, comment) for every live card nobody has decided.
+
+    A plain reviewer comment has no `decision_request` and is never in scope:
+    `close` retires questions the agent asked, not things the reviewer said.
+    """
+    out = []
+    for anchor_id, items in (store.get("anchors") or {}).items():
+        if not isinstance(items, list):
+            continue
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            if not isinstance(c.get("decision_request"), dict):
+                continue
+            if c.get("status") == "archived" or isinstance(c.get("decision"), dict):
+                continue
+            out.append((c.get("anchor_id") or anchor_id, c))
+    return out
+
+
+def _archive_comment_in_store(store: dict, comment_id: str, author: str, now: str) -> bool:
+    """Move one comment to `archived`, in the shape the server's route writes.
+
+    Only used when no server is holding the store; a live page is closed
+    through its own API so the two never write the same file.
+    """
+    archived = store.setdefault("archived", {})
+    if isinstance(archived, list):  # v1 shape: keep it a list
+        append = archived.append
+    else:
+        append = None
+    for anchor_id, items in list((store.get("anchors") or {}).items()):
+        if not isinstance(items, list):
+            continue
+        for c in list(items):
+            if not isinstance(c, dict) or c.get("id") != comment_id:
+                continue
+            c["status"] = "archived"
+            c["archived_at"] = now
+            c["archived_by"] = author
+            items.remove(c)
+            if not items:
+                del store["anchors"][anchor_id]
+            if append is not None:
+                append(c)
+            else:
+                archived.setdefault(anchor_id, []).append(c)
+            return True
+    return False
+
+
+def _server_reachable(record: dict, timeout: float = 3.0) -> bool:
+    """True when something answers on the page's own local URL.
+
+    The registry pid lies after a restart outside the CLI, so the HTTP surface
+    is the only honest test of whether writing comments.json directly would
+    race a live server.
+    """
+    if not record.get("local_url"):
+        return False
+    code, _ = _api(record, "GET", "/api/capabilities", None,
+                   _resolve_author(None), timeout=timeout)
+    return code != 0
+
+
+def cmd_close(args) -> int:
+    """Archive the decision cards on a page that nobody ever answered.
+
+    Only cards: a card with a verdict is left alone (it was answered), and an
+    ordinary reviewer comment is never touched. The page keeps serving; this
+    closes the questions, not the page.
+    """
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    try:
+        threshold = _parse_age(args.older_than)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    store_path = _store_file(record)
+    if not store_path or not store_path.exists():
+        print(f"ERROR: {project}/{slug} has no comment store at {store_path}", file=sys.stderr)
+        return 2
+
+    now = datetime.now(UTC)
+    store = _read_store_file(store_path)
+    stale, young = [], 0
+    for anchor_id, c in _unanswered_cards(store):
+        age = _age_seconds(c.get("created_at"), now)
+        if age is None or age < threshold:
+            young += 1
+            continue
+        stale.append({
+            "id": c.get("id") or "?",
+            "anchor_id": anchor_id,
+            "age_s": age,
+            "prompt": (c.get("decision_request") or {}).get("prompt") or c.get("text") or "",
+        })
+    stale.sort(key=lambda r: -r["age_s"])
+
+    label = "would archive" if args.dry_run else "archiving"
+    print(f"  {project}/{slug} — {len(stale)} unanswered card(s) older than "
+          f"{args.older_than}, {young} younger")
+    if stale:
+        print("  %-12s %-22s %-6s %s" % ("ID", "ANCHOR", "AGE", "PROMPT"))
+        print("  %-12s %-22s %-6s %s" % ("-" * 12, "-" * 22, "-" * 6, "-" * 40))
+        for row in stale:
+            print("  %-12s %-22s %-6s %s" % (
+                row["id"][:12], row["anchor_id"][:22], _fmt_age(row["age_s"]),
+                _clip(row["prompt"], 48)))
+    if not stale:
+        print("  nothing to close.")
+        return 0
+    if args.dry_run:
+        print(f"  (dry run) {label} {len(stale)}; nothing was written.")
+        return 0
+
+    author = _resolve_author(getattr(args, "author", None))
+    ids = [row["id"] for row in stale]
+    archived_ids, failures = [], []
+    if _server_reachable(record):
+        # The page is live: its server owns comments.json, so go through the
+        # route it already has rather than writing the file underneath it.
+        for cid in ids:
+            code, payload = _api(record, "POST", f"/api/comments/{cid}/archive", {}, author)
+            if code == 200:
+                archived_ids.append(cid)
+            else:
+                failures.append((cid, code, payload))
+    else:
+        live = _running_servers().get(str(Path(record["slug_dir"]).resolve()))
+        if live:
+            print("ERROR: a server is running for this slug_dir but its URL did not "
+                  "answer; refusing to write comments.json underneath it.", file=sys.stderr)
+            return 2
+        stamp = _now_iso()
+        try:
+            with _flock(_store_lock_path(project, slug)):
+                store = _read_store_file(store_path)
+                for cid in ids:
+                    if _archive_comment_in_store(store, cid, author, stamp):
+                        archived_ids.append(cid)
+                    else:
+                        failures.append((cid, 0, "not found in store"))
+                tmp = store_path.with_name(store_path.name + ".tmp")
+                tmp.write_text(json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8")
+                os.replace(tmp, store_path)
+        except TimeoutError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 4
+
+    remaining = len(_unanswered_cards(_read_store_file(store_path)))
+    _bus_emit(record.get("bus_file"), {
+        "event": "page_closed",
+        "slug": slug,
+        "archived_ids": archived_ids,
+        "archived_count": len(archived_ids),
+        "remaining_open": remaining,
+        "by": author,
+        "session_id": _session_id(),
+        "older_than": args.older_than,
+    })
+    print(f"  archived {len(archived_ids)} card(s); {remaining} unanswered card(s) remain.")
+    for cid, code, payload in failures:
+        print(f"  FAILED {cid}: HTTP {code} {payload}", file=sys.stderr)
+    return 2 if failures else 0
+
+
+def _retired_file(project: str) -> Path:
+    return STATE_DIR / "retired" / f"{project}.json"
+
+
+def _load_retired_for_project(project: str) -> dict:
+    path = _retired_file(project)
+    if not path.exists():
+        return {"project": project, "slugs": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"project": project, "slugs": {}}
+    data.setdefault("project", project)
+    if not isinstance(data.get("slugs"), dict):
+        data["slugs"] = {}
+    return data
+
+
+def _save_retired_for_project(project: str, data: dict) -> None:
+    path = _retired_file(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _retired_entries() -> list[tuple[str, str, dict]]:
+    root = STATE_DIR / "retired"
+    out: list[tuple[str, str, dict]] = []
+    if not root.exists():
+        return out
+    for path in sorted(root.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project = data.get("project") or path.stem
+        for slug, record in (data.get("slugs") or {}).items():
+            if isinstance(record, dict):
+                out.append((project, slug, record))
+    return sorted(out, key=lambda e: (e[0], e[1]))
+
+
+def _entry_is_dead(record: dict, live: dict) -> bool:
+    """A registry row with no process behind it.
+
+    Two conditions, because either one alone gets it wrong: the recorded pid
+    is stale the moment a server is restarted outside the CLI, and a slug_dir
+    match is the only way to tell "this page is served by a different pid now"
+    from "this page is gone".
+    """
+    try:
+        pid = int(record.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid and _is_process_alive(pid):
+        return False
+    slug_dir = record.get("slug_dir")
+    if not slug_dir:
+        return True
+    try:
+        key = str(Path(slug_dir).resolve())
+    except OSError:
+        return True
+    return not live.get(key)
+
+
+def cmd_retire(args) -> int:
+    """Move dead registry rows to state/retired/<project>.json.
+
+    Touches the registry and nothing else: the slug directory, its bus and the
+    transport config are all left exactly as they are, so a retired page can
+    be re-published later and pick its history straight back up.
+    """
+    live = _running_servers()
+    if getattr(args, "dead", False):
+        targets = [(p, s, r) for p, s, r in _registry_entries() if _entry_is_dead(r, live)]
+        skipped = [(p, s) for p, s, r in _registry_entries() if not _entry_is_dead(r, live)]
+    else:
+        if not getattr(args, "slug", None):
+            print("ERROR: name a slug or pass --dead", file=sys.stderr)
+            return 2
+        resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+        if not resolved:
+            return 2
+        project, slug, record = resolved
+        if not _entry_is_dead(record, live):
+            print(f"ERROR: {project}/{slug} is still alive — stop it with "
+                  f"`{_inv()} unpublish {slug}` first.", file=sys.stderr)
+            return 2
+        targets, skipped = [(project, slug, record)], []
+
+    if not targets:
+        print("  (nothing to retire — every registered page still has a live server)")
+        return 0
+
+    print(f"  {'PROJECT':<15} {'SLUG':<24} {'PID':<8} {'PORT':<6} URL")
+    print(f"  {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 6} {'-' * 40}")
+    for project, slug, record in targets:
+        print(f"  {project[:15]:<15} {slug[:24]:<24} {str(record.get('pid')):<8} "
+              f"{str(record.get('port')):<6} {record.get('url')}")
+    if args.dry_run:
+        print(f"  (dry run) would retire {len(targets)} entr(ies); nothing was written.")
+        return 0
+
+    stamp = _now_iso()
+    moved = 0
+    for project, slug, _record in targets:
+        try:
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                record = (state.get("slugs") or {}).get(slug)
+                if not isinstance(record, dict):
+                    continue
+                # Written to `retired` BEFORE it leaves the registry: a crash
+                # between the two writes must leave a duplicate, never a row
+                # that exists nowhere.
+                retired = _load_retired_for_project(project)
+                retired["slugs"][slug] = {**record, "retired_at": stamp}
+                _save_retired_for_project(project, retired)
+                state["slugs"].pop(slug, None)
+                _save_state_for_project(project, state)
+                moved += 1
+        except TimeoutError as exc:
+            print(f"ERROR: {project}/{slug}: {exc}", file=sys.stderr)
+            return 4
+    print(f"  retired {moved} entr(ies) → {STATE_DIR / 'retired'}")
+    if skipped:
+        print(f"  left alone ({len(skipped)} still alive): "
+              + ", ".join(f"{p}/{s}" for p, s in skipped))
     return 0
 
 
@@ -2865,6 +3322,8 @@ def main():
 
     sp_st = sub.add_parser("status", help="list active slugs")
     sp_st.add_argument("slug", nargs="?", default=None)
+    sp_st.add_argument("--retired", action="store_true",
+                       help="list retired registry entries instead")
     sp_st.set_defaults(func=cmd_status)
 
     sp_mig = sub.add_parser("migrate", help="legacy HTML → v2 layout")
@@ -2915,6 +3374,26 @@ def main():
     sp_claim.add_argument("slug", help="<slug> or <project>/<slug>")
     sp_claim.add_argument("--project", default=None)
     sp_claim.set_defaults(func=cmd_claim)
+
+    sp_close = sub.add_parser("close", help="archive decision cards nobody answered")
+    sp_close.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_close.add_argument("--project", default=None)
+    sp_close.add_argument("--older-than", default="30d",
+                          help="age threshold: 30d (default), 12h, 90m, 2w")
+    sp_close.add_argument("--dry-run", action="store_true",
+                          help="print the table and write nothing")
+    sp_close.add_argument("--author", default=None)
+    sp_close.set_defaults(func=cmd_close)
+
+    sp_retire = sub.add_parser("retire", help="move dead registry entries to state/retired/")
+    sp_retire.add_argument("slug", nargs="?", default=None,
+                           help="<slug> or <project>/<slug>; omit with --dead")
+    sp_retire.add_argument("--project", default=None)
+    sp_retire.add_argument("--dead", action="store_true",
+                           help="retire every entry whose server is gone")
+    sp_retire.add_argument("--dry-run", action="store_true",
+                           help="print the table and write nothing")
+    sp_retire.set_defaults(func=cmd_retire)
 
     sp_eval = sub.add_parser("eval", help="read-only baseline of the review loop")
     sp_eval.add_argument("--since", default=None,

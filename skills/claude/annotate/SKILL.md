@@ -38,8 +38,10 @@ name is libgd's image tool. `publish` and `install-shim` write a
 | `doctor` | invocation, roots, hook registration, `node`/`lsof`/`codex`, session id |
 | `publish <slug-dir>` | start server, register route, claim owner, verify, install shim + hook |
 | `unpublish <slug>` | tear down route and stop the server |
-| `status [<slug>]` | list running slugs and their health |
+| `status [<slug>] [--retired]` | list running slugs, their health and their owners |
 | `claim <slug>` | make this session the owner (handoff, or a pre-ownership page) |
+| `close <slug> [--older-than 30d] [--dry-run]` | archive decision cards nobody ever answered |
+| `retire <slug>\|--dead [--dry-run]` | move dead registry rows to `state/retired/` |
 | `install-shim [--force]` | (re)write `~/.local/bin/annotate` |
 | `ask <slug> --from cards.json [--version vN]` | create or refresh a whole round of cards |
 | `cards <slug>` (`open-cards`) | list cards, verdicts, undecided anchors |
@@ -91,6 +93,17 @@ which is the default option list when a card names none. `accept` closes the
 card; `reject` and `changes` leave it open. `changes` requires a note, and
 that note is the instruction — read `decision.text`, not just the verdict.
 Full schema, rendering and round mode: `references/decision-cards.md`.
+
+## 5a. Closing stale work
+
+`status` marks a serving page whose owning session is gone with `(gone)`: the
+hook is notifying nobody, so `claim` it before answering anything on it.
+
+`close <slug> --older-than 30d` archives the cards on a page that nobody ever
+answered — never a decided card, never a plain reviewer comment — and appends
+one `page_closed` event. `retire --dead` moves registry rows whose server is
+gone to `state/retired/`, keeping every field. Run both with `--dry-run`
+first; neither deletes anything.
 
 ## 6. Comment lifecycle
 

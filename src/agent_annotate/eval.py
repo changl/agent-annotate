@@ -289,9 +289,18 @@ def iter_comments(store):
                 yield c, False
     arch = store.get("archived") or {}
     if isinstance(arch, dict):
-        for c in arch.values():
-            if isinstance(c, dict):
-                yield c, True
+        for value in arch.values():
+            # The server writes {anchor_id: [comment, …]}; only some older
+            # stores hold {comment_id: comment}. Reading just the second shape
+            # made every archived comment invisible here, which is how a
+            # closed card could vanish from the numbers instead of counting
+            # as closed.
+            if isinstance(value, dict):
+                yield value, True
+            elif isinstance(value, list):
+                for c in value:
+                    if isinstance(c, dict):
+                        yield c, True
     elif isinstance(arch, list):
         for c in arch:
             if isinstance(c, dict):

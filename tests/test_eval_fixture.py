@@ -104,3 +104,44 @@ def test_cli_eval_prints_a_headline(tmp_path, monkeypatch, capsys):
     assert "annotate eval" in out
     assert "2 decision requests" in out
     assert "1 accept, 0 reject, 0 changes, 1 undecided, 0 closed" in out
+
+
+def test_closed_cards_leave_the_unanswered_denominators(tmp_path):
+    """D7: a card `annotate close` archived was never answered and never will
+    be. It must drop out of the "none" bucket and the age buckets, and be
+    counted as closed instead — otherwise a retired page's backlog stays in
+    the numbers forever."""
+    state, bus_root = _estate(tmp_path)
+    store_path = tmp_path / "pages" / "demo" / "comments.json"
+    store = json.loads(store_path.read_text())
+    stale = store["anchors"].pop("s:b")[0]
+    stale["status"] = "archived"
+    stale["archived_at"] = "2026-09-17T00:00:00Z"
+    stale["archived_by"] = "agent:test"
+    store["archived"] = {"s:b": [stale]}
+    store_path.write_text(json.dumps(store))
+    with (bus_root / "proj" / "demo.ndjson").open("a") as fh:
+        fh.write(json.dumps({"ts": "2026-09-17T00:00:00Z", "event": "page_closed",
+                             "slug": "demo", "archived_ids": ["bbbbbbbbbbbb"],
+                             "archived_count": 1, "remaining_open": 0,
+                             "by": "agent:test", "older_than": "30d"}) + "\n")
+
+    out_dir = tmp_path / "out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "agent_annotate.eval", "--since", "2026-09-01",
+         "--state-dir", str(state), "--bus-dir", str(bus_root),
+         "--transcript-glob", str(tmp_path / "no-transcripts" / "*.jsonl"),
+         "--out-dir", str(out_dir)],
+        capture_output=True, text=True, timeout=60, env=os.environ.copy())
+    assert proc.returncode == 0, proc.stderr
+
+    report = json.loads((out_dir / "eval-baseline.json").read_text())
+    agg = report["s1_aggregate"]
+    assert agg["verdicts"]["none"] == 0
+    assert agg["verdicts"]["closed"] == 1
+    assert report["s3"]["closed_cards"] == 1
+    assert report["s3"]["unanswered"] == []
+    assert report["s3"]["unanswered_by_age"] == {}
+    # page_closed is bookkeeping, not somebody reviewing.
+    assert agg["reviewer_events"] == 1
+    assert "1 card(s) were closed" in (out_dir / "eval-baseline.md").read_text()
