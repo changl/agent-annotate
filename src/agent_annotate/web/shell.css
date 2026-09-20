@@ -168,8 +168,8 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .decision-block.decision-resolved{background:#F8FAFC;border-color:#E2E8F0}
 .decision-prompt{font-size:12px;font-weight:600;color:#312E81;margin-bottom:8px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .decision-resolved .decision-prompt{margin-bottom:6px}
-.decision-btns{display:flex;gap:6px;flex-wrap:wrap}
-.decision-btn{font-size:12px;font-weight:700;padding:7px 14px;border-radius:7px;border:none;cursor:pointer;font-family:inherit;color:#FFF;white-space:nowrap}
+.decision-btns{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.decision-btn{font-size:12px;font-weight:700;padding:7px 14px;border-radius:7px;border:none;cursor:pointer;font-family:inherit;color:#FFF;max-width:100%;min-width:0;text-align:left;line-height:1.35;white-space:normal;overflow-wrap:anywhere}
 .decision-btn:hover{filter:brightness(.92)}
 .decision-btn:disabled{opacity:.55;cursor:not-allowed;filter:none}
 .decision-accept{background:#16A34A}
@@ -180,8 +180,8 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
    able to tell the two apart at a glance. */
 .decision-changes{background:#B45309}
 .decision-comment-form{margin-top:8px;display:flex;flex-direction:column;gap:5px}
-.decision-comment-ta{width:100%;min-height:44px;padding:6px 8px;border:1px solid #C7D2FE;border-radius:5px;font-size:11px;font-family:inherit;resize:vertical;color:#0F172A;background:#FAFAFA;line-height:1.4}
-.decision-comment-ta:focus{outline:none;border-color:#4338CA;background:#FFF}
+.decision-comment-ta,.decision-say-ta{width:100%;min-height:44px;padding:6px 8px;border:1px solid #C7D2FE;border-radius:5px;font-size:11px;font-family:inherit;resize:vertical;color:#0F172A;background:#FAFAFA;line-height:1.4}
+.decision-comment-ta:focus,.decision-say-ta:focus{outline:none;border-color:#4338CA;background:#FFF}
 .decision-comment-submit{align-self:flex-end;font-size:10px;font-weight:600;padding:4px 10px;border-radius:5px;border:none;cursor:pointer;background:#4338CA;color:#FFF;font-family:inherit}
 .decision-comment-submit:hover{background:#3730A3}
 .decision-feedback{margin-top:6px;font-size:10.5px;font-weight:600;color:#4338CA;min-height:13px}
@@ -212,7 +212,7 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .decision-chip-impact-high{background:#FEE2E2;color:#B91C1C}
 .decision-chip-blocking{background:#312E81;color:#FFF}
 .decision-btns.has-consequences{flex-direction:column;align-items:stretch}
-.decision-opt{display:flex;flex-direction:column;gap:3px}
+.decision-opt{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%}
 .decision-opt .decision-btn{align-self:flex-start}
 .decision-consequence{font-size:10.5px;color:#64748B;line-height:1.4;padding-left:2px;white-space:pre-wrap;word-break:break-word}
 .decision-btn.is-recommended{box-shadow:0 0 0 2px #FFF,0 0 0 4px #4338CA}
@@ -224,6 +224,13 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .decision-evidence-lbl{font-weight:600}
 .decision-evidence-link{font-size:10.5px;color:#4338CA;font-weight:600;background:none;border:none;padding:1px 2px;cursor:pointer;font-family:inherit;text-decoration:underline dotted}
 .decision-evidence-link:hover{text-decoration:underline}
+.decision-say-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.decision-say{font-size:11.5px;font-weight:700;padding:6px 12px;border-radius:7px;border:1px solid #C7D2FE;background:#FFF;color:#4338CA;cursor:pointer;font-family:inherit;max-width:100%;text-align:left;line-height:1.35;white-space:normal;overflow-wrap:anywhere}
+.decision-say:hover{background:#EEF2FF}
+.decision-say:disabled{opacity:.55;cursor:not-allowed}
+.decision-say-hint{font-size:10.5px;color:#64748B}
+.decision-commented{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.decision-commented-txt{font-size:10.5px;color:#64748B}
 .decision-note-row{margin-top:6px}
 .decision-note-toggle{font-size:10.5px;color:#64748B;background:none;border:none;padding:2px 0;cursor:pointer;font-family:inherit}
 .decision-note-toggle:hover{color:#4338CA}

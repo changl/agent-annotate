@@ -96,9 +96,16 @@ def _rebind_roots(state_dir=None, bus_dir=None, transcript_glob=None):
 # corpus holds both — everything answered before D2 says "comment" — so they
 # fold into one column here; splitting them would break every trend line this
 # file exists to draw.
+#
+# D3 split the two acts again (a comment now remarks without answering) and
+# gave a custom-option click its own "select" verdict, where it used to post
+# "comment". Both still fold into the same column so the series stays
+# comparable across the whole corpus. Whether to break that series and count
+# post-D3 comments as unanswered is a judgement call about the metrics, not
+# about the chrome, and is deliberately left open.
 VERDICTS = ("accept", "reject", "changes")
-VERDICT_ALIAS = {"comment": "changes"}
-TEXT_VERDICTS = ("changes", "comment")
+VERDICT_ALIAS = {"comment": "changes", "select": "changes"}
+TEXT_VERDICTS = ("changes", "comment", "select")
 AGENT_PREFIX = "agent:"
 
 

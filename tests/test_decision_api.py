@@ -89,8 +89,8 @@ def test_capabilities_advertise_batch_and_rounds(server):
     assert caps["batch"] is True and caps["rounds"] is True
     assert caps["decision_schema"] == 2
     assert caps["decision_request_cap"] == 8192
-    # D2: the chrome renders "Request changes" only when the server says so.
-    assert caps["verdicts"] == ["accept", "reject", "changes"]
+    # D2/D3: the chrome renders exactly the verdicts the server names here.
+    assert caps["verdicts"] == ["accept", "reject", "changes", "comment", "select"]
 
 
 # ── create with decision_request ──────────────────────────────────────────
@@ -226,7 +226,8 @@ def test_deferred_verdicts_then_submit_emit_exactly_one_session_push(server):
                               author="reviewer@example.com")
     assert status == 200
     assert submitted["comment_count"] == 2
-    assert submitted["verdict_counts"] == {"accept": 1, "reject": 1, "changes": 0, "comment": 0}
+    assert submitted["verdict_counts"] == {
+        "accept": 1, "reject": 1, "changes": 0, "comment": 0, "select": 0}
     assert submitted["undecided_ids"] == [c]
 
     pushes = _events(bus, "session_push")
@@ -324,17 +325,52 @@ def test_request_changes_without_text_is_a_400_and_writes_nothing(server):
     assert len(_events(bus)) == before
 
 
-def test_legacy_comment_verdict_is_still_accepted(server):
-    """A page loaded before D2 keeps posting `comment`. It must keep working:
-    the reply is the bare note, exactly as it always was."""
+def test_a_comment_verdict_is_labelled_in_the_thread(server):
+    """D3: `comment` is a remark, not an answer. Its reply is prefixed, so it
+    reads as a comment in the thread instead of an anonymous reply — the very
+    thing that made these remarks easy to miss."""
     httpd, slug_dir, _ = server
     _, comment = _call(httpd, "POST", "/api/comments", _card())
     status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
                          {"verdict": "comment", "text": "old chrome"})
     assert status == 200
     assert resp["decision"]["verdict"] == "comment"
-    assert resp["replies"][-1]["text"] == "old chrome"
+    assert resp["replies"][-1]["text"] == "💬 Comment: old chrome"
     assert _store(slug_dir)["anchors"]["s:a"][0]["status"] == "open"
+
+
+def test_a_comment_rides_the_round_but_stays_undecided(server):
+    """D3: a commented card is pushed with the round AND reported undecided."""
+    httpd, slug_dir, bus = server
+    _, batch = _call(httpd, "POST", "/api/comments/batch",
+                     {"items": [_card("s:a"), _card("s:b")], "idempotency": "anchor"})
+    a, b = batch["ids"]
+    _call(httpd, "POST", f"/api/comments/{a}/decision",
+          {"verdict": "comment", "text": "needs the client's read first", "defer_push": True},
+          author="reviewer@example.com")
+    _call(httpd, "POST", f"/api/comments/{b}/decision",
+          {"verdict": "accept", "defer_push": True}, author="reviewer@example.com")
+
+    status, submitted = _call(httpd, "POST", "/api/rounds/submit", {},
+                              author="reviewer@example.com")
+    assert status == 200
+    assert submitted["verdict_counts"] == {
+        "accept": 1, "reject": 0, "changes": 0, "comment": 1, "select": 0}
+    assert sorted(submitted["comment_ids"]) == sorted([a, b])
+    assert submitted["undecided_ids"] == [a]
+    pushes = _events(bus, "session_push")
+    assert len(pushes) == 1 and pushes[0]["undecided_ids"] == [a]
+    stored = next(x for items in _store(slug_dir)["anchors"].values() for x in items if x["id"] == a)
+    assert "round_pending" not in stored["decision"]
+
+
+def test_a_comment_without_text_is_a_400(server):
+    httpd, _, _ = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    status, err = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                        {"verdict": "comment"})
+    assert status == 400
+    assert err["error"] == "text required for comment verdict"
 
 
 def test_revising_into_changes_keeps_the_prior_verdict_in_the_reply(server):
@@ -357,3 +393,20 @@ def test_an_unknown_verdict_is_still_rejected(server):
                         {"verdict": "maybe", "text": "x"})
     assert status == 400
     assert err["error"] == "invalid verdict"
+
+
+def test_a_selected_custom_option_answers_the_card(server):
+    """D3: a click on an option with a custom id is a CHOICE. It answers the
+    card (so a round does not report it undecided) while leaving it open,
+    because the agent still has to act on the choice."""
+    httpd, slug_dir, _ = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
+                         {"verdict": "select", "text": "Draw both and decide later"})
+    assert status == 200
+    assert resp["decision"]["verdict"] == "select"
+    assert resp["replies"][-1]["text"] == "☑ Selected: Draw both and decide later"
+    assert _store(slug_dir)["anchors"]["s:a"][0]["status"] == "open"
+
+    status, submitted = _call(httpd, "POST", "/api/rounds/submit", {})
+    assert submitted["undecided_ids"] == []

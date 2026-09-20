@@ -6,6 +6,33 @@ this repository.
 
 ## Unreleased
 
+- **A reviewer can comment on a decision card, and long options fit** (D3).
+  Three items from a reviewer's round-1 note on a live page, all in the
+  decision surfaces:
+  - **`comment` is a verdict again, beside "Request changes".** D2 replaced
+    "Comment" with "Request changes" and left no way to remark on a card, so
+    remarks went in as thread replies and were easy to miss. Every unanswered
+    card now carries a standing **💬 Comment** button whose verdict answers
+    nothing: the options stay live, the card stays unresolved and in "Needs my
+    review", the auto reply reads `💬 Comment: <text>`, and a submitted round
+    counts it in `verdict_counts.comment` while still listing the card in
+    `undecided_ids`. The button is absent once a card carries an answer, so a
+    comment can never overwrite one. `annotate cards` / `annotate inbox` print
+    a `comment` column and treat a comment-only card as undecided.
+  - **Option labels wrap.** A label longer than the rail used to widen the
+    flex line to its own min-content width, pushing the button *and* its
+    consequence line off the right edge of the screen. Buttons now wrap in the
+    rail card and in the body strip, at every width.
+  - **Clicking into a card's box goes to its location.** Focus landing in a
+    reply, verdict note, "Request changes" or "Comment" box scrolls the
+    document to that card's anchor, exactly as clicking the card does, without
+    disturbing what is being typed. Every one of those boxes now also survives
+    a re-render with its text, its open state and the caret intact.
+  - **A custom option id posts the new `select` verdict** (`☑ Selected:
+    <label>`) instead of `comment`, since picking one of the card's own
+    options is a choice, not a remark. It answers the card and leaves it open.
+    Against a server that predates `select`, the chrome posts the pre-D3
+    `comment` text.
 - **`annotate new <slug-dir> --from page.md` — a page costs one write** (D9).
   A small dependency-free markdown parser turns front matter, `##`/`###`
   headings, paragraphs, bullet and numbered lists, pipe tables, `kpi:` lines,

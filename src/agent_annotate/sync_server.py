@@ -43,8 +43,8 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
                 "decision_request": { "prompt": str, "options": [str, ...] } | null,
                 "decision": { "verdict": "accept"|"reject"|"changes"|"comment",
                               # "changes" = Request changes (text required);
-                              # "comment" is the pre-D2 spelling, still
-                              # accepted from an already-loaded chrome
+                              # "comment" = a remark that does NOT answer the
+                              # card (text required); the card stays undecided
                               "text": str | null, "ts": iso, "by": str } | null,
                 "decision_history": [ { "verdict": ..., "text": ..., "ts": ..., "by": ... }, ... ]
                                      # prior decisions, oldest first; a comment
@@ -65,8 +65,9 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       PUT  /api/comments/<id>               → set status / response_text / decision_request
       POST /api/comments/<id>/reply         → append a thread reply
       POST /api/comments/<id>/archive       → move comment to archived
-      POST /api/comments/<id>/decision      → resolve a posed decision_request
-                                              (accept/reject/changes); pushes to session.
+      POST /api/comments/<id>/decision      → answer a posed decision_request
+                                              (accept/reject/changes), or remark on
+                                              it (comment); pushes to session.
                                               Re-posting on an already-decided
                                               comment REVISES it: the prior
                                               decision moves to decision_history,
@@ -1810,29 +1811,53 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
 
-    # D2: "changes" (Request changes) replaces "comment" as the third verdict.
-    # "comment" stays accepted forever — an already-loaded page, a baked
-    # archive copy of the chrome, or a script written against 2.19 keeps
-    # posting it — but no new surface offers it.
-    _DECISION_VERDICTS = ("accept", "reject", "changes", "comment")
+    # D2 made "changes" (Request changes) the third verdict. D3 brings
+    # "comment" back beside it as a fourth, because the two are not the same
+    # act: "changes" answers the card and instructs, "comment" only remarks
+    # on it and leaves it open. A reviewer with no Comment button posted
+    # remarks as thread replies, where they were easy to miss.
+    _DECISION_VERDICTS = ("accept", "reject", "changes", "comment", "select")
     # The advertised set: what a current chrome should render as buttons.
-    _DECISION_VERDICTS_OFFERED = ("accept", "reject", "changes")
+    # "select" is not a button — it is what a click on an option with a
+    # custom id posts. A chrome that does not find it here posts `comment`
+    # for those clicks, as it did before D3.
+    _DECISION_VERDICTS_OFFERED = ("accept", "reject", "changes", "comment", "select")
+    # Verdicts that ANSWER a card. A card whose only verdict is "comment" is
+    # still undecided: it keeps its buttons in the chrome, and a round
+    # reports it in undecided_ids.
+    _DECISION_ANSWERS = ("accept", "reject", "changes", "select")
     # Both text verdicts leave the card open: the agent still owes an answer.
     _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open",
-                            "changes": "open", "comment": "open"}
+                            "changes": "open", "comment": "open",
+                            "select": "open"}
     _DECISION_REPLY_TEXT = {"accept": "✓ Accepted", "reject": "✗ Rejected"}
     # Verdicts whose reply text IS the reviewer's note (so the note is
     # mandatory). "changes" prefixes it; "comment" never did.
-    _DECISION_TEXT_VERDICTS = ("changes", "comment")
+    _DECISION_TEXT_VERDICTS = ("changes", "comment", "select")
     _DECISION_CHANGES_PREFIX = "↻ Changes requested: "
+    # D3: the in-thread reply a comment verdict writes. Pre-D3 it was the
+    # bare note, indistinguishable from an ordinary reply — the very thing
+    # that made these remarks easy to miss.
+    _DECISION_COMMENT_PREFIX = "💬 Comment: "
+    # D3: the reviewer picked one of the card's own options. `text` is the
+    # option's label, plus any note after a blank line.
+    _DECISION_SELECT_PREFIX = "☑ Selected: "
     # Prior-verdict label used in revision reply text ("was ✗ Rejected"). Kept
     # distinct from _DECISION_REPLY_TEXT (which has no text-verdict entry)
     # since a revision's PRIOR verdict can be any of the four.
     _DECISION_PRIOR_LABEL = {"accept": "✓ Accepted", "reject": "✗ Rejected",
-                             "changes": "↻ Changes requested", "comment": "Commented"}
+                             "changes": "↻ Changes requested", "comment": "Commented",
+                             "select": "☑ Selected"}
+
+    @classmethod
+    def _is_answered(cls, decision) -> bool:
+        """True when this decision actually answers its card (not a comment)."""
+        return bool(isinstance(decision, dict)
+                    and decision.get("verdict") in cls._DECISION_ANSWERS)
 
     def _v2_post_decision(self, comment_id: str, parsed):
-        """Resolve a one-click decision_request: accept / reject / changes.
+        """Resolve a one-click decision_request: accept / reject / changes,
+        or remark on it without answering: comment.
 
         Sets c["decision"], appends a thread reply so the agent sees the
         verdict in-thread, transitions status, and performs the same
@@ -1912,7 +1937,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if verdict == "changes":
                 reply_text = self._DECISION_CHANGES_PREFIX + text
             elif verdict == "comment":
-                reply_text = text
+                reply_text = self._DECISION_COMMENT_PREFIX + text
+            elif verdict == "select":
+                reply_text = self._DECISION_SELECT_PREFIX + text
             else:
                 reply_text = self._DECISION_REPLY_TEXT[verdict]
                 if text:
@@ -2002,9 +2029,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if c.get("status") == "archived":
                         continue
                     d = c.get("decision")
-                    if c.get("decision_request") and not d:
+                    # D3: "comment" is a remark, not an answer — the card
+                    # stays in undecided_ids. It still rides out with the
+                    # round below (it may well be the only thing the
+                    # reviewer said about this card).
+                    if c.get("decision_request") and not self._is_answered(d):
                         undecided_ids.append(c.get("id"))
-                        continue
                     if isinstance(d, dict) and d.get("round_pending"):
                         d.pop("round_pending", None)
                         c["flagged_for_session"] = True

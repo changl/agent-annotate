@@ -115,9 +115,17 @@ to seeding every session from a cursor that belonged to a different one.
 ### `cards <slug>` (alias `open-cards`)
 
 Reads `comments.json` directly. No cursor, no server, no side effects. Prints
-`id, anchor, version, verdict, prompt` plus the verdict note for `comment`
-verdicts — which is where a custom-id option's `Selected: <label>` lands — and
-the same decisions/undecided summary line. `--json` for the raw list.
+`id, anchor, version, verdict, prompt` plus the verdict note for the text
+verdicts — a `select` verdict's note is the chosen option's label, a `comment`
+verdict's note is the remark — and the same decisions/undecided summary line:
+
+```
+  decisions: N accept, N reject, N changes, N select, N comment; undecided: …
+```
+
+`accept`, `reject`, `changes` and `select` answer a card; `comment` does not,
+so a card whose only verdict is a comment is listed under `undecided`.
+`--json` for the raw list.
 
 ### `watch <slug>`
 

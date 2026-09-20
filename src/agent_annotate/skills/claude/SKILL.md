@@ -78,10 +78,12 @@ anchors surface as "Comments without anchor".
 
 Every card states the context, a recommendation, and what each option costs.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
-`text` defaults to `prompt`. Verdicts are `accept`, `reject` and `changes`
-("Request changes", the default third option): `accept` closes the card, the
-other two leave it open, and `changes` requires a note — read `decision.text`,
-not just the verdict. Option `style`, `evidence`, full schema and round mode:
+`text` defaults to `prompt`. Three verdicts ANSWER a card — `accept` (closes
+it), `reject` and `changes` ("Request changes", the default third option,
+which requires a note). A fourth, `comment`, does not: the reviewer's standing
+"Comment" button records a remark, leaves the card undecided, and keeps it in
+`undecided_ids`. Always read `decision.text`, not just the verdict. Option
+`style`, `evidence`, full schema and round mode:
 `references/decision-cards.md`.
 
 A serving page marked `(gone)` in `status` is notifying nobody — `claim` it

@@ -60,6 +60,10 @@ let latestRounds = false;
 // the strip's third button is "Request changes" instead of "Comment". Absent
 // from an old shell's message → false → the pre-D2 strip, unchanged.
 let latestChanges = false;
+// D3: true when the shell said the server understands the `select` verdict,
+// which a click on a custom option id posts. Absent from an old shell's
+// message → false → those clicks post `comment`, exactly as before D3.
+let latestSelect = false;
 
 function cssEsc(s) {
   return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
@@ -671,12 +675,12 @@ function wireHoverLinking() {
 // a fresh 'annotate:comment-counts' message (see wireBridge) — NOT on every
 // resize/scroll-driven badge refresh, so DOM insertion here can never
 // feed back into the MutationObserver above and loop.
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented', select: 'Selected' };
 // Checkmark-prefixed variant for the plain-text "currently X" changing-note
 // (the resolved chip itself is color-coded so it doesn't need one; the note
 // has no color coding, so it gets the same symbol shell.js's rail card and
 // sync_server.py's revision reply text use, for a consistent read).
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented' };
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented', select: '☑ Selected' };
 const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
 const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
 const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
@@ -707,6 +711,10 @@ const stripChanging = {};
 const stripDetailsOpen = {};
 const stripNoteOpen = {};
 const stripNoteText = {};
+// D3: the standing Comment form's open state and draft, kept across a
+// rebuild exactly like the note above.
+const stripSayOpen = {};
+const stripSayText = {};
 const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Comment', changes: '↻ Request changes' };
 const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment', changes: 'annotate-decision-changes' };
 const DECISION_CONTEXT_INLINE_MAX = 160;
@@ -770,11 +778,16 @@ function ensureStripStyle() {
       font-size: 12px !important; font-weight: 600 !important; color: #312E81 !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
-    .annotate-decision-btns { display: flex !important; gap: 6px !important; flex-wrap: wrap !important; }
+    .annotate-decision-btns { display: flex !important; gap: 6px !important; flex-wrap: wrap !important; min-width: 0 !important; }
     .annotate-decision-btn {
       font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
-      color: #FFF !important; font-family: inherit !important; white-space: nowrap !important;
+      color: #FFF !important; font-family: inherit !important;
+      /* An option label longer than the strip used to force the flex line
+         wider than the page; the button and its consequence line then ran
+         off the right edge (user-reported). */
+      max-width: 100% !important; min-width: 0 !important; text-align: left !important;
+      line-height: 1.35 !important; white-space: normal !important; overflow-wrap: anywhere !important;
     }
     .annotate-decision-btn:hover { filter: brightness(.92) !important; }
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
@@ -857,7 +870,7 @@ function ensureStripStyle() {
     .annotate-chip-impact-high { background: #FEE2E2 !important; color: #B91C1C !important; }
     .annotate-chip-blocking { background: #312E81 !important; color: #FFF !important; }
     .annotate-decision-btns.has-consequences { flex-direction: column !important; align-items: stretch !important; }
-    .annotate-decision-opt { display: flex !important; flex-direction: column !important; gap: 3px !important; }
+    .annotate-decision-opt { display: flex !important; flex-direction: column !important; gap: 3px !important; min-width: 0 !important; max-width: 100% !important; }
     .annotate-decision-opt .annotate-decision-btn { align-self: flex-start !important; }
     .annotate-decision-consequence {
       font-size: 10.5px !important; color: #64748B !important; line-height: 1.4 !important;
@@ -869,6 +882,21 @@ function ensureStripStyle() {
       text-transform: uppercase !important; background: rgba(255,255,255,.28) !important;
       padding: 1px 5px !important; border-radius: 6px !important; margin-left: 6px !important;
     }
+    .annotate-decision-say-row {
+      display: flex !important; align-items: center !important; gap: 8px !important;
+      flex-wrap: wrap !important; margin-top: 8px !important;
+    }
+    .annotate-decision-say {
+      font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
+      border-radius: 6px !important; border: 1px solid #C7D2FE !important; cursor: pointer !important;
+      background: #FFF !important; color: #4338CA !important; font-family: inherit !important;
+      max-width: 100% !important; text-align: left !important; line-height: 1.35 !important;
+      white-space: normal !important; overflow-wrap: anywhere !important;
+    }
+    .annotate-decision-say:hover { background: #E0E7FF !important; filter: none !important; }
+    .annotate-decision-say-hint { font-size: 10.5px !important; color: #64748B !important; }
+    .annotate-decision-commented { margin: 0 0 6px !important; }
+    .annotate-decision-commented-txt { font-size: 10.5px !important; color: #64748B !important; margin-left: 6px !important; }
     .annotate-decision-custom { background: #475569 !important; }
     .annotate-decision-custom.annotate-style-primary { background: #4338CA !important; }
     .annotate-decision-custom.annotate-style-danger { background: #DC2626 !important; }
@@ -906,7 +934,7 @@ function ensureStripStyle() {
       .annotate-decision-sendnow { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
       /* Thumb-sized buttons, buttons free to wrap to their own row, and a
          16px textarea so iOS doesn't zoom the page in on focus. */
-      .annotate-decision-btn {
+      .annotate-decision-btn, .annotate-decision-say {
         min-height: 44px !important; padding: 10px 16px !important; font-size: 13px !important;
         flex: 1 1 auto !important; touch-action: manipulation !important;
       }
@@ -1093,7 +1121,7 @@ function buildDecisionItemEl(entry) {
   item.className = 'annotate-decision-item';
   item.dataset.stripItem = id;
 
-  if (entry.decisionVerdict && !stripChanging[id]) {
+  if (entry.decisionVerdict && entry.decisionVerdict !== 'comment' && !stripChanging[id]) {
     item.classList.add('annotate-decision-resolved');
     const chip = document.createElement('span');
     chip.className = 'annotate-verdict-chip verdict-' + entry.decisionVerdict;
@@ -1114,6 +1142,22 @@ function buildDecisionItemEl(entry) {
     }
     if (entry.roundPending) appendPendingControls(item, id);
     return item;
+  }
+
+  // D3: "Commented — still undecided" above the live controls. The shell
+  // sends decisionCommented for a card whose only verdict is a remark.
+  if (entry.decisionCommented || entry.decisionVerdict === 'comment') {
+    const row = document.createElement('div');
+    row.className = 'annotate-decision-commented';
+    const chip = document.createElement('span');
+    chip.className = 'annotate-verdict-chip verdict-comment';
+    chip.textContent = '💬 Commented';
+    row.appendChild(chip);
+    const txt = document.createElement('span');
+    txt.className = 'annotate-decision-commented-txt';
+    txt.textContent = 'still undecided';
+    row.appendChild(txt);
+    item.appendChild(row);
   }
 
   const dr = entry.decisionRequest || {};
@@ -1279,11 +1323,14 @@ function buildDecisionItemEl(entry) {
       });
       mountOption(b, o);
     } else {
-      // custom option id → comment verdict naming the choice
+      // custom option id → the `select` verdict naming the choice, or the
+      // pre-D3 `comment` text against a server that predates it.
       const b = makeStripBtn(o.label, 'annotate-decision-custom' + (o.style ? ' annotate-style-' + o.style : ''));
       b.addEventListener('click', () => {
         const n = noteText();
-        submitStripDecision(id, 'comment', 'Selected: ' + o.label + (n ? '\n\n' + n : ''), item);
+        const v = latestSelect ? 'select' : 'comment';
+        const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
+        submitStripDecision(id, v, text, item);
       });
       mountOption(b, o);
     }
@@ -1293,6 +1340,56 @@ function buildDecisionItemEl(entry) {
     if (!text) { ta.focus(); return; }
     submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
   });
+
+  // D3: the standing Comment button — say something about the decision
+  // without answering it. Skipped when `comment` is already one of the posed
+  // options (a pre-D2 third slot) and on a card that already carries an
+  // answer, which a comment must never overwrite.
+  if (!opts.some(o => o.id === 'comment') && !entry.decisionVerdict) {
+    const sayRow = document.createElement('div');
+    sayRow.className = 'annotate-decision-say-row';
+    const sayBtn = document.createElement('button');
+    sayBtn.type = 'button';
+    sayBtn.className = 'annotate-decision-say';
+    sayBtn.textContent = '💬 Comment';
+    sayBtn.title = 'Say something about this decision without answering it';
+    const sayHint = document.createElement('span');
+    sayHint.className = 'annotate-decision-say-hint';
+    sayHint.textContent = 'without answering';
+    sayRow.appendChild(sayBtn);
+    sayRow.appendChild(sayHint);
+    item.appendChild(sayRow);
+
+    const sayForm = document.createElement('div');
+    sayForm.className = 'annotate-decision-form';
+    sayForm.style.setProperty('display', stripSayOpen[id] ? 'flex' : 'none', 'important');
+    const sayTa = document.createElement('textarea');
+    sayTa.className = 'annotate-decision-ta';
+    sayTa.rows = 2;
+    sayTa.placeholder = 'Comment on this decision…';
+    sayTa.value = stripSayText[id] || '';
+    sayTa.addEventListener('input', () => { stripSayText[id] = sayTa.value; });
+    const saySubmit = makeStripBtn('Send comment', 'annotate-decision-submit');
+    sayTa.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        saySubmit.click();
+      }
+    });
+    saySubmit.addEventListener('click', () => {
+      const text = (sayTa.value || '').trim();
+      if (!text) { sayTa.focus(); return; }
+      submitStripDecision(id, 'comment', text, item);
+    });
+    sayBtn.addEventListener('click', () => {
+      stripSayOpen[id] = !stripSayOpen[id];
+      sayForm.style.setProperty('display', stripSayOpen[id] ? 'flex' : 'none', 'important');
+      if (stripSayOpen[id]) sayTa.focus();
+    });
+    sayForm.appendChild(sayTa);
+    sayForm.appendChild(saySubmit);
+    item.appendChild(sayForm);
+  }
 
   // v2.19: evidence links → scroll + flash the referenced anchor in THIS
   // document (same scrollToAnchor path the shell's "Go to location" uses).
@@ -1609,6 +1706,7 @@ function wireBridge() {
       latestPins = data.pins || {};
       latestRounds = data.rounds === true; // absent from an old shell → legacy posting
       latestChanges = data.changes === true; // absent from an old shell → "Comment"
+      latestSelect = data.select === true;   // absent from an old shell → `comment`
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();

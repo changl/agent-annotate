@@ -397,6 +397,13 @@ function changesEnabled() {
 function textVerdictId() {
   return changesEnabled() ? 'changes' : 'comment';
 }
+// D3: the verdict a click on a custom option id posts. `select` where the
+// server advertises it, `comment` against anything older — which is what the
+// chrome always posted, so an old server behaves exactly as it did.
+function selectVerdictId() {
+  return (CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('select') !== -1)
+    ? 'select' : 'comment';
+}
 function canonicalOptionId(id) {
   return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
 }
@@ -618,6 +625,25 @@ function anchorLabel(c) {
 function drawerScope() {
   return showAllVersions ? null : CURRENT_VERSION;
 }
+// D3 (user-reported: "there is no 'comment' option except to enter a note or
+// post a reply. my comments were entered in as replies", which made them easy
+// to miss): `comment` is a remark ON a decision, not an answer TO it. Only
+// accept / reject / changes answer a card. A commented card keeps its option
+// buttons, stays in "Needs my review", keeps its pulsing pin, and the round
+// still reports it as undecided — while the comment itself travels as a
+// verdict (bus event, round verdict_counts, `annotate cards`) instead of
+// disappearing into the reply thread.
+function isAnswerVerdict(v) {
+  return !!v && v !== 'comment';
+}
+function decisionAnswer(c) {
+  const d = c && c.decision;
+  return (d && isAnswerVerdict(d.verdict)) ? d : null;
+}
+function decisionCommentOnly(c) {
+  const d = c && c.decision;
+  return (d && d.verdict === 'comment') ? d : null;
+}
 // F9: an UNRESOLVED decision card must never disappear behind the version
 // filter. After a republish the reviewer lands on vN while the agent's open
 // questions were posed on v1; hiding them read as "where are the decision
@@ -625,7 +651,7 @@ function drawerScope() {
 // and always get a pin/strip on the version being viewed. Resolved and plain
 // comments keep the normal per-version scope.
 function isUnresolvedDecision(c) {
-  return !!(c && c.decision_request && !c.decision && c.status !== 'archived');
+  return !!(c && c.decision_request && !decisionAnswer(c) && c.status !== 'archived');
 }
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
@@ -705,13 +731,25 @@ function renderDrawer() {
   // innerHTML swap — cards filtered out by the new scope keep their draft
   // for when they render again.
   let focusedDraftFor = null;
+  let focusedTa = null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     setDraft(ta.dataset.replyFor, ta.value || '');
     if (ta === document.activeElement) focusedDraftFor = ta.dataset.replyFor;
   });
-  // v2.19: the optional verdict note survives re-renders the same way.
+  // v2.19: the optional verdict note survives re-renders the same way, and
+  // so (D3) do the "Request changes" and standing-Comment boxes — a focus-
+  // driven goto or an 8s poll must never eat what is half-typed in one.
   listEl.querySelectorAll('.decision-note-ta').forEach(ta => {
     setDraft('note:' + ta.dataset.decisionNoteTa, ta.value || '');
+    if (ta === document.activeElement) focusedTa = '[data-decision-note-ta="' + cssEsc(ta.dataset.decisionNoteTa) + '"]';
+  });
+  listEl.querySelectorAll('.decision-comment-ta').forEach(ta => {
+    setDraft('changes:' + ta.dataset.decisionCommentTa, ta.value || '');
+    if (ta === document.activeElement) focusedTa = '[data-decision-comment-ta="' + cssEsc(ta.dataset.decisionCommentTa) + '"]';
+  });
+  listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
+    setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+    if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
 
   let all = flattenAll(false).filter(inScope);
@@ -759,6 +797,21 @@ function renderDrawer() {
     const draft = DRAFTS['note:' + ta.dataset.decisionNoteTa];
     if (draft) ta.value = draft;
   });
+  listEl.querySelectorAll('.decision-comment-ta').forEach(ta => {
+    const draft = DRAFTS['changes:' + ta.dataset.decisionCommentTa];
+    if (draft) ta.value = draft;
+  });
+  listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
+    const draft = DRAFTS['say:' + ta.dataset.decisionSayTa];
+    if (draft) ta.value = draft;
+  });
+  if (focusedTa && !focusedDraftFor) {
+    const ta = listEl.querySelector(focusedTa);
+    if (ta) {
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
+  }
   if (focusedDraftFor) {
     const ta = listEl.querySelector('[data-reply-for="' + cssEsc(focusedDraftFor) + '"]');
     if (ta) {
@@ -779,7 +832,7 @@ function renderDrawer() {
   // Skip when a reply textarea just reclaimed focus above — the browser's
   // own scroll-into-view for that focus is the more correct outcome, and
   // forcing the old scrollTop back would fight it mid-keystroke.
-  if (drawerBodyEl && !focusedDraftFor) drawerBodyEl.scrollTop = savedScrollTop;
+  if (drawerBodyEl && !focusedDraftFor && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -798,7 +851,10 @@ function renderDrawer() {
 let pendingGoto = null; // {commentId, anchorId, target} awaiting scroll-result after a version switch
 const gotoUnavailable = {}; // commentId -> true, once we've heard back it can't resolve
 
-function goToCommentLocation(anchorId, version, commentId) {
+// `opts.quiet` (D3 item 3): navigate WITHOUT re-rendering the drawer. Used
+// when the trigger is focus landing in one of the card's textareas — a
+// re-render would rebuild that textarea underneath the caret.
+function goToCommentLocation(anchorId, version, commentId, opts) {
   // Drawer -> content is a "take me there" action; on mobile the sheet
   // covers the content entirely, so leaving it open would scroll/highlight
   // the anchor invisibly behind it. Dismiss so the result is immediately
@@ -818,11 +874,22 @@ function goToCommentLocation(anchorId, version, commentId) {
   } else {
     scrollToAnchorInFrame(anchorId, target);
   }
-  renderDrawer();
+  if (opts && opts.quiet) markActiveCardInPlace(commentId);
+  else renderDrawer();
+}
+
+// Move the `hl` ring to one card without rebuilding the list (see the `quiet`
+// path above).
+function markActiveCardInPlace(commentId) {
+  document.querySelectorAll('#comment-list .citem').forEach(el => {
+    el.classList.toggle('hl', el.dataset.commentId === commentId);
+  });
 }
 
 function markGotoUnavailable(commentId) {
   gotoUnavailable[commentId] = true;
+  const ae = document.activeElement;
+  if (ae && ae.closest && ae.closest('#comment-list textarea, #comment-list input')) return;
   renderDrawer();
 }
 
@@ -833,12 +900,12 @@ function isGeneralAnchor(anchorId) {
   return typeof anchorId === 'string' && anchorId.indexOf('general:') === 0;
 }
 
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented', select: 'Selected' };
 // Prior-verdict text for the rail's "Changing verdict — currently X" note,
 // checkmark-prefixed to match the reply text sync_server.py generates on a
 // revision (_DECISION_PRIOR_LABEL) so the card and the bus event read the
 // same way.
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented' };
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented', select: '☑ Selected' };
 // Every option id this chrome knows how to render. "comment" and "changes"
 // are the same slot: which one a page shows is decided by the server's
 // advertised verdicts, never by both appearing at once.
@@ -868,6 +935,13 @@ const decisionChanging = {};
 // open. Note TEXT lives in DRAFTS under 'note:<id>' (same store as replies).
 const decisionDetailsOpen = {};
 const decisionNoteOpen = {};
+// D3: whether the standing "Comment" form is open. Its text lives in DRAFTS
+// under 'say:<id>', the same store as replies and verdict notes.
+const decisionSayOpen = {};
+// …and the same for the "Request changes" (pre-D2: "Comment") form, whose
+// open state used to live in the DOM alone — so a re-render triggered while
+// the reviewer was typing closed it and lost the box.
+const decisionChangesOpen = {};
 
 // v2.19 schema: dr.options may be the legacy string list or
 // [{id, label, consequence, style}]; dr.consequences {accept, reject} is the
@@ -957,7 +1031,7 @@ function renderDecisionBlock(c) {
   if (!c.decision_request || c.status === 'archived') return '';
   const dr = c.decision_request;
   const changing = !!decisionChanging[c.id];
-  if (c.decision && !changing) {
+  if (decisionAnswer(c) && !changing) {
     const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${esc(dr.prompt || '')}</div>
@@ -970,6 +1044,11 @@ function renderDecisionBlock(c) {
   // D2: the free-text slot posts `changes` (note mandatory) when this card
   // carries the Request-changes option, `comment` otherwise.
   const wantsChanges = opts.some(o => o.id === 'changes');
+  // D3: the standing Comment affordance. Skipped when `comment` is already
+  // one of the posed options (a pre-D2 server's third slot), and on a card
+  // that already carries an answer — a comment must never overwrite one.
+  const showSay = !opts.some(o => o.id === 'comment') && !decisionAnswer(c);
+  const said = decisionCommentOnly(c);
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
   let btns = '';
@@ -990,6 +1069,19 @@ function renderDecisionBlock(c) {
       <span>Changing verdict &mdash; currently ${esc(DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict)}</span>
       <button class="alink" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
     </div>` : '';
+  const sayOpen = !!decisionSayOpen[c.id];
+  const sayHtml = showSay ? `<div class="decision-say-row">
+      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Say something about this decision without answering it. The comment reaches the agent as a comment on this card, not as a reply buried in the thread.">&#128172; Comment</button>
+      <span class="decision-say-hint">without answering</span>
+    </div>
+    <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
+      <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Comment on this decision&hellip;" rows="2"></textarea>
+      <button class="decision-comment-submit" data-decision-action="say-submit" data-id="${escAttr(c.id)}">Send comment</button>
+    </div>` : '';
+  const commentedHtml = said ? `<div class="decision-commented">
+      <span class="decision-verdict-chip verdict-comment">&#128172; Commented &middot; ${esc(fmtTs(said.ts))}</span>
+      <span class="decision-commented-txt">still undecided</span>
+    </div>` : '';
   const noteOpen = !!decisionNoteOpen[c.id];
   const noteHtml = opts.some(o => o.id === 'accept' || o.id === 'reject') ? `<div class="decision-note-row">
       <button type="button" class="decision-note-toggle" data-decision-action="note-toggle" data-id="${escAttr(c.id)}" aria-expanded="${noteOpen ? 'true' : 'false'}">${noteOpen ? '&minus; Remove note' : '+ Add a note'}</button>
@@ -997,13 +1089,15 @@ function renderDecisionBlock(c) {
     </div>` : '';
   return `<div class="decision-block">
     ${changingNote}
+    ${commentedHtml}
     <div class="decision-prompt">${esc(dr.prompt || '')}</div>
     ${renderDecisionContext(c, dr)}
     ${renderDecisionMeta(dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
     ${renderDecisionEvidence(dr)}
+    ${sayHtml}
     ${noteHtml}
-    <div class="decision-comment-form" data-decision-comment-for="${escAttr(c.id)}" style="display:none">
+    <div class="decision-comment-form" data-decision-comment-for="${escAttr(c.id)}" style="display:${decisionChangesOpen[c.id] ? 'flex' : 'none'}">
       <textarea class="decision-comment-ta" data-decision-comment-ta="${escAttr(c.id)}" placeholder="${wantsChanges ? 'What needs to change&hellip;' : 'Add your comment&hellip;'}" rows="2"></textarea>
       <button class="decision-comment-submit" data-decision-action="comment-submit" data-id="${escAttr(c.id)}"${wantsChanges ? ' data-verdict="changes"' : ''}>Send</button>
     </div>
@@ -1026,7 +1120,7 @@ function renderCItem(c) {
   else if (rstate === 'unread') unreadChipHtml = '<span class="citem-chip-unread" title="You have not opened this comment yet">Unread</span>';
   const unreadCls = rstate !== 'read' ? ' is-unread' : '';
   const hl = c.id === highlightedCommentId ? ' hl' : '';
-  const decisionCls = (c.decision_request && !c.decision && c.status !== 'archived') ? ' decision-required' : '';
+  const decisionCls = isUnresolvedDecision(c) ? ' decision-required' : '';
 
   const replyHtml = (c.replies || []).map(r => `
     <div class="thread-reply">
@@ -1141,6 +1235,22 @@ function wireCardActions(root) {
     goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id);
     sendCommentCountsToFrame();
   }));
+  // D3 item 3 (user-reported: "i also would like to be able to automatically
+  // be brought to the location when i click into the feedback box instead of
+  // having to do that manually"). The whole-card click above deliberately
+  // ignores clicks that land in a control, so typing a reply or a verdict
+  // note never moved the document. Focus entering any of the card's boxes is
+  // the same intent as clicking the card, so it navigates too — quietly, so
+  // the box the reviewer just clicked into survives.
+  root.querySelectorAll('.citem').forEach(card => card.addEventListener('focusin', (e) => {
+    if (!e.target.closest('textarea, input')) return;
+    const c = findCommentById(card.dataset.commentId);
+    if (!c || isGeneralAnchor(c.anchor_id)) return;
+    if (highlightedCommentId === c.id) return; // already showing this location
+    markRead([c]);
+    goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id, { quiet: true });
+    sendCommentCountsToFrame();
+  }));
   root.querySelectorAll('[data-action="accept"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     await apiAccept(btn.dataset.id);
@@ -1221,6 +1331,10 @@ async function submitDecision(root, id, verdict, text) {
   delete decisionChanging[id]; // resolved again (first vote or a correction) — drop back to the chip
   delete decisionNoteOpen[id];
   setDraft('note:' + id, '');
+  delete decisionSayOpen[id];
+  delete decisionChangesOpen[id];
+  setDraft('say:' + id, '');
+  setDraft('changes:' + id, '');
   if (result.delivery === 'deferred' || (roundsEnabled() && result.decision && result.decision.round_pending)) {
     setDecisionFeedback(root, id, 'Pending — not sent. Finish review to send.', false);
   } else {
@@ -1249,13 +1363,16 @@ function wireDecisionActions(root) {
     e.stopPropagation();
     submitDecision(root, btn.dataset.id, 'reject', decisionNoteText(root, btn.dataset.id));
   }));
-  // Custom option (object form with an id outside accept/reject/comment):
-  // recorded as a comment verdict naming the choice.
+  // Custom option (object form with an id outside accept/reject/changes):
+  // a real choice, so it posts the `select` verdict naming it. Against a
+  // server that predates `select` it posts `comment` with the pre-D3 text.
   root.querySelectorAll('[data-decision-action="custom"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
     const note = decisionNoteText(root, btn.dataset.id);
-    submitDecision(root, btn.dataset.id, 'comment', 'Selected: ' + label + (note ? '\n\n' + note : ''));
+    const v = selectVerdictId();
+    const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
+    submitDecision(root, btn.dataset.id, v, text);
   }));
   root.querySelectorAll('[data-decision-action="toggle-details"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1302,9 +1419,32 @@ function wireDecisionActions(root) {
     e.stopPropagation();
     const form = root.querySelector('[data-decision-comment-for="' + cssEsc(btn.dataset.id) + '"]');
     if (!form) return;
+    decisionChangesOpen[btn.dataset.id] = true;
     form.style.display = 'flex';
     const ta = form.querySelector('.decision-comment-ta');
     if (ta) ta.focus();
+  }));
+  // D3: the standing Comment button. Its own form and its own verdict, so a
+  // card that offers "Request changes" still lets a reviewer just talk.
+  root.querySelectorAll('[data-decision-action="say"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.id;
+    const open = !decisionSayOpen[id];
+    decisionSayOpen[id] = open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const form = root.querySelector('[data-decision-say-for="' + cssEsc(id) + '"]');
+    if (!form) return;
+    form.style.display = open ? 'flex' : 'none';
+    const ta = form.querySelector('.decision-say-ta');
+    if (open && ta) ta.focus();
+  }));
+  root.querySelectorAll('[data-decision-action="say-submit"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.id;
+    const ta = root.querySelector('[data-decision-say-ta="' + cssEsc(id) + '"]');
+    const text = (ta && ta.value || '').trim();
+    if (!text) { if (ta) ta.focus(); return; }
+    submitDecision(root, id, 'comment', text);
   }));
   root.querySelectorAll('[data-decision-action="comment-submit"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1825,7 +1965,7 @@ function roundStats() {
   for (const c of flattenAll(false)) {
     if (!hasDecisionRequest(c)) continue;
     total++;
-    if (c.decision) decided++; else undecided++;
+    if (decisionAnswer(c)) decided++; else undecided++;
     if (isRoundPending(c)) pending++;
   }
   return { pending, decided, total, undecided };
@@ -2141,8 +2281,8 @@ function sendCommentCountsToFrame() {
     pins[aid] = list
       .map(c => {
         const hasDecisionRequest = !!(c.decision_request && c.status !== 'archived');
-        const decisionPending = hasDecisionRequest && !c.decision;
-        const decisionResolved = !!(c.decision && c.status !== 'archived');
+        const decisionPending = hasDecisionRequest && !decisionAnswer(c);
+        const decisionResolved = !!(decisionAnswer(c) && c.status !== 'archived');
         return {
           id: c.id,
           n: NUM_MAP[c.id] || 0,
@@ -2170,6 +2310,10 @@ function sendCommentCountsToFrame() {
             blocking: c.decision_request.blocking === true,
           } : null,
           decisionVerdict: decisionResolved ? c.decision.verdict : null,
+          // D3: a comment-only card is still unanswered; the body strip shows
+          // a "Commented" chip ABOVE its live buttons rather than instead of
+          // them.
+          decisionCommented: !!(decisionCommentOnly(c) && c.status !== 'archived'),
           // v2.19 round mode: verdict recorded but not yet sent.
           roundPending: isRoundPending(c),
         };
@@ -2177,8 +2321,9 @@ function sendCommentCountsToFrame() {
       .sort((a, b) => a.n - b.n);
   }
   // `rounds` tells the adapter to post its own verdicts with defer_push;
-  // `changes` tells it the server offers the D2 "Request changes" verdict.
-  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, rounds: roundsEnabled(), changes: changesEnabled() }, '*');
+  // `changes` tells it the server offers the D2 "Request changes" verdict;
+  // `select` tells it a custom option id posts the D3 `select` verdict.
+  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, '*');
 }
 
 function scrollToAnchorInFrame(anchorId, target) {
@@ -2213,6 +2358,10 @@ function wirePopover() {
     } else if (t.classList.contains('decision-comment-ta')) {
       e.preventDefault();
       const btn = document.querySelector('[data-decision-action="comment-submit"][data-id="' + cssEsc(t.dataset.decisionCommentTa) + '"]');
+      if (btn) btn.click();
+    } else if (t.classList.contains('decision-say-ta')) {
+      e.preventDefault();
+      const btn = document.querySelector('[data-decision-action="say-submit"][data-id="' + cssEsc(t.dataset.decisionSayTa) + '"]');
       if (btn) btn.click();
     } else if (t.id === 'gf-ta') {
       e.preventDefault();

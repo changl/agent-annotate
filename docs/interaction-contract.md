@@ -13,9 +13,10 @@ what is covered:
 - **Comments and decisions** — the lifecycle, no silent confirmation, comments
   surviving version swaps, cards that render everything they ask and are
   refused rather than dropped when malformed or oversize, reversible verdicts,
-  the three verdicts Accept / Reject / Request changes with a note required on
-  the third, round mode with exactly one push per submitted round, and
-  idempotent re-posing.
+  the three answers Accept / Reject / Request changes with a note required on
+  the third, a fourth Comment verdict that remarks without answering and
+  leaves the card undecided, round mode with exactly one push per submitted
+  round, and idempotent re-posing.
 - **Delivery and ownership** — truthful `Sent`/`Queued`/`deferred`, takeover
   that stops only the old monitor, append-audited replayable feedback,
   owner-targeted per-session hook notices that never touch the inbox cursor,

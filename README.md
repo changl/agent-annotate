@@ -101,8 +101,13 @@ same treatment, and Alt/Option-click to comment on an excluded element
 anyway. Decision cards show their prompt, context, recommendation and
 consequences on the rail and inline next to the anchored element. In round
 mode a verdict is parked until "Finish review"; "Send now" pushes a single
-card. The three verdicts are Accept, Reject and Request changes; the last one
-requires a note, and that note is what the agent acts on. Both rails collapse;
+card. Accept, Reject and Request changes answer a card; the last one requires
+a note, and that note is what the agent acts on. A standing **Comment** button
+sits beside them for saying something *without* answering — the card keeps its
+options, stays in "Needs my review" and the round still reports it undecided,
+but the remark travels as a verdict instead of an easily-missed reply. Long
+option labels wrap. Clicking into any of a card's boxes takes the document to
+that card's location. Both rails collapse;
 below 1160px the page becomes a phone layout with a bottom-sheet drawer. The chrome is served from the package on every
 request, so a fix reaches every published page at once.
 

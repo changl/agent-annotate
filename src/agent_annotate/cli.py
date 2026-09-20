@@ -1874,7 +1874,7 @@ def cmd_inbox(args) -> int:
     texts = _comment_texts(store)
     cards = _decision_cards(store)
     counts = _verdict_counts(cards)
-    undecided = [c["anchor_id"] or c["id"] for c in cards if not c["verdict"]]
+    undecided = [c["anchor_id"] or c["id"] for c in cards if _is_undecided(c)]
 
     if getattr(args, "json", False):
         print(json.dumps({
@@ -1895,9 +1895,7 @@ def cmd_inbox(args) -> int:
         for ev in shown:
             print(_inbox_line(ev, texts))
         if cards:
-            print("  decisions: %d accept, %d reject, %d changes; undecided: %s"
-                  % (counts["accept"], counts["reject"], counts["changes"],
-                     ", ".join(undecided) if undecided else "none"))
+            print(_decision_line(cards))
 
     if args.unread and new_offset > offset:
         _bus_emit(bus_file, {
@@ -1942,11 +1940,7 @@ def cmd_cards(args) -> int:
         if c["verdict_text"]:
             line += f'  “{_clip(c["verdict_text"], 48)}”'
         print(line)
-    counts = _verdict_counts(cards)
-    undecided = [c["anchor_id"] or c["id"] for c in cards if not c["verdict"]]
-    print("  decisions: %d accept, %d reject, %d changes; undecided: %s"
-          % (counts["accept"], counts["reject"], counts["changes"],
-             ", ".join(undecided) if undecided else "none"))
+    print(_decision_line(cards))
     return 0
 
 
@@ -3032,19 +3026,35 @@ def _decision_cards(store: dict) -> list[dict]:
     return sorted(cards, key=lambda c: (c["anchor_id"], c["id"]))
 
 
-# D2: "changes" (Request changes) replaced "comment" as the third verdict.
-# Both are counted in the same column — a page answered before D2, or by a
-# still-loaded pre-D2 chrome, reads the same as one answered after it.
-VERDICT_COLUMNS = ("accept", "reject", "changes")
-_VERDICT_ALIAS = {"comment": "changes"}
+# D2 made "changes" (Request changes) the third verdict; D3 gave "comment"
+# its own column beside it, because the two say different things. Only the
+# first three ANSWER a card: a card whose sole verdict is a comment is still
+# undecided, and both readouts below say so.
+VERDICT_COLUMNS = ("accept", "reject", "changes", "comment", "select")
+ANSWER_VERDICTS = ("accept", "reject", "changes", "select")
 
 
 def _verdict_column(verdict) -> str | None:
     """The counting column for a stored verdict, or None if it has no verdict."""
     if not verdict:
         return None
-    col = _VERDICT_ALIAS.get(verdict, verdict)
-    return col if col in VERDICT_COLUMNS else None
+    return verdict if verdict in VERDICT_COLUMNS else None
+
+
+def _is_undecided(card: dict) -> bool:
+    """True when nothing has answered this card (a comment does not)."""
+    return card.get("verdict") not in ANSWER_VERDICTS
+
+
+def _decision_line(cards: list[dict]) -> str:
+    """The one-line decision summary `cards` and `inbox` both print."""
+    counts = _verdict_counts(cards)
+    undecided = [c["anchor_id"] or c["id"] for c in cards if _is_undecided(c)]
+    return ("  decisions: %d accept, %d reject, %d changes, %d select, "
+            "%d comment; undecided: %s"
+            % (counts["accept"], counts["reject"], counts["changes"],
+               counts["select"], counts["comment"],
+               ", ".join(undecided) if undecided else "none"))
 
 
 def _verdict_counts(cards: list[dict]) -> dict:
