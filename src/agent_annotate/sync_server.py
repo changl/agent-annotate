@@ -37,14 +37,14 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
             "<anchor_id>": [
               { "id": str, "anchor_id": str, "text": str, "author": str,
                 "created_at": iso, "version": "vN",
-                "status": "open" | "addressed_by_agent" | "user_confirmed" | "archived",
+    "status": "open" | "addressed_by_agent" | "resolved_in_version" |
+              "user_confirmed" | "archived",
                 "response_text": str | null,
                 "replies": [ { "author": str, "text": str, "ts": iso } ],
                 "decision_request": { "prompt": str, "options": [str, ...] } | null,
                 "decision": { "verdict": "accept"|"reject"|"changes"|"comment",
                               # "changes" = Request changes (text required);
-                              # "comment" = a remark that does NOT answer the
-                              # card (text required); the card stays undecided
+                              # "comment" = free-text answer (text required)
                               "text": str | null, "ts": iso, "by": str } | null,
                 "decision_history": [ { "verdict": ..., "text": ..., "ts": ..., "by": ... }, ... ]
                                      # prior decisions, oldest first; a comment
@@ -66,8 +66,8 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       POST /api/comments/<id>/reply         → append a thread reply
       POST /api/comments/<id>/archive       → move comment to archived
       POST /api/comments/<id>/decision      → answer a posed decision_request
-                                              (accept/reject/changes), or remark on
-                                              it (comment); pushes to session.
+                                              (accept/reject/changes/comment/select);
+                                              pushes to session.
                                               Re-posting on an already-decided
                                               comment REVISES it: the prior
                                               decision moves to decision_history,
@@ -258,6 +258,14 @@ class DecisionRequestError(ValueError):
         self.status = status
 
 
+def _normalize_item_number(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise DecisionRequestError("number must be a positive integer")
+    return value
+
+
 def _normalize_decision_request(dr: Any) -> dict:
     """Validate an incoming decision_request and stamp requested_at.
 
@@ -391,6 +399,7 @@ _STATUS_MAP = {
     "open": "open",
     "addressed": "addressed_by_agent",
     "addressed_by_agent": "addressed_by_agent",
+    "resolved_in_version": "resolved_in_version",
     "user_confirmed": "user_confirmed",
     "confirmed": "user_confirmed",
     "archived": "archived",
@@ -404,6 +413,17 @@ def _coerce_status(s: str) -> str:
 
 def _new_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def _version_has_anchor(artifact_dir: Path, version: str, anchor_id: str) -> bool:
+    """True when a disposition points at a real anchor in the named version."""
+    target = artifact_dir / "versions" / f"{version}.html"
+    try:
+        markup = target.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    pattern = re.compile(r"data-anchor-id=(['\"])" + re.escape(anchor_id) + r"\1")
+    return bool(pattern.search(markup))
 
 
 def _load_v2_store(path: Path) -> dict:
@@ -1297,6 +1317,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "response_text": None,
             "replies": [],
         }
+        number = _normalize_item_number(payload.get("number"))
+        if number is not None:
+            comment["number"] = number
         # Granular sub-anchor selector captured client-side at click
         # time (inner element id / relative CSS path / text quote /
         # click offset). Stored verbatim; size-capped defensively.
@@ -1370,13 +1393,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     existing = None
                     if idempotency == "anchor" and fresh.get("decision_request"):
                         for c in store["anchors"].get(aid, []):
-                            if (c.get("status") != "archived" and c.get("author") == author
+                            if (c.get("status") not in ("archived", "resolved_in_version")
+                                    and c.get("author") == author
                                     and c.get("decision_request")):
                                 existing = c
                                 break
                     if existing is not None:
                         existing["text"] = fresh["text"]
                         existing["decision_request"] = fresh["decision_request"]
+                        if fresh.get("number") is not None:
+                            existing["number"] = fresh["number"]
                         if fresh.get("anchor_label"):
                             existing["anchor_label"] = fresh["anchor_label"]
                         existing["edited_at"] = now
@@ -1448,9 +1474,54 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         new_status = payload.get("status")
         if new_status is not None:
             new_status = _coerce_status(new_status)
-            if new_status not in ("open", "addressed_by_agent", "user_confirmed", "archived"):
+            if new_status not in (
+                "open", "addressed_by_agent", "resolved_in_version",
+                "user_confirmed", "archived",
+            ):
                 self._respond(400, b'{"error":"invalid status"}')
                 return
+        resolution_version = payload.get("resolved_in_version")
+        resolution_anchor = payload.get("resolution_anchor_id")
+        if new_status == "resolved_in_version":
+            if not isinstance(resolution_version, str) or not resolution_version.strip():
+                self._respond(400, b'{"error":"resolved_in_version required"}')
+                return
+            if not isinstance(resolution_anchor, str) or not resolution_anchor.strip():
+                self._respond(400, b'{"error":"resolution_anchor_id required"}')
+                return
+            resolution_version = resolution_version.strip()
+            resolution_anchor = resolution_anchor.strip()
+            if not _version_has_anchor(self.artifact_dir, resolution_version, resolution_anchor):
+                self._respond(400, b'{"error":"resolution target anchor not found"}')
+                return
+
+        carry_forward = payload.get("carry_forward")
+        carry_version = carry_anchor = None
+        if carry_forward is not None:
+            if not isinstance(carry_forward, dict):
+                self._respond(400, b'{"error":"carry_forward must be an object"}')
+                return
+            carry_version = carry_forward.get("version")
+            carry_anchor = carry_forward.get("anchor_id")
+            if not isinstance(carry_version, str) or not carry_version.strip():
+                self._respond(400, b'{"error":"carry_forward.version required"}')
+                return
+            if not isinstance(carry_anchor, str) or not carry_anchor.strip():
+                self._respond(400, b'{"error":"carry_forward.anchor_id required"}')
+                return
+            carry_version = carry_version.strip()
+            carry_anchor = carry_anchor.strip()
+            if not _version_has_anchor(self.artifact_dir, carry_version, carry_anchor):
+                self._respond(400, b'{"error":"carry target anchor not found"}')
+                return
+            if new_status is not None:
+                self._respond(400, b'{"error":"carry_forward owns the status transition"}')
+                return
+        try:
+            item_number = _normalize_item_number(payload.get("number"))
+        except DecisionRequestError as exc:
+            self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
+            return
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
@@ -1469,8 +1540,31 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return
             anchor_id, c = found
             old_status = c.get("status")
+            if new_status == "addressed_by_agent" and old_status == "user_confirmed":
+                self._respond(
+                    409,
+                    b'{"error":"addressed_by_agent cannot demote user_confirmed"}',
+                )
+                return
+            if carry_forward is not None and old_status == "user_confirmed":
+                self._respond(
+                    409,
+                    b'{"error":"carry_forward cannot demote user_confirmed"}',
+                )
+                return
             if new_status:
                 c["status"] = new_status
+            if item_number is not None:
+                c["number"] = item_number
+            resolved_now = new_status == "resolved_in_version"
+            if resolved_now:
+                c["resolved_in_version"] = resolution_version
+                c["resolution_anchor_id"] = resolution_anchor
+                c["resolved_at"] = _now_iso()
+                c["resolved_by"] = author
+                decision = c.get("decision")
+                if isinstance(decision, dict):
+                    decision.pop("round_pending", None)
             if "response_text" in payload:
                 c["response_text"] = payload["response_text"]
             if "text" in payload:
@@ -1504,7 +1598,26 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
                         return
                     decision_posed = True
-            new_anchor = payload.get("anchor_id")
+            carried_now = carry_forward is not None
+            if carried_now:
+                carried_at = _now_iso()
+                c.setdefault("origin_version", c.get("version"))
+                c.setdefault("origin_anchor_id", anchor_id)
+                c.setdefault("carry_history", []).append({
+                    "from_version": c.get("version"),
+                    "from_anchor_id": anchor_id,
+                    "to_version": carry_version,
+                    "to_anchor_id": carry_anchor,
+                    "ts": carried_at,
+                    "by": author,
+                })
+                c["version"] = carry_version
+                c["carried_to_version"] = carry_version
+                c["carried_to_anchor_id"] = carry_anchor
+                c["carried_at"] = carried_at
+                c["carried_by"] = author
+                c["status"] = "open"
+            new_anchor = carry_anchor if carried_now else payload.get("anchor_id")
             if isinstance(new_anchor, str) and new_anchor and new_anchor != anchor_id:
                 store["anchors"][anchor_id].remove(c)
                 if not store["anchors"][anchor_id]:
@@ -1533,6 +1646,27 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             **({"decision_requested": True} if decision_posed else {}),
             **session,
         })
+        if resolved_now:
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "comment_resolved",
+                "comment_id": comment_id,
+                "anchor_id": anchor_id,
+                "resolved_in_version": resolution_version,
+                "resolution_anchor_id": resolution_anchor,
+                "author": author,
+                **session,
+            })
+        if carried_now:
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "comment_carried_forward",
+                "comment_id": comment_id,
+                "from_version": c.get("origin_version"),
+                "from_anchor_id": c.get("origin_anchor_id"),
+                "to_version": carry_version,
+                "to_anchor_id": carry_anchor,
+                "author": author,
+                **session,
+            })
         if decision_posed:
             _bus_append(self.bus_dir, self.slug, {**_decision_requested_event(c, author), **session})
         print(f"  PUT /api/comments/{comment_id} → status={c.get('status')} by {author}", flush=True)
@@ -1564,6 +1698,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             store = self._v2_load()
             found = None
             auto_reopened = False
+            reopened_from = None
             for anchor_id, items in store["anchors"].items():
                 for c in items:
                     if c.get("id") == comment_id:
@@ -1573,10 +1708,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         # a second action. Agent replies (author "agent:*",
                         # same convention the shell's ball-in-court logic
                         # uses) never auto-reopen.
-                        if c.get("status") == "addressed_by_agent" and not author.startswith("agent:"):
+                        if c.get("status") in ("addressed_by_agent", "resolved_in_version") \
+                                and not author.startswith("agent:"):
+                            reopened_from = c.get("status")
                             c["status"] = "open"
                             c["reopened_at"] = _now_iso()
                             c["reopened_by"] = author
+                            if reopened_from == "resolved_in_version":
+                                c["resolution_reopened_at"] = c["reopened_at"]
+                                c["resolution_reopened_by"] = author
                             auto_reopened = True
                         found = (anchor_id, c)
                         break
@@ -1592,12 +1732,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_id": comment_id,
             "anchor_id": found[0],
             "author": author,
-            **({"auto_reopened": True, "old_status": "addressed_by_agent",
+            **({"auto_reopened": True, "old_status": reopened_from,
                 "new_status": "open"} if auto_reopened else {}),
             **self._session_fields(),
         })
         if auto_reopened:
-            print(f"  POST /api/comments/{comment_id}/reply → user reply auto-reopened (by {author})", flush=True)
+            print(f"  POST /api/comments/{comment_id}/reply → user reply auto-reopened "
+                  f"from {reopened_from} (by {author})", flush=True)
         self._respond(200, json.dumps(found[1], ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_archive(self, comment_id: str, parsed):
@@ -1811,21 +1952,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
 
-    # D2 made "changes" (Request changes) the third verdict. D3 brings
-    # "comment" back beside it as a fourth, because the two are not the same
-    # act: "changes" answers the card and instructs, "comment" only remarks
-    # on it and leaves it open. A reviewer with no Comment button posted
-    # remarks as thread replies, where they were easy to miss.
+    # `comment` is the free-text answer path. Ordinary thread replies remain
+    # the non-answer remark path.
     _DECISION_VERDICTS = ("accept", "reject", "changes", "comment", "select")
     # The advertised set: what a current chrome should render as buttons.
     # "select" is not a button — it is what a click on an option with a
     # custom id posts. A chrome that does not find it here posts `comment`
     # for those clicks, as it did before D3.
     _DECISION_VERDICTS_OFFERED = ("accept", "reject", "changes", "comment", "select")
-    # Verdicts that ANSWER a card. A card whose only verdict is "comment" is
-    # still undecided: it keeps its buttons in the chrome, and a round
-    # reports it in undecided_ids.
-    _DECISION_ANSWERS = ("accept", "reject", "changes", "select")
+    # Every verdict answers the card. `comment` is the free-text answer;
+    # ordinary thread replies remain the non-answer remark path.
+    _DECISION_ANSWERS = ("accept", "reject", "changes", "comment", "select")
     # Both text verdicts leave the card open: the agent still owes an answer.
     _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open",
                             "changes": "open", "comment": "open",
@@ -1838,7 +1975,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # D3: the in-thread reply a comment verdict writes. Pre-D3 it was the
     # bare note, indistinguishable from an ordinary reply — the very thing
     # that made these remarks easy to miss.
-    _DECISION_COMMENT_PREFIX = "💬 Comment: "
+    _DECISION_COMMENT_PREFIX = "💬 Answer in words: "
     # D3: the reviewer picked one of the card's own options. `text` is the
     # option's label, plus any note after a blank line.
     _DECISION_SELECT_PREFIX = "☑ Selected: "
@@ -1846,18 +1983,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # distinct from _DECISION_REPLY_TEXT (which has no text-verdict entry)
     # since a revision's PRIOR verdict can be any of the four.
     _DECISION_PRIOR_LABEL = {"accept": "✓ Accepted", "reject": "✗ Rejected",
-                             "changes": "↻ Changes requested", "comment": "Commented",
+                             "changes": "↻ Changes requested", "comment": "Answered in words",
                              "select": "☑ Selected"}
 
     @classmethod
     def _is_answered(cls, decision) -> bool:
-        """True when this decision actually answers its card (not a comment)."""
+        """True when this decision answers its card."""
         return bool(isinstance(decision, dict)
                     and decision.get("verdict") in cls._DECISION_ANSWERS)
 
     def _v2_post_decision(self, comment_id: str, parsed):
-        """Resolve a one-click decision_request: accept / reject / changes,
-        or remark on it without answering: comment.
+        """Resolve a decision_request: accept / reject / changes, or a
+        free-text answer (`comment`).
 
         Sets c["decision"], appends a thread reply so the agent sees the
         verdict in-thread, transitions status, and performs the same
@@ -2029,10 +2166,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if c.get("status") == "archived":
                         continue
                     d = c.get("decision")
-                    # D3: "comment" is a remark, not an answer — the card
-                    # stays in undecided_ids. It still rides out with the
-                    # round below (it may well be the only thing the
-                    # reviewer said about this card).
+                    if c.get("status") == "resolved_in_version":
+                        if isinstance(d, dict):
+                            d.pop("round_pending", None)
+                        continue
+                    # Every verdict, including the free-text `comment`,
+                    # answers a card. Only a card with no verdict is undecided.
                     if c.get("decision_request") and not self._is_answered(d):
                         undecided_ids.append(c.get("id"))
                     if isinstance(d, dict) and d.get("round_pending"):

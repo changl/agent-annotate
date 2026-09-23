@@ -113,6 +113,27 @@ def test_create_accepts_decision_request_in_one_call(server):
     assert requested[0]["has_context"] is True and requested[0]["options_n"] == 2
 
 
+def test_create_preserves_explicit_item_number(server):
+    httpd, slug_dir, _ = server
+    payload = _card()
+    payload["number"] = 14
+    status, comment = _call(httpd, "POST", "/api/comments", payload)
+    assert status == 201
+    assert comment["number"] == 14
+    assert _store(slug_dir)["anchors"]["s:a"][0]["number"] == 14
+
+
+@pytest.mark.parametrize("number", [0, -1, True, "14"])
+def test_create_rejects_invalid_item_number(server, number):
+    httpd, slug_dir, _ = server
+    payload = _card()
+    payload["number"] = number
+    status, error = _call(httpd, "POST", "/api/comments", payload)
+    assert status == 400
+    assert "number" in error["error"]
+    assert _store(slug_dir)["anchors"] == {}
+
+
 def test_create_without_prompt_is_a_400(server):
     httpd, slug_dir, _ = server
     status, err = _call(httpd, "POST", "/api/comments",
@@ -335,12 +356,12 @@ def test_a_comment_verdict_is_labelled_in_the_thread(server):
                          {"verdict": "comment", "text": "old chrome"})
     assert status == 200
     assert resp["decision"]["verdict"] == "comment"
-    assert resp["replies"][-1]["text"] == "💬 Comment: old chrome"
+    assert resp["replies"][-1]["text"] == "💬 Answer in words: old chrome"
     assert _store(slug_dir)["anchors"]["s:a"][0]["status"] == "open"
 
 
-def test_a_comment_rides_the_round_but_stays_undecided(server):
-    """D3: a commented card is pushed with the round AND reported undecided."""
+def test_an_answer_in_words_rides_the_round_and_counts_as_answered(server):
+    """Free-text card answers wait on the agent, not on the reviewer again."""
     httpd, slug_dir, bus = server
     _, batch = _call(httpd, "POST", "/api/comments/batch",
                      {"items": [_card("s:a"), _card("s:b")], "idempotency": "anchor"})
@@ -357,11 +378,52 @@ def test_a_comment_rides_the_round_but_stays_undecided(server):
     assert submitted["verdict_counts"] == {
         "accept": 1, "reject": 0, "changes": 0, "comment": 1, "select": 0}
     assert sorted(submitted["comment_ids"]) == sorted([a, b])
-    assert submitted["undecided_ids"] == [a]
+    assert submitted["undecided_ids"] == []
     pushes = _events(bus, "session_push")
-    assert len(pushes) == 1 and pushes[0]["undecided_ids"] == [a]
+    assert len(pushes) == 1 and pushes[0]["undecided_ids"] == []
     stored = next(x for items in _store(slug_dir)["anchors"].values() for x in items if x["id"] == a)
     assert "round_pending" not in stored["decision"]
+
+
+def test_resolved_comment_card_is_excluded_from_round_and_undecided_ids(server):
+    httpd, slug_dir, bus = server
+    _, comment = _call(httpd, "POST", "/api/comments", _card())
+    _call(
+        httpd,
+        "POST",
+        f"/api/comments/{comment['id']}/decision",
+        {
+            "verdict": "comment",
+            "text": "apply this in the next version",
+            "defer_push": True,
+        },
+        author="reviewer@example.com",
+    )
+    store = _store(slug_dir)
+    stored = store["anchors"]["s:a"][0]
+    stored["status"] = "resolved_in_version"
+    stored["resolved_in_version"] = "v2"
+    stored["resolution_anchor_id"] = "s:new"
+    (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
+
+    status, submitted = _call(
+        httpd,
+        "POST",
+        "/api/rounds/submit",
+        {},
+        author="reviewer@example.com",
+    )
+
+    assert status == 200
+    assert submitted["comment_count"] == 0
+    assert submitted["undecided_ids"] == []
+    assert submitted["verdict_counts"] == {
+        "accept": 0, "reject": 0, "changes": 0, "comment": 0, "select": 0,
+    }
+    pushed = _events(bus, "session_push")[-1]
+    assert pushed["comment_ids"] == []
+    assert pushed["undecided_ids"] == []
+    assert "round_pending" not in _store(slug_dir)["anchors"]["s:a"][0]["decision"]
 
 
 def test_a_comment_without_text_is_a_400(server):

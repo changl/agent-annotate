@@ -88,7 +88,7 @@ polled, and is hidden under the 1160px compact layout.
   "anchors": {
     "tbl:items:row:42": [
       {
-        "id": "abc123", "anchor_id": "tbl:items:row:42",
+        "id": "abc123", "number": 14, "anchor_id": "d:q14",
         "anchor_label": "Acme Corp", "text": "COLI or Schedule A?",
         "author": "user@example.com", "created_at": "2026-06-28T15:00:00Z",
         "version": "v3", "status": "addressed_by_agent",
@@ -110,6 +110,14 @@ The top-level key is `anchors`, not `comments`. Archived comments move to
 `archived`, keyed by the same anchor id. Legacy shapes — the v1 `{nodeId:
 [comment]}` map and the prem-fin list — are coerced to v2 on first write, with
 the original backed up next to the file.
+
+Cross-version disposition stays in `anchors`. A resolved item has
+`status: "resolved_in_version"`, `resolved_in_version`,
+`resolution_anchor_id`, `resolved_at`, and `resolved_by`; later-version views
+do not count or render it as outstanding, while its origin version keeps the
+history and lets the reviewer reopen it. A carried item keeps
+`origin_version`, `origin_anchor_id`, and `carry_history`, while its live
+`version` and `anchor_id` move to the target round.
 
 ## 5. `ANCHOR_REGISTRY`
 

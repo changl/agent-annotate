@@ -149,22 +149,40 @@ async function loadStore() {
   } catch { return false; }
 }
 
-// ── Per-version comment numbering ───────────────────────────────────
-// Every comment gets a stable 1-based number within its version, assigned in
-// creation order over ALL comments of that version INCLUDING archived ones —
-// so accepting/archiving a comment never renumbers its neighbors mid-session.
-// The number renders on the sidebar card (#7) and on the page pin (7): the
-// shared visual key that disambiguates two comments on the same section.
+// ── Stable page-wide item numbering ─────────────────────────────────
+// Explicit `number` is canonical. Legacy cards recover an unsuffixed Q<number>
+// from their prompt; everything else receives the next unused number in
+// creation order over live + archived history. One map drives rail, pin and
+// body order, so a response item never has three competing labels.
 function computeNumbers() {
   NUM_MAP = {};
-  const byVersion = {};
-  for (const c of flattenAll(true)) {
-    (byVersion[c.version || ''] = byVersion[c.version || ''] || []).push(c);
+  const all = flattenAll(true);
+  const used = new Set();
+  for (const c of all) {
+    if (Number.isInteger(c.number) && c.number > 0 && !used.has(c.number)) {
+      NUM_MAP[c.id] = c.number;
+      used.add(c.number);
+    }
   }
-  for (const v of Object.keys(byVersion)) {
-    byVersion[v].sort((a, b) =>
-      new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
-    byVersion[v].forEach((c, i) => { NUM_MAP[c.id] = i + 1; });
+  for (const c of all) {
+    if (NUM_MAP[c.id]) continue;
+    const prompt = c.decision_request && c.decision_request.prompt;
+    const match = typeof prompt === 'string' ? prompt.match(/^Q(\d+)(?![0-9A-Za-z])/i) : null;
+    const n = match ? Number(match[1]) : 0;
+    if (n > 0 && !used.has(n)) {
+      NUM_MAP[c.id] = n;
+      used.add(n);
+    }
+  }
+  let next = used.size ? Math.max(...used) + 1 : 1;
+  all.sort((a, b) =>
+    new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
+  for (const c of all) {
+    if (NUM_MAP[c.id]) continue;
+    while (used.has(next)) next++;
+    NUM_MAP[c.id] = next;
+    used.add(next);
+    next++;
   }
 }
 
@@ -430,10 +448,12 @@ async function apiRoundDiscard() {
   return null;
 }
 function isRoundPending(c) {
-  return !!(c && c.decision && c.decision.round_pending && c.status !== 'archived');
+  return !!(c && c.decision && c.decision.round_pending &&
+    c.status !== 'archived' && c.status !== 'resolved_in_version');
 }
 function hasDecisionRequest(c) {
-  return !!(c && c.decision_request && c.status !== 'archived');
+  return !!(c && c.decision_request &&
+    c.status !== 'archived' && c.status !== 'resolved_in_version');
 }
 
 // OLD-SERVER FALLBACK: composes the same outcome from routes that predate
@@ -444,7 +464,7 @@ async function apiDecisionFallback(id, verdict, text) {
   const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
   const isText = verdict === 'comment' || verdict === 'changes';
   let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
-    : verdict === 'comment' ? text : verdictText[verdict];
+    : verdict === 'comment' ? '💬 Answer in words: ' + text : verdictText[verdict];
   if (!isText && text) replyText += '\n\n' + text;
   const replied = await apiReply(id, replyText);
   if (!replied) return null;
@@ -493,7 +513,7 @@ function classify(c) {
   if (c.status === 'open') {
     return isAgentAuthor(lastReplyAuthor(c)) ? 'review' : 'waiting';
   }
-  // user_confirmed or archived
+  // user_confirmed, resolved_in_version or archived
   return 'done';
 }
 
@@ -625,24 +645,14 @@ function anchorLabel(c) {
 function drawerScope() {
   return showAllVersions ? null : CURRENT_VERSION;
 }
-// D3 (user-reported: "there is no 'comment' option except to enter a note or
-// post a reply. my comments were entered in as replies", which made them easy
-// to miss): `comment` is a remark ON a decision, not an answer TO it. Only
-// accept / reject / changes answer a card. A commented card keeps its option
-// buttons, stays in "Needs my review", keeps its pulsing pin, and the round
-// still reports it as undecided — while the comment itself travels as a
-// verdict (bus event, round verdict_counts, `annotate cards`) instead of
-// disappearing into the reply thread.
+// Every stored verdict answers a card. `comment` is the free-text answer;
+// ordinary thread replies are non-answer remarks.
 function isAnswerVerdict(v) {
-  return !!v && v !== 'comment';
+  return !!v;
 }
 function decisionAnswer(c) {
   const d = c && c.decision;
   return (d && isAnswerVerdict(d.verdict)) ? d : null;
-}
-function decisionCommentOnly(c) {
-  const d = c && c.decision;
-  return (d && d.verdict === 'comment') ? d : null;
 }
 // F9: an UNRESOLVED decision card must never disappear behind the version
 // filter. After a republish the reviewer lands on vN while the agent's open
@@ -651,7 +661,8 @@ function decisionCommentOnly(c) {
 // and always get a pin/strip on the version being viewed. Resolved and plain
 // comments keep the normal per-version scope.
 function isUnresolvedDecision(c) {
-  return !!(c && c.decision_request && !decisionAnswer(c) && c.status !== 'archived');
+  return !!(c && c.decision_request && !decisionAnswer(c) &&
+    c.status !== 'archived' && c.status !== 'resolved_in_version');
 }
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
@@ -757,10 +768,11 @@ function renderDrawer() {
     all = all.filter(c => classify(c) === activeFilter);
   }
 
-  all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  all.sort((a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
   if (unreadFirst) {
     const rank = c => (readStateOf(c) === 'read' ? 1 : 0);
-    all.sort((a, b) => rank(a) - rank(b) || (new Date(b.created_at) - new Date(a.created_at)));
+    all.sort((a, b) => rank(a) - rank(b) ||
+      ((NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0)));
   }
 
   document.getElementById('archived-count').textContent =
@@ -900,12 +912,12 @@ function isGeneralAnchor(anchorId) {
   return typeof anchorId === 'string' && anchorId.indexOf('general:') === 0;
 }
 
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented', select: 'Selected' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Answered in words', select: 'Selected' };
 // Prior-verdict text for the rail's "Changing verdict — currently X" note,
 // checkmark-prefixed to match the reply text sync_server.py generates on a
 // revision (_DECISION_PRIOR_LABEL) so the card and the bus event read the
 // same way.
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented', select: '☑ Selected' };
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
 // Every option id this chrome knows how to render. "comment" and "changes"
 // are the same slot: which one a page shows is decided by the server's
 // advertised verdicts, never by both appearing at once.
@@ -917,7 +929,7 @@ const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
 // Default button labels/classes. accept/reject/comment are byte-identical to
 // the pre-2.19 markup so a legacy decision_request (string options, nothing
 // else) against a legacy server renders exactly as it always has.
-const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Comment', changes: '&#8635; Request changes' };
+const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // Context up to this many chars renders as a muted paragraph; longer context
 // goes behind the "Why / details" WAI-ARIA disclosure.
@@ -935,7 +947,7 @@ const decisionChanging = {};
 // open. Note TEXT lives in DRAFTS under 'note:<id>' (same store as replies).
 const decisionDetailsOpen = {};
 const decisionNoteOpen = {};
-// D3: whether the standing "Comment" form is open. Its text lives in DRAFTS
+// Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
 const decisionSayOpen = {};
 // …and the same for the "Request changes" (pre-D2: "Comment") form, whose
@@ -1030,6 +1042,12 @@ function renderDecisionPending(c) {
 function renderDecisionBlock(c) {
   if (!c.decision_request || c.status === 'archived') return '';
   const dr = c.decision_request;
+  if (c.status === 'resolved_in_version') {
+    return `<div class="decision-block decision-resolved">
+      <div class="decision-prompt">${esc(dr.prompt || '')}</div>
+      <span class="decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')} &middot; ${esc(c.resolution_anchor_id || 'location unavailable')}</span>
+    </div>`;
+  }
   const changing = !!decisionChanging[c.id];
   if (decisionAnswer(c) && !changing) {
     const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
@@ -1044,11 +1062,9 @@ function renderDecisionBlock(c) {
   // D2: the free-text slot posts `changes` (note mandatory) when this card
   // carries the Request-changes option, `comment` otherwise.
   const wantsChanges = opts.some(o => o.id === 'changes');
-  // D3: the standing Comment affordance. Skipped when `comment` is already
-  // one of the posed options (a pre-D2 server's third slot), and on a card
-  // that already carries an answer — a comment must never overwrite one.
+  // Free-text answer. Skipped when `comment` is already one of the posed
+  // options and on a card that already carries an answer.
   const showSay = !opts.some(o => o.id === 'comment') && !decisionAnswer(c);
-  const said = decisionCommentOnly(c);
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
   let btns = '';
@@ -1071,16 +1087,12 @@ function renderDecisionBlock(c) {
     </div>` : '';
   const sayOpen = !!decisionSayOpen[c.id];
   const sayHtml = showSay ? `<div class="decision-say-row">
-      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Say something about this decision without answering it. The comment reaches the agent as a comment on this card, not as a reply buried in the thread.">&#128172; Comment</button>
-      <span class="decision-say-hint">without answering</span>
+      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words. For a non-answer remark, use Add a reply.">&#128172; Answer in words</button>
+      <span class="decision-say-hint">counts as answered</span>
     </div>
     <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
-      <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Comment on this decision&hellip;" rows="2"></textarea>
-      <button class="decision-comment-submit" data-decision-action="say-submit" data-id="${escAttr(c.id)}">Send comment</button>
-    </div>` : '';
-  const commentedHtml = said ? `<div class="decision-commented">
-      <span class="decision-verdict-chip verdict-comment">&#128172; Commented &middot; ${esc(fmtTs(said.ts))}</span>
-      <span class="decision-commented-txt">still undecided</span>
+      <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Answer in your own words&hellip;" rows="2"></textarea>
+      <button class="decision-comment-submit" data-decision-action="say-submit" data-id="${escAttr(c.id)}">Send answer</button>
     </div>` : '';
   const noteOpen = !!decisionNoteOpen[c.id];
   const noteHtml = opts.some(o => o.id === 'accept' || o.id === 'reject') ? `<div class="decision-note-row">
@@ -1089,7 +1101,6 @@ function renderDecisionBlock(c) {
     </div>` : '';
   return `<div class="decision-block">
     ${changingNote}
-    ${commentedHtml}
     <div class="decision-prompt">${esc(dr.prompt || '')}</div>
     ${renderDecisionContext(c, dr)}
     ${renderDecisionMeta(dr)}
@@ -1108,7 +1119,10 @@ function renderDecisionBlock(c) {
 function renderCItem(c) {
   const cls = classify(c);
   const clsMap = { review: 'needs-review', waiting: 'waiting-agent', done: 'done' };
-  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: c.status === 'archived' ? 'Archived' : 'Done' };
+  const doneLabel = c.status === 'archived' ? 'Archived'
+    : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
+    : 'Done';
+  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const ts = fmtTs(c.created_at);
   // #n mirrors the numbered pin on the page (pin 7 ↔ card #7).
   const num = NUM_MAP[c.id];
@@ -1138,7 +1152,7 @@ function renderCItem(c) {
     if (cls === 'review') {
       actions += `<button class="alink accept" data-action="accept" data-id="${escAttr(c.id)}">&#10003; Accept &amp; archive</button>`;
       actions += `<button class="alink" data-action="reopen" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}">Reopen</button>`;
-    } else if (c.status === 'user_confirmed') {
+    } else if (c.status === 'user_confirmed' || c.status === 'resolved_in_version') {
       actions += `<button class="alink accept" data-action="accept" data-id="${escAttr(c.id)}">&#10003; Accept &amp; archive</button>`;
       actions += `<button class="alink" data-action="reopen" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}">Reopen</button>`;
     } else {
@@ -1148,6 +1162,9 @@ function renderCItem(c) {
     // Only meaningful when the comment's version is the one on screen.
     if (!isGeneralAnchor(c.anchor_id) && c.version === CURRENT_VERSION) {
       actions += `<button class="alink" data-action="repin" data-id="${escAttr(c.id)}" title="Click a new location in the document to move this comment's pin">&#128204; Re-pin</button>`;
+    }
+    if (c.status === 'resolved_in_version' && c.resolved_in_version && c.resolution_anchor_id) {
+      actions += `<button class="alink" data-action="resolution" data-id="${escAttr(c.id)}">View resolution in ${esc(c.resolved_in_version)}</button>`;
     }
   } else {
     actions += `<button class="alink" data-action="restore" data-id="${escAttr(c.id)}">Restore</button>`;
@@ -1272,6 +1289,12 @@ function wireCardActions(root) {
     await apiPutComment(btn.dataset.id, { status: 'open' });
     await refreshStore();
     markReadAfterAction(btn.dataset.id);
+  }));
+  root.querySelectorAll('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const c = findCommentById(btn.dataset.id);
+    if (!c || !c.resolved_in_version || !c.resolution_anchor_id) return;
+    goToCommentLocation(c.resolution_anchor_id, c.resolved_in_version, null);
   }));
   root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1599,7 +1622,10 @@ let pinPopoverCtx = null; // {anchorId, anchorLabel, x, y} of the open pin popov
 
 function renderPinPopItem(c) {
   const cls = classify(c);
-  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: c.status === 'archived' ? 'Archived' : 'Done' };
+  const doneLabel = c.status === 'archived' ? 'Archived'
+    : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
+    : 'Done';
+  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const num = NUM_MAP[c.id];
   const respHtml = c.response_text
     ? `<div class="pinpop-item-resp"><b>Agent:</b> ${esc(c.response_text)}</div>`
@@ -2280,9 +2306,11 @@ function sendCommentCountsToFrame() {
     counts[aid] = list.length;
     pins[aid] = list
       .map(c => {
-        const hasDecisionRequest = !!(c.decision_request && c.status !== 'archived');
+        const hasDecisionRequest = !!(c.decision_request &&
+          c.status !== 'archived' && c.status !== 'resolved_in_version');
         const decisionPending = hasDecisionRequest && !decisionAnswer(c);
-        const decisionResolved = !!(decisionAnswer(c) && c.status !== 'archived');
+        const decisionResolved = !!(decisionAnswer(c) &&
+          c.status !== 'archived' && c.status !== 'resolved_in_version');
         return {
           id: c.id,
           n: NUM_MAP[c.id] || 0,
@@ -2310,10 +2338,6 @@ function sendCommentCountsToFrame() {
             blocking: c.decision_request.blocking === true,
           } : null,
           decisionVerdict: decisionResolved ? c.decision.verdict : null,
-          // D3: a comment-only card is still unanswered; the body strip shows
-          // a "Commented" chip ABOVE its live buttons rather than instead of
-          // them.
-          decisionCommented: !!(decisionCommentOnly(c) && c.status !== 'archived'),
           // v2.19 round mode: verdict recorded but not yet sent.
           roundPending: isRoundPending(c),
         };

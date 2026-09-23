@@ -75,6 +75,13 @@ def test_version_must_look_like_a_version(tmp_path):
         generate(src, tmp_path / "slug", version="round-2")
 
 
+def test_later_version_requires_full_plan_contract(tmp_path):
+    src = tmp_path / "page.md"
+    src.write_text(_doc("## Plan\n\ntext\n", version="v2"), encoding="utf-8")
+    with pytest.raises(PageGenError, match="full_plan: true"):
+        generate(src, tmp_path / "slug")
+
+
 # ── block parser ────────────────────────────────────────────────────────────
 def test_parse_blocks_recognises_every_construct():
     blocks = parse_blocks(
@@ -303,6 +310,62 @@ def test_a_cards_block_that_is_not_json_is_rejected():
         _render("## D\n\n```cards\n{not json}\n```\n")
 
 
+def test_v2_requires_one_numbered_question_section_and_renders_scope(tmp_path):
+    src = tmp_path / "page.md"
+    src.write_text(_doc(
+        "## Plan\n\nComplete plan.\n\n"
+        "## Questions for Chang\n\n"
+        "```cards\n"
+        "[{\"number\":14,\"anchor_id\":\"d:q14\",\"text\":\"Choose the home.\","
+        "\"decision_request\":{\"prompt\":\"Which workspace should hold it?\","
+        "\"evidence\":[{\"label\":\"Plan\",\"anchor\":\"s:plan\"}]}}]\n"
+        "```\n",
+        version="v2",
+        full_plan="true",
+        other_files_required="none",
+    ), encoding="utf-8")
+
+    result = generate(src, tmp_path / "slug")
+    cards = json.loads(result["cards_json"].read_text(encoding="utf-8"))
+    html = result["html"].read_text(encoding="utf-8")
+
+    assert cards[0]["number"] == 14
+    assert '<span class="item-num">#14</span>' in html
+    assert "Complete plan" in html
+    assert "No other files required" in html
+
+
+@pytest.mark.parametrize(
+    "cards,error",
+    [
+        (
+            '[{"number":14,"anchor_id":"d:q14","text":"A",'
+            '"decision_request":{"prompt":"A?","evidence":[{"anchor":"s:plan"}]}},'
+            '{"number":14,"anchor_id":"d:q14","text":"B",'
+            '"decision_request":{"prompt":"B?","evidence":[{"anchor":"s:plan"}]}}]',
+            "duplicate card number",
+        ),
+        (
+            '[{"number":15,"anchor_id":"d:q15","text":"A",'
+            '"decision_request":{"prompt":"A?","evidence":[{"anchor":"s:plan"}]}},'
+            '{"number":14,"anchor_id":"d:q14","text":"B",'
+            '"decision_request":{"prompt":"B?","evidence":[{"anchor":"s:plan"}]}}]',
+            "strictly increasing",
+        ),
+    ],
+)
+def test_v2_rejects_duplicate_or_out_of_order_card_numbers(tmp_path, cards, error):
+    src = tmp_path / "page.md"
+    src.write_text(_doc(
+        f"## Plan\n\nComplete.\n\n## Questions for Chang\n\n```cards\n{cards}\n```\n",
+        version="v2",
+        full_plan="true",
+        other_files_required="none",
+    ), encoding="utf-8")
+    with pytest.raises(PageGenError, match=error):
+        generate(src, tmp_path / "slug")
+
+
 # ── lint ────────────────────────────────────────────────────────────────────
 def test_lint_rejects_text_between_the_stylesheet_and_the_first_element():
     canvas = '<style>.a{color:red}</style>\n.b{color:blue}\n<p data-anchor-id="s:a">x</p>'
@@ -369,7 +432,7 @@ def test_rerunning_the_same_version_is_idempotent(tmp_path):
     assert second["prior_versions"] == []
 
 
-def test_a_second_version_keeps_the_first_and_points_current_at_the_new_one(tmp_path):
+def test_generating_a_second_version_does_not_publish_it_before_the_gate(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(EXAMPLE, encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
@@ -377,12 +440,35 @@ def test_a_second_version_keeps_the_first_and_points_current_at_the_new_one(tmp_
     result = generate(src, slug_dir, version="v2", label="round 2")
 
     import os
-    assert os.readlink(slug_dir / "current.html") == "versions/v2.html"
+    assert os.readlink(slug_dir / "current.html") == "versions/v1.html"
     assert (slug_dir / "versions" / "v1.html").is_file()
     assert (slug_dir / "source" / "v2.md").is_file()
     meta = json.loads((slug_dir / "current.meta.json").read_text(encoding="utf-8"))
-    assert [h["version"] for h in meta["history"]] == ["v1", "v2"]
+    assert [h["version"] for h in meta["history"]] == ["v1"]
     assert result["prior_versions"] == ["v1"]
+
+
+def test_later_version_warns_when_most_plan_sections_disappear(tmp_path):
+    slug_dir = tmp_path / "review"
+    v1 = tmp_path / "v1.md"
+    v1.write_text(_doc(
+        "## Scope\n\na\n\n## Design\n\nb\n\n## Pilot\n\nc\n",
+        version="v1",
+    ), encoding="utf-8")
+    generate(v1, slug_dir)
+
+    v2 = tmp_path / "v2.md"
+    v2.write_text(_doc(
+        "## Update only\n\ndelta\n",
+        version="v2",
+        full_plan="true",
+        other_files_required="none",
+    ), encoding="utf-8")
+    result = generate(v2, slug_dir)
+
+    assert len(result["warnings"]) == 1
+    assert "retains 0/3 prior sections" in result["warnings"][0]
+    assert "scope" in result["warnings"][0]
 
 
 def test_the_template_is_fully_filled_and_the_sentinels_survive(tmp_path):

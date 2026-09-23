@@ -65,6 +65,8 @@ CSS = """<style>
 .aa .cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin:12px 0}
 .aa .card{border:1px solid #E5E7EB;border-left:4px solid #6366F1;border-radius:8px;padding:10px 14px;background:#FFF;min-width:0}
 .aa .card h4{margin:0 0 4px;font-size:15px}
+.aa .item-num{display:inline-block;min-width:38px;margin-right:7px;font-weight:800;color:#4338CA}
+.aa .plan-scope{border:1px solid #C7D2FE;border-radius:8px;background:#EEF2FF;color:#312E81;padding:8px 12px;margin:4px 0 16px;font-size:13px;font-weight:600}
 .aa .card .ctx{margin:4px 0;color:#374151}
 .aa .card .opts{margin:6px 0 0;padding-left:18px}
 .aa .card .opts li{margin:2px 0}
@@ -79,7 +81,10 @@ CSS = """<style>
 
 E = html.escape
 
-FRONT_MATTER_KEYS = ("title", "subtitle", "date", "slug", "legend", "version", "label")
+FRONT_MATTER_KEYS = (
+    "title", "subtitle", "date", "slug", "legend", "version", "label",
+    "full_plan", "other_files_required",
+)
 _UNSAFE_URL = re.compile(r"^\s*(?:javascript|data|vbscript)\s*:", re.IGNORECASE)
 
 
@@ -508,7 +513,11 @@ class Renderer:
         if dr.get("blocking"):
             chips += '<span class="chip blocking">blocking</span>'
         title = first_sentence(text)
-        parts = [f"<h4>{inline(title)}{chips}</h4>"]
+        number = card.get("number")
+        number_badge = (f'<span class="item-num">#{number}</span>'
+                        if isinstance(number, int) and not isinstance(number, bool)
+                        and number > 0 else "")
+        parts = [f"<h4>{number_badge}{inline(title)}{chips}</h4>"]
         rest = text[len(title):].strip()
         if rest:
             parts.append(f'<p class="ctx">{inline(rest)}</p>')
@@ -626,6 +635,120 @@ def lint(canvas: str, registry: dict) -> list[str]:
     return problems
 
 
+def _is_later_version(version: str) -> bool:
+    return bool(re.fullmatch(r"v\d+", version) and int(version[1:]) > 1)
+
+
+def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
+                             registry: dict, version: str) -> list[str]:
+    """Authoring contract for cumulative rounds after v1."""
+    if not _is_later_version(version):
+        return []
+    problems = []
+    if str(meta.get("full_plan") or "").strip().lower() != "true":
+        problems.append("later versions require front matter `full_plan: true`")
+    if not str(meta.get("other_files_required") or "").strip():
+        problems.append(
+            "later versions require `other_files_required: none` or an explicit file list")
+
+    card_blocks = [i for i, block in enumerate(blocks) if block.get("kind") == "cards"]
+    if cards:
+        if len(card_blocks) != 1:
+            problems.append("later versions require exactly one ```cards block")
+        elif card_blocks:
+            prior_h2 = next((
+                block for block in reversed(blocks[:card_blocks[0]])
+                if block.get("kind") == "heading" and block.get("level") <= 2
+            ), None)
+            if not prior_h2 or slugify(prior_h2.get("text", "")) != "questions-for-chang":
+                problems.append(
+                    "the ```cards block must be in one final `## Questions for Chang` section")
+
+        seen: set[int] = set()
+        previous = 0
+        for card in cards:
+            number = card.get("number")
+            if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+                problems.append("every later-version card needs a positive integer `number`")
+                continue
+            if number in seen:
+                problems.append(f"duplicate card number {number}")
+            if number <= previous:
+                problems.append("card numbers must be strictly increasing")
+            seen.add(number)
+            previous = number
+
+            expected_anchor = f"d:q{number}"
+            if card.get("anchor_id") != expected_anchor:
+                problems.append(
+                    f"card #{number} must use anchor_id {expected_anchor!r}; "
+                    "link plan locations through decision_request.evidence")
+            prompt = str((card.get("decision_request") or {}).get("prompt") or "")
+            if re.match(r"^\s*(?:Q(?:uestion)?\s*\d+|#\s*\d+)", prompt, re.IGNORECASE):
+                problems.append(
+                    f"card #{number} prompt repeats a number; the `number` badge is canonical")
+            evidence = (card.get("decision_request") or {}).get("evidence")
+            if not isinstance(evidence, list) or not evidence:
+                problems.append(
+                    f"card #{number} needs decision_request.evidence linking to the plan")
+            else:
+                for item in evidence:
+                    anchor = item.get("anchor") if isinstance(item, dict) else None
+                    if not anchor or anchor not in registry:
+                        problems.append(
+                            f"card #{number} evidence anchor {anchor!r} is not on this page")
+    return problems
+
+
+def _full_plan_warnings(slug_dir: Path, version: str, blocks: list[dict]) -> list[str]:
+    """Warn when a claimed full plan drops most prior top-level sections."""
+    if not _is_later_version(version):
+        return []
+    try:
+        from .cli import _read_meta
+        prior_version = _read_meta(slug_dir).get("current")
+        prior_path = slug_dir / "source" / f"{prior_version}.md"
+        _prior_meta, prior_body = parse_front_matter(prior_path.read_text(encoding="utf-8"))
+    except (OSError, AttributeError, TypeError):
+        return []
+    prior_sections = {
+        slugify(block["text"])
+        for block in parse_blocks(prior_body)
+        if block.get("kind") == "heading" and block.get("level") == 2
+        and slugify(block["text"]) != "questions-for-chang"
+    }
+    current_sections = {
+        slugify(block["text"])
+        for block in blocks
+        if block.get("kind") == "heading" and block.get("level") == 2
+        and slugify(block["text"]) != "questions-for-chang"
+    }
+    if not prior_sections:
+        return []
+    retained = len(prior_sections & current_sections)
+    if retained * 2 >= len(prior_sections):
+        return []
+    missing = sorted(prior_sections - current_sections)
+    return [
+        f"full-plan warning: {version} retains {retained}/{len(prior_sections)} "
+        f"prior sections; verify renamed/dropped sections: {', '.join(missing)}"
+    ]
+
+
+def _scope_banner(meta: dict, version: str) -> str:
+    if not _is_later_version(version):
+        return ""
+    other = str(meta.get("other_files_required") or "").strip()
+    if other.lower() == "none":
+        detail = "No other files required"
+    else:
+        detail = f"Other files required: {other}"
+    return (
+        '<div class="plan-scope"><strong>Complete plan</strong> · '
+        f'{inline(detail)}</div>'
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Build
 # ────────────────────────────────────────────────────────────────────────────
@@ -678,8 +801,14 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     blocks = parse_blocks(body)
     canvas, registry, cards = render(meta, blocks)
     problems = lint(canvas, registry)
+    problems += _round_contract_problems(meta, blocks, cards, registry, version)
     if problems:
         raise PageGenError("page rejected by lint:\n  " + "\n  ".join(problems))
+
+    banner = _scope_banner(meta, version)
+    if banner:
+        canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
+    warnings = _full_plan_warnings(slug_dir, version, blocks)
 
     html_out = build_html(meta, canvas, registry, version)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
@@ -692,6 +821,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "label": label,
         "anchors": len(registry),
         "cards": len(cards),
+        "warnings": warnings,
         "prior_versions": prior,
         "html": slug_dir / "versions" / f"{version}.html",
         "cards_json": slug_dir / "cards.json",
@@ -713,8 +843,10 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
     from .cli import _read_meta, _write_meta_locked
 
     slug_dir.mkdir(parents=True, exist_ok=True)
-    prior = sorted(h.get("version") for h in (_read_meta(slug_dir).get("history") or [])
+    existing_meta = _read_meta(slug_dir)
+    prior = sorted(h.get("version") for h in (existing_meta.get("history") or [])
                    if isinstance(h, dict) and h.get("version"))
+    activate = not prior or existing_meta.get("current") == version
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
     _atomic_write(slug_dir / "source" / f"{version}.md", source_text)
@@ -722,23 +854,24 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
         _atomic_write(slug_dir / "cards.json",
                       json.dumps(cards, indent=2, ensure_ascii=False) + "\n")
 
-    current = slug_dir / "current.html"
-    tmp_link = slug_dir / ".current.html.tmp"
-    if tmp_link.is_symlink() or tmp_link.exists():
-        tmp_link.unlink()
-    tmp_link.symlink_to(Path("versions") / f"{version}.html")   # relative target
-    os.replace(tmp_link, current)
+    if activate:
+        current = slug_dir / "current.html"
+        tmp_link = slug_dir / ".current.html.tmp"
+        if tmp_link.is_symlink() or tmp_link.exists():
+            tmp_link.unlink()
+        tmp_link.symlink_to(Path("versions") / f"{version}.html")
+        os.replace(tmp_link, current)
 
-    def _mutate(meta: dict) -> None:
-        meta["current"] = version
-        history = meta.setdefault("history", [])
-        for entry in history:
-            if isinstance(entry, dict) and entry.get("version") == version:
-                entry["label"] = label
-                return                      # idempotent by version, never appended twice
-        history.append({"version": version, "ts": _now_iso(), "label": label})
+        def _mutate(meta: dict) -> None:
+            meta["current"] = version
+            history = meta.setdefault("history", [])
+            for entry in history:
+                if isinstance(entry, dict) and entry.get("version") == version:
+                    entry["label"] = label
+                    return                  # idempotent by version, never appended twice
+            history.append({"version": version, "ts": _now_iso(), "label": label})
 
-    _write_meta_locked(slug_dir, _mutate)
+        _write_meta_locked(slug_dir, _mutate)
     (slug_dir / "comments.json").touch()    # an empty file is a valid v2 store
     return [v for v in prior if v != version]
 
@@ -758,6 +891,8 @@ slug: items-model-review
 version: v1
 label: round 1
 legend: Red KPI = failing · Amber = costly · Green = working. Answer every card, then press Finish review.
+full_plan: true
+other_files_required: none
 ---
 
 # Items model review
@@ -809,7 +944,7 @@ CREATE TRIGGER items_touch BEFORE UPDATE ON items
   FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 ```
 
-## Decisions
+## Questions for Chang
 
 Three cards. Each states its context, my recommendation, and what each option
 costs.
@@ -817,7 +952,8 @@ costs.
 ```cards
 [
   {
-    "anchor_id": "d:rename",
+    "number": 1,
+    "anchor_id": "d:q1",
     "text": "Rename status to lifecycle_state. Three services read the column, so the rename needs a dual-write window before v3 ships.",
     "decision_request": {
       "prompt": "Rename status → lifecycle_state?",
@@ -833,7 +969,8 @@ costs.
     }
   },
   {
-    "anchor_id": "tbl:columns:row:tier",
+    "number": 2,
+    "anchor_id": "d:q2",
     "text": "Give tier to the catalog service.",
     "decision_request": {
       "prompt": "Does catalog own tier after the split?",
@@ -841,10 +978,13 @@ costs.
       "recommendation": "accept",
       "options": ["accept", "reject", "comment"],
       "consequences": {"accept": "Billing reads it through the catalog API.", "reject": "It stays shared and undocumented."},
+      "evidence": [{"label": "tier row", "anchor": "tbl:columns:row:tier"}],
       "impact": "low"
     }
   },
   {
+    "number": 3,
+    "anchor_id": "d:q3",
     "text": "Drop the shadow status column left by the last migration.",
     "decision_request": {
       "prompt": "Drop the jsonb shadow column?",
@@ -854,6 +994,7 @@ costs.
         {"id": "accept", "label": "Drop it now", "consequence": "Irreversible without a restore.", "style": "danger"},
         {"id": "reject", "label": "Drop it after v3", "consequence": "One more quarter of dead bytes.", "style": "primary"}
       ],
+      "evidence": [{"label": "migration sketch", "anchor": "s:migration-sketch"}],
       "impact": "high"
     }
   }
@@ -899,6 +1040,8 @@ def cmd_new(args) -> int:
     print(f"  version        {version} ({result['label']})"
           + (f"; earlier: {', '.join(result['prior_versions'])}"
              if result["prior_versions"] else ""))
+    for warning in result.get("warnings") or []:
+        print(f"  WARN           {warning}")
 
     new_version = bool(result["prior_versions"])
     rc = 0

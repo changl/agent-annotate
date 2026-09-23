@@ -675,12 +675,12 @@ function wireHoverLinking() {
 // a fresh 'annotate:comment-counts' message (see wireBridge) — NOT on every
 // resize/scroll-driven badge refresh, so DOM insertion here can never
 // feed back into the MutationObserver above and loop.
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Commented', select: 'Selected' };
+const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Answered in words', select: 'Selected' };
 // Checkmark-prefixed variant for the plain-text "currently X" changing-note
 // (the resolved chip itself is color-coded so it doesn't need one; the note
 // has no color coding, so it gets the same symbol shell.js's rail card and
 // sync_server.py's revision reply text use, for a consistent read).
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Commented', select: '☑ Selected' };
+const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
 const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
 const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
 const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
@@ -1016,7 +1016,7 @@ async function stripApiDecisionFallback(id, verdict, text) {
   const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
   const isText = verdict === 'comment' || verdict === 'changes';
   let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
-    : verdict === 'comment' ? text : verdictText[verdict];
+    : verdict === 'comment' ? '💬 Answer in words: ' + text : verdictText[verdict];
   if (!isText && text) replyText += '\n\n' + text;
   const replied = await stripApiReply(id, replyText);
   if (!replied) return null;
@@ -1121,7 +1121,7 @@ function buildDecisionItemEl(entry) {
   item.className = 'annotate-decision-item';
   item.dataset.stripItem = id;
 
-  if (entry.decisionVerdict && entry.decisionVerdict !== 'comment' && !stripChanging[id]) {
+  if (entry.decisionVerdict && !stripChanging[id]) {
     item.classList.add('annotate-decision-resolved');
     const chip = document.createElement('span');
     chip.className = 'annotate-verdict-chip verdict-' + entry.decisionVerdict;
@@ -1142,22 +1142,6 @@ function buildDecisionItemEl(entry) {
     }
     if (entry.roundPending) appendPendingControls(item, id);
     return item;
-  }
-
-  // D3: "Commented — still undecided" above the live controls. The shell
-  // sends decisionCommented for a card whose only verdict is a remark.
-  if (entry.decisionCommented || entry.decisionVerdict === 'comment') {
-    const row = document.createElement('div');
-    row.className = 'annotate-decision-commented';
-    const chip = document.createElement('span');
-    chip.className = 'annotate-verdict-chip verdict-comment';
-    chip.textContent = '💬 Commented';
-    row.appendChild(chip);
-    const txt = document.createElement('span');
-    txt.className = 'annotate-decision-commented-txt';
-    txt.textContent = 'still undecided';
-    row.appendChild(txt);
-    item.appendChild(row);
   }
 
   const dr = entry.decisionRequest || {};
@@ -1341,21 +1325,18 @@ function buildDecisionItemEl(entry) {
     submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
   });
 
-  // D3: the standing Comment button — say something about the decision
-  // without answering it. Skipped when `comment` is already one of the posed
-  // options (a pre-D2 third slot) and on a card that already carries an
-  // answer, which a comment must never overwrite.
+  // Free-text answer. Ordinary thread replies are the non-answer remark path.
   if (!opts.some(o => o.id === 'comment') && !entry.decisionVerdict) {
     const sayRow = document.createElement('div');
     sayRow.className = 'annotate-decision-say-row';
     const sayBtn = document.createElement('button');
     sayBtn.type = 'button';
     sayBtn.className = 'annotate-decision-say';
-    sayBtn.textContent = '💬 Comment';
-    sayBtn.title = 'Say something about this decision without answering it';
+    sayBtn.textContent = '💬 Answer in words';
+    sayBtn.title = 'Answer this question in your own words';
     const sayHint = document.createElement('span');
     sayHint.className = 'annotate-decision-say-hint';
-    sayHint.textContent = 'without answering';
+    sayHint.textContent = 'counts as answered';
     sayRow.appendChild(sayBtn);
     sayRow.appendChild(sayHint);
     item.appendChild(sayRow);
@@ -1366,10 +1347,10 @@ function buildDecisionItemEl(entry) {
     const sayTa = document.createElement('textarea');
     sayTa.className = 'annotate-decision-ta';
     sayTa.rows = 2;
-    sayTa.placeholder = 'Comment on this decision…';
+    sayTa.placeholder = 'Answer in your own words…';
     sayTa.value = stripSayText[id] || '';
     sayTa.addEventListener('input', () => { stripSayText[id] = sayTa.value; });
-    const saySubmit = makeStripBtn('Send comment', 'annotate-decision-submit');
+    const saySubmit = makeStripBtn('Send answer', 'annotate-decision-submit');
     sayTa.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();

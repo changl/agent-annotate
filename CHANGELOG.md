@@ -6,19 +6,34 @@ this repository.
 
 ## Unreleased
 
+- **Review rounds are one ordered, cumulative plan instead of another chat
+  transcript.** Later-version sources now declare `full_plan: true` and
+  `other_files_required`; the page renders that scope and warns when most prior
+  sections disappear. Every response card has one stable integer `number`,
+  lives in the final `Questions for Chang` section, and links back to plan
+  evidence; rail, body, pin and CLI use the same `#N` order. Free-text
+  **Answer in words** now counts as answered and waits on the agent, while a
+  plain reply remains a remark. Generating vN no longer selects it before the
+  publication/carry-over gate passes. Generated skills and Chang's global
+  instruction make the page replace chat walls of text: chat carries only
+  changed/needed/URL.
+- **Earlier-round comments cannot remain in limbo.** `publish-version` now
+  fails before changing `current.html` when any prior `open` or
+  `addressed_by_agent` item lacks an explicit disposition. `annotate resolve`
+  records the exact version and anchor where the answer landed; the item stays
+  in origin-version history but no longer follows the reviewer as outstanding.
+  `annotate carry` moves genuinely open work to a real anchor in the new
+  version while preserving origin and carry history. Reviewer replies reopen a
+  resolved item. Resolved cards are excluded from CLI/hook card totals, round
+  submission and `undecided_ids`. `addressed` can no longer demote
+  `user_confirmed` cards.
 - **A reviewer can comment on a decision card, and long options fit** (D3).
   Three items from a reviewer's round-1 note on a live page, all in the
   decision surfaces:
-  - **`comment` is a verdict again, beside "Request changes".** D2 replaced
-    "Comment" with "Request changes" and left no way to remark on a card, so
-    remarks went in as thread replies and were easy to miss. Every unanswered
-    card now carries a standing **💬 Comment** button whose verdict answers
-    nothing: the options stay live, the card stays unresolved and in "Needs my
-    review", the auto reply reads `💬 Comment: <text>`, and a submitted round
-    counts it in `verdict_counts.comment` while still listing the card in
-    `undecided_ids`. The button is absent once a card carries an answer, so a
-    comment can never overwrite one. `annotate cards` / `annotate inbox` print
-    a `comment` column and treat a comment-only card as undecided.
+  - **`comment` is the free-text answer verdict beside "Request changes".**
+    The current UI calls it **💬 Answer in words**; it collapses the card,
+    waits on the agent, and is not `undecided`. Plain thread replies remain
+    available for remarks that do not answer the question.
   - **Option labels wrap.** A label longer than the rail used to widen the
     flex line to its own min-content width, pushing the button *and* its
     consequence line off the right edge of the screen. Buttons now wrap in the

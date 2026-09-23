@@ -37,6 +37,8 @@ Subcommands:
     publish-version <slug-dir> <vN>       add new version + swap symlink
     archive-comment <slug> <comment-id>
     addressed <slug> <comment-id> [--response "<text>"]
+    resolve <slug> <comment-id> --in-version <vN> --anchor <id>
+    carry <slug> <comment-id> --to-version <vN> --anchor <id>
     hook-check                            the UserPromptSubmit hook, in-process
     mcp                                   MCP server over stdio
 
@@ -1716,6 +1718,77 @@ def cmd_migrate(args) -> int:
     return 0
 
 
+def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
+    """Return prior-round comments that lack a complete disposition.
+
+    Open/addressed comments must either be resolved (which changes their
+    status) or carried (which moves their version). A malformed resolution is
+    also a blocker: a status label without a real version/anchor pointer is
+    still limbo.
+    """
+    comments_path = slug_dir / "comments.json"
+    if not comments_path.exists():
+        return []
+    try:
+        raw = json.loads(comments_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [{
+            "id": "comments.json",
+            "version": "?",
+            "anchor_id": "?",
+            "status": "invalid_store",
+            "reason": str(exc),
+        }]
+
+    from .sync_server import _coerce_v2, _version_has_anchor
+
+    store = _coerce_v2(raw)
+    meta = _read_meta(slug_dir)
+    history = [
+        item.get("version")
+        for item in (meta.get("history") or [])
+        if isinstance(item, dict) and item.get("version")
+    ]
+    if new_version in history:
+        prior_versions = set(history[:history.index(new_version)])
+    else:
+        prior_versions = {
+            c.get("version")
+            for _anchor_id, c in _iter_comments(store)
+            if c.get("version") != new_version
+        }
+    allowed_resolution_versions = prior_versions | {new_version}
+
+    blockers = []
+    for anchor_id, comment in _iter_comments(store):
+        version = comment.get("version")
+        is_prior = not version or version in prior_versions
+        if not is_prior:
+            continue
+        status = comment.get("status") or "open"
+        reason = None
+        if status in ("open", "addressed_by_agent"):
+            reason = "no resolution or carry-forward"
+        elif status == "resolved_in_version":
+            resolved_version = comment.get("resolved_in_version")
+            resolved_anchor = comment.get("resolution_anchor_id")
+            if not resolved_version or not resolved_anchor:
+                reason = "resolution pointer incomplete"
+            elif resolved_version not in allowed_resolution_versions:
+                reason = "resolution points past the version being published"
+            elif not _version_has_anchor(slug_dir, resolved_version, resolved_anchor):
+                reason = "resolution target anchor missing"
+        if reason:
+            blockers.append({
+                "id": comment.get("id") or "?",
+                "version": version or "?",
+                "anchor_id": comment.get("anchor_id") or anchor_id,
+                "status": status,
+                "reason": reason,
+            })
+    return blockers
+
+
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
@@ -1726,6 +1799,30 @@ def cmd_publish_version(args) -> int:
     target = versions_dir / f"{new_version}.html"
     if not target.exists():
         print(f"ERROR: versions/{new_version}.html not found — drop it in first", file=sys.stderr)
+        return 2
+    blockers = _carryover_blockers(slug_dir, new_version)
+    if blockers:
+        print(
+            f"ERROR: cannot publish {new_version}: {len(blockers)} prior-round comment(s) "
+            "lack an explicit disposition.",
+            file=sys.stderr,
+        )
+        for blocker in blockers:
+            print(
+                f"  {blocker['id']}  {blocker['version']}  {blocker['status']}  "
+                f"{blocker['anchor_id']}  ({blocker['reason']})",
+                file=sys.stderr,
+            )
+        print(
+            f"  Resolve: {_inv()} resolve {slug_dir.name} <id> --in-version {new_version} "
+            "--anchor <vN-anchor> --response \"where it was applied\"",
+            file=sys.stderr,
+        )
+        print(
+            f"  Carry:   {_inv()} carry {slug_dir.name} <id> --to-version {new_version} "
+            "--anchor <vN-anchor>",
+            file=sys.stderr,
+        )
         return 2
     current_symlink = slug_dir / "current.html"
     if current_symlink.exists() or current_symlink.is_symlink():
@@ -1931,11 +2028,13 @@ def cmd_cards(args) -> int:
               f"(create some with `{_inv()} ask {slug} --from cards.json`)")
         return 0
     print(f"  {project}/{slug} — {len(cards)} decision card(s)")
-    print("  %-12s %-20s %-6s %-9s %s" % ("id", "anchor", "ver", "verdict", "prompt"))
+    print("  %-6s %-12s %-20s %-6s %-9s %s" % (
+        "item", "id", "anchor", "ver", "verdict", "prompt"))
     for c in cards:
         verdict = c["verdict"] or ("pending" if c["pending"] else "—")
-        line = "  %-12s %-20s %-6s %-9s %s" % (
-            c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
+        item_number = f"#{c['number']}" if isinstance(c.get("number"), int) else "—"
+        line = "  %-6s %-12s %-20s %-6s %-9s %s" % (
+            item_number, c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
             verdict, _clip(c["prompt"], 64))
         if c["verdict_text"]:
             line += f'  “{_clip(c["verdict_text"], 48)}”'
@@ -1954,7 +2053,9 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
     by_anchor: dict = {}
     if code == 200 and isinstance(existing, list):
         for c in existing:
-            if not isinstance(c, dict) or c.get("status") == "archived":
+            if not isinstance(c, dict) or c.get("status") in (
+                "archived", "resolved_in_version",
+            ):
                 continue
             if c.get("author") != author or not c.get("decision_request"):
                 continue
@@ -1965,6 +2066,8 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
         prior = by_anchor.get(item["anchor_id"])
         if prior:
             body = {"text": item["text"]}
+            if item.get("number") is not None:
+                body["number"] = item["number"]
             if "decision_request" in item:
                 body["decision_request"] = item["decision_request"]
             code, payload = _api(record, "PUT", f"/api/comments/{prior['id']}",
@@ -2013,6 +2116,13 @@ def cmd_ask(args) -> int:
         version = _read_meta(Path(record["slug_dir"])).get("current")
 
     items = []
+    numbered_round = bool(
+        isinstance(version, str)
+        and re.fullmatch(r"v\d+", version)
+        and int(version[1:]) >= 3
+    )
+    seen_numbers: set[int] = set()
+    previous_number = 0
     for i, c in enumerate(cards):
         if not isinstance(c, dict) or not c.get("anchor_id"):
             print(f"ERROR: card #{i} has no anchor_id", file=sys.stderr)
@@ -2030,6 +2140,37 @@ def cmd_ask(args) -> int:
             item["version"] = version
         if c.get("anchor_label"):
             item["anchor_label"] = c["anchor_label"]
+        number = c.get("number")
+        if numbered_round:
+            if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+                print(f"ERROR: card #{i} needs a positive integer `number` for {version}",
+                      file=sys.stderr)
+                return 2
+            if number in seen_numbers:
+                print(f"ERROR: duplicate card number {number}", file=sys.stderr)
+                return 2
+            if number <= previous_number:
+                print("ERROR: card numbers must be strictly increasing", file=sys.stderr)
+                return 2
+            seen_numbers.add(number)
+            previous_number = number
+            expected_anchor = f"d:q{number}"
+            if c["anchor_id"] != expected_anchor:
+                print(f"ERROR: card #{number} must use anchor_id {expected_anchor!r}",
+                      file=sys.stderr)
+                return 2
+            prompt = str((dr or {}).get("prompt") or "")
+            if re.match(r"^\s*(?:Q(?:uestion)?\s*\d+|#\s*\d+)", prompt,
+                        re.IGNORECASE):
+                print(f"ERROR: card #{number} prompt repeats a number", file=sys.stderr)
+                return 2
+            evidence = (dr or {}).get("evidence")
+            if not isinstance(evidence, list) or not evidence:
+                print(f"ERROR: card #{number} needs decision_request.evidence",
+                      file=sys.stderr)
+                return 2
+        if number is not None:
+            item["number"] = number
         if dr:
             item["decision_request"] = dr
         items.append(item)
@@ -2276,7 +2417,8 @@ def _unanswered_cards(store: dict) -> list[tuple[str, dict]]:
                 continue
             if not isinstance(c.get("decision_request"), dict):
                 continue
-            if c.get("status") == "archived" or isinstance(c.get("decision"), dict):
+            if c.get("status") in ("archived", "resolved_in_version") \
+                    or isinstance(c.get("decision"), dict):
                 continue
             out.append((c.get("anchor_id") or anchor_id, c))
     return out
@@ -2891,6 +3033,22 @@ def cmd_archive_comment(args) -> int:
     return _comment_call(args, "POST", f"/api/comments/{args.comment_id}/archive", {})
 
 
+def cmd_resolve(args) -> int:
+    body = {
+        "status": "resolved_in_version",
+        "resolved_in_version": args.in_version,
+        "resolution_anchor_id": args.anchor,
+    }
+    if args.response:
+        body["response_text"] = args.response
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
+
+
+def cmd_carry(args) -> int:
+    body = {"carry_forward": {"version": args.to_version, "anchor_id": args.anchor}}
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
+
+
 def cmd_addressed(args) -> int:
     body = {"status": "addressed_by_agent"}
     if args.response:
@@ -3005,14 +3163,53 @@ def _iter_comments(store: dict):
 
 def _decision_cards(store: dict) -> list[dict]:
     """Every live decision card, flattened for printing."""
+    comments = list(_iter_comments(store))
+    numbers: dict[str, int] = {}
+    used: set[int] = set()
+    for _anchor_id, comment in comments:
+        number = comment.get("number")
+        cid = comment.get("id")
+        if (cid and isinstance(number, int) and not isinstance(number, bool)
+                and number > 0 and number not in used):
+            numbers[cid] = number
+            used.add(number)
+    for _anchor_id, comment in comments:
+        cid = comment.get("id")
+        if not cid or cid in numbers:
+            continue
+        prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+        match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
+        number = int(match.group(1)) if match else 0
+        if number > 0 and number not in used:
+            numbers[cid] = number
+            used.add(number)
+    next_number = max(used, default=0) + 1
+    for _anchor_id, comment in sorted(
+            comments,
+            key=lambda item: (
+                item[1].get("created_at") or "",
+                item[1].get("id") or "",
+            )):
+        cid = comment.get("id")
+        if not cid or cid in numbers:
+            continue
+        while next_number in used:
+            next_number += 1
+        numbers[cid] = next_number
+        used.add(next_number)
+        next_number += 1
+
     cards = []
-    for anchor_id, c in _iter_comments(store):
+    for anchor_id, c in comments:
         dr = c.get("decision_request")
-        if not isinstance(dr, dict) or c.get("status") == "archived":
+        if not isinstance(dr, dict) or c.get("status") in (
+            "archived", "resolved_in_version",
+        ):
             continue
         d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
         cards.append({
             "id": c.get("id") or "?",
+            "number": numbers.get(c.get("id")),
             "anchor_id": c.get("anchor_id") or anchor_id,
             "prompt": dr.get("prompt") or c.get("text") or "",
             "verdict": d.get("verdict"),
@@ -3023,7 +3220,11 @@ def _decision_cards(store: dict) -> list[dict]:
             "version": c.get("version") or "",
             "status": c.get("status") or "",
         })
-    return sorted(cards, key=lambda c: (c["anchor_id"], c["id"]))
+    return sorted(cards, key=lambda c: (
+        c["number"] if isinstance(c.get("number"), int) else 10**9,
+        c["anchor_id"],
+        c["id"],
+    ))
 
 
 # D2 made "changes" (Request changes) the third verdict; D3 gave "comment"
@@ -3031,7 +3232,7 @@ def _decision_cards(store: dict) -> list[dict]:
 # first three ANSWER a card: a card whose sole verdict is a comment is still
 # undecided, and both readouts below say so.
 VERDICT_COLUMNS = ("accept", "reject", "changes", "comment", "select")
-ANSWER_VERDICTS = ("accept", "reject", "changes", "select")
+ANSWER_VERDICTS = ("accept", "reject", "changes", "comment", "select")
 
 
 def _verdict_column(verdict) -> str | None:
@@ -3042,7 +3243,7 @@ def _verdict_column(verdict) -> str | None:
 
 
 def _is_undecided(card: dict) -> bool:
-    """True when nothing has answered this card (a comment does not)."""
+    """True when nothing has answered this card."""
     return card.get("verdict") not in ANSWER_VERDICTS
 
 
@@ -3524,6 +3725,31 @@ def main():
     sp_addr.add_argument("--author", default=None,
                          help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:claude)")
     sp_addr.set_defaults(func=cmd_addressed)
+
+    sp_resolve = sub.add_parser(
+        "resolve",
+        help="resolve a prior-round comment in a named version and anchor",
+    )
+    sp_resolve.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_resolve.add_argument("comment_id")
+    sp_resolve.add_argument("--in-version", required=True)
+    sp_resolve.add_argument("--anchor", required=True)
+    sp_resolve.add_argument("--response", default=None)
+    sp_resolve.add_argument("--project", default=None)
+    sp_resolve.add_argument("--author", default=None)
+    sp_resolve.set_defaults(func=cmd_resolve)
+
+    sp_carry = sub.add_parser(
+        "carry",
+        help="carry a prior-round comment onto an anchor in a newer version",
+    )
+    sp_carry.add_argument("slug", help="<slug> or <project>/<slug>")
+    sp_carry.add_argument("comment_id")
+    sp_carry.add_argument("--to-version", required=True)
+    sp_carry.add_argument("--anchor", required=True)
+    sp_carry.add_argument("--project", default=None)
+    sp_carry.add_argument("--author", default=None)
+    sp_carry.set_defaults(func=cmd_carry)
 
     args = p.parse_args()
     sys.exit(args.func(args))

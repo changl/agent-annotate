@@ -107,8 +107,9 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
             assert frame.locator('pre[data-anchor-id="s:migration-sketch:code1"]').count() == 1
 
             # The decision card is visible in the body with its recommendation.
-            card = frame.locator('.card[data-anchor-id="d:rename"]')
+            card = frame.locator('.card[data-anchor-id="d:q1"]')
             card.wait_for(state="visible")
+            assert card.locator(".item-num").inner_text() == "#1"
             assert "Rename status to lifecycle_state." in card.inner_text()
             badge = card.locator(".reco")
             assert badge.count() == 1

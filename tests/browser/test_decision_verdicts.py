@@ -57,6 +57,15 @@ LONG_LABEL_CARD = dict(CARD, decision_request={
     ],
 })
 
+RESOLVED_PRIOR_CARD = dict(
+    CARD,
+    status="resolved_in_version",
+    resolved_in_version="v2",
+    resolution_anchor_id="s:overview",
+    resolved_at="2026-09-17T10:30:00Z",
+    resolved_by="agent:test",
+)
+
 LEGACY_CAPS = json.dumps({"version": "2.19", "batch": True, "rounds": True,
                           "decision_schema": 2, "decision_request_cap": 8192})
 
@@ -153,14 +162,14 @@ def test_a_d2_server_shows_request_changes(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_a_pre_d2_server_still_shows_comment(tmp_path):
+def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
     process, base, slug_dir = _serve(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base, legacy=True)
             btn = page.locator(".decision-btn.decision-comment")
             btn.wait_for(state="visible")
-            assert btn.inner_text().strip() == "💬 Comment"
+            assert btn.inner_text().strip() == "💬 Answer in words"
             assert page.locator(".decision-btn.decision-changes").count() == 0
 
             btn.click()
@@ -177,12 +186,84 @@ def test_a_pre_d2_server_still_shows_comment(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_a_comment_leaves_the_card_undecided(tmp_path):
-    """D3 (user-reported: "there is no 'comment' option except to enter a note
-    or post a reply. my comments were entered in as replies"). A D2 server
-    offers Request changes AND a standing Comment, and a comment answers
-    nothing: the buttons stay, the card stays in "Needs my review", and the
-    round bar still counts it undecided."""
+def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
+    process, base, slug_dir = _serve(tmp_path, card=RESOLVED_PRIOR_CARD)
+    try:
+        shutil.copyfile(slug_dir / "versions" / "v1.html", slug_dir / "versions" / "v2.html")
+        (slug_dir / "current.html").unlink()
+        (slug_dir / "current.html").symlink_to(Path("versions") / "v2.html")
+        (slug_dir / "current.meta.json").write_text(json.dumps({
+            "current": "v2",
+            "history": [
+                {"version": "v1", "label": "round 1"},
+                {"version": "v2", "label": "round 2"},
+            ],
+        }), encoding="utf-8")
+
+        with playwright.sync_playwright() as runner:
+            browser, page = _open(runner, base)
+            assert page.locator('.vrow.current[data-version="v2"]').count() == 1
+            assert page.locator("#comment-list .citem").count() == 0
+            assert page.locator(".chip-all .chip-n").inner_text() == "0"
+
+            page.locator('.vrow[data-version="v1"]').click()
+            page.locator("#comment-list .citem").wait_for(state="visible")
+            assert page.locator(".citem-status").inner_text() == "RESOLVED IN V2"
+            assert page.locator('[data-action="resolution"]').inner_text() == (
+                "View resolution in v2"
+            )
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_explicit_item_numbers_control_rail_order(tmp_path):
+    process, base, slug_dir = _serve(tmp_path)
+    try:
+        newer_14 = dict(
+            CARD,
+            id="card-number-14",
+            number=14,
+            anchor_id="s:overview",
+            text="Fourteen",
+            created_at="2026-09-17T11:00:00Z",
+        )
+        older_15 = dict(
+            CARD,
+            id="card-number-15",
+            number=15,
+            anchor_id="s:overview:bottom",
+            text="Fifteen",
+            created_at="2026-09-17T09:00:00Z",
+        )
+        (slug_dir / "comments.json").write_text(json.dumps({
+            "schema_version": 2,
+            "anchors": {
+                "s:overview": [newer_14],
+                "s:overview:bottom": [older_15],
+            },
+            "archived": {},
+        }), encoding="utf-8")
+
+        with playwright.sync_playwright() as runner:
+            browser, page = _open(runner, base)
+            cards = page.locator("#comment-list .citem")
+            assert cards.count() == 2
+            assert cards.nth(0).locator(".citem-num").inner_text() == "#14"
+            assert cards.nth(0).locator(".citem-txt").inner_text() == "Fourteen"
+            assert cards.nth(1).locator(".citem-num").inner_text() == "#15"
+            assert cards.nth(1).locator(".citem-txt").inner_text() == "Fifteen"
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_an_answer_in_words_stops_nagging_the_reviewer(tmp_path):
+    """A free-text answer closes the question surface and waits on the agent."""
     process, base, slug_dir = _serve(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
@@ -196,19 +277,19 @@ def test_a_comment_leaves_the_card_undecided(tmp_path):
             say.click()
             page.locator(".decision-say-ta").fill("what does legal say?")
             page.locator('[data-decision-action="say-submit"]').click()
-            page.locator(".decision-commented").wait_for(state="visible")
+            page.locator(".decision-block.decision-resolved").wait_for(state="visible")
 
             stored = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
             decision = stored["anchors"]["s:overview"][0]["decision"]
             assert decision["verdict"] == "comment"
             assert decision["text"] == "what does legal say?"
             assert stored["anchors"]["s:overview"][0]["replies"][-1]["text"] == (
-                "💬 Comment: what does legal say?")
+                "💬 Answer in words: what does legal say?")
 
-            # Still answerable, still unanswered.
-            assert page.locator(".decision-btn.decision-accept").count() == 1
-            assert page.locator(".citem.decision-required").count() == 1
-            assert "0 of 1 decided" in page.locator("#round-bar-main").inner_text()
+            assert page.locator(".decision-btn.decision-accept").count() == 0
+            assert page.locator(".citem.decision-required").count() == 0
+            assert page.locator(".citem.waiting-agent").count() == 1
+            assert "1 of 1 decided" in page.locator("#round-bar-main").inner_text()
             browser.close()
     finally:
         process.terminate()
@@ -251,7 +332,6 @@ def test_clicking_into_a_feedback_box_goes_to_the_location(tmp_path):
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
             page.locator(".reply-ta").first.wait_for(state="visible")
-            frame = page.frame_locator("#content-frame")
             before = page.evaluate(
                 "() => document.getElementById('content-frame')"
                 ".contentDocument.documentElement.scrollTop")

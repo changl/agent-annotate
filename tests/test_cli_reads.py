@@ -127,6 +127,57 @@ def test_cards_lists_verdicts_without_touching_a_cursor(registry, capsys):
     assert not (cli.BUS_OFFSET_ROOT).exists()
 
 
+def test_answer_in_words_is_not_reported_undecided(registry, capsys):
+    path = registry.slug_dir / "comments.json"
+    store = json.loads(path.read_text(encoding="utf-8"))
+    store["anchors"]["s:b"][0]["decision"] = {
+        "verdict": "comment",
+        "text": "Use the existing workspace.",
+        "ts": "2026-09-17T10:30:00Z",
+        "by": "r@x",
+    }
+    path.write_text(json.dumps(store), encoding="utf-8")
+
+    assert cli.cmd_cards(SimpleNamespace(
+        slug="demo", project=None, json=False,
+    )) == 0
+    assert "undecided: none" in capsys.readouterr().out
+
+
+def test_cards_and_inbox_exclude_resolved_prior_round_comment_cards(
+        registry, capsys):
+    path = registry.slug_dir / "comments.json"
+    store = json.loads(path.read_text(encoding="utf-8"))
+    store["anchors"]["s:old"] = [{
+        "id": "cccccccccccc",
+        "anchor_id": "s:old",
+        "text": "Old question",
+        "status": "resolved_in_version",
+        "version": "v1",
+        "resolved_in_version": "v2",
+        "resolution_anchor_id": "s:a",
+        "decision_request": {"prompt": "Old question?"},
+        "decision": {
+            "verdict": "comment",
+            "text": "Please account for this.",
+            "ts": "2026-09-17T10:30:00Z",
+            "by": "r@x",
+        },
+    }]
+    path.write_text(json.dumps(store), encoding="utf-8")
+
+    assert cli.cmd_cards(SimpleNamespace(
+        slug="demo", project=None, json=True,
+    )) == 0
+    cards = json.loads(capsys.readouterr().out)
+    assert {card["id"] for card in cards} == {"aaaaaaaaaaaa", "bbbbbbbbbbbb"}
+
+    assert cli.cmd_inbox(_inbox(json=True)) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["card_count"] == 2
+    assert summary["undecided"] == ["s:b"]
+
+
 def test_unknown_slug_lists_the_registered_ones(registry, capsys):
     assert cli.cmd_cards(SimpleNamespace(slug="nope", project=None, json=False)) == 2
     err = capsys.readouterr().err
@@ -175,7 +226,8 @@ def served(tmp_path, monkeypatch):
 def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
     cards = tmp_path / "cards.json"
     cards.write_text(json.dumps([
-        {"anchor_id": "s:a", "decision_request": {"prompt": "A?", "recommendation": "accept"}},
+        {"number": 14, "anchor_id": "s:a",
+         "decision_request": {"prompt": "A?", "recommendation": "accept"}},
         {"anchor_id": "s:b", "text": "B please", "decision_request": {"prompt": "B?"}},
     ]))
     args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
@@ -191,6 +243,7 @@ def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
 
     store = json.loads((served.slug_dir / "comments.json").read_text())
     assert len(store["anchors"]["s:a"]) == 1
+    assert store["anchors"]["s:a"][0]["number"] == 14
     assert store["anchors"]["s:a"][0]["text"] == "A?"          # text defaults to the prompt
     assert store["anchors"]["s:a"][0]["version"] == "v2"
     seeded = [json.loads(line) for line in served.bus.read_text().splitlines() if '"comments_seeded"' in line]

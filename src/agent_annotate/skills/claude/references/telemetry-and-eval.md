@@ -29,7 +29,7 @@ failed append cannot fail a publish.
 |---|---|---|
 | `decision_requested` | create, `PUT`, or batch item that sets a `decision_request` | `comment_id`, `anchor_id`, `prompt_len`, `has_context`, `options_n`, `by`, `session_id` |
 | `comments_seeded` | once per `POST /api/comments/batch` | `comment_ids`, `created`, `updated`, `by`, `session_id` |
-| `round_submitted` | `POST /api/rounds/submit` | `comment_ids`, `verdict_counts {accept, reject, changes, comment, select}`, `undecided_ids` (includes every card whose only verdict is a `comment`), `note`, `by`, `session_id` |
+| `round_submitted` | `POST /api/rounds/submit` | `comment_ids`, `verdict_counts {accept, reject, changes, comment, select}`, `undecided_ids` (cards with no verdict; free-text `comment` is an answer; excludes `resolved_in_version`), `note`, `by`, `session_id` |
 | `round_discarded` | `POST /api/rounds/discard` | `comment_ids`, `by`, `session_id`. No push follows. |
 | `session_push` | `POST /api/push-session`, `POST /api/comments/<id>/push`, an immediate (non-deferred) verdict, and exactly once per round submit | `delivery` (`active_monitor`\|`queued`), `monitor_count`, `monitor_owner`, `delivery_id`, `comment_count`, `comment_ids`, `author`, plus `anchor_id`/`decision` on a single push and `round: true` + `verdict_counts` + `undecided_ids` + `note` on a round |
 

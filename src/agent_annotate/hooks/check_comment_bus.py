@@ -286,7 +286,7 @@ def _load_cards(slug_dir: str) -> dict:
         for c in items:
             if not isinstance(c, dict) or not c.get("decision_request"):
                 continue
-            if c.get("status") == "archived":
+            if c.get("status") in ("archived", "resolved_in_version"):
                 continue
             decision = c.get("decision") if isinstance(c.get("decision"), dict) else None
             cards[c.get("id")] = {

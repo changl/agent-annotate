@@ -115,7 +115,7 @@ to seeding every session from a cursor that belonged to a different one.
 ### `cards <slug>` (alias `open-cards`)
 
 Reads `comments.json` directly. No cursor, no server, no side effects. Prints
-`id, anchor, version, verdict, prompt` plus the verdict note for the text
+`item number, id, anchor, version, verdict, prompt` in item-number order plus the verdict note for the text
 verdicts — a `select` verdict's note is the chosen option's label, a `comment`
 verdict's note is the remark — and the same decisions/undecided summary line:
 
@@ -123,8 +123,8 @@ verdict's note is the remark — and the same decisions/undecided summary line:
   decisions: N accept, N reject, N changes, N select, N comment; undecided: …
 ```
 
-`accept`, `reject`, `changes` and `select` answer a card; `comment` does not,
-so a card whose only verdict is a comment is listed under `undecided`.
+Every verdict answers a card. `comment` is the free-text **Answer in words**
+path; plain thread replies are non-answer remarks.
 `--json` for the raw list.
 
 ### `watch <slug>`
@@ -260,8 +260,10 @@ next hook notice. A deferred verdict inside an open round reports
 | `status [<slug>] [--retired]` | Registry plus liveness. A slug whose port is actually being served is not reported dead just because the recorded pid moved. Every serving row also names its owner and how long ago it was claimed, and marks `(gone)` when no process carrying that session id is running — that is the cue to `claim` it. The last line counts retired entries; `--retired` lists them. |
 | `close <slug> [--older-than 30d] [--dry-run]` | Archives every decision card whose `decision_request` was never answered and whose `created_at` is older than the threshold. A decided card and an ordinary reviewer comment are never touched. Goes through the page's own archive route while it is serving, and writes `comments.json` directly (under the store lock, same archive shape) only when nothing answers on its URL. Appends exactly one `page_closed {slug, archived_ids, archived_count, remaining_open, by, session_id, older_than}`. |
 | `retire <slug>\|--dead [--dry-run]` | Moves registry rows whose pid is dead and whose slug_dir has no live server to `state/retired/<project>.json`, keeping every field and adding `retired_at`. Refuses a slug that is still serving. Never touches a slug directory, a bus or the transport config, so a retired page can be re-published and pick its history back up. |
-| `publish-version <slug-dir> <vN> [--label …]` | Atomically swaps `current.html` to `versions/<vN>.html` and appends to `current.meta.json.history`, exactly once per version even when re-run. Emits `version_published`. Fails if `versions/<vN>.html` is missing. |
-| `addressed <slug> <id> [--response …]` | `PUT /api/comments/<id>` with `status=addressed_by_agent`. |
+| `publish-version <slug-dir> <vN> [--label …]` | Refuses prior-round `open`/`addressed_by_agent` items without explicit resolution or carry-forward, then atomically swaps `current.html` to `versions/<vN>.html` and registers history exactly once. |
+| `addressed <slug> <id> [--response …]` | `PUT /api/comments/<id>` with `status=addressed_by_agent`; cannot demote `user_confirmed`. |
+| `resolve <slug> <id> --in-version <vN> --anchor <id> [--response …]` | Records a real version/anchor resolution pointer and removes the prior item from later-round outstanding work. |
+| `carry <slug> <id> --to-version <vN> --anchor <id>` | Moves unresolved work to the new round while preserving its origin and carry history. |
 | `archive-comment <slug> <id>` | `POST /api/comments/<id>/archive`. |
 | `migrate <legacy.html> [--slug] [--version] [--label] [--copy]` | Builds a `<slug-dir>/` beside the file: `versions/v1.html`, `current.html`, `current.meta.json`, v2 `comments.json`, legacy store backed up as `comments.<stem>.v1.bak.json`. |
 | `install-shim [--force]` | See §1. |

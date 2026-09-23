@@ -19,10 +19,10 @@ annotate new <slug-dir> --from page.md --publish --ask     # …and serve it, an
 annotate new <slug-dir> --from page.md --version v2 --label "round 2" --publish
 ```
 
-One run writes `versions/<vN>.html`, the `current.html` symlink, the
-`current.meta.json` entry (idempotent by version — a re-run never appends a
-second history row), `cards.json`, `comments.json` and a copy of the source at
-`source/<vN>.md`. It prints the anchor count and the commands that follow. The
+One run writes `versions/<vN>.html`, `cards.json`, `comments.json` and a copy of
+the source at `source/<vN>.md`. The first version also creates `current.html`
+and history; later versions remain staged until `publish-version` passes the
+carry-over gate. It prints the anchor count and the commands that follow. The
 parser is part of the package; there is no markdown dependency and no rendering
 you cannot predict from the table below.
 
@@ -39,6 +39,8 @@ you cannot predict from the table below.
 | `version` | `v1` — `--version` wins |
 | `label` | `generated from <file>` — `--label` wins |
 | `legend` | empty; renders into the legend drawer |
+| `full_plan` | required as `true` after v1; every version is cumulative, never a delta |
+| `other_files_required` | required after v1; use `none` or name every required file |
 
 An unknown key is an error, not a silent typo.
 
@@ -69,13 +71,19 @@ never silently loses a row anchor. Every anchor is written into
 ### The cards block
 
 A ` ```cards ` fence holds the same JSON array `annotate ask --from` takes:
-`[{anchor_id, text, decision_request}]`, schema in `decision-cards.md`. The
+`[{number, anchor_id, text, decision_request}]`, schema in
+`decision-cards.md`. The
 generator writes it to `<slug-dir>/cards.json` **and** renders each card in the
 body — title, context, one line per option, a "Recommended" badge on the
 recommended one, impact and blocking chips. The reviewer sees the question
 where the evidence is, not only in the drawer.
 
-`anchor_id` is optional; omitted, the card owns a fresh `d:<n>`. Name an anchor
+For v2+, put exactly one cards block in the final `## Questions for Chang`
+section. Each card needs a unique ascending positive integer `number`, uses
+`anchor_id: d:q<number>`, and links back to plan anchors through
+`decision_request.evidence`. The prompt carries no competing Q/# label.
+
+On v1, `anchor_id` is optional; omitted, the card owns a fresh `d:<n>`. Name an anchor
 the prose already mints (`tbl:columns:row:tier`) and the card is pinned to that
 element instead: the body card renders bound, with a link, and no second
 element claims the id. Order does not matter — a card may name an anchor
@@ -84,10 +92,15 @@ defined later in the document.
 ### Lint
 
 The run fails, writes nothing, and names the problem when the page would carry
-duplicate anchor ids, no anchors at all, or text between `</style>` and the
+duplicate anchor ids, no anchors at all, invalid later-version full-plan/card
+metadata, or text between `</style>` and the
 first element. That last one is the rule that nine published versions broke:
 all CSS lives in the single `<style>` the generator emits at the top of the
 canvas, and nothing else does.
+
+A later version that retains fewer than half of the prior top-level sections
+also prints a full-plan warning naming the missing sections. Resolve the warning
+before publishing; it is a restructure check, not permission to ship a delta.
 
 ## 2. Template placeholders
 

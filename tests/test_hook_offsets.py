@@ -197,6 +197,28 @@ def test_a_changes_verdict_shows_its_note_in_the_notice(tmp_path):
     assert "undecided: 0 of 2 cards" in out
 
 
+def test_notice_excludes_resolved_prior_round_cards_from_undecided(tmp_path):
+    bus_root, state, _ = _estate(tmp_path)
+    registry = json.loads((Path(state) / "proj.json").read_text())
+    slug_dir = Path(registry["slugs"]["demo"]["slug_dir"])
+    comments = json.loads((slug_dir / "comments.json").read_text())
+    old = comments["anchors"]["s:b"][0]
+    old["status"] = "resolved_in_version"
+    old["resolved_in_version"] = "v2"
+    old["resolution_anchor_id"] = "s:a"
+    old["decision"] = {
+        "verdict": "comment",
+        "text": "apply this in v2",
+        "ts": "2026-09-17T10:30:00Z",
+        "by": "r@x",
+    }
+    (slug_dir / "comments.json").write_text(json.dumps(comments))
+
+    out = _run(bus_root, state, "sess-resolved")
+
+    assert "undecided: 0 of 1 cards" in out
+
+
 def test_page_closed_is_bookkeeping_for_the_notice(tmp_path):
     """D7: `annotate close` archiving stale cards is not reviewer activity."""
     bus_root, state, bus = _estate(tmp_path)

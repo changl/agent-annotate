@@ -27,17 +27,23 @@ annotate` is not this package.
    into anchored HTML plus `cards.json`. `annotate new --example` prints a
    worked document; hand-build from `template.html` only for what markdown
    cannot express — `references/building-pages.md`.
+   Every version after v1 is the complete cumulative plan, never a delta.
 2. `annotate publish <slug-dir>` — serves it, claims ownership for this thread
    (`CODEX_THREAD_ID`), prints a URL only once the page is proven to render.
 3. `annotate ask <slug> --from cards.json` — the whole round in one call.
    Steps 1-3 collapse into `annotate new … --publish --ask`.
-4. Stop and hand the URL over. Say you will read the review when they tell
-   you the round is done.
+4. Stop and hand the URL over. Chat says only what changed, what Chang must
+   answer, and the URL; never repeat page substance as a chat wall of text.
 5. `annotate inbox <slug> --unread` for everything new,
    `annotate cards <slug>` for verdicts only.
-6. Act, then `annotate addressed <slug> <id> --response "…"`.
-7. Next round: `annotate new <slug-dir> --from page.md --version v2
+6. Act. Use `addressed` only while reviewer confirmation is still needed;
+   it cannot demote an already confirmed card.
+7. Before a new version, disposition every earlier `open` or
+   `addressed_by_agent` item: `resolve` it with the exact version + anchor
+   where the answer landed, or `carry` it onto a new-version anchor.
+8. Next round: `annotate new <slug-dir> --from page.md --version v2
    --label "round 2" --publish` (or `publish-version` for a hand-built page).
+   Publication fails closed while any earlier item lacks that disposition.
 
 ## 3. Commands
 
@@ -57,6 +63,8 @@ annotate` is not this package.
 | `connect <slug> --thread <id>` · `disconnect <slug>` | detached monitor relaying each round into a Codex thread; see §7 |
 | `publish-version <slug-dir> <vN> [--label …]` | swap `current.html`, register history |
 | `addressed <slug> <id> [--response …]` | mark a comment addressed_by_agent |
+| `resolve <slug> <id> --in-version <vN> --anchor <id> [--response …]` | record where an earlier item was applied; hide it from later rounds |
+| `carry <slug> <id> --to-version <vN> --anchor <id>` | move an unresolved earlier item onto a real anchor in the new round |
 
 Also `eval` (baseline of the loop), `watch`, `archive-comment`, `migrate`,
 `prune-bus` — `references/cli-reference.md`.
@@ -79,25 +87,40 @@ absent from the registry surface as "Comments without anchor".
 `cards.json` and a page's ` ```cards ` block take the same array:
 
 ```json
-[{"anchor_id": "tbl:items:col:status",
+[{"number": 14, "anchor_id": "d:q14",
   "decision_request": {"prompt": "Rename status → lifecycle_state?",
     "context": "Three services read it; the rename needs a dual-write week before v3.",
     "recommendation": "accept",
     "options": [{"id": "accept", "label": "Rename", "consequence": "One dual-write week."},
                 {"id": "reject", "label": "Keep status", "consequence": "Ambiguous through v3."}],
+    "evidence": [{"label": "status column", "anchor": "tbl:items:col:status"}],
     "impact": "medium", "blocking": true}}]
 ```
 
 Every card states the context, a recommendation, and what each option costs.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
-`text` defaults to `prompt`. Option `style`, `evidence`, full schema and round
-mode: `references/decision-cards.md`.
+`text` defaults to `prompt`. Every verdict answers a card: `accept` closes it;
+`reject`, `changes`, `select`, and free-text `comment` leave it waiting on the
+agent. The UI calls `comment` **Answer in words**. A plain thread reply is the
+non-answer remark path. Option `style`, `evidence`, full schema and round mode:
+`references/decision-cards.md`.
+
+For v2+ sources, front matter must say `full_plan: true` and
+`other_files_required: none` (or name the required files). Put every response
+item in one final `## Questions for Chang` section. Each card needs a stable,
+unique, ascending positive integer `number`, anchor `d:q<number>`, a prompt
+without another Q/# label, and `decision_request.evidence` links back into the
+plan. Rail, body card, and pin all use `#<number>` in that order.
 
 ## 6. Comment lifecycle
 
 `open` (blue) → `addressed_by_agent` (purple) → `user_confirmed` (green) →
-`archived` (hidden). You may only set `addressed_by_agent`; confirming and
-archiving belong to the reviewer, never to you.
+`archived` (hidden). Cross-version resolution is
+`open|addressed_by_agent` → `resolved_in_version` with a required version and
+anchor pointer; it is hidden on later versions, remains visible as history on
+its origin version, and a reviewer reply reopens it. `carry` preserves origin
+provenance but moves the live card to the new version/anchor. You may not
+confirm or archive for the reviewer.
 
 ## 7. Getting feedback back
 

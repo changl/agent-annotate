@@ -30,26 +30,29 @@ returned 200, so agents believed cards existed that had never been posed.
 
 **Withdrawing.** `PUT` with `decision_request: null` clears an unanswered card.
 
-**Three answers and one remark.** `accept` closes the card
+**Every verdict answers.** `accept` closes the card
 (`status: user_confirmed`). `reject` and `changes` leave it open, because the
 agent still owes an answer. `changes` ("Request changes") **requires** `text`:
 a request with no note is HTTP 400, and the note is the instruction — the auto
 reply reads `↻ Changes requested: <text>`.
 
-`comment` is the fourth verdict and it answers **nothing**. Every unanswered
-card carries a standing "Comment" button beside its options, for a reviewer
-who wants to say something rather than choose. A comment requires `text`,
-writes the reply `💬 Comment: <text>`, leaves the card unresolved on both
-surfaces (the options stay live, the card stays in "Needs my review", the pin
-keeps pulsing), and a submitted round lists that card in `undecided_ids` while
-counting it in `verdict_counts.comment`. Treat it as prose to answer, never as
-a decision. It never overwrites an existing answer: the button is absent once
-a card carries one.
+`comment` is the free-text answer verdict. The UI calls it **Answer in words**.
+It requires `text`, writes the reply `💬 Answer in words: <text>`, collapses
+the options, and moves the card from "Needs my review" to "Waiting on agent".
+It is counted in `verdict_counts.comment` but never in `undecided_ids`. A plain
+thread reply is the non-answer remark path. A `resolved_in_version` card is
+historical and excluded from both.
+
+Later-version cards also carry top-level `number`: one stable positive integer
+per response item. Numbers are unique and strictly increasing in the one final
+`## Questions for Chang` section. Use anchor `d:q<number>` for the card and
+`decision_request.evidence` to link back to plan anchors; do not repeat Q/#
+labels inside the prompt.
 
 `GET /api/capabilities` advertises the live set as `verdicts`, and a chrome
 that does not find `changes` there renders the pre-D2 "Comment" button in the
-third slot instead (and no standing one). The server accepts every spelling
-from such a page forever.
+third slot instead (and no standing one). That legacy spelling is still a
+free-text answer, and the server accepts it indefinitely.
 
 **Verdict shape.** `comment.decision = {verdict, text, ts, by}` plus server-set
 `latency_s` (seconds since `requested_at`; absent on pre-2.19 cards) and
@@ -90,7 +93,7 @@ Unanswered cards also mark their page pin in pulsing indigo, so a reviewer can
 find a pending decision without opening the drawer. Under Accept/Reject there
 is an "+ Add a note" toggle that attaches text to that verdict. "Request
 changes" opens the same textarea, but there the note is required: the Send
-button does nothing while it is empty. The standing "Comment" button has its
+button does nothing while it is empty. The standing "Answer in words" button has its
 own box, so neither can borrow the other's text.
 
 Clicking into any of those boxes — or into the card's reply box — also takes
@@ -116,7 +119,7 @@ each click pushes immediately, exactly as in v2.18.
 |---|---|
 | Verdict click | Posts `POST /api/comments/<id>/decision {defer_push: true}`. The verdict is stored, `decision.round_pending` is set, `comment_updated` carries `deferred: true`, and **no** `session_push` is emitted. |
 | Pending chip | The card shows "Pending — not sent". |
-| Round bar | Sticky: bottom on mobile, above the rail footer on desktop. Shows "Finish review (N)" and "D of M decided" — a comment-only card counts in N (it is sent) but not in D (it decided nothing). |
+| Round bar | Sticky: bottom on mobile, above the rail footer on desktop. Shows "Finish review (N)" and "D of M decided"; every verdict, including Answer in words, counts in D. |
 | Finish review | Opens a confirm dialog with a note textarea, "Submit review" (primary) and "Discard pending" (danger). |
 | Submit review | `POST /api/rounds/submit {note}` → "Sent to session" or "Queued — no session listening (N)". |
 | Discard pending | `POST /api/rounds/discard` → clears the pending flags, keeps the verdicts recorded, emits `round_discarded` and **never** a `session_push`. |
