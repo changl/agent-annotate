@@ -6,6 +6,15 @@ this repository.
 
 ## Unreleased
 
+- **A carried card asked a new question goes back to the reviewer.** When
+  `ask` changes the question on a card that was carried into a newer version
+  after it was answered, the old verdict moves to `decision_history`. The card
+  reopens, gets a `reposed_at` stamp, and shows under "Needs my review" again.
+  Before this, an Answer-in-words that asked "which session is that?" kept the
+  re-asked card under "Waiting on agent", where the reviewer would never look.
+  Re-running `ask` with the same question, or rewording a card inside the
+  version where it was answered, still keeps the verdict. Needs a page-server
+  restart.
 - **Review rounds are one ordered, cumulative plan instead of another chat
   transcript.** Later-version sources now declare `full_plan: true` and
   `other_files_required`; the page renders that scope and warns when most prior

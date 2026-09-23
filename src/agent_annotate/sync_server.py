@@ -266,6 +266,18 @@ def _normalize_item_number(value: Any) -> int | None:
     return value
 
 
+def _decision_request_changed(old: Any, new: Any) -> bool:
+    """True when two decision_requests pose different questions.
+
+    requested_at is stamped on every `ask`, so it never counts as a change.
+    """
+    def _question(dr: Any) -> Any:
+        if not isinstance(dr, dict):
+            return dr
+        return {k: v for k, v in dr.items() if k != "requested_at"}
+    return _question(old) != _question(new)
+
+
 def _normalize_decision_request(dr: Any) -> dict:
     """Validate an incoming decision_request and stamp requested_at.
 
@@ -1399,6 +1411,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 existing = c
                                 break
                     if existing is not None:
+                        # A card carried into a newer version and then asked
+                        # a different question is a new question: its old
+                        # verdict answered the old one. Keep that verdict in
+                        # decision_history and put the card back in front of
+                        # the reviewer. Re-running `ask` with the same
+                        # question (requested_at aside) leaves verdicts alone.
+                        prior = existing.get("decision")
+                        reposed = (
+                            isinstance(prior, dict)
+                            and existing.get("carried_at")
+                            and existing["carried_at"] >= (prior.get("ts") or "")
+                            and _decision_request_changed(existing.get("decision_request"),
+                                                          fresh["decision_request"])
+                        )
+                        if reposed:
+                            existing.setdefault("decision_history", []).append(prior)
+                            existing.pop("decision", None)
+                            existing["status"] = "open"
+                            existing["reposed_at"] = now
                         existing["text"] = fresh["text"]
                         existing["decision_request"] = fresh["decision_request"]
                         if fresh.get("number") is not None:

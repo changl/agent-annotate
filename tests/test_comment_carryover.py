@@ -184,6 +184,78 @@ def test_carry_forward_moves_card_to_new_version_and_preserves_origin(server):
     assert [event for event in events if event.get("event") == "comment_carried_forward"]
 
 
+def _ask(httpd, prompt):
+    return _call(httpd, "POST", "/api/comments/batch", {
+        "idempotency": "anchor",
+        "items": [{
+            "anchor_id": "s:new",
+            "text": prompt,
+            "version": "v2",
+            "decision_request": {"prompt": prompt},
+        }],
+    })
+
+
+def _answer_in_words_then_carry(httpd):
+    card = _create_card(httpd)
+    code, _ = _call(httpd, "POST", f"/api/comments/{card['id']}/decision",
+                    {"verdict": "comment", "text": "Which session is that?"},
+                    author="reviewer@example.com")
+    assert code == 200
+    code, _ = _call(httpd, "PUT", f"/api/comments/{card['id']}", {
+        "carry_forward": {"version": "v2", "anchor_id": "s:new"},
+    })
+    assert code == 200
+    return card
+
+
+def _stored(slug_dir, anchor="s:new"):
+    store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    return store["anchors"][anchor][0]
+
+
+def test_reposing_a_carried_card_clears_the_answer_to_the_old_question(server):
+    httpd, slug_dir, _ = server
+    _answer_in_words_then_carry(httpd)
+
+    code, _ = _ask(httpd, "Should the Windmill pilot session own it?")
+
+    assert code == 200
+    card = _stored(slug_dir)
+    assert "decision" not in card
+    assert card["status"] == "open"
+    assert card["reposed_at"]
+    assert card["decision_history"][-1]["verdict"] == "comment"
+    assert card["decision_history"][-1]["text"] == "Which session is that?"
+
+
+def test_rerunning_ask_with_the_same_question_keeps_the_verdict(server):
+    httpd, slug_dir, _ = server
+    _answer_in_words_then_carry(httpd)
+
+    code, _ = _ask(httpd, "Old question?")
+
+    assert code == 200
+    card = _stored(slug_dir)
+    assert card["decision"]["verdict"] == "comment"
+    assert "reposed_at" not in card
+
+
+def test_changing_a_card_answered_in_the_same_version_keeps_the_verdict(server):
+    httpd, slug_dir, _ = server
+    code, _ = _ask(httpd, "First wording?")
+    assert code == 200
+    card_id = _stored(slug_dir)["id"]
+    code, _ = _call(httpd, "POST", f"/api/comments/{card_id}/decision",
+                    {"verdict": "accept"}, author="reviewer@example.com")
+    assert code == 200
+
+    code, _ = _ask(httpd, "Second wording?")
+
+    assert code == 200
+    assert _stored(slug_dir)["decision"]["verdict"] == "accept"
+
+
 def _versioned_slug(tmp_path, status="addressed_by_agent"):
     slug_dir = tmp_path / "demo"
     versions = slug_dir / "versions"
