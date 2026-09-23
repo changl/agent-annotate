@@ -1752,10 +1752,14 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     if new_version in history:
         prior_versions = set(history[:history.index(new_version)])
     else:
-        prior_versions = {
+        # A version being published for the first time follows every version
+        # already in the history. Taking prior versions only from the
+        # comments misses a version whose cards were all carried forward
+        # (it has no comments left), and then rejects a resolution into it.
+        prior_versions = set(history) | {
             c.get("version")
             for _anchor_id, c in _iter_comments(store)
-            if c.get("version") != new_version
+            if c.get("version") and c.get("version") != new_version
         }
     allowed_resolution_versions = prior_versions | {new_version}
 

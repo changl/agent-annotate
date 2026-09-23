@@ -251,3 +251,59 @@ def test_publish_version_allows_explicit_resolution(tmp_path, monkeypatch):
     assert result == 0
     assert (slug_dir / "current.html").readlink() == Path("versions/v2.html")
     assert json.loads((slug_dir / "current.meta.json").read_text())["current"] == "v2"
+
+
+def test_publish_version_accepts_resolution_into_a_version_with_no_cards_left(tmp_path, monkeypatch):
+    # v1 item resolved into v2; every v2 card carried on to v3; now publish v3.
+    # v2 holds no comments any more, but it is in the history, so a resolution
+    # pointing into it is a valid disposition, not "past the version published".
+    slug_dir = _versioned_slug(tmp_path, status="resolved_in_version")
+    (slug_dir / "versions" / "v3.html").write_text(
+        "<html><body><section data-anchor-id='d:q16'>Q16</section></body></html>",
+        encoding="utf-8",
+    )
+    (slug_dir / "current.meta.json").write_text(json.dumps({
+        "current": "v2",
+        "history": [{"version": "v1", "label": "round 1"},
+                    {"version": "v2", "label": "round 2"}],
+    }), encoding="utf-8")
+    store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    comment = store["anchors"]["s:old"][0]
+    comment["resolved_in_version"] = "v2"
+    comment["resolution_anchor_id"] = "s:new"
+    store["anchors"]["d:q16"] = [{
+        "id": "bbbbbbbbbbbb", "anchor_id": "d:q16", "text": "Carried card",
+        "status": "open", "version": "v3", "origin_version": "v2",
+        "carried_to_version": "v3", "carried_to_anchor_id": "d:q16",
+    }]
+    (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
+    monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+
+    assert cli._carryover_blockers(slug_dir, "v3") == []
+    result = cli.cmd_publish_version(SimpleNamespace(
+        slug_dir=str(slug_dir), version="v3", label="round 3", project=None,
+    ))
+
+    assert result == 0
+    assert json.loads((slug_dir / "current.meta.json").read_text())["current"] == "v3"
+
+
+def test_publish_version_still_refuses_resolution_into_a_later_version(tmp_path, monkeypatch, capsys):
+    slug_dir = _versioned_slug(tmp_path, status="resolved_in_version")
+    (slug_dir / "versions" / "v3.html").write_text(
+        "<html><body><section data-anchor-id='s:later'>Later</section></body></html>",
+        encoding="utf-8",
+    )
+    store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    comment = store["anchors"]["s:old"][0]
+    comment["resolved_in_version"] = "v3"
+    comment["resolution_anchor_id"] = "s:later"
+    (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
+    monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+
+    result = cli.cmd_publish_version(SimpleNamespace(
+        slug_dir=str(slug_dir), version="v2", label="round 2", project=None,
+    ))
+
+    assert result == 2
+    assert "points past the version being published" in capsys.readouterr().err
