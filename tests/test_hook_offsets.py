@@ -125,6 +125,15 @@ def test_owner_targeting_silences_bystanders(tmp_path):
     assert "reviewer event" in _run(bus_root, state, "sess-other", {"ANNOTATE_HOOK_ALL": "1"})
 
 
+def test_a_retired_page_notifies_nobody(tmp_path):
+    """Retiring moves the row out of state/<project>.json; its bus stays.
+    With no row there is no owner, and the backlog used to go to everyone."""
+    bus_root, state, _ = _estate(tmp_path, owner="sess-owner")
+    (state / "proj.json").write_text(json.dumps({"project": "proj", "slugs": {}}))
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+    assert _run(bus_root, state, "sess-other").strip() == ""
+
+
 def test_inbox_cursor_is_read_but_never_written(tmp_path):
     """`inbox --unread` consuming the backlog also silences the notice."""
     bus_root, state, bus = _estate(tmp_path)

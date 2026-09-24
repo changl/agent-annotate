@@ -6,6 +6,13 @@ this repository.
 
 ## Unreleased
 
+- **A retired or unpublished page no longer notifies every session.** Retiring
+  moves a page's row out of `state/<project>.json` and leaves its bus in place.
+  The hook then found a bus with no owner on record and announced its whole
+  backlog to every session that had never read it: retiring 14 pages on
+  2026-09-23 sent old verdicts from la-plastic-email-tactics and
+  windmill-runbook into an unrelated session. A bus with no registry row is now
+  skipped (`ANNOTATE_HOOK_ALL=1` still shows it).
 - **Section comments work over the tailnet address.** A page opened at its
   `*.ts.net` URL had no reviewer identity, and the shell refuses to open the
   comment composer without one, so a reviewer on that URL could answer cards

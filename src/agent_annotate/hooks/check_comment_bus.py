@@ -430,7 +430,13 @@ def _scan(session_id: str) -> list:
                 continue
             slug = name[: -len(".ndjson")]
 
-            record = registry.get((project, slug)) or {}
+            record = registry.get((project, slug))
+            if record is None and not hook_all:
+                # Retired or unpublished: no server, so nothing new can
+                # arrive, and with no owner on record its backlog would be
+                # announced to every session that has never read it.
+                continue
+            record = record or {}
             owner = record.get("owner_session")
             if owner and owner != session_id and not hook_all:
                 # Another session published this page. Staying silent here is
