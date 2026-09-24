@@ -1768,6 +1768,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             found = None
             auto_reopened = False
             reopened_from = None
+            answered_by_reply = None
             for anchor_id, items in store["anchors"].items():
                 for c in items:
                     if c.get("id") == comment_id:
@@ -1787,6 +1788,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 c["resolution_reopened_at"] = c["reopened_at"]
                                 c["resolution_reopened_by"] = author
                             auto_reopened = True
+                        # A reviewer's reply on an unanswered question IS the
+                        # answer (Chang, 2026-09-23: a reply kept the card in
+                        # "Needs my review"). Record it as the free-text verdict
+                        # so every readout agrees the ball is with the agent.
+                        if (c.get("decision_request") and not author.startswith("agent:")
+                                and c.get("status") not in ("archived", "resolved_in_version")
+                                and not self._is_answered(c.get("decision"))):
+                            prior = c.get("decision")
+                            if prior is not None:
+                                c.setdefault("decision_history", []).append(prior)
+                            c["decision"] = {"verdict": "comment", "text": text,
+                                             "ts": reply["ts"], "by": author, "via": "reply"}
+                            latency_s = _decision_latency_s(c, reply["ts"])
+                            if latency_s is not None:
+                                c["decision"]["latency_s"] = latency_s
+                            answered_by_reply = c.get("status")
+                            c["status"] = "open"
                         found = (anchor_id, c)
                         break
                 if found:
@@ -1805,6 +1823,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 "new_status": "open"} if auto_reopened else {}),
             **self._session_fields(),
         })
+        if answered_by_reply is not None:
+            decision = found[1]["decision"]
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "comment_updated",
+                "comment_id": comment_id,
+                "anchor_id": found[0],
+                "old_status": answered_by_reply,
+                "new_status": "open",
+                "author": author,
+                "decision": "comment",
+                "via": "reply",
+                **({"latency_s": decision["latency_s"]} if "latency_s" in decision else {}),
+                **self._session_fields(),
+            })
+            print(f"  POST /api/comments/{comment_id}/reply → answered the card (by {author})",
+                  flush=True)
         if auto_reopened:
             print(f"  POST /api/comments/{comment_id}/reply → user reply auto-reopened "
                   f"from {reopened_from} (by {author})", flush=True)
@@ -2021,16 +2055,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
 
-    # `comment` is the free-text answer path. Ordinary thread replies remain
-    # the non-answer remark path.
+    # `comment` is the free-text answer path; a reviewer's reply on an
+    # unanswered card is recorded as one (see _v2_post_reply).
     _DECISION_VERDICTS = ("accept", "reject", "changes", "comment", "select")
     # The advertised set: what a current chrome should render as buttons.
     # "select" is not a button — it is what a click on an option with a
     # custom id posts. A chrome that does not find it here posts `comment`
     # for those clicks, as it did before D3.
     _DECISION_VERDICTS_OFFERED = ("accept", "reject", "changes", "comment", "select")
-    # Every verdict answers the card. `comment` is the free-text answer;
-    # ordinary thread replies remain the non-answer remark path.
+    # Every verdict answers the card. `comment` is the free-text answer.
     _DECISION_ANSWERS = ("accept", "reject", "changes", "comment", "select")
     # Both text verdicts leave the card open: the agent still owes an answer.
     _DECISION_STATUS_MAP = {"accept": "user_confirmed", "reject": "open",
@@ -2240,8 +2273,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             d.pop("round_pending", None)
                         continue
                     # Every verdict, including the free-text `comment`,
-                    # answers a card. Only a card with no verdict is undecided.
-                    if c.get("decision_request") and not self._is_answered(d):
+                    # answers a card. Only a card with no verdict is undecided,
+                    # and not one the agent addressed or withdrew.
+                    if (c.get("decision_request") and not self._is_answered(d)
+                            and c.get("status") != "addressed_by_agent"):
                         undecided_ids.append(c.get("id"))
                     if isinstance(d, dict) and d.get("round_pending"):
                         d.pop("round_pending", None)

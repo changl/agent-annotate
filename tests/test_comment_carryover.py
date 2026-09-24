@@ -256,6 +256,62 @@ def test_changing_a_card_answered_in_the_same_version_keeps_the_verdict(server):
     assert _stored(slug_dir)["decision"]["verdict"] == "accept"
 
 
+def _bus_events(bus):
+    return [json.loads(line) for line in bus.read_text(encoding="utf-8").splitlines()]
+
+
+def test_a_reviewer_reply_answers_an_unanswered_card(server):
+    httpd, slug_dir, bus = server
+    card = _create_card(httpd)
+
+    code, replied = _call(httpd, "POST", f"/api/comments/{card['id']}/reply",
+                          {"text": "These are what we are working on."},
+                          author="reviewer@example.com")
+
+    assert code == 200
+    assert replied["decision"]["verdict"] == "comment"
+    assert replied["decision"]["via"] == "reply"
+    assert replied["decision"]["text"] == "These are what we are working on."
+    assert replied["status"] == "open"
+    answered = [e for e in _bus_events(bus)
+                if e.get("event") == "comment_updated" and e.get("via") == "reply"]
+    assert answered and answered[-1]["decision"] == "comment"
+
+
+def test_a_reply_on_an_answered_card_keeps_the_verdict(server):
+    httpd, _, _ = server
+    card = _create_card(httpd)
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "accept"},
+          author="reviewer@example.com")
+
+    _, replied = _call(httpd, "POST", f"/api/comments/{card['id']}/reply",
+                       {"text": "One more thought."}, author="reviewer@example.com")
+
+    assert replied["decision"]["verdict"] == "accept"
+
+
+def test_an_agent_reply_does_not_answer_the_card(server):
+    httpd, _, _ = server
+    card = _create_card(httpd)
+    _, replied = _call(httpd, "POST", f"/api/comments/{card['id']}/reply",
+                       {"text": "Clarifying the question."})
+    assert "decision" not in replied
+
+
+def test_a_withdrawn_card_is_not_undecided_in_a_round(server):
+    httpd, _, _ = server
+    withdrawn = _create_card(httpd)
+    _call(httpd, "PUT", f"/api/comments/{withdrawn['id']}",
+          {"status": "addressed_by_agent", "response_text": "Withdrawn."})
+    open_card = _create_card(httpd)
+
+    code, submitted = _call(httpd, "POST", "/api/rounds/submit", {},
+                            author="reviewer@example.com")
+
+    assert code == 200
+    assert submitted["undecided_ids"] == [open_card["id"]]
+
+
 def _versioned_slug(tmp_path, status="addressed_by_agent"):
     slug_dir = tmp_path / "demo"
     versions = slug_dir / "versions"

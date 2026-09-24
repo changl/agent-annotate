@@ -492,9 +492,12 @@ async function loadSessionMonitor() {
 }
 
 // ── Ball-in-court classification ───────────────────────────────────
-// needsReview  = addressed_by_agent, OR (open AND last reply author starts with "agent:")
-// waitingAgent = open AND (no replies OR last reply author does NOT start with "agent:")
-// done         = user_confirmed OR archived
+// needsReview  = unanswered decision card, OR (open AND last reply is the agent's)
+// waitingAgent = open AND (no replies OR last reply is the reviewer's)
+// done         = addressed_by_agent, user_confirmed, resolved_in_version, archived
+// An item stays in front of the reviewer only while it still needs them
+// (Chang, 2026-09-23). The agent addressing or withdrawing it ends that; a
+// reviewer reply reopens it on the server.
 function isAgentAuthor(a) {
   return !!a && a.indexOf('agent:') === 0;
 }
@@ -509,7 +512,6 @@ function classify(c) {
   // would stay at 0 with nine open questions on the page). Once a verdict
   // exists the ordinary rules below apply (accept → done, reject → waiting).
   if (isUnresolvedDecision(c)) return 'review';
-  if (c.status === 'addressed_by_agent') return 'review';
   if (c.status === 'open') {
     return isAgentAuthor(lastReplyAuthor(c)) ? 'review' : 'waiting';
   }
@@ -636,8 +638,10 @@ function fmtTs(iso) {
   } catch { return String(iso).slice(0, 16).replace('T', ' '); }
 }
 
+// A human section name, or '' — raw anchor ids (d:q19, s:…, tbl:…) are
+// internal addresses and never shown beside the #N badge.
 function anchorLabel(c) {
-  return c.anchor_label || c.anchor_id;
+  return (c.anchor_label && c.anchor_label !== c.anchor_id) ? c.anchor_label : '';
 }
 
 // Drawer scope: null = every version ("All versions" toggle on), else the
@@ -646,7 +650,7 @@ function drawerScope() {
   return showAllVersions ? null : CURRENT_VERSION;
 }
 // Every stored verdict answers a card. `comment` is the free-text answer;
-// ordinary thread replies are non-answer remarks.
+// a reviewer's reply on an unanswered card is recorded as one by the server.
 function isAnswerVerdict(v) {
   return !!v;
 }
@@ -662,7 +666,16 @@ function decisionAnswer(c) {
 // comments keep the normal per-version scope.
 function isUnresolvedDecision(c) {
   return !!(c && c.decision_request && !decisionAnswer(c) &&
-    c.status !== 'archived' && c.status !== 'resolved_in_version');
+    c.status !== 'archived' && c.status !== 'resolved_in_version' &&
+    c.status !== 'addressed_by_agent');
+}
+// The prompt as shown: a legacy "Q10 …" prefix repeats the #10 badge, so it
+// is dropped when it matches. One number per item.
+function displayPrompt(c) {
+  const p = (c && c.decision_request && c.decision_request.prompt) || '';
+  const n = NUM_MAP[c.id];
+  const m = p.match(/^\s*(?:Q|#)\s*(\d+)[\s:.\-—–]*/i);
+  return (m && n && Number(m[1]) === n) ? p.slice(m[0].length) : p;
 }
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
@@ -1044,15 +1057,21 @@ function renderDecisionBlock(c) {
   const dr = c.decision_request;
   if (c.status === 'resolved_in_version') {
     return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${esc(dr.prompt || '')}</div>
-      <span class="decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')} &middot; ${esc(c.resolution_anchor_id || 'location unavailable')}</span>
+      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+      <span class="decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')}</span>
+    </div>`;
+  }
+  if (c.status === 'addressed_by_agent' && !decisionAnswer(c)) {
+    return `<div class="decision-block decision-resolved">
+      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+      <span class="decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
     </div>`;
   }
   const changing = !!decisionChanging[c.id];
   if (decisionAnswer(c) && !changing) {
     const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
     return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${esc(dr.prompt || '')}</div>
+      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
       <span class="decision-verdict-chip verdict-${escAttr(c.decision.verdict)}">${esc(label)} &middot; ${esc(fmtTs(c.decision.ts))}</span>
       <button class="alink decision-change-link" data-decision-action="change" data-id="${escAttr(c.id)}">&#8634; Change verdict</button>
       ${renderDecisionPending(c)}
@@ -1087,7 +1106,7 @@ function renderDecisionBlock(c) {
     </div>` : '';
   const sayOpen = !!decisionSayOpen[c.id];
   const sayHtml = showSay ? `<div class="decision-say-row">
-      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words. For a non-answer remark, use Add a reply.">&#128172; Answer in words</button>
+      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words.">&#128172; Answer in words</button>
       <span class="decision-say-hint">counts as answered</span>
     </div>
     <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
@@ -1101,7 +1120,7 @@ function renderDecisionBlock(c) {
     </div>` : '';
   return `<div class="decision-block">
     ${changingNote}
-    <div class="decision-prompt">${esc(dr.prompt || '')}</div>
+    <div class="decision-prompt">${esc(displayPrompt(c))}</div>
     ${renderDecisionContext(c, dr)}
     ${renderDecisionMeta(dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
@@ -1121,13 +1140,13 @@ function renderCItem(c) {
   const clsMap = { review: 'needs-review', waiting: 'waiting-agent', done: 'done' };
   const doneLabel = c.status === 'archived' ? 'Archived'
     : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
+    : c.status === 'addressed_by_agent' ? 'Addressed'
     : 'Done';
   const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const ts = fmtTs(c.created_at);
   // #n mirrors the numbered pin on the page (pin 7 ↔ card #7).
   const num = NUM_MAP[c.id];
   const numHtml = num ? `<span class="citem-num">#${num}</span>` : '';
-  const vchipHtml = `<span class="citem-vchip">${esc(c.version || '?')}</span>`;
   const rstate = readStateOf(c);
   let unreadChipHtml = '';
   if (rstate === 'new-activity') unreadChipHtml = '<span class="citem-chip-newreply" title="The agent responded since you last read this">&uarr; NEW reply</span>';
@@ -1190,7 +1209,7 @@ function renderCItem(c) {
       </div>`;
   } else if (gotoUnavailable[c.id]) {
     gotoHtml = `<div class="citem-goto unavailable">
-        <span class="citem-goto-label">${esc(anchorLabel(c))} &mdash; location unavailable in this version</span>
+        <span class="citem-goto-label">Location unavailable in this version</span>
         <button class="citem-goto-btn err" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(gotoVersionFor(c))}" title="Content may have been restructured since this comment was made">&#10007; Not found</button>
       </div>`;
   } else {
@@ -1202,7 +1221,7 @@ function renderCItem(c) {
 
   return `<div class="citem ${clsMap[cls]}${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
-      <span class="citem-node-name">${numHtml}${vchipHtml}${esc(anchorLabel(c))}</span>
+      <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
       ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabelMap[cls])}</span>
     </div>
     ${gotoHtml}
@@ -1624,6 +1643,7 @@ function renderPinPopItem(c) {
   const cls = classify(c);
   const doneLabel = c.status === 'archived' ? 'Archived'
     : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
+    : c.status === 'addressed_by_agent' ? 'Addressed'
     : 'Done';
   const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const num = NUM_MAP[c.id];
@@ -1633,7 +1653,6 @@ function renderPinPopItem(c) {
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
       ${num ? `<span class="citem-num">#${num}</span>` : ''}
-      <span class="citem-vchip">${esc(c.version || '?')}</span>
       <span class="citem-status cstatus-${cls}">${esc(statusLabelMap[cls])}</span>
     </div>
     <div class="pinpop-item-txt">${esc(c.text)}</div>
@@ -2306,7 +2325,8 @@ function sendCommentCountsToFrame() {
     counts[aid] = list.length;
     pins[aid] = list
       .map(c => {
-        const hasDecisionRequest = !!(c.decision_request &&
+        const withdrawn = c.status === 'addressed_by_agent' && !decisionAnswer(c);
+        const hasDecisionRequest = !!(c.decision_request && !withdrawn &&
           c.status !== 'archived' && c.status !== 'resolved_in_version');
         const decisionPending = hasDecisionRequest && !decisionAnswer(c);
         const decisionResolved = !!(decisionAnswer(c) &&
@@ -2326,7 +2346,7 @@ function sendCommentCountsToFrame() {
           // rail card does. adapter.js assigns this via textContent only,
           // never innerHTML.
           decisionRequest: hasDecisionRequest ? {
-            prompt: c.decision_request.prompt || '',
+            prompt: displayPrompt(c),
             options: Array.isArray(c.decision_request.options) ? c.decision_request.options : null,
             // v2.19 fields (absent on a legacy request → undefined → adapter
             // renders exactly the old strip).

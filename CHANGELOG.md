@@ -6,6 +6,20 @@ this repository.
 
 ## Unreleased
 
+- **One number per item; answered and withdrawn items leave "Needs my
+  review".** Chang, 2026-09-23 (the fourth report): one item showed as `#19`,
+  `v5` and `d:q19` at once, and a card he had replied to still asked for his
+  review.
+  - The rail and the pin popover show only `#N`. The version chip and raw
+    anchor ids are gone, and so is a legacy `Q10` prompt prefix that repeats
+    its own number.
+  - A reviewer's reply on an unanswered card now counts as the answer. It is
+    stored as the `comment` verdict with `via: "reply"`, so the page, the
+    hook, `cards` and round `undecided_ids` all agree.
+  - `addressed_by_agent` now means done, not "needs my review". A card the
+    agent addressed or withdrew without a verdict drops its buttons and is not
+    undecided anywhere. A reviewer reply reopens it.
+  - Needs a page-server restart.
 - **A retired or unpublished page no longer notifies every session.** Retiring
   moves a page's row out of `state/<project>.json` and leaves its bus in place.
   The hook then found a bus with no owner on record and announced its whole

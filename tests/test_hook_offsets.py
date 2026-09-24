@@ -125,6 +125,17 @@ def test_owner_targeting_silences_bystanders(tmp_path):
     assert "reviewer event" in _run(bus_root, state, "sess-other", {"ANNOTATE_HOOK_ALL": "1"})
 
 
+def test_a_withdrawn_card_is_not_undecided_in_the_notice(tmp_path):
+    bus_root, state, _ = _estate(tmp_path)
+    registry = json.loads((state / "proj.json").read_text())
+    comments = Path(registry["slugs"]["demo"]["slug_dir"]) / "comments.json"
+    store = json.loads(comments.read_text())
+    store["anchors"]["s:b"][0]["status"] = "addressed_by_agent"
+    comments.write_text(json.dumps(store))
+    out = _run(bus_root, state, "sess-A")
+    assert "undecided: 0 of 1 cards" in out, out
+
+
 def test_a_retired_page_notifies_nobody(tmp_path):
     """Retiring moves the row out of state/<project>.json; its bus stays.
     With no row there is no owner, and the backlog used to go to everyone."""

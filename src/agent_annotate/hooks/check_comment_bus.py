@@ -289,6 +289,8 @@ def _load_cards(slug_dir: str) -> dict:
             if c.get("status") in ("archived", "resolved_in_version"):
                 continue
             decision = c.get("decision") if isinstance(c.get("decision"), dict) else None
+            if not decision and c.get("status") == "addressed_by_agent":
+                continue  # addressed or withdrawn by the agent: not a live question
             cards[c.get("id")] = {
                 "anchor_id": c.get("anchor_id"),
                 "verdict": (decision or {}).get("verdict"),

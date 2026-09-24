@@ -124,7 +124,7 @@ verdict's note is the remark — and the same decisions/undecided summary line:
 ```
 
 Every verdict answers a card. `comment` is the free-text **Answer in words**
-path; plain thread replies are non-answer remarks.
+path; a reviewer's reply on an unanswered card is stored as one.
 `--json` for the raw list.
 
 ### `watch <slug>`

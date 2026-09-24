@@ -1325,7 +1325,7 @@ function buildDecisionItemEl(entry) {
     submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
   });
 
-  // Free-text answer. Ordinary thread replies are the non-answer remark path.
+  // Free-text answer. A reviewer reply on an unanswered card also answers it.
   if (!opts.some(o => o.id === 'comment') && !entry.decisionVerdict) {
     const sayRow = document.createElement('div');
     sayRow.className = 'annotate-decision-say-row';

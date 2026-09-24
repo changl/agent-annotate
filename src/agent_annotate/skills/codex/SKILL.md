@@ -101,8 +101,8 @@ Every card states the context, a recommendation, and what each option costs.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
 `text` defaults to `prompt`. Every verdict answers a card: `accept` closes it;
 `reject`, `changes`, `select`, and free-text `comment` leave it waiting on the
-agent. The UI calls `comment` **Answer in words**. A plain thread reply is the
-non-answer remark path. Option `style`, `evidence`, full schema and round mode:
+agent. The UI calls `comment` **Answer in words**; a reviewer's reply on an
+unanswered card is stored as one (`decision.via: "reply"`). Option `style`, `evidence`, full schema and round mode:
 `references/decision-cards.md`.
 
 For v2+ sources, front matter must say `full_plan: true` and

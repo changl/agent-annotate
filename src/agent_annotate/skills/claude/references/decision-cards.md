@@ -39,9 +39,10 @@ reply reads `↻ Changes requested: <text>`.
 `comment` is the free-text answer verdict. The UI calls it **Answer in words**.
 It requires `text`, writes the reply `💬 Answer in words: <text>`, collapses
 the options, and moves the card from "Needs my review" to "Waiting on agent".
-It is counted in `verdict_counts.comment` but never in `undecided_ids`. A plain
-thread reply is the non-answer remark path. A `resolved_in_version` card is
-historical and excluded from both.
+It is counted in `verdict_counts.comment` but never in `undecided_ids`. A
+reviewer's plain reply on an unanswered card is stored the same way
+(`decision.via: "reply"`). A card the agent set to `addressed_by_agent` without
+a verdict (withdrawn) and a `resolved_in_version` card are excluded from both.
 
 Later-version cards also carry top-level `number`: one stable positive integer
 per response item. Numbers are unique and strictly increasing in the one final

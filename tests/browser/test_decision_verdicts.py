@@ -262,6 +262,47 @@ def test_explicit_item_numbers_control_rail_order(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_one_number_per_item_and_withdrawn_cards_are_done(tmp_path):
+    """Chang, 2026-09-23: '#19, v5 and d:q19 all represent the same item', and
+    a card he had replied to still asked for his review."""
+    process, base, slug_dir = _serve(tmp_path)
+    try:
+        legacy_10 = dict(CARD, id="card-legacy-10", anchor_id="d:q10",
+                         decision_request={"prompt": "Q10 Build the inbox?",
+                                           "requested_at": "2026-09-17T09:00:00Z"})
+        withdrawn_19 = dict(CARD, id="card-withdrawn-19", number=19, anchor_id="d:q19",
+                            status="addressed_by_agent", response_text="Withdrawn.",
+                            replies=[{"author": "reviewer@example.com", "text": "Why ask?",
+                                      "ts": "2026-09-17T10:00:00Z"}])
+        (slug_dir / "comments.json").write_text(json.dumps({
+            "schema_version": 2,
+            "anchors": {"d:q10": [legacy_10], "d:q19": [withdrawn_19]},
+            "archived": {},
+        }), encoding="utf-8")
+
+        with playwright.sync_playwright() as runner:
+            browser, page = _open(runner, base)
+            page.locator('.chip[data-filter="all"], .chip-all').first.click()
+            items = page.locator("#comment-list .citem")
+            items.first.wait_for(state="visible")
+            headers = [items.nth(i).locator(".citem-node-name").inner_text().strip()
+                       for i in range(items.count())]
+            assert headers == ["#10", "#19"]
+            rail = page.locator("#comment-list").inner_text()
+            assert "d:q" not in rail and "v1" not in rail
+            assert "Build the inbox?" in rail and "Q10" not in rail
+
+            withdrawn = page.locator('.citem[data-comment-id="card-withdrawn-19"]')
+            assert "done" in withdrawn.get_attribute("class")
+            assert withdrawn.locator(".decision-btn").count() == 0
+            assert page.locator(".citem.needs-review").count() == 1
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_an_answer_in_words_stops_nagging_the_reviewer(tmp_path):
     """A free-text answer closes the question surface and waits on the agent."""
     process, base, slug_dir = _serve(tmp_path)

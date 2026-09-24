@@ -3231,10 +3231,8 @@ def _decision_cards(store: dict) -> list[dict]:
     ))
 
 
-# D2 made "changes" (Request changes) the third verdict; D3 gave "comment"
-# its own column beside it, because the two say different things. Only the
-# first three ANSWER a card: a card whose sole verdict is a comment is still
-# undecided, and both readouts below say so.
+# Every verdict answers a card, including `comment` (Answer in words, or a
+# reviewer's reply on an unanswered card, which the server records as one).
 VERDICT_COLUMNS = ("accept", "reject", "changes", "comment", "select")
 ANSWER_VERDICTS = ("accept", "reject", "changes", "comment", "select")
 
@@ -3247,8 +3245,10 @@ def _verdict_column(verdict) -> str | None:
 
 
 def _is_undecided(card: dict) -> bool:
-    """True when nothing has answered this card."""
-    return card.get("verdict") not in ANSWER_VERDICTS
+    """True when nothing has answered this card and the agent has not
+    addressed or withdrawn it."""
+    return (card.get("verdict") not in ANSWER_VERDICTS
+            and card.get("status") != "addressed_by_agent")
 
 
 def _decision_line(cards: list[dict]) -> str:
