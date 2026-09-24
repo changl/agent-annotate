@@ -84,6 +84,52 @@ def test_local_identity_requires_loopback_peer_and_local_host(identity_server):
     assert deceptive["authenticated"] is False
 
 
+TAILNET_HOST = "macbook-pro.tail2b8ab9.ts.net:8454"
+TAILNET_LOGIN = {"Tailscale-User-Login": "changl@gmail.com", "Tailscale-User-Name": "Chang Lee"}
+
+
+def test_tailnet_login_identifies_the_reviewer_and_section_comments_work(identity_server):
+    server, slug_dir = identity_server
+
+    status, ident = _request(server, "GET", "/review/api/identity", TAILNET_HOST,
+                             headers=TAILNET_LOGIN)
+    assert status == 200
+    assert ident == {"email": "changl@gmail.com", "name": "Chang Lee", "authenticated": True}
+
+    status, comment = _request(
+        server, "POST", "/review/api/comments", TAILNET_HOST, headers=TAILNET_LOGIN,
+        body={"anchor_id": "s:plan", "text": "section comment over the tailnet", "version": "v2"},
+    )
+    assert status == 201
+    assert comment["author"] == "changl@gmail.com"
+
+
+def test_tailnet_login_is_ignored_on_cloudflare_forwarded_requests(identity_server):
+    server, _ = identity_server
+    status, ident = _request(server, "GET", "/review/api/identity", TAILNET_HOST,
+                             headers={**TAILNET_LOGIN, "Cf-Ray": "8c1f0e2d3a4b5c6d-SJC"})
+    assert status == 200
+    assert ident["authenticated"] is False
+
+
+def test_tailnet_login_is_ignored_off_a_tailnet_host(identity_server):
+    server, _ = identity_server
+    status, ident = _request(server, "GET", "/review/api/identity", "connelly.leadory.net",
+                             headers=TAILNET_LOGIN)
+    assert status == 200
+    assert ident["authenticated"] is False
+
+
+def test_access_identity_beats_the_tailnet_login(identity_server):
+    server, _ = identity_server
+    status, ident = _request(
+        server, "GET", "/review/api/identity", TAILNET_HOST,
+        headers={**TAILNET_LOGIN, "Cf-Access-Authenticated-User-Email": "chang@leadory.com"},
+    )
+    assert status == 200
+    assert ident["email"] == "chang@leadory.com"
+
+
 def test_oauth_identity_wins_and_local_comment_uses_fallback(identity_server):
     server, slug_dir = identity_server
     port = server.server_address[1]

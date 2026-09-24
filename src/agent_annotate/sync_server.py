@@ -681,6 +681,39 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return stripped or "/"
         return path
 
+    # Cloudflare stamps these on every request it forwards. Its connector is
+    # itself a tailnet node, so a public request reaching `tailscale serve`
+    # through the tunnel would otherwise carry the connector owner's login.
+    _CLOUDFLARE_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
+
+    def _tailscale_identity(self) -> tuple[str, str]:
+        """The tailnet login `tailscale serve` attaches, or ("", "").
+
+        `tailscale serve` drops any Tailscale-User-* header a client sends and
+        sets its own from the tailnet login (checked on 2026-09-23 with a
+        forged header: it arrived replaced by the real login). Trust it only
+        on a loopback peer (serve proxies from this host) with a *.ts.net
+        Host, and never on a request Cloudflare forwarded.
+        """
+        login = (self.headers.get("Tailscale-User-Login") or "").strip()
+        if not login:
+            return "", ""
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return "", ""
+        except ValueError:
+            return "", ""
+        if any(self.headers.get(h) for h in self._CLOUDFLARE_HEADERS):
+            return "", ""
+        host_header = (self.headers.get("Host") or "").strip()
+        try:
+            hostname = urllib.parse.urlsplit("//" + host_header).hostname or ""
+        except ValueError:
+            return "", ""
+        if not hostname.lower().endswith(".ts.net"):
+            return "", ""
+        return login, (self.headers.get("Tailscale-User-Name") or "").strip()
+
     def _is_direct_loopback_request(self) -> bool:
         """Accept local identity only on a direct loopback URL.
 
@@ -731,6 +764,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             encoding = self.headers.get("oai-authenticated-user-full-name-encoding", "")
             name = urllib.parse.unquote(oai_name) if encoding == "percent-encoded-utf-8" else oai_name
             name = name.strip()
+        if not email:
+            ts_email, ts_name = self._tailscale_identity()
+            if ts_email:
+                email = ts_email
+                name = name or ts_name
         if not email and self.local_author and self._is_direct_loopback_request():
             email = self.local_author
             name = self.local_author_name or name

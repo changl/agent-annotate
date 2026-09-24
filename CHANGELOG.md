@@ -6,6 +6,17 @@ this repository.
 
 ## Unreleased
 
+- **Section comments work over the tailnet address.** A page opened at its
+  `*.ts.net` URL had no reviewer identity, and the shell refuses to open the
+  comment composer without one, so a reviewer on that URL could answer cards
+  but could not comment on any section. Every reviewer event on
+  windmill-cheerticketing-plan-20260922 had been recorded as `anonymous`. The
+  server now accepts the `Tailscale-User-Login` / `Tailscale-User-Name` headers
+  that `tailscale serve` sets. It does so only on a loopback peer with a
+  `*.ts.net` Host, and never on a request carrying Cloudflare headers, because
+  the tunnel connector is itself a tailnet node. `tailscale serve` replaces a
+  client-forged header with the real login, which was checked live. Cloudflare
+  Access identity still wins when both are present. Needs a page-server restart.
 - **A carried card asked a new question goes back to the reviewer.** When
   `ask` changes the question on a card that was carried into a newer version
   after it was answered, the old verdict moves to `decision_history`. The card
