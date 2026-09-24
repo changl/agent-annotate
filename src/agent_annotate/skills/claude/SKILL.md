@@ -101,7 +101,9 @@ For v2+ sources, front matter must say `full_plan: true` and
 item in one final `## Questions for Chang` section. Each card needs a stable,
 unique, ascending positive integer `number`, anchor `d:q<number>`, a prompt
 without another Q/# label, and `decision_request.evidence` links back into the
-plan. Rail, body card, and pin all use `#<number>` in that order.
+plan. Rail, body card, and pin all use `#<number>` in that order. Page text
+refers to items the same way, as `#19`, never `Q19` or `d:q19`, and never
+restates an item's status: the page shows live status on each card.
 
 A serving page marked `(gone)` in `status` is notifying nobody — `claim` it
 first. `close` and `retire` never delete: they archive and set aside.

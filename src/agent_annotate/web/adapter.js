@@ -64,6 +64,8 @@ let latestChanges = false;
 // which a click on a custom option id posts. Absent from an old shell's
 // message → false → those clicks post `comment`, exactly as before D3.
 let latestSelect = false;
+// {anchorId: {state: 'review'|'waiting'|'done', label}} for question cards.
+let latestCardStates = {};
 
 function cssEsc(s) {
   return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
@@ -1512,6 +1514,46 @@ function placeStripAbsolute(el, stripEl) {
 // data change, never on the resize/scroll-driven badge-refresh cadence, so
 // this function's own DOM mutations can't feed the MutationObserver above
 // into a rebuild loop the way renderBadges() must guard against.
+// Baked question cards (`.card[data-anchor-id]`, written into the page at
+// generation time) show the live state the rail shows, with the same label.
+// Without this a card the rail lists as answered or addressed still read
+// "Answer it on the card" in the body (Chang, 2026-09-23).
+function ensureCardStateStyle() {
+  if (document.getElementById('annotate-card-state-style')) return;
+  const style = document.createElement('style');
+  style.id = 'annotate-card-state-style';
+  style.textContent = `
+    .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
+    .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
+    .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
+      font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .02em; }
+    .annotate-card-state.review { background: #FEF2F2; color: #DC2626; }
+    .annotate-card-state.waiting { background: #F1F5F9; color: #64748B; }
+    .annotate-card-state.done { background: #DCFCE7; color: #15803D; }
+  `;
+  document.head.appendChild(style);
+}
+
+function renderCardStates() {
+  ensureCardStateStyle();
+  document.querySelectorAll('.card[data-anchor-id]').forEach(card => {
+    const st = latestCardStates[card.dataset.anchorId];
+    let chip = card.querySelector(':scope > .annotate-card-state');
+    if (!st) {
+      delete card.dataset.annotateState;
+      if (chip) chip.remove();
+      return;
+    }
+    card.dataset.annotateState = st.state;
+    if (!chip) {
+      chip = document.createElement('div');
+      card.insertBefore(chip, card.firstChild);
+    }
+    chip.className = 'annotate-card-state ' + st.state;
+    chip.textContent = st.label; // textContent only
+  });
+}
+
 function renderDecisionStrips() {
   ensureStripStyle();
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
@@ -1688,9 +1730,11 @@ function wireBridge() {
       latestRounds = data.rounds === true; // absent from an old shell → legacy posting
       latestChanges = data.changes === true; // absent from an old shell → "Comment"
       latestSelect = data.select === true;   // absent from an old shell → `comment`
+      latestCardStates = data.cardStates || {};
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
+      renderCardStates();
       renderBadges();
     }
   });

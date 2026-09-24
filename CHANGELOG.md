@@ -6,6 +6,14 @@ this repository.
 
 ## Unreleased
 
+- **The page body and the rail always agree about a question.** Question
+  cards are baked into the page when a version is generated. They kept reading
+  "Answer it on the card" after the rail had moved the item to Addressed or
+  Done. The shell now sends each card's live status, computed by the same
+  `statusLabel()` the rail uses. The adapter stamps it on the baked card as
+  the same label, dims cards that no longer need the reviewer, and hides
+  their "Answer it" prompt. The skills say page text names items only as
+  `#N` and never restates their status.
 - **One number per item; answered and withdrawn items leave "Needs my
   review".** Chang, 2026-09-23 (the fourth report): one item showed as `#19`,
   `v5` and `d:q19` at once, and a card he had replied to still asked for his

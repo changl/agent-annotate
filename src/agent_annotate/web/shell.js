@@ -519,6 +519,17 @@ function classify(c) {
   return 'done';
 }
 
+// The one status text for an item, shared by the rail, the pin popover and
+// the page body's baked question cards, so all three always agree.
+function statusLabel(c, cls) {
+  if (cls === 'review') return 'Needs my review';
+  if (cls === 'waiting') return 'Waiting on agent';
+  if (c.status === 'archived') return 'Archived';
+  if (c.status === 'resolved_in_version') return `Resolved in ${c.resolved_in_version || 'later version'}`;
+  if (c.status === 'addressed_by_agent') return 'Addressed';
+  return 'Done';
+}
+
 function flattenAll(includeArchived) {
   const all = [];
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
@@ -1138,11 +1149,6 @@ function renderDecisionBlock(c) {
 function renderCItem(c) {
   const cls = classify(c);
   const clsMap = { review: 'needs-review', waiting: 'waiting-agent', done: 'done' };
-  const doneLabel = c.status === 'archived' ? 'Archived'
-    : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
-    : c.status === 'addressed_by_agent' ? 'Addressed'
-    : 'Done';
-  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const ts = fmtTs(c.created_at);
   // #n mirrors the numbered pin on the page (pin 7 ↔ card #7).
   const num = NUM_MAP[c.id];
@@ -1222,7 +1228,7 @@ function renderCItem(c) {
   return `<div class="citem ${clsMap[cls]}${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
       <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
-      ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabelMap[cls])}</span>
+      ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
     ${gotoHtml}
     <div class="citem-txt">${esc(c.text)}</div>
@@ -1641,11 +1647,6 @@ let pinPopoverCtx = null; // {anchorId, anchorLabel, x, y} of the open pin popov
 
 function renderPinPopItem(c) {
   const cls = classify(c);
-  const doneLabel = c.status === 'archived' ? 'Archived'
-    : c.status === 'resolved_in_version' ? `Resolved in ${c.resolved_in_version || 'later version'}`
-    : c.status === 'addressed_by_agent' ? 'Addressed'
-    : 'Done';
-  const statusLabelMap = { review: 'Needs my review', waiting: 'Waiting on agent', done: doneLabel };
   const num = NUM_MAP[c.id];
   const respHtml = c.response_text
     ? `<div class="pinpop-item-resp"><b>Agent:</b> ${esc(c.response_text)}</div>`
@@ -1653,7 +1654,7 @@ function renderPinPopItem(c) {
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
       ${num ? `<span class="citem-num">#${num}</span>` : ''}
-      <span class="citem-status cstatus-${cls}">${esc(statusLabelMap[cls])}</span>
+      <span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
     <div class="pinpop-item-txt">${esc(c.text)}</div>
     ${respHtml}
@@ -2367,7 +2368,24 @@ function sendCommentCountsToFrame() {
   // `rounds` tells the adapter to post its own verdicts with defer_push;
   // `changes` tells it the server offers the D2 "Request changes" verdict;
   // `select` tells it a custom option id posts the D3 `select` verdict.
-  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, '*');
+  // Live state for every question card baked into the page body: the body
+  // must never show a question as open when the rail says it is not.
+  const cardStates = {};
+  const noteCard = (c, archived) => {
+    if (!c.decision_request) return;
+    const prev = cardStates[c.anchor_id];
+    if (prev && !prev.archived) return; // a live card beats an archived copy
+    const cls = archived ? 'done' : classify(c);
+    cardStates[c.anchor_id] = { state: cls, label: statusLabel(c, cls), archived };
+  };
+  for (const [aid, items] of Object.entries(STORE.anchors || {})) {
+    items.forEach(c => noteCard(Object.assign({}, c, { anchor_id: aid }), false));
+  }
+  for (const [aid, items] of Object.entries(STORE.archived || {})) {
+    (Array.isArray(items) ? items : []).forEach(c =>
+      noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
+  }
+  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, '*');
 }
 
 function scrollToAnchorInFrame(anchorId, target) {
