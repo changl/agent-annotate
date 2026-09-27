@@ -1105,8 +1105,11 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     print(f"  annotate publish — {project}/{slug}")
     print("  ─────────────────────────────────────────────")
 
-    if report is not None and report.failed:
-        stage = report.failed[0]
+    # The tailnet URL is the page's URL. A broken Cloudflare route only
+    # affects outside reviewers, so it warns instead of withholding the URL.
+    blocking = [st for st in (report.failed if report is not None else []) if st.name != "public"]
+    if blocking:
+        stage = blocking[0]
         _bus_emit(record.get("bus_file"), {
             "event": "page_publish_failed",
             "slug": slug,
@@ -1128,7 +1131,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
             print(f"  Transport err: {record['transport_error']}")
         print(f"  Slug dir:      {slug_dir}")
         print("  ─────────────────────────────────────────────")
-        print(f"  No URL is printed for {slug!r}: the {report.failed[0].name} stage failed.")
+        print(f"  No URL is printed for {slug!r}: the {stage.name} stage failed.")
         print(f"  Fix that stage and re-run `{_inv()} publish {slug_dir}`, or")
         print(f"  `{_inv()} unpublish {slug}` to tear the whole thing down.")
         print()
@@ -1136,6 +1139,8 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
 
     if headline:
         print(f"  {headline}")
+    for st in (report.failed if report is not None else []):
+        print(f"  WARN           public URL failed ({st.detail[:120]}); the URL below works")
     if skip_verify:
         print("  UNVERIFIED     --no-verify was passed; nothing below has been checked")
     elif report is not None and report.unavailable:

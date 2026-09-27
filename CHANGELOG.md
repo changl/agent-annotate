@@ -46,6 +46,9 @@ this repository.
   jump into a folded section opens it. No authoring change and no agent cost.
 
 
+- **A broken Cloudflare route no longer withholds a working page.** With
+  the tailnet URL primary, a failed `public` stage prints a one-line WARN and
+  the URL; only `origin` and `tailscale` failures print NOT PUBLISHED.
 - **One URL per page: Tailscale.** `publish` prints the tailnet URL as `URL:`
   and nothing else to choose from; 26 of 30 sessions had been handing over the
   Cloudflare URL because it was the only `URL:` line. `--public` (also on `new

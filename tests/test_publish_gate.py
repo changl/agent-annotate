@@ -70,8 +70,7 @@ def _report(*stages):
 
 def test_a_failing_stage_suppresses_the_url_and_exits_nonzero(published, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(
-        ("origin", PASS, "shell + 3 anchors"),
-        ("public", FAIL, "Cloudflare 502 — the tunnel could not reach the origin"),
+        ("origin", FAIL, "connection refused"),
     ))
 
     rc = cli.cmd_publish(_args(published.slug_dir))
@@ -80,8 +79,25 @@ def test_a_failing_stage_suppresses_the_url_and_exits_nonzero(published, monkeyp
     assert rc == 1
     assert PUBLIC_URL not in out
     assert "NOT PUBLISHED" in out
-    assert "502" in out
-    assert "public stage failed" in out
+    assert "origin stage failed" in out
+
+
+def test_a_broken_public_route_warns_but_prints_the_tailnet_url(published, monkeypatch, capsys):
+    """The tailnet URL is the page's URL; Cloudflare only serves outside
+    reviewers, so its 502 must not withhold a page that works."""
+    monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(
+        ("origin", PASS, "shell + 3 anchors"),
+        ("tailscale", PASS, "shell + 3 anchors"),
+        ("public", FAIL, "Cloudflare 502 — the tunnel could not reach the origin"),
+    ))
+
+    rc = cli.cmd_publish(_args(published.slug_dir))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert PUBLIC_URL in out
+    assert "NOT PUBLISHED" not in out
+    assert "WARN           public URL failed (Cloudflare 502" in out
 
 
 def test_the_failing_stage_is_named_so_the_broken_hop_is_obvious(published, monkeypatch, capsys):
