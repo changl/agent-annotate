@@ -1,0 +1,12 @@
+{
+  "description": "A design note with three open questions becomes a published v1 page, one card per question.",
+  "cwd": "orders-service",
+  "files": {"notes.md": "notes.md"},
+  "prompt": "Put these notes up as an annotate review page for Chang with a decision card for each open question. Hand back the URL.",
+  "checks": [
+    {"check": "live"},
+    {"check": "version_html", "version": "v1"},
+    {"check": "cards_json", "count": 3},
+    {"check": "posed", "version": "v1", "count": 3}
+  ]
+}

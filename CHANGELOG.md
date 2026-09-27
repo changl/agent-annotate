@@ -6,6 +6,13 @@ this repository.
 
 ## Unreleased
 
+- **Before/after bench.** `scripts/bench.py` runs real `claude -p` sessions
+  against main and a candidate build, each in a throwaway sandbox with its own
+  state, bus, config, hook and skill, and prints tokens, cost, time, turns,
+  annotate calls and failures, and outcome checks side by side. Agent-facing
+  changes (skill text, CLI output, markdown format, gates) are gated on it.
+  Scenarios `v1-page` and `round-2`; fixtures in `bench/`, not the package.
+
 - **One URL per page: Tailscale.** `publish` prints the tailnet URL as `URL:`
   and nothing else to choose from; 26 of 30 sessions had been handing over the
   Cloudflare URL because it was the only `URL:` line. `--public` (also on `new

@@ -1,0 +1,27 @@
+{
+  "description": "A published v1 page with a submitted round (select, Answer in words, accept) becomes v2.",
+  "cwd": "orders-service",
+  "files": {
+    "notes.md": "../v1-page/notes.md",
+    "reviews/orders-status-rename.md": "v1.md"
+  },
+  "setup": {
+    "slug_dir": "reviews/orders-status-rename",
+    "source": "reviews/orders-status-rename.md",
+    "verdicts": [
+      {"anchor": "d:q1", "verdict": "select", "text": "Two weeks"},
+      {"anchor": "d:q2", "verdict": "comment",
+       "text": "Neither script. Run the backfill through the nightly reconcile job so it stays resumable, and make that its own plan step."},
+      {"anchor": "d:q3", "verdict": "accept"}
+    ],
+    "submit": true
+  },
+  "prompt": "Chang submitted his review of {slug}. Read his answers and publish v2 that addresses them.",
+  "checks": [
+    {"check": "live"},
+    {"check": "current", "version": "v2"},
+    {"check": "disposed", "version": "v1"},
+    {"check": "source_cards", "version": "v2"},
+    {"check": "keywords", "version": "v2", "any": ["reconcile"]}
+  ]
+}
