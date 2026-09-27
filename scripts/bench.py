@@ -31,6 +31,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import traceback
 import urllib.parse
 import urllib.request
 import uuid
@@ -633,6 +634,7 @@ def run_one(build: dict, scenario: dict, run: int, slots: queue.Queue, args) -> 
         }
     except Exception as e:      # one broken run must not sink the rest
         row["error"] = f"{type(e).__name__}: {_clip(e, 600)}"
+        row["traceback"] = traceback.format_exc()[-2000:]
     finally:
         if sb:
             teardown(sb, args.keep)

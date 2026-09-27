@@ -31,11 +31,10 @@ image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
 3. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
    for verdicts only.
 4. Act. Use `addressed` only while reviewer confirmation is still needed.
-5. Before a new version, disposition every earlier `open` or
-   `addressed_by_agent` item: `resolve` it with the exact version + anchor
-   where the answer landed, or `carry` it onto a new-version anchor.
-6. Next round: the same `new` line with `--version v2 --label "round 2"`.
-   Publication fails closed while any earlier item lacks that disposition.
+5. Next round: the same `new` line with `--version v2 --label "round 2"`.
+   In v2, name each earlier open item as `#N` where it is answered, or give it
+   a card with the same number to keep it open; publish records both. An item
+   v2 never names blocks publication.
 
 ## 3. Commands
 

@@ -1817,6 +1817,105 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     return blockers
 
 
+def _mentions_by_anchor(html: str) -> dict[int, str]:
+    """{item number: the innermost anchor whose own text first says #N}.
+
+    Deepest anchor wins so a mention inside a list item resolves to that item,
+    not to the whole section around it.
+    """
+    from html.parser import HTMLParser
+
+    found: dict[int, str] = {}
+
+    class _Walk(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack: list[tuple[str, str | None]] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("br", "img", "hr", "input", "meta", "link", "col", "wbr"):
+                return
+            self.stack.append((tag, dict(attrs).get("data-anchor-id")))
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    return
+
+        def handle_data(self, data):
+            if any(t in ("script", "style") for t, _ in self.stack):
+                return
+            anchor = next((a for _, a in reversed(self.stack) if a), None)
+            if not anchor:
+                return
+            for m in re.finditer(r"(?<![\w#&])#(\d{1,4})\b", data):
+                found.setdefault(int(m.group(1)), anchor)
+
+    _Walk().feed(html)
+    return found
+
+
+def _auto_dispose(slug_dir: Path, new_version: str, project_hint: str | None) -> list[str]:
+    """Record where each earlier item went, from the new version itself.
+
+    Resolving and carrying by hand cost a call per item per round, and had to
+    happen in a narrow window: after the version was generated, before it was
+    published. Agents in the bench resolved too early and hit the publish gate.
+    The version already says where each item went: a card with the same
+    number keeps it open (carry), and the first element that names it as #N
+    answers it (resolve). Items it does not mention stay blockers.
+    """
+    blockers = [b for b in _carryover_blockers(slug_dir, new_version)
+                if b["reason"] == "no resolution or carry-forward"]
+    if not blockers:
+        return []
+    try:
+        html = (slug_dir / "versions" / f"{new_version}.html").read_text(encoding="utf-8")
+        store = _coerce_store_file(slug_dir)
+    except OSError:
+        return []
+    numbers = {c.get("id"): c.get("number") for _a, c in _iter_comments(store)}
+    cards = {}
+    try:
+        for card in json.loads((slug_dir / "cards.json").read_text(encoding="utf-8")):
+            if isinstance(card, dict) and card.get("number") and card.get("anchor_id"):
+                cards[int(card["number"])] = card["anchor_id"]
+    except (OSError, ValueError, TypeError):
+        pass
+    mentions = _mentions_by_anchor(html)
+    resolved = _resolve_slug(slug_dir.name, project_hint)
+    if not resolved:
+        return []
+    record = resolved[2]
+    done = []
+    for b in blockers:
+        number = numbers.get(b["id"])
+        if not number:
+            continue
+        number = int(number)
+        if number in cards and f'data-anchor-id="{cards[number]}"' in html:
+            body = {"carry_forward": {"version": new_version, "anchor_id": cards[number]}}
+            verb = "carried"
+        elif number in mentions:
+            body = {"status": "resolved_in_version", "resolved_in_version": new_version,
+                    "resolution_anchor_id": mentions[number],
+                    "response_text": f"Answered in {new_version}."}
+            verb = "resolved"
+        else:
+            continue
+        code, _payload = _api(record, "PUT", f"/api/comments/{b['id']}", body,
+                              _resolve_author(None))
+        if 200 <= code < 300:
+            done.append(f"{verb} #{number}")
+    return done
+
+
+def _coerce_store_file(slug_dir: Path) -> dict:
+    from .sync_server import _coerce_v2
+    return _coerce_v2(json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
+
+
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
@@ -1828,11 +1927,15 @@ def cmd_publish_version(args) -> int:
     if not target.exists():
         print(f"ERROR: versions/{new_version}.html not found — drop it in first", file=sys.stderr)
         return 2
+    auto = _auto_dispose(slug_dir, new_version, getattr(args, "project", None))
+    if auto:
+        print(f"  earlier items: {', '.join(auto)}")
     blockers = _carryover_blockers(slug_dir, new_version)
     if blockers:
         print(
             f"ERROR: cannot publish {new_version}: {len(blockers)} prior-round comment(s) "
-            "lack an explicit disposition.",
+            f"lack an explicit disposition. Name each as #N where {new_version} answers "
+            "it, or give it a card with the same number to keep it open.",
             file=sys.stderr,
         )
         for blocker in blockers:

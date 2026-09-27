@@ -6,6 +6,15 @@ this repository.
 
 ## Unreleased
 
+- **A new version records where earlier items went; no resolve or carry
+  calls.** `publish-version` (and `new --version vN --publish`) carries an
+  earlier open item onto the new card with the same number, and resolves it
+  at the first element that names it as `#N`. Only an item the new version
+  never names still blocks. The bench caught agents resolving before v2
+  existed and then hitting the publish gate. Benchmark, round-2, 6 runs a
+  side, opus/medium: annotate failures median 1 to 0, turns 11 to 9, output
+  tokens -13%, cost -11%, outcome 6/6 (main 5/6, one harness crash).
+
 - **Before/after bench.** `scripts/bench.py` runs real `claude -p` sessions
   against main and a candidate build, each in a throwaway sandbox with its own
   state, bus, config, hook and skill, and prints tokens, cost, time, turns,
