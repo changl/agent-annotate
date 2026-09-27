@@ -735,6 +735,80 @@ def _full_plan_warnings(slug_dir: Path, version: str, blocks: list[dict]) -> lis
     ]
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Unchanged sections (v2+)
+#
+# Every later version is the whole plan, so a reviewer re-reads every section
+# that did not move. The generator compares each `##` section with the same
+# section of the previous version and marks the unchanged ones; the chrome
+# (adapter.js) collapses them behind a one-line "Unchanged since vN" header.
+# No author input: the comparison is on the rendered section, so anything that
+# changes the HTML — a word, a link target, a table cell — counts as a change.
+# ────────────────────────────────────────────────────────────────────────────
+_SECTION_RE = re.compile(
+    r'<section data-anchor-id="([^"]+)"(?: [a-z-]+="[^"]*")*>(.*?)</section>', re.DOTALL)
+
+
+def section_bodies(canvas: str) -> dict[str, str]:
+    """{section anchor: whitespace-normalized HTML} for every `##` section.
+
+    Generated sections never nest and every piece of text is escaped, so a
+    literal `</section>` only ever closes one. The implicit overview (prose
+    before the first `##`) has no heading to match on and is left out.
+    """
+    out: dict[str, str] = {}
+    for m in _SECTION_RE.finditer(canvas):
+        body = re.sub(r"\s+", " ", m.group(2)).strip()
+        if body.startswith("<h2>"):
+            out[m.group(1)] = body
+    return out
+
+
+def _previous_sections(slug_dir: Path, version: str, title: str) -> tuple[str, dict] | None:
+    """The previous version's sections, from its markdown or its rendered page.
+
+    None when there is nothing trustworthy to compare with: v1, no previous
+    version on disk, or a previous page that was not generated from markdown
+    (a hand-built page's sections mean nothing to this comparison).
+    """
+    if not _is_later_version(version):
+        return None
+    prev = f"v{int(version[1:]) - 1}"
+    try:
+        source = slug_dir / "source" / f"{prev}.md"
+        if source.is_file():
+            prev_meta, prev_body = parse_front_matter(source.read_text(encoding="utf-8"))
+            prev_meta.setdefault("title", title)
+            canvas, _registry, _cards = render(prev_meta, parse_blocks(prev_body))
+            return prev, section_bodies(canvas)
+        page = slug_dir / "versions" / f"{prev}.html"
+        if page.is_file():
+            from .extract import ExtractionError, extract_canvas
+            try:
+                canvas = extract_canvas(page.read_text(encoding="utf-8"))
+            except ExtractionError:
+                return None
+            if '<div class="aa">' not in canvas:
+                return None
+            return prev, section_bodies(canvas)
+    except (OSError, UnicodeDecodeError, PageGenError, ValueError):
+        return None
+    return None
+
+
+def mark_unchanged_sections(canvas: str, prev_version: str,
+                            prev_sections: dict[str, str]) -> tuple[str, list[str]]:
+    """Stamp `data-unchanged-since` on every section identical to the previous one."""
+    unchanged = [aid for aid, body in section_bodies(canvas).items()
+                 if prev_sections.get(aid) == body]
+    for aid in unchanged:
+        canvas = canvas.replace(
+            f'<section data-anchor-id="{aid}">',
+            f'<section data-anchor-id="{aid}" data-unchanged-since="{E(prev_version, quote=True)}">',
+            1)
+    return canvas, unchanged
+
+
 def _scope_banner(meta: dict, version: str) -> str:
     if not _is_later_version(version):
         return ""
@@ -805,6 +879,11 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if problems:
         raise PageGenError("page rejected by lint:\n  " + "\n  ".join(problems))
 
+    unchanged: list[str] = []
+    previous = _previous_sections(slug_dir, version, meta["title"])
+    if previous:
+        canvas, unchanged = mark_unchanged_sections(canvas, *previous)
+
     banner = _scope_banner(meta, version)
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
@@ -822,6 +901,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "anchors": len(registry),
         "cards": len(cards),
         "warnings": warnings,
+        "unchanged_sections": unchanged,
         "prior_versions": prior,
         "html": slug_dir / "versions" / f"{version}.html",
         "cards_json": slug_dir / "cards.json",

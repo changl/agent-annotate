@@ -82,6 +82,18 @@ function findAnchorEl(anchorId) {
   return document.querySelector('[data-anchor-id="' + cssEsc(anchorId) + '"]') || document.getElementById(anchorId);
 }
 
+// The element that stands for an anchor on screen. A generated question card
+// the interactive strip replaces is hidden (renderDecisionStrips), so pins,
+// hover and scroll-to land on its strip instead of on a zero-size box.
+function displayAnchorEl(anchorId) {
+  const el = findAnchorEl(anchorId);
+  if (el && el.dataset && el.dataset.annotateReplaced) {
+    const strip = document.querySelector('.annotate-decision-strip[data-strip-anchor="' + cssEsc(anchorId) + '"]');
+    if (strip) return strip;
+  }
+  return el;
+}
+
 // ── Click -> parent anchor resolution (mirrors legacy findParentAnchor) ──
 function findParentAnchor(el) {
   let cur = el;
@@ -193,7 +205,7 @@ function resolveInnerEl(anchorEl, target) {
     const q = target.quote;
     let cand = null, candLen = Infinity;
     anchorEl.querySelectorAll('*').forEach(el2 => {
-      if (el2.closest('#badge-layer') || el2.closest('[data-annotate-strip]') || el2.classList.contains('bpin-inline') || el2.tagName === 'SCRIPT' || el2.tagName === 'STYLE') return;
+      if (el2.closest('#badge-layer') || el2.closest('[data-annotate-strip]') || el2.closest('[data-annotate-back]') || el2.closest('.annotate-unchanged-bar') || el2.classList.contains('bpin-inline') || el2.tagName === 'SCRIPT' || el2.tagName === 'STYLE') return;
       const t = normText(el2.textContent);
       if (!t) return;
       if (t.indexOf(q) !== -1 || (q.length >= 60 && t.indexOf(q.slice(0, 60)) !== -1)) {
@@ -254,6 +266,9 @@ function wireClicks() {
     // any other part of a strip (prompt text, padding) must never fall
     // through to click-to-CREATE — it isn't a click on the underlying anchor.
     if (e.target.closest('[data-annotate-strip]')) return;
+    // Same for the chrome this file adds around content: the "Back to #N"
+    // marker an evidence jump leaves, and an unchanged section's header.
+    if (e.target.closest('[data-annotate-back], .annotate-unchanged-bar')) return;
 
     // Don't hijack clicks on real interactive controls. This listener runs in
     // the CAPTURE phase and calls stopPropagation() below, so anything it
@@ -520,9 +535,10 @@ function renderBadges() {
   const layer = ensureBadgeLayer();
   layer.innerHTML = '';
 
+  positionBackPill();
   for (const [anchorId, count] of Object.entries(latestCounts)) {
     if (!count) continue;
-    const el = findAnchorEl(anchorId);
+    const el = displayAnchorEl(anchorId);
     if (!el) continue;
 
     // Skip elements hidden inside a non-active tab-panel/sub-panel.
@@ -627,7 +643,7 @@ function ensureHoverStyle() {
 }
 
 function highlightAnchor(anchorId, on) {
-  const el = anchorId && findAnchorEl(anchorId);
+  const el = anchorId && displayAnchorEl(anchorId);
   if (el) el.classList.toggle('annotate-anchor-hl', on);
 }
 function highlightPinsFor(anchorId, on) {
@@ -708,18 +724,24 @@ const stripFormOpen = {};
 // annotate:comment-counts message doesn't snap a mid-correction strip back
 // to the chip.
 const stripChanging = {};
-// v2.19 per-item UI state that must survive a rebuild: context disclosure
-// open, optional-note form open, and the note draft text.
-const stripDetailsOpen = {};
+// v2.19 per-item UI state that must survive a rebuild: optional-note form
+// open, and the note draft text.
 const stripNoteOpen = {};
 const stripNoteText = {};
 // D3: the standing Comment form's open state and draft, kept across a
 // rebuild exactly like the note above.
 const stripSayOpen = {};
 const stripSayText = {};
+// Card layout: which excerpts are expanded past their 4-line clamp, whether
+// a card's "Evidence (n)" list is open, and which evidence previews are open.
+// Keyed per card so an 8s-poll rebuild never snaps them shut.
+const stripExcerptOpen = {};
+const stripEvidenceOpen = {};
+const stripEvidenceItemOpen = {};
 const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Comment', changes: '↻ Request changes' };
+// The same options without their glyphs, for the "Recommended: …" sentence.
+const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Comment', changes: 'Request changes' };
 const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment', changes: 'annotate-decision-changes' };
-const DECISION_CONTEXT_INLINE_MAX = 160;
 const DECISION_IMPACTS = ['low', 'medium', 'high'];
 
 // Same normalization as shell.js decisionOptions(): legacy string options
@@ -736,7 +758,7 @@ function stripDecisionOptions(dr) {
       if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
       const sid = stripCanonicalOptionId(o);
       const scq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[sid] === 'string' ? cons[sid] : '');
-      out.push({ id: sid, label: DECISION_BTN_TEXT[sid], consequence: scq, style: null, custom: false });
+      out.push({ id: sid, label: DECISION_BTN_TEXT[sid], plain: DECISION_PLAIN_LABEL[sid], consequence: scq, style: null, custom: false });
     } else if (o && typeof o === 'object' && typeof o.id === 'string' && o.id) {
       const oid = stripCanonicalOptionId(o.id);
       const known = DECISION_OPTIONS_ALL.indexOf(oid) !== -1;
@@ -744,6 +766,7 @@ function stripDecisionOptions(dr) {
       out.push({
         id: known ? oid : o.id,
         label: label || (known ? DECISION_BTN_TEXT[oid] : o.id),
+        plain: label || (known ? DECISION_PLAIN_LABEL[oid] : o.id),
         consequence: typeof o.consequence === 'string' ? o.consequence : (typeof cons[o.id] === 'string' ? cons[o.id] : ''),
         style: (o.style === 'primary' || o.style === 'danger' || o.style === 'default') ? o.style : null,
         custom: !known,
@@ -780,7 +803,18 @@ function ensureStripStyle() {
       font-size: 12px !important; font-weight: 600 !important; color: #312E81 !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
-    .annotate-decision-btns { display: flex !important; gap: 6px !important; flex-wrap: wrap !important; min-width: 0 !important; }
+    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color: #4338CA !important; }
+    .annotate-decision-resolved .annotate-decision-prompt { margin-bottom: 5px !important; }
+    .annotate-decision-text {
+      font-size: 11.5px !important; color: #334155 !important; line-height: 1.5 !important;
+      margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
+    }
+    /* Options are rows (radio-tile layout): label, its consequence under it,
+       a Recommended badge, nothing preselected. One click still answers. */
+    .annotate-decision-btns {
+      display: flex !important; flex-direction: column !important; align-items: stretch !important;
+      gap: 6px !important; min-width: 0 !important;
+    }
     .annotate-decision-btn {
       font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
@@ -815,6 +849,7 @@ function ensureStripStyle() {
       color: #4338CA !important; min-height: 12px !important;
     }
     .annotate-decision-feedback.is-error { color: #DC2626 !important; }
+    .annotate-decision-feedback:empty { min-height: 0 !important; margin-top: 0 !important; }
     .annotate-decision-delivery {
       font-size: 11px !important; color: #64748B !important; margin-left: 8px !important;
     }
@@ -842,26 +877,44 @@ function ensureStripStyle() {
       text-transform: uppercase !important; letter-spacing: .03em !important;
       margin: 0 0 5px !important; white-space: normal !important;
     }
-    /* v2.19 fields */
+    /* v2.19 fields. Context is always shown in full: it is what the
+       reviewer needs to decide, so it never sits behind a disclosure. */
     .annotate-decision-context {
       font-size: 11px !important; color: #475569 !important; line-height: 1.5 !important;
       margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
       font-weight: 400 !important;
     }
-    .annotate-decision-disclosure { margin: -2px 0 6px !important; }
-    .annotate-decision-disclosure-btn {
+    .annotate-decision-reco-line {
+      font-size: 11px !important; color: #065F46 !important; font-weight: 600 !important;
+      line-height: 1.4 !important; margin: 0 0 6px !important;
+    }
+    .annotate-decision-reco-line b { font-weight: 800 !important; }
+    /* Quoted excerpt of the element the card is about, read from this page. */
+    .annotate-excerpt {
+      margin: 0 0 8px !important; padding: 5px 9px !important; background: #FFF !important;
+      border: none !important; border-left: 3px solid #A5B4FC !important; border-radius: 0 6px 6px 0 !important;
+      min-width: 0 !important; max-width: 100% !important; box-sizing: border-box !important;
+    }
+    .annotate-excerpt-src {
+      font-size: 9.5px !important; font-weight: 700 !important; color: #64748B !important;
+      text-transform: uppercase !important; letter-spacing: .03em !important; margin: 0 0 2px !important;
+    }
+    .annotate-excerpt-text {
+      margin: 0 !important; padding: 0 !important; border: none !important; quotes: none !important;
+      font-size: 11px !important; font-style: normal !important; font-weight: 400 !important;
+      color: #334155 !important; line-height: 1.5 !important; white-space: pre-line !important;
+      word-break: break-word !important; overflow-wrap: anywhere !important; background: none !important;
+      display: -webkit-box !important; -webkit-box-orient: vertical !important; -webkit-line-clamp: 4 !important;
+      overflow: hidden !important;
+    }
+    .annotate-excerpt.is-open .annotate-excerpt-text { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
+    .annotate-excerpt-more {
       font-size: 10.5px !important; font-weight: 600 !important; color: #4338CA !important;
-      background: none !important; border: none !important; padding: 2px 0 !important;
-      cursor: pointer !important; font-family: inherit !important; display: inline-flex !important;
-      align-items: center !important; gap: 4px !important;
+      background: none !important; border: none !important; padding: 2px 0 !important; margin: 2px 0 0 !important;
+      cursor: pointer !important; font-family: inherit !important;
     }
-    .annotate-decision-disclosure-btn::before { content: '\\25B8'; font-size: 9px; transition: transform .12s; }
-    .annotate-decision-disclosure-btn[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-decision-disclosure .annotate-decision-context {
-      margin: 4px 0 0 !important; padding: 6px 8px !important; background: #F8FAFC !important;
-      border: 1px solid #E2E8F0 !important; border-radius: 6px !important;
-    }
-    .annotate-decision-context[hidden] { display: none !important; }
+    .annotate-excerpt-more[hidden] { display: none !important; }
+    .annotate-card-replaced { display: none !important; }
     .annotate-decision-meta { display: flex !important; gap: 5px !important; flex-wrap: wrap !important; margin: 0 0 6px !important; }
     .annotate-decision-chip {
       font-size: 9px !important; font-weight: 700 !important; padding: 2px 7px !important; border-radius: 8px !important;
@@ -871,18 +924,34 @@ function ensureStripStyle() {
     .annotate-chip-impact-medium { background: #FEF3C7 !important; color: #B45309 !important; }
     .annotate-chip-impact-high { background: #FEE2E2 !important; color: #B91C1C !important; }
     .annotate-chip-blocking { background: #312E81 !important; color: #FFF !important; }
-    .annotate-decision-btns.has-consequences { flex-direction: column !important; align-items: stretch !important; }
-    .annotate-decision-opt { display: flex !important; flex-direction: column !important; gap: 3px !important; min-width: 0 !important; max-width: 100% !important; }
-    .annotate-decision-opt .annotate-decision-btn { align-self: flex-start !important; }
-    .annotate-decision-consequence {
-      font-size: 10.5px !important; color: #64748B !important; line-height: 1.4 !important;
-      padding-left: 2px !important; white-space: pre-wrap !important; word-break: break-word !important;
+    .annotate-decision-btns > .annotate-decision-btn {
+      display: block !important; width: 100% !important; box-sizing: border-box !important;
+      background: #FFF !important; color: #1E1B4B !important; text-align: left !important;
+      border: 1px solid #C7D2FE !important; border-left: 4px solid #94A3B8 !important;
+      padding: 7px 10px !important; font-weight: 700 !important;
     }
-    .annotate-decision-btn.is-recommended { box-shadow: 0 0 0 2px #FFF, 0 0 0 4px #4338CA !important; }
+    .annotate-decision-btns > .annotate-decision-btn:hover {
+      filter: none !important; background: #F5F7FF !important;
+      border-top-color: #818CF8 !important; border-right-color: #818CF8 !important; border-bottom-color: #818CF8 !important;
+    }
+    .annotate-decision-btns > .annotate-decision-accept { border-left-color: #16A34A !important; }
+    .annotate-decision-btns > .annotate-decision-reject { border-left-color: #DC2626 !important; }
+    .annotate-decision-btns > .annotate-decision-comment { border-left-color: #4338CA !important; }
+    .annotate-decision-btns > .annotate-decision-changes { border-left-color: #B45309 !important; }
+    .annotate-decision-btns > .annotate-decision-custom { border-left-color: #475569 !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-primary { border-left-color: #4338CA !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-danger { border-left-color: #DC2626 !important; }
+    .annotate-opt-head { display: flex !important; align-items: center !important; gap: 6px !important; flex-wrap: wrap !important; }
+    .annotate-opt-label { font-weight: 700 !important; }
+    .annotate-decision-consequence {
+      display: block !important; margin-top: 2px !important;
+      font-size: 10.5px !important; font-weight: 400 !important; color: #64748B !important; line-height: 1.4 !important;
+      white-space: pre-wrap !important; word-break: break-word !important;
+    }
     .annotate-decision-rec {
       font-size: 8.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
-      text-transform: uppercase !important; background: rgba(255,255,255,.28) !important;
-      padding: 1px 5px !important; border-radius: 6px !important; margin-left: 6px !important;
+      text-transform: uppercase !important; background: #D1FAE5 !important; color: #065F46 !important;
+      border: 1px solid #A7F3D0 !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
     .annotate-decision-say-row {
       display: flex !important; align-items: center !important; gap: 8px !important;
@@ -902,16 +971,50 @@ function ensureStripStyle() {
     .annotate-decision-custom { background: #475569 !important; }
     .annotate-decision-custom.annotate-style-primary { background: #4338CA !important; }
     .annotate-decision-custom.annotate-style-danger { background: #DC2626 !important; }
-    .annotate-decision-evidence {
-      display: flex !important; flex-wrap: wrap !important; align-items: center !important;
-      gap: 2px 6px !important; margin: 6px 0 0 !important; font-size: 10.5px !important; color: #64748B !important;
+    /* Evidence: a collapsed "Evidence (n)" disclosure; each item previews its
+       target inside the card, and "Go to" jumps there leaving "Back to #N". */
+    .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: 10.5px !important; color: #64748B !important; }
+    .annotate-decision-evidence-toggle, .annotate-decision-evidence-link {
+      font-size: 10.5px !important; font-weight: 700 !important; color: #4338CA !important;
+      background: none !important; border: none !important; padding: 2px 0 !important;
+      cursor: pointer !important; font-family: inherit !important; display: inline-flex !important;
+      align-items: center !important; gap: 4px !important; text-align: left !important;
     }
-    .annotate-decision-evidence-lbl { font-weight: 600 !important; }
-    .annotate-decision-evidence-link {
-      font-size: 10.5px !important; color: #4338CA !important; font-weight: 600 !important;
-      background: none !important; border: none !important; padding: 1px 2px !important;
-      cursor: pointer !important; font-family: inherit !important; text-decoration: underline dotted !important;
+    .annotate-decision-evidence-link { font-weight: 600 !important; text-decoration: none !important; }
+    .annotate-decision-evidence-label { text-decoration: underline dotted !important; }
+    .annotate-decision-evidence-toggle::before, .annotate-decision-evidence-link::before {
+      content: '\\25B8'; font-size: 9px; transition: transform .12s; text-decoration: none;
     }
+    .annotate-decision-evidence-toggle[aria-expanded="true"]::before,
+    .annotate-decision-evidence-link[aria-expanded="true"]::before { transform: rotate(90deg); }
+    .annotate-decision-evidence-list {
+      display: flex !important; flex-direction: column !important; gap: 4px !important;
+      margin: 4px 0 0 !important; padding: 0 0 0 12px !important;
+    }
+    .annotate-decision-evidence-list[hidden], .annotate-decision-evidence-preview[hidden] { display: none !important; }
+    .annotate-decision-evidence-preview {
+      margin: 2px 0 2px !important; padding: 6px 8px !important; background: #F8FAFC !important;
+      border: 1px solid #E2E8F0 !important; border-radius: 6px !important; box-sizing: border-box !important;
+    }
+    .annotate-decision-evidence-preview .annotate-excerpt { margin: 0 0 6px !important; }
+    .annotate-decision-evidence-missing { font-style: italic !important; color: #94A3B8 !important; margin: 0 0 6px !important; }
+    .annotate-decision-evidence-goto {
+      font-size: 10.5px !important; font-weight: 700 !important; color: #FFF !important; background: #4338CA !important;
+      border: none !important; border-radius: 5px !important; padding: 3px 10px !important;
+      cursor: pointer !important; font-family: inherit !important;
+    }
+    .annotate-decision-evidence-goto:disabled { opacity: .5 !important; cursor: not-allowed !important; }
+    /* "Back to #N": left on the target by an evidence jump, returns to the card. */
+    .annotate-back-row { display: block !important; list-style: none !important; margin: 4px 0 !important; padding: 0 !important; text-align: left !important; }
+    .annotate-back-tr > td { padding: 3px 0 !important; border: none !important; background: transparent !important; }
+    .annotate-back-pill {
+      font: 700 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      color: #FFF !important; background: #312E81 !important; border: none !important; border-radius: 999px !important;
+      padding: 5px 12px !important; cursor: pointer !important; box-shadow: 0 2px 8px rgba(49,46,129,.3) !important;
+      line-height: 1.3 !important; white-space: nowrap !important;
+    }
+    .annotate-back-pill:hover { background: #4338CA !important; }
+    .annotate-back-abs { position: absolute !important; pointer-events: auto !important; z-index: 16 !important; }
     .annotate-decision-note-toggle {
       font-size: 10.5px !important; color: #64748B !important; background: none !important;
       border: none !important; padding: 2px 0 !important; cursor: pointer !important;
@@ -932,8 +1035,9 @@ function ensureStripStyle() {
     }
     .annotate-decision-sendnow:hover { filter: none !important; text-decoration: underline !important; }
     @media (max-width: 768px), (max-height: 480px) {
-      .annotate-decision-disclosure-btn, .annotate-decision-evidence-link, .annotate-decision-note-toggle,
-      .annotate-decision-sendnow { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
+      .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-decision-note-toggle,
+      .annotate-excerpt-more, .annotate-decision-sendnow { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
+      .annotate-decision-evidence-goto, .annotate-back-pill { min-height: 44px !important; padding: 10px 16px !important; touch-action: manipulation !important; }
       /* Thumb-sized buttons, buttons free to wrap to their own row, and a
          16px textarea so iOS doesn't zoom the page in on focus. */
       .annotate-decision-btn, .annotate-decision-say {
@@ -1055,7 +1159,10 @@ function appendPendingControls(itemEl, id) {
 }
 
 function swapStripItemToResolved(itemEl, verdict, deliveryMsg, pendingId) {
+  // The question stays on screen above its verdict, as on a rebuilt strip.
+  const promptEl = itemEl.querySelector(':scope > .annotate-decision-prompt');
   itemEl.innerHTML = '';
+  if (promptEl) itemEl.appendChild(promptEl);
   itemEl.classList.add('annotate-decision-resolved');
   const chip = document.createElement('span');
   chip.className = 'annotate-verdict-chip verdict-' + verdict;
@@ -1115,6 +1222,239 @@ function makeStripBtn(label, cls) {
   return b;
 }
 
+// One option row: its label, a Recommended badge when the agent recommends
+// it, and its consequence on the line under it — the whole row is the button,
+// so a click anywhere on it answers exactly as the old button did.
+function makeOptionBtn(o, cls, recommended) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'annotate-decision-btn annotate-opt-row ' + cls;
+  const head = document.createElement('span');
+  head.className = 'annotate-opt-head';
+  const label = document.createElement('span');
+  label.className = 'annotate-opt-label';
+  label.textContent = o.label; // textContent only — agent data
+  head.appendChild(label);
+  if (recommended) {
+    b.classList.add('is-recommended');
+    b.title = 'Recommended by the agent';
+    const badge = document.createElement('span');
+    badge.className = 'annotate-decision-rec';
+    badge.textContent = 'Recommended';
+    head.appendChild(badge);
+  }
+  b.appendChild(head);
+  if (o.consequence) {
+    const c = document.createElement('span');
+    c.className = 'annotate-decision-consequence';
+    c.textContent = o.consequence; // textContent only — agent data
+    b.appendChild(c);
+  }
+  return b;
+}
+
+function buildPromptEl(entry, dr) {
+  const el = document.createElement('div');
+  el.className = 'annotate-decision-prompt';
+  if (entry.n) {
+    const num = document.createElement('span');
+    num.className = 'annotate-decision-num';
+    num.textContent = '#' + entry.n;
+    el.appendChild(num);
+  }
+  // textContent only — decision_request.prompt is store/agent-controlled
+  // data and must never be interpreted as markup.
+  el.appendChild(document.createTextNode((dr && dr.prompt) || ''));
+  return el;
+}
+
+function evidenceOf(dr) {
+  return (dr && Array.isArray(dr.evidence))
+    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
+    : [];
+}
+
+// ── Excerpts: an element's text, quoted inside a card ────────────────
+// Read from this document, so the card shows what it is about without the
+// reviewer scrolling to find it. Block boundaries become line breaks, table
+// cells are joined with " | ", and everything this file injected (strips,
+// pins, markers, state chips) is left out.
+const EXCERPT_MAX = 1200;
+const EXCERPT_SKIP_SEL = '[data-annotate-strip], [data-annotate-back], .bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
+const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
+
+function excerptText(el) {
+  if (!el) return '';
+  let out = '';
+  const walk = (node) => {
+    if (out.length > EXCERPT_MAX * 3) return;
+    if (node.nodeType === 3) { out += node.nodeValue; return; }
+    if (node.nodeType !== 1) return;
+    if (node.matches && node.matches(EXCERPT_SKIP_SEL)) return;
+    const block = EXCERPT_BLOCK_TAG.test(node.tagName);
+    if (block) out += '\n';
+    if (/^li$/i.test(node.tagName)) out += '• ';
+    for (const child of node.childNodes) walk(child);
+    if (/^(td|th)$/i.test(node.tagName)) out += ' | ';
+    if (block) out += '\n';
+  };
+  walk(el);
+  const text = out.split('\n')
+    .map(line => line.replace(/[ \t \r]+/g, ' ').replace(/(\s*\|\s*)+$/, '').trim())
+    .filter(Boolean)
+    .join('\n');
+  return text.length > EXCERPT_MAX ? text.slice(0, EXCERPT_MAX - 1).trimEnd() + '…' : text;
+}
+
+// "Columns › status": where the quoted text lives, from the anchor registry.
+function excerptSource(anchorId) {
+  const e = ANCHOR_REGISTRY[anchorId];
+  if (!e) return '';
+  const name = normText(e.name), grp = normText(e.grp);
+  return (grp && name && grp !== name) ? grp + ' › ' + name : (name || grp);
+}
+
+// A question card baked into a generated page (pagegen's ```cards block).
+// Scoped to that markup so a hand-built page's own `.card` content is never
+// mistaken for one and hidden.
+function isStaticCard(el) {
+  return !!(el && el.matches && el.matches('.aa .cards > .card'));
+}
+
+function domId(prefix, key) {
+  let h = 5381;
+  const s = String(key);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return prefix + '-' + h.toString(36);
+}
+
+// A quoted excerpt clamped to four lines, with a "Show more" disclosure that
+// appears only when the text is actually cut off.
+function buildExcerptEl(key, text, source) {
+  const box = document.createElement('figure');
+  box.className = 'annotate-excerpt' + (stripExcerptOpen[key] ? ' is-open' : '');
+  if (source) {
+    const cap = document.createElement('figcaption');
+    cap.className = 'annotate-excerpt-src';
+    cap.textContent = source;
+    box.appendChild(cap);
+  }
+  const quote = document.createElement('blockquote');
+  quote.className = 'annotate-excerpt-text';
+  quote.id = domId('annotate-x', key);
+  quote.textContent = text;
+  box.appendChild(quote);
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'annotate-excerpt-more';
+  more.setAttribute('aria-controls', quote.id);
+  more.hidden = true;
+  more.addEventListener('click', () => {
+    stripExcerptOpen[key] = !stripExcerptOpen[key];
+    box.classList.toggle('is-open', !!stripExcerptOpen[key]);
+    syncExcerptClamp(box);
+  });
+  box.appendChild(more);
+  return box;
+}
+
+function syncExcerptClamp(box) {
+  const t = box && box.querySelector('.annotate-excerpt-text');
+  const more = box && box.querySelector('.annotate-excerpt-more');
+  if (!t || !more) return;
+  const open = box.classList.contains('is-open');
+  more.textContent = open ? 'Show less' : 'Show more';
+  more.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) { more.hidden = false; return; }
+  const text = t.textContent || '';
+  // Unrendered (inside a collapsed container): judge by length instead.
+  more.hidden = !(t.clientHeight > 0
+    ? t.scrollHeight > t.clientHeight + 1
+    : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
+}
+function syncAllExcerptClamps(root) {
+  (root || document).querySelectorAll('.annotate-excerpt').forEach(syncExcerptClamp);
+}
+
+// "Evidence (n)": collapsed by default. Each item previews its target in
+// place; "Go to" scrolls there and leaves "Back to #N" on the target.
+function buildEvidenceEl(entry, ev) {
+  const id = entry.id;
+  const wrap = document.createElement('div');
+  wrap.className = 'annotate-decision-evidence';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'annotate-decision-evidence-toggle';
+  toggle.textContent = 'Evidence (' + ev.length + ')';
+  const list = document.createElement('div');
+  list.className = 'annotate-decision-evidence-list';
+  list.id = domId('annotate-evl', id);
+  toggle.setAttribute('aria-controls', list.id);
+  const syncList = () => {
+    const open = !!stripEvidenceOpen[id];
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    list.hidden = !open;
+  };
+  toggle.addEventListener('click', () => {
+    stripEvidenceOpen[id] = !stripEvidenceOpen[id];
+    syncList();
+    if (stripEvidenceOpen[id]) syncAllExcerptClamps(list);
+  });
+  ev.forEach((e, i) => {
+    const key = id + '\n' + e.anchor + '\n' + i;
+    const row = document.createElement('div');
+    row.className = 'annotate-decision-evidence-item';
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'annotate-decision-evidence-link';
+    const linkLabel = document.createElement('span');
+    linkLabel.className = 'annotate-decision-evidence-label';
+    linkLabel.textContent = e.label || e.anchor;
+    link.appendChild(linkLabel);
+    link.title = 'Preview ' + e.anchor;
+    const preview = document.createElement('div');
+    preview.className = 'annotate-decision-evidence-preview';
+    preview.id = domId('annotate-evp', key);
+    link.setAttribute('aria-controls', preview.id);
+    const target = findAnchorEl(e.anchor);
+    const text = target ? excerptText(target) : '';
+    if (text) {
+      preview.appendChild(buildExcerptEl('ev\n' + key, text, excerptSource(e.anchor)));
+    } else {
+      const miss = document.createElement('div');
+      miss.className = 'annotate-decision-evidence-missing';
+      miss.textContent = target ? 'Nothing to quote here.' : 'Not on this version of the page.';
+      preview.appendChild(miss);
+    }
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'annotate-decision-evidence-goto';
+    go.textContent = 'Go to ↓';
+    go.title = 'Scroll to ' + e.anchor + '; a "Back" marker there returns here';
+    go.disabled = !target;
+    go.addEventListener('click', () => scrollToAnchor(e.anchor, null, { commentId: id, n: entry.n || 0, from: 'strip' }));
+    preview.appendChild(go);
+    const syncItem = () => {
+      const open = !!stripEvidenceItemOpen[key];
+      link.setAttribute('aria-expanded', open ? 'true' : 'false');
+      preview.hidden = !open;
+    };
+    link.addEventListener('click', () => {
+      stripEvidenceItemOpen[key] = !stripEvidenceItemOpen[key];
+      syncItem();
+      if (stripEvidenceItemOpen[key]) syncAllExcerptClamps(preview);
+    });
+    syncItem();
+    row.appendChild(link);
+    row.appendChild(preview);
+    list.appendChild(row);
+  });
+  syncList();
+  wrap.appendChild(toggle);
+  wrap.appendChild(list);
+  return wrap;
+}
+
 // Builds ONE decision item (either the live accept/reject/comment controls,
 // or — once resolved — a compact verdict chip) for a single comment entry.
 function buildDecisionItemEl(entry) {
@@ -1125,6 +1465,9 @@ function buildDecisionItemEl(entry) {
 
   if (entry.decisionVerdict && !stripChanging[id]) {
     item.classList.add('annotate-decision-resolved');
+    // The strip replaces the generated card in the body, so the question
+    // itself stays readable above its verdict.
+    if (entry.decisionRequest) item.appendChild(buildPromptEl(entry, entry.decisionRequest));
     const chip = document.createElement('span');
     chip.className = 'annotate-verdict-chip verdict-' + entry.decisionVerdict;
     chip.textContent = DECISION_VERDICT_LABEL[entry.decisionVerdict] || entry.decisionVerdict;
@@ -1146,49 +1489,20 @@ function buildDecisionItemEl(entry) {
     return item;
   }
 
+  // Card layout, the same on the rail: number and prompt, the card's own
+  // text when it says more than the prompt, chips, context in full,
+  // "Recommended: …", a quoted excerpt of the first evidence target, the
+  // options as rows, then a collapsed "Evidence (n)".
   const dr = entry.decisionRequest || {};
-  const promptEl = document.createElement('div');
-  promptEl.className = 'annotate-decision-prompt';
-  // textContent only — decision_request.prompt is store/agent-controlled
-  // data and must never be interpreted as markup.
-  promptEl.textContent = dr.prompt || '';
-  item.appendChild(promptEl);
-
-  // v2.19: context — short inline, long behind a WAI-ARIA disclosure that
-  // opens inline (no sheet) so it works identically on mobile.
-  const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
-  if (ctx) {
-    const ctxEl = document.createElement('div');
-    ctxEl.className = 'annotate-decision-context';
-    ctxEl.textContent = ctx;
-    if (ctx.length <= DECISION_CONTEXT_INLINE_MAX) {
-      item.appendChild(ctxEl);
-    } else {
-      const disc = document.createElement('div');
-      disc.className = 'annotate-decision-disclosure';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'annotate-decision-disclosure-btn';
-      btn.textContent = 'Why / details';
-      const rid = 'annotate-dctx-' + id;
-      ctxEl.id = rid;
-      ctxEl.setAttribute('role', 'region');
-      ctxEl.setAttribute('aria-label', 'Decision details');
-      const open = !!stripDetailsOpen[id];
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      btn.setAttribute('aria-controls', rid);
-      ctxEl.hidden = !open;
-      btn.addEventListener('click', () => {
-        const now = !stripDetailsOpen[id];
-        stripDetailsOpen[id] = now;
-        btn.setAttribute('aria-expanded', now ? 'true' : 'false');
-        ctxEl.hidden = !now;
-      });
-      disc.appendChild(btn);
-      disc.appendChild(ctxEl);
-      item.appendChild(disc);
-    }
+  item.appendChild(buildPromptEl(entry, dr));
+  const cardText = typeof entry.text === 'string' ? entry.text.trim() : '';
+  if (cardText && normText(cardText) !== normText(dr.prompt)) {
+    const textEl = document.createElement('div');
+    textEl.className = 'annotate-decision-text';
+    textEl.textContent = cardText; // textContent only — agent data
+    item.appendChild(textEl);
   }
+  const ev = evidenceOf(dr);
   // v2.19: impact / blocking chips
   const hasImpact = typeof dr.impact === 'string' && DECISION_IMPACTS.indexOf(dr.impact) !== -1;
   if (hasImpact || dr.blocking === true) {
@@ -1227,6 +1541,37 @@ function buildDecisionItemEl(entry) {
     item.appendChild(note);
   }
 
+  const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
+  if (ctx) {
+    const ctxEl = document.createElement('div');
+    ctxEl.className = 'annotate-decision-context';
+    ctxEl.textContent = ctx; // textContent only — agent data
+    item.appendChild(ctxEl);
+  }
+
+  const opts = stripDecisionOptions(dr);
+  const hasCons = opts.some(o => !!o.consequence);
+  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
+  if (rec) {
+    const recId = stripCanonicalOptionId(rec);
+    const recOpt = opts.find(o => o.id === recId);
+    const recLine = document.createElement('div');
+    recLine.className = 'annotate-decision-reco-line';
+    recLine.appendChild(document.createTextNode('Recommended: '));
+    const recName = document.createElement('b');
+    recName.textContent = recOpt ? recOpt.plain : (DECISION_PLAIN_LABEL[recId] || rec);
+    recLine.appendChild(recName);
+    item.appendChild(recLine);
+  }
+
+  // The first evidence target, quoted. The strip's own anchor is the element
+  // right above it, so it is never quoted here (the rail card quotes it).
+  const firstTarget = ev.length ? findAnchorEl(ev[0].anchor) : null;
+  if (firstTarget) {
+    const text = excerptText(firstTarget);
+    if (text) item.appendChild(buildExcerptEl(id + '\nfirst', text, excerptSource(ev[0].anchor)));
+  }
+
   const btnRow = document.createElement('div');
   btnRow.className = 'annotate-decision-btns';
   item.appendChild(btnRow);
@@ -1258,10 +1603,7 @@ function buildDecisionItemEl(entry) {
   feedback.className = 'annotate-decision-feedback';
   item.appendChild(feedback);
 
-  const opts = stripDecisionOptions(dr);
-  const hasCons = opts.some(o => !!o.consequence);
   if (hasCons) btnRow.classList.add('has-consequences');
-  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
 
   // Optional note for Accept/Reject ("+ Add a note"); null when closed/empty.
   let noteTa = null;
@@ -1271,54 +1613,33 @@ function buildDecisionItemEl(entry) {
     return t || null;
   };
 
-  const mountOption = (b, o) => {
-    if (rec && stripCanonicalOptionId(rec) === o.id) {
-      b.classList.add('is-recommended');
-      b.title = 'Recommended by the agent';
-      const badge = document.createElement('span');
-      badge.className = 'annotate-decision-rec';
-      badge.textContent = 'Recommended';
-      b.appendChild(badge);
-    }
-    if (!hasCons) { btnRow.appendChild(b); return; }
-    const wrap = document.createElement('div');
-    wrap.className = 'annotate-decision-opt';
-    wrap.appendChild(b);
-    if (o.consequence) {
-      const c = document.createElement('div');
-      c.className = 'annotate-decision-consequence';
-      c.textContent = o.consequence; // textContent only — agent data
-      wrap.appendChild(c);
-    }
-    btnRow.appendChild(wrap);
-  };
-
+  const isRec = o => !!rec && stripCanonicalOptionId(rec) === o.id;
   for (const o of opts) {
     if (o.id === 'accept' || o.id === 'reject') {
-      const b = makeStripBtn(o.label, DECISION_BTN_CLASS[o.id]);
+      const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
       b.addEventListener('click', () => submitStripDecision(id, o.id, noteText(), item));
-      mountOption(b, o);
+      btnRow.appendChild(b);
     } else if (o.id === 'comment' || o.id === 'changes') {
       // One slot, two spellings: "Comment" pre-D2, "Request changes" after.
       // Both reveal the textarea; neither submits empty.
-      const b = makeStripBtn(o.label, DECISION_BTN_CLASS[o.id]);
+      const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
       b.addEventListener('click', () => {
         stripFormOpen[id] = true;
         form.style.setProperty('display', 'flex', 'important');
         ta.focus();
       });
-      mountOption(b, o);
+      btnRow.appendChild(b);
     } else {
       // custom option id → the `select` verdict naming the choice, or the
       // pre-D3 `comment` text against a server that predates it.
-      const b = makeStripBtn(o.label, 'annotate-decision-custom' + (o.style ? ' annotate-style-' + o.style : ''));
+      const b = makeOptionBtn(o, 'annotate-decision-custom' + (o.style ? ' annotate-style-' + o.style : ''), isRec(o));
       b.addEventListener('click', () => {
         const n = noteText();
         const v = latestSelect ? 'select' : 'comment';
         const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
         submitStripDecision(id, v, text, item);
       });
-      mountOption(b, o);
+      btnRow.appendChild(b);
     }
   }
   submitBtn.addEventListener('click', () => {
@@ -1326,6 +1647,8 @@ function buildDecisionItemEl(entry) {
     if (!text) { ta.focus(); return; }
     submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
   });
+
+  if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
 
   // Free-text answer. A reviewer reply on an unanswered card also answers it.
   if (!opts.some(o => o.id === 'comment') && !entry.decisionVerdict) {
@@ -1372,30 +1695,6 @@ function buildDecisionItemEl(entry) {
     sayForm.appendChild(sayTa);
     sayForm.appendChild(saySubmit);
     item.appendChild(sayForm);
-  }
-
-  // v2.19: evidence links → scroll + flash the referenced anchor in THIS
-  // document (same scrollToAnchor path the shell's "Go to location" uses).
-  const ev = Array.isArray(dr.evidence)
-    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
-    : [];
-  if (ev.length) {
-    const row = document.createElement('div');
-    row.className = 'annotate-decision-evidence';
-    const lbl = document.createElement('span');
-    lbl.className = 'annotate-decision-evidence-lbl';
-    lbl.textContent = 'Evidence:';
-    row.appendChild(lbl);
-    for (const e of ev) {
-      const a = document.createElement('button');
-      a.type = 'button';
-      a.className = 'annotate-decision-evidence-link';
-      a.textContent = e.label || e.anchor;
-      a.title = 'Scroll to ' + e.anchor;
-      a.addEventListener('click', () => scrollToAnchor(e.anchor, null));
-      row.appendChild(a);
-    }
-    item.appendChild(row);
   }
 
   // v2.19: optional note under Accept/Reject
@@ -1448,8 +1747,11 @@ function buildStripEl(anchorId, items) {
   // so a reviewer scanning strips never has to guess which row one belongs
   // to. Skipped when the registry has no real name for this anchor (falls
   // back to the anchor id itself, which isn't useful to show).
+  // A strip standing in for a generated question card is that card: its
+  // number and prompt are the title, and the registry name (the card's own
+  // first sentence) would only repeat them.
   const label = anchorName(anchorId);
-  if (label && label !== anchorId) {
+  if (label && label !== anchorId && !isStaticCard(findAnchorEl(anchorId))) {
     const hdr = document.createElement('div');
     hdr.className = 'annotate-strip-anchor-label';
     hdr.textContent = label; // textContent only — registry data, not markup
@@ -1554,9 +1856,29 @@ function renderCardStates() {
   });
 }
 
+// The generated question cards a strip stands in for: the card that owns the
+// anchor, and any card bound to it ("Anchored to …" links to the anchor).
+function staticCardsFor(anchorId) {
+  const out = [];
+  const el = findAnchorEl(anchorId);
+  if (isStaticCard(el)) out.push(el);
+  document.querySelectorAll('.aa .cards > .card.card-bound').forEach(card => {
+    const a = card.querySelector('.card-ref a[href]');
+    if (a && a.getAttribute('href') === '#' + anchorId && out.indexOf(card) === -1) out.push(card);
+  });
+  return out;
+}
+
 function renderDecisionStrips() {
   ensureStripStyle();
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
+  // One card per question in the body. A generated card whose question the
+  // interactive strip now renders is hidden (it stays in the HTML as the
+  // no-JavaScript fallback) and comes back if the strip goes away.
+  document.querySelectorAll('[data-annotate-replaced]').forEach(card => {
+    card.classList.remove('annotate-card-replaced');
+    delete card.dataset.annotateReplaced;
+  });
 
   for (const [anchorId, entries] of Object.entries(latestPins)) {
     const items = (entries || []).filter(e => e.decisionRequest || e.decisionVerdict);
@@ -1574,7 +1896,14 @@ function renderDecisionStrips() {
     items.sort((a, b) => (a.n || 0) - (b.n || 0));
     const stripEl = buildStripEl(anchorId, items);
     if (!insertStripInFlow(el, stripEl)) placeStripAbsolute(el, stripEl);
+    if (items.some(e => e.decisionRequest)) {
+      staticCardsFor(anchorId).forEach(card => {
+        card.classList.add('annotate-card-replaced');
+        card.dataset.annotateReplaced = '1';
+      });
+    }
   }
+  syncAllExcerptClamps();
 }
 
 // ── Go-to-location persistent highlight ─────────────────────────────
@@ -1660,9 +1989,11 @@ function revealAnchor(el) {
   return clicked;
 }
 
-function scrollToAnchor(anchorId, target) {
+// `back` ({commentId, n, from: 'strip'|'rail'}) is set by an evidence "Go to":
+// the target then carries a "Back to #N" marker that returns to the card.
+function scrollToAnchor(anchorId, target, back) {
   ensureGotoHighlightStyle();
-  const anchorEl = findAnchorEl(anchorId);
+  const anchorEl = displayAnchorEl(anchorId);
   if (!anchorEl) {
     window.parent.postMessage({ type: 'annotate:scroll-result', anchorId, found: false }, '*');
     return;
@@ -1674,6 +2005,8 @@ function scrollToAnchor(anchorId, target) {
   const inner = resolveInnerEl(anchorEl, target);
   const el = inner ? inner.el : anchorEl;
 
+  // A jump into a collapsed unchanged section opens it first.
+  expandUnchangedAncestor(el);
   // If inside hidden tab panels, switch the content doc's own tabs first.
   const switched = revealAnchor(el);
 
@@ -1685,6 +2018,7 @@ function scrollToAnchor(anchorId, target) {
       window.parent.postMessage({ type: 'annotate:scroll-result', anchorId, found: false }, '*');
       return;
     }
+    const marker = back && back.commentId ? placeBackPill(el, back) : null;
     const isSvgEl = !!(el.ownerSVGElement || el.tagName.toLowerCase() === 'svg');
     if (isSvgEl) {
       const svg = document.querySelector('svg');
@@ -1698,6 +2032,10 @@ function scrollToAnchor(anchorId, target) {
           window.scrollTo({ top: Math.max(0, svgRect.top + window.scrollY + bbox.y * scale - 120), behavior: 'smooth' });
         }
       }
+    } else if (marker && marker.row !== marker.pill &&
+               el.getBoundingClientRect().height > window.innerHeight * 0.6) {
+      // Too tall to center with its marker in view: start at the marker.
+      marker.row.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -1717,13 +2055,257 @@ function scrollToAnchor(anchorId, target) {
   }, switched ? 150 : 0);
 }
 
+// ── "Back to #N": the marker an evidence jump leaves on its target ──────
+// Wikipedia's reference previews and GitHub's review threads both keep the
+// reader anchored to where they came from; this is the way back from the
+// evidence to the question card that cited it. Inserted in flow just above
+// the target (a sibling row for a table row), or absolutely positioned where
+// flow insertion is not possible (SVG, table cells). One at a time.
+let backPillAbs = null; // {pill, el} while an absolutely-positioned marker is up
+
+function removeBackPills() {
+  document.querySelectorAll('[data-annotate-back]').forEach(n => n.remove());
+  backPillAbs = null;
+}
+
+function positionBackPill() {
+  if (!backPillAbs) return;
+  const { pill, el } = backPillAbs;
+  if (!pill.isConnected || !el.isConnected) { backPillAbs = null; return; }
+  const wrapper = pill.parentElement && pill.parentElement.parentElement;
+  if (!wrapper) return;
+  const wr = wrapper.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const h = pill.getBoundingClientRect().height || 26;
+  pill.style.left = Math.max(8, r.left - wr.left) + 'px';
+  pill.style.top = Math.max(0, r.top - wr.top - h - 4) + 'px';
+}
+
+function placeBackPill(el, back) {
+  removeBackPills();
+  ensureStripStyle();
+  const pill = document.createElement('button');
+  pill.type = 'button';
+  pill.className = 'annotate-back-pill';
+  pill.textContent = back.n ? '↩ Back to #' + back.n : '↩ Back to the question';
+  pill.title = 'Return to the question card that cited this';
+  pill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    goBackToCard(back);
+  });
+  const tag = el.tagName.toUpperCase();
+  const inSvg = !!(el.ownerSVGElement || tag === 'SVG' || el.closest('svg'));
+  let row;
+  try {
+    if (!inSvg && tag === 'TR') {
+      row = document.createElement('tr');
+      row.className = 'annotate-back-tr';
+      const td = document.createElement('td');
+      td.colSpan = el.children.length || 1;
+      td.appendChild(pill);
+      row.appendChild(td);
+      el.insertAdjacentElement('beforebegin', row);
+    } else if (!inSvg && el.parentElement &&
+               !/^(TD|TH|THEAD|TBODY|TFOOT|CAPTION|COLGROUP|COL|OPTION|OPTGROUP|DT|DD|HTML|BODY)$/.test(tag)) {
+      row = document.createElement(tag === 'LI' ? 'li' : 'div');
+      row.className = 'annotate-back-row';
+      row.appendChild(pill);
+      el.insertAdjacentElement('beforebegin', row);
+    }
+  } catch (err) {
+    row = null;
+  }
+  if (!row) {
+    row = pill;
+    pill.classList.add('annotate-back-abs');
+    ensureStripLayer().appendChild(pill);
+    backPillAbs = { pill, el };
+    positionBackPill();
+  }
+  row.dataset.annotateBack = '1';
+  return { row, pill };
+}
+
+function flashEl(el) {
+  clearGotoHighlight();
+  el.classList.add('goto-highlight');
+  gotoHighlightTimer = setTimeout(() => {
+    el.classList.remove('goto-highlight');
+    gotoHighlightTimer = null;
+  }, 1600);
+}
+
+function goBackToCard(back) {
+  removeBackPills();
+  if (back.from === 'rail') {
+    // The card lives in the shell's rail: the shell reopens and focuses it.
+    window.parent.postMessage({ type: 'annotate:back-to-card', commentId: back.commentId }, '*');
+    return;
+  }
+  const item = document.querySelector('[data-strip-item="' + cssEsc(back.commentId) + '"]');
+  if (!item) return;
+  expandUnchangedAncestor(item);
+  revealAnchor(item);
+  item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  flashEl(item);
+}
+
+// ── Unchanged sections (v2+) ─────────────────────────────────────────
+// pagegen stamps `data-unchanged-since="vN"` on every `##` section identical
+// to the previous version's. Those render collapsed behind a one-line header
+// (WAI-ARIA disclosure: a button with aria-expanded), so a reviewer reads what
+// changed instead of the whole plan again. A section holding an open question
+// card, or the evidence an open card cites, is opened automatically, and so
+// is any section a jump lands in. Without JavaScript nothing collapses.
+const unchangedChoice = {}; // section key -> true/false once the reviewer toggles it
+
+function ensureUnchangedStyle() {
+  if (document.getElementById('annotate-unchanged-style')) return;
+  const style = document.createElement('style');
+  style.id = 'annotate-unchanged-style';
+  style.textContent = `
+    section.annotate-unchanged-collapsed > :not(.annotate-unchanged-bar) { display: none !important; }
+    .annotate-unchanged-bar { display: block !important; margin: 14px 0 4px !important; padding: 0 !important; }
+    .annotate-unchanged-toggle {
+      display: flex !important; align-items: center !important; gap: 8px !important; flex-wrap: wrap !important;
+      width: 100% !important; box-sizing: border-box !important; text-align: left !important;
+      font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      color: #334155 !important; background: #F8FAFC !important; border: 1px dashed #CBD5E1 !important;
+      border-radius: 8px !important; padding: 8px 12px !important; cursor: pointer !important; margin: 0 !important;
+    }
+    .annotate-unchanged-toggle:hover { background: #F1F5F9 !important; border-color: #94A3B8 !important; }
+    .annotate-unchanged-toggle:focus-visible { outline: 2px solid #4338CA !important; outline-offset: 1px !important; }
+    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 10px; color: #64748B; transition: transform .12s; }
+    .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+    .annotate-unchanged-title { font-weight: 700 !important; color: #1F2937 !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: #64748B !important; font-size: 12px !important; }
+    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar { margin: 24px 0 -22px !important; }
+    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-toggle {
+      width: auto !important; background: none !important; border: none !important; padding: 2px 0 !important; font-size: 11.5px !important;
+    }
+    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-title { display: none !important; }
+    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-note { font-size: 11.5px !important; }
+    @media (max-width: 768px), (max-height: 480px) {
+      .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function unchangedKey(sec) {
+  return sec.dataset.anchorId || sec.id;
+}
+
+function setUnchangedOpen(sec, open) {
+  sec.classList.toggle('annotate-unchanged-collapsed', !open);
+  const btn = sec.querySelector(':scope > .annotate-unchanged-bar > .annotate-unchanged-toggle');
+  if (!btn) return;
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const note = btn.querySelector('.annotate-unchanged-note');
+  if (note) {
+    note.textContent = 'Unchanged since ' + (sec.dataset.unchangedSince || 'the last version') +
+      (open ? ' — hide' : ' — show');
+  }
+  if (open) syncAllExcerptClamps(sec);
+}
+
+function initUnchangedSections() {
+  const sections = document.querySelectorAll('section[data-unchanged-since]');
+  if (!sections.length) return;
+  ensureUnchangedStyle();
+  sections.forEach((sec, i) => {
+    if (sec.querySelector(':scope > .annotate-unchanged-bar')) return;
+    if (!sec.id) sec.id = 'annotate-unchanged-' + (i + 1);
+    const key = unchangedKey(sec);
+    const bar = document.createElement('div');
+    bar.className = 'annotate-unchanged-bar';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'annotate-unchanged-toggle';
+    btn.setAttribute('aria-controls', sec.id);
+    const heading = sec.querySelector(':scope > h2, :scope > h1, :scope > h3');
+    const title = document.createElement('span');
+    title.className = 'annotate-unchanged-title';
+    title.textContent = normText(heading ? heading.textContent : anchorName(key));
+    const note = document.createElement('span');
+    note.className = 'annotate-unchanged-note';
+    btn.appendChild(title);
+    btn.appendChild(note);
+    btn.addEventListener('click', () => {
+      const open = sec.classList.contains('annotate-unchanged-collapsed');
+      unchangedChoice[key] = open;
+      setUnchangedOpen(sec, open);
+    });
+    bar.appendChild(btn);
+    sec.insertBefore(bar, sec.firstChild);
+    setUnchangedOpen(sec, false);
+  });
+}
+
+// Never leave an open question, or what it cites, folded away.
+function openUnchangedSectionsForOpenCards() {
+  if (!document.querySelector('section[data-unchanged-since]')) return;
+  const keep = new Set();
+  const note = (aid) => {
+    const el = aid && findAnchorEl(aid);
+    const sec = el && el.closest('section[data-unchanged-since]');
+    if (sec) keep.add(sec);
+  };
+  for (const [aid, entries] of Object.entries(latestPins)) {
+    for (const e of entries || []) {
+      const open = e.decision === true || (e.decisionRequest && stripChanging[e.id]);
+      if (!open) continue;
+      note(aid);
+      evidenceOf(e.decisionRequest).forEach(x => note(x.anchor));
+    }
+  }
+  keep.forEach(sec => {
+    if (unchangedChoice[unchangedKey(sec)] === false) return; // the reviewer folded it
+    if (sec.classList.contains('annotate-unchanged-collapsed')) setUnchangedOpen(sec, true);
+  });
+}
+
+function expandUnchangedAncestor(el) {
+  const sec = el && el.closest ? el.closest('section[data-unchanged-since]') : null;
+  if (!sec || !sec.classList.contains('annotate-unchanged-collapsed')) return false;
+  setUnchangedOpen(sec, true);
+  return true;
+}
+
+// ── Excerpts for the rail card ───────────────────────────────────────
+// shell.js never reads this document; the rail card's quoted excerpt and
+// evidence previews arrive here, one message per change in what they say.
+let lastExcerptsJson = '';
+function postExcerpts() {
+  if (window.parent === window) return;
+  const out = {};
+  const add = (aid) => {
+    if (!aid || Object.prototype.hasOwnProperty.call(out, aid)) return;
+    const el = findAnchorEl(aid);
+    out[aid] = el
+      ? { text: excerptText(el), name: excerptSource(aid), card: isStaticCard(el) }
+      : { missing: true };
+  };
+  for (const [aid, entries] of Object.entries(latestPins)) {
+    for (const e of entries || []) {
+      if (!e.decisionRequest) continue;
+      add(aid);
+      evidenceOf(e.decisionRequest).forEach(x => add(x.anchor));
+    }
+  }
+  const json = JSON.stringify(out);
+  if (json === lastExcerptsJson) return;
+  lastExcerptsJson = json;
+  window.parent.postMessage({ type: 'annotate:excerpts', version: META.version || null, excerpts: out }, '*');
+}
+
 // ── Bridge: listen for shell messages ────────────────────────────────
 function wireBridge() {
   window.addEventListener('message', (e) => {
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:scroll-to') {
-      scrollToAnchor(data.anchorId, data.target || null);
+      scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
@@ -1734,8 +2316,10 @@ function wireBridge() {
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
+      openUnchangedSectionsForOpenCards();
       renderCardStates();
       renderBadges();
+      postExcerpts();
     }
   });
 }
@@ -2013,6 +2597,8 @@ async function init() {
   wireBridge();
   installBadgeMutObs();
   wireHoverLinking();
+  // Before the first paint settles, so a later version opens compact.
+  initUnchangedSections();
 
   window.addEventListener('resize', scheduleBadgeRefresh);
   window.addEventListener('resize', scheduleScrollLockRecheck);

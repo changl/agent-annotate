@@ -21,6 +21,24 @@ this repository.
   annotate calls and failures, and outcome checks side by side. Agent-facing
   changes (skill text, CLI output, markdown format, gates) are gated on it.
   Scenarios `v1-page` and `round-2`; fixtures in `bench/`, not the package.
+- **One card, with its context inside it.** The rail card and the body strip
+  share one layout: `#N` and the prompt, the context in full (the "Why /
+  details" disclosure hid it on 94% of cards), a "Recommended: <option>" line,
+  a quoted excerpt of the first evidence anchor read from the page, the
+  options as full-width rows with their consequence under the label and
+  nothing preselected, then a collapsed "Evidence (n)" whose items preview
+  their target in the card; "Go to" leaves a "Back to #N" marker on the target
+  that returns to the card. In a generated page the strip replaces the baked
+  question card instead of rendering under it, so a question appears once in
+  the body; the baked card stays as the no-JavaScript fallback. Verdicts,
+  rounds, Answer in words, notes and Request changes are unchanged.
+
+- **Unchanged sections fold on v2+.** `new` compares each `##` section with
+  the same section of the previous version and stamps the identical ones
+  `data-unchanged-since`; the page opens them folded behind "Unchanged since
+  vN — show". A section holding an open card or its evidence stays open, and a
+  jump into a folded section opens it. No authoring change and no agent cost.
+
 
 - **One URL per page: Tailscale.** `publish` prints the tailnet URL as `URL:`
   and nothing else to choose from; 26 of 30 sessions had been handing over the

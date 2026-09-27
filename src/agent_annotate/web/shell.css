@@ -186,6 +186,7 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .decision-comment-submit:hover{background:#3730A3}
 .decision-feedback{margin-top:6px;font-size:10.5px;font-weight:600;color:#4338CA;min-height:13px}
 .decision-feedback.is-error{color:#DC2626}
+.decision-feedback:empty{min-height:0;margin-top:0}
 .decision-verdict-chip{display:inline-block;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:10px}
 .decision-verdict-chip.verdict-accept{background:#DCFCE7;color:#15803D}
 .decision-verdict-chip.verdict-reject{background:#FEF2F2;color:#DC2626}
@@ -195,35 +196,60 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .decision-changing-note{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:600;color:#4338CA;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:6px;padding:6px 8px;margin-bottom:8px}
 .decision-changing-note .alink{color:#4338CA;font-weight:600}
 
-/* ── v2.19 decision card fields: context, recommendation, consequences,
-   impact/blocking, evidence, pending round chip, optional note ─────── */
+/* ── Decision card layout (the body strip in adapter.js matches): prompt,
+   chips, context in full, "Recommended: …", a quoted excerpt, options as
+   rows, "Evidence (n)", then the free-text and note affordances. ─────── */
 .decision-context{font-size:11px;color:#475569;line-height:1.5;margin:-2px 0 8px;white-space:pre-wrap;word-break:break-word}
-.decision-disclosure{margin:-2px 0 8px}
-.decision-disclosure-btn{font-size:10.5px;font-weight:600;color:#4338CA;background:none;border:none;padding:2px 0;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px}
-.decision-disclosure-btn::before{content:'\25B8';font-size:9px;transition:transform .12s}
-.decision-disclosure-btn[aria-expanded="true"]::before{transform:rotate(90deg)}
-.decision-disclosure-btn:hover{text-decoration:underline}
-.decision-disclosure .decision-context{margin:4px 0 0;padding:6px 8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px}
-.decision-disclosure .decision-context[hidden]{display:none}
+.decision-reco-line{font-size:11px;font-weight:600;color:#065F46;line-height:1.4;margin:0 0 8px}
+.decision-reco-line b{font-weight:800}
+.decision-excerpt{margin:0 0 8px;padding:5px 9px;background:#F8FAFC;border-left:3px solid #A5B4FC;border-radius:0 6px 6px 0;min-width:0}
+.decision-excerpt-src{font-size:9.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px;overflow-wrap:anywhere}
+.decision-excerpt-text{font-size:11px;color:#334155;line-height:1.5;white-space:pre-line;word-break:break-word;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+.decision-excerpt.is-open .decision-excerpt-text{display:block;-webkit-line-clamp:unset;overflow:visible}
+.decision-excerpt-more{font-size:10.5px;font-weight:600;color:#4338CA;background:none;border:none;padding:2px 0;margin-top:2px;cursor:pointer;font-family:inherit}
+.decision-excerpt-more:hover{text-decoration:underline}
+.decision-excerpt-more[hidden]{display:none}
 .decision-meta{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px}
 .decision-chip{font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
 .decision-chip-impact-low{background:#F1F5F9;color:#475569}
 .decision-chip-impact-medium{background:#FEF3C7;color:#B45309}
 .decision-chip-impact-high{background:#FEE2E2;color:#B91C1C}
 .decision-chip-blocking{background:#312E81;color:#FFF}
-.decision-btns.has-consequences{flex-direction:column;align-items:stretch}
-.decision-opt{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%}
-.decision-opt .decision-btn{align-self:flex-start}
-.decision-consequence{font-size:10.5px;color:#64748B;line-height:1.4;padding-left:2px;white-space:pre-wrap;word-break:break-word}
-.decision-btn.is-recommended{box-shadow:0 0 0 2px #FFF,0 0 0 4px #4338CA}
-.decision-rec-badge{font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;background:rgba(255,255,255,.28);padding:1px 5px;border-radius:6px;margin-left:6px;vertical-align:middle}
 .decision-custom{background:#475569}
 .decision-custom.decision-style-primary{background:#4338CA}
 .decision-custom.decision-style-danger{background:#DC2626}
-.decision-evidence{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:8px 0 0;font-size:10.5px;color:#64748B}
-.decision-evidence-lbl{font-weight:600}
-.decision-evidence-link{font-size:10.5px;color:#4338CA;font-weight:600;background:none;border:none;padding:1px 2px;cursor:pointer;font-family:inherit;text-decoration:underline dotted}
-.decision-evidence-link:hover{text-decoration:underline}
+/* Options as rows (radio-tile layout, Carbon/Helios): white tile, a colored
+   left edge per verdict, label + Recommended badge, consequence under it.
+   Nothing looks preselected — the recommendation is the badge alone. */
+.decision-btns{flex-direction:column;align-items:stretch}
+.decision-btns > .decision-btn{display:block;width:100%;background:#FFF;color:#1E1B4B;border:1px solid #C7D2FE;border-left:4px solid #94A3B8;padding:7px 10px}
+.decision-btns > .decision-btn:hover{filter:none;background:#F5F7FF;border-top-color:#818CF8;border-right-color:#818CF8;border-bottom-color:#818CF8}
+.decision-btns > .decision-accept{border-left-color:#16A34A}
+.decision-btns > .decision-reject{border-left-color:#DC2626}
+.decision-btns > .decision-comment{border-left-color:#4338CA}
+.decision-btns > .decision-changes{border-left-color:#B45309}
+.decision-btns > .decision-custom{border-left-color:#475569}
+.decision-btns > .decision-custom.decision-style-primary{border-left-color:#4338CA}
+.decision-btns > .decision-custom.decision-style-danger{border-left-color:#DC2626}
+.decision-opt-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.decision-consequence{display:block;margin-top:2px;font-size:10.5px;font-weight:400;color:#64748B;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.decision-rec-badge{font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0;padding:1px 6px;border-radius:999px}
+/* Evidence: a collapsed "Evidence (n)" disclosure; each item previews its
+   target inside the card, with "Go to" to scroll there. */
+.decision-evidence{margin:8px 0 0;font-size:10.5px;color:#64748B}
+.decision-evidence-toggle,.decision-evidence-link{font-size:10.5px;color:#4338CA;font-weight:700;background:none;border:none;padding:2px 0;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px;text-align:left}
+.decision-evidence-link{font-weight:600}
+.decision-evidence-label{text-decoration:underline dotted}
+.decision-evidence-toggle::before,.decision-evidence-link::before{content:'\25B8';font-size:9px;transition:transform .12s}
+.decision-evidence-toggle[aria-expanded="true"]::before,.decision-evidence-link[aria-expanded="true"]::before{transform:rotate(90deg)}
+.decision-evidence-toggle:hover,.decision-evidence-link:hover .decision-evidence-label{text-decoration:underline}
+.decision-evidence-list{list-style:none;margin:4px 0 0;padding:0 0 0 12px;display:flex;flex-direction:column;gap:4px}
+.decision-evidence-list[hidden],.decision-evidence-preview[hidden]{display:none}
+.decision-evidence-preview{margin:2px 0;padding:6px 8px;background:#FFF;border:1px solid #E2E8F0;border-radius:6px}
+.decision-evidence-preview .decision-excerpt{margin:0 0 6px}
+.decision-evidence-missing{font-style:italic;color:#94A3B8;margin-bottom:6px}
+.decision-evidence-goto{font-size:10.5px;font-weight:700;color:#FFF;background:#4338CA;border:none;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit}
+.decision-evidence-goto:hover{background:#3730A3}
 .decision-say-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .decision-say{font-size:11.5px;font-weight:700;padding:6px 12px;border-radius:7px;border:1px solid #C7D2FE;background:#FFF;color:#4338CA;cursor:pointer;font-family:inherit;max-width:100%;text-align:left;line-height:1.35;white-space:normal;overflow-wrap:anywhere}
 .decision-say:hover{background:#EEF2FF}
@@ -355,7 +381,8 @@ body > .round-bar .round-bar-btn{min-height:44px;padding:10px 16px;touch-action:
   #round-confirm{width:100%;max-width:calc(100vw - 24px)}
   .round-confirm-ft .btn{min-height:44px;padding:10px 14px;touch-action:manipulation}
   .round-note-ta,.decision-note-ta{font-size:16px}
-  .decision-disclosure-btn,.decision-evidence-link,.decision-note-toggle{min-height:44px;padding:10px 4px;touch-action:manipulation}
+  .decision-evidence-toggle,.decision-evidence-link,.decision-note-toggle,.decision-excerpt-more{min-height:44px;padding:10px 4px;touch-action:manipulation}
+  .decision-evidence-goto{min-height:44px;padding:10px 16px;touch-action:manipulation}
   .decision-send-now{min-height:44px}
   .push-session-btn{padding:8px 10px;min-height:44px;touch-action:manipulation}
   .push-session-label{display:none}

@@ -77,23 +77,37 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
             frame = page.frame_locator("#content-frame")
-            frame.locator('.card[data-anchor-id="d:q3"] .annotate-card-state').wait_for()
+            frame.locator('.card[data-anchor-id="d:q3"] .annotate-card-state').wait_for(
+                state="attached")
 
             expected = {"d:q1": ("done", "Addressed"), "d:q2": ("done", "Done"),
                         "d:q3": ("review", "Needs my review")}
             for anchor, (state, label) in expected.items():
                 card = frame.locator(f'.card[data-anchor-id="{anchor}"]')
                 assert card.get_attribute("data-annotate-state") == state
-                assert card.locator(".annotate-card-state").inner_text().strip() == label
-                prompt_visible = card.locator("p.q").is_visible()
-                assert prompt_visible is (state == "review"), anchor
+                assert card.locator(".annotate-card-state").text_content().strip() == label
+
+            # One card per question in the body. A question the chrome renders
+            # as an interactive strip (open, or answered) hides its baked card;
+            # a withdrawn one has no strip, so its baked card stays, marked.
+            assert frame.locator('.card[data-anchor-id="d:q1"]').is_visible()
+            assert not frame.locator('.card[data-anchor-id="d:q1"] p.q').is_visible()
+            for anchor in ("d:q2", "d:q3"):
+                assert not frame.locator(f'.card[data-anchor-id="{anchor}"]').is_visible()
+                strip = frame.locator(f'.annotate-decision-strip[data-strip-anchor="{anchor}"]')
+                assert strip.count() == 1 and strip.is_visible()
+            assert "#3" in frame.locator(
+                '.annotate-decision-strip[data-strip-anchor="d:q3"] .annotate-decision-prompt'
+            ).inner_text()
+            assert "Accepted" in frame.locator(
+                '.annotate-decision-strip[data-strip-anchor="d:q2"]').inner_text()
 
             # Same words on both sides, item by item.
             for cid, anchor in (("withdrawn-1", "d:q1"), ("accepted-2", "d:q2"),
                                 ("open-3", "d:q3")):
                 rail = page.locator(f'.citem[data-comment-id="{cid}"] .citem-status')
                 body = frame.locator(f'.card[data-anchor-id="{anchor}"] .annotate-card-state')
-                assert rail.inner_text().strip().lower() == body.inner_text().strip().lower()
+                assert rail.inner_text().strip().lower() == body.text_content().strip().lower()
             browser.close()
     finally:
         process.terminate()

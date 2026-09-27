@@ -82,13 +82,22 @@ overlay where neither is possible, e.g. inside `<svg>`).
 
 | Field | Rail card and body strip |
 |---|---|
-| `prompt` | Card title. |
-| `context` | Muted paragraph. Inline up to 160 chars; longer sits behind a "Why / details" WAI-ARIA disclosure (`aria-expanded`), which on mobile opens inline rather than in a new sheet. |
-| `recommendation` | "Recommended" badge on the matching button. |
-| `options` | One button each, wrapping to as many lines as the label needs. Object options render `label`; `style` sets primary/default/danger. |
-| `consequence` / `consequences` | One line under its own button. Buttons switch to a column layout when any consequence is present. |
-| `impact`, `blocking` | Chips beside the title. |
-| `evidence` | Links. A click scrolls to the anchor and flashes it, using the same highlight mechanism as pin hover. |
+| `prompt` | Card title, after the item number (`#N`). |
+| `context` | Muted paragraph, always shown in full. |
+| `recommendation` | A "Recommended: <option label>" line under the context, plus a "Recommended" badge on that option. Nothing is preselected. |
+| `options` | One row each, full width: the label, then its consequence on the line under it. The whole row is the button; one click answers as before. Object options render `label`; `style` colors the row's left edge (primary/default/danger). |
+| `consequence` / `consequences` | The line under its own option. |
+| `impact`, `blocking` | Chips under the title. |
+| `evidence` | The first anchor's text, quoted in the card (clamped to four lines, "Show more"). Below the options, a collapsed "Evidence (n)": each item previews its target in the card, and its "Go to" scrolls there, flashes it, and leaves a "Back to #N" marker that returns to the card. |
+
+The quote is read from the page on screen. With no evidence, the rail card
+quotes the card's own anchor when that anchor is not the card itself (a card
+pinned to a table row quotes the row); the body strip never quotes the element
+directly above it. The strip also shows the card's `text` under the title when
+it says more than the prompt. In a generated page the strip replaces the baked
+question card, which stays in the HTML as the no-JavaScript fallback, so each
+question appears once in the body; a withdrawn, archived or resolved-in-version
+card has no strip and keeps its baked card with a status chip.
 
 Unanswered cards also mark their page pin in pulsing indigo, so a reviewer can
 find a pending decision without opening the drawer. Under Accept/Reject there

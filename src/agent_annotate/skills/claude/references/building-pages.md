@@ -89,6 +89,16 @@ element instead: the body card renders bound, with a link, and no second
 element claims the id. Order does not matter — a card may name an anchor
 defined later in the document.
 
+### Unchanged sections
+
+Nothing to author. When `new` writes vN (N > 1), every `##` section whose
+rendered content matches the same-titled section of v(N-1) (its
+`source/v(N-1).md`, else its generated `versions/v(N-1).html`) gets
+`data-unchanged-since="v(N-1)"`, and the page opens it folded behind one line,
+"Scope · Unchanged since v1 — show". A section holding an open question card,
+or evidence an open card cites, stays open, and a jump into a folded section
+opens it. v1, hand-built pages and pages without JavaScript never fold.
+
 ### Lint
 
 The run fails, writes nothing, and names the problem when the page would carry

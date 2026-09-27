@@ -65,6 +65,7 @@ function isMobileLayout() {
 // re-rendered DOM.
 function setMobileSheetOpen(open) {
   document.body.classList.toggle('is-mobile-sheet-open', open);
+  if (open) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
 function isMobileSheetOpen() {
   return document.body.classList.contains('is-mobile-sheet-open');
@@ -865,6 +866,7 @@ function renderDrawer() {
   });
   wireCardActions(listEl);
   wireDecisionActions(listEl);
+  syncExcerptClamps(listEl);
   // Skip when a reply textarea just reclaimed focus above — the browser's
   // own scroll-into-view for that focus is the more correct outcome, and
   // forcing the old scrollTop back would fight it mid-keystroke.
@@ -955,9 +957,8 @@ const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
 // else) against a legacy server renders exactly as it always has.
 const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
-// Context up to this many chars renders as a muted paragraph; longer context
-// goes behind the "Why / details" WAI-ARIA disclosure.
-const DECISION_CONTEXT_INLINE_MAX = 160;
+// The same options without their glyphs, for the "Recommended: …" sentence.
+const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Answer in words', changes: 'Request changes' };
 const DECISION_IMPACTS = ['low', 'medium', 'high'];
 
 // T-verdict-reversal (user-reported: clicked Reject by mistake on decision
@@ -966,11 +967,21 @@ const DECISION_IMPACTS = ['low', 'medium', 'high'];
 // state) so the 8s poll's re-render doesn't silently snap the card back to
 // the chip mid-correction; cleared on submit or explicit Cancel.
 const decisionChanging = {};
-// v2.19 per-card UI state that must survive the 8s re-render: the context
-// disclosure's expanded state and whether the optional "Add a note" form is
-// open. Note TEXT lives in DRAFTS under 'note:<id>' (same store as replies).
-const decisionDetailsOpen = {};
+// v2.19 per-card UI state that must survive the 8s re-render: whether the
+// optional "Add a note" form is open. Note TEXT lives in DRAFTS under
+// 'note:<id>' (same store as replies).
 const decisionNoteOpen = {};
+// Card layout state, kept across re-renders the same way: the "Evidence (n)"
+// list per card, each evidence preview, and each excerpt expanded past its
+// four-line clamp.
+const decisionEvidenceOpen = {};
+const decisionEvidenceItemOpen = {};
+const decisionExcerptOpen = {};
+// Text of the anchors the open cards refer to, read by adapter.js from the
+// document on screen ('annotate:excerpts'); the shell never reads the iframe.
+// {anchorId: {text, name, card} | {missing: true}} for EXCERPTS_VERSION.
+let EXCERPTS = {};
+let EXCERPTS_VERSION = null;
 // Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
 const decisionSayOpen = {};
@@ -996,7 +1007,7 @@ function decisionOptions(dr) {
       if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
       const id = canonicalOptionId(o);
       const cq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[id] === 'string' ? cons[id] : '');
-      out.push({ id, labelHtml: DECISION_BTN_LABEL[id], labelText: id, consequence: cq, style: null, custom: false });
+      out.push({ id, labelHtml: DECISION_BTN_LABEL[id], labelText: id, plainLabel: DECISION_PLAIN_LABEL[id], consequence: cq, style: null, custom: false });
     } else if (o && typeof o === 'object' && typeof o.id === 'string' && o.id) {
       const id = canonicalOptionId(o.id);
       const known = DECISION_OPTIONS_ALL.indexOf(id) !== -1;
@@ -1005,6 +1016,7 @@ function decisionOptions(dr) {
         id: known ? id : o.id,
         labelHtml: label ? esc(label) : (known ? DECISION_BTN_LABEL[id] : esc(o.id)),
         labelText: label || o.id,
+        plainLabel: label || (known ? DECISION_PLAIN_LABEL[id] : o.id),
         consequence: typeof o.consequence === 'string' ? o.consequence : (typeof cons[o.id] === 'string' ? cons[o.id] : ''),
         style: (o.style === 'primary' || o.style === 'danger' || o.style === 'default') ? o.style : null,
         custom: !known,
@@ -1014,16 +1026,60 @@ function decisionOptions(dr) {
   return out;
 }
 
-function renderDecisionContext(c, dr) {
+// Context is what the reviewer needs in order to decide, so it is always
+// shown in full (NN/g: never hide what the decision depends on).
+function renderDecisionContext(dr) {
   const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
-  if (!ctx) return '';
-  if (ctx.length <= DECISION_CONTEXT_INLINE_MAX) return `<div class="decision-context">${esc(ctx)}</div>`;
-  const open = !!decisionDetailsOpen[c.id];
-  const rid = 'dctx-' + escAttr(c.id);
-  return `<div class="decision-disclosure">
-      <button type="button" class="decision-disclosure-btn" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${rid}" data-decision-action="toggle-details" data-id="${escAttr(c.id)}">Why / details</button>
-      <div class="decision-context" id="${rid}" role="region" aria-label="Decision details"${open ? '' : ' hidden'}>${esc(ctx)}</div>
-    </div>`;
+  return ctx ? `<div class="decision-context">${esc(ctx)}</div>` : '';
+}
+// "Recommended: <option>" — the MADR "chosen option" line, stated once.
+function renderDecisionReco(opts, dr) {
+  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
+  if (!rec) return '';
+  const id = canonicalOptionId(rec);
+  const o = opts.find(x => x.id === id);
+  const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
+  return `<div class="decision-reco-line">Recommended: <b>${esc(label)}</b></div>`;
+}
+
+function idFor(key) {
+  let h = 5381;
+  const s = String(key);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return 'dx-' + h.toString(36);
+}
+function evidenceList(dr) {
+  return Array.isArray(dr.evidence)
+    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
+    : [];
+}
+// Excerpts describe the document on screen; a card that belongs to another
+// version gets none rather than text from the wrong page.
+function excerptsFor(c) {
+  return (EXCERPTS_VERSION === CURRENT_VERSION && gotoVersionFor(c) === CURRENT_VERSION) ? EXCERPTS : null;
+}
+// A quoted excerpt clamped to four lines; "Show more" appears only when the
+// text is cut off (see syncExcerptClamps).
+function renderExcerptBox(key, text, source) {
+  const open = !!decisionExcerptOpen[key];
+  const qid = idFor('q|' + key);
+  return `<figure class="decision-excerpt${open ? ' is-open' : ''}">
+      ${source ? `<figcaption class="decision-excerpt-src">${esc(source)}</figcaption>` : ''}
+      <blockquote class="decision-excerpt-text" id="${qid}">${esc(text)}</blockquote>
+      <button type="button" class="decision-excerpt-more" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>
+    </figure>`;
+}
+// The element the card is about, quoted inside the card: the first evidence
+// anchor, else the card's own anchor when that is not the card itself.
+function renderDecisionExcerpt(c, dr) {
+  const x = excerptsFor(c);
+  if (!x) return '';
+  const ev = evidenceList(dr);
+  const first = ev.length ? x[ev[0].anchor] : null;
+  if (first && first.text) return renderExcerptBox(c.id + '|first', first.text, first.name);
+  const own = x[c.anchor_id];
+  if (own && own.text && !own.card) return renderExcerptBox(c.id + '|own', own.text, own.name);
+  return '';
 }
 function renderDecisionMeta(dr) {
   let h = '';
@@ -1035,15 +1091,50 @@ function renderDecisionMeta(dr) {
   }
   return h ? `<div class="decision-meta">${h}</div>` : '';
 }
-function renderDecisionEvidence(dr) {
-  const ev = Array.isArray(dr.evidence)
-    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
-    : [];
+// "Evidence (n)", collapsed. Each item opens a preview of its target inside
+// the card (Wikipedia's reference previews); "Go to" scrolls the document
+// there and leaves a "Back to #N" marker that returns to this card.
+function renderDecisionEvidence(c, dr) {
+  const ev = evidenceList(dr);
   if (!ev.length) return '';
-  const links = ev.map(e =>
-    `<button type="button" class="decision-evidence-link" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" title="Scroll to ${escAttr(e.anchor)} in the document">${esc(e.label || e.anchor)}</button>`
-  ).join('');
-  return `<div class="decision-evidence"><span class="decision-evidence-lbl">Evidence:</span>${links}</div>`;
+  const x = excerptsFor(c);
+  const open = !!decisionEvidenceOpen[c.id];
+  const listId = idFor('evl|' + c.id);
+  const items = ev.map((e, i) => {
+    const key = c.id + '|' + e.anchor + '|' + i;
+    const itemOpen = !!decisionEvidenceItemOpen[key];
+    const pid = idFor('evp|' + key);
+    const hit = x ? x[e.anchor] : null;
+    const preview = hit && hit.text
+      ? renderExcerptBox('ev|' + key, hit.text, hit.name)
+      : `<div class="decision-evidence-missing">${hit && hit.missing ? 'Not on this version of the page.' : 'No preview for this version.'}</div>`;
+    return `<li class="decision-evidence-item">
+        <button type="button" class="decision-evidence-link" data-decision-action="evidence-preview" data-key="${escAttr(key)}" aria-expanded="${itemOpen ? 'true' : 'false'}" aria-controls="${pid}" title="Preview ${escAttr(e.anchor)}"><span class="decision-evidence-label">${esc(e.label || e.anchor)}</span></button>
+        <div class="decision-evidence-preview" id="${pid}"${itemOpen ? '' : ' hidden'}>
+          ${preview}
+          <button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll the document to ${escAttr(e.anchor)}; a Back marker there returns here">Go to &rarr;</button>
+        </div>
+      </li>`;
+  }).join('');
+  return `<div class="decision-evidence">
+      <button type="button" class="decision-evidence-toggle" data-decision-action="evidence-toggle" data-id="${escAttr(c.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${listId}">Evidence (${ev.length})</button>
+      <ul class="decision-evidence-list" id="${listId}"${open ? '' : ' hidden'}>${items}</ul>
+    </div>`;
+}
+// Show "Show more" only under an excerpt the clamp actually cuts off. An
+// unrendered one (collapsed rail, closed preview) is judged by its length.
+function syncExcerptClamps(root) {
+  if (!root) return;
+  root.querySelectorAll('.decision-excerpt').forEach(box => {
+    const t = box.querySelector('.decision-excerpt-text');
+    const more = box.querySelector('.decision-excerpt-more');
+    if (!t || !more) return;
+    if (box.classList.contains('is-open')) { more.hidden = false; return; }
+    const text = t.textContent || '';
+    more.hidden = !(t.clientHeight > 0
+      ? t.scrollHeight > t.clientHeight + 1
+      : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
+  });
 }
 function renderDecisionPending(c) {
   if (!isRoundPending(c)) return '';
@@ -1097,6 +1188,9 @@ function renderDecisionBlock(c) {
   const showSay = !opts.some(o => o.id === 'comment') && !decisionAnswer(c);
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
+  // Options are rows (radio-tile layout): label, a Recommended badge, and the
+  // consequence on the line under it. The whole row is the button, nothing
+  // is preselected, and one click answers exactly as before.
   let btns = '';
   for (const o of opts) {
     const isRec = !!rec && canonicalOptionId(rec) === o.id;
@@ -1106,10 +1200,8 @@ function renderDecisionBlock(c) {
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
     const badge = isRec ? '<span class="decision-rec-badge">Recommended</span>' : '';
-    const btn = `<button class="decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}>${o.labelHtml}${badge}</button>`;
-    btns += hasCons
-      ? `<div class="decision-opt">${btn}${o.consequence ? `<div class="decision-consequence">${esc(o.consequence)}</div>` : ''}</div>`
-      : btn;
+    const cons = o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : '';
+    btns += `<button class="decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   }
   const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
       <span>Changing verdict &mdash; currently ${esc(DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict)}</span>
@@ -1129,13 +1221,18 @@ function renderDecisionBlock(c) {
       <button type="button" class="decision-note-toggle" data-decision-action="note-toggle" data-id="${escAttr(c.id)}" aria-expanded="${noteOpen ? 'true' : 'false'}">${noteOpen ? '&minus; Remove note' : '+ Add a note'}</button>
       <div class="decision-note-form"${noteOpen ? '' : ' hidden'}><textarea class="decision-note-ta" data-decision-note-ta="${escAttr(c.id)}" placeholder="Optional note sent with Accept / Reject&hellip;" rows="2"></textarea></div>
     </div>` : '';
+  // One card layout on both surfaces (the body strip in adapter.js matches):
+  // prompt, chips, context in full, "Recommended: …", a quoted excerpt of
+  // what the card is about, the options as rows, then "Evidence (n)".
   return `<div class="decision-block">
     ${changingNote}
     <div class="decision-prompt">${esc(displayPrompt(c))}</div>
-    ${renderDecisionContext(c, dr)}
     ${renderDecisionMeta(dr)}
+    ${renderDecisionContext(dr)}
+    ${renderDecisionReco(opts, dr)}
+    ${renderDecisionExcerpt(c, dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
-    ${renderDecisionEvidence(dr)}
+    ${renderDecisionEvidence(c, dr)}
     ${sayHtml}
     ${noteHtml}
     <div class="decision-comment-form" data-decision-comment-for="${escAttr(c.id)}" style="display:${decisionChangesOpen[c.id] ? 'flex' : 'none'}">
@@ -1393,13 +1490,16 @@ async function submitDecision(root, id, verdict, text) {
   markReadAfterAction(id);
 }
 
-// Evidence link → scroll + flash the referenced anchor in the content doc
-// (same postMessage path as "Go to location"). On mobile the sheet covers the
-// document, so dismiss it first exactly like goToCommentLocation does.
-function goToEvidence(anchorId) {
+// Evidence "Go to" → scroll + flash the referenced anchor in the content doc
+// (same postMessage path as "Go to location"), leaving a "Back to #N" marker
+// on it that brings this card back ('annotate:back-to-card'). On mobile the
+// sheet covers the document, so dismiss it first exactly like
+// goToCommentLocation does.
+function goToEvidence(anchorId, commentId) {
   if (!anchorId) return;
   if (isMobileLayout()) setMobileSheetOpen(false);
-  scrollToAnchorInFrame(anchorId, null);
+  const back = commentId ? { commentId, n: NUM_MAP[commentId] || 0, from: 'rail' } : null;
+  scrollToAnchorInFrame(anchorId, null, back);
 }
 
 function wireDecisionActions(root) {
@@ -1422,20 +1522,41 @@ function wireDecisionActions(root) {
     const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
     submitDecision(root, btn.dataset.id, v, text);
   }));
-  root.querySelectorAll('[data-decision-action="toggle-details"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    const open = !decisionDetailsOpen[id];
-    decisionDetailsOpen[id] = open;
-    // Toggle in place (no re-render): keeps focus on the disclosure button,
-    // which is what assistive tech expects from aria-expanded.
+  // Disclosures toggle in place (no re-render): focus stays on the button,
+  // which is what assistive tech expects from aria-expanded.
+  const toggleRegion = (btn, open) => {
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     const region = document.getElementById(btn.getAttribute('aria-controls'));
     if (region) region.hidden = !open;
+    return region;
+  };
+  root.querySelectorAll('[data-decision-action="evidence-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !decisionEvidenceOpen[btn.dataset.id];
+    decisionEvidenceOpen[btn.dataset.id] = open;
+    const region = toggleRegion(btn, open);
+    if (open) syncExcerptClamps(region);
+  }));
+  root.querySelectorAll('[data-decision-action="evidence-preview"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !decisionEvidenceItemOpen[btn.dataset.key];
+    decisionEvidenceItemOpen[btn.dataset.key] = open;
+    const region = toggleRegion(btn, open);
+    if (open) syncExcerptClamps(region);
+  }));
+  root.querySelectorAll('[data-decision-action="excerpt-more"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !decisionExcerptOpen[btn.dataset.key];
+    decisionExcerptOpen[btn.dataset.key] = open;
+    const box = btn.closest('.decision-excerpt');
+    if (box) box.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Show less' : 'Show more';
+    if (box && box.parentElement) syncExcerptClamps(box.parentElement);
   }));
   root.querySelectorAll('[data-decision-action="evidence"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    goToEvidence(btn.dataset.anchor);
+    goToEvidence(btn.dataset.anchor, btn.dataset.id);
   }));
   root.querySelectorAll('[data-decision-action="note-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1824,6 +1945,7 @@ function setDrawerCollapsed(collapsed, persist) {
     try { localStorage.setItem('annotate:drawerCollapsed', collapsed ? '1' : '0'); } catch {}
   }
   updateStripBadge();
+  if (!collapsed) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
 function setVrailCollapsed(collapsed, persist) {
   document.getElementById('vrail').classList.toggle('collapsed', collapsed);
@@ -2205,7 +2327,9 @@ function renderOwnerChip() {
 //                   {type:'annotate:ready', version}
 //                   {type:'annotate:scroll-result', anchorId, found}
 //                   {type:'annotate:decision-posted', commentId}  (body-inline decision strip resolved)
-// Shell -> content: {type:'annotate:scroll-to', anchorId}
+//                   {type:'annotate:excerpts', version, excerpts: {anchorId: {text, name, card} | {missing}}}
+//                   {type:'annotate:back-to-card', commentId}  ("Back to #N" clicked on an evidence target)
+// Shell -> content: {type:'annotate:scroll-to', anchorId, target, back: {commentId, n, from} | null}
 //                   {type:'annotate:comment-counts', counts: {anchorId: n},
 //                    pins: {anchorId: [{id, n, unread, target, decision,
 //                                        decisionRequest, decisionVerdict}]}}
@@ -2287,6 +2411,18 @@ function wireBridge() {
       } else {
         pendingGoto = null;
       }
+    } else if (data.type === 'annotate:excerpts') {
+      // Text of the anchors the open cards cite, for the rail card's quoted
+      // excerpt and evidence previews. Posted only when it changes.
+      if (!data.excerpts || typeof data.excerpts !== 'object') return;
+      if (data.version && data.version !== CURRENT_VERSION) return; // a stale document
+      EXCERPTS = data.excerpts;
+      EXCERPTS_VERSION = data.version || CURRENT_VERSION;
+      renderDrawer();
+    } else if (data.type === 'annotate:back-to-card') {
+      // "Back to #N" on an evidence target the rail card sent the reader to.
+      const c = data.commentId ? findCommentById(data.commentId) : null;
+      if (c) focusSidebarCard(c.id);
     } else if (data.type === 'annotate:decision-posted') {
       // A body-inline decision strip (adapter.js) just resolved a decision.
       // Refresh immediately so the rail card's decision block and the pins
@@ -2346,6 +2482,9 @@ function sendCommentCountsToFrame() {
           // resolution — so the strip can offer "↺ Change" the same way the
           // rail card does. adapter.js assigns this via textContent only,
           // never innerHTML.
+          // The card's own text: the body strip shows it under the prompt
+          // when it says more, since the strip replaces the generated card.
+          text: hasDecisionRequest && typeof c.text === 'string' ? c.text : null,
           decisionRequest: hasDecisionRequest ? {
             prompt: displayPrompt(c),
             options: Array.isArray(c.decision_request.options) ? c.decision_request.options : null,
@@ -2388,10 +2527,10 @@ function sendCommentCountsToFrame() {
   frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, '*');
 }
 
-function scrollToAnchorInFrame(anchorId, target) {
+function scrollToAnchorInFrame(anchorId, target, back) {
   const frame = document.getElementById('content-frame');
   if (!frame || !frame.contentWindow) return;
-  frame.contentWindow.postMessage({ type: 'annotate:scroll-to', anchorId, target: target || null }, '*');
+  frame.contentWindow.postMessage({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null }, '*');
 }
 
 // ── Wire popover buttons ─────────────────────────────────────────────

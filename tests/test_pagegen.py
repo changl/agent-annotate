@@ -471,6 +471,79 @@ def test_later_version_warns_when_most_plan_sections_disappear(tmp_path):
     assert "scope" in result["warnings"][0]
 
 
+# ── unchanged sections (v2+) ────────────────────────────────────────────────
+_V1_BODY = (
+    "Intro prose before any section.\n\n"
+    "## Scope\n\nWhat this round decides.\n\n- rename status\n- own tier\n\n"
+    "## Columns\n\n| Column | Type |\n|---|---|\n| status | text |\n\n"
+    "## Links\n\nSee [the history](https://example.com/a).\n\n"
+    "## Plan\n\nTwo statements and a week of dual writes.\n"
+)
+
+
+def _two_versions(tmp_path, v2_body):
+    slug_dir = tmp_path / "review"
+    v1 = tmp_path / "v1.md"
+    v1.write_text(_doc(_V1_BODY, version="v1"), encoding="utf-8")
+    generate(v1, slug_dir)
+    v2 = tmp_path / "v2.md"
+    v2.write_text(_doc(v2_body, version="v2", full_plan="true",
+                       other_files_required="none"), encoding="utf-8")
+    return slug_dir, v2
+
+
+def _section_tag(html: str, anchor: str) -> str:
+    start = html.index(f'<section data-anchor-id="{anchor}"')
+    return html[start:html.index(">", start) + 1]
+
+
+def test_v2_marks_only_the_sections_identical_to_v1(tmp_path):
+    v2_body = (_V1_BODY
+               .replace("(https://example.com/a)", "(https://example.com/b)")
+               .replace("a week of dual writes", "two weeks of dual writes")
+               + "\n## Rollout\n\nNew in v2.\n")
+    slug_dir, v2 = _two_versions(tmp_path, v2_body)
+    result = generate(v2, slug_dir)
+    html = result["html"].read_text(encoding="utf-8")
+
+    assert result["unchanged_sections"] == ["s:scope", "s:columns"]
+    for anchor in ("s:scope", "s:columns"):
+        assert _section_tag(html, anchor) == (
+            f'<section data-anchor-id="{anchor}" data-unchanged-since="v1">')
+    # A changed word, a changed link target and a brand-new section all render
+    # as before; so does the heading-less overview.
+    for anchor in ("s:links", "s:plan", "s:rollout", "s:overview"):
+        assert _section_tag(html, anchor) == f'<section data-anchor-id="{anchor}">'
+    # Rerunning the same version is idempotent.
+    assert generate(v2, slug_dir)["unchanged_sections"] == ["s:scope", "s:columns"]
+
+
+def test_v1_never_marks_a_section(tmp_path):
+    src = tmp_path / "page.md"
+    src.write_text(_doc(_V1_BODY), encoding="utf-8")
+    result = generate(src, tmp_path / "review")
+    assert result["unchanged_sections"] == []
+    assert "data-unchanged-since" not in result["html"].read_text(encoding="utf-8")
+
+
+def test_the_previous_rendered_page_stands_in_for_a_missing_source(tmp_path):
+    slug_dir, v2 = _two_versions(tmp_path, _V1_BODY.replace("dual writes", "dual reads"))
+    (slug_dir / "source" / "v1.md").unlink()
+    result = generate(v2, slug_dir)
+    assert result["unchanged_sections"] == ["s:scope", "s:columns", "s:links"]
+
+
+def test_a_hand_built_previous_page_marks_nothing(tmp_path):
+    slug_dir, v2 = _two_versions(tmp_path, _V1_BODY)
+    (slug_dir / "source" / "v1.md").unlink()
+    template = (pagegen.WEB_DIR / "template.html").read_text(encoding="utf-8")
+    (slug_dir / "versions" / "v1.html").write_text(template.replace(
+        "{{CANVAS}}", '<section data-anchor-id="s:scope"><h2>Scope</h2></section>'),
+        encoding="utf-8")
+    result = generate(v2, slug_dir)
+    assert result["unchanged_sections"] == []
+
+
 def test_the_template_is_fully_filled_and_the_sentinels_survive(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(EXAMPLE, encoding="utf-8")
