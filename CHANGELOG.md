@@ -25,6 +25,16 @@ this repository.
   echo (cards it posed, items it resolved, its publishes) and prints a
   reviewer's answer whole; `--json` events carry `decision_text`.
 
+- **`annotate cost` measures what agents spend on annotate, and prices a
+  change before it ships.** A read-only scan of Claude transcripts (Codex
+  with `--codex`) turns every annotate call and skill/reference read into a
+  row: result tokens, the issuing turn's output tokens (read once per
+  message id), CLI seconds, failure reason and the retry that followed. The
+  report shows calls, failure rate, tokens and round medians per week (or
+  per release, or between given dates) and per subcommand. `--estimate
+  model.json` replays those past rows with smaller results or fixed
+  failures and prints before and after totals.
+
 - **Pages come back by themselves after a reboot or crash.** `annotate
   revive` restarts every registered page whose server is gone, on its recorded
   port, re-runs its route and keeps its owner (`publish` would have made the

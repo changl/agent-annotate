@@ -280,6 +280,7 @@ next hook notice. A deferred verdict inside an open round reports
 | `hook-check` | The UserPromptSubmit hook, in-process. |
 | `mcp` | The MCP server over stdio (`agent-annotate[mcp]`). |
 | `eval [--since YYYY-MM-DD] [--out-dir DIR] [--refresh-transcripts] [--state-dir] [--bus-dir] [--transcript-glob]` | Runs `eval.py` in a subprocess over the buses, the comment stores and the transcripts; writes `eval-baseline.{md,json}` to `state/logs` and prints a headline. Read-only: it is exec'd rather than imported so it cannot reach `inbox` and move the cursor it measures. Seven sections and the regression thresholds: `telemetry-and-eval.md`. |
+| `cost [--since D] [--by week\|release\|D1,D2] [--include-dev] [--codex] [--json] [--estimate model.json]` | Read-only maintainer tool; never needed by a page author. Finds every annotate call and skill/reference read in the Claude transcripts (Codex too with `--codex`; default window 30 days) and prints per-period calls, failure rate, output and result tokens and closed-round medians, then per-subcommand result size, CLI seconds and top failure reasons. Sessions developing annotate are left out unless `--include-dev`. `--json` prints one row per call. `--estimate` prices a change on those past rows before it ships: `{"<sub>": {"result_tokens": N}}` resizes that subcommand's successful results, `{"<error regex>": "fixed"}` drops matching failures with their retry turn's output. |
 
 ## 11. Environment variables
 

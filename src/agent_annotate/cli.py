@@ -28,6 +28,7 @@ Subcommands:
     cards <slug>                          list decision cards and their verdicts
     ask <slug> --from cards.json          create/refresh decision cards in one call
     eval [--since DATE]                   read-only baseline of the review loop
+    cost [--since DATE] [--estimate M]    read-only token/speed cost from agent transcripts
     prune-bus [--days N] [--apply]        archive quiet buses and their cursors
     watch <slug>                          tail comments to stdout (sidecar)
     monitor <slug> [--owner ID]           exclusive session monitor + live lease
@@ -2341,6 +2342,12 @@ def cmd_eval(args) -> int:
     return 0
 
 
+def cmd_cost(args) -> int:
+    """What agents spend driving annotate, read from their transcripts (costs.py)."""
+    from .costs import run
+    return run(args)
+
+
 def cmd_claim(args) -> int:
     """Take ownership of a page for this session, without a monitor.
 
@@ -3935,6 +3942,20 @@ def main():
     sp_eval.add_argument("--refresh-transcripts", dest="refresh_transcripts",
                          action="store_true", help="ignore the transcript scan cache")
     sp_eval.set_defaults(func=cmd_eval)
+
+    sp_cost = sub.add_parser("cost", help="read-only token and speed cost of annotate, from transcripts")
+    sp_cost.add_argument("--since", default=None, help="YYYY-MM-DD (default: 30 days ago)")
+    sp_cost.add_argument("--by", default="week", help="periods: week, release, or cut dates D1,D2")
+    sp_cost.add_argument("--include-dev", dest="include_dev", action="store_true",
+                         help="keep sessions developing annotate itself")
+    sp_cost.add_argument("--codex", action="store_true", help="also scan Codex sessions")
+    sp_cost.add_argument("--root", default=None, help="Claude transcript root (default ~/.claude/projects)")
+    sp_cost.add_argument("--codex-root", dest="codex_root", default=None,
+                         help="Codex session root (default $CODEX_HOME/sessions)")
+    sp_cost.add_argument("--json", action="store_true", help="print the per-call rows")
+    sp_cost.add_argument("--estimate", default=None, metavar="model.json",
+                         help='price a change: {"<sub>": {"result_tokens": N}, "<error regex>": "fixed"}')
+    sp_cost.set_defaults(func=cmd_cost)
 
     sp_shim = sub.add_parser("install-shim", help="(re)write ~/.local/bin/annotate")
     sp_shim.add_argument("--force", action="store_true",
