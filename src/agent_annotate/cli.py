@@ -21,6 +21,7 @@ Subcommands:
     status [<slug>] [--retired]           list active slugs / health / retired rows
     close <slug> [--older-than 30d]       archive decision cards nobody answered
     retire <slug>|--dead                  move dead registry rows to state/retired/
+    revive [--install|--uninstall]        restart dead pages on their port, owner kept
     doctor                                validate the installation
     migrate <legacy.html>                 one-shot v1→v2 migration
     inbox <slug> [--unread] [--json]      read this session's unseen bus events
@@ -1296,7 +1297,13 @@ def cmd_publish(args) -> int:
             else:
                 port_base = existing.get("port") if existing else cfg.get("port_base", 8800)
                 registered_pid = existing.get("pid") if existing else None
+                # A dead page still owns its port: `revive` brings it back
+                # there, and its routes point at it.
+                reserved = {int(r["port"]) for p, s, r in _registry_entries()
+                            if (p, s) != (project, slug) and r.get("port")}
                 port = _find_free_port_after(int(port_base), registered_pid=registered_pid)
+                while port in reserved:
+                    port = _find_free_port_after(port + 1, registered_pid=registered_pid)
 
             bus_dir = BUS_ROOT / project
             bus_dir.mkdir(parents=True, exist_ok=True)
@@ -2718,6 +2725,192 @@ def cmd_retire(args) -> int:
     return 0
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# revive — bring dead registry rows back after a reboot or crash
+# ────────────────────────────────────────────────────────────────────────────
+REVIVE_LABEL = "com.agent-annotate.revive"
+LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+
+
+def _wait_listening(port: int, pid: int, seconds: float = 8.0) -> bool:
+    """True once `pid` is alive and something LISTENs on `port`."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not _is_process_alive(pid):
+            return False
+        try:
+            if _port_listen_pid(port) is not None:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            return _is_process_alive(pid)
+        time.sleep(0.25)
+    return False
+
+
+def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str, str]:
+    """Restart one dead page on its recorded port, keeping its owner.
+
+    `publish` is the wrong tool for this: it makes the caller the owner, so a
+    page revived by whoever happened to run it stops notifying the session
+    that asked the questions. Returns (outcome, detail).
+    """
+    with _flock(_state_lock_path(project)):
+        state = _load_state_for_project(project)
+        record = (state.get("slugs") or {}).get(slug)
+        if not isinstance(record, dict):
+            return "gone", "no longer registered"
+        if not _entry_is_dead(record, live):
+            procs = live.get(str(Path(record.get("slug_dir", "")).resolve())) or []
+            if len(procs) == 1 and procs[0]["pid"] != record.get("pid"):
+                # Serving under a pid the registry never saw: adopt it.
+                if not dry_run:
+                    record["pid"] = procs[0]["pid"]
+                    record["port"] = procs[0]["port"] or record.get("port")
+                    _save_state_for_project(project, state)
+                return "adopted", f"pid {procs[0]['pid']}"
+            return "alive", ""
+        slug_dir = Path(record.get("slug_dir") or "")
+        if not (slug_dir / "current.html").exists():
+            return "skipped", f"no current.html in {slug_dir}"
+        port = int(record.get("port") or 0)
+        if not port:
+            return "skipped", "no recorded port"
+        try:
+            free = _find_free_port_after(port, registered_pid=record.get("pid"))
+        except RuntimeError as e:
+            free = None
+            detail = str(e)
+        transport_name = record.get("transport") or "local"
+        if free and free != port and transport_name == "local":
+            # No route points at a local page's port, so it may move, but not
+            # onto a port another registered page will come back to.
+            reserved = {int(r["port"]) for p, s, r in _registry_entries()
+                        if (p, s) != (project, slug) and r.get("port")}
+            while free in reserved:
+                free = _find_free_port_after(free + 1)
+            port = free
+        elif free != port:
+            # Every route points at this port. Moving it would strand them.
+            return "skipped", f"port {port} is in use" if free else detail
+        if dry_run:
+            return "would-revive", f"port {port}"
+
+        url = record.get("url") if transport_name != "local" else f"http://localhost:{port}/"
+        details = record.get("transport_details") or {}
+        error = None
+        pbp = record.get("public_base_path") or ""
+        if transport_name != "local":
+            # Re-run the route every time: it is idempotent, and it is what
+            # moves a page onto the machine's current tailnet name.
+            try:
+                from .transports import load as _load_transport
+                cfg = _project_config(project)
+                opts = _transport_opts(cfg)
+                if cfg.get("hostname"):
+                    opts["hostname"] = cfg["hostname"]
+                opts["previous"] = {"port": port, "details": details}
+                with _flock(_tunnel_lock_path()):
+                    result = _load_transport(transport_name).publish(
+                        (pbp or f"/{slug}").lstrip("/"), port, **opts)
+                url = result.get("url") or url
+                details = result.get("details", details)
+                pbp = pbp or f"/{slug}"
+            except Exception as e:
+                error = str(e)
+        bus_dir = BUS_ROOT / project
+        bus_dir.mkdir(parents=True, exist_ok=True)
+        pid = _start_server(slug_dir, port, bus_dir, pbp)
+        if not _wait_listening(port, pid):
+            return "failed", f"server exited; see {LOG_DIR / (slug_dir.name + '.log')}"
+        record.update({
+            "pid": pid,
+            "port": port,
+            "local_url": f"http://localhost:{port}/",
+            "url": url,
+            "public_base_path": pbp or None,
+            "transport_details": details,
+            "transport_error": error,
+            "revived_at": _now_iso(),
+        })
+        _save_state_for_project(project, state)
+    _bus_emit(record.get("bus_file") or str(bus_dir / f"{slug}.ndjson"),
+              {"event": "page_revived", "slug": slug, "pid": pid, "port": port,
+               "url": url, "transport_error": error, "ts": _now_iso()})
+    return "revived", f"port {port}" + (f" (route: {error})" if error else "")
+
+
+def _revive_plist(interval: int) -> str:
+    exe = shutil.which("annotate") or str(Path.home() / ".local" / "bin" / "annotate")
+    log = LOG_DIR / "revive.log"
+    path = os.environ.get("PATH", "/usr/bin:/bin")
+    for extra in ("/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin")):
+        if extra not in path.split(":"):
+            path += ":" + extra
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{REVIVE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array><string>{exe}</string><string>revive</string><string>--quiet</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>{interval}</integer>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>{path}</string></dict>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+"""
+
+
+def _launchctl(*argv: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["launchctl", *argv], capture_output=True, text=True, timeout=15)
+
+
+def cmd_revive(args) -> int:
+    """Restart every registered page whose server is gone.
+
+    Safe to run any time and from launchd: live pages are left alone, retired
+    rows are never touched, and each revived page keeps its port, route and
+    owner.
+    """
+    plist = LAUNCH_AGENTS_DIR / f"{REVIVE_LABEL}.plist"
+    domain = f"gui/{os.getuid()}"
+    if args.install:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        plist.write_text(_revive_plist(args.interval), encoding="utf-8")
+        _launchctl("bootout", f"{domain}/{REVIVE_LABEL}")
+        proc = _launchctl("bootstrap", domain, str(plist))
+        if proc.returncode != 0:
+            print(f"ERROR: launchctl bootstrap failed: {(proc.stderr or proc.stdout).strip()}",
+                  file=sys.stderr)
+            return 1
+        print(f"  installed {plist} (at login + every {args.interval}s)")
+        return 0
+    if args.uninstall:
+        _launchctl("bootout", f"{domain}/{REVIVE_LABEL}")
+        plist.unlink(missing_ok=True)
+        print(f"  removed {plist}")
+        return 0
+
+    live = _running_servers()
+    failed = 0
+    for project, slug, _record in _registry_entries():
+        try:
+            outcome, detail = _revive_one(project, slug, live, args.dry_run)
+        except TimeoutError as e:
+            outcome, detail = "failed", str(e)
+        if outcome == "failed":
+            failed += 1
+        if outcome == "alive" or (args.quiet and outcome in ("gone",)):
+            continue
+        stamp = f"{_now_iso()} " if args.quiet else "  "
+        print(f"{stamp}{outcome:<12} {project}/{slug}" + (f"  {detail}" if detail else ""))
+    return 1 if failed else 0
+
+
 def cmd_install_shim(args) -> int:
     changed, msg = _ensure_shim_installed(force=getattr(args, "force", False), refresh=True)
     print(f"  {msg}")
@@ -3640,6 +3833,17 @@ def main():
     sp_retire.add_argument("--dry-run", action="store_true",
                            help="print the table and write nothing")
     sp_retire.set_defaults(func=cmd_retire)
+
+    sp_revive = sub.add_parser(
+        "revive", help="restart dead pages on their recorded port, keeping owner and route")
+    sp_revive.add_argument("--dry-run", action="store_true", help="report, start nothing")
+    sp_revive.add_argument("--quiet", action="store_true",
+                           help="timestamped lines for changes only (launchd log)")
+    sp_revive.add_argument("--install", action="store_true",
+                           help="install the launchd watchdog: at login and every --interval")
+    sp_revive.add_argument("--uninstall", action="store_true", help="remove the watchdog")
+    sp_revive.add_argument("--interval", type=int, default=60)
+    sp_revive.set_defaults(func=cmd_revive)
 
     sp_eval = sub.add_parser("eval", help="read-only baseline of the review loop")
     sp_eval.add_argument("--since", default=None,

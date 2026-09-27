@@ -71,6 +71,7 @@ recommend get answered; cards that only ask mostly do not. The schema is in
 annotate status                                # health, owners, "(gone)" owners
 annotate close review --older-than 30d --dry-run   # cards nobody ever answered
 annotate retire --dead --dry-run               # registry rows whose server died
+annotate revive --install                      # launchd: restart dead pages at login + every 60 s
 annotate eval --since 2026-09-01               # read-only baseline, by hand
 ```
 
@@ -78,7 +79,9 @@ annotate eval --since 2026-09-01               # read-only baseline, by hand
 card that has a verdict or an ordinary reviewer comment. `retire` moves dead
 registry rows to `state/retired/`, keeping every field, and leaves the slug
 directory, the bus and the transport config alone. Both take `--dry-run`, and
-neither deletes anything.
+neither deletes anything. `revive` restarts every registered page whose server
+died (reboot or crash) on its recorded port, re-runs its route and keeps its
+owner; `--install` runs it from launchd at login and every 60 seconds.
 
 `eval` is a **manual** step, not a scheduled one: run it once before an
 improvement round and once after, and compare. Its thresholds are guidance for

@@ -6,6 +6,15 @@ this repository.
 
 ## Unreleased
 
+- **Pages come back by themselves after a reboot or crash.** `annotate
+  revive` restarts every registered page whose server is gone, on its recorded
+  port, re-runs its route and keeps its owner (`publish` would have made the
+  caller the owner). `annotate revive --install` runs it from launchd at login
+  and every 60 seconds. A dead page's port stays reserved: `publish` no longer
+  hands it to a new page.
+- **Tailscale routes follow a machine rename.** The transport reads the live
+  tailnet name and ignores serve entries keyed on an old one.
+
 - **The page body and the rail always agree about a question.** Question
   cards are baked into the page when a version is generated. They kept reading
   "Answer it on the card" after the rail had moved the item to Addressed or
