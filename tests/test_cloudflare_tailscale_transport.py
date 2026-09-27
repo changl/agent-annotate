@@ -59,20 +59,32 @@ def siblings(monkeypatch):
 
 
 def test_the_tunnel_origin_is_the_tailscale_endpoint_not_localhost(siblings):
-    result = cloudflare_tailscale.publish("demo", 8900, hostname="reviews.example.com")
+    result = cloudflare_tailscale.publish("demo", 8900, public=True,
+                                          hostname="reviews.example.com")
 
     service = siblings["cf_publish"][0][2]["service"]
     assert service == "https://host.ts.net:8456"
     assert "localhost" not in service
-    assert result["url"] == "https://reviews.example.com/demo/"
+    assert result["url"] == "https://host.ts.net:8456/demo/"
+    assert result["details"]["public_url"] == "https://reviews.example.com/demo/"
     assert result["details"]["https_port"] == 8456
     assert result["details"]["tailscale"]["local_port"] == 8900
+
+
+def test_without_public_there_is_no_tunnel_route(siblings):
+    """One URL per page: agents handed over Cloudflare 26 times in 30 when
+    publish printed both."""
+    result = cloudflare_tailscale.publish("demo", 8900)
+    assert siblings["cf_publish"] == []
+    assert result["url"] == "https://host.ts.net:8456/demo/"
+    assert result["details"]["public"] is False
+    assert "public_url" not in result["details"]
 
 
 def test_the_service_url_carries_no_trailing_slash(siblings):
     """cloudflared appends the request path to the service; a trailing slash
     doubles it on every request."""
-    cloudflare_tailscale.publish("demo", 8900)
+    cloudflare_tailscale.publish("demo", 8900, public=True)
     assert not siblings["cf_publish"][0][2]["service"].endswith("/")
 
 
@@ -85,7 +97,7 @@ def test_a_failed_tunnel_write_does_not_leak_the_serve_port(monkeypatch, sibling
     sys.modules["annotate_transport_cloudflare"].publish = _boom
 
     with pytest.raises(RuntimeError, match="403"):
-        cloudflare_tailscale.publish("demo", 8900)
+        cloudflare_tailscale.publish("demo", 8900, public=True)
 
     assert siblings["ts_unpublish"], "serve port was left behind"
     assert siblings["ts_unpublish"][0][1]["https_port"] == 8456

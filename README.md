@@ -130,10 +130,11 @@ request, so a fix reaches every published page at once.
 | `local` | none; `http://localhost:<port>/` |
 | `tailscale` | `tailscale serve` HTTPS endpoint on the tailnet |
 | `cloudflare` | Cloudflare Tunnel ingress rule; origin defaults to loopback, override with `service=` |
-| `cloudflare_tailscale` | Cloudflare Tunnel whose origin is the tailnet endpoint |
+| `cloudflare_tailscale` | the tailnet endpoint; with `--public`, also a Cloudflare Tunnel route whose origin is that endpoint |
 
-Prefer `cloudflare_tailscale` for a tunnel whose connector cannot dial
-loopback. The transport is configured per project in `projects.toml`
+The tailnet URL is the page's one URL. `--public` on `publish` (or `new
+--publish`) adds the Cloudflare route for a reviewer outside the tailnet and
+prints it as `Public URL:`; a page that already had one keeps it. The transport is configured per project in `projects.toml`
 (`transport`, `hostname`, `port_base`, `path_prefix`); every other key in a
 project's section is passed to the transport as an option, so a section can
 carry `env_file = "/path/.env.local"` and `tunnel_id = "…"`. Cloudflare
@@ -144,8 +145,8 @@ private env file named by `ANNOTATE_CLOUDFLARE_ENV_FILE`; nothing is embedded.
 ## Publish verification
 
 `annotate publish` prints a URL only after it has loaded the page and found
-rendered anchors at the local origin, the tailnet hop and the public URL,
-naming the hop that broke. A Cloudflare Access login page is reported as
+rendered anchors at the local origin and the tailnet hop (and the public URL,
+with `--public`), naming the hop that broke. A Cloudflare Access login page is reported as
 `UNVERIFIED … (Access login)` — live for an authenticated reviewer, unproven
 from here — not as a failure. `--no-verify` skips the gate and says so.
 

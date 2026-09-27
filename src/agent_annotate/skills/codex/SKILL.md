@@ -142,11 +142,10 @@ inbox shows it) or for every card to carry a verdict.
 
 ## 8. Verification
 
-`publish` asserts rendered anchors at the `origin`, `tailscale` and `public`
-hops. A status code proves nothing behind Cloudflare Access: a healthy route
-and a dead one both answer 302 to the login page. `UNVERIFIED … (Access login)`
-means live but unproven from here — open the URL in an authenticated browser.
-Never curl a page; never call one live off a 200.
+`publish` proves the page renders at the `origin` and `tailscale` hops before
+it prints `URL:`, the one link to hand over. `--public` adds a Cloudflare route
+for a reviewer outside the tailnet. Never curl a page; never call one live off
+a 200.
 
 ## 9. References
 

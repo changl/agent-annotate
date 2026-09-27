@@ -6,6 +6,14 @@ this repository.
 
 ## Unreleased
 
+- **One URL per page: Tailscale.** `publish` prints the tailnet URL as `URL:`
+  and nothing else to choose from; 26 of 30 sessions had been handing over the
+  Cloudflare URL because it was the only `URL:` line. `--public` (also on `new
+  --publish`) adds the Cloudflare route for a reviewer outside the tailnet and
+  prints it as `Public URL:`. Pages that already had a route keep it through
+  publish and revive. The success output drops pid, port, transport, slug dir,
+  bus and state paths; `status` has them.
+
 - **Fewer failed rounds, less output.** Measured over 60 days of transcripts,
   62% of recent page rounds hit a gate error. `resolve`, `carry` and
   `addressed` print one line instead of the whole comment (about 530 tokens

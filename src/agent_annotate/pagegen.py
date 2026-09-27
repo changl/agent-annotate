@@ -1078,6 +1078,7 @@ def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
         port=getattr(args, "port", None),
         transport=getattr(args, "transport", None),
         hostname=getattr(args, "hostname", None),
+        public=getattr(args, "public", False),
         path_prefix=None,
         skip_js_lint=False,
         no_verify=False,
@@ -1123,4 +1124,6 @@ def add_parser(sub) -> None:
     sp.add_argument("--transport", default=None,
                     choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"])
     sp.add_argument("--hostname", default=None)
+    sp.add_argument("--public", action="store_true",
+                    help="with --publish: also add a Cloudflare route for an outside reviewer")
     sp.set_defaults(func=cmd_new)

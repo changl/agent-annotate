@@ -35,12 +35,24 @@ def _sibling(name: str):
     return mod
 
 
-def publish(slug: str, port: int, **opts) -> dict:
+def publish(slug: str, port: int, public: bool = False, **opts) -> dict:
+    """The tailnet URL is the page's URL. The tunnel route is added only for
+    `public=True`, for a reviewer outside the tailnet: handing over two URLs
+    per page left agents choosing, and they chose Cloudflare 26 times in 30.
+    """
     tailscale = _sibling("tailscale")
     cloudflare = _sibling("cloudflare")
 
     ts = tailscale.publish(slug, port, **opts)
     ts_details = ts.get("details", {})
+    # The server mounts the page under /<slug>/ (its public base path), so
+    # the serve root alone is not the page.
+    page_url = f"{ts['url'].rstrip('/')}/{slug}/"
+    if not public:
+        return {"url": page_url, "details": {
+            "transport": "cloudflare_tailscale", "public": False,
+            "tailscale": ts_details, "https_port": ts_details.get("https_port"),
+        }}
     # Strip the trailing slash: cloudflared treats the service as an origin
     # base, and "https://host:8455/" would double the slash on every path.
     service = ts["url"].rstrip("/")
@@ -57,10 +69,12 @@ def publish(slug: str, port: int, **opts) -> dict:
 
     details = dict(cf.get("details", {}))
     details["transport"] = "cloudflare_tailscale"
+    details["public"] = True
+    details["public_url"] = cf["url"]
     details["origin_service"] = service
     details["tailscale"] = ts_details
     details["https_port"] = ts_details.get("https_port")
-    return {"url": cf["url"], "details": details}
+    return {"url": page_url, "details": details}
 
 
 def unpublish(slug: str, **opts) -> dict:

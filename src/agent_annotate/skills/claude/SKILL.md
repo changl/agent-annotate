@@ -139,11 +139,9 @@ event `round_submitted`), or for every card to carry a verdict.
 
 ## 8. Verification
 
-`publish` asserts rendered anchors at the `origin`, `tailscale` and `public`
-hops. Behind Cloudflare Access a status code proves nothing: healthy and dead
-routes both answer 302. `UNVERIFIED … (Access login)` means live but unproven
-from here — check it with `orca tab create --url <url> --json` plus `orca
-eval` on the authenticated profile. Never curl a page; never call one live off
+`publish` proves the page renders at the `origin` and `tailscale` hops before
+it prints `URL:`, the one link to hand over. `--public` adds a Cloudflare route
+for a reviewer outside the tailnet. Never curl a page; never call one live off
 a 200.
 
 ## 9. References

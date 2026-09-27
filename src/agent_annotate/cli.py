@@ -1039,10 +1039,22 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
         if report.failed:
             return report
 
-    url = record.get("url") or ""
-    if record.get("transport") != "local" and url.startswith("https://"):
-        report.stages.append(probe_browser("public", url, timeout=timeout))
+    public = record.get("public_url") or (
+        record.get("url") if record.get("transport") == "cloudflare" else None) or ""
+    if public.startswith("https://"):
+        report.stages.append(probe_browser("public", public, timeout=timeout))
     return report
+
+
+def _had_public_route(record: dict) -> bool:
+    """True when a page was published with a Cloudflare route.
+
+    Pages published before Tailscale became the default carry the route but
+    no `public_url`; their details name the tunnel's origin service instead.
+    """
+    details = record.get("transport_details") or {}
+    return bool(record.get("public_url") or details.get("public_url")
+                or details.get("origin_service"))
 
 
 class _AlreadyRunning(Exception):
@@ -1138,30 +1150,26 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
                 print(f"  UNVERIFIED     {s.name}: not verified from this session "
                       f"(Access login)"
                       + (f"; {passed} stage(s) PASS" if passed else ""))
-            print("                 The URL below is live for an authenticated reviewer;")
-            print("                 open it in the authenticated browser to confirm.")
+            print("                 The public URL below is live for an authenticated")
+            print("                 reviewer; the tailnet URL is verified.")
         if len(access) < len(report.unavailable):
             print("  UNVERIFIED     could not reach the authenticated browser — the public")
             print("                 URL below is UNCONFIRMED, not known-good")
 
+    # The one URL to hand over. Pid, port, bus and state paths used to follow
+    # it; `status` has them, and no round needed them from here.
     print(f"  URL:           {record['url']}")
-    print(f"  Local URL:     {record['local_url']}")
-    print(f"  PID:           {record['pid']}")
-    print(f"  Port:          {record['port']}")
-    print(f"  Transport:     {record.get('transport')}")
+    if record.get("public_url"):
+        print(f"  Public URL:    {record['public_url']}   (outside reviewers only)")
     if record.get("transport_error"):
         print(f"  Transport err: {record['transport_error']}")
-    print(f"  Slug dir:      {slug_dir}")
-    print(f"  NDJSON bus:    {record.get('bus_file')}")
-    print(f"  State file:    {STATE_DIR / (project + '.json')}")
     if report is not None:
         print("  ─────────────────────────────────────────────")
         for line in format_report(report):
             print(line)
     print("  ─────────────────────────────────────────────")
     if record.get("owner_label"):
-        print(f"  Owner:         {record['owner_label']}  "
-              f"(session {record.get('owner_session')})")
+        print(f"  Owner:         {record['owner_label']}")
     if hook_msg:
         print(f"  Hook install:  {hook_msg}")
         if hook_added:
@@ -1303,7 +1311,10 @@ def cmd_publish(args) -> int:
                             if (p, s) != (project, slug) and r.get("port")}
                 port = _find_free_port_after(int(port_base), registered_pid=registered_pid)
                 while port in reserved:
-                    port = _find_free_port_after(port + 1, registered_pid=registered_pid)
+                    nxt = _find_free_port_after(port + 1, registered_pid=registered_pid)
+                    if nxt <= port:
+                        break
+                    port = nxt
 
             bus_dir = BUS_ROOT / project
             bus_dir.mkdir(parents=True, exist_ok=True)
@@ -1326,6 +1337,10 @@ def cmd_publish(args) -> int:
                     opts = _transport_opts(cfg)
                     if hostname:
                         opts["hostname"] = hostname
+                    if transport_name == "cloudflare_tailscale":
+                        # A page that already had a public route keeps it.
+                        opts["public"] = bool(getattr(args, "public", False)) or bool(
+                            existing and _had_public_route(existing))
                     if existing:
                         # What this slug was routed through last time. A
                         # transport whose route key can move between publishes
@@ -1362,6 +1377,7 @@ def cmd_publish(args) -> int:
                 "transport": transport_name,
                 "public_base_path": pbp or None,
                 "url": transport_url or f"http://localhost:{port}/",
+                "public_url": transport_details.get("public_url"),
                 "local_url": f"http://localhost:{port}/",
                 "bus_file": str(bus_dir / f"{slug}.ndjson"),
                 "started_at": _now_iso(),
@@ -2813,7 +2829,10 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str
             reserved = {int(r["port"]) for p, s, r in _registry_entries()
                         if (p, s) != (project, slug) and r.get("port")}
             while free in reserved:
-                free = _find_free_port_after(free + 1)
+                nxt = _find_free_port_after(free + 1)
+                if nxt <= free:
+                    break
+                free = nxt
             port = free
         elif free != port:
             # Every route points at this port. Moving it would strand them.
@@ -2835,6 +2854,8 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str
                 if cfg.get("hostname"):
                     opts["hostname"] = cfg["hostname"]
                 opts["previous"] = {"port": port, "details": details}
+                if transport_name == "cloudflare_tailscale":
+                    opts["public"] = _had_public_route(record)
                 with _flock(_tunnel_lock_path()):
                     result = _load_transport(transport_name).publish(
                         (pbp or f"/{slug}").lstrip("/"), port, **opts)
@@ -2853,6 +2874,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str
             "port": port,
             "local_url": f"http://localhost:{port}/",
             "url": url,
+            "public_url": details.get("public_url") or record.get("public_url"),
             "public_base_path": pbp or None,
             "transport_details": details,
             "transport_error": error,
@@ -3788,6 +3810,8 @@ def main():
         choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"],
     )
     sp_pub.add_argument("--hostname", default=None)
+    sp_pub.add_argument("--public", action="store_true",
+                        help="also add a Cloudflare route, for a reviewer outside the tailnet")
     sp_pub.add_argument("--path-prefix", default=None)
     sp_pub.add_argument(
         "--skip-js-lint",

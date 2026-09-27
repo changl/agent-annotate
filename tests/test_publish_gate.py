@@ -35,17 +35,22 @@ def published(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_find_free_port_after", lambda start, registered_pid=None: 8900)
     monkeypatch.setattr(cli, "_start_server", lambda *a, **k: 4242)
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [])
 
-    transport = SimpleNamespace(
-        publish=lambda slug, port, **opts: {
-            "url": PUBLIC_URL,
-            "details": {"transport": "cloudflare_tailscale", "https_port": 8456,
-                        "tailscale": {"hostname": "host.ts.net", "https_port": 8456}},
-        }
-    )
+    transport_calls = []
+
+    def _publish(slug, port, **opts):
+        transport_calls.append(opts)
+        details = {"transport": "cloudflare_tailscale", "https_port": 8456,
+                   "tailscale": {"hostname": "host.ts.net", "https_port": 8456}}
+        if opts.get("public"):
+            details["public_url"] = "https://public.example.com/demo/"
+        return {"url": PUBLIC_URL, "details": details}
+
+    transport = SimpleNamespace(publish=_publish)
     monkeypatch.setattr("agent_annotate.transports.load", lambda name: transport)
 
-    return SimpleNamespace(slug_dir=slug_dir, saved=saved)
+    return SimpleNamespace(slug_dir=slug_dir, saved=saved, transport_calls=transport_calls)
 
 
 def _args(slug_dir, **over):
@@ -122,6 +127,25 @@ def test_an_unreachable_browser_prints_the_url_but_says_unverified(published, mo
     assert "UNVERIFIED" in out
     assert "authenticated browser" in out
     assert published.saved["demo"]["verified"] is False
+
+
+def test_one_url_unless_public_is_asked_for(published, monkeypatch, capsys):
+    """Agents hand over whatever publish prints first. It prints one URL now;
+    --public adds the Cloudflare route for a reviewer outside the tailnet."""
+    monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(
+        ("origin", PASS, "ok"), ("tailscale", PASS, "ok")))
+    assert cli.cmd_publish(_args(published.slug_dir)) == 0
+    out = capsys.readouterr().out
+    assert published.transport_calls[-1]["public"] is False
+    assert "Public URL" not in out
+    assert "PID:" not in out and "NDJSON" not in out
+
+    published.saved.clear()
+    assert cli.cmd_publish(_args(published.slug_dir, public=True)) == 0
+    out = capsys.readouterr().out
+    assert published.transport_calls[-1]["public"] is True
+    assert "Public URL:    https://public.example.com/demo/" in out
+    assert published.saved["demo"]["public_url"] == "https://public.example.com/demo/"
 
 
 def test_no_verify_says_so_instead_of_claiming_success(published, capsys):
