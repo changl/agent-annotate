@@ -42,6 +42,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0: True)
     monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None: p)
     monkeypatch.setattr(cli, "_running_servers", lambda: {})
+    monkeypatch.setattr(cli, "_live_tailnet_host", lambda: None)
     return SimpleNamespace(slug_dir=slug_dir, started=started, tmp=tmp_path)
 
 
@@ -146,3 +147,38 @@ def test_the_plist_runs_revive_at_login_and_on_an_interval(estate):
     # launchd must not reap the servers the job started when the job exits.
     assert "<key>AbandonProcessGroup</key><true/>" in body
     assert json.dumps(cli.REVIVE_LABEL).strip('"') in body
+
+
+def test_a_live_page_is_rerouted_after_a_machine_rename(estate, monkeypatch):
+    """The server survives a rename; its route does not. On 2026-09-27 the Mac
+    went macbook-pro -> m1max -> macbook-pro and every page kept a URL on the
+    name it was published under."""
+    state = cli._load_state_for_project("reviews")
+    state["slugs"]["demo"].update({
+        "transport": "cloudflare_tailscale", "public_base_path": "/demo",
+        "url": "https://m1max.example.ts.net:8460/demo/",
+        "transport_details": {"tailscale": {"hostname": "m1max.example.ts.net",
+                                            "https_port": 8460}}})
+    cli._save_state_for_project("reviews", state)
+    live = {str(estate.slug_dir.resolve()): [{"pid": 999999, "port": 8899}]}
+    monkeypatch.setattr(cli, "_running_servers", lambda: live)
+    monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid == 999999)
+    monkeypatch.setattr(cli, "_live_tailnet_host", lambda: "macbook-pro.example.ts.net")
+
+    class _Fake:
+        @staticmethod
+        def publish(slug, port, **opts):
+            return {"url": "https://macbook-pro.example.ts.net:8447/demo/",
+                    "details": {"tailscale": {"hostname": "macbook-pro.example.ts.net",
+                                              "https_port": 8447}}}
+
+    import agent_annotate.transports as transports
+    monkeypatch.setattr(transports, "load", lambda name: _Fake)
+    monkeypatch.setattr(cli, "_project_config", lambda project: {})
+
+    assert cli.cmd_revive(_args(dry_run=True)) == 0
+    assert _record()["url"].startswith("https://m1max")
+    assert cli.cmd_revive(_args()) == 0
+    assert estate.started == []          # rerouted, not restarted
+    assert _record()["url"] == "https://macbook-pro.example.ts.net:8447/demo/"
+    assert cli._route_host(_record()) == "macbook-pro.example.ts.net"

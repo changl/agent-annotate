@@ -6,6 +6,12 @@ this repository.
 
 ## Unreleased
 
+- **Routes follow a machine rename in both directions.** `revive` (every
+  60 s under launchd) and `publish` on a live page re-run the route when the
+  page's tailnet name differs from the machine's current one, without
+  restarting the server. On 2026-09-27 the Mac went macbook-pro, m1max and
+  back within hours, and each page kept whichever name it had.
+
 - **A new version records where earlier items went; no resolve or carry
   calls.** `publish-version` (and `new --version vN --publish`) carries an
   earlier open item onto the new card with the same number, and resolves it

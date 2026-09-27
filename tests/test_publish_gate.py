@@ -36,6 +36,7 @@ def published(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_start_server", lambda *a, **k: 4242)
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
     monkeypatch.setattr(cli, "_registry_entries", lambda: [])
+    monkeypatch.setattr(cli, "_live_tailnet_host", lambda: None)
 
     transport_calls = []
 

@@ -1289,6 +1289,15 @@ def cmd_publish(args) -> int:
     # seconds and must not run while holding the project state lock.
     pre_existing = _load_state_for_project(project)["slugs"].get(slug)
     if pre_existing and _is_process_alive(pre_existing.get("pid", 0)):
+        if _route_host(pre_existing):
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                rec = state["slugs"].get(slug) or pre_existing
+                moved = _rerouted_if_renamed(project, slug, rec, _live_tailnet_host(), False)
+                if moved and moved[0] == "rerouted":
+                    _save_state_for_project(project, state)
+                    print(f"  Rerouted:      {moved[1]}")
+                pre_existing = rec
         return _publish_already_running(project, slug, slug_dir, pre_existing, args)
 
     try:
@@ -2899,7 +2908,72 @@ def _wait_listening(port: int, pid: int, seconds: float = 8.0) -> bool:
     return False
 
 
-def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str, str]:
+def _reroute(project: str, slug: str, record: dict, port: int):
+    """Re-run a page's route on `port`. Returns (url, details, base_path, error)."""
+    details = record.get("transport_details") or {}
+    pbp = record.get("public_base_path") or ""
+    transport_name = record.get("transport") or "local"
+    try:
+        from .transports import load as _load_transport
+        cfg = _project_config(project)
+        opts = _transport_opts(cfg)
+        if cfg.get("hostname"):
+            opts["hostname"] = cfg["hostname"]
+        opts["previous"] = {"port": port, "details": details}
+        if transport_name == "cloudflare_tailscale":
+            opts["public"] = _had_public_route(record)
+        with _flock(_tunnel_lock_path()):
+            result = _load_transport(transport_name).publish(
+                (pbp or f"/{slug}").lstrip("/"), port, **opts)
+        return (result.get("url") or record.get("url"), result.get("details", details),
+                pbp or f"/{slug}", None)
+    except Exception as e:
+        return record.get("url"), details, pbp, str(e)
+
+
+def _route_host(record: dict) -> str | None:
+    """The tailnet name a page's route was made under, if it has one."""
+    details = record.get("transport_details") or {}
+    ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
+    if ts is None and details.get("transport") == "tailscale":
+        ts = details
+    return (ts or {}).get("hostname")
+
+
+def _live_tailnet_host() -> str | None:
+    """This machine's tailnet name now, or None when tailscale cannot say."""
+    try:
+        proc = subprocess.run(["tailscale", "status", "--json"], capture_output=True,
+                              text=True, timeout=15)
+        name = (json.loads(proc.stdout).get("Self") or {}).get("DNSName") or ""
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return name.rstrip(".") or None
+
+
+def _rerouted_if_renamed(project: str, slug: str, record: dict, live_host: str | None,
+                         dry_run: bool) -> tuple[str, str] | None:
+    """Move a live page's route onto the machine's current tailnet name.
+
+    The server survives a rename but its route does not: on 2026-09-27 the
+    Mac went macbook-pro -> m1max -> macbook-pro within hours, and every page
+    kept a URL on whichever name it was published under.
+    """
+    old = _route_host(record)
+    if not live_host or not old or old == live_host:
+        return None
+    if dry_run:
+        return "would-reroute", f"{old} → {live_host}"
+    url, details, _pbp, error = _reroute(project, slug, record, int(record.get("port") or 0))
+    if error:
+        return "failed", f"reroute: {error}"
+    record.update({"url": url, "transport_details": details,
+                   "public_url": details.get("public_url") or record.get("public_url")})
+    return "rerouted", f"{old} → {live_host}"
+
+
+def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
+                live_host: str | None = None) -> tuple[str, str]:
     """Restart one dead page on its recorded port, keeping its owner.
 
     `publish` is the wrong tool for this: it makes the caller the owner, so a
@@ -2920,7 +2994,10 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str
                     record["port"] = procs[0]["port"] or record.get("port")
                     _save_state_for_project(project, state)
                 return "adopted", f"pid {procs[0]['pid']}"
-            return "alive", ""
+            moved = _rerouted_if_renamed(project, slug, record, live_host, dry_run)
+            if moved and moved[0] == "rerouted":
+                _save_state_for_project(project, state)
+            return moved or ("alive", "")
         slug_dir = Path(record.get("slug_dir") or "")
         if not (slug_dir / "current.html").exists():
             return "skipped", f"no current.html in {slug_dir}"
@@ -2950,30 +3027,13 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool) -> tuple[str
         if dry_run:
             return "would-revive", f"port {port}"
 
-        url = record.get("url") if transport_name != "local" else f"http://localhost:{port}/"
-        details = record.get("transport_details") or {}
-        error = None
-        pbp = record.get("public_base_path") or ""
-        if transport_name != "local":
+        if transport_name == "local":
+            url, details, pbp, error = (f"http://localhost:{port}/",
+                                        record.get("transport_details") or {}, "", None)
+        else:
             # Re-run the route every time: it is idempotent, and it is what
             # moves a page onto the machine's current tailnet name.
-            try:
-                from .transports import load as _load_transport
-                cfg = _project_config(project)
-                opts = _transport_opts(cfg)
-                if cfg.get("hostname"):
-                    opts["hostname"] = cfg["hostname"]
-                opts["previous"] = {"port": port, "details": details}
-                if transport_name == "cloudflare_tailscale":
-                    opts["public"] = _had_public_route(record)
-                with _flock(_tunnel_lock_path()):
-                    result = _load_transport(transport_name).publish(
-                        (pbp or f"/{slug}").lstrip("/"), port, **opts)
-                url = result.get("url") or url
-                details = result.get("details", details)
-                pbp = pbp or f"/{slug}"
-            except Exception as e:
-                error = str(e)
+            url, details, pbp, error = _reroute(project, slug, record, port)
         bus_dir = BUS_ROOT / project
         bus_dir.mkdir(parents=True, exist_ok=True)
         pid = _start_server(slug_dir, port, bus_dir, pbp)
@@ -3055,10 +3115,11 @@ def cmd_revive(args) -> int:
         return 0
 
     live = _running_servers()
+    live_host = _live_tailnet_host()
     failed = 0
     for project, slug, _record in _registry_entries():
         try:
-            outcome, detail = _revive_one(project, slug, live, args.dry_run)
+            outcome, detail = _revive_one(project, slug, live, args.dry_run, live_host)
         except TimeoutError as e:
             outcome, detail = "failed", str(e)
         if outcome == "failed":
