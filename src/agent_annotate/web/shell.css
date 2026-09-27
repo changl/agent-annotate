@@ -383,6 +383,7 @@ body > .round-bar .round-bar-btn{min-height:44px;padding:10px 16px;touch-action:
   .round-note-ta,.decision-note-ta{font-size:16px}
   .decision-evidence-toggle,.decision-evidence-link,.decision-note-toggle,.decision-excerpt-more{min-height:44px;padding:10px 4px;touch-action:manipulation}
   .decision-evidence-goto{min-height:44px;padding:10px 16px;touch-action:manipulation}
+  .decision-evidence{margin-top:0} /* the toggle's own 44px target already spaces it from the options */
   .decision-send-now{min-height:44px}
   .push-session-btn{padding:8px 10px;min-height:44px;touch-action:manipulation}
   .push-session-label{display:none}

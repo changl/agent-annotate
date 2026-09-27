@@ -182,6 +182,14 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             columns = frame.locator('section[data-anchor-id="s:columns"]')
             assert "annotate-unchanged-collapsed" not in (columns.get_attribute("class") or "")
             assert frame.locator('[data-anchor-id="tbl:columns:row:status"]').is_visible()
+            # Open or folded, the header is one control that carries the
+            # section title; the generated <h2> is not shown twice.
+            open_bar = columns.locator(".annotate-unchanged-toggle")
+            assert open_bar.inner_text().split("\n")[0] == "Columns"
+            assert "Unchanged since v1 — hide" in open_bar.inner_text()
+            assert columns.locator(".annotate-unchanged-bar").get_attribute("role") == "heading"
+            for sec in (scope, columns):
+                assert not sec.locator(":scope > h2").is_visible()
             assert frame.locator(
                 'section[data-anchor-id="s:migration-sketch"] .annotate-unchanged-bar').count() == 0
 
@@ -208,6 +216,14 @@ def test_card_layout_and_unchanged_sections(tmp_path):
 
             # ── Evidence: collapsed, previews in place, Go to leaves Back to #1.
             toggle = strip.locator(".annotate-decision-evidence-toggle")
+            # Nothing empty sits between the last option and "Evidence (n)".
+            gap = strip.evaluate("""s => {
+                const rows = s.querySelectorAll('.annotate-opt-row');
+                const r = document.createRange();
+                r.selectNodeContents(s.querySelector('.annotate-decision-evidence-toggle'));
+                return r.getBoundingClientRect().top - rows[rows.length - 1].getBoundingClientRect().bottom;
+            }""")
+            assert gap <= 18, gap
             assert toggle.inner_text() == "Evidence (2)"
             assert toggle.get_attribute("aria-expanded") == "false"
             items = strip.locator(".annotate-decision-evidence-link")

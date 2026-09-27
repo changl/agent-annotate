@@ -1038,6 +1038,8 @@ function ensureStripStyle() {
       .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-decision-note-toggle,
       .annotate-excerpt-more, .annotate-decision-sendnow { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
       .annotate-decision-evidence-goto, .annotate-back-pill { min-height: 44px !important; padding: 10px 16px !important; touch-action: manipulation !important; }
+      /* The toggle's own 44px target already spaces it from the options. */
+      .annotate-decision-evidence { margin-top: 0 !important; }
       /* Thumb-sized buttons, buttons free to wrap to their own row, and a
          16px textarea so iOS doesn't zoom the page in on focus. */
       .annotate-decision-btn, .annotate-decision-say {
@@ -2152,9 +2154,11 @@ function goBackToCard(back) {
 
 // ── Unchanged sections (v2+) ─────────────────────────────────────────
 // pagegen stamps `data-unchanged-since="vN"` on every `##` section identical
-// to the previous version's. Those render collapsed behind a one-line header
-// (WAI-ARIA disclosure: a button with aria-expanded), so a reviewer reads what
-// changed instead of the whole plan again. A section holding an open question
+// to the previous version's. Those render collapsed behind a one-line header,
+// so a reviewer reads what changed instead of the whole plan again. The header
+// is the section's heading in both states (WAI-ARIA APG accordion: a heading
+// wrapping a button with aria-expanded) and stands in for the generated <h2>,
+// which stays in the DOM for no-JS readers. A section holding an open question
 // card, or the evidence an open card cites, is opened automatically, and so
 // is any section a jump lands in. Without JavaScript nothing collapses.
 const unchangedChoice = {}; // section key -> true/false once the reviewer toggles it
@@ -2165,9 +2169,13 @@ function ensureUnchangedStyle() {
   style.id = 'annotate-unchanged-style';
   style.textContent = `
     section.annotate-unchanged-collapsed > :not(.annotate-unchanged-bar) { display: none !important; }
-    .annotate-unchanged-bar { display: block !important; margin: 14px 0 4px !important; padding: 0 !important; }
+    /* The bar is the section's heading in both states; the generated one
+       would only repeat its title. */
+    section[data-unchanged-since] > .annotate-unchanged-heading { display: none !important; }
+    .annotate-unchanged-bar { display: block !important; margin: 26px 0 10px !important; padding: 0 !important; }
+    section.annotate-unchanged-collapsed > .annotate-unchanged-bar { margin-bottom: 4px !important; }
     .annotate-unchanged-toggle {
-      display: flex !important; align-items: center !important; gap: 8px !important; flex-wrap: wrap !important;
+      display: flex !important; align-items: baseline !important; gap: 4px 10px !important; flex-wrap: wrap !important;
       width: 100% !important; box-sizing: border-box !important; text-align: left !important;
       font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
       color: #334155 !important; background: #F8FAFC !important; border: 1px dashed #CBD5E1 !important;
@@ -2175,16 +2183,10 @@ function ensureUnchangedStyle() {
     }
     .annotate-unchanged-toggle:hover { background: #F1F5F9 !important; border-color: #94A3B8 !important; }
     .annotate-unchanged-toggle:focus-visible { outline: 2px solid #4338CA !important; outline-offset: 1px !important; }
-    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 10px; color: #64748B; transition: transform .12s; }
+    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: #64748B; transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-weight: 700 !important; color: #1F2937 !important; }
-    .annotate-unchanged-note { font-weight: 500 !important; color: #64748B !important; font-size: 12px !important; }
-    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar { margin: 24px 0 -22px !important; }
-    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-toggle {
-      width: auto !important; background: none !important; border: none !important; padding: 2px 0 !important; font-size: 11.5px !important;
-    }
-    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-title { display: none !important; }
-    section:not(.annotate-unchanged-collapsed) > .annotate-unchanged-bar .annotate-unchanged-note { font-size: 11.5px !important; }
+    .annotate-unchanged-title { font-size: 17px !important; font-weight: 700 !important; color: #1F2937 !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: #64748B !important; font-size: 12.5px !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
     }
@@ -2217,13 +2219,16 @@ function initUnchangedSections() {
     if (sec.querySelector(':scope > .annotate-unchanged-bar')) return;
     if (!sec.id) sec.id = 'annotate-unchanged-' + (i + 1);
     const key = unchangedKey(sec);
+    const heading = sec.querySelector(':scope > h2, :scope > h1, :scope > h3');
     const bar = document.createElement('div');
     bar.className = 'annotate-unchanged-bar';
+    bar.setAttribute('role', 'heading');
+    bar.setAttribute('aria-level', heading ? heading.tagName.slice(1) : '2');
+    if (heading) heading.classList.add('annotate-unchanged-heading');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'annotate-unchanged-toggle';
     btn.setAttribute('aria-controls', sec.id);
-    const heading = sec.querySelector(':scope > h2, :scope > h1, :scope > h3');
     const title = document.createElement('span');
     title.className = 'annotate-unchanged-title';
     title.textContent = normText(heading ? heading.textContent : anchorName(key));
