@@ -143,4 +143,6 @@ def test_the_plist_runs_revive_at_login_and_on_an_interval(estate):
     assert "<string>revive</string>" in body
     assert "<key>RunAtLoad</key><true/>" in body
     assert "<integer>60</integer>" in body
+    # launchd must not reap the servers the job started when the job exits.
+    assert "<key>AbandonProcessGroup</key><true/>" in body
     assert json.dumps(cli.REVIVE_LABEL).strip('"') in body

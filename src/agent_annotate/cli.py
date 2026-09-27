@@ -2855,6 +2855,7 @@ def _revive_plist(interval: int) -> str:
   <array><string>{exe}</string><string>revive</string><string>--quiet</string></array>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>{interval}</integer>
+  <key>AbandonProcessGroup</key><true/>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>{path}</string></dict>
   <key>StandardOutPath</key><string>{log}</string>
