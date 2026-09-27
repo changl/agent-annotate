@@ -107,11 +107,18 @@ def _equivalent_origins(local_port: int) -> set[str]:
     return {f"http://127.0.0.1:{p}", f"http://localhost:{p}", f"http://[::1]:{p}"}
 
 
-def _mappings(state: dict) -> dict[int, str]:
-    """serve_port -> proxy target, for root-path handlers only."""
+def _mappings(state: dict, host: str | None = None) -> dict[int, str]:
+    """serve_port -> proxy target, for root-path handlers only.
+
+    With `host`, only entries keyed on that name count. After a machine rename
+    tailscale keeps the old `<old-name>:<port>` entries, but nothing resolves
+    that name any more, so an origin mapped only there is not reachable.
+    """
     out: dict[int, str] = {}
     for key, entry in (state.get("Web") or {}).items():
-        _, _, port_str = str(key).rpartition(":")
+        key_host, _, port_str = str(key).rpartition(":")
+        if host is not None and key_host != host:
+            continue
         try:
             serve_port = int(port_str)
         except ValueError:
@@ -139,10 +146,12 @@ def _claimed_ports(state: dict) -> set[int]:
 
 
 def _hostname(state: dict, binary: str) -> str:
-    for key in (state.get("Web") or {}):
-        host, _, _ = str(key).rpartition(":")
-        if host:
-            return host
+    """This machine's tailnet DNS name, read live.
+
+    The live name comes first. Serve-table keys are only a fallback: they keep
+    whatever name the machine had when each entry was made, so after a rename
+    they name a host that no longer resolves.
+    """
     proc = _run([binary, "status", "--json"])
     if proc.returncode == 0 and (proc.stdout or "").strip():
         try:
@@ -151,6 +160,10 @@ def _hostname(state: dict, binary: str) -> str:
             name = ""
         if name:
             return name.rstrip(".")
+    for key in (state.get("Web") or {}):
+        host, _, _ = str(key).rpartition(":")
+        if host:
+            return host
     raise RuntimeError(
         "could not determine this machine's tailnet DNS name — is tailscaled running "
         "and MagicDNS enabled?"
@@ -177,9 +190,9 @@ def _allocate(state: dict, opts: dict) -> int:
     )
 
 
-def _find_existing(state: dict, local_port: int) -> int | None:
+def _find_existing(state: dict, local_port: int, host: str | None = None) -> int | None:
     wanted = _equivalent_origins(local_port)
-    for serve_port, proxy in sorted(_mappings(state).items()):
+    for serve_port, proxy in sorted(_mappings(state, host).items()):
         if proxy.rstrip("/") in wanted:
             return serve_port
     return None
@@ -202,13 +215,14 @@ def _previous(opts: dict) -> tuple[int | None, int | None]:
         return None, None
 
 
-def _remove_mapping(binary: str, serve_port: int, local_port: int | None) -> bool:
+def _remove_mapping(binary: str, serve_port: int, local_port: int | None,
+                    host: str | None = None) -> bool:
     """Turn off one serve port. Caller must already hold the lock.
 
     Refuses when the port has been recycled onto a different origin: the
     recorded serve port is only evidence of what WAS there.
     """
-    mappings = _mappings(_serve_state(binary))
+    mappings = _mappings(_serve_state(binary), host)
     if serve_port not in mappings:
         return False
     if local_port is not None and \
@@ -220,7 +234,7 @@ def _remove_mapping(binary: str, serve_port: int, local_port: int | None) -> boo
             f"`tailscale serve --https={serve_port} off` failed (exit "
             f"{proc.returncode}): {(proc.stderr or proc.stdout).strip()}"
         )
-    if serve_port in _mappings(_serve_state(binary)):
+    if serve_port in _mappings(_serve_state(binary), host):
         raise RuntimeError(f"tailscale serve :{serve_port} is still mapped after `off`")
     return True
 
@@ -236,7 +250,8 @@ def publish(slug: str, port: int, **opts) -> dict:
     reclaimed = None
     with _Lock():
         state = _serve_state(binary)
-        serve_port = _find_existing(state, port)
+        host = _hostname(state, binary)
+        serve_port = _find_existing(state, port, host)
         action = "existing"
         if serve_port is None:
             serve_port = _allocate(state, opts)
@@ -251,13 +266,12 @@ def publish(slug: str, port: int, **opts) -> dict:
         # but leaves no mapping is exactly the silent failure this transport
         # exists to stop.
         state = _serve_state(binary)
-        landed = _mappings(state).get(serve_port)
+        landed = _mappings(state, host).get(serve_port)
         if not landed or landed.rstrip("/") not in _equivalent_origins(port):
             raise RuntimeError(
-                f"tailscale serve did not register :{serve_port} -> {_origin(port)} "
+                f"tailscale serve did not register {host}:{serve_port} -> {_origin(port)} "
                 f"(serve table now says {landed!r})"
             )
-        host = _hostname(state, binary)
 
         # The slug's local port can move between publishes (the old one sits
         # in TIME_WAIT, or something else grabbed it). Its previous serve port
@@ -268,7 +282,7 @@ def publish(slug: str, port: int, **opts) -> dict:
         # to tell "our orphan" from "a port someone else has since taken", and
         # removing the latter takes down a live page.
         if prev_serve_port and prev_local_port and prev_serve_port != serve_port:
-            if _remove_mapping(binary, prev_serve_port, prev_local_port):
+            if _remove_mapping(binary, prev_serve_port, prev_local_port, host):
                 reclaimed = prev_serve_port
 
     details = {
@@ -298,7 +312,8 @@ def unpublish(slug: str, **opts) -> dict:
 
     with _Lock():
         state = _serve_state(binary)
-        mappings = _mappings(state)
+        host = _hostname(state, binary)
+        mappings = _mappings(state, host)
 
         if https_port is not None:
             serve_port = int(https_port)
@@ -321,7 +336,7 @@ def unpublish(slug: str, **opts) -> dict:
                                 "https_port": serve_port},
                 }
         elif local_port is not None:
-            found = _find_existing(state, local_port)
+            found = _find_existing(state, local_port, host)
             if found is None:
                 return {
                     "ok": True,
@@ -338,7 +353,7 @@ def unpublish(slug: str, **opts) -> dict:
                                       f"{slug!r}"},
             }
 
-        removed = _remove_mapping(binary, serve_port, local_port)
+        removed = _remove_mapping(binary, serve_port, local_port, host)
 
     return {
         "ok": True,
@@ -351,11 +366,11 @@ def unpublish(slug: str, **opts) -> dict:
 def status(slug: str | None = None, **opts) -> dict:
     binary = _binary(opts)
     state = _serve_state(binary)
-    mappings = _mappings(state)
     try:
         host = _hostname(state, binary)
     except RuntimeError:
         host = None
+    mappings = _mappings(state, host)
 
     out: dict = {
         "transport": "tailscale",
@@ -370,7 +385,7 @@ def status(slug: str | None = None, **opts) -> dict:
     if https_port is not None and int(https_port) in mappings:
         serve_port = int(https_port)
     elif local_port is not None:
-        serve_port = _find_existing(state, local_port)
+        serve_port = _find_existing(state, local_port, host)
     if serve_port is not None and host:
         out["url"] = f"https://{host}:{serve_port}/"
         out["https_port"] = serve_port

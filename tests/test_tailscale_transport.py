@@ -258,6 +258,25 @@ def test_hostname_falls_back_to_tailscale_status_when_serve_is_empty(fake):
     assert tailscale._hostname({}, "tailscale") == HOST
 
 
+def test_a_renamed_machine_publishes_under_its_live_name(fake):
+    """Seen live on 2026-09-27: the Mac came back from an update as m1max, but
+    every serve entry was still keyed on macbook-pro. Reading the name off the
+    first serve key published URLs on a host that no longer resolved, and the
+    old entry for the same origin was taken as the existing mapping."""
+    ts = fake(_Tailscale())
+    state = _state({})
+    state["Web"]["old-name.tail2b8ab9.ts.net:8447"] = {
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:8900"}}}
+    state["TCP"]["8447"] = {"HTTPS": True}
+
+    assert tailscale._hostname(state, "tailscale") == HOST
+    assert tailscale._find_existing(state, 8900, HOST) is None
+    assert tailscale._find_existing(state, 8900) == 8447
+    # The stale entry still owns its TCP port, so a new mapping goes elsewhere.
+    assert 8447 in tailscale._claimed_ports(state)
+    assert ["tailscale", "status", "--json"] in ts.calls
+
+
 def test_missing_binary_names_the_override(monkeypatch, tmp_path):
     monkeypatch.setattr(tailscale, "STATE_DIR", tmp_path)
 
