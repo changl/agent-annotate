@@ -99,6 +99,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
 """
 
 import argparse
+import difflib
 import fcntl
 import hashlib
 import http.server
@@ -436,6 +437,26 @@ def _version_has_anchor(artifact_dir: Path, version: str, anchor_id: str) -> boo
         return False
     pattern = re.compile(r"data-anchor-id=(['\"])" + re.escape(anchor_id) + r"\1")
     return bool(pattern.search(markup))
+
+
+def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) -> bytes:
+    """The 400 body for a disposition aimed at a missing anchor.
+
+    A bare "not found" was the most common error agents hit on a new version:
+    they guessed the anchor, or resolved before generating the version. The
+    closest real anchors turn the retry into a copy, not a search.
+    """
+    target = artifact_dir / "versions" / f"{version}.html"
+    body = {"error": f"{what} target anchor not found", "version": version, "anchor": anchor_id}
+    try:
+        markup = target.read_text(encoding="utf-8")
+    except OSError:
+        body["error"] = f"{what} target version {version} has no page yet — generate it first"
+        return json.dumps(body).encode()
+    anchors = re.findall(r"data-anchor-id=['\"]([^'\"]+)['\"]", markup)
+    prefixed = [a for a in anchors if a.startswith(anchor_id + ":")][:3]
+    body["closest"] = prefixed or difflib.get_close_matches(anchor_id, anchors, n=3, cutoff=0.5)
+    return json.dumps(body).encode()
 
 
 def _load_v2_store(path: Path) -> dict:
@@ -1561,7 +1582,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             resolution_version = resolution_version.strip()
             resolution_anchor = resolution_anchor.strip()
             if not _version_has_anchor(self.artifact_dir, resolution_version, resolution_anchor):
-                self._respond(400, b'{"error":"resolution target anchor not found"}')
+                self._respond(400, _anchor_miss(self.artifact_dir, resolution_version,
+                                                resolution_anchor, "resolution"))
                 return
 
         carry_forward = payload.get("carry_forward")
@@ -1581,7 +1603,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             carry_version = carry_version.strip()
             carry_anchor = carry_anchor.strip()
             if not _version_has_anchor(self.artifact_dir, carry_version, carry_anchor):
-                self._respond(400, b'{"error":"carry target anchor not found"}')
+                self._respond(400, _anchor_miss(self.artifact_dir, carry_version,
+                                                carry_anchor, "carry"))
                 return
             if new_status is not None:
                 self._respond(400, b'{"error":"carry_forward owns the status transition"}')

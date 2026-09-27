@@ -1893,6 +1893,23 @@ def cmd_publish_version(args) -> int:
 
 # Machinery, not something a reviewer said. Shown only with --all-events.
 _INBOX_HIDDEN = {"seen_updated", "notice_emitted", "inbox_read"}
+# The session's own publishing steps, which it already saw in its own output.
+_INBOX_SELF = {"page_published", "page_publish_fail", "page_revived", "version_published",
+               "comments_seeded", "decision_requested"}
+
+
+def _inbox_visible(ev: dict, session_id: str) -> bool:
+    """Reviewer activity and other sessions' work, not this session's echo.
+
+    Reading a round back used to replay every card this session had just
+    posed and every item it had just resolved, ahead of the verdicts it was
+    waiting for.
+    """
+    if ev.get("event") in _INBOX_HIDDEN:
+        return False
+    if ev.get("session_id") == session_id and session_id != "unknown":
+        return False
+    return not (ev.get("event") in _INBOX_SELF and ev.get("owner_session", session_id) == session_id)
 
 
 def _comment_texts(store: dict) -> dict:
@@ -1920,14 +1937,19 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
     body, note = (texts or {}).get(ev.get("comment_id")) or ("", "")
     text = (ev.get("text") or ev.get("response_text") or ev.get("note")
             or ev.get("detail") or (note if ev.get("decision") else "") or body)
+    author = str(ev.get("author") or ev.get("by") or "")
+    # A reviewer's words are the instruction, so they print whole; clipping
+    # them sent the agent to comments.json for the rest.
+    shown = text if note and ev.get("decision") and not author.startswith("agent:") \
+        else _clip(text, 120)
     return "  %-20s %-17s %-10s %-18s %-24s %-9s %s" % (
         ev.get("ts") or "",
         (ev.get("event") or "")[:17],
         (ev.get("comment_id") or "")[:10],
         (ev.get("anchor_id") or "")[:18],
-        (str(ev.get("author") or ev.get("by") or ""))[:24],
+        author[:24],
         str(verdict)[:9],
-        _clip(text, 120),
+        shown,
     )
 
 
@@ -1977,9 +1999,13 @@ def cmd_inbox(args) -> int:
             new_offset = f.tell()
 
     shown = events if getattr(args, "all_events", False) else [
-        e for e in events if e.get("event") not in _INBOX_HIDDEN]
+        e for e in events if _inbox_visible(e, session_id)]
     store = _load_store(record)
     texts = _comment_texts(store)
+    for ev in shown:
+        note = (texts.get(ev.get("comment_id")) or ("", ""))[1]
+        if ev.get("decision") and note and "decision_text" not in ev:
+            ev["decision_text"] = note
     cards = _decision_cards(store)
     counts = _verdict_counts(cards)
     undecided = [c["anchor_id"] or c["id"] for c in cards if _is_undecided(c)]
@@ -3213,22 +3239,43 @@ def cmd_monitor(args) -> int:
         })
 
 
-def _comment_call(args, method: str, path: str, body: dict) -> int:
+def _comment_call(args, method: str, path: str, body: dict, done: str | None = None,
+                  target: str = "") -> int:
+    """One comment mutation, reported in one line.
+
+    These run once per earlier item on every new version. Echoing the whole
+    comment back cost about 530 tokens a call and told the agent nothing it
+    had not just sent; `--json` still prints it.
+    """
     resolved = _resolve_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     _project, _slug, record = resolved
     author = _resolve_author(getattr(args, "author", None))
     code, payload = _api(record, method, path, body, author)
+    err = payload.get("error") if isinstance(payload, dict) else payload
+    if code == 409 and "cannot demote user_confirmed" in str(err):
+        # The reviewer already closed it; there is nothing left to mark.
+        print(f"noop {args.comment_id}: already confirmed by the reviewer")
+        return 0
     if code == 0 or code >= 400:
-        print(f"ERROR: {method} {path} → HTTP {code}: {payload}", file=sys.stderr)
+        print(f"ERROR: {method} {path} → HTTP {code}: {err}", file=sys.stderr)
+        closest = payload.get("closest") if isinstance(payload, dict) else None
+        if closest:
+            print(f"  closest anchors in {payload.get('version')}: {', '.join(closest)}",
+                  file=sys.stderr)
         return 2
-    print(json.dumps(payload, ensure_ascii=False) if payload is not None else "ok")
+    if getattr(args, "json", False) or not done or not isinstance(payload, dict):
+        print(json.dumps(payload, ensure_ascii=False) if payload is not None else "ok")
+    else:
+        number = f" #{payload['number']}" if payload.get("number") else ""
+        print(f"{done} {args.comment_id}{number}{target}")
     return 0
 
 
 def cmd_archive_comment(args) -> int:
-    return _comment_call(args, "POST", f"/api/comments/{args.comment_id}/archive", {})
+    return _comment_call(args, "POST", f"/api/comments/{args.comment_id}/archive", {},
+                         done="archived")
 
 
 def cmd_resolve(args) -> int:
@@ -3239,19 +3286,22 @@ def cmd_resolve(args) -> int:
     }
     if args.response:
         body["response_text"] = args.response
-    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
+                         done="resolved", target=f" → {args.in_version} {args.anchor}")
 
 
 def cmd_carry(args) -> int:
     body = {"carry_forward": {"version": args.to_version, "anchor_id": args.anchor}}
-    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
+                         done="carried", target=f" → {args.to_version} {args.anchor}")
 
 
 def cmd_addressed(args) -> int:
     body = {"status": "addressed_by_agent"}
     if args.response:
         body["response_text"] = args.response
-    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body)
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
+                         done="addressed")
 
 
 def _registry_entries() -> list[tuple[str, str, dict]]:
@@ -3311,6 +3361,12 @@ def _resolve_slug(raw: str, project_hint: str | None = None):
     else:
         candidates = _by_slug(slug)
 
+    if len(candidates) > 1:
+        # The same slug under two projects is usually one live page and one
+        # leftover. Pick the page this session owns, else the only live one.
+        mine = [e for e in candidates if e[2].get("owner_session") == _session_id()]
+        live = [e for e in candidates if _is_process_alive(int(e[2].get("pid") or 0))]
+        candidates = mine if len(mine) == 1 else live if len(live) == 1 else candidates
     if len(candidates) == 1:
         return candidates[0]
     if len(candidates) > 1:
@@ -3933,6 +3989,7 @@ def main():
     sp_addr.add_argument("--project", default=None)
     sp_addr.add_argument("--author", default=None,
                          help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:claude)")
+    sp_addr.add_argument("--json", action="store_true", help="print the updated comment")
     sp_addr.set_defaults(func=cmd_addressed)
 
     sp_resolve = sub.add_parser(
@@ -3946,6 +4003,7 @@ def main():
     sp_resolve.add_argument("--response", default=None)
     sp_resolve.add_argument("--project", default=None)
     sp_resolve.add_argument("--author", default=None)
+    sp_resolve.add_argument("--json", action="store_true", help="print the updated comment")
     sp_resolve.set_defaults(func=cmd_resolve)
 
     sp_carry = sub.add_parser(
@@ -3958,6 +4016,7 @@ def main():
     sp_carry.add_argument("--anchor", required=True)
     sp_carry.add_argument("--project", default=None)
     sp_carry.add_argument("--author", default=None)
+    sp_carry.add_argument("--json", action="store_true", help="print the updated comment")
     sp_carry.set_defaults(func=cmd_carry)
 
     args = p.parse_args()

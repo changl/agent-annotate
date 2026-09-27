@@ -6,6 +6,17 @@ this repository.
 
 ## Unreleased
 
+- **Fewer failed rounds, less output.** Measured over 60 days of transcripts,
+  62% of recent page rounds hit a gate error. `resolve`, `carry` and
+  `addressed` print one line instead of the whole comment (about 530 tokens
+  each; `--json` keeps it). A miss on the target anchor names the closest
+  anchors in that version, or says the version has not been generated yet.
+  Addressing or carrying an item the reviewer already confirmed is a no-op,
+  not an error. A slug registered under two projects resolves to the one this
+  session owns, or the only live one. `inbox` leaves out this session's own
+  echo (cards it posed, items it resolved, its publishes) and prints a
+  reviewer's answer whole; `--json` events carry `decision_text`.
+
 - **Pages come back by themselves after a reboot or crash.** `annotate
   revive` restarts every registered page whose server is gone, on its recorded
   port, re-runs its route and keeps its owner (`publish` would have made the

@@ -36,8 +36,7 @@ annotate` is not this package.
    answer, and the URL; never repeat page substance as a chat wall of text.
 5. `annotate inbox <slug> --unread` for everything new,
    `annotate cards <slug>` for verdicts only.
-6. Act. Use `addressed` only while reviewer confirmation is still needed;
-   it cannot demote an already confirmed card.
+6. Act. Use `addressed` only while reviewer confirmation is still needed.
 7. Before a new version, disposition every earlier `open` or
    `addressed_by_agent` item: `resolve` it with the exact version + anchor
    where the answer landed, or `carry` it onto a new-version anchor.

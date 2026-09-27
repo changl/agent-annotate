@@ -185,6 +185,52 @@ def test_unknown_slug_lists_the_registered_ones(registry, capsys):
     assert "proj/demo" in err
 
 
+def test_a_slug_under_two_projects_prefers_this_sessions_page(monkeypatch, capsys):
+    """"registered under more than one project" stopped rounds cold even
+    when one of the two rows was a leftover nobody owned."""
+    mine = {"slug": "demo", "owner_session": "sess-me", "pid": 0}
+    other = {"slug": "demo", "owner_session": "sess-other", "pid": 0}
+    monkeypatch.setattr(cli, "_registry_entries",
+                        lambda: [("a", "demo", other), ("b", "demo", mine)])
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-me")
+    assert cli._resolve_slug("demo")[0] == "b"
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-nobody")
+    assert cli._resolve_slug("demo") is None
+    assert "more than one project" in capsys.readouterr().err
+
+
+def test_inbox_hides_this_sessions_own_echo(registry, monkeypatch, capsys):
+    """Reading a round back replayed every card the session had just posed
+    ahead of the verdicts it was waiting for."""
+    with registry.bus.open("a") as f:
+        f.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "comment_resolved",
+                            "comment_id": "bbbbbbbbbbbb", "session_id": "sess-me",
+                            "author": "agent:claude"}) + "\n")
+        f.write(json.dumps({"ts": "2026-09-17T11:00:01Z", "event": "version_published",
+                            "owner_session": "sess-me"}) + "\n")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-me")
+    cli.cmd_inbox(_inbox())
+    out = capsys.readouterr().out
+    assert "comment_resolved" not in out and "version_published" not in out
+    assert "comment_updated" in out
+
+
+def test_inbox_prints_a_reviewers_answer_whole(registry, capsys):
+    words = "in addition to your recommendation, " * 8
+    store = json.loads((registry.slug_dir / "comments.json").read_text())
+    store["anchors"]["s:a"][0]["decision"] = {"verdict": "comment", "text": words, "by": "r@x"}
+    (registry.slug_dir / "comments.json").write_text(json.dumps(store))
+    with registry.bus.open("a") as f:
+        f.write(json.dumps({"ts": "2026-09-17T12:00:00Z", "event": "comment_updated",
+                            "comment_id": "aaaaaaaaaaaa", "author": "r@x",
+                            "decision": "comment"}) + "\n")
+    cli.cmd_inbox(_inbox())
+    assert words.strip() in capsys.readouterr().out
+    cli.cmd_inbox(_inbox(json=True))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["events"][-1]["decision_text"] == words
+
+
 def test_project_slash_slug_and_swapped_forms_resolve(registry):
     assert cli._resolve_slug("proj/demo")[1] == "demo"
     assert cli._resolve_slug("demo/proj")[1] == "demo"
@@ -267,7 +313,57 @@ def test_addressed_goes_through_the_api_with_session_header(served, monkeypatch,
     args = SimpleNamespace(slug="proj/live", project=None, comment_id=comment["id"],
                            response="done", author="agent:test")
     assert cli.cmd_addressed(args) == 0
-    updated = json.loads(_last_line(capsys))
+    assert _last_line(capsys) == f"addressed {comment['id']}"
+    store = json.loads((served.slug_dir / "comments.json").read_text())
+    updated = store["anchors"]["s:z"][0]
     assert updated["status"] == "addressed_by_agent" and updated["response_text"] == "done"
     events = [json.loads(line) for line in served.bus.read_text().splitlines()]
     assert events[-1]["event"] == "comment_updated" and events[-1]["session_id"] == "sess-agent"
+
+    args.json = True
+    assert cli.cmd_addressed(args) == 0
+    assert json.loads(_last_line(capsys))["status"] == "addressed_by_agent"
+
+
+def _posted(served, anchor="s:z"):
+    code, comment = cli._api(served.record, "POST", "/api/comments",
+                             {"anchor_id": anchor, "text": "hi"}, "reviewer@example.com")
+    assert code == 201
+    return comment["id"]
+
+
+def test_addressing_a_confirmed_item_is_a_noop_not_an_error(served, capsys):
+    """"cannot demote user_confirmed" was a failure agents retried; the
+    reviewer had already closed the item, so there is nothing to do."""
+    cid = _posted(served)
+    cli._api(served.record, "PUT", f"/api/comments/{cid}", {"status": "user_confirmed"},
+             "reviewer@example.com")
+    args = SimpleNamespace(slug="live", project=None, comment_id=cid, response=None,
+                           author="agent:test", json=False)
+    assert cli.cmd_addressed(args) == 0
+    assert "already confirmed" in _last_line(capsys)
+
+
+def test_resolving_into_a_missing_anchor_names_the_closest_ones(served, capsys):
+    (served.slug_dir / "versions").mkdir()
+    (served.slug_dir / "versions" / "v2.html").write_text(
+        '<p data-anchor-id="s:scope:p1"></p><p data-anchor-id="s:scope:p2"></p>')
+    cid = _posted(served)
+    args = SimpleNamespace(slug="live", project=None, comment_id=cid, in_version="v2",
+                           anchor="s:scope", response=None, author="agent:test", json=False)
+    assert cli.cmd_resolve(args) == 2
+    err = capsys.readouterr().err
+    assert "resolution target anchor not found" in err
+    assert "closest anchors in v2: s:scope:p1, s:scope:p2" in err
+
+    args.anchor = "s:scope:p1"
+    assert cli.cmd_resolve(args) == 0
+    assert _last_line(capsys) == f"resolved {cid} → v2 s:scope:p1"
+
+
+def test_resolving_into_an_ungenerated_version_says_so(served, capsys):
+    cid = _posted(served)
+    args = SimpleNamespace(slug="live", project=None, comment_id=cid, in_version="v9",
+                           anchor="s:a", response=None, author="agent:test", json=False)
+    assert cli.cmd_resolve(args) == 2
+    assert "version v9 has no page yet" in capsys.readouterr().err

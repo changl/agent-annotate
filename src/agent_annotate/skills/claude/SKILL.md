@@ -30,8 +30,7 @@ image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
    Wait for the hook notice (§7).
 3. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
    for verdicts only.
-4. Act. Use `addressed` only while reviewer confirmation is still needed;
-   it cannot demote an already confirmed card.
+4. Act. Use `addressed` only while reviewer confirmation is still needed.
 5. Before a new version, disposition every earlier `open` or
    `addressed_by_agent` item: `resolve` it with the exact version + anchor
    where the answer landed, or `carry` it onto a new-version anchor.

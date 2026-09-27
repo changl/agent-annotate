@@ -91,9 +91,11 @@ pages and cost 5-10 recovery calls each.
 
 Compact by default: one line per event,
 `ts  event  comment_id  anchor  author  verdict/status  text[:120]`, followed
-by `decisions: N accept, N reject, N comment; undecided: <anchor ids>`.
-`seen_updated`, `notice_emitted` and `inbox_read` are hidden unless
-`--all-events`. `--json` prints the raw events plus `offset_from`,
+by `decisions: N accept, N reject, N comment; undecided: <anchor ids>`. A
+reviewer's verdict note prints whole. Hidden unless `--all-events`:
+`seen_updated`, `notice_emitted`, `inbox_read`, and this session's own echo
+(events carrying its session id, and its publishes). `--json` prints the same
+events raw, each verdict with its `decision_text`, plus `offset_from`,
 `offset_to`, `decisions`, `card_count` and `undecided`.
 
 `--unread` reads from this session's cursor and advances it, and emits
@@ -262,9 +264,9 @@ next hook notice. A deferred verdict inside an open round reports
 | `retire <slug>\|--dead [--dry-run]` | Moves registry rows whose pid is dead and whose slug_dir has no live server to `state/retired/<project>.json`, keeping every field and adding `retired_at`. Refuses a slug that is still serving. Never touches a slug directory, a bus or the transport config, so a retired page can be re-published and pick its history back up. |
 | `revive [--dry-run] [--install\|--uninstall]` | Restarts every registered page whose server is gone, on its recorded port, keeping its owner. Re-runs the route, so a page follows a tailnet rename. Skips a routed page whose port is taken; a local page moves. `--install` writes the `com.agent-annotate.revive` LaunchAgent (at login and every 60 s, log in `state/logs/revive.log`). Never needed by a page author. |
 | `publish-version <slug-dir> <vN> [--label …]` | Refuses prior-round `open`/`addressed_by_agent` items without explicit resolution or carry-forward, then atomically swaps `current.html` to `versions/<vN>.html` and registers history exactly once. |
-| `addressed <slug> <id> [--response …]` | `PUT /api/comments/<id>` with `status=addressed_by_agent`; cannot demote `user_confirmed`. |
-| `resolve <slug> <id> --in-version <vN> --anchor <id> [--response …]` | Records a real version/anchor resolution pointer and removes the prior item from later-round outstanding work. |
-| `carry <slug> <id> --to-version <vN> --anchor <id>` | Moves unresolved work to the new round while preserving its origin and carry history. |
+| `addressed <slug> <id> [--response …]` | `PUT /api/comments/<id>` with `status=addressed_by_agent`. On an item the reviewer already confirmed it prints `noop` and exits 0. Prints one line; `--json` prints the comment. |
+| `resolve <slug> <id> --in-version <vN> --anchor <id> [--response …]` | Records a real version/anchor resolution pointer and removes the prior item from later-round outstanding work. Prints one line (`--json` for the comment). A missing anchor fails with the closest anchors in that version. |
+| `carry <slug> <id> --to-version <vN> --anchor <id>` | Moves unresolved work to the new round while preserving its origin and carry history. One line of output; a confirmed item is a no-op. |
 | `archive-comment <slug> <id>` | `POST /api/comments/<id>/archive`. |
 | `migrate <legacy.html> [--slug] [--version] [--label] [--copy]` | Builds a `<slug-dir>/` beside the file: `versions/v1.html`, `current.html`, `current.meta.json`, v2 `comments.json`, legacy store backed up as `comments.<stem>.v1.bak.json`. |
 | `install-shim [--force]` | See §1. |
