@@ -1225,6 +1225,16 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     recorded URL and exit 0, so re-running publish on a page that had just
     failed the gate reported it as fine one command later.
     """
+    if record.get("owner_session") == _session_id():
+        from .delivery import capture_target
+        target = capture_target(_session_id(), _session_agent())
+        if target and target != record.get("owner_target"):
+            fields = {key: record.get(key) for key in ("owner_session", "owner_agent", "owner_label", "owner_claimed_at")}
+            fields["owner_target"] = target
+            error = _stamp_owner_in_registry(project, slug, fields)
+            if not error:
+                record.update(fields)
+                _write_owner_meta(slug_dir, fields)
     report = _run_gate(record, args)
     if report is not None:
         try:
@@ -1396,6 +1406,7 @@ def cmd_publish(args) -> int:
             pid = _start_server(slug_dir, port, bus_dir, pbp)
 
             # Record state
+            from .updates import runtime_manifest
             record = {
                 "slug": slug,
                 "slug_dir": str(slug_dir),
@@ -1412,6 +1423,8 @@ def cmd_publish(args) -> int:
                 "transport_details": transport_details,
                 "transport_error": transport_error,
                 **_owner_fields(),
+                "runtime_python": sys.executable,
+                "runtime_manifest": runtime_manifest(),
             }
             state["slugs"][slug] = record
             _save_state_for_project(project, state)
@@ -3182,7 +3195,7 @@ def _maybe_update() -> None:
 
 
 def cmd_update(args) -> int:
-    from .updates import is_newer, latest_release, stage_release, write_enrollment
+    from .updates import latest_release, read_enrollment, stage_release, version_tuple, write_enrollment
     try:
         if args.enable or args.disable:
             write_enrollment({"enabled": bool(args.enable)})
@@ -3190,11 +3203,20 @@ def cmd_update(args) -> int:
             return 0
         release = latest_release()
         print(f"Installed {__version__}; stable {release['version']} ({release['html_url']})")
-        if not args.apply or not is_newer(release["version"]):
+        if not args.apply or version_tuple(release["version"]) < version_tuple(__version__):
+            return 0
+        enrollment = read_enrollment()
+        records = _registry_entries()
+        if (enrollment.get("active_version") == release["version"] and enrollment.get("active_manifest")
+                and all(record.get("runtime_manifest") == enrollment.get("active_manifest")
+                        and record.get("runtime_python") == enrollment.get("active_python")
+                        for _project, _slug, record in records)):
             return 0
         from .deployment import activate_runtime
         python = stage_release(release)
         result = activate_runtime(python)
+        write_enrollment({"active_version": release["version"], "active_build_id": result["runtime"]["build_id"],
+                          "active_manifest": result["runtime"], "active_python": str(python), "last_check": _now_iso()})
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment.pop("PYTHONHOME", None)
