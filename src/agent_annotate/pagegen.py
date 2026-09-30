@@ -953,7 +953,15 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
             history.append({"version": version, "ts": _now_iso(), "label": label})
 
         _write_meta_locked(slug_dir, _mutate)
-    (slug_dir / "comments.json").touch()    # an empty file is a valid v2 store
+    # Reports can have no decision cards, so the server may never write this
+    # store before the next publish gate reads it. Initialize valid JSON while
+    # leaving any existing feedback (including a damaged store) untouched.
+    try:
+        with (slug_dir / "comments.json").open("x", encoding="utf-8") as store:
+            json.dump({"schema_version": 2, "anchors": {}, "archived": {}}, store)
+            store.write("\n")
+    except FileExistsError:
+        pass
     return [v for v in prior if v != version]
 
 
