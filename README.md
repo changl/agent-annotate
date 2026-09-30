@@ -55,7 +55,7 @@ become `versions/vN.html` with a `data-anchor-id` on every element, plus
 `cards.json`, the `current.html` symlink and the version history. It refuses
 to write a page with duplicate anchors, no anchors, or CSS outside its
 `<style>` block. The format is in
-[building-pages.md](skills/claude/annotate/references/building-pages.md) §1;
+[building-pages.md](src/agent_annotate/skills/claude/references/building-pages.md) §1;
 `annotate publish ./review` and `annotate ask review --from cards.json` remain
 separate commands for a page built by hand.
 
@@ -87,7 +87,7 @@ owner; `--install` runs it from launchd at login and every 60 seconds.
 improvement round and once after, and compare. Its thresholds are guidance for
 reading the two reports against each other, not gates that fail anything.
 Sections and thresholds:
-[telemetry-and-eval.md](skills/claude/annotate/references/telemetry-and-eval.md).
+[telemetry-and-eval.md](src/agent_annotate/skills/claude/references/telemetry-and-eval.md).
 
 In Claude Code the `UserPromptSubmit` hook (installed by `publish`) announces
 new reviewer activity on the next turn, to the session that owns the page
@@ -146,7 +146,7 @@ inspects the journal. Outside Orca, delivery remains attended through the hook.
 ## Stable updates and weekly evidence
 
 GitHub pushes do not update installed machines or already-loaded agent skills.
-A version bump pushed to main runs CI, builds one wheel, and publishes an immutable stable release with SHA256SUMS and a build ID. Tag-triggered releases use the same checks.
+A version bump pushed to main runs CI, builds one wheel, and publishes a versioned stable release with SHA256SUMS and a build ID. Tag-triggered releases use the same checks. Checksums detect byte mismatches; they do not establish publisher provenance or GitHub release immutability.
 
 ```bash
 annotate update --check
@@ -172,7 +172,30 @@ The weekly page uses existing local events and transcripts without a model run
 or inbox-cursor changes. It tracks submitted rounds, delivery states/latencies,
 owner acknowledgment, publishing failures, choice-card quality and agent cost.
 It does not infer completed implementation from a prompt receipt. Remote hosts
-are separate estates; browser timing and resource opens are not yet measured.
+are separate estates unless explicitly enrolled below; browser timing and resource opens are not yet measured.
+
+### Fleet coverage
+
+`annotate fleet` collects runtime, capability, owner-presence and latest-delivery
+observations from local registered pages. It never copies reviewer text or owner
+session identifiers. Enroll explicit remote page URLs in the machine-local
+`config_dir/fleet.json` shown by `annotate doctor`:
+
+```json
+{"schema_version":1,"targets":[{"machine":"remote-mac","project":"reviews","slug":"design","url":"https://remote-host.tailnet.ts.net:8445/design/"}]}
+```
+
+```bash
+annotate fleet --snapshot /private/path/fleet.json
+```
+
+The existing weekly report includes enrolled coverage automatically. HTTPS uses
+certificate verification; requests are bounded and do not follow redirects or
+send credentials. Missing or legacy APIs remain unknown. Machine names are
+inventory labels; owner metadata does not prove a live agent. Delivery counts
+describe the latest observed row per target, not all submitted rounds. Use direct
+machine-specific page URLs; a remote label cannot turn localhost into a remote
+address. This inventory does not discover every remote page or change ownership.
 
 ## Repository layout
 

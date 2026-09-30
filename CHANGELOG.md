@@ -4,6 +4,16 @@ The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
 
+## v2.20.3 Fleet runtime and delivery observations (2026-09-29)
+
+- Fleet snapshots combine local registered pages with an explicit remote page
+  inventory. Collection uses bounded read-only requests, verifies TLS, refuses
+  redirects, and exports only runtime, capability, owner-presence and latest
+  delivery observations. Missing observations remain unknown.
+- Existing weekly reports include enrolled fleet coverage without a model run,
+  new service, reviewer text, or owner-session identifiers. Inventory labels and
+  owner metadata are explicitly distinguished from attested host/live ownership.
+
 ## v2.20.2 Progress-page feedback store initialization (2026-09-29)
 
 - Generated pages initialize a valid empty feedback store. Progress and weekly

@@ -7,6 +7,7 @@ import json
 import statistics
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from . import cli, costs
 from .pagegen import _publish_namespace, generate
@@ -20,7 +21,12 @@ def _cost_summary(rows: list[dict]) -> dict:
             "median_round_tokens": statistics.median([sum(r["out_tokens"] for r in rd) for rd in rounds]) if rounds else None}
 
 
-def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str) -> str:
+def _markdown_url(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, quote(parts.path, safe="/%:@!$&'*=+-._~"), "", ""))
+
+
+def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str, fleet: dict | None = None) -> str:
     current = metrics["global"]
     prior = previous["global"]
     counts = ["submitted_rounds", "reviewer_decisions", "publish_successes", "publish_failures"]
@@ -48,6 +54,21 @@ def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str) ->
               "This report covers this machine's registry and transcripts, not every remote host. Output-token attribution is an estimate from existing transcripts. Browser load time, resource opens, and completed implementation are not inferred from a prompt receipt.",
               "", "## Feedback carried forward", "",
               "Feedback on earlier reports remains open for the project owner; generating a new report does not resolve it.", ""]
+    if fleet is not None:
+        lines += ["", "## Fleet runtime and delivery coverage", ""]
+        if "summary" not in fleet:
+            lines += ["Fleet collection is unavailable. Reconcile the configured inventory; missing observations are not zero activity."]
+        else:
+            summary = fleet["summary"]
+            lines += [f"{summary['total']} configured page URLs across {len(summary['by_machine'])} machine labels; "
+                      f"{summary['healthy']} healthy API observations, {summary['degraded']} degraded and {summary['unreachable']} unreachable.",
+                      "", "| Machine label | Project / page | Runtime | Owner metadata | Latest delivery | API health |",
+                      "|---|---|---|---|---|---|"]
+            for row in fleet["targets"]:
+                owner = "present" if row["owner_present"] is True else "absent" if row["owner_present"] is False else "unknown"
+                lines.append(f"| {row['machine']} | [{row['project']}/{row['slug']}]({_markdown_url(row['url'])}) | "
+                             f"{row['package_version'] or 'unknown'} | {owner} | {row['latest_delivery_state']} | {row['health']} |")
+            lines += ["", "```details", "Fleet measurement limits", *[f"- {limit}" for limit in fleet["limitations"]], "```"]
     return "\n".join(lines)
 
 
@@ -61,15 +82,21 @@ def write_report(slug_dir: Path, now: dt.datetime | None = None) -> dict:
                                          codex_root=None, include_dev=False))
     rows = [r for r in rows if r.get("ts") and since <= costs._when(r["ts"]) < now]
     cost = _cost_summary(rows)
+    fleet = None
+    if (cli.CONFIG_DIR / "fleet.json").exists():
+        try:
+            fleet = cli._fleet_snapshot()
+        except (OSError, ValueError):
+            fleet = {"error": "inventory_unavailable"}
     slug_dir = Path(slug_dir)
     meta = cli._read_meta(slug_dir)
     version = f"v{max([int(h['version'][1:]) for h in meta.get('history', []) if h.get('version', '').startswith('v') and h['version'][1:].isdigit()] or [0]) + 1}"
     slug_dir.mkdir(parents=True, exist_ok=True)
     source = slug_dir / "weekly-source.md"
-    source.write_text(report_source(current, previous, cost, now.date().isoformat()))
+    source.write_text(report_source(current, previous, cost, now.date().isoformat(), fleet))
     result = generate(source, slug_dir, version, f"Week ending {now.date().isoformat()}")
     # Aggregate evidence only; no reviewer text or transcript fragments copied.
-    (slug_dir / "metrics.json").write_text(json.dumps({"current": current, "previous": previous, "agent_cost": cost}, indent=2))
+    (slug_dir / "metrics.json").write_text(json.dumps({"current": current, "previous": previous, "agent_cost": cost, "fleet": fleet}, indent=2))
     return result
 
 

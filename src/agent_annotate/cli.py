@@ -3277,6 +3277,70 @@ def cmd_project(args) -> int:
         return 2
 
 
+def _fleet_snapshot(from_file=None) -> dict:
+    from .fleet import collect_fleet, validate_config
+
+    path = Path(from_file).expanduser() if from_file else CONFIG_DIR / "fleet.json"
+    config = validate_config(json.loads(path.read_text()) if from_file or path.exists() else {"schema_version": 1, "targets": []})
+    machine = socket.gethostname().split(".")[0]
+    if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}", machine):
+        machine = "local"
+    identities = {(target["machine"], target["project"], target["slug"]): target["url"] for target in config["targets"]}
+    urls = {url: identity for identity, url in identities.items()}
+    excluded = 0
+    for project, slug, record in _registry_entries():
+        try:
+            target = validate_config({"schema_version": 1, "targets": [{"machine": machine, "project": project,
+                                      "slug": slug, "url": record.get("url")}]})["targets"][0]
+        except ValueError:
+            excluded += 1
+            continue
+        identity = (machine, project, slug)
+        if target["url"] in urls or identity in identities:
+            if identities.get(identity) == target["url"] and urls.get(target["url"]) == identity:
+                continue
+            raise ValueError("fleet inventory conflicts with a local registered page")
+        config["targets"].append(target)
+        urls[target["url"]] = identity
+        identities[identity] = target["url"]
+    snapshot = collect_fleet(config)
+    snapshot["observed_at"] = _now_iso()
+    snapshot["excluded_local_records"] = excluded
+    if excluded:
+        snapshot["limitations"].append(f"{excluded} local registry entries had no usable safe page URL and were excluded.")
+    return snapshot
+
+
+def cmd_fleet(args) -> int:
+    try:
+        snapshot = _fleet_snapshot(args.from_file)
+        if args.snapshot:
+            path = Path(args.snapshot).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(prefix=".fleet-", dir=path.parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    json.dump(snapshot, output, ensure_ascii=False, indent=2)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        if args.json:
+            print(json.dumps(snapshot, ensure_ascii=False))
+        else:
+            summary = snapshot["summary"]
+            print(f"Fleet: {summary['total']} configured pages; {summary['healthy']} healthy, "
+                  f"{summary['degraded']} degraded, {summary['unreachable']} unreachable")
+            print("Versions: " + ", ".join(f"{name}: {count}" for name, count in summary["by_version"].items()))
+            print("Machine labels and owner presence are inventory observations, not attested live ownership.")
+        return 0
+    except (OSError, ValueError):
+        print("ERROR: fleet inventory could not be read or validated; no configuration or page state changed", file=sys.stderr)
+        return 2
+
+
 def cmd_install_shim(args) -> int:
     changed, msg = _ensure_shim_installed(force=getattr(args, "force", False), refresh=True)
     print(f"  {msg}")
@@ -4150,6 +4214,12 @@ def main():
     sp_delivery.add_argument("--project", default=None)
     sp_delivery.add_argument("--dry-run", action="store_true")
     sp_delivery.set_defaults(func=cmd_deliver)
+
+    sp_fleet = sub.add_parser("fleet", help="collect safe runtime/delivery observations from configured page URLs")
+    sp_fleet.add_argument("--from", dest="from_file", default=None, help="remote inventory; defaults to config_dir/fleet.json")
+    sp_fleet.add_argument("--json", action="store_true")
+    sp_fleet.add_argument("--snapshot", default=None, help="write a private redacted snapshot")
+    sp_fleet.set_defaults(func=cmd_fleet)
 
     sp_project = sub.add_parser("project", help="read/update persistent project links, progress and notes")
     sp_project.add_argument("slug")
