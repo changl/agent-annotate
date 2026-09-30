@@ -39,45 +39,7 @@ from .paths import WEB_DIR
 # that lands outside a <style> is the single most common reason a publish stops
 # before printing a URL. The lint below refuses to write a page that does it.
 # ────────────────────────────────────────────────────────────────────────────
-CSS = """<style>
-.aa{max-width:1080px;margin:0 auto;padding:8px 18px 60px;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:#1F2937}
-.aa h2{font-size:20px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB}
-.aa h3{font-size:16px;margin:22px 0 6px}
-.aa p{margin:6px 0 10px}
-.aa ul,.aa ol{margin:6px 0 12px;padding-left:22px}
-.aa li{margin:3px 0}
-.aa .lede{font-size:16px;color:#374151}
-.aa .muted{color:#6B7280;font-size:13px}
-.aa .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
-.aa .kpi{border:1px solid #E5E7EB;border-radius:10px;padding:10px 12px;background:#FAFAFA;min-width:0}
-.aa .kpi b{display:block;font-size:24px;line-height:1.1;margin-bottom:2px;overflow-wrap:anywhere}
-.aa .kpi.bad b{color:#B91C1C}.aa .kpi.ok b{color:#047857}.aa .kpi.warn b{color:#B45309}
-.aa .kpi span{font-size:12px;color:#4B5563}
-.aa .wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
-.aa table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:13.5px}
-.aa th,.aa td{border:1px solid #E5E7EB;padding:6px 8px;vertical-align:top;text-align:left}
-.aa th{background:#F3F4F6;font-weight:600}
-.aa tr[data-anchor-id]:hover td{background:#F9FAFB}
-.aa pre{background:#0F172A;color:#E2E8F0;border-radius:8px;padding:10px 12px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;max-width:100%}
-.aa code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#F3F4F6;padding:1px 4px;border-radius:4px}
-.aa pre code{background:none;padding:0;color:inherit;font:inherit}
-.aa a{color:#4338CA}
-.aa .cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin:12px 0}
-.aa .card{border:1px solid #E5E7EB;border-left:4px solid #6366F1;border-radius:8px;padding:10px 14px;background:#FFF;min-width:0}
-.aa .card h4{margin:0 0 4px;font-size:15px}
-.aa .item-num{display:inline-block;min-width:38px;margin-right:7px;font-weight:800;color:#4338CA}
-.aa .plan-scope{border:1px solid #C7D2FE;border-radius:8px;background:#EEF2FF;color:#312E81;padding:8px 12px;margin:4px 0 16px;font-size:13px;font-weight:600}
-.aa .card .ctx{margin:4px 0;color:#374151}
-.aa .card .opts{margin:6px 0 0;padding-left:18px}
-.aa .card .opts li{margin:2px 0}
-.aa .card .q{color:#6B7280;font-style:italic;font-size:12.5px;margin:6px 0 0}
-.aa .card-ref{font-size:12px}
-.aa .reco{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0}
-.aa .chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:#E0E7FF;color:#3730A3;border:1px solid #C7D2FE;margin-left:6px}
-.aa .chip.blocking{background:#FEE2E2;color:#991B1B;border-color:#FECACA}
-.aa section{max-width:100%;overflow-wrap:anywhere}
-@media (max-width:760px){.aa{padding:8px 12px 60px}.aa pre{white-space:pre-wrap;word-break:break-word}.aa table{font-size:12.5px}.aa .kpis{grid-template-columns:1fr 1fr}}
-</style>"""
+CSS = '<style data-annotate-style="managed">\n' + (WEB_DIR / "content.css").read_text(encoding="utf-8") + "</style>"
 
 E = html.escape
 
@@ -228,7 +190,7 @@ def parse_blocks(body: str) -> list[dict]:
                 raise PageGenError(f"fenced block opened with ```{lang} was never closed")
             i += 1
             text = "\n".join(buf)
-            blocks.append({"kind": "cards", "raw": text} if lang == "cards"
+            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "details", "project")
                           else {"kind": "code", "lang": lang, "text": text})
             continue
 
@@ -409,6 +371,24 @@ class Renderer:
         self.reg(aid, f"{lang or 'code'} block", "code", parent=self.parent)
         self.parts.append(f'<pre data-anchor-id="{aid}"><code>{E(text)}</code></pre>')
 
+    def details(self, raw: str) -> None:
+        self.ensure_section()
+        summary, _, body = raw.strip().partition("\n")
+        if not summary.strip():
+            raise PageGenError("a details fence needs a summary on its first line")
+        blocks = parse_blocks(body)
+        if any(b["kind"] in ("cards", "project", "details", "heading") for b in blocks):
+            raise PageGenError("details holds paragraphs, lists, tables or KPIs; keep headings and cards outside")
+        aid = self._unique(f"s:{self.section_slug}:details{self._next('details:' + self.section_slug)}")
+        self.reg(aid, summary, "details", parent=self.parent)
+        self.parts.append(f'<details class="aa-details" data-anchor-id="{aid}"><summary>{inline(summary)}</summary>')
+        prior_sub = self.sub
+        self.sub = aid
+        for block in blocks:
+            self.block(block)
+        self.sub = prior_sub
+        self.parts.append("</details>")
+
     def kpis(self, tiles: list[str]) -> None:
         self.ensure_section()
         cells = []
@@ -555,29 +535,34 @@ class Renderer:
     def run(self, blocks: list[dict]) -> None:
         self.parts.append('<div class="aa">')
         for block in blocks:
-            kind = block["kind"]
-            if kind == "heading":
-                text = block["text"]
-                if block["level"] == 1 and text.strip() == (self.title or "").strip():
-                    continue           # the document title is already the header
-                if block["level"] <= 2:
-                    self.open_section(text)
-                else:
-                    self.open_sub(text)
-            elif kind == "para":
-                self.para(block["text"])
-            elif kind == "list":
-                self.lst(block["items"], block["ordered"])
-            elif kind == "code":
-                self.code(block["text"], block["lang"])
-            elif kind == "kpis":
-                self.kpis(block["tiles"])
-            elif kind == "table":
-                self.table(block["header"], block["rows"])
-            elif kind == "cards" and not self.skip_cards:
-                self.cards_block(block["raw"])
+            self.block(block)
         self.close_section()
         self.parts.append("</div>")
+
+    def block(self, block: dict) -> None:
+        kind = block["kind"]
+        if kind == "heading":
+            text = block["text"]
+            if block["level"] == 1 and text.strip() == (self.title or "").strip():
+                return             # the document title is already the header
+            if block["level"] <= 2:
+                self.open_section(text)
+            else:
+                self.open_sub(text)
+        elif kind == "para":
+            self.para(block["text"])
+        elif kind == "list":
+            self.lst(block["items"], block["ordered"])
+        elif kind == "code":
+            self.code(block["text"], block["lang"])
+        elif kind == "kpis":
+            self.kpis(block["tiles"])
+        elif kind == "table":
+            self.table(block["header"], block["rows"])
+        elif kind == "cards" and not self.skip_cards:
+            self.cards_block(block["raw"])
+        elif kind == "details":
+            self.details(block["raw"])
 
     @property
     def canvas(self) -> str:
@@ -873,6 +858,16 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     label = label or meta.get("label") or f"generated from {source.name}"
 
     blocks = parse_blocks(body)
+    project_blocks = [b for b in blocks if b["kind"] == "project"]
+    project_data = None
+    if project_blocks:
+        from .project_state import validate_project
+        if len(project_blocks) > 1:
+            raise PageGenError("use one project fence for persistent project modules")
+        try:
+            project_data = validate_project(json.loads(project_blocks[0]["raw"]))
+        except ValueError as exc:
+            raise PageGenError(f"project fence: {exc}") from exc
     canvas, registry, cards = render(meta, blocks)
     problems = lint(canvas, registry)
     problems += _round_contract_problems(meta, blocks, cards, registry, version)
@@ -888,9 +883,15 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
     warnings = _full_plan_warnings(slug_dir, version, blocks)
+    from .decision_quality import decision_warnings
+    for card in cards:
+        warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
     html_out = build_html(meta, canvas, registry, version)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
+    if project_data is not None:
+        from .project_state import save_project
+        save_project(slug_dir, project_data)
     return {
         "slug_dir": slug_dir,
         "slug": slug_dir.name,

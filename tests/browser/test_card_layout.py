@@ -274,3 +274,49 @@ def test_card_layout_and_unchanged_sections(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
+    from agent_annotate.project_state import save_project
+    source = tmp_path / "source.md"
+    source.write_text(_doc("v1", "```details\nSupporting evidence\nThis is a hidden detail.\n```"))
+    directory = tmp_path / "items-model"
+    generate(source, directory)
+    save_project(directory, {"title":"Project workspace", "modules":[
+        {"id":"resources","title":"Open project","kind":"links","items":[{"label":"Payload CMS","url":"https://cms.example/admin"}]},
+        {"id":"progress","title":"Progress","kind":"progress","items":[{"label":"Review pipeline","status":"done"}]}]})
+    process, base = _serve(tmp_path, directory)
+    try:
+        item = {"number":1, "anchor_id":"s:scope", "text":"Pick a runtime", "version":"v1",
+                "decision_request":{"prompt":"Pick a runtime", "options":["Shared runtime","Keep fork"], "recommendation":"Shared runtime"}}
+        request = urllib.request.Request(base + "api/comments/batch", data=json.dumps({"items":[item]}).encode(),
+            headers={"Content-Type":"application/json", "Cf-Access-Authenticated-User-Email":"agent:test"})
+        urllib.request.urlopen(request).close()
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page(viewport={"width":1440,"height":1000}, extra_http_headers={"Cf-Access-Authenticated-User-Email":"reviewer@example.com"})
+            page.goto(base, wait_until="networkidle")
+            page.locator('#project-panel a').wait_for(state="visible")
+            assert page.locator('#project-panel a').get_attribute('href') == 'https://cms.example/admin'
+            assert page.locator('#vrail-body .vrow').first.evaluate('e => e.tagName') == 'BUTTON'
+            frame = page.frame_locator('#content-frame')
+            frame.locator('link[href*="content.css"]').wait_for(state="attached")
+            assert frame.locator('.aa-details').count() == 1
+            assert frame.locator('.aa-details').get_attribute('open') is None
+            page.locator('#comment-list button').filter(has_text='Shared runtime').click()
+            page.locator('#round-finish-btn').wait_for(state="visible")
+            assert 'PENDING' in page.locator('#comment-list').inner_text()
+            page.screenshot(path='/tmp/annotate-managed-desktop.png', full_page=True)
+            page.locator('#project-panel details[data-module="resources"] summary').click()
+            page.reload(wait_until="networkidle")
+            page.locator('#project-panel').wait_for(state="visible")
+            assert page.locator('#project-panel details[data-module="resources"]').get_attribute('open') is None
+            page.set_viewport_size({"width":390,"height":844})
+            _wait(lambda: _in_view(page.locator("#round-finish-btn")), page)
+            page.screenshot(path='/tmp/annotate-managed-mobile.png', full_page=True)
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)

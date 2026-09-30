@@ -103,6 +103,24 @@ def test_unread_cursor_is_per_session(registry, monkeypatch, capsys):
     assert "comment_updated" in capsys.readouterr().out
 
 
+def test_a_round_arriving_during_inbox_reporting_stays_unread(registry, monkeypatch, capsys):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-owner")
+    original = cli._bus_emit
+    before = registry.bus.stat().st_size
+    def emit(path, event):
+        if event["event"] == "inbox_read":
+            original(path, {"event": "round_submitted", "round_id": "new-concurrent-round", "slug": "demo"})
+        original(path, event)
+    monkeypatch.setattr(cli, "_bus_emit", emit)
+    cli.cmd_inbox(_inbox(unread=True))
+    capsys.readouterr()
+    cursor = cli._offset_file("proj", "demo", "sess-owner")
+    assert int(cursor.read_text()) == before
+    cli.cmd_inbox(_inbox(unread=True, json=True))
+    result = json.loads(capsys.readouterr().out)
+    assert any(e.get("round_id") == "new-concurrent-round" for e in result["events"])
+
+
 def test_owner_replays_the_backlog_and_a_bystander_starts_at_the_legacy_cursor(registry, monkeypatch, capsys):
     legacy = cli.BUS_OFFSET_ROOT / "proj" / "demo.offset"
     legacy.parent.mkdir(parents=True)
@@ -367,3 +385,8 @@ def test_resolving_into_an_ungenerated_version_says_so(served, capsys):
                            anchor="s:a", response=None, author="agent:test", json=False)
     assert cli.cmd_resolve(args) == 2
     assert "version v9 has no page yet" in capsys.readouterr().err
+
+
+def test_submitted_round_note_is_printed_whole():
+    note = "Keep every reviewer instruction. " * 20
+    assert note.strip() in cli._inbox_line({"event":"round_submitted","note":note,"by":"reviewer@example.com"})

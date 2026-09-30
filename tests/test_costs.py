@@ -192,3 +192,12 @@ def test_report_json_and_estimate_through_the_cli(root, tmp_path, capsys):
     assert proc.returncode == 0, proc.stderr
     assert "/anchor not found/ fixed: 1 failed rows" in proc.stdout
     assert "  all " in proc.stdout
+
+
+def test_installed_release_cuts_uses_packaged_changelog(tmp_path, monkeypatch):
+    monkeypatch.setattr(costs, "PACKAGE_DIR", tmp_path / "library" / "site-packages" / "agent_annotate")
+    monkeypatch.setattr(costs.sys, "prefix", str(tmp_path / "environment"))
+    history = tmp_path / "environment" / "share" / "agent-annotate" / "CHANGELOG.md"
+    history.parent.mkdir(parents=True)
+    history.write_text("## v2.20.0 Release (2026-09-29)\n")
+    assert costs.period_of("release")("2026-09-30") == "v2.20.0"

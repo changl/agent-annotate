@@ -114,6 +114,66 @@ that card's location. Both rails collapse;
 below 1160px the page becomes a phone layout with a bottom-sheet drawer. The chrome is served from the package on every
 request, so a fix reaches every published page at once.
 
+## Managed progress and review pages
+
+The package owns the shell, content styles and decision controls. Standard pages
+use `annotate new`; agents supply project information and decisions, not a copied
+server or stylesheet. Shared `content.css` is applied at serve time to generated
+pages, including earlier versions. Standalone HTML retains its fallback styles.
+
+A `project` JSON fence persists links, progress and notes in `project.json`, outside
+the versioned review. Modules use stable IDs and native disclosure controls; each
+reviewer retains their collapse preferences. `annotate project SLUG --from FILE`
+updates the workspace without publishing another feedback round. A `details`
+fence contains a summary line followed by supporting Markdown. Choice options
+must be structured; manual option-letter prompts produce actionable warnings.
+
+## Automatic completed-round delivery
+
+Publishing or claiming a page from an Orca terminal captures that owner session,
+terminal incarnation, worktree and provider-process start time. **Finish review**
+commits one round to the durable bus before clearing pending answers. A server
+worker sends a routing prompt through Orca and retries unavailable owners every
+30 seconds. It does not send individual answers or rely on an agent's Monitor.
+
+Delivery validates fresh ownership under the claim lock. Accepted input is never
+resent; an interrupted or ambiguous send remains `uncertain` for inspection. The
+page distinguishes accepted input, a started turn, owner acknowledgment through
+`inbox --unread`, and project work completion. A successor must claim the page;
+closed/replaced terminals are not reopened. `annotate deliver SLUG --dry-run`
+inspects the journal. Outside Orca, delivery remains attended through the hook.
+
+## Stable updates and weekly evidence
+
+GitHub pushes do not update installed machines or already-loaded agent skills.
+A version bump pushed to main runs CI, builds one wheel, and publishes an immutable stable release with SHA256SUMS and a build ID. Tag-triggered releases use the same checks.
+
+```bash
+annotate update --check
+annotate update --apply
+annotate update --enable
+annotate revive --install
+```
+
+Daily checks are opt-in per machine through the existing revive watchdog.
+Updates stage a separate environment, verify the wheel checksum, reconcile every
+registered server and listener, preserve owners/ports/routes/state, and roll back
+failed restarts. Generated skill deployments refresh from their manifests;
+custom edits remain untouched and are reported. Running agents must reload
+instructions they already read. Prototype forks and unregistered servers need
+explicit migration; an updater never kills them by guessing.
+
+```bash
+annotate report /path/to/reviews/annotate-weekly --publish
+annotate report /path/to/reviews/annotate-weekly --install
+```
+
+The weekly page uses existing local events and transcripts without a model run
+or inbox-cursor changes. It tracks submitted rounds, delivery states/latencies,
+owner acknowledgment, publishing failures, choice-card quality and agent cost.
+It does not infer completed implementation from a prompt receipt. Remote hosts
+are separate estates; browser timing and resource opens are not yet measured.
+
 ## Repository layout
 
 - `src/agent_annotate/` — CLI, page server, `paths.py`, verify/extract/eval,

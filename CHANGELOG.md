@@ -4,7 +4,26 @@ The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
 
-## Unreleased
+## v2.20.0 Managed progress and completed-round delivery (2026-09-29)
+
+- Automatic Orca owner prompts for completed feedback rounds, with durable
+  delivery IDs, current-owner validation, duplicate suppression, visible delivery
+  states and separate owner acknowledgment. No agent-owned monitor is required.
+- Persistent project links, progress and notes; native collapsible modules and
+  author-written details fences. Shared content styles update generated versions
+  at serve time; custom content remains an extension.
+- Choice-authoring warnings and legacy custom-string options that render as
+  actual controls. Keyboard-operable version navigation.
+- Hidden tabs stop polling; visible refreshes cannot overlap. Conditional store
+  and metadata responses avoid downloading unchanged history. Asset keys derive
+  from content hashes, not install timestamps.
+- Checksum-verified stable-release staging, owner-preserving activation and
+  rollback, build/asset identity, and conflict-aware generated-skill refresh.
+  Per-machine automatic checks are opt-in; prototype forks are not overwritten.
+- Local weekly usage pages without a model run, including submission/delivery/
+  acknowledgment metrics, failures, card quality and existing transcript cost.
+
+## Earlier unreleased changes carried into 2.20.0
 
 - **Routes follow a machine rename in both directions.** `revive` (every
   60 s under launchd) and `publish` on a live page re-run the route when the

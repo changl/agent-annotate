@@ -657,26 +657,35 @@ def _ensure_hook_installed() -> tuple[bool, str]:
 # ────────────────────────────────────────────────────────────────────────────
 def _start_server(slug_dir: Path, port: int, bus_dir: Path, public_base_path: str | None) -> int:
     """Spawn sync_server.py in v2 mode. Returns PID."""
+    from .paths import PACKAGE_DIR
+    isolated = "site-packages" in PACKAGE_DIR.parts
     cmd = [
         sys.executable,
+        *(["-I"] if isolated else []),
         "-m",
         "agent_annotate.sync_server",
         "--slug-dir", str(slug_dir),
         "--slug", slug_dir.name,
         "--bus-dir", str(bus_dir),
         "--port", str(port),
+        "--strict-port",
     ]
     if public_base_path:
         cmd += ["--public-base-path", public_base_path]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{slug_dir.name}.log"
     fh = open(log_path, "ab", buffering=0)
+    environment = os.environ.copy()
+    if isolated:
+        environment.pop("PYTHONPATH", None)
+        environment.pop("PYTHONHOME", None)
     proc = subprocess.Popen(
         cmd,
         stdout=fh,
         stderr=fh,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
+        env=environment,
     )
     # Give it a moment to bind
     time.sleep(0.5)
@@ -961,11 +970,14 @@ def _owner_fields(session_id: str | None = None) -> dict:
     written, because a page can outlive the state file it was registered in.
     """
     sid = session_id or _session_id()
+    from .delivery import capture_target
+
     return {
         "owner_session": sid,
         "owner_agent": _session_agent(),
         "owner_label": _session_label(sid),
         "owner_claimed_at": _now_iso(),
+        "owner_target": capture_target(sid, _session_agent()),
     }
 
 
@@ -983,6 +995,7 @@ def _write_owner_meta(slug_dir: Path, fields: dict) -> str | None:
             "owner_agent": fields["owner_agent"],
             "owner_label": fields["owner_label"],
             "claimed_at": fields["owner_claimed_at"],
+            "target": fields.get("owner_target"),
         }
 
     try:
@@ -1212,6 +1225,16 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     recorded URL and exit 0, so re-running publish on a page that had just
     failed the gate reported it as fine one command later.
     """
+    if record.get("owner_session") == _session_id():
+        from .delivery import capture_target
+        target = capture_target(_session_id(), _session_agent())
+        if target and target != record.get("owner_target"):
+            fields = {key: record.get(key) for key in ("owner_session", "owner_agent", "owner_label", "owner_claimed_at")}
+            fields["owner_target"] = target
+            error = _stamp_owner_in_registry(project, slug, fields)
+            if not error:
+                record.update(fields)
+                _write_owner_meta(slug_dir, fields)
     report = _run_gate(record, args)
     if report is not None:
         try:
@@ -1383,6 +1406,7 @@ def cmd_publish(args) -> int:
             pid = _start_server(slug_dir, port, bus_dir, pbp)
 
             # Record state
+            from .updates import runtime_manifest
             record = {
                 "slug": slug,
                 "slug_dir": str(slug_dir),
@@ -1399,6 +1423,8 @@ def cmd_publish(args) -> int:
                 "transport_details": transport_details,
                 "transport_error": transport_error,
                 **_owner_fields(),
+                "runtime_python": sys.executable,
+                "runtime_manifest": runtime_manifest(),
             }
             state["slugs"][slug] = record
             _save_state_for_project(project, state)
@@ -2074,7 +2100,9 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
     author = str(ev.get("author") or ev.get("by") or "")
     # A reviewer's words are the instruction, so they print whole; clipping
     # them sent the agent to comments.json for the rest.
-    shown = text if note and ev.get("decision") and not author.startswith("agent:") \
+    full_reviewer_text = ((note and ev.get("decision")) or
+                          (ev.get("event") == "round_submitted" and ev.get("note")))
+    shown = text if full_reviewer_text and not author.startswith("agent:") \
         else _clip(text, 120)
     return "  %-20s %-17s %-10s %-18s %-24s %-9s %s" % (
         ev.get("ts") or "",
@@ -2166,6 +2194,12 @@ def cmd_inbox(args) -> int:
             print(_decision_line(cards))
 
     if args.unread and new_offset > offset:
+        if record.get("owner_session") == session_id:
+            from .delivery import acknowledge
+            delivery_ids = [e.get("delivery_id") for e in events if e.get("automatic_delivery")]
+            for delivery_id in acknowledge(project, slug, session_id, delivery_ids):
+                _bus_emit(bus_file, {"event": "round_received", "round_id": delivery_id,
+                                     "owner_session": session_id, "slug": slug})
         _bus_emit(bus_file, {
             "event": "inbox_read",
             "slug": slug,
@@ -2174,10 +2208,8 @@ def cmd_inbox(args) -> int:
             "offset_to": new_offset,
             "event_count": len(shown),
         })
-        try:
-            new_offset = bus_file.stat().st_size
-        except OSError:
-            pass
+        # Commit only bytes actually read. A round appended while reporting
+        # this inbox must remain unread and must not become acknowledged.
         tmp = offset_file.with_name(offset_file.name + ".tmp")
         tmp.write_text(str(new_offset), encoding="utf-8")
         os.replace(tmp, offset_file)
@@ -2344,6 +2376,9 @@ def cmd_ask(args) -> int:
             item["number"] = number
         if dr:
             item["decision_request"] = dr
+            from .decision_quality import decision_warnings
+            for warning in decision_warnings(dr):
+                print(f"WARN: {item['anchor_id']}: {warning}", file=sys.stderr)
         items.append(item)
 
     author = _resolve_author(getattr(args, "author", None))
@@ -3119,6 +3154,8 @@ def cmd_revive(args) -> int:
         print(f"  removed {plist}")
         return 0
 
+    if not args.dry_run:
+        _maybe_update()
     live = _running_servers()
     live_host = _live_tailnet_host()
     failed = 0
@@ -3127,6 +3164,12 @@ def cmd_revive(args) -> int:
             outcome, detail = _revive_one(project, slug, live, args.dry_run, live_host)
         except TimeoutError as e:
             outcome, detail = "failed", str(e)
+        if not args.dry_run:
+            from .delivery import dispatch_record
+            try:
+                dispatch_record(_record, project, slug)
+            except (OSError, ValueError) as exc:
+                print(f"WARN: delivery {project}/{slug}: {exc}", file=sys.stderr)
         if outcome == "failed":
             failed += 1
         if outcome == "alive" or (args.quiet and outcome in ("gone",)):
@@ -3134,6 +3177,91 @@ def cmd_revive(args) -> int:
         stamp = f"{_now_iso()} " if args.quiet else "  "
         print(f"{stamp}{outcome:<12} {project}/{slug}" + (f"  {detail}" if detail else ""))
     return 1 if failed else 0
+
+
+def _maybe_update() -> None:
+    from .updates import read_enrollment, write_enrollment
+    try:
+        config = read_enrollment()
+        if not config["enabled"]:
+            return
+        age = _age_seconds(config.get("last_check"))
+        if age is not None and age < 86400:
+            return
+        write_enrollment({"last_check": _now_iso()})
+        cmd_update(argparse.Namespace(check=False, apply=True, enable=False, disable=False))
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"WARN: stable update: {exc}", file=sys.stderr)
+
+
+def cmd_update(args) -> int:
+    from .updates import latest_release, read_enrollment, stage_release, version_tuple, write_enrollment
+    try:
+        if args.enable or args.disable:
+            write_enrollment({"enabled": bool(args.enable)})
+            print("Stable updates enabled; the revive watchdog checks daily" if args.enable else "Stable updates disabled")
+            return 0
+        release = latest_release()
+        print(f"Installed {__version__}; stable {release['version']} ({release['html_url']})")
+        if not args.apply or version_tuple(release["version"]) < version_tuple(__version__):
+            return 0
+        enrollment = read_enrollment()
+        records = _registry_entries()
+        if (enrollment.get("active_version") == release["version"] and enrollment.get("active_manifest")
+                and all(record.get("runtime_manifest") == enrollment.get("active_manifest")
+                        and record.get("runtime_python") == enrollment.get("active_python")
+                        for _project, _slug, record in records)):
+            return 0
+        from .deployment import activate_runtime
+        python = stage_release(release)
+        result = activate_runtime(python)
+        write_enrollment({"active_version": release["version"], "active_build_id": result["runtime"]["build_id"],
+                          "active_manifest": result["runtime"], "active_python": str(python), "last_check": _now_iso()})
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        environment.pop("PYTHONHOME", None)
+        synced = subprocess.run([str(python), "-I", "-m", "agent_annotate.cli", "sync-skills"],
+                                capture_output=True, text=True, env=environment, timeout=30)
+        print(json.dumps(result, ensure_ascii=False))
+        if synced.stdout:
+            print(synced.stdout.strip())
+        if synced.returncode:
+            print("WARN: runtime updated; custom skill conflicts require attention", file=sys.stderr)
+        return 0
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"ERROR: stable update: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_deliver(args) -> int:
+    from .delivery import dispatch_record
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    result = dispatch_record(record, project, slug, dry_run=args.dry_run)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+def cmd_project(args) -> int:
+    from .project_state import load_project, save_project
+    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    _project, _slug, record = resolved
+    try:
+        directory = Path(record["slug_dir"])
+        if args.from_file:
+            data = json.loads(Path(args.from_file).read_text())
+            saved = save_project(directory, data)
+            print(f"  project saved: {len(saved['modules'])} persistent modules")
+        else:
+            print(json.dumps(load_project(directory), ensure_ascii=False, indent=2))
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: project: {exc}", file=sys.stderr)
+        return 2
 
 
 def cmd_install_shim(args) -> int:
@@ -3164,6 +3292,14 @@ def cmd_install_skill(args) -> int:
     for line in install_skill(args.provider, Path(args.dest)):
         print(line)
     return 0
+
+
+def cmd_sync_skills(args) -> int:
+    from .skillgen import sync_skills
+    results = sync_skills()
+    for line in results:
+        print(line)
+    return 1 if any(line.startswith("conflict") for line in results) else 0
 
 
 def cmd_watch(args) -> int:
@@ -3406,7 +3542,8 @@ def cmd_monitor(args) -> int:
                     continue
                 if ev.get("event") in MONITOR_PRINT_EVENTS:
                     print(_monitor_line(ev), flush=True)
-                if provider_name == "codex-app-server" and ev.get("event") == "session_push":
+                if (provider_name == "codex-app-server" and ev.get("event") == "session_push"
+                        and not ev.get("automatic_delivery")):
                     # Deliver before advancing the cursor: a failed turn leaves
                     # the event unread so it is retried from the durable bus.
                     try:
@@ -3820,6 +3957,10 @@ def cmd_doctor(args) -> int:
         ("codex", codex is not None, codex or "not found; Codex adapter unavailable"),
         ("session", _session_id() != "unknown", _session_id()),
     ]
+    from .updates import read_enrollment, runtime_manifest
+    manifest = runtime_manifest()
+    checks.append(("build", True, manifest["build_id"]))
+    checks.append(("stable_updates", True, "enabled" if read_enrollment()["enabled"] else "disabled; annotate update --enable"))
     failed = False
     for name, ok, detail in checks:
         hard = name in ("state_dir", "bus_root", "web_assets", "hook_script")
@@ -3974,6 +4115,34 @@ def main():
 
     sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
     sp_doc.set_defaults(func=cmd_doctor)
+    sp_update = sub.add_parser("update", help="check/apply tested stable releases; opt into daily checks")
+    update_mode = sp_update.add_mutually_exclusive_group()
+    update_mode.add_argument("--check", action="store_true")
+    update_mode.add_argument("--apply", action="store_true")
+    update_mode.add_argument("--enable", action="store_true")
+    update_mode.add_argument("--disable", action="store_true")
+    sp_update.set_defaults(func=cmd_update)
+    from .reports import cmd_report
+    sp_report = sub.add_parser("report", help="generate/schedule the short weekly usage page without a model run")
+    sp_report.add_argument("slug_dir")
+    sp_report.add_argument("--project", default="reviews")
+    sp_report.add_argument("--publish", action="store_true")
+    sp_report.add_argument("--install", action="store_true", help="schedule weekly on macOS")
+    sp_report.add_argument("--uninstall", action="store_true", help="remove the weekly job; preserve report history")
+    sp_report.set_defaults(func=cmd_report)
+    sub.add_parser("sync-skills", help="refresh registered generated skills; preserve custom edits").set_defaults(func=cmd_sync_skills)
+
+    sp_delivery = sub.add_parser("deliver", help="inspect/retry pending completed-round delivery to the page owner")
+    sp_delivery.add_argument("slug")
+    sp_delivery.add_argument("--project", default=None)
+    sp_delivery.add_argument("--dry-run", action="store_true")
+    sp_delivery.set_defaults(func=cmd_deliver)
+
+    sp_project = sub.add_parser("project", help="read/update persistent project links, progress and notes")
+    sp_project.add_argument("slug")
+    sp_project.add_argument("--project", default=None)
+    sp_project.add_argument("--from", dest="from_file", default=None)
+    sp_project.set_defaults(func=cmd_project)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 

@@ -45,7 +45,7 @@ from .paths import PACKAGE_DIR, TRANSCRIPT_GLOB
 SUBS = ("new publish publish-version unpublish status claim ask cards open-cards inbox monitor "
         "addressed resolve carry close retire revive doctor eval cost watch install-shim "
         "install-skill archive-comment migrate prune-bus sessions connect disconnect send "
-        "hook-check mcp").split()
+        "hook-check mcp update sync-skills project deliver report").split()
 _SUB = "|".join(sorted(map(re.escape, SUBS), key=len, reverse=True))
 SEG_CLI = re.compile(rf"^(?:\S*/)?annotate\s+({_SUB})(?=\s|$)(.*)$", re.S)
 SEG_PY = re.compile(rf"^\S*python[0-9.]*\s+(?:-u\s+)?(?:-m\s+agent_annotate\.cli|\S*annotate/cli\.py)"
@@ -484,6 +484,8 @@ def _k(n) -> str:
 def _release_cuts() -> list[tuple[str, str]]:
     """(date, version) from the dated CHANGELOG headings; the newest heading wins a shared date."""
     changelog = PACKAGE_DIR.parents[1] / "CHANGELOG.md"
+    if not changelog.is_file():
+        changelog = Path(sys.prefix) / "share" / "agent-annotate" / "CHANGELOG.md"
     if not changelog.is_file():
         raise ValueError(f"--by release reads {changelog}, which this install lacks; pass --by D1,D2")
     cuts = {}

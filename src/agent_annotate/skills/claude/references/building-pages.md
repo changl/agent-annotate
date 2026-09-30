@@ -257,3 +257,17 @@ one write of `page.md`, one run. Reserve the `build.py` path for a page
 markdown cannot express, and keep its cost in mind when you reach for it. Most
 of the old overrun was hand-patching chrome into a published page and
 re-checking a URL that was already verified. Neither is work.
+
+## Persistent modules and disclosures
+
+The `project` fence is a JSON object with `title` and `modules`. Each module
+has a stable `id`, `title`, `kind` (`links`, `progress`, `notes`) and `items`.
+Links use `{label,url,description?}`; progress uses `{label,status,detail?}`;
+notes use `{text}`. This stores project.json independently of version history.
+Omitting the fence preserves it. The shell owns its rendering and collapse
+preferences; do not build another project header or resource widget.
+
+A `details` fence begins with a summary line, then supporting Markdown. It
+accepts paragraphs, lists, tables and KPIs. Keep headings and decision cards
+outside disclosures so response items stay visible. A jump opens a containing
+disclosure. Shared generated-page content styles come from runtime content.css.

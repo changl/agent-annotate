@@ -134,3 +134,19 @@ def test_cli_registers_install_skill():
                           capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0
     assert "--provider" in proc.stdout and "--dest" in proc.stdout
+
+
+def test_sync_preserves_custom_edits_and_new_path_collisions(tmp_path, monkeypatch):
+    monkeypatch.setattr(skillgen, "CONFIG_DIR", tmp_path / "config")
+    dest = tmp_path / "deployed"
+    skillgen.install_skill("claude", dest)
+    (dest / "local.md").write_text("owner notes")
+    original = skillgen.planned_files
+    def planned(provider, python=None):
+        return {**original(provider, python), "local.md": ("new generated reference", 0o644)}
+    monkeypatch.setattr(skillgen, "planned_files", planned)
+    assert skillgen.sync_skills()[0].startswith("conflict")
+    assert (dest / "local.md").read_text() == "owner notes"
+    (dest / "SKILL.md").write_text("owner customized skill")
+    assert skillgen.sync_skills()[0].startswith("conflict")
+    assert (dest / "SKILL.md").read_text() == "owner customized skill"

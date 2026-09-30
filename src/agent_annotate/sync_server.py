@@ -118,6 +118,9 @@ from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, STATE_DIR, WEB_DIR
+from .updates import runtime_manifest
+
+RUNTIME_MANIFEST = runtime_manifest()
 
 SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server code
 
@@ -181,7 +184,7 @@ def _mime(suffix: str) -> str:
 _NO_STORE = "no-store, max-age=0, must-revalidate"
 
 # /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
-_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|adapter\.js|diagram-plot\.js)$")
+_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|content\.css|adapter\.js|diagram-plot\.js)$")
 
 
 def _cache_control_for(suffix: str) -> str:
@@ -191,13 +194,14 @@ def _cache_control_for(suffix: str) -> str:
 
 
 def _mtime_stamp(path) -> str:
-    """Integer-mtime cache-buster for an asset URL. Falls back to a CONSTANT
+    """Content-derived numeric asset key, stable across installs and copies.
+    Falls back to a CONSTANT
     ('0') when the file can't be statted: a clock-based fallback minted a new
     stamp every second, so any document referencing a missing asset came back
     byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
         try:
-            return str(int(Path(path).stat().st_mtime))
+            return str(int(hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16], 16))
         except OSError:
             pass
     return "0"
@@ -601,6 +605,9 @@ def _bus_append(bus_dir: Path | None, slug: str, event: dict) -> None:
     line = json.dumps(event, ensure_ascii=False) + "\n"
     with f.open("a", encoding="utf-8") as fh:
         fh.write(line)
+        if event.get("event") == "session_push" and event.get("round"):
+            fh.flush()
+            os.fsync(fh.fileno())
 
 
 def _monitor_project(bus_dir: Path | None) -> str:
@@ -820,11 +827,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_session_monitor(parsed)
             if route_path == "/api/capabilities":
                 return self._v2_get_capabilities(parsed)
+            if route_path == "/api/delivery":
+                from .delivery import delivery_status
+                return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
+            if route_path == "/api/project":
+                from .project_state import load_project
+                try:
+                    return self._respond(200, json.dumps(load_project(self.artifact_dir)).encode(), "application/json")
+                except (OSError, ValueError) as exc:
+                    return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
             if route_path == "/comments.json":
                 return self._v2_get_store()
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
-            if route_path in ("/shell.js", "/shell.css", "/adapter.js"):
+            if route_path in ("/shell.js", "/shell.css", "/content.css", "/adapter.js"):
                 return self._serve_skill_asset(route_path.lstrip("/"))
             # PATH-versioned assets: /assets/<stamp>/<name>. The stamp segment
             # exists purely as an edge cache key — some CDN configurations
@@ -925,8 +941,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return None, b"bad"
 
     def _v2_get_capabilities(self, parsed):
+        from . import __version__
         self._respond(200, json.dumps({
-            "version": "2.19",
+            "version": __version__,
+            "runtime": RUNTIME_MANIFEST,
+            "automatic_round_delivery": True,
             "batch": True,
             "rounds": True,
             "decision_schema": 2,
@@ -994,18 +1013,28 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_get_store(self):
         with _STORE_LOCK:
             store = self._v2_load()
-        self._respond(200, json.dumps(store, ensure_ascii=False).encode(), "application/json")
+        self._respond(200, json.dumps(store, ensure_ascii=False).encode(), "application/json", conditional=True)
 
     def _v2_get_meta(self):
         p = self._meta_path()
         if p.exists():
             try:
-                data = p.read_bytes()
-            except OSError:
+                meta = json.loads(p.read_text())
+                if isinstance(meta.get("owner"), dict):
+                    meta["owner"] = {k: v for k, v in meta["owner"].items() if k != "target"}
+                from .delivery import delivery_status
+                from .project_state import load_project
+                try:
+                    meta["project_info"] = load_project(self.artifact_dir)
+                except (OSError, ValueError):
+                    meta["project_info"] = {"modules": []}
+                meta["delivery_status"] = delivery_status(_monitor_project(self.bus_dir), self.slug)
+                data = json.dumps(meta).encode()
+            except (OSError, ValueError):
                 data = b"{}"
         else:
             data = json.dumps({"current": "v1", "history": []}).encode()
-        self._respond(200, data, "application/json")
+        self._respond(200, data, "application/json", conditional=True)
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -1213,6 +1242,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Both injected refs carry mtime stamps (edge-cache bypass, see
         # _cache_control_for).
         base = self.public_base_path or ""
+        # Generated page styles are runtime-owned. Preserve frozen standalone
+        # snapshots while applying shared style fixes to every generated version.
+        if '<div class="aa">' in html:
+            html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
+            css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
+            html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='
@@ -2266,86 +2301,79 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── v2.19: review rounds ─────────────────────────────────────────
     def _v2_post_rounds_submit(self, parsed):
-        """POST /api/rounds/submit {"note": str?} — close the reviewer's round.
+        """Commit one completed review round before clearing pending answers.
 
-        Collects every comment whose decision is round_pending, clears the
-        flag, and emits `round_submitted` plus exactly ONE session_push
-        {round: true, ...} so the agent sees the whole set of verdicts at
-        once instead of reacting to the first click.
+        The fsynced bus is the durable outbox. A retry mints the same delivery
+        ID until the pending flags are saved, preventing repeated input.
         """
         payload, err = self._read_json_body()
         if err:
             return
-        if not isinstance(payload, dict):
-            payload = {}
-        note = (payload.get("note") or "").strip() or None
+        payload = payload if isinstance(payload, dict) else {}
+        note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         with _STORE_LOCK:
             store = self._v2_load()
             now = _now_iso()
-            comment_ids = []
+            pending = []
             verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
             undecided_ids = []
-            for anchor_id, items in store.get("anchors", {}).items():
+            for items in store.get("anchors", {}).values():
                 for c in items:
-                    if c.get("status") == "archived":
+                    if c.get("status") in ("archived", "resolved_in_version"):
+                        if isinstance(c.get("decision"), dict):
+                            c["decision"].pop("round_pending", None)
                         continue
-                    d = c.get("decision")
-                    if c.get("status") == "resolved_in_version":
-                        if isinstance(d, dict):
-                            d.pop("round_pending", None)
-                        continue
-                    # Every verdict, including the free-text `comment`,
-                    # answers a card. Only a card with no verdict is undecided,
-                    # and not one the agent addressed or withdrew.
-                    if (c.get("decision_request") and not self._is_answered(d)
+                    decision = c.get("decision")
+                    if (c.get("decision_request") and not self._is_answered(decision)
                             and c.get("status") != "addressed_by_agent"):
                         undecided_ids.append(c.get("id"))
-                    if isinstance(d, dict) and d.get("round_pending"):
-                        d.pop("round_pending", None)
-                        c["flagged_for_session"] = True
-                        c["flagged_at"] = now
-                        c["flagged_by"] = author
-                        comment_ids.append(c.get("id"))
-                        v = d.get("verdict")
-                        if v in verdict_counts:
-                            verdict_counts[v] += 1
+                    if isinstance(decision, dict) and decision.get("round_pending"):
+                        pending.append(c)
+                        if decision.get("verdict") in verdict_counts:
+                            verdict_counts[decision["verdict"]] += 1
+            comment_ids = [c["id"] for c in pending]
+            if not comment_ids and not note:
+                self._v2_save(store)
+                self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
+                                              "comment_ids": [], "verdict_counts": verdict_counts,
+                                              "undecided_count": len(undecided_ids),
+                                              "undecided_ids": undecided_ids}).encode(), "application/json")
+                return
+            owner = self._read_meta().get("owner") or {}
+            fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
+                           "note": note, "owner": owner.get("owner_session"),
+                           "version": self._read_meta().get("current")}
+            delivery = self._compute_delivery()
+            delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
+            event = {"comment_ids": comment_ids, "verdict_counts": verdict_counts,
+                     "undecided_ids": undecided_ids, "note": note, **self._session_fields()}
+            _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
+                                                "round_id": delivery["delivery_id"], **event})
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
+                "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+                "comment_count": len(comment_ids), "author": author, **event,
+            })
+            for c in pending:
+                c["decision"].pop("round_pending", None)
+                c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             self._v2_save(store)
 
-        session = self._session_fields()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "round_submitted",
-            "comment_ids": comment_ids,
-            "verdict_counts": verdict_counts,
-            "undecided_ids": undecided_ids,
-            "note": note,
-            "by": author,
-            **session,
-        })
-        delivery = self._compute_delivery()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push",
-            **delivery,
-            "round": True,
-            "comment_count": len(comment_ids),
-            "comment_ids": comment_ids,
-            "verdict_counts": verdict_counts,
-            "undecided_ids": undecided_ids,
-            "note": note,
-            "author": author,
-            **session,
-        })
-        print(f"  POST /api/rounds/submit → {len(comment_ids)} verdict(s) {verdict_counts}, "
-              f"{len(undecided_ids)} undecided, {delivery['delivery']}, by {author}", flush=True)
-        self._respond(200, json.dumps({
-            "ok": True,
-            **delivery,
-            "comment_count": len(comment_ids),
-            "comment_ids": comment_ids,
-            "verdict_counts": verdict_counts,
-            "undecided_count": len(undecided_ids),
-            "undecided_ids": undecided_ids,
-        }, ensure_ascii=False).encode(), "application/json")
+        def wake_owner():
+            from .delivery import dispatch_record
+            try:
+                state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+                record = state.get("slugs", {}).get(self.slug)
+                if record:
+                    dispatch_record(record, _monitor_project(self.bus_dir), self.slug)
+            except (OSError, ValueError, TimeoutError) as exc:
+                print(f"WARN: automatic delivery: {exc}", flush=True)
+        threading.Thread(target=wake_owner, daemon=True).start()
+        self._respond(200, json.dumps({"ok": True, **delivery,
+                                      "comment_count": len(comment_ids), **event,
+                                      "undecided_count": len(undecided_ids)},
+                                     ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_rounds_discard(self, parsed):
         """POST /api/rounds/discard — drop the round_pending flags WITHOUT
@@ -2502,6 +2530,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             self._respond(403, b"Forbidden")
             return
+        if self.v2_mode and target == self._meta_path().resolve():
+            return self._v2_get_meta()
         # Public-exposure gate: for v2-mode slugs that have been migrated to
         # the universal-shell layout (content/ dir present), the old
         # versions/ tree — including archive-baked/ — holds chrome-
@@ -2537,11 +2567,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
-                 cache_control: str = "no-cache"):
+                 cache_control: str = "no-cache", conditional: bool = False):
+        etag = '"' + hashlib.sha256(body).hexdigest() + '"' if conditional else None
+        if code == 200 and self.command == "GET" and etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, no-cache")
+            self.end_headers()
+            return
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
+        if etag:
+            self.send_header("ETag", etag)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
@@ -2619,6 +2658,7 @@ def main():
         help='Public URL prefix to strip from incoming requests (e.g. "/schema-v4-2"). '
              "Default: empty (no stripping).",
     )
+    parser.add_argument("--strict-port", action="store_true", help="exit if the requested port is unavailable")
     parser.add_argument(
         "--local-author",
         default="",
@@ -2656,6 +2696,8 @@ def main():
         bus_dir = Path(args.bus_dir).resolve() if args.bus_dir else BUS_ROOT / "default"
         skill_dir = WEB_DIR
         port = find_free_port(args.port)
+        if args.strict_port and port != args.port:
+            parser.error(f"requested port {args.port} is unavailable; no alternate port selected")
         handler = make_handler(
             artifact_dir=slug_dir,
             artifact_file="current.html",
@@ -2732,6 +2774,20 @@ def main():
         print()
 
     try:
+        if args.slug_dir:
+            def delivery_loop():
+                from .delivery import dispatch_record
+                while True:
+                    try:
+                        state_path = STATE_DIR / f"{_monitor_project(bus_dir)}.json"
+                        state = json.loads(state_path.read_text())
+                        record = state.get("slugs", {}).get(args.slug or Path(args.slug_dir).name)
+                        if record:
+                            dispatch_record(record, _monitor_project(bus_dir), args.slug or Path(args.slug_dir).name)
+                    except (OSError, ValueError, TimeoutError):
+                        pass
+                    threading.Event().wait(30)
+            threading.Thread(target=delivery_loop, daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n  Server stopped.")

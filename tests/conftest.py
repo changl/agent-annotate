@@ -32,6 +32,7 @@ os.environ.pop("ANNOTATE_PROJECTS_TOML", None)
 for _name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID",
               "ANNOTATE_SESSION_ID", "ANNOTATE_HOOK_ALL", "ANNOTATE_HOOK_DRY_RUN"):
     os.environ.pop(_name, None)
+os.environ.pop("ORCA_TERMINAL_HANDLE", None)
 
 import pytest  # noqa: E402
 

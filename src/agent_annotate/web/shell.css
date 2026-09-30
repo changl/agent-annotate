@@ -59,7 +59,8 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .vrail.collapsed .rail-strip,.drawer.collapsed .rail-strip{display:flex}
 .vrail-body{flex:1;overflow-y:auto;padding:8px}
 .vrail-empty{padding:12px;font-size:11px;color:#94A3B8}
-.vrow{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:12px;border-radius:6px;cursor:pointer;color:#475569;position:relative}
+.vrow{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:12px;border-radius:6px;cursor:pointer;color:#475569;position:relative;width:100%;border:0;background:transparent;font-family:inherit;text-align:left}
+.vrow:focus-visible{outline:2px solid #4338CA;outline-offset:-2px}
 .vrow:hover{background:#F8FAFC}
 .vrow.current{background:#EEF2FF;color:#4338CA;font-weight:600}
 .vrow-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#CBD5E1}
@@ -71,8 +72,23 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 .vrow-new{font-size:8px;font-weight:800;color:#D97706;letter-spacing:.02em;flex-shrink:0}
 
 /* ── Content frame ──────────────────────────────────── */
-.frame-area{flex:1;overflow:hidden;background:#FAFAFA;position:relative}
-.content-frame{width:100%;height:100%;border:none;display:block;background:#FAFAFA}
+.frame-area{flex:1;min-width:0;overflow:hidden;background:#FAFAFA;position:relative;display:flex;flex-direction:column}
+.content-frame{width:100%;height:100%;flex:1;min-height:0;border:none;display:block;background:#FAFAFA}
+.project-panel{flex-shrink:0;max-height:35vh;overflow:auto;background:#FFF;border-bottom:1px solid #E2E8F0;padding:12px 16px;font-size:13px}
+.project-panel[hidden],.delivery-status[hidden],#project-toggle[hidden]{display:none}
+.project-heading{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:8px}
+.project-heading small{font-size:11px;color:#475569}
+.project-module{border-top:1px solid #E2E8F0;padding:8px 0}
+.project-module summary{cursor:pointer;font-weight:600;padding:4px 0}
+.project-module summary:focus-visible{outline:2px solid #4338CA}
+.project-module ul{list-style:none;padding:4px 0}
+.project-module li{padding:4px 0;overflow-wrap:anywhere}
+.project-module a{color:#4338CA;font-weight:600}
+.project-module .project-detail{display:block;color:#475569;font-size:12px;margin-top:4px}
+.project-state{display:inline-block;border:1px solid #CBD5E1;background:#F1F5F9;color:#334155;border-radius:4px;padding:2px 6px;margin-right:8px;font-size:11px}
+.project-state.done{border-color:#BBF7D0;background:#F0FDF4;color:#15803D}
+.project-state.blocked{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
+.delivery-status{flex-shrink:0;padding:8px 16px;background:#EEF2FF;color:#312E81;font-size:12px;border-bottom:1px solid #C7D2FE}
 
 /* ── Re-pin mode banner ─────────────────────────────── */
 .repin-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:12px;background:#312E81;color:#FFF;padding:8px 14px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);font-size:12px;font-weight:600;max-width:90%}

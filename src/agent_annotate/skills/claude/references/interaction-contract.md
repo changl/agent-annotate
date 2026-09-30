@@ -58,3 +58,21 @@ layout at phone width. Collapsed rail state persists across reloads, so pin
 placement must be re-verified after the canvas resizes in each direction.
 Monitor tests must cover claim conflict, explicit takeover, queued push, round
 submit, replay, SIGTERM release, and provider failure.
+
+## Completed rounds and persistent project context (2.20)
+
+A choice lives in decision_request.options, with an ID, label and consequence.
+The reviewer clicks it and presses Finish review; manually typing an option
+letter is not the standard interaction. Free-text answers remain available.
+No choice is preselected. Ordinary comments retain their existing lifecycle.
+
+The page keeps project links, progress and notes outside versioned decisions.
+Stable module IDs preserve collapse preferences; switching or publishing
+versions never removes the project workspace. Native disclosure summaries and
+version buttons support keyboard use. Jumps reveal collapsed evidence.
+
+Finishing review records a durable round before clearing pending answers.
+Only completed rounds generate automatic owner prompts; no per-answer prompt
+is sent. Delivery acceptance, owner receipt and implementation completion
+are visibly distinct. Changed/dead owner terminals do not receive input; a
+successor claims ownership from their own live session.

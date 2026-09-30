@@ -559,8 +559,8 @@ def test_the_template_is_fully_filled_and_the_sentinels_survive(tmp_path):
     assert "const DOC_ID = 'items-model-review';" in html
     # The stylesheet is the first thing in the canvas and the only CSS on it.
     canvas = html.split("<!-- CANVAS CONTENT", 1)[1].split("-->", 1)[1]
-    assert canvas.lstrip().startswith("<style>")
-    assert canvas.count("<style>") == 1
+    assert canvas.lstrip().startswith('<style data-annotate-style="managed">')
+    assert canvas.count('<style data-annotate-style="managed">') == 1
 
 
 def test_the_example_document_round_trips_with_more_than_twenty_anchors(tmp_path):
