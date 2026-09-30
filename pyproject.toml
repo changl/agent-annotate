@@ -37,6 +37,9 @@ Issues = "https://github.com/changl/agent-annotate/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.data-files]
+"share/agent-annotate" = ["CHANGELOG.md"]
+
 [tool.setuptools.package-data]
 agent_annotate = ["_build.json", "web/*", "hooks/*", "skills/*/*", "skills/*/*/*"]
 

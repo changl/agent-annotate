@@ -485,6 +485,8 @@ def _release_cuts() -> list[tuple[str, str]]:
     """(date, version) from the dated CHANGELOG headings; the newest heading wins a shared date."""
     changelog = PACKAGE_DIR.parents[1] / "CHANGELOG.md"
     if not changelog.is_file():
+        changelog = Path(sys.prefix) / "share" / "agent-annotate" / "CHANGELOG.md"
+    if not changelog.is_file():
         raise ValueError(f"--by release reads {changelog}, which this install lacks; pass --by D1,D2")
     cuts = {}
     for m in re.finditer(r"^## (v[\d.]+)\b[^\n]*?\((\d{4}-\d{2}-\d{2})", changelog.read_text(), re.M):

@@ -4,7 +4,7 @@ The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
 
-## 2.20.0
+## v2.20.0 Managed progress and completed-round delivery (2026-09-29)
 
 - Automatic Orca owner prompts for completed feedback rounds, with durable
   delivery IDs, current-owner validation, duplicate suppression, visible delivery
