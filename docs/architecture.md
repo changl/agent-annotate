@@ -130,6 +130,7 @@ Legacy automatic Codex monitors do not deliver these rounds a second time.
 `inbox --unread` emits owner acknowledgment without claiming work completion.
 Unknown send outcomes remain uncertain instead of triggering duplicate input.
 
+A version bump on main publishes a tested immutable release through CI.
 `updates.py` verifies stable release metadata and checksummed wheel artifacts,
 then stages isolated environments. `deployment.py` reconciles registry, process
 arguments and listener identity before replacing registered page servers; it

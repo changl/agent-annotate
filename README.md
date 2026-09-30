@@ -146,7 +146,7 @@ inspects the journal. Outside Orca, delivery remains attended through the hook.
 ## Stable updates and weekly evidence
 
 GitHub pushes do not update installed machines or already-loaded agent skills.
-Tagged releases run CI, build one wheel, and publish SHA256SUMS plus a build ID.
+A version bump pushed to main runs CI, builds one wheel, and publishes an immutable stable release with SHA256SUMS and a build ID. Tag-triggered releases use the same checks.
 
 ```bash
 annotate update --check
