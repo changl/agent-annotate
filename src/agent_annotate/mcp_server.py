@@ -57,13 +57,16 @@ def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author
 
 def build_server():
     try:
-        from mcp.server.fastmcp import FastMCP
+        try:
+            from mcp.server.mcpserver import MCPServer
+        except ImportError:
+            from mcp.server.fastmcp import FastMCP as MCPServer
     except ImportError as exc:
         raise RuntimeError(
             "MCP support is not installed. Install with `uv tool install 'agent-annotate[mcp]'`."
         ) from exc
 
-    server = FastMCP("agent-annotate")
+    server = MCPServer("agent-annotate")
 
     @server.tool()
     def list_pages() -> list[dict[str, Any]]:
@@ -153,4 +156,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -27,6 +27,7 @@ def estate(tmp_path, monkeypatch):
     transport.write_text('[reviews]\ntransport="tailscale"\n')
     monkeypatch.setattr(updates, "STATE_DIR", state)
     monkeypatch.setattr(updates, "CONFIG_DIR", config)
+    monkeypatch.setattr(updates, "_inherited_mcp_version", lambda: None)
     calls = []
 
     def run(argv, **kwargs):
@@ -307,3 +308,12 @@ def test_manifest_falls_back_to_asset_digest(estate, monkeypatch, tmp_path):
     first = updates.runtime_manifest()
     (web / "shell.js").write_text("second")
     assert first["build_id"] != updates.runtime_manifest()["build_id"]
+
+
+def test_mcp_capability_and_version_are_preserved(estate, monkeypatch):
+    _mock_downloads(monkeypatch, wheel=b"wheel")
+    release = updates.latest_release()
+    monkeypatch.setattr(updates, "_inherited_mcp_version", lambda: "2.2.0")
+    updates.stage_release(release)
+    assert any("mcp==2.2.0" in command for command in estate.calls)
+    assert any("from agent_annotate.mcp_server import build_server; build_server()" in command for command in estate.calls)

@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
-      - run: python -m pip install '.[dev,browser]' build
+      - run: python -m pip install '.[dev,browser,mcp]' build
       - run: python -m playwright install --with-deps chromium
       - run: sudo install -d -m 755 -o "$USER" '/Applications/Google Chrome.app/Contents/MacOS'
       - name: Use sandboxed Chromium for browser tests

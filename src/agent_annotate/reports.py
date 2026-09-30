@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import cli, costs
-from .pagegen import generate
+from .pagegen import _publish_namespace, generate
 
 
 def _cost_summary(rows: list[dict]) -> dict:
@@ -142,7 +142,5 @@ def cmd_report(args) -> int:
         if code:
             return code
         return cli._publish_already_running(args.project, directory.name, directory, record,
-                                             SimpleNamespace(no_verify=False, require_all=False))
-    return cli.cmd_publish(SimpleNamespace(slug_dir=str(directory), project=args.project, port=None,
-                         hostname=None, public=False, local_author=None, local_author_name=None,
-                         no_verify=False, skip_js_lint=False, require_all=False))
+                                             _publish_namespace(directory, args))
+    return cli.cmd_publish(_publish_namespace(directory, args))
