@@ -628,6 +628,7 @@ function installBadgeMutObs() {
   // Granular pins live in a shared overlay so they work for HTML and SVG.
   // Recompute geometry when any nested diagram/document scroller moves.
   document.addEventListener('scroll', scheduleBadgeRefresh, true);
+  document.addEventListener('toggle', scheduleBadgeRefresh, true);
   window.addEventListener('resize', scheduleBadgeRefresh);
 }
 

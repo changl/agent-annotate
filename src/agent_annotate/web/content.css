@@ -39,3 +39,21 @@
 .aa .aa-details summary{cursor:pointer;font-weight:600;padding:4px 0}
 .aa .aa-details summary:focus-visible{outline:2px solid #4338CA;outline-offset:4px}
 @media (max-width:760px){.aa{padding:8px 12px 60px}.aa pre{white-space:pre-wrap;word-break:break-word}.aa table{font-size:12.5px}.aa .kpis{grid-template-columns:1fr 1fr}}
+
+/* Persistent project information shares the document's scroll and width. */
+#project-panel{box-sizing:border-box;max-width:1044px;margin:12px auto 0;padding:0 12px;border:1px solid #E2E8F0;border-radius:8px;background:#FFF;color:#334155;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+#project-panel[hidden]{display:none}
+#project-panel > summary{cursor:pointer;font-weight:600;padding:10px 0}
+#project-panel summary:focus-visible{outline:2px solid #4338CA;outline-offset:2px}
+#project-panel .project-heading{display:flex;justify-content:space-between;gap:12px;padding:4px 0 8px;color:#64748B;font-size:12px}
+#project-panel .project-module{border-top:1px solid #E2E8F0;padding:6px 0}
+#project-panel .project-module > summary{cursor:pointer;font-weight:600;padding:4px 0}
+#project-panel ul{list-style:none;padding:4px 0;margin:0}
+#project-panel li{padding:4px 0;overflow-wrap:anywhere}
+#project-panel a{color:#4338CA;font-weight:600}
+#project-panel .project-detail{display:block;color:#64748B;font-size:12px;margin-top:2px}
+#project-panel .project-state{display:inline-block;border:1px solid #CBD5E1;background:#F1F5F9;color:#334155;border-radius:4px;padding:1px 5px;margin-right:6px;font-size:11px}
+#project-panel .project-state.done{border-color:#BBF7D0;background:#F0FDF4;color:#15803D}
+#project-panel .project-state.blocked{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
+@media(max-width:1080px){#project-panel{margin:12px 18px 0}}
+@media(max-width:760px){#project-panel{margin:8px 12px 0}}

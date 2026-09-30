@@ -297,10 +297,13 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width":1440,"height":1000})
             page.goto(base, wait_until="networkidle")
-            page.locator('#project-panel a').wait_for(state="visible")
-            assert page.locator('#project-panel a').get_attribute('href') == 'https://cms.example/admin'
-            assert page.locator('#vrail-body .vrow').first.evaluate('e => e.tagName') == 'BUTTON'
             frame = page.frame_locator('#content-frame')
+            panel = frame.locator('#project-panel')
+            panel.locator(':scope > summary').click()
+            panel.locator('details[data-module="resources"] summary').click()
+            panel.locator('a').wait_for(state="visible")
+            assert panel.locator('a').get_attribute('href') == 'https://cms.example/admin'
+            assert page.locator('#vrail-body .vrow').first.evaluate('e => e.tagName') == 'BUTTON'
             frame.locator('link[href*="content.css"]').wait_for(state="attached")
             assert frame.locator('.aa-details').count() == 1
             assert frame.locator('.aa-details').get_attribute('open') is None
@@ -308,10 +311,10 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
             page.locator('#round-finish-btn').wait_for(state="visible")
             assert 'PENDING' in page.locator('#comment-list').inner_text()
             page.screenshot(path='/tmp/annotate-managed-desktop.png', full_page=True)
-            page.locator('#project-panel details[data-module="resources"] summary').click()
+            panel.locator('details[data-module="resources"] summary').click()
             page.reload(wait_until="networkidle")
-            page.locator('#project-panel').wait_for(state="visible")
-            assert page.locator('#project-panel details[data-module="resources"]').get_attribute('open') is None
+            panel.wait_for(state="visible")
+            assert panel.locator('details[data-module="resources"]').get_attribute('open') is None
             page.set_viewport_size({"width":390,"height":844})
             _wait(lambda: _in_view(page.locator("#round-finish-btn")), page)
             page.screenshot(path='/tmp/annotate-managed-mobile.png', full_page=True)

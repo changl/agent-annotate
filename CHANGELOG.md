@@ -6,6 +6,9 @@ this repository.
 
 ## v2.20.4 Review reliability and request boundaries (unreleased)
 
+- Project information uses a compact native disclosure inside the document,
+  scrolling away with content. The redundant header Project toggle is removed.
+  Expansion preferences and pins remain correct across versions and srcdoc.
 - Generated and legacy managed pages retain a visible title; the shell title
   follows the selected version. Tables preserve words and scroll when needed.
   Decision numbers remain stable across live, archived and resolved history,

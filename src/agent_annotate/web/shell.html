@@ -20,7 +20,6 @@
          Filled from current.meta.json `owner`; hidden when absent. -->
     <span class="owner-chip" id="owner-chip" style="display:none"></span>
     <span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span>
-    <button class="btn btn-sec" id="project-toggle" aria-controls="project-panel" aria-expanded="true" hidden>Project</button>
     <button class="push-session-btn" id="push-session-btn" title="Send comments to an armed session monitor, or queue them for the next turn">
       <span class="push-session-text"><span class="push-session-icon">&#128238;</span><span class="push-session-label"> Push to session</span></span><span class="push-session-counter" id="push-session-counter">0</span>
     </button>
@@ -43,7 +42,7 @@
 
   <!-- Content iframe -->
   <div class="frame-area" id="frame-area">
-    <section class="project-panel" id="project-panel" aria-label="Project information" hidden></section>
+    <div id="project-staging" hidden><details class="project-panel" id="project-panel" data-annotate-project-panel="runtime" data-annotate-interactive hidden></details></div>
     <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>

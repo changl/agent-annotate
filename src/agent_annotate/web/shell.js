@@ -595,6 +595,8 @@ let HAS_SUMMARY = false;
 let SUMMARY_PROJECT = null;
 let SUMMARY_DELIVERY = null;
 let projectSnapshot = '';
+const projectPanel = document.getElementById('project-panel');
+projectPanel.addEventListener('toggle', () => projectPreference(':summary', projectPanel.open));
 function projectPreference(key, value) {
   try {
     const storageKey = 'annotate:project:' + location.pathname + ':' + key;
@@ -603,16 +605,19 @@ function projectPreference(key, value) {
   } catch { return null; }
 }
 function renderProject() {
-  const panel = document.getElementById('project-panel');
-  const toggle = document.getElementById('project-toggle');
+  const panel = projectPanel;
   const modules = PROJECT.modules || [];
-  toggle.hidden = !modules.length;
-  if (!modules.length) { panel.hidden = true; return; }
-  panel.hidden = projectPreference('panel') === 'closed';
-  toggle.setAttribute('aria-expanded', String(!panel.hidden));
-  panel.innerHTML = `<div class="project-heading"><strong>${esc(PROJECT.title || 'Project links and progress')}</strong><small>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</small></div>` + modules.map((module, index) => {
+  if (!modules.length) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    document.getElementById('project-staging').appendChild(panel);
+    return;
+  }
+  panel.hidden = false;
+  panel.open = projectPreference(':summary') === 'open';
+  panel.innerHTML = `<summary>Project summary</summary><div class="project-heading"><span>${esc(PROJECT.title || 'Links and progress')}</span><span>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</span></div>` + modules.map(module => {
     const preference = projectPreference(module.id);
-    const open = preference ? preference === 'open' : module.kind === 'links' && index === 0;
+    const open = preference === 'open';
     const items = module.items.map(item => {
       if (module.kind === 'links') {
         let url; try { url = new URL(item.url); } catch { return ''; }
@@ -628,6 +633,29 @@ function renderProject() {
     node.querySelector('summary').addEventListener('click', () => projectPreference(node.dataset.module, !node.open));
     node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
   });
+  mountProjectInDocument(document.getElementById('content-frame'));
+}
+
+function mountProjectInDocument(frame) {
+  if (projectPanel.hidden || !frame) return;
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body) return;
+    const locationOrigin = frame.contentWindow.location.origin;
+    const origin = locationOrigin === 'null' ? frame.contentWindow.origin : locationOrigin;
+    if (origin !== BRIDGE_ORIGIN) return;
+    doc.querySelectorAll('#project-panel[data-annotate-project-panel="runtime"]').forEach(node => {
+      if (node !== projectPanel) node.remove();
+    });
+    if (!doc.querySelector('link[href*="/assets/"][href$="/content.css"]') && !doc.getElementById('annotate-project-content-style')) {
+      const link = doc.createElement('link');
+      link.id = 'annotate-project-content-style';
+      link.rel = 'stylesheet';
+      link.href = document.querySelector('link[href*="shell.css"]').href.replace('shell.css', 'content.css');
+      doc.head.appendChild(link);
+    }
+    doc.body.prepend(projectPanel);
+  } catch { /* Foreign or unavailable content never receives project data. */ }
 }
 async function loadProject() {
   try {
@@ -727,8 +755,11 @@ function switchVersion(v) {
 
 function loadIframe(v) {
   const frame = document.getElementById('content-frame');
+  // Keep the live summary out of the outgoing document during navigation.
+  document.getElementById('project-staging').appendChild(projectPanel);
   frame.onload = () => {
     try {
+      mountProjectInDocument(frame);
       const title = frame.contentDocument.title;
       if (title) {
         document.getElementById('hdr-title').textContent = title;
@@ -736,6 +767,7 @@ function loadIframe(v) {
       }
     } catch { /* A failed content load keeps the last known page title. */ }
   };
+  frame.removeAttribute('srcdoc');
   frame.src = './content?v=' + encodeURIComponent(v);
 }
 
@@ -2505,6 +2537,7 @@ function wireBridge() {
     } else if (data.type === 'annotate:ready') {
       // content doc finished loading + adapter.js initialized
       autoCollapseForFullscreen(false); // version switch discards any overlay
+      mountProjectInDocument(frame);
       sendCommentCountsToFrame();
       markSeen(CURRENT_VERSION);
       loadSeen().then(renderVersionRail);
@@ -2725,12 +2758,6 @@ async function init() {
 
   await Promise.all([loadStore(), loadMeta(), loadSessionMonitor(), loadCapabilities()]);
   await Promise.all([loadProject(), loadDelivery()]);
-  document.getElementById('project-toggle').addEventListener('click', () => {
-    const panel = document.getElementById('project-panel');
-    panel.hidden = !panel.hidden;
-    projectPreference('panel', !panel.hidden);
-    document.getElementById('project-toggle').setAttribute('aria-expanded', String(!panel.hidden));
-  });
   // // v2.19: the ONE probe; 404 → legacy mode for this page load
 
   const urlV = new URL(window.location.href).searchParams.get('v');

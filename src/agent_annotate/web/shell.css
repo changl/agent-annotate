@@ -74,20 +74,7 @@ body{font-family:'Helvetica Neue',-apple-system,'Segoe UI',Roboto,Arial,sans-ser
 /* ── Content frame ──────────────────────────────────── */
 .frame-area{flex:1;min-width:0;overflow:hidden;background:#FAFAFA;position:relative;display:flex;flex-direction:column}
 .content-frame{width:100%;height:100%;flex:1;min-height:0;border:none;display:block;background:#FAFAFA}
-.project-panel{flex-shrink:0;max-height:35vh;overflow:auto;background:#FFF;border-bottom:1px solid #E2E8F0;padding:12px 16px;font-size:13px}
-.project-panel[hidden],.delivery-status[hidden],#project-toggle[hidden]{display:none}
-.project-heading{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:8px}
-.project-heading small{font-size:11px;color:#475569}
-.project-module{border-top:1px solid #E2E8F0;padding:8px 0}
-.project-module summary{cursor:pointer;font-weight:600;padding:4px 0}
-.project-module summary:focus-visible{outline:2px solid #4338CA}
-.project-module ul{list-style:none;padding:4px 0}
-.project-module li{padding:4px 0;overflow-wrap:anywhere}
-.project-module a{color:#4338CA;font-weight:600}
-.project-module .project-detail{display:block;color:#475569;font-size:12px;margin-top:4px}
-.project-state{display:inline-block;border:1px solid #CBD5E1;background:#F1F5F9;color:#334155;border-radius:4px;padding:2px 6px;margin-right:8px;font-size:11px}
-.project-state.done{border-color:#BBF7D0;background:#F0FDF4;color:#15803D}
-.project-state.blocked{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
+.delivery-status[hidden]{display:none}
 .delivery-status{flex-shrink:0;padding:8px 16px;background:#EEF2FF;color:#312E81;font-size:12px;border-bottom:1px solid #C7D2FE}
 
 /* ── Re-pin mode banner ─────────────────────────────── */

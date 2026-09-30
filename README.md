@@ -162,6 +162,11 @@ updates the workspace without publishing another feedback round. A `details`
 fence contains a summary line followed by supporting Markdown. Choice options
 must be structured; manual option-letter prompts produce actionable warnings.
 
+Persistent information appears in one compact **Project summary** disclosure
+inside the document. It starts collapsed, scrolls with the page and retains
+section expansion preferences across review versions. There is no separate
+header button or project-view navigation mode.
+
 ## Automatic completed-round delivery
 
 Publishing or claiming a page from an Orca terminal captures that owner session,
