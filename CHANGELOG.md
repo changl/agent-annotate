@@ -6,6 +6,8 @@ this repository.
 
 ## v2.20.1 Weekly report publishing and capability preservation (2026-09-29)
 
+- Owner status uses captured process identity when available, avoiding false
+  inactive labels when a live session ID is absent from process arguments.
 - MCP server construction supports both the 1.x FastMCP and 2.x MCPServer
   SDK entry points, with schema-generation checks.
 - Staged updates preserve an installed MCP capability at its existing SDK
