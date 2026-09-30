@@ -4,6 +4,13 @@ The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
 
+## v2.20.2 Progress-page feedback store initialization (2026-09-29)
+
+- Generated pages initialize a valid empty feedback store. Progress and weekly
+  pages with no decisions can publish their next version without requiring an
+  intervening browser write. Existing feedback is preserved exactly, including
+  damaged stores that still need explicit recovery.
+
 ## v2.20.1 Weekly report publishing and capability preservation (2026-09-29)
 
 - Owner status uses captured process identity when available, avoiding false

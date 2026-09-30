@@ -432,6 +432,35 @@ def test_rerunning_the_same_version_is_idempotent(tmp_path):
     assert second["prior_versions"] == []
 
 
+def test_generated_page_without_decisions_can_publish_a_second_round(tmp_path):
+    from agent_annotate import cli
+
+    src = tmp_path / "weekly.md"
+    src.write_text(_doc("## Progress\n\nWeekly status.\n", version="v1",
+                        full_plan="true", other_files_required="none"), encoding="utf-8")
+    slug_dir = tmp_path / "weekly"
+    generate(src, slug_dir)
+    assert json.loads((slug_dir / "comments.json").read_text()) == {
+        "schema_version": 2, "anchors": {}, "archived": {},
+    }
+    generate(src, slug_dir, version="v2")
+    assert cli._carryover_blockers(slug_dir, "v2") == []
+
+
+@pytest.mark.parametrize("stored", [
+    '{"schema_version":2,"anchors":{"s:progress":[{"id":"feedback","text":"Keep this"}]},"archived":{}}',
+    'damaged feedback awaiting recovery',
+])
+def test_generation_preserves_an_existing_feedback_store(tmp_path, stored):
+    src = tmp_path / "weekly.md"
+    src.write_text(_doc("## Progress\n\nWeekly status.\n", version="v1"), encoding="utf-8")
+    slug_dir = tmp_path / "weekly"
+    slug_dir.mkdir()
+    (slug_dir / "comments.json").write_text(stored, encoding="utf-8")
+    generate(src, slug_dir)
+    assert (slug_dir / "comments.json").read_text(encoding="utf-8") == stored
+
+
 def test_generating_a_second_version_does_not_publish_it_before_the_gate(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(EXAMPLE, encoding="utf-8")
