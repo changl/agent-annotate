@@ -46,7 +46,7 @@ def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "Cf-Access-Authenticated-User-Email": author,
+            "X-Annotate-Agent": author if author.startswith("agent:") else f"agent:{author}",
             # Every event this request emits is attributed to this session.
             "X-Annotate-Session": cli._session_id(),
         },

@@ -534,6 +534,8 @@ class Renderer:
     # ── drive ──────────────────────────────────────────────────────────────
     def run(self, blocks: list[dict]) -> None:
         self.parts.append('<div class="aa">')
+        if self.title:
+            self.parts.append(f'<h1 class="aa-page-title">{E(self.title)}</h1>')
         for block in blocks:
             self.block(block)
         self.close_section()
@@ -544,7 +546,7 @@ class Renderer:
         if kind == "heading":
             text = block["text"]
             if block["level"] == 1 and text.strip() == (self.title or "").strip():
-                return             # the document title is already the header
+                return             # run() renders the document title once inside the canvas
             if block["level"] <= 2:
                 self.open_section(text)
             else:
@@ -814,10 +816,9 @@ def _scope_banner(meta: dict, version: str) -> str:
 def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
     """Fill every `{{NAME}}` in the packaged template. Never one occurrence."""
     template = (WEB_DIR / "template.html").read_text(encoding="utf-8")
-    # ANCHOR_REGISTRY lands inside <script>, where the HTML parser does not
-    # decode entities — the only thing that can end the block early is the
-    # literal `</script>`, so that is the only thing escaped.
-    registry_js = json.dumps(registry, indent=1, ensure_ascii=False).replace("</", "<\\/")
+    # Escape all '<' so neither script-end tags nor HTML double-escaped
+    # script states can alter parsing. JSON decoding restores exact labels.
+    registry_js = json.dumps(registry, indent=1, ensure_ascii=False).replace("<", "\\u003c")
     values = {
         "{{TITLE}}": E(meta["title"]),
         "{{SUBTITLE}}": E(meta.get("subtitle", "")),

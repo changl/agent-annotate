@@ -42,6 +42,7 @@ def _serve(tmp_path):
             "--slug", "demo",
             "--bus-dir", str(tmp_path / "bus"),
             "--port", str(port),
+            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -69,13 +70,9 @@ def test_interactive_controls_keep_native_click_behavior(tmp_path):
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             # The shell only enables comment authoring for an identified
-            # reviewer, so the proxy identity headers are required here.
+            # reviewer; the isolated server supplies its configured local identity.
             page = browser.new_page(
                 viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-                    "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-                },
             )
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
@@ -122,13 +119,9 @@ def test_alt_click_overrides_the_interactive_bail_out(tmp_path):
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             # The shell only enables comment authoring for an identified
-            # reviewer, so the proxy identity headers are required here.
+            # reviewer; the isolated server supplies its configured local identity.
             page = browser.new_page(
                 viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-                    "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-                },
             )
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")

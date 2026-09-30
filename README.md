@@ -10,18 +10,46 @@ Claude Code, Codex and future providers attach to the same runtime.
 
 ## Install
 
+Requires Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), and
+Python 3.11 or newer (uv can provision Python). Install a tested release tag;
+installing Git main is a development checkout and can differ from the stable
+runtime on another machine.
+
 ```sh
-uv tool install "agent-annotate[mcp] @ git+https://github.com/changl/agent-annotate.git"
+uv tool install "agent-annotate[mcp] @ git+https://github.com/changl/agent-annotate.git@v2.20.4"
+uv tool update-shell
 annotate doctor
 ```
+
+Open a new terminal after updating PATH. If `annotate doctor` runs another tool,
+use the absolute `annotate` executable in the directory printed by
+`uv tool dir --bin`. The `python -m` fallback works only in an environment where
+this package is installed; system Python does not inherit uv's tool environment.
+`doctor` reports the package version, resolved invocation, roots and dependencies.
+Run it on each machine rather than assuming a GitHub push updated either one.
 
 For development:
 
 ```sh
 uv venv
 uv pip install -e '.[dev]'
-annotate doctor
+uv run annotate doctor
 ```
+
+The local page server works without a provider plugin. Claude Code and Codex
+can use the same CLI and stdio MCP server (`annotate mcp`). Existing skills are
+user-managed: package installation and runtime updates do not install, replace,
+or refresh them. A running agent must reload instructions it has already read.
+The Codex plugin uses the installed CLI on its PATH; verify that invocation in
+the provider's environment and restart its MCP process after a runtime change.
+Its bundled skill references are incomplete; the canonical references below
+remain in the package source. Plugin discovery is separate from runtime health.
+
+Tailscale and Cloudflare transports require their corresponding CLI/account
+configuration. Orca completed-round routing requires a live Orca owner session.
+Automatic revive/report scheduling uses macOS launchd; on other systems run the
+commands explicitly. Browser tests require Playwright and Chromium; normal
+local page serving does not.
 
 `annotate` is the package entry point. When that name on PATH is something
 else (on one machine it is libgd's image tool) the CLI prints every
@@ -37,6 +65,11 @@ and friends relocate them; see the environment table in
 [cli-reference.md](src/agent_annotate/skills/claude/references/cli-reference.md).
 
 ## A round
+
+These commands are for the owning agent. Publishing from its Orca session
+captures the owner automatically; after a handoff, the successor runs
+`annotate claim review` from its own session before collecting another round.
+Human runtime setup alone does not establish an orchestrator owner.
 
 ```sh
 annotate new --example > page.md               # a worked markdown document
@@ -92,9 +125,10 @@ Sections and thresholds:
 In Claude Code the `UserPromptSubmit` hook (installed by `publish`) announces
 new reviewer activity on the next turn, to the session that owns the page
 only, without consuming the inbox. `annotate monitor` is for a session with
-no user turn coming. A Codex session reads with `annotate inbox`; `annotate
+no user turn coming outside automatic Orca delivery. A Codex session reads with `annotate inbox`; `annotate
 connect` can relay each submitted round into an idle Codex thread through
-the local app-server, but nothing interrupts a running Codex prompt.
+the local app-server. Orca completed-round delivery below is the automatic
+route when publishing from a supported Orca session.
 
 ## Reviewing a page
 
@@ -105,10 +139,9 @@ anyway. Decision cards show their prompt, context, recommendation and
 consequences on the rail and inline next to the anchored element. In round
 mode a verdict is parked until "Finish review"; "Send now" pushes a single
 card. Accept, Reject and Request changes answer a card; the last one requires
-a note, and that note is what the agent acts on. A standing **Comment** button
-sits beside them for saying something *without* answering — the card keeps its
-options, stays in "Needs my review" and the round still reports it undecided,
-but the remark travels as a verdict instead of an easily-missed reply. Long
+a note, and that note is what the agent acts on. **Answer in words** accepts
+free-text feedback as the answer: the card waits for the agent and no longer
+counts as undecided. Long
 option labels wrap. Clicking into any of a card's boxes takes the document to
 that card's location. Both rails collapse;
 below 1160px the page becomes a phone layout with a bottom-sheet drawer. The chrome is served from the package on every
@@ -158,9 +191,9 @@ annotate revive --install
 Daily checks are opt-in per machine through the existing revive watchdog.
 Updates stage a separate environment, verify the wheel checksum, reconcile every
 registered server and listener, preserve owners/ports/routes/state, and roll back
-failed restarts. Generated skill deployments refresh from their manifests;
-custom edits remain untouched and are reported. Running agents must reload
-instructions they already read. Prototype forks and unregistered servers need
+failed restarts. Skills remain user-managed and are excluded from runtime
+updates. Running MCP processes must restart to load a changed runtime.
+Prototype forks and unregistered servers need
 explicit migration; an updater never kills them by guessing.
 
 ```bash
@@ -224,6 +257,56 @@ carry `env_file = "/path/.env.local"` and `tunnel_id = "…"`. Cloudflare
 credentials otherwise come from `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
 `ANNOTATE_CLOUDFLARE_TUNNEL_ID` and `ANNOTATE_CLOUDFLARE_HOSTNAME`, or from a
 private env file named by `ANNOTATE_CLOUDFLARE_ENV_FILE`; nothing is embedded.
+
+### Reviewer identity and request boundaries
+
+Local browser feedback needs an explicitly configured reviewer. Add a project
+section to `projects.toml` in the config directory printed by `doctor` (the
+section name is the project, such as `reviews`, not `projects.reviews`):
+
+```toml
+[reviews]
+transport = "local"
+local_author = "reviewer@example.com"
+local_author_name = "Local reviewer"
+```
+
+These fields are passed when starting the server. They apply only to direct
+loopback requests with the server's actual local Host and port. Agent CLI/MCP
+requests are attributed separately and cannot establish human reviewer identity.
+Requests from another browser origin, an unknown Host, or outside the published
+mount are rejected. A mounted page URL without its final slash redirects to the
+directory URL and preserves its query.
+
+Tailnet reviewer identity requires Tailscale Serve identity headers on a recorded
+tailnet endpoint. Public Access identity additionally requires its recorded
+public URL and an explicit `trusted_access_origins = ["https://review.example.com"]`
+in that project section. Only declare an edge that validates Access JWTs and
+overwrites incoming identity headers: the application checks assertion presence
+and trusts that configured edge; it does not cryptographically verify the JWT.
+An arbitrary email header is insufficient. Validate the actual proxy Host,
+headers and mount with a real authenticated reviewer before promoting a change.
+
+Only intended assets and attachments are statically served. Internal project,
+metrics, card and state JSON files and backup/hidden files are private. Published
+attachments are public to whoever can access the page; review their contents
+before attaching them.
+
+## Removing an installation
+
+Disable updates with `annotate update --disable`; remove a watchdog installed
+by this package with `annotate revive --uninstall`. If a weekly report job was
+installed, use `annotate report /path/to/its/page --uninstall`. These preserve
+review history. Stop only the page servers and monitors you own, and remove
+only their named transport routes; never reset unrelated Tailscale or tunnel
+configuration.
+
+Remove a package-managed shim only if it still points to this installation,
+then use `uv tool uninstall agent-annotate`. Provider MCP registrations, skills
+and hook registrations are separate resources: inspect ownership and remove
+only this tool's entries, preserving unrelated settings and edits. Keep the
+registry, page directories, buses and private backups unless you intentionally
+choose to delete that history. No whole-settings restore is required.
 
 ## Publish verification
 

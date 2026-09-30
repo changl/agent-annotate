@@ -14,12 +14,21 @@
 function apiUrl(path) {
   return path; // relative fetch — browser resolves against current document URL
 }
+const BRIDGE_ORIGIN = (() => {
+  const origin = window.location.origin;
+  if (/^https?:\/\//.test(origin)) return origin;
+  try {
+    const parentOrigin = window.parent.location.origin;
+    const inherited = parentOrigin === 'null' ? window.parent.origin : parentOrigin;
+    return /^https?:\/\//.test(inherited) ? inherited : null;
+  } catch { return null; }
+})();
 
 let STORE = { schema_version: 2, anchors: {}, archived: {} };
 let META = { current: null, history: [], content_stamps: {} };
 let SEEN = {}; // { version: {ts, whole_hash, section_hashes} }
 let READ = {}; // { commentId: {ts, sig} } — this viewer's per-comment read state
-let NUM_MAP = {}; // { commentId: n } — stable per-version comment number (pin #n ↔ card #n)
+let NUM_MAP = {}; // { commentId: n } — canonical item number shared by rail, body and pin
 let CURRENT_VERSION = null;
 let AUTHOR = null;
 let IDENTITY = null;
@@ -160,7 +169,7 @@ function computeNumbers() {
   const all = flattenAll(true);
   const used = new Set();
   for (const c of all) {
-    if (Number.isInteger(c.number) && c.number > 0 && !used.has(c.number)) {
+    if (Number.isInteger(c.number) && c.number > 0 && !NUM_MAP[c.id]) {
       NUM_MAP[c.id] = c.number;
       used.add(c.number);
     }
@@ -170,7 +179,7 @@ function computeNumbers() {
     const prompt = c.decision_request && c.decision_request.prompt;
     const match = typeof prompt === 'string' ? prompt.match(/^Q(\d+)(?![0-9A-Za-z])/i) : null;
     const n = match ? Number(match[1]) : 0;
-    if (n > 0 && !used.has(n)) {
+    if (n > 0) {
       NUM_MAP[c.id] = n;
       used.add(n);
     }
@@ -718,6 +727,15 @@ function switchVersion(v) {
 
 function loadIframe(v) {
   const frame = document.getElementById('content-frame');
+  frame.onload = () => {
+    try {
+      const title = frame.contentDocument.title;
+      if (title) {
+        document.getElementById('hdr-title').textContent = title;
+        document.title = title;
+      }
+    } catch { /* A failed content load keeps the last known page title. */ }
+  };
   frame.src = './content?v=' + encodeURIComponent(v);
 }
 
@@ -2439,6 +2457,8 @@ function frameOffset() {
 
 function wireBridge() {
   window.addEventListener('message', (e) => {
+    const frame = document.getElementById('content-frame');
+    if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frame || e.source !== frame.contentWindow) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:pin-click') {
@@ -2611,13 +2631,13 @@ function sendCommentCountsToFrame() {
     (Array.isArray(items) ? items : []).forEach(c =>
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
-  frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, '*');
+  if (BRIDGE_ORIGIN) frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, BRIDGE_ORIGIN);
 }
 
 function scrollToAnchorInFrame(anchorId, target, back) {
   const frame = document.getElementById('content-frame');
   if (!frame || !frame.contentWindow) return;
-  frame.contentWindow.postMessage({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null }, '*');
+  if (BRIDGE_ORIGIN) frame.contentWindow.postMessage({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null }, BRIDGE_ORIGIN);
 }
 
 // ── Wire popover buttons ─────────────────────────────────────────────

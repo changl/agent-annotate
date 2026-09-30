@@ -14,7 +14,7 @@ V1 USAGE (single HTML file; backward compatible)
     Routes:
       GET  /api/comments?doc=<id>  → return <dir>/<id>.comments.json or {}
       POST /api/comments?doc=<id>  → write JSON body to <dir>/<id>.comments.json
-      *                            → serve static files from the artifact's directory
+      *                            → serve public assets/attachments from the artifact's directory
 
 ────────────────────────────────────────────────────────────────────────────
 V2 USAGE (directory layout, version-pivot, comment lifecycle)
@@ -85,7 +85,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
                                               decision.round_pending on every deferred
                                               verdict and emits ONE session_push{round:true}
       POST /api/rounds/discard              → clear round_pending flags without pushing
-      *                                     → serve static files from <slug-dir>
+      *                                     → serve public assets/attachments from <slug-dir>
 
     Optional request header X-Annotate-Session: <id> — when present, every bus
     event the request emits carries session_id (agents/CLIs send it, browsers
@@ -109,7 +109,9 @@ import os
 import re
 import socket
 import sys
+import tempfile
 import threading
+import tomllib
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
@@ -117,7 +119,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
-from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, STATE_DIR, WEB_DIR
+from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
@@ -432,12 +434,37 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+_VERSION_ID = re.compile(r"v[0-9]{1,10}\Z", re.ASCII)
+_AGENT_ID = re.compile(r"agent:[^\x00-\x1f\x7f]{1,128}\Z")
+
+
+def _contained_path(artifact_dir: Path, relative: str, subtree: str | None = None) -> Path:
+    """Resolve within both the artifact and the intended public subtree."""
+    try:
+        root = artifact_dir.resolve()
+        if subtree and (root / subtree).is_symlink():
+            raise ValueError("version directory must not be a symlink")
+        parent = (root / subtree).resolve() if subtree else root
+        parent.relative_to(root)
+        target = (parent / relative).resolve()
+        target.relative_to(parent)
+        return target
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise PermissionError("artifact path leaves its allowed directory") from exc
+
+
+def _version_file(artifact_dir: Path, version: str, subtree: str = "versions") -> Path:
+    if not isinstance(version, str) or not _VERSION_ID.fullmatch(version):
+        raise ValueError("version must have form vNN")
+    return _contained_path(artifact_dir, f"{version}.html", subtree)
+
+
 def _version_has_anchor(artifact_dir: Path, version: str, anchor_id: str) -> bool:
     """True when a disposition points at a real anchor in the named version."""
-    target = artifact_dir / "versions" / f"{version}.html"
     try:
+        target = _version_file(artifact_dir, version)
         markup = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return False
     pattern = re.compile(r"data-anchor-id=(['\"])" + re.escape(anchor_id) + r"\1")
     return bool(pattern.search(markup))
@@ -450,11 +477,11 @@ def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) ->
     they guessed the anchor, or resolved before generating the version. The
     closest real anchors turn the retry into a copy, not a search.
     """
-    target = artifact_dir / "versions" / f"{version}.html"
     body = {"error": f"{what} target anchor not found", "version": version, "anchor": anchor_id}
     try:
+        target = _version_file(artifact_dir, version)
         markup = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         body["error"] = f"{what} target version {version} has no page yet — generate it first"
         return json.dumps(body).encode()
     anchors = re.findall(r"data-anchor-id=['\"]([^'\"]+)['\"]", markup)
@@ -487,9 +514,15 @@ def _load_v2_store(path: Path) -> dict:
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(data, output, indent=2, ensure_ascii=False)
+            os.fchmod(output.fileno(), mode)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -696,6 +729,112 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     skill_dir: Path | None = None  # packaged web asset directory (shell.*, adapter.js)
     local_author: str | None = None
     local_author_name: str | None = None
+    proxy_urls: tuple[str, ...] = ()
+    trusted_access_origins: tuple[str, ...] = ()
+
+    @staticmethod
+    def _origin(value: str) -> tuple[str, str, int] | None:
+        try:
+            parsed = urllib.parse.urlsplit(value)
+            if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.query or parsed.fragment or any(char.isspace() or ord(char) < 32 for char in value)):
+                return None
+            port = parsed.port
+            if port is not None and not 0 < port < 65536:
+                return None
+            port = port or (443 if parsed.scheme == "https" else 80)
+            return parsed.scheme, parsed.hostname.lower(), port
+        except ValueError:
+            return None
+
+    def _published_proxy_origins(self) -> set[tuple[str, str, int]]:
+        urls = list(self.proxy_urls)
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            slugs = state.get("slugs", {}) if isinstance(state, dict) else {}
+            record = slugs.get(self.slug, {}) if isinstance(slugs, dict) else {}
+            if not isinstance(record, dict):
+                record = {}
+            if (Path(record.get("slug_dir", "")).resolve() == self.artifact_dir.resolve()
+                    and record.get("port") == self.server.server_address[1]
+                    and record.get("transport") != "local"):
+                urls.extend(record.get(field) for field in ("url", "public_url"))
+        except (OSError, ValueError, TypeError):
+            pass
+        return {origin for value in urls if isinstance(value, str)
+                and (origin := self._origin(value)) is not None and origin[0] == "https"}
+
+    def _access_origins(self) -> set[tuple[str, str, int]]:
+        values = list(self.trusted_access_origins)
+        try:
+            config = tomllib.loads(PROJECTS_TOML.read_text())
+            section = config.get(_monitor_project(self.bus_dir), {}) if isinstance(config, dict) else {}
+            configured = section.get("trusted_access_origins", []) if isinstance(section, dict) else []
+            if isinstance(configured, list):
+                values.extend(configured)
+        except (OSError, ValueError, TypeError):
+            pass
+        return {origin for value in values if isinstance(value, str)
+                and (origin := self._origin(value)) is not None and origin[0] == "https"
+                and urllib.parse.urlsplit(value).path in ("", "/")}
+
+    def _request_origin(self) -> tuple[str, str, int] | None:
+        host = self.headers.get("Host") or ""
+        if any(char in host for char in ("/", "\\", "?", "#", "@")):
+            return None
+        direct = self._origin("http://" + host)
+        if direct is not None:
+            try:
+                loopback = direct[1] == "localhost" or ipaddress.ip_address(direct[1]).is_loopback
+            except ValueError:
+                loopback = False
+            legacy_agent = self.headers.get("Cf-Access-Authenticated-User-Email")
+            if (loopback and direct[2] == self.server.server_address[1] and not self._has_proxy_markers()
+                    and (not legacy_agent or (legacy_agent.startswith("agent:") and not self.headers.get("Origin")
+                                              and not self.headers.get("Sec-Fetch-Site")))):
+                return direct
+        proxy = self._origin("https://" + host)
+        return proxy if proxy in self._published_proxy_origins() else None
+
+    def _allow_request(self) -> bool:
+        path = urllib.parse.urlsplit(self.path).path
+        if self.public_base_path and path != self.public_base_path and not path.startswith(self.public_base_path + "/"):
+            self._respond(404, b'{"error":"outside published page mount"}')
+            return False
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                raise ValueError
+        except ValueError:
+            self._respond(403, b'{"error":"loopback listener boundary required"}')
+            return False
+        origin = self._request_origin()
+        supplied = self.headers.get("Origin")
+        if (origin is None or (supplied is not None and (self._origin(supplied) != origin
+                or urllib.parse.urlsplit(supplied).path not in ("", "/")))):
+            self._respond(403, b'{"error":"untrusted host or origin"}')
+            return False
+        agent = self.headers.get("X-Annotate-Agent") or self.headers.get("Cf-Access-Authenticated-User-Email")
+        if origin[0] == "http" and agent is not None and (
+                supplied is not None or self.headers.get("Sec-Fetch-Site") is not None or not _AGENT_ID.fullmatch(agent)):
+            self._respond(403, b'{"error":"local agent attribution requires a direct non-browser request"}')
+            return False
+        site = self.headers.get("Sec-Fetch-Site")
+        navigation = (self.command == "GET" and self.headers.get("Sec-Fetch-Mode") == "navigate"
+                      and self.headers.get("Sec-Fetch-Dest") == "document")
+        if site not in (None, "none", "same-origin") and not navigation:
+            self._respond(403, b'{"error":"cross-origin request refused"}')
+            return False
+        if origin[0] == "https" and not self._identity()["authenticated"]:
+            self._respond(403, b'{"error":"authenticated proxy boundary required"}')
+            return False
+        try:
+            for name in ("comments.json", "current.meta.json", "project.json", "seen.json", "read-state.json"):
+                _contained_path(self.artifact_dir, name)
+        except PermissionError:
+            self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
+            return False
+        return True
 
     # ── Path normalization ──────────────────────────────────────────
     def _strip_base(self, path: str) -> str:
@@ -713,6 +852,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # itself a tailnet node, so a public request reaching `tailscale serve`
     # through the tunnel would otherwise carry the connector owner's login.
     _CLOUDFLARE_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
+    _PROXY_MARKERS = (*_CLOUDFLARE_HEADERS, "Cf-Access-Authenticated-User-Name", "Forwarded", "Via", "X-Real-IP",
+                      "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Tailscale-User-Login",
+                      "Tailscale-User-Name", "X-Auth-Request-User", "oai-authenticated-user-email",
+                      "oai-authenticated-user-full-name", "oai-authenticated-user-full-name-encoding")
+
+    def _has_proxy_markers(self) -> bool:
+        return any(self.headers.get(name) is not None for name in self._PROXY_MARKERS)
 
     def _tailscale_identity(self) -> tuple[str, str]:
         """The tailnet login `tailscale serve` attaches, or ("", "").
@@ -738,7 +884,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             hostname = urllib.parse.urlsplit("//" + host_header).hostname or ""
         except ValueError:
             return "", ""
-        if not hostname.lower().endswith(".ts.net"):
+        if (not hostname.lower().endswith(".ts.net")
+                or self._origin("https://" + host_header) not in self._published_proxy_origins()):
             return "", ""
         return login, (self.headers.get("Tailscale-User-Name") or "").strip()
 
@@ -753,7 +900,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             peer_is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
         except ValueError:
             return False
-        if not peer_is_loopback:
+        if not peer_is_loopback or self._has_proxy_markers():
             return False
 
         host_header = (self.headers.get("Host") or "").strip()
@@ -771,39 +918,30 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
 
     def _identity(self) -> dict:
-        """Return identity supplied by OAuth or the configured local fallback.
+        """Trust recorded TailServe or an explicitly declared Access edge.
 
-        Client query parameters and JSON bodies are deliberately excluded:
-        they are display input, not authentication evidence. The fallback is
-        available only to direct loopback URLs and never to public/proxy Hosts.
+        Access JWT validation is delegated to that owner-configured edge; token
+        presence here is not cryptographic verification. Local OS callers are
+        attributed as agents. Browser identity uses only the local preset or
+        trusted proxy, never a client-authored JSON/query/proxy claim.
         """
-        email = (
-            self.headers.get("Cf-Access-Authenticated-User-Email")
-            or self.headers.get("oai-authenticated-user-email")
-            or ""
-        ).strip()
-        name = (
-            self.headers.get("Cf-Access-Authenticated-User-Name")
-            or self.headers.get("X-Auth-Request-User")
-            or ""
-        ).strip()
-        oai_name = self.headers.get("oai-authenticated-user-full-name")
-        if not name and oai_name:
-            encoding = self.headers.get("oai-authenticated-user-full-name-encoding", "")
-            name = urllib.parse.unquote(oai_name) if encoding == "percent-encoded-utf-8" else oai_name
-            name = name.strip()
-        if not email:
-            ts_email, ts_name = self._tailscale_identity()
-            if ts_email:
-                email = ts_email
-                name = name or ts_name
+        email, name = self._tailscale_identity()
+        origin = self._origin("https://" + (self.headers.get("Host") or ""))
+        if (origin in self._published_proxy_origins() and origin in self._access_origins()
+                and not origin[1].endswith(".ts.net") and self.headers.get("Cf-Access-Jwt-Assertion")):
+            email = (self.headers.get("Cf-Access-Authenticated-User-Email") or "").strip()
+            name = (self.headers.get("Cf-Access-Authenticated-User-Name") or "").strip()
+        if self._is_direct_loopback_request() and not self.headers.get("Origin") and not self.headers.get("Sec-Fetch-Site"):
+            agent = self.headers.get("X-Annotate-Agent") or self.headers.get("Cf-Access-Authenticated-User-Email") or ""
+            if _AGENT_ID.fullmatch(agent):
+                email, name = agent, ""
         if not email and self.local_author and self._is_direct_loopback_request():
             email = self.local_author
             name = self.local_author_name or name
         return {
             "email": email or None,
             "name": name or None,
-            "authenticated": bool(email),
+            "authenticated": bool(email) and not email.startswith("agent:"),
         }
 
     def _author(self, parsed=None) -> str:
@@ -811,7 +949,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
+        if self.public_base_path and parsed.path == self.public_base_path:
+            # Relative shell assets and API URLs require a directory base.
+            location = self.public_base_path + "/"
+            if parsed.query:
+                location += "?" + parsed.query
+            self.send_response(308)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         route_path = self._strip_base(parsed.path)
 
         if self.v2_mode:
@@ -862,6 +1012,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── POST ─────────────────────────────────────────────────────────
     def do_POST(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
 
@@ -906,6 +1058,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b"Not found")
 
     def do_PUT(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
         if self.v2_mode and route_path.startswith("/api/comments/"):
@@ -914,10 +1068,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(404, b'{"error":"Not found"}')
 
     def do_OPTIONS(self):
+        if not self._allow_request():
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Cf-Access-Authenticated-User-Email, X-Annotate-Session")
+        self.send_header("Allow", "GET, POST, PUT, OPTIONS")
         self.end_headers()
 
     # ── v2.19: agent session attribution ─────────────────────────────
@@ -957,13 +1111,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         }).encode(), "application/json")
 
     # ── V1 routes (backward compat) ─────────────────────────────────
+    def _legacy_comments_path(self, parsed):
+        doc = (urllib.parse.parse_qs(parsed.query).get("doc") or [None])[0]
+        if (not isinstance(doc, str) or not doc or doc in (".", "..")
+                or any(char in doc for char in ("/", "\\"))
+                or any(ord(char) < 32 or ord(char) == 127 for char in doc)):
+            self._respond(400, b'{"error":"safe doc identifier required"}')
+            return None
+        try:
+            return _contained_path(self.artifact_dir, doc + ".comments.json")
+        except PermissionError:
+            self._respond(403, b'{"error":"forbidden comment path"}')
+            return None
+
     def _v1_get_comments(self, parsed):
-        params = urllib.parse.parse_qs(parsed.query)
-        doc = (params.get("doc") or [None])[0]
-        if not doc:
-            self._respond(400, b'{"error":"missing doc param"}')
+        json_path = self._legacy_comments_path(parsed)
+        if json_path is None:
             return
-        json_path = self.artifact_dir / (doc + ".comments.json")
         if json_path.exists():
             try:
                 data = json_path.read_bytes()
@@ -975,10 +1139,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, data, content_type="application/json")
 
     def _v1_post_comments(self, parsed):
-        params = urllib.parse.parse_qs(parsed.query)
-        doc = (params.get("doc") or [None])[0]
-        if not doc:
-            self._respond(400, b'{"error":"missing doc param"}')
+        json_path = self._legacy_comments_path(parsed)
+        if json_path is None:
             return
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
@@ -987,14 +1149,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             self._respond(400, f'{{"error":"invalid json: {exc}"}}'.encode())
             return
-        json_path = self.artifact_dir / (doc + ".comments.json")
         try:
             _atomic_write_json(json_path, data)
         except OSError as exc:
             self._respond(500, f'{{"error":"write error: {exc}"}}'.encode())
             return
         total = sum(len(v) for v in data.values() if isinstance(v, list))
-        print(f"  POST /api/comments?doc={doc} → {total} comment(s) → {json_path}", flush=True)
+        print(f"  POST /api/comments → {total} comment(s)", flush=True)
         self._respond(200, b'{"ok":true}', content_type="application/json")
 
     # ── V2 routes ────────────────────────────────────────────────────
@@ -1057,8 +1218,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _version_path(self, version: str | None):
         if version:
-            return self.artifact_dir / "versions" / f"{version}.html"
-        return self.artifact_dir / "current.html"
+            return _version_file(self.artifact_dir, version)
+        return _contained_path(self.artifact_dir, "current.html")
 
     def _extractable_version(self, version: str | None) -> bool:
         """True when a baked legacy version can be served through the shell.
@@ -1070,12 +1231,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         comes from the skill dir on every request like it does for every other
         slug. Nothing is written to disk — see _v2_serve_content.
         """
-        target = self._version_path(version)
-        if not target.exists() or not target.is_file():
-            return False
         try:
+            target = self._version_path(version)
+            if not target.exists() or not target.is_file():
+                return False
             return has_canvas_sentinels(target.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
+        except (OSError, ValueError):
             return False
 
     def _shell_eligible(self, parsed=None) -> bool:
@@ -1090,6 +1251,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self._extractable_version(version)
 
     def _v2_serve_root(self, parsed):
+        v = (urllib.parse.parse_qs(parsed.query).get("v") or [None])[0]
+        try:
+            target = self._version_path(v)
+        except ValueError:
+            return self._respond(400, b'{"error":"invalid version"}')
+        except PermissionError:
+            return self._respond(403, b'{"error":"forbidden version path"}')
         # Universal-shell slugs serve the shared shell.html at root; the shell
         # reads ?v= client-side and loads the right iframe src. A slug earns
         # that path either by having a content/ dir of chrome-free docs, or by
@@ -1123,12 +1291,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(500, b'{"error":"shell.html not found next to sync_server.py"}')
             return
 
-        params = urllib.parse.parse_qs(parsed.query)
-        v = (params.get("v") or [None])[0]
-        if v:
-            target = self.artifact_dir / "versions" / f"{v}.html"
-        else:
-            target = self.artifact_dir / "current.html"
         if not target.exists() or not target.is_file():
             self._respond(404, b"Not found")
             return
@@ -1200,7 +1362,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not v:
             self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
             return
-        target = self.artifact_dir / "content" / f"{v}.html"
+        try:
+            target = _version_file(self.artifact_dir, v, "content")
+        except ValueError:
+            return self._respond(400, b'{"error":"invalid version"}')
+        except PermissionError:
+            return self._respond(403, b'{"error":"forbidden content path"}')
         if target.exists() and target.is_file():
             try:
                 html = target.read_text(encoding="utf-8")
@@ -1216,7 +1383,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # slug, with no file to re-generate and no stale duplicate on
             # disk. An explicit content/<v>.html always wins, so a hand-tuned
             # extraction is never overridden.
-            baked = self._version_path(v)
+            try:
+                baked = self._version_path(v)
+            except PermissionError:
+                return self._respond(403, b'{"error":"forbidden version path"}')
             if not baked.exists() or not baked.is_file():
                 self._respond(404, f'{{"error":"content not found for version {v}"}}'.encode())
                 return
@@ -1249,9 +1419,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
             html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
+        content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug}).replace("<", "\\u003c")
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='
-            f'{json.dumps({"version": v, "publicBasePath": base, "slug": self.slug})};</script>\n'
+            f'{content_meta};</script>\n'
             f'<script src="{base}/assets/{adapter_v}/adapter.js"></script>\n'
         )
         if "</body>" in html:
@@ -1267,9 +1438,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # clock — making the whole document byte-different on every request.
         # Strip the tag in that case; otherwise stamp it from the copy that
         # will actually be served.
-        dgplot_local = self.artifact_dir / "diagram-plot.js"
+        try:
+            dgplot_local = _contained_path(self.artifact_dir, "diagram-plot.js")
+            if not self._is_public_static(dgplot_local.relative_to(self.artifact_dir.resolve()).as_posix()):
+                dgplot_local = None
+        except PermissionError:
+            dgplot_local = None
         dgplot_skill = (self.skill_dir / "diagram-plot.js") if self.skill_dir else None
-        dgplot = dgplot_local if dgplot_local.exists() else (
+        dgplot = dgplot_local if dgplot_local is not None and dgplot_local.exists() else (
             dgplot_skill if (dgplot_skill and dgplot_skill.exists()) else None)
         if dgplot is not None:
             html = html.replace(
@@ -1314,9 +1490,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """
         candidates = []
         if name == "diagram-plot.js":
-            candidates.append(self.artifact_dir / name)
+            try:
+                local = _contained_path(self.artifact_dir, name)
+                if self._is_public_static(local.relative_to(self.artifact_dir.resolve()).as_posix()):
+                    candidates.append(local)
+            except PermissionError:
+                pass
         if self.skill_dir:
-            candidates.append(self.skill_dir / name)
+            try:
+                candidates.append(_contained_path(self.skill_dir, name))
+            except PermissionError:
+                pass
         for target in candidates:
             if target.exists() and target.is_file():
                 try:
@@ -2522,16 +2706,42 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
+    def _is_public_static(self, relative: str) -> bool:
+        parts = relative.split("/")
+        if any(not part or part in (".", "..") or part.startswith(".") for part in parts):
+            return False
+        name = parts[-1].lower()
+        if (name in {"comments.json", "current.meta.json", "project.json", "cards.json", "metrics.json",
+                     "seen.json", "read-state.json", "weekly-source.md"}
+                or name.endswith((".comments.json", ".tmp", ".bak", ".backup", ".lock", ".log", ".ndjson", ".sqlite", ".db", "~"))):
+            return False
+        if parts[0] in ("assets", "attachments") and len(parts) > 1:
+            return True  # These directories are an explicit publication boundary.
+        if len(parts) == 1:
+            return (relative == self.artifact_file or relative == "current.html"
+                    or Path(name).suffix in {".css", ".js", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+                                            ".webp", ".avif", ".woff", ".woff2", ".ttf", ".mp4", ".webm", ".ogg", ".mp3", ".wav"})
+        return (parts[0] == "versions" and len(parts) == 2 and not self._has_content_dir()
+                and Path(name).suffix == ".html" and bool(_VERSION_ID.fullmatch(Path(name).stem)))
+
     def _serve_static(self, url_path):
-        rel = url_path.lstrip("/") or self._default_file()
-        target = (self.artifact_dir / rel).resolve()
         try:
-            target.relative_to(self.artifact_dir.resolve())
-        except ValueError:
+            rel = urllib.parse.unquote(url_path, errors="strict").lstrip("/") or self._default_file()
+        except UnicodeError:
+            return self._respond(400, b"Invalid path")
+        if "\\" in rel or any(ord(char) < 32 for char in rel):
+            return self._respond(404, b"Not found")
+        try:
+            target = _contained_path(self.artifact_dir, rel)
+        except PermissionError:
             self._respond(403, b"Forbidden")
             return
         if self.v2_mode and target == self._meta_path().resolve():
-            return self._v2_get_meta()
+            return self._v2_get_meta()  # Preserve normalized aliases through the filtered API, never raw bytes.
+        if not self._is_public_static(rel):
+            return self._respond(404, b"Not found")
+        if not self._is_public_static(target.relative_to(self.artifact_dir.resolve()).as_posix()):
+            return self._respond(404, b"Not found")
         # Public-exposure gate: for v2-mode slugs that have been migrated to
         # the universal-shell layout (content/ dir present), the old
         # versions/ tree — including archive-baked/ — holds chrome-
@@ -2581,7 +2791,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache_control)
         if etag:
             self.send_header("ETag", etag)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -2603,6 +2813,8 @@ def make_handler(
     skill_dir: Path | None = None,
     local_author: str | None = None,
     local_author_name: str | None = None,
+    proxy_urls: tuple[str, ...] = (),
+    trusted_access_origins: tuple[str, ...] = (),
 ) -> type:
     class BoundHandler(AnnotateHandler):
         pass
@@ -2615,6 +2827,8 @@ def make_handler(
     BoundHandler.skill_dir = skill_dir
     BoundHandler.local_author = local_author
     BoundHandler.local_author_name = local_author_name
+    BoundHandler.proxy_urls = proxy_urls
+    BoundHandler.trusted_access_origins = trusted_access_origins
     return BoundHandler
 
 

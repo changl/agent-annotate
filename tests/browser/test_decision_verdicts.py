@@ -91,7 +91,8 @@ def _serve(tmp_path, card=None, anchor="s:overview"):
     process = subprocess.Popen(
         [sys.executable, "-m", "agent_annotate.sync_server",
          "--slug-dir", str(slug_dir), "--slug", "demo",
-         "--bus-dir", str(tmp_path / "bus"), "--port", str(port)],
+         "--bus-dir", str(tmp_path / "bus"), "--port", str(port),
+         "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     base = f"http://127.0.0.1:{port}/"
@@ -112,10 +113,6 @@ def _open(runner, base, legacy=False):
     browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
     page = browser.new_page(
         viewport={"width": 1280, "height": 800},
-        extra_http_headers={
-            "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-            "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-        },
     )
     if legacy:
         # Answer the one capabilities probe with a pre-D2 body. Everything

@@ -21,6 +21,20 @@
 
 const META = window.__ANNOTATE_CONTENT_META__ || {};
 
+// Reading the parent proves same-origin access. srcdoc reports a null
+// location origin, so use its inherited security origin only after that read.
+const PARENT_ORIGIN = (() => {
+  if (window.parent === window) return null;
+  try {
+    const origin = window.parent.location.origin;
+    const inherited = origin === 'null' ? window.parent.origin : origin;
+    return /^https?:\/\//.test(inherited) ? inherited : null;
+  } catch { return null; }
+})();
+function postToParent(data) {
+  if (PARENT_ORIGIN) window.parent.postMessage(data, PARENT_ORIGIN);
+}
+
 // Elements whose own click behavior must win over click-to-comment: native
 // form controls, links, ARIA widgets, and the artifact chrome. Anything NOT
 // matched here stays fully annotatable, so click-anywhere-to-comment is
@@ -249,7 +263,7 @@ function wireClicks() {
         highlightAnchor(pinAid, true);
         setTimeout(() => highlightAnchor(pinAid, false), 1500);
       }
-      window.parent.postMessage({
+      postToParent({
         type: 'annotate:pin-open',
         anchorId: pinAid,
         anchorIds,
@@ -257,7 +271,7 @@ function wireClicks() {
         commentIds: (pin.dataset.pinComments || '').split(',').filter(Boolean),
         x: e.clientX,
         y: e.clientY,
-      }, '*');
+      });
       return;
     }
 
@@ -294,7 +308,7 @@ function wireClicks() {
     document.querySelectorAll('[data-anchor-id].active, .no.active').forEach(el => el.classList.remove('active'));
     target.classList.add('active');
 
-    window.parent.postMessage({
+    postToParent({
       type: 'annotate:pin-click',
       anchorId: aid,
       anchorLabel: anchorName(aid),
@@ -304,7 +318,7 @@ function wireClicks() {
       target: captureTarget(e.target, target, e),
       x: e.clientX,
       y: e.clientY,
-    }, '*');
+    });
   }, true);
 }
 
@@ -324,14 +338,14 @@ if (typeof window.openPopover !== 'function') {
         .forEach(n => n.classList.remove('active'));
       el.classList.add('active');
     }
-    window.parent.postMessage({
+    postToParent({
       type: 'annotate:pin-click',
       anchorId: anchorId,
       anchorLabel: anchorName(anchorId),
       target: null,
       x: typeof x === 'number' ? x : 0,
       y: typeof y === 'number' ? y : 0,
-    }, '*');
+    });
   };
 }
 
@@ -1158,7 +1172,7 @@ function appendPendingControls(itemEl, id) {
     if (!j) { send.disabled = false; send.textContent = 'Send now'; return; }
     pend.remove();
     send.remove();
-    window.parent.postMessage({ type: 'annotate:decision-posted', commentId: id }, '*');
+    postToParent({ type: 'annotate:decision-posted', commentId: id });
   });
   itemEl.appendChild(send);
 }
@@ -1216,7 +1230,7 @@ async function submitStripDecision(id, verdict, text, itemEl) {
   } else {
     swapStripItemToResolved(itemEl, verdict, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed');
   }
-  window.parent.postMessage({ type: 'annotate:decision-posted', commentId: id }, '*');
+  postToParent({ type: 'annotate:decision-posted', commentId: id });
 }
 
 function makeStripBtn(label, cls) {
@@ -2000,7 +2014,7 @@ function scrollToAnchor(anchorId, target, back) {
   ensureGotoHighlightStyle();
   const anchorEl = displayAnchorEl(anchorId);
   if (!anchorEl) {
-    window.parent.postMessage({ type: 'annotate:scroll-result', anchorId, found: false }, '*');
+    postToParent({ type: 'annotate:scroll-result', anchorId, found: false });
     return;
   }
 
@@ -2023,7 +2037,7 @@ function scrollToAnchor(anchorId, target, back) {
     // report honestly instead of "scrolling" to an invisible element —
     // the shell renders "location unavailable in this version".
     if (!el.getClientRects().length) {
-      window.parent.postMessage({ type: 'annotate:scroll-result', anchorId, found: false }, '*');
+      postToParent({ type: 'annotate:scroll-result', anchorId, found: false });
       return;
     }
     const marker = back && back.commentId ? placeBackPill(el, back) : null;
@@ -2054,12 +2068,12 @@ function scrollToAnchor(anchorId, target, back) {
       el.classList.remove('active', 'goto-highlight', 'goto-highlight-svg');
       gotoHighlightTimer = null;
     }, GOTO_HIGHLIGHT_MS);
-    window.parent.postMessage({
+    postToParent({
       type: 'annotate:scroll-result',
       anchorId,
       found: true,
       resolved: inner ? inner.how : 'anchor',
-    }, '*');
+    });
   }, switched ? 150 : 0);
 }
 
@@ -2147,7 +2161,7 @@ function goBackToCard(back) {
   removeBackPills();
   if (back.from === 'rail') {
     // The card lives in the shell's rail: the shell reopens and focuses it.
-    window.parent.postMessage({ type: 'annotate:back-to-card', commentId: back.commentId }, '*');
+    postToParent({ type: 'annotate:back-to-card', commentId: back.commentId });
     return;
   }
   const item = document.querySelector('[data-strip-item="' + cssEsc(back.commentId) + '"]');
@@ -2307,12 +2321,13 @@ function postExcerpts() {
   const json = JSON.stringify(out);
   if (json === lastExcerptsJson) return;
   lastExcerptsJson = json;
-  window.parent.postMessage({ type: 'annotate:excerpts', version: META.version || null, excerpts: out }, '*');
+  postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out });
 }
 
 // ── Bridge: listen for shell messages ────────────────────────────────
 function wireBridge() {
   window.addEventListener('message', (e) => {
+    if (!PARENT_ORIGIN || e.origin !== PARENT_ORIGIN || e.source !== window.parent) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:scroll-to') {
@@ -2598,7 +2613,7 @@ function detectContentFullscreen() {
   } catch {}
   if (active !== lastFullscreenState) {
     lastFullscreenState = active;
-    window.parent.postMessage({ type: 'annotate:content-fullscreen', active }, '*');
+    postToParent({ type: 'annotate:content-fullscreen', active });
   }
 }
 
@@ -2626,7 +2641,7 @@ async function init() {
   // Announce readiness once the DOM (and any deferred diagram scripts)
   // have had a frame to settle.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    window.parent.postMessage({ type: 'annotate:ready', version: META.version }, '*');
+    postToParent({ type: 'annotate:ready', version: META.version });
     renderBadges();
   }));
 }

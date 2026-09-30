@@ -59,7 +59,7 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
     process = subprocess.Popen(
         [sys.executable, "-m", "agent_annotate.sync_server", "--slug-dir", str(slug_dir),
          "--slug", "items-model-review", "--bus-dir", str(tmp_path / "bus"),
-         "--port", str(port)],
+         "--port", str(port), "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{port}/"
     try:
@@ -72,8 +72,7 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
                 time.sleep(0.05)
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": 1280, "height": 900}, extra_http_headers={
-                "Cf-Access-Authenticated-User-Email": "reviewer@example.com"})
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
             frame = page.frame_locator("#content-frame")

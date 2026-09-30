@@ -2,8 +2,11 @@
 card checks and table math. Nothing here calls claude or starts a server."""
 
 import importlib.util
+import io
 import json
 from pathlib import Path
+
+import pytest
 
 _PATH = Path(__file__).resolve().parents[1] / "scripts" / "bench.py"
 _SPEC = importlib.util.spec_from_file_location("annotate_bench", _PATH)
@@ -143,3 +146,43 @@ def test_render_table():
     assert by_name["cost $"].endswith("-0.30 (-27%)")
     assert by_name["thinking tokens"].split()[2:] == ["-", "-", "-"]
     assert by_name["outcome pass"].split()[2:] == ["1/2", "2/2", "+1"]
+
+
+def test_export_ref_does_not_fall_back_to_unfiltered_extraction(tmp_path, monkeypatch):
+    class Archive:
+        calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extractall(self, path, **kwargs):
+            self.calls.append(kwargs)
+            raise TypeError("filter unsupported")
+
+    archive = Archive()
+    monkeypatch.setattr(bench, "_git", lambda *args: "inert-sha")
+    monkeypatch.setattr(bench.subprocess, "run", lambda *args, **kwargs: type("Result", (), {"stdout": b""})())
+    monkeypatch.setattr(bench.tarfile, "open", lambda **kwargs: archive)
+    with pytest.raises(RuntimeError, match="data extraction filters"):
+        bench.export_ref("inert-ref", tmp_path)
+    assert archive.calls == [{"filter": "data"}]
+
+
+def test_benchmark_review_declares_identity_and_uses_real_origin(monkeypatch):
+    requests = []
+    class Response(io.BytesIO):
+        pass
+
+    def urlopen(request, **kwargs):
+        requests.append(request)
+        return Response(b'{"ok":true}')
+
+    monkeypatch.setattr(bench.urllib.request, "urlopen", urlopen)
+    assert bench._http("POST", "http://127.0.0.1:9400/review/api/comments", {"text": "inert"}) == {"ok": True}
+    assert requests[0].get_header("Origin") == "http://127.0.0.1:9400"
+    assert not any(key.lower().startswith("cf-") for key in requests[0].headers)
+    assert 'local_author = "chang@example.com"' in bench._toml_section("reviews", 9400)
+    assert 'local_author = "chang@example.com"' in bench.LAUNCHER

@@ -107,10 +107,6 @@ class _NullProcess:
 def _page(browser):
     return browser.new_page(
         viewport={"width": 1280, "height": 800},
-        extra_http_headers={
-            "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-            "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-        },
     )
 
 

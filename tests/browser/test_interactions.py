@@ -42,6 +42,7 @@ def test_scroll_jump_granular_pin_and_reverse_lookup(tmp_path):
             str(bus_dir),
             "--port",
             str(port),
+            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -66,10 +67,6 @@ def test_scroll_jump_granular_pin_and_reverse_lookup(tmp_path):
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(
                 viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-                    "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-                },
             )
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")

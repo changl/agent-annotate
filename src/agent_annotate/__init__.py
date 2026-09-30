@@ -1,3 +1,3 @@
 """Agent Annotate provider-neutral runtime."""
 
-__version__ = "2.20.3"
+__version__ = "2.20.4"

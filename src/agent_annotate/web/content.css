@@ -1,4 +1,5 @@
 .aa{max-width:1080px;margin:0 auto;padding:8px 18px 60px;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:#1F2937}
+.aa .aa-page-title{font-size:24px;line-height:1.25;margin:16px 0 24px;overflow-wrap:break-word}
 .aa h2{font-size:20px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB}
 .aa h3{font-size:16px;margin:22px 0 6px}
 .aa p{margin:6px 0 10px}
@@ -13,7 +14,7 @@
 .aa .kpi span{font-size:12px;color:#4B5563}
 .aa .wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .aa table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:13.5px}
-.aa th,.aa td{border:1px solid #E5E7EB;padding:6px 8px;vertical-align:top;text-align:left}
+.aa th,.aa td{border:1px solid #E5E7EB;padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:normal;word-break:normal}
 .aa th{background:#F3F4F6;font-weight:600}
 .aa tr[data-anchor-id]:hover td{background:#F9FAFB}
 .aa pre{background:#0F172A;color:#E2E8F0;border-radius:8px;padding:10px 12px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;max-width:100%}

@@ -42,6 +42,13 @@ def _anchors(canvas: str) -> list[str]:
     return pagegen._ANCHOR_ATTR.findall(canvas)
 
 
+def test_frontmatter_title_is_one_visible_canvas_h1_with_existing_section_anchors():
+    canvas, registry, _cards = _render("# Audit & progress\n\n## Coverage\n\nComplete review.", title="Audit & progress")
+    assert canvas.count("<h1") == 1
+    assert '<h1 class="aa-page-title">Audit &amp; progress</h1>' in canvas
+    assert set(registry) == {"s:coverage", "s:coverage:p1"}
+
+
 # ── front matter ────────────────────────────────────────────────────────────
 def test_front_matter_parses_known_keys_and_survives_quotes():
     meta, body = parse_front_matter(

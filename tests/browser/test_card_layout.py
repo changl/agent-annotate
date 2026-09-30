@@ -126,7 +126,8 @@ def _serve(tmp_path, slug_dir):
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(
         [sys.executable, "-m", "agent_annotate.sync_server", "--slug-dir", str(slug_dir),
-         "--slug", "items-model", "--bus-dir", str(tmp_path / "bus"), "--port", str(port)],
+         "--slug", "items-model", "--bus-dir", str(tmp_path / "bus"), "--port", str(port),
+         "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{port}/"
     deadline = time.time() + 5
@@ -162,8 +163,7 @@ def test_card_layout_and_unchanged_sections(tmp_path):
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": 1400, "height": 900}, extra_http_headers={
-                "Cf-Access-Authenticated-User-Email": "reviewer@example.com"})
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
             frame = page.frame_locator("#content-frame")
@@ -291,11 +291,11 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
         item = {"number":1, "anchor_id":"s:scope", "text":"Pick a runtime", "version":"v1",
                 "decision_request":{"prompt":"Pick a runtime", "options":["Shared runtime","Keep fork"], "recommendation":"Shared runtime"}}
         request = urllib.request.Request(base + "api/comments/batch", data=json.dumps({"items":[item]}).encode(),
-            headers={"Content-Type":"application/json", "Cf-Access-Authenticated-User-Email":"agent:test"})
+            headers={"Content-Type":"application/json", "X-Annotate-Agent":"agent:test"})
         urllib.request.urlopen(request).close()
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width":1440,"height":1000}, extra_http_headers={"Cf-Access-Authenticated-User-Email":"reviewer@example.com"})
+            page = browser.new_page(viewport={"width":1440,"height":1000})
             page.goto(base, wait_until="networkidle")
             page.locator('#project-panel a').wait_for(state="visible")
             assert page.locator('#project-panel a').get_attribute('href') == 'https://cms.example/admin'

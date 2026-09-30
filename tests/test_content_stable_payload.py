@@ -11,8 +11,10 @@ exactly one distinct payload.
 """
 
 import hashlib
+import json
 import time
 import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 
 from agent_annotate import sync_server
@@ -75,3 +77,39 @@ def test_content_payload_is_stable_across_repeated_requests(tmp_path):
         f"GET /content returned {len(digests)} distinct payloads across 3 "
         "requests >1s apart; expected exactly 1"
     )
+
+
+def test_content_bootstrap_metadata_cannot_change_html_script_boundaries(tmp_path):
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    (content_dir / "v1.html").write_text(_CONTENT_HTML)
+    (tmp_path / "current.meta.json").write_text('{"current":"v1"}')
+    handler = _CapturingHandler(tmp_path, tmp_path)
+    handler.slug = '<!--<script></script><script>window.unwanted=true</script>'
+
+    class Scripts(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.scripts = []
+            self.active = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                self.scripts.append("")
+                self.active = True
+
+        def handle_data(self, data):
+            if self.active:
+                self.scripts[-1] += data
+
+        def handle_endtag(self, tag):
+            if tag == "script":
+                self.active = False
+
+    parser = Scripts()
+    parser.feed(_serve_content_once(handler).decode())
+    assert len(parser.scripts) == 2  # metadata and adapter; absent diagram asset is removed
+    prefix = "window.__ANNOTATE_CONTENT_META__="
+    assert parser.scripts[0].startswith(prefix)
+    assert json.loads(parser.scripts[0][len(prefix):-1])["slug"] == handler.slug
+    assert "<" not in parser.scripts[0]

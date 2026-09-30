@@ -457,7 +457,8 @@ def _project_config(project: str) -> dict:
     return cfg
 
 
-_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix"})
+_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix", "trusted_access_origins",
+                               "local_author", "local_author_name"})
 
 
 def _transport_opts(cfg: dict) -> dict:
@@ -645,10 +646,16 @@ def _ensure_hook_installed() -> tuple[bool, str]:
         ]
     })
 
-    # Atomic write
-    tmp = SETTINGS_JSON.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, SETTINGS_JSON)
+    # Preserve private settings permissions and never follow a predictable temp symlink.
+    mode = SETTINGS_JSON.stat().st_mode & 0o777
+    descriptor, temporary = tempfile.mkstemp(prefix=".annotate-settings-", dir=SETTINGS_JSON.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(settings, output, indent=2, ensure_ascii=False)
+            os.fchmod(output.fileno(), mode)
+        os.replace(temporary, SETTINGS_JSON)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
     return True, f"added UserPromptSubmit hook → {HOOK_COMMAND}"
 
 
@@ -672,6 +679,16 @@ def _start_server(slug_dir: Path, port: int, bus_dir: Path, public_base_path: st
     ]
     if public_base_path:
         cmd += ["--public-base-path", public_base_path]
+    local = _project_config(bus_dir.name)
+    for key in ("local_author", "local_author_name"):
+        value = local.get(key)
+        if value is not None:
+            if (not isinstance(value, str) or not value.strip() or len(value) > 256
+                    or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+                raise ValueError(f"project {key} must be a nonempty identity without control characters")
+            if key == "local_author_name" and not local.get("local_author"):
+                raise ValueError("project local_author_name requires local_author")
+            cmd += ["--" + key.replace("_", "-"), value.strip()]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{slug_dir.name}.log"
     fh = open(log_path, "ab", buffering=0)
@@ -3230,16 +3247,8 @@ def cmd_update(args) -> int:
         result = activate_runtime(python)
         write_enrollment({"active_version": release["version"], "active_build_id": result["runtime"]["build_id"],
                           "active_manifest": result["runtime"], "active_python": str(python), "last_check": _now_iso()})
-        environment = os.environ.copy()
-        environment.pop("PYTHONPATH", None)
-        environment.pop("PYTHONHOME", None)
-        synced = subprocess.run([str(python), "-I", "-m", "agent_annotate.cli", "sync-skills"],
-                                capture_output=True, text=True, env=environment, timeout=30)
         print(json.dumps(result, ensure_ascii=False))
-        if synced.stdout:
-            print(synced.stdout.strip())
-        if synced.returncode:
-            print("WARN: runtime updated; custom skill conflicts require attention", file=sys.stderr)
+        print("Skills are user-managed; reload or synchronize them only when explicitly requested.")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"ERROR: stable update: {exc}", file=sys.stderr)
@@ -3799,7 +3808,7 @@ def _load_store(record: dict) -> dict:
     """Read a slug's comment store.
 
     The shape is {"schema_version":…, "anchors": {anchor_id: [comment, …]},
-    "archived": […]}. Every observed first-attempt parse reached for
+    "archived": {anchor_id: [comment, …]} (or a legacy list)}. Every observed first-attempt parse reached for
     store["comments"], which does not exist and never has.
     """
     slug_dir = record.get("slug_dir")
@@ -3816,7 +3825,7 @@ def _load_store(record: dict) -> dict:
         # v1 store: {anchor_id: [comment, …]} at the top level.
         anchors = {k: v for k, v in data.items() if isinstance(v, list)}
     archived = data.get("archived")
-    return {"anchors": anchors, "archived": archived if isinstance(archived, list) else []}
+    return {"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else []}
 
 
 def _iter_comments(store: dict):
@@ -3830,28 +3839,34 @@ def _iter_comments(store: dict):
 def _decision_cards(store: dict) -> list[dict]:
     """Every live decision card, flattened for printing."""
     comments = list(_iter_comments(store))
+    historical = []
+    archived = store.get("archived") or {}
+    values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
+    for value in values:
+        historical.extend([value] if isinstance(value, dict) else value if isinstance(value, list) else [])
+    allocation = comments + [(c.get("anchor_id"), c) for c in historical if isinstance(c, dict)]
     numbers: dict[str, int] = {}
     used: set[int] = set()
-    for _anchor_id, comment in comments:
+    for _anchor_id, comment in allocation:
         number = comment.get("number")
         cid = comment.get("id")
         if (cid and isinstance(number, int) and not isinstance(number, bool)
-                and number > 0 and number not in used):
+                and number > 0 and cid not in numbers):
             numbers[cid] = number
             used.add(number)
-    for _anchor_id, comment in comments:
+    for _anchor_id, comment in allocation:
         cid = comment.get("id")
         if not cid or cid in numbers:
             continue
         prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
         match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
         number = int(match.group(1)) if match else 0
-        if number > 0 and number not in used:
+        if number > 0:
             numbers[cid] = number
             used.add(number)
     next_number = max(used, default=0) + 1
     for _anchor_id, comment in sorted(
-            comments,
+            allocation,
             key=lambda item: (
                 item[1].get("created_at") or "",
                 item[1].get("id") or "",
@@ -3946,7 +3961,7 @@ def _api(record: dict, method: str, path: str, body, author: str,
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, method=method, data=data, headers={
         "Content-Type": "application/json",
-        "Cf-Access-Authenticated-User-Email": author,
+        "X-Annotate-Agent": author if author.startswith("agent:") else f"agent:{author}",
         "X-Annotate-Session": _session_id(),
     })
     try:

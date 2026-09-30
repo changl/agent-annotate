@@ -14,7 +14,7 @@ def test_equal_cli_version_still_activates_unmanaged_old_servers(monkeypatch):
     monkeypatch.setattr(updates,"stage_release",lambda item:Path("/staged/python"))
     calls=[]
     monkeypatch.setattr(deployment,"activate_runtime",lambda python:calls.append(python) or {"runtime":{"build_id":"tested-build"}})
-    monkeypatch.setattr(cli.subprocess,"run",lambda *a,**k:SimpleNamespace(returncode=0,stdout=""))
+    monkeypatch.setattr(cli.subprocess,"run",lambda *a,**k:(_ for _ in ()).throw(AssertionError("runtime updates must not synchronize user-managed skills")))
     assert cli.cmd_update(SimpleNamespace(enable=False,disable=False,apply=True))==0
     assert calls==[Path("/staged/python")]
     assert writes[0]["active_build_id"]=="tested-build"

@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
@@ -76,7 +78,7 @@ jobs:
           tag = 'v' + version
           existing = subprocess.run(['gh', 'release', 'view', tag], capture_output=True, text=True)
           if existing.returncode == 0:
-              print(f'{tag} already published; bump version to publish the next immutable release.')
+              print(f'{tag} already published; bump version to publish the next stable release.')
           else:
               ref = subprocess.run(['gh', 'api', f'repos/{os.environ["REPOSITORY"]}/commits/{tag}'], capture_output=True, text=True)
               if ref.returncode == 0:

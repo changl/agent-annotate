@@ -8,6 +8,7 @@ private backup under Agent Annotate's state directory.
 import base64
 import json
 import os
+import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ def _decode_account_id(encoded_credentials: str) -> str:
     return json.loads(raw)["a"]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _api_request(method: str, url: str, token: str, body: bytes | None = None) -> dict:
     req = urllib.request.Request(url, method=method)
     req.add_header("Authorization", f"Bearer {token}")
@@ -44,9 +50,12 @@ def _api_request(method: str, url: str, token: str, body: bytes | None = None) -
         req.add_header("Content-Type", "application/json")
         req.data = body
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=20) as resp:
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            e.close()
+            raise RuntimeError(f"Cloudflare API {method} redirect refused (HTTP {e.code})") from None
         try:
             err_body = e.read().decode()
         except Exception:
@@ -100,12 +109,16 @@ def _backup(current_full: dict) -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_dir = STATE_DIR / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    bp = backup_dir / f"cf-tunnel-config.backup-{ts}.json"
-    bp.write_text(json.dumps(current_full, indent=2))
+    descriptor, name = tempfile.mkstemp(prefix=f"cf-tunnel-config.backup-{ts}-", suffix=".json", dir=backup_dir)
+    bp = Path(name)
     try:
-        os.chmod(bp, 0o600)
-    except OSError:
-        pass
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(current_full, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        bp.unlink(missing_ok=True)
+        raise
     return bp
 
 
