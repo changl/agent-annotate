@@ -44,3 +44,15 @@ def test_report_generation_is_managed_and_does_not_read_inbox(tmp_path, monkeypa
     assert "Feedback delivery" in result["html"].read_text()
     assert not (tmp_path/"state").exists()
     assert (tmp_path/"weekly"/"metrics.json").is_file()
+
+
+def test_first_report_uses_complete_publish_options(tmp_path, monkeypatch):
+    directory=tmp_path/"weekly"
+    monkeypatch.setattr(cli,"_load_state_for_project",lambda project:{"slugs":{}})
+    monkeypatch.setattr(reports,"write_report",lambda path:{"version":"v1","label":"week"})
+    captured=[]
+    monkeypatch.setattr(cli,"cmd_publish",lambda args:captured.append(args) or 0)
+    assert reports.cmd_report(SimpleNamespace(slug_dir=str(directory),project="reviews",install=False,publish=True))==0
+    assert captured[0].transport is None
+    assert captured[0].path_prefix is None
+    assert captured[0].verify_timeout==45.0

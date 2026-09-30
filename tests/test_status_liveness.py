@@ -95,3 +95,13 @@ def test_live_recorded_pid_needs_no_fallback(tmp_path, monkeypatch, capsys, base
     out = capsys.readouterr().out
     assert "alive" in out
     assert "alive*" not in out
+
+
+def test_bound_owner_is_live_without_session_id_in_process_arguments(monkeypatch):
+    from agent_annotate import delivery
+    monkeypatch.setattr(delivery, "_process", lambda pid:("start", "/bin/codex"))
+    record={"owner_session":"session-not-in-argv", "owner_label":"owner",
+            "owner_target":{"pid":123,"process_start":"start","agent":"codex"}}
+    assert "gone" not in cli._owner_note(record, "/bin/codex")
+    monkeypatch.setattr(delivery, "_process", lambda pid:("reused-pid", "/bin/codex"))
+    assert "gone" in cli._owner_note(record, "/bin/codex")

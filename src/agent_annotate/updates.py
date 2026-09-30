@@ -17,6 +17,8 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as dependency_version
 from pathlib import Path
 
 from . import __version__
@@ -143,6 +145,13 @@ def _verify_python(python: Path, version: str) -> None:
         raise ValueError("staged runtime version does not match the stable release tag")
 
 
+def _inherited_mcp_version() -> str | None:
+    try:
+        return dependency_version("mcp")
+    except PackageNotFoundError:
+        return None
+
+
 def stage_release(release: dict) -> Path:
     """Download, hash-check and install a release into its own environment.
 
@@ -162,6 +171,9 @@ def stage_release(release: dict) -> Path:
     stage = root / version
     python = stage / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     receipt = {"version": version, "tag_name": release["tag_name"], "wheel_sha256": digest}
+    mcp_version = _inherited_mcp_version()
+    if mcp_version:
+        receipt["mcp_version"] = mcp_version
     if stage.exists():
         marker = stage / "staged.json"
         if stage.is_symlink() or not marker.is_file() or json.loads(marker.read_text()) != receipt:
@@ -179,9 +191,14 @@ def stage_release(release: dict) -> Path:
         artifact.write_bytes(wheel)
         subprocess.run(["uv", "venv", str(stage / "venv")], check=True,
                        capture_output=True, text=True, timeout=120)
-        subprocess.run(["uv", "pip", "install", "--python", str(python), str(artifact)],
+        dependencies = [f"mcp=={mcp_version}"] if mcp_version else []
+        subprocess.run(["uv", "pip", "install", "--python", str(python), str(artifact), *dependencies],
                        check=True, capture_output=True, text=True, timeout=300)
         _verify_python(python, version)
+        if mcp_version:
+            subprocess.run([str(python), "-I", "-c",
+                            "from agent_annotate.mcp_server import build_server; build_server()"],
+                           check=True, capture_output=True, text=True, timeout=30)
         _atomic_json(stage / "staged.json", receipt)
     except BaseException:
         # Only this call's newly claimed directory is removed on failure.

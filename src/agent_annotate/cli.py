@@ -1599,7 +1599,20 @@ def _owner_note(record: dict, ps_snapshot: str, width: int = OWNER_COL) -> str:
         return "unclaimed"
     age = _age_seconds(record.get("owner_claimed_at"))
     suffix = f" claimed {_fmt_age(age)}" if age is not None else ""
-    if session and session != "unknown" and ps_snapshot and session not in ps_snapshot:
+    absent = bool(session and session != "unknown" and ps_snapshot and session not in ps_snapshot)
+    target = record.get("owner_target")
+    if isinstance(target, dict) and target.get("pid") and target.get("process_start"):
+        from .delivery import _process
+        try:
+            process = _process(int(target["pid"]))
+            if process:
+                absent = (process[0] != target["process_start"]
+                          or not re.search(rf"(?:^|/){re.escape(target.get('agent', ''))}(?:$|[.-])", process[1]))
+            elif ps_snapshot:
+                absent = True
+        except (OSError, ValueError, subprocess.SubprocessError):
+            absent = False
+    if absent:
         suffix += " (gone)"
     return label[:max(1, width - len(suffix))] + suffix
 

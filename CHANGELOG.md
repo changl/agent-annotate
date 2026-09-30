@@ -4,6 +4,18 @@ The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
 
+## v2.20.1 Weekly report publishing and capability preservation (2026-09-29)
+
+- Owner status uses captured process identity when available, avoiding false
+  inactive labels when a live session ID is absent from process arguments.
+- MCP server construction supports both the 1.x FastMCP and 2.x MCPServer
+  SDK entry points, with schema-generation checks.
+- Staged updates preserve an installed MCP capability at its existing SDK
+  version and validate server construction, rather than silently dropping it.
+- Weekly reports reuse the standard complete publish options, fixing first
+  publication on a configured transport. Existing report verification uses the
+  same options and keeps ownership unchanged.
+
 ## v2.20.0 Managed progress and completed-round delivery (2026-09-29)
 
 - Automatic Orca owner prompts for completed feedback rounds, with durable
