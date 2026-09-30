@@ -141,7 +141,7 @@ function authorQuery() {
 
 async function loadStore() {
   try {
-    const r = await fetch(apiUrl('./comments.json'), { cache: 'no-store' });
+    const r = await fetch(apiUrl('./comments.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     const store = await r.json();
     STORE = store && store.schema_version === 2 ? store : { schema_version: 2, anchors: {}, archived: {} };
@@ -189,9 +189,17 @@ function computeNumbers() {
 
 async function loadMeta() {
   try {
-    const r = await fetch(apiUrl('./current.meta.json'), { cache: 'no-store' });
+    const r = await fetch(apiUrl('./current.meta.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
-    META = await r.json();
+    const meta = await r.json();
+    if (meta.project_info && meta.delivery_status) {
+      HAS_SUMMARY = true;
+      SUMMARY_PROJECT = meta.project_info;
+      SUMMARY_DELIVERY = meta.delivery_status;
+      delete meta.project_info;
+      delete meta.delivery_status;
+    }
+    META = meta;
     return true;
   } catch { return false; }
 }
@@ -239,7 +247,7 @@ function readStateOf(c) {
 
 async function loadReadState() {
   try {
-    const r = await fetch(apiUrl('./api/read-state' + authorQuery()), { cache: 'no-store' });
+    const r = await fetch(apiUrl('./api/read-state' + authorQuery()), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     const j = await r.json();
     READ = j.read || {};
@@ -484,7 +492,7 @@ async function apiPushAll() {
 
 async function loadSessionMonitor() {
   try {
-    const r = await fetch(apiUrl('./api/session-monitor'), { cache: 'no-store' });
+    const r = await fetch(apiUrl('./api/session-monitor'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (r.ok) SESSION_MONITOR = await r.json();
   } catch {
     SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
@@ -572,6 +580,82 @@ function neverVisited(version) {
   return !SEEN[version];
 }
 
+// Persistent project modules are independent of whichever review version is open.
+let PROJECT = { modules: [] };
+let HAS_SUMMARY = false;
+let SUMMARY_PROJECT = null;
+let SUMMARY_DELIVERY = null;
+let projectSnapshot = '';
+function projectPreference(key, value) {
+  try {
+    const storageKey = 'annotate:project:' + location.pathname + ':' + key;
+    if (value !== undefined) localStorage.setItem(storageKey, value ? 'open' : 'closed');
+    return localStorage.getItem(storageKey);
+  } catch { return null; }
+}
+function renderProject() {
+  const panel = document.getElementById('project-panel');
+  const toggle = document.getElementById('project-toggle');
+  const modules = PROJECT.modules || [];
+  toggle.hidden = !modules.length;
+  if (!modules.length) { panel.hidden = true; return; }
+  panel.hidden = projectPreference('panel') === 'closed';
+  toggle.setAttribute('aria-expanded', String(!panel.hidden));
+  panel.innerHTML = `<div class="project-heading"><strong>${esc(PROJECT.title || 'Project links and progress')}</strong><small>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</small></div>` + modules.map((module, index) => {
+    const preference = projectPreference(module.id);
+    const open = preference ? preference === 'open' : module.kind === 'links' && index === 0;
+    const items = module.items.map(item => {
+      if (module.kind === 'links') {
+        let url; try { url = new URL(item.url); } catch { return ''; }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+        return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${esc(item.description)}</span>` : ''}</li>`;
+      }
+      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${esc(item.label)}${item.detail ? `<span class="project-detail">${esc(item.detail)}</span>` : ''}</li>`;
+      return `<li>${esc(item.text)}</li>`;
+    }).join('');
+    return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
+  }).join('');
+  panel.querySelectorAll('details').forEach(node => {
+    node.querySelector('summary').addEventListener('click', () => projectPreference(node.dataset.module, !node.open));
+    node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
+  });
+}
+async function loadProject() {
+  try {
+    if (HAS_SUMMARY) {
+      const snapshot = JSON.stringify(SUMMARY_PROJECT);
+      if (snapshot !== projectSnapshot) { PROJECT = SUMMARY_PROJECT; projectSnapshot = snapshot; renderProject(); }
+      return;
+    }
+    const response = await fetch(apiUrl('./api/project'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) return;
+    const data = await response.json();
+    const snapshot = JSON.stringify(data);
+    if (snapshot !== projectSnapshot) { PROJECT = data; projectSnapshot = snapshot; renderProject(); }
+  } catch {}
+}
+async function loadDelivery() {
+  const node = document.getElementById('delivery-status');
+  if (!CAPS || !CAPS.automatic_round_delivery) {
+    node.hidden = !!CAPS;
+    if (!CAPS) node.textContent = 'This server predates Finish review and automatic delivery. Update its agent-annotate runtime.';
+    return;
+  }
+  try {
+    let data = SUMMARY_DELIVERY;
+    if (!HAS_SUMMARY) {
+      const response = await fetch(apiUrl('./api/delivery'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      if (!response.ok) return;
+      data = await response.json();
+    }
+    node.hidden = !data.latest;
+    if (data.latest) {
+      const labels = {acknowledged: 'Owner read this feedback round; project work is tracked separately', pending: 'Feedback saved; owner wake-up pending', accepted: 'Owner prompt accepted by Orca; agent response pending', started: 'Owner turn started; agent response pending', uncertain: 'Feedback saved; prompt delivery unproven', superseded: 'Page owner changed before this round was delivered'};
+      node.textContent = (labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state) + (data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? '. ' + data.latest.detail : '');
+    }
+  } catch {}
+}
+
 // ── Version rail ─────────────────────────────────────────────────
 function renderVersionRail() {
   const body = document.getElementById('vrail-body');
@@ -590,12 +674,12 @@ function renderVersionRail() {
       ? `<span class="vrow-badge">${counts.review}</span>`
       : `<span class="vrow-badge zero">0</span>`;
     const newHtml = isNew ? '<span class="vrow-new" title="Content updated since your last visit">↑NEW</span>' : '';
-    return `<div class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
+    return `<button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
       ${dotHtml}
       <span class="vrow-label">${esc(h.version)}${h.label ? ' &middot; ' + esc(h.label) : ''}</span>
       ${newHtml}
       ${badgeHtml}
-    </div>`;
+    </button>`;
   }).join('');
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
     row.addEventListener('click', () => switchVersion(row.dataset.version));
@@ -1004,7 +1088,10 @@ function decisionOptions(dr) {
   const out = [];
   for (const o of raw) {
     if (typeof o === 'string') {
-      if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
+      if (DECISION_OPTIONS_ALL.indexOf(o) === -1) {
+        out.push({id:o, labelHtml:esc(o), labelText:o, plainLabel:o, consequence:cons[o] || '', style:null, custom:true});
+        continue;
+      }
       const id = canonicalOptionId(o);
       const cq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[id] === 'string' ? cons[id] : '');
       out.push({ id, labelHtml: DECISION_BTN_LABEL[id], labelText: id, plainLabel: DECISION_PLAIN_LABEL[id], consequence: cq, style: null, custom: false });
@@ -2616,10 +2703,15 @@ async function init() {
   wireRoundBar();
   wireBridge();
 
-  await loadStore();
-  await loadMeta();
-  await loadSessionMonitor();
-  await loadCapabilities(); // v2.19: the ONE probe; 404 → legacy mode for this page load
+  await Promise.all([loadStore(), loadMeta(), loadSessionMonitor(), loadCapabilities()]);
+  await Promise.all([loadProject(), loadDelivery()]);
+  document.getElementById('project-toggle').addEventListener('click', () => {
+    const panel = document.getElementById('project-panel');
+    panel.hidden = !panel.hidden;
+    projectPreference('panel', !panel.hidden);
+    document.getElementById('project-toggle').setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  // // v2.19: the ONE probe; 404 → legacy mode for this page load
 
   const urlV = new URL(window.location.href).searchParams.get('v');
   CURRENT_VERSION = urlV || META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
@@ -2638,24 +2730,29 @@ async function init() {
   const gfInit = document.getElementById('gf-ta');
   if (gfInit && CURRENT_VERSION) gfInit.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
 
-  // Poll for new comments every 8s (mirrors legacy template.html behavior).
-  // Skip the re-render when nothing changed — an unconditional 8s re-render
-  // would discard drawer scroll position and interrupt in-progress typing
-  // for no reason (drafts are additionally preserved in renderDrawer).
+  // One refresh at a time. Hidden tabs make no requests; foreground resumes now.
   let lastSnap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
-  setInterval(async () => {
-    await loadStore();
-    await loadMeta();
-    await loadReadState();
-    await loadSessionMonitor();
-    const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
-    if (snap !== lastSnap) {
-      lastSnap = snap;
-      renderAll();
-    } else {
-      updatePushCounter();
+  let refreshing = false;
+  let refreshTimer;
+  async function refresh() {
+    clearTimeout(refreshTimer);
+    if (document.hidden || refreshing) return;
+    refreshing = true;
+    try {
+      await Promise.all([loadStore(), loadMeta(), loadReadState(), loadSessionMonitor()]);
+      await Promise.all([loadProject(), loadDelivery()]);
+      const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+      if (snap !== lastSnap) { lastSnap = snap; renderAll(); } else updatePushCounter();
+    } finally {
+      refreshing = false;
+      if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
     }
-  }, 8000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(refreshTimer);
+    if (!document.hidden) refresh();
+  });
+  refreshTimer = setTimeout(refresh, 8000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

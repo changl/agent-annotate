@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-annotate"
-version = "2.19.0"
+version = "2.20.0"
 description = "Local-first interactive annotation and feedback coordination for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,7 +38,7 @@ Issues = "https://github.com/changl/agent-annotate/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_annotate = ["web/*", "hooks/*", "skills/*/*", "skills/*/*/*"]
+agent_annotate = ["_build.json", "web/*", "hooks/*", "skills/*/*", "skills/*/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

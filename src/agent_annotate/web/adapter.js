@@ -755,7 +755,10 @@ function stripDecisionOptions(dr) {
   const out = [];
   for (const o of raw) {
     if (typeof o === 'string') {
-      if (DECISION_OPTIONS_ALL.indexOf(o) === -1) continue;
+      if (DECISION_OPTIONS_ALL.indexOf(o) === -1) {
+        out.push({id:o, label:o, plain:o, consequence:cons[o] || '', style:null, custom:true});
+        continue;
+      }
       const sid = stripCanonicalOptionId(o);
       const scq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[sid] === 'string' ? cons[sid] : '');
       out.push({ id: sid, label: DECISION_BTN_TEXT[sid], plain: DECISION_PLAIN_LABEL[sid], consequence: scq, style: null, custom: false });
@@ -2006,6 +2009,9 @@ function scrollToAnchor(anchorId, target, back) {
   // target no longer resolves (structure changed) — never a wrong element.
   const inner = resolveInnerEl(anchorEl, target);
   const el = inner ? inner.el : anchorEl;
+  for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  }
 
   // A jump into a collapsed unchanged section opens it first.
   expandUnchangedAncestor(el);

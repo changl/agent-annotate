@@ -151,3 +151,18 @@ is worth chasing. Read them off sections 7 (bystander, loose), 1 (delivery) and
 the publish events. The first two come from sections 3 and 2: an unanswered card usually means the card did
 not say what it would cost to answer either way, and a slow reaction usually
 means a session acted on a partial round and then waited for the rest.
+
+## 2.20 delivery and weekly reports
+
+`round_submitted` has a round_id. Its corresponding automatic session_push
+uses the same delivery_id and captures the owning session. Private delivery
+journals record attempts, input acceptance, uncertainty and acknowledgment.
+`round_received` means the owning session read its inbox; it never means the
+requested work was completed. Reports deduplicate explicit round IDs.
+
+`annotate report DIR --publish` derives local aggregates and existing transcript
+cost; `--install` schedules Mondays at 09:00 local on macOS without a model run.
+Metrics include submitted rounds, failed publications, delivery states and
+latencies, acknowledgment and unusable choice-card warnings. They exclude
+reviewer text and do not move inbox cursors. Browser timing, resource opens
+and fleet-wide remote aggregation remain future instrumentation.

@@ -21,12 +21,14 @@ saying what happened, so a second run prints "unchanged" for everything.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import sys
 from pathlib import Path
 
-from .paths import HOOK_SCRIPT, PACKAGE_DIR
+from .paths import CONFIG_DIR, HOOK_SCRIPT, PACKAGE_DIR
 
 SKILLS_DIR = PACKAGE_DIR / "skills"
 PROVIDERS = ("claude", "codex")
@@ -146,4 +148,44 @@ def install_skill(provider: str, dest: Path, python: str | None = None) -> list[
         else:
             _write_atomic(target, content, mode)
             lines.append(f"wrote      {rel}")
+    manifest = {"provider": provider, "files": {rel: hashlib.sha256(content.encode()).hexdigest()
+                for rel, (content, _mode) in planned_files(provider, python).items()}}
+    from . import __version__
+    manifest["version"] = __version__
+    _write_atomic(dest / ".annotate-install.json", json.dumps(manifest, indent=2), 0o644)
+    registry = CONFIG_DIR / "skill-installs.json"
+    try:
+        installs = json.loads(registry.read_text()) if registry.exists() else {}
+    except (OSError, ValueError):
+        installs = {}
+    installs[str(dest)] = provider
+    _write_atomic(registry, json.dumps(installs, indent=2), 0o644)
     return lines
+
+
+def sync_skills() -> list[str]:
+    """Refresh enrolled generated deployments, preserving locally edited files."""
+    registry = CONFIG_DIR / "skill-installs.json"
+    if not registry.exists():
+        return []
+    installs = json.loads(registry.read_text())
+    reports = []
+    for path, provider in installs.items():
+        dest = Path(path)
+        try:
+            manifest = json.loads((dest / ".annotate-install.json").read_text())
+            conflicts = [rel for rel, digest in manifest["files"].items()
+                         if not (dest / rel).is_file()
+                         or hashlib.sha256((dest / rel).read_bytes()).hexdigest() != digest]
+            for rel, (content, _mode) in planned_files(provider).items():
+                if rel not in manifest["files"] and (dest / rel).exists():
+                    if not (dest / rel).is_file() or (dest / rel).read_bytes() != content.encode():
+                        conflicts.append(rel)
+            if conflicts:
+                reports.append(f"conflict {dest}: {', '.join(conflicts)}; deployment preserved")
+                continue
+            install_skill(provider, dest)
+            reports.append(f"updated {dest} ({provider}); running agents must reload their skill context")
+        except (OSError, ValueError, KeyError) as exc:
+            reports.append(f"conflict {dest}: {exc}; deployment preserved")
+    return reports

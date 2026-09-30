@@ -1,152 +1,63 @@
 ---
 name: annotate
-description: Publish an interactive HTML review page the user annotates in the browser — click-to-comment on any element, pinned decision cards answered in one click, and a submitted round of verdicts read back into this session. Use for a reviewable or comment-able artifact (diagram, schema, mockup, table, doc, PRD), an "annotatable html", a design they will redline over rounds, or /annotate.
+description: Publish shared project progress and interactive review pages with persistent links, collapsible modules, clickable decision cards, and completed-round delivery to the owning agent.
 ---
 
-# annotate v2.19
+# annotate v2.20
 
 ## 1. Invocation
 
 ```bash
-annotate <cmd>                       # agent-annotate entry point
-python -m agent_annotate.cli <cmd>   # always works once the package imports
+annotate <cmd>
+python3 -m agent_annotate.cli <cmd>  # fallback if annotate names another tool
 ```
 
-`annotate doctor` says which form this machine has — the name is also libgd's
-image tool. `publish` writes a `~/.local/bin/annotate` shim if none exists.
+`annotate doctor` identifies installed build. Claude Code and Codex use the same runtime; skill copies contain no server code.
 
-## 2. The round, end to end
+## 2. Publish and respond
 
-1. `annotate new <slug-dir> --from page.md --publish --ask` — markdown (front
-   matter, `##` sections, tables, `kpi:` lines, a ` ```cards ` block) becomes
-   an anchored page plus `cards.json`, published and posed in one call.
-   `annotate new --example` prints a worked document; hand-build from
-   `template.html` only for what markdown cannot express
-   (`references/building-pages.md`). `publish` prints a URL only once the page
-   is proven to render, and claims the page for this session.
-   Every version after v1 is the complete cumulative plan, never a delta.
-2. Stop and hand the URL over. Chat says only what changed, what Chang must
-   answer, and the URL; never repeat page substance as a chat wall of text.
-   Wait for the hook notice (§7).
-3. `annotate inbox <slug> --unread` for everything new, `annotate cards <slug>`
-   for verdicts only.
-4. Act. Use `addressed` only while reviewer confirmation is still needed.
-5. Next round: the same `new` line with `--version v2 --label "round 2"`.
-   In v2, name each earlier open item as `#N` where it is answered, or give it
-   a card with the same number to keep it open; publish records both. An item
-   v2 never names blocks publication.
+1. Write one Markdown source, then run `annotate new <slug-dir> --from page.md --publish --ask`.
+2. Share the verified `URL:` plus only what changed and what needs an answer. Review substance stays on the page.
+3. Reviewer clicks a choice or **Answer in words**, then **Finish review**. Never ask them to type an option letter or number.
+4. Read `annotate inbox <slug> --unread` and `annotate cards <slug>` after **ROUND SUBMITTED**. Read every `decision.text` and reply; partial answers stay pending.
+5. Update persistent project information when progress, blockers, hosted URLs, or useful artifacts change. These updates do not require a new decision round.
+6. Publish later rounds with `new ... --version vN --publish --ask`. Each is the complete cumulative plan. Mention an applied prior item as `#N` at its answer, or retain a same-numbered card to carry it forward. An omitted open item blocks publication.
 
-## 3. Commands
+`publish`/`claim` binds an Orca-managed owner terminal automatically. The server queues one durable prompt per submitted round, validates current owner/process/terminal before input, and retries unavailable delivery. No agent-owned monitor is required. Accepted input is not completed work; `inbox --unread` acknowledges receipt. Ambiguous sends remain visible and are not automatically repeated. A successor runs `annotate claim <slug>` from their own session; never claim other projects' pages. Outside Orca, hook notices remain attended-only; see `deliver <slug> --dry-run` for delivery state.
 
-| Command | Effect |
-|---|---|
-| `doctor` | invocation, roots, hook, `node`/`lsof`, session id |
-| `new <slug-dir> --from page.md [--version vN] [--publish] [--ask]` | markdown → `versions/vN.html` + `cards.json`; `--example` prints one |
-| `publish <slug-dir>` | serve, route, claim owner, verify, install shim + hook |
-| `unpublish <slug>` | tear down the route, stop the server |
-| `status [<slug>] [--retired]` | running slugs, health, owner; `(gone)` = owner session dead |
-| `claim <slug>` | make this session the owner |
-| `ask <slug> --from cards.json [--version vN]` | create or refresh a whole round |
-| `cards <slug>` | cards, verdicts, undecided anchors |
-| `inbox <slug> [--unread] [--json]` | this session's unread bus events |
-| `monitor <slug> [--owner ID] [--takeover]` | exclusive lease + event stream |
-| `publish-version <slug-dir> <vN> [--label …]` | swap `current.html`, register history |
-| `addressed <slug> <id> [--response …]` | mark a comment addressed_by_agent |
-| `resolve <slug> <id> --in-version <vN> --anchor <id> [--response …]` | record where an earlier item was applied; hide it from later rounds |
-| `carry <slug> <id> --to-version <vN> --anchor <id>` | move an unresolved earlier item onto a real anchor in the new round |
-| `close <slug> [--older-than 30d] [--dry-run]` | archive cards nobody answered |
-| `retire <slug>\|--dead [--dry-run]` | move dead registry rows to `state/retired/` |
+## 3. One controlled page format
 
-Also `eval`, `watch`, `install-shim`, `archive-comment`, `migrate`,
-`prune-bus`, `sessions`/`connect`/`disconnect`/`send` —
-`references/cli-reference.md`. Every slug argument takes `<slug>` or
-`<project>/<slug>`.
+Use built-in Markdown renderer for standard progress and review pages. Do not copy a server, stylesheet, or shell into the project. Runtime owns layout, controls, and shared `content.css`; custom diagrams remain content extensions.
 
-## 4. Anchor ids
+Supported source: `---` front matter, headings, paragraphs, lists, pipe tables, code, `kpi: value | label | ok|warn|bad`, and the three data fences below. `annotate new --example` prints a complete review.
 
-`<scope>:<key>[:<sub-key>][:<row-or-id>]` on every commentable element:
-`s:intro` · `s:intro:p2` · `d:1` · `kpi:net-equity` · `tbl:items` ·
-`tbl:items:row:42` · `tbl:items:col:status` · `dgm:schema:node:premiums`.
-Shift+click promotes the target to its `ANCHOR_REGISTRY` parent; unregistered
-anchors surface as "Comments without anchor".
+For v2+, front matter includes `full_plan: true` and `other_files_required: none` (or named requirements). Put decision cards in one final `## Questions for Chang` section. Stable positive `number`, anchor `d:q<number>`, ascending order; no Q/# prefixes in prompt. Evidence names real plan anchors such as `s:scope:p1` or `tbl:columns:row:status`.
 
-## 5. Decision cards
-
-`cards.json` and a page's ` ```cards ` block share one array:
-
-```json
-[{"number": 14, "anchor_id": "d:q14",
-  "decision_request": {"prompt": "Rename status → lifecycle_state?",
-    "context": "Three services read it; the rename needs a dual-write week before v3.",
-    "recommendation": "accept",
-    "options": [{"id": "accept", "label": "Rename", "consequence": "One dual-write week."},
-                {"id": "reject", "label": "Keep status", "consequence": "Ambiguous through v3."}],
-    "evidence": [{"label": "status column", "anchor": "tbl:items:col:status"}],
-    "impact": "medium", "blocking": true}}]
+```cards
+[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Use the shared runtime?","context":"The prototype fork misses updates.","recommendation":"shared","options":[{"id":"shared","label":"Shared runtime","consequence":"One migration; later updates are shared."},{"id":"fork","label":"Keep fork","consequence":"Maintain updates separately."}],"evidence":[{"label":"Plan","anchor":"s:scope"}]}}]
 ```
 
-Every card states the context, a recommendation, and what each option costs.
-Cards that recommend are answered 74% of the time; cards that only ask, 34%.
-`text` defaults to `prompt`. Every verdict answers a card: `accept` closes it;
-`reject`, `changes`, `select`, and free-text `comment` leave it waiting on the
-agent. The UI calls `comment` **Answer in words**; a reviewer's reply on an
-unanswered card is stored as one (`decision.via: "reply"`). Always read `decision.text`, not just the verdict. Option
-`style`, `evidence`, full schema and round mode:
-`references/decision-cards.md`.
+Choices belong in `options`, not only in prose. Custom choices use `{id,label,consequence}`. `accept` confirms; `select`, `reject`, `changes`, and `comment` await agent action. Intentional text questions may offer `comment` alone. Never preselect an answer.
 
-For v2+ sources, front matter must say `full_plan: true` and
-`other_files_required: none` (or name the required files). Put every response
-item in one final `## Questions for Chang` section. Each card needs a stable,
-unique, ascending positive integer `number`, anchor `d:q<number>`, a prompt
-without another Q/# label, and `decision_request.evidence` links back into the
-plan. Rail, body card, and pin all use `#<number>` in that order. Page text
-refers to items the same way, as `#19`, never `Q19` or `d:q19`, and never
-restates an item's status: the page shows live status on each card.
-
-A serving page marked `(gone)` in `status` is notifying nobody — `claim` it
-first. `close` and `retire` never delete: they archive and set aside.
-
-## 6. Comment lifecycle
-
-`open` (blue) → `addressed_by_agent` (purple) → `user_confirmed` (green) →
-`archived` (hidden). Cross-version resolution is
-`open|addressed_by_agent` → `resolved_in_version` with a required version and
-anchor pointer; it is hidden on later versions, remains visible as history on
-its origin version, and a reviewer reply reopens it. `carry` preserves origin
-provenance but moves the live card to the new version/anchor. You may not
-confirm or archive for the reviewer.
-
-## 7. Getting feedback back — one policy
-
-**Attended is the default.** The `UserPromptSubmit` hook reports on the next
-user turn and costs nothing while quiet:
-
-```
-[annotate] <project>/<slug>: N reviewer event(s) since your last read — verdicts: …; undecided: N of M cards. Read: annotate inbox <slug> --unread
+```project
+{"title":"Project workspace","modules":[{"id":"resources","title":"Open project","kind":"links","items":[{"label":"CMS","url":"https://host.example/admin","description":"Current admin workspace"}]},{"id":"progress","title":"Progress","kind":"progress","items":[{"label":"CMS setup","status":"done"}]},{"id":"blockers","title":"Current blockers","kind":"notes","items":[{"text":"Waiting for published content."}]}]}
 ```
 
-It speaks only to the owning session, counts reviewer events only, and never
-advances the `inbox --unread` cursor.
+Project data persists in `project.json` across versions; omitting the fence preserves it. Stable module IDs retain collapse preferences. `annotate project <slug> --from project.json` updates it independently. Link URLs are HTTP/HTTPS; no credentials in URLs. Progress states: `todo`, `in_progress`, `done`, `blocked`.
 
-**Unattended only:** with no user turn coming, run `annotate monitor <slug>`
-in Claude Code's Monitor tool, `timeout_ms: 1800000`, re-armed on expiry.
-Heartbeats are off. One lease per slug; `--takeover` only for a handoff. Never
-arm one for a page a human is reviewing while you still have turns.
+```details
+Supporting evidence
+Paragraphs, lists, tables, and KPIs render behind this native disclosure.
+```
 
-**Never act on a partial round.** Wait for `ROUND SUBMITTED` in the notice (bus
-event `round_submitted`), or for every card to carry a verdict.
+## 4. Commands and history
 
-## 8. Verification
+`status` lists live pages/owners; `(gone)` means owner absent. `claim` transfers your page ownership. `addressed` requests reviewer confirmation; `resolve` records a real later-version anchor; `carry` preserves origin and moves an unresolved item. Never confirm or archive for the reviewer. Reviewer replies reopen resolved items.
 
-`publish` proves the page renders at the `origin` and `tailscale` hops before
-it prints `URL:`, the one link to hand over. `--public` adds a Cloudflare route
-for a reviewer outside the tailnet. Never curl a page; never call one live off
-a 200.
+`update --check` identifies stable release; `update --apply` stages a checksum-verified runtime, preserves owners/routes/state and custom edits, and rolls back failed restarts. `update --enable` opts this machine into daily stable checks via `revive --install`. Generated skills refresh through `sync-skills`; running agents must reload already-loaded instructions. GitHub push alone does not update a machine or a prototype fork.
 
-## 9. References
+`report <slug-dir> --publish` generates the short usage page without a model; `--install` schedules it weekly on macOS. `eval` and `cost` read local evidence without consuming inbox cursors.
 
-`references/building-pages.md` (markdown format, §1) ·
-`references/decision-cards.md` ·
-`references/cli-reference.md` · `references/architecture.md` ·
-`references/telemetry-and-eval.md` · `references/interaction-contract.md` ·
-release history in the repo's `CHANGELOG.md` (`annotate doctor` prints the path).
+`publish` verifies origin/tailnet rendering before printing a URL. `--public` adds an outside-tailnet route. Never curl a page or infer rendering from HTTP 200.
+
+References: `references/building-pages.md`, `decision-cards.md`, `cli-reference.md`, `architecture.md`, `interaction-contract.md`, `telemetry-and-eval.md`.

@@ -420,9 +420,8 @@ def test_resolved_comment_card_is_excluded_from_round_and_undecided_ids(server):
     assert submitted["verdict_counts"] == {
         "accept": 0, "reject": 0, "changes": 0, "comment": 0, "select": 0,
     }
-    pushed = _events(bus, "session_push")[-1]
-    assert pushed["comment_ids"] == []
-    assert pushed["undecided_ids"] == []
+    assert submitted["delivery"] == "noop"
+    assert _events(bus, "session_push") == []
     assert "round_pending" not in _store(slug_dir)["anchors"]["s:a"][0]["decision"]
 
 
@@ -472,3 +471,30 @@ def test_a_selected_custom_option_answers_the_card(server):
 
     status, submitted = _call(httpd, "POST", "/api/rounds/submit", {})
     assert submitted["undecided_ids"] == []
+
+
+def test_owner_binding_is_private_for_normalized_metadata_paths(server):
+    httpd, directory, _bus = server
+    meta={"current":"v1", "owner":{"owner_session":"owner","target":{"handle":"secret-terminal","pid":123}}}
+    (directory/"current.meta.json").write_text(json.dumps(meta))
+    for path in ("/current.meta.json","/./current.meta.json","/versions/../current.meta.json"):
+        status, public = _call(httpd,"GET",path)
+        assert status == 200
+        assert public["owner"] == {"owner_session":"owner"}
+    assert json.loads((directory/"current.meta.json").read_text())["owner"]["target"]["pid"]==123
+
+
+def test_conditional_store_reply_avoids_unchanged_payload(server):
+    httpd, _directory, _bus = server
+    connection=http.client.HTTPConnection("127.0.0.1",httpd.server_address[1])
+    connection.request("GET","/comments.json")
+    first=connection.getresponse()
+    etag=first.getheader("ETag")
+    first.read()
+    connection.close()
+    connection=http.client.HTTPConnection("127.0.0.1",httpd.server_address[1])
+    connection.request("GET","/comments.json",headers={"If-None-Match":etag})
+    second=connection.getresponse()
+    assert second.status==304
+    assert second.read()==b""
+    connection.close()

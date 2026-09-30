@@ -1,0 +1,719 @@
+{
+  "meta": {
+    "refs": [
+      {
+        "ref": "main",
+        "label": "main@4fbe796",
+        "sha": "4fbe796",
+        "src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-ebzxecde/main-4fbe796/src"
+      },
+      {
+        "ref": "/tmp/annotate-220-candidate-final",
+        "label": "annotate-220-candidate-final",
+        "sha": "worktree",
+        "src": "/private/tmp/annotate-220-candidate-final/src"
+      }
+    ],
+    "scenarios": [
+      "round-2",
+      "v1-page"
+    ],
+    "runs": 3,
+    "model": "opus",
+    "effort": "medium",
+    "date": "2026-09-29T18:46:32-0700"
+  },
+  "rows": [
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "round-2",
+      "run": 1,
+      "session_id": "a53be486-be5e-4df1-8978-66f32d09a657",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 42.5,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "inbox": 1,
+        "cards": 1,
+        "new": 1
+      },
+      "input_tokens": 14,
+      "output_tokens": 3840,
+      "thinking_tokens": 1204,
+      "cache_read": 149500,
+      "cache_creation": 20299,
+      "cost_usd": 0.269148,
+      "duration_s": 40.041,
+      "num_turns": 8,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "v2 is published: **http://localhost:9400/**\n\nHere's how v2 handles Chang's answers:\n- **#1 (dual-write window):** set to two weeks, which covers reporting's dbt release every two weeks.\n- **#2 (backfill method):** the backfill now runs in the nightly reconcile job instead of either script, and it's its own plan step. That step has its own section explaining how it works:\n  - It tracks the last order id it finished, so a failed run picks up there the next night.\n  - It uses no table lock and stays out of the 17:00\u201321:00 UTC peak.\n  - It's done when no row still has both new columns empty.\n  - It ships as its own sqitch change.\n- **#3 (drop timing):** stopping writes and dropping `status` are now separate steps, with the column kept read-only for a quarter in between.\n\nThe publish step marked #1 and #2 as resolved in v2. #3 was already closed when Chang accepted it.\n\n**Chang has one new question, #4:** since the backfill now takes several nights, should readers start moving before it finishes? My recommendation is to wait until it's done, so each reader switches over cleanly without temporary code that falls back to `status`.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "1 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "round-2",
+      "run": 1,
+      "session_id": "970e3828-b365-49fb-8257-16d8970fb0e1",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 43.9,
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "inbox": 1,
+        "cards": 1,
+        "new": 1
+      },
+      "input_tokens": 18,
+      "output_tokens": 4138,
+      "thinking_tokens": 871,
+      "cache_read": 194620,
+      "cache_creation": 19910,
+      "cost_usd": 0.281036,
+      "duration_s": 41.373,
+      "num_turns": 12,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "I've published v2 at http://localhost:9420/, and the page check passed.\n\nHow Chang's three answers landed:\n- **#1 Dual-write window:** set to two weeks, in plan step 2.\n- **#2 Backfill:** both scripts are dropped. Plan step 3 is now its own step that runs the backfill through the nightly reconcile job, picking up each night where the last one stopped. I added step 4, a check that the backfill is complete before any reader moves to the new columns.\n- **#3 Keep status for a quarter:** accepted. Step 6 now stops writing `status`, keeps it read-only for one quarter, then drops it.\n\nThe page marks #1 and #2 as resolved in v2. #3 was already settled when Chang accepted it.\n\n**Needs Chang's answer (card #4):** Because the backfill now spans several nights, it may still be running two weeks after dual-write starts. So when does the two-week window start? I recommend starting it once the completeness check passes, so reporting gets a full dbt release on complete data. The other option is to count from when dual-write starts, which is shorter overall but could leave reporting with less than one release on complete data.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "1 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "v1-page",
+      "run": 1,
+      "session_id": "55638cd7-8c40-4139-9f97-0b1d9dd1236c",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 39.8,
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "annotate_calls": 4,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "new": 4
+      },
+      "input_tokens": 14,
+      "output_tokens": 4229,
+      "thinking_tokens": 619,
+      "cache_read": 148877,
+      "cache_creation": 19219,
+      "cost_usd": 0.2681634,
+      "duration_s": 39.208,
+      "num_turns": 10,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page is up: **http://localhost:9400/**\n\n`notes.md` is on the page as written, and Chang can click any section, table row or plan step to comment on it. Each of the three open questions has a decision card with a recommendation, what each option costs, and links back to the parts of the plan it concerns:\n\n- **#1 Dual-write window:** I recommend two weeks. Reporting (dbt) only releases every two weeks, and INC-4471 came from a report, so a one-week window could end before reporting has moved to the new columns.\n- **#2 Backfill method:** I recommend the batched `UPDATE`. It takes about 6 hours without locking the table and fits outside the 17:00\u201321:00 UTC peak.\n- **#3 When to drop `status`:** I added a third option and recommend it: rename the column to `status_deprecated` and drop it the next quarter. A reader we don't know about would fail loudly instead of quietly reading stale values, and undoing it is a one-line rename.\n\nThis is a localhost address, so it only opens on this machine. If Chang is reviewing from somewhere else, I can republish with a public link. I'll read the verdicts once Chang submits the round.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "v1-page",
+      "run": 1,
+      "session_id": "6ee3e75b-8ee7-4e6f-b026-8e2e8615ed17",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 53.0,
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "new": 3
+      },
+      "input_tokens": 16,
+      "output_tokens": 4351,
+      "thinking_tokens": 372,
+      "cache_read": 157868,
+      "cache_creation": 17648,
+      "cost_usd": 0.2598416,
+      "duration_s": 52.414,
+      "num_turns": 11,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page for Chang is live: **http://localhost:9420/**\n\nIt has the full rename plan from `notes.md` and three decision cards, one for each open question. Below each question is the option I recommended on the card:\n\n1. **Dual-write window:** two weeks. That also covers reporting's fortnightly dbt release, and INC-4471 came from reporting.\n2. **Backfill method:** the batched `UPDATE`, which doesn't lock the table. It needs to be scheduled so it stays out of the 17:00\u201321:00 UTC peak.\n3. **When to drop `status`:** keep it read-only for a quarter, so any reader missing from the table shows up before the data is gone.\n\nThe recommendations are shown on the cards but nothing is preselected. Each card also has an **Answer in words** option. The publish check confirmed the page renders at the local address. That address only works on this machine, so Chang can't open it from elsewhere unless it's republished with `--public`.\n\nWhen Chang presses **Finish review**, their answers come back to this session and I'll reply to each one.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "round-2",
+      "run": 2,
+      "session_id": "64ba3116-e5b4-4159-9162-76d40433e301",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 32.7,
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "inbox": 2,
+        "cards": 1,
+        "new": 1
+      },
+      "input_tokens": 12,
+      "output_tokens": 2980,
+      "thinking_tokens": 800,
+      "cache_read": 117089,
+      "cache_creation": 17258,
+      "cost_usd": 0.22112980000000002,
+      "duration_s": 32.176,
+      "num_turns": 7,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "v2 is published. It includes all three of your answers and adds one new question.\n\n- **#1:** the dual-write window is now two weeks (step 2).\n- **#2:** the backfill is now its own step (3) and runs through the nightly reconcile job. Each night picks up from the last row it finished, so an interrupted run loses nothing. The step is done when no rows have both new columns empty.\n- **#3:** `status` stays read-only for a quarter after writes stop. Dropping it is now a separate final step (6).\n\n**New question, #4:** should moving the readers (step 4) wait until the backfill finishes? I don't know how many rows the reconcile job can handle per night, so the 41M rows could take several nights. My recommendation is to wait, because any reader that switches early would see empty values for older orders.\n\nhttp://localhost:9400/",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "1 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "round-2",
+      "run": 2,
+      "session_id": "652870a4-ef2d-450b-ab6a-a841b124b52c",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 33.1,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "inbox": 1,
+        "cards": 1,
+        "new": 1
+      },
+      "input_tokens": 12,
+      "output_tokens": 2934,
+      "thinking_tokens": 625,
+      "cache_read": 108074,
+      "cache_creation": 13884,
+      "cost_usd": 0.1914148,
+      "duration_s": 32.561,
+      "num_turns": 8,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "I've published v2 at http://localhost:9420/. It covers all three of Chang's answers and has no new questions for him.\n\n- **#1 Dual-write window:** now two weeks, so it also covers reporting's dbt release that ships every two weeks.\n- **#2 Backfill:** both scripts are gone. The backfill is now its own step (step 3) and runs through the nightly reconcile job. Each night the job picks up rows where both new columns are still empty, so if it's interrupted it resumes the next night without redoing finished rows. The step is done when that count reaches zero. Readers only move after that.\n- **#3 Dropping `status`:** it stays read-only for a quarter after writes stop. Dropping it is now a separate step (step 7).\n\nThe plan went from 5 steps to 7. I also changed one sentence: v1 said every step ships as its own sqitch change, but the backfill now runs inside the reconcile job, not as a migration. It now says only the schema steps (1 and 7) do.\n\nOn publishing, the tool marked #1 and #2 resolved; #3 needed no action because Chang had already accepted it.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "v1-page",
+      "run": 2,
+      "session_id": "d4cb1680-49b2-44a3-b6f7-acf25f706a4c",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 50.4,
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "new": 3
+      },
+      "input_tokens": 16,
+      "output_tokens": 4699,
+      "thinking_tokens": 882,
+      "cache_read": 168239,
+      "cache_creation": 20259,
+      "cost_usd": 0.2897638,
+      "duration_s": 49.797,
+      "num_turns": 10,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page for `notes.md` is live, with one decision card for each of the three open questions.\n\n**URL: http://localhost:9400/**\n\nThe publish check confirmed it renders on this machine. It's a localhost address, so Chang can only open it here. If they're on another machine, I can republish it with a public link.\n\nYour notes didn't recommend an answer for any question, so the recommendations on the cards are mine:\n\n- **#1 Dual-write window: two weeks.** That also covers reporting's fortnightly dbt release, and reporting is the reader behind INC-4471.\n- **#2 Backfill: the batched `UPDATE`.** It takes no lock and can be paused, but it has to be scheduled around the 17:00\u201321:00 UTC peak.\n- **#3 Dropping `status`: keep it read-only for a quarter.** I made that conditional on watching reads of `status`, which your notes don't mention. Without that, an unknown reader keeps running on stale values instead of failing. Change this if you disagree.\n\nI'll read Chang's answers once they press Finish review.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "v1-page",
+      "run": 2,
+      "session_id": "5973c667-0503-4664-8d65-d470d21b730d",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 46.3,
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "new": 2
+      },
+      "input_tokens": 14,
+      "output_tokens": 4444,
+      "thinking_tokens": 913,
+      "cache_read": 134909,
+      "cache_creation": 17510,
+      "cost_usd": 0.2559978,
+      "duration_s": 45.785,
+      "num_turns": 9,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page is up: **http://localhost:9420/**\n\nIt shows the \"Rename orders.status\" plan from `notes.md` and ends with one decision card for each of the three open questions. The notes didn't recommend an answer for any of them, so the recommendations on the cards are mine:\n\n1. **Dual-write window:** I recommend two weeks. That covers one of the reporting team's fortnightly dbt releases, and reporting is where the INC-4471 refund bug came from.\n2. **Backfill method:** I recommend the batched `UPDATE`. It takes about 6 hours but never locks the table, and it can be scheduled around the 17:00\u201321:00 UTC peak.\n3. **When to drop `status`:** I recommend keeping it read-only for a quarter. Once it's dropped, getting it back means restoring from backup.\n\nChang can pick an option on each card or choose **Answer in words**, then press **Finish review**. The answers come back to this session once they submit.\n\nThe page only passed its check on this machine (localhost). If Chang is on another machine, it needs to be republished with `--public` to get a link they can open.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "round-2",
+      "run": 3,
+      "session_id": "bc87f54b-90a7-4901-9456-47db29abbfe6",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 36.0,
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "inbox": 1,
+        "cards": 2,
+        "new": 1
+      },
+      "input_tokens": 16,
+      "output_tokens": 3276,
+      "thinking_tokens": 1122,
+      "cache_read": 169838,
+      "cache_creation": 17739,
+      "cost_usd": 0.2414636,
+      "duration_s": 35.446,
+      "num_turns": 10,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "v2 of the orders-status-rename review is published: http://localhost:9400/\n\nChanges from Chang's answers:\n- **#1 (two weeks):** Plan step 2 now runs dual-write for two weeks, which also covers reporting's dbt release every two weeks.\n- **#2 (nightly reconcile job):** The backfill is now its own step, step 3, and runs through the nightly reconcile job. The job records how far it got, so a night that's cut short picks up where it stopped. Both the batched UPDATE and the CTAS swap options are gone. Readers move to the new columns (step 4) only after the backfill reports no rows left to split.\n- **#3 (accepted):** Once writes stop in step 5, `status` stays read-only for one quarter. It's dropped in a new step 6.\n\nThe tool marked #1 and #2 as resolved in v2. #3 was already closed when Chang accepted it. There are no new questions this round.\n\nI didn't have any details about the reconcile job itself, like when it runs or how many nights 41M rows will take. The plan doesn't guess at them. If those matter, Chang can comment on step 3.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "round-2",
+      "run": 3,
+      "session_id": "2a293a73-5c57-4d28-ac71-d4739d0c7939",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 37.8,
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "inbox": 1,
+        "cards": 2,
+        "new": 1
+      },
+      "input_tokens": 16,
+      "output_tokens": 3614,
+      "thinking_tokens": 895,
+      "cache_read": 165688,
+      "cache_creation": 18014,
+      "cost_usd": 0.24959360000000003,
+      "duration_s": 37.206,
+      "num_turns": 9,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "v2 is live: **http://localhost:9420/**\n\nHere's how v2 handles each of Chang's answers:\n- **#1, two weeks:** the dual-write step now says two weeks, which covers reporting's fortnightly dbt release. This item shows as resolved.\n- **#2, use the nightly reconcile job:** the backfill is now its own step (step 3). It runs as a task in the nightly reconcile job, works in batches, commits each one, and picks up where it stopped the next night. I also added a separate step 4 that checks the backfill before any readers move. This item shows as resolved.\n- **#3, keep `status` read-only for a quarter:** stopping writes and dropping the column are now two steps, a quarter apart. He accepted my recommendation, so the card stays as a confirmed decision.\n\n**One new question for Chang (#4):** running the backfill nightly means it may take several nights. Should moving readers wait for the step 4 check, or should readers move now and fall back to `status` on older rows? I recommend waiting for the check.\n\nI couldn't find any details about the reconcile job in the repo. So the plan doesn't give batch sizes, how long a nightly run takes, or when the job runs. It only says it runs outside the 17:00\u201321:00 UTC peak and takes no table lock. Someone who knows the job should check that part.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "1 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 1,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "main@4fbe796",
+      "sha": "4fbe796",
+      "scenario": "v1-page",
+      "run": 3,
+      "session_id": "d0a764de-d382-4630-a138-207ae1ada4b9",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 37.4,
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 2,
+        "new": 3
+      },
+      "input_tokens": 12,
+      "output_tokens": 3912,
+      "thinking_tokens": 614,
+      "cache_read": 113428,
+      "cache_creation": 16627,
+      "cost_usd": 0.2339896,
+      "duration_s": 36.91,
+      "num_turns": 9,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page for Chang is up at **http://localhost:9400/**\n\nIt has the whole of `notes.md` (why, the readers/writers table and the plan) plus one decision card for each of the three open questions. Each card gives context, a recommendation, and what each option costs:\n\n1. **Dual-write window:** I recommend **two weeks**, so the fortnightly reporting (dbt) release can move off `status` before writes stop. A misread report is what caused INC-4471.\n2. **Backfill method:** I recommend the **batched `UPDATE`**. It takes about 6 hours but never locks the table and can pause through the 17:00\u201321:00 UTC peak. The `CREATE TABLE AS` swap is faster but locks the table.\n3. **When to drop `status`:** I recommend keeping it **read-only for a quarter**. Dropping it can't be undone without a restore, though any reader still on it gets out-of-date values once writes stop.\n\nThe page was only confirmed to render at the local address. The publish step didn't check a tailnet address, so this link only works on this machine. If Chang is reviewing from somewhere else, I can republish with a public address. I'll read the answers once Chang presses Finish review.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    },
+    {
+      "ref": "annotate-220-candidate-final",
+      "sha": "worktree",
+      "scenario": "v1-page",
+      "run": 3,
+      "session_id": "0009eba7-0d01-4ff9-809c-ecc60ee8a891",
+      "outcome": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_s": 44.0,
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "skill_used": true,
+      "failures": [],
+      "annotate_subcommands": {
+        "doctor": 1,
+        "new": 2
+      },
+      "input_tokens": 14,
+      "output_tokens": 4156,
+      "thinking_tokens": 682,
+      "cache_read": 136904,
+      "cache_creation": 16726,
+      "cost_usd": 0.24436480000000002,
+      "duration_s": 43.469,
+      "num_turns": 10,
+      "is_error": false,
+      "subtype": "success",
+      "result_text": "The review page for Chang is up: **http://localhost:9420/**\n\nIt's the \"Rename orders.status\" notes, with one decision card for each of the three open questions. The publish check passed, but it only checked this machine. The link is a localhost address, so Chang can only open it here, not from another computer.\n\nThe notes didn't recommend anything, so each card has a recommendation from me. Chang may want to know that when reviewing:\n\n1. **Dual-write window:** I recommend two weeks rather than one, so the reporting team's fortnightly dbt release lands inside the window. Reporting is where the refund bug INC-4471 came from.\n2. **Backfill method:** I recommend the batched `UPDATE` (about 6 hours, no lock) over the locked `CREATE TABLE AS` swap in the Sunday window, and suggest scheduling it outside the 17:00\u201321:00 UTC peak.\n3. **When to drop `status`:** I recommend keeping it read-only for a quarter. The downside, shown on the card, is that an unknown reader could quietly read stale values instead of failing loudly. This was the closest call of the three.\n\nNo answer is preselected. Chang picks an option or uses **Answer in words** on each card, then clicks **Finish review**. Once they submit, I'll read the answers with `annotate cards orders-status-rename`.",
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      }
+    }
+  ]
+}

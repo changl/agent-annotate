@@ -87,6 +87,7 @@ TEXT_VERDICTS = ("changes", "comment")
 
 # Events that are machinery, not a reviewer saying something.
 BOOKKEEPING_EVENTS = {
+    "round_received",
     # D7: `annotate close` archiving stale unanswered cards. Nobody decided
     # anything, so it must not read as reviewer activity.
     "page_closed",

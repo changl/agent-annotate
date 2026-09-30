@@ -45,7 +45,7 @@ from .paths import PACKAGE_DIR, TRANSCRIPT_GLOB
 SUBS = ("new publish publish-version unpublish status claim ask cards open-cards inbox monitor "
         "addressed resolve carry close retire revive doctor eval cost watch install-shim "
         "install-skill archive-comment migrate prune-bus sessions connect disconnect send "
-        "hook-check mcp").split()
+        "hook-check mcp update sync-skills project deliver report").split()
 _SUB = "|".join(sorted(map(re.escape, SUBS), key=len, reverse=True))
 SEG_CLI = re.compile(rf"^(?:\S*/)?annotate\s+({_SUB})(?=\s|$)(.*)$", re.S)
 SEG_PY = re.compile(rf"^\S*python[0-9.]*\s+(?:-u\s+)?(?:-m\s+agent_annotate\.cli|\S*annotate/cli\.py)"

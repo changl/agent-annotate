@@ -113,3 +113,32 @@ into a skill directory by `annotate install-skill`; `src/agent_annotate/skills/c
 Codex plugin say the same thing in Codex wording and point at those
 references. Neither wrapper owns the comment data or the browser
 implementation.
+
+## Managed project information, delivery and deployment (2.20)
+
+`project_state.py` owns the independent project.json schema. The shell renders
+links, progress and notes through shared native disclosures. `pagegen.py`
+compiles project/details/card data into the controlled document format; shared
+content.css is injected at serve time for generated pages. Custom canvases
+keep their own content, anchors and extension controls.
+
+The fsynced event bus is the source of submitted-round wake-ups. `delivery.py`
+keeps its own journal/cursor, validates fresh owner/process/terminal identity
+under the claim lock, and uses Orca's durable terminal-send receipt. The page
+server performs delivery immediately and checks pending work every 30 seconds.
+Legacy automatic Codex monitors do not deliver these rounds a second time.
+`inbox --unread` emits owner acknowledgment without claiming work completion.
+Unknown send outcomes remain uncertain instead of triggering duplicate input.
+
+`updates.py` verifies stable release metadata and checksummed wheel artifacts,
+then stages isolated environments. `deployment.py` reconciles registry, process
+arguments and listener identity before replacing registered page servers; it
+preserves owner, route, port and reviewer state and restores original commands
+on failure. Prototype forks are outside this contract. `skillgen.py` records
+generated file hashes and refreshes only unchanged managed deployments.
+
+`metrics.py` derives aggregate local usage evidence without reviewer content
+or cursor changes. `reports.py` combines it with existing transcript cost
+estimates and compiles a short weekly page, carrying report feedback forward.
+The opt-in daily updater uses the existing revive watchdog; the weekly report
+uses one deterministic macOS calendar job and no model invocation.

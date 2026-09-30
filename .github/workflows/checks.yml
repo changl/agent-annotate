@@ -1,0 +1,69 @@
+name: Checks and stable release
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[dev,browser]' build
+      - run: python -m playwright install --with-deps chromium
+      - run: sudo install -d -m 755 -o "$USER" '/Applications/Google Chrome.app/Contents/MacOS'
+      - name: Use sandboxed Chromium for browser tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as runner:
+              Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome').symlink_to(runner.chromium.executable_path)
+          PY
+      - run: python -m ruff check src tests
+      - run: python -m pytest -q
+      - name: Validate stable release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          tag = os.environ['TAG_NAME']
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag) and tag == 'v' + version
+          PY
+      - name: Stamp release build identity
+        env:
+          BUILD_ID: ${{ github.sha }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('src/agent_annotate/_build.json').write_text(json.dumps({'build_id': os.environ['BUILD_ID'], 'tag': os.environ['TAG_NAME']}))
+          PY
+      - run: python -m build
+      - name: Write wheel checksums
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          wheels = sorted(Path('dist').glob('*.whl'))
+          Path('dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in wheels))
+          PY
+      - name: Publish tested stable wheel
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" dist/*.whl dist/SHA256SUMS --verify-tag --generate-notes
+    permissions:
+      contents: write
