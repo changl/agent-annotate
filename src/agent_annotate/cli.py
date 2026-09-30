@@ -56,6 +56,7 @@ skill-directory install used (~/.claude/annotate-state/state and
 import argparse
 import contextlib
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -71,6 +72,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
+from http.client import HTTPException
 from pathlib import Path
 
 from . import __version__
@@ -92,6 +94,7 @@ from .paths import (
     WEB_DIR,
     ensure_runtime_dirs,
 )
+from .urls import mounted_url, page_url
 
 SHIM_MARKER = "agent-annotate shim"
 
@@ -1070,8 +1073,8 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
         if report.failed:
             return report
 
-    public = record.get("public_url") or (
-        record.get("url") if record.get("transport") == "cloudflare" else None) or ""
+    public = mounted_url(record.get("public_url"), base) or (
+        page_url(record) if record.get("transport") == "cloudflare" else None) or ""
     if public.startswith("https://"):
         report.stages.append(probe_browser("public", public, timeout=timeout))
     return report
@@ -1153,7 +1156,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         for line in format_report(report):
             print(line)
         print()
-        print(f"  Local URL:     {record['local_url']}   (server is still running)")
+        print(f"  Local URL:     {mounted_url(record['local_url'], record.get('public_base_path'))}   (server is still running)")
         print(f"  PID:           {record['pid']}")
         print(f"  Port:          {record['port']}")
         print(f"  Transport:     {record.get('transport')}")
@@ -1194,9 +1197,9 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
 
     # The one URL to hand over. Pid, port, bus and state paths used to follow
     # it; `status` has them, and no round needed them from here.
-    print(f"  URL:           {record['url']}")
+    print(f"  URL:           {page_url(record)}")
     if record.get("public_url"):
-        print(f"  Public URL:    {record['public_url']}   (outside reviewers only)")
+        print(f"  Public URL:    {mounted_url(record['public_url'], record.get('public_base_path'))}   (outside reviewers only)")
     if record.get("transport_error"):
         print(f"  Transport err: {record['transport_error']}")
     if report is not None:
@@ -1221,7 +1224,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         "owner_session": record.get("owner_session") or _session_id(),
         "owner_agent": record.get("owner_agent") or _session_agent(),
         "version": _read_meta(slug_dir).get("current"),
-        "url": record.get("url"),
+        "url": page_url(record),
         "transport": record.get("transport"),
         "verified": bool(record.get("verified")),
         "verify_stages": [
@@ -1432,8 +1435,8 @@ def cmd_publish(args) -> int:
                 "port": port,
                 "transport": transport_name,
                 "public_base_path": pbp or None,
-                "url": transport_url or f"http://localhost:{port}/",
-                "public_url": transport_details.get("public_url"),
+                "url": mounted_url(transport_url or f"http://localhost:{port}/", pbp),
+                "public_url": mounted_url(transport_details.get("public_url"), pbp),
                 "local_url": f"http://localhost:{port}/",
                 "bus_file": str(bus_dir / f"{slug}.ndjson"),
                 "started_at": _now_iso(),
@@ -1480,65 +1483,82 @@ def cmd_publish(args) -> int:
 
 
 def cmd_unpublish(args) -> int:
-    slug = args.slug
-    # Locate the state file that owns this slug
-    record = None
-    project = None
-    for sf in _all_state_files():
-        st = json.loads(sf.read_text(encoding="utf-8"))
-        if slug in st.get("slugs", {}):
-            record = st["slugs"][slug]
-            project = st["project"]
-            break
-    if not record:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
-
-    # Stop server
-    pid = record.get("pid", 0)
-    stopped = _stop_server(pid)
-    print(f"  Server pid={pid} {'stopped' if stopped else 'not running'}")
-
-    # Transport teardown
-    transport_name = record.get("transport", "local")
-    pbp = (record.get("public_base_path") or "").lstrip("/")
-    if transport_name != "local" and pbp:
-        try:
-            from .transports import load as _load_transport
-            tmod = _load_transport(transport_name)
-            details = record.get("transport_details", {}) or {}
-            opts = _transport_opts(_project_config(project))
-            host = details.get("hostname")
-            if host:
-                opts["hostname"] = host
-            # A tailscale serve mapping is addressed by port, not by slug: pass
-            # both the recorded serve port and the local port so teardown can
-            # identify the mapping and refuse to remove a recycled one.
-            if record.get("port"):
-                opts["port"] = record["port"]
-            https_port = details.get("https_port") or \
-                (details.get("tailscale") or {}).get("https_port")
-            if https_port:
-                opts["https_port"] = https_port
-            with _flock(_tunnel_lock_path()):
-                r = tmod.unpublish(pbp, **opts)
-            print(f"  Transport {transport_name}: {r.get('details', {}).get('action', 'ok')}")
-        except NotImplementedError as e:
-            print(f"WARN: transport {transport_name}: {e}", file=sys.stderr)
-        except TimeoutError as e:
-            print(f"WARN: transport {transport_name} unpublish skipped: {e}", file=sys.stderr)
-        except Exception as e:
-            print(f"WARN: transport {transport_name} unpublish failed: {e}", file=sys.stderr)
-
-    # Remove from state
+    project, slug, selected = resolved
     try:
         with _flock(_state_lock_path(project)):
             state = _load_state_for_project(project)
+            record = state.get("slugs", {}).get(slug)
+            if record != selected:
+                raise RuntimeError("page registration changed during selection; no teardown attempted")
+            directory = Path(record["slug_dir"]).resolve()
+            for other_project, other_slug, other in _registry_entries():
+                if (other_project, other_slug) == (project, slug):
+                    continue
+                if (str(other.get("port")) == str(record.get("port"))
+                        or (other.get("slug_dir") and Path(other["slug_dir"]).resolve() == directory)):
+                    raise RuntimeError("page directory or port is also registered to another scope; no teardown attempted")
+            from .deployment import _identity
+            owned = {**record, "project": project}
+            before = _identity(owned)
+
+            # Remove only this recorded route. A root mount is still a route;
+            # the transport's origin/port ownership guard decides whether it
+            # belongs to this page. Failed removal leaves the receipt intact.
+            transport_name = record.get("transport", "local")
+            if transport_name != "local":
+                from .transports import load as _load_transport
+                tmod = _load_transport(transport_name)
+                details = record.get("transport_details") or {}
+                opts = _transport_opts(_project_config(project))
+                if details.get("hostname"):
+                    opts["hostname"] = details["hostname"]
+                opts["port"] = record["port"]
+                https_port = details.get("https_port") or (details.get("tailscale") or {}).get("https_port")
+                if https_port:
+                    opts["https_port"] = https_port
+                with _flock(_tunnel_lock_path()):
+                    result = tmod.unpublish((record.get("public_base_path") or "").lstrip("/"), **opts)
+                if not isinstance(result, dict) or result.get("ok") is not True:
+                    raise RuntimeError(f"transport {transport_name} teardown failed or was refused")
+                transport_details = result.get("details") or {}
+                outcomes = [transport_details.get(name) for name in ("tailscale", "cloudflare")
+                            if isinstance(transport_details.get(name), dict)] or [transport_details]
+                for outcome in outcomes:
+                    reason = outcome.get("reason")
+                    if (outcome.get("action") == "noop"
+                            and not (isinstance(reason, str) and
+                                     (reason.startswith("no serve mapping") or reason == "no matching rule"))):
+                        raise RuntimeError(f"transport {transport_name} ownership not proven; inspect its recorded route")
+                print(f"  Transport {transport_name}: {transport_details.get('action', 'ok')}")
+
+            fresh = _identity(owned)
+            if fresh != before:
+                raise RuntimeError("server identity changed during teardown; no signal sent")
+            pid = before["pid"]
+            if pid is not None:
+                # Avoid _stop_server's unguarded SIGKILL escalation: a reused
+                # PID during its wait must never authorize another signal.
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(20):
+                    if not _is_process_alive(pid):
+                        break
+                    time.sleep(0.1)
+                if _is_process_alive(pid):
+                    raise RuntimeError("server stop unproven after SIGTERM; inspect it before retrying; no hard kill sent")
+            if _identity({**owned, "pid": pid})["pid"] is not None:
+                raise RuntimeError("a page server appeared during teardown; registration retained")
+            print(f"  Server pid={pid if pid is not None else record.get('pid', 0)} {'stopped' if pid is not None else 'already stopped'}")
             state["slugs"].pop(slug, None)
             _save_state_for_project(project, state)
     except TimeoutError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {e}; registration retained for retry", file=sys.stderr)
         return 4
+    except Exception as e:
+        print(f"ERROR: unpublish {project}/{slug}: {e}; registration retained for retry", file=sys.stderr)
+        return 1
     print(f"  Removed from state file: {STATE_DIR / (project + '.json')}")
     return 0
 
@@ -1644,7 +1664,7 @@ def cmd_status(args) -> int:
         print(f"  {'-' * 15} {'-' * 24} {'-' * 21} {'-' * 40}")
         for project, slug, record in retired:
             print(f"  {project[:15]:<15} {slug[:24]:<24} "
-                  f"{str(record.get('retired_at'))[:21]:<21} {record.get('url')}")
+                  f"{str(record.get('retired_at'))[:21]:<21} {page_url(record)}")
         return 0
     rows = []
     live = _running_servers()
@@ -1677,7 +1697,7 @@ def cmd_status(args) -> int:
             # An owner only matters while the page is serving: a dead row's
             # owner is a fact about history, not about who should act.
             owner = _owner_note(rec, ps_snapshot) if state != "dead" else ""
-            rows.append((project, slug, pid, port, rec.get("url"), state, owner))
+            rows.append((project, slug, pid, port, page_url(rec), state, owner))
     if not rows:
         print("(no active slugs)")
         _print_retired_count()
@@ -1954,7 +1974,7 @@ def _auto_dispose(slug_dir: Path, new_version: str, project_hint: str | None) ->
     except (OSError, ValueError, TypeError):
         pass
     mentions = _mentions_by_anchor(html)
-    resolved = _resolve_slug(slug_dir.name, project_hint)
+    resolved = _resolve_scoped_slug(slug_dir.name, project_hint)
     if not resolved:
         return []
     record = resolved[2]
@@ -2063,7 +2083,7 @@ def cmd_publish_version(args) -> int:
     print(f"  history:       {'added' if added and added[0] else 'updated in place'} "
           f"{new_version} ({entries} entr{'y' if entries == 1 else 'ies'} total)")
 
-    resolved = _resolve_slug(slug_dir.name, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(slug_dir.name, getattr(args, "project", None))
     if resolved:
         _project, _slug, record = resolved
         bus_file = record.get("bus_file")
@@ -2282,7 +2302,10 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
     Keeps the same anchor-idempotency contract: an existing non-archived card
     by this author on the same anchor is updated, not duplicated.
     """
+    author = author if author.startswith("agent:") else f"agent:{author}"
     code, existing = _api(record, "GET", "/api/comments", None, author)
+    if code != 200 or not isinstance(existing, list):
+        raise RuntimeError(f"cannot read existing cards before legacy fallback (HTTP {code}); inspect existing page/history before retrying; fallback stopped before any per-card write")
     by_anchor: dict = {}
     if code == 200 and isinstance(existing, list):
         for c in existing:
@@ -2305,13 +2328,13 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
                 body["decision_request"] = item["decision_request"]
             code, payload = _api(record, "PUT", f"/api/comments/{prior['id']}",
                                  body, author)
-            if code >= 400 or code == 0:
+            if code >= 300 or code == 0:
                 raise RuntimeError(f"PUT {prior['id']} → HTTP {code}: {payload}")
             ids.append(prior["id"])
             updated += 1
             continue
         code, payload = _api(record, "POST", "/api/comments", item, author)
-        if code >= 400 or code == 0 or not isinstance(payload, dict):
+        if code >= 300 or code == 0 or not isinstance(payload, dict):
             raise RuntimeError(f"POST {item['anchor_id']} → HTTP {code}: {payload}")
         cid = payload.get("id")
         ids.append(cid)
@@ -2321,14 +2344,14 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
         if item.get("decision_request") and not payload.get("decision_request"):
             code, payload = _api(record, "PUT", f"/api/comments/{cid}",
                                  {"decision_request": item["decision_request"]}, author)
-            if code >= 400 or code == 0:
+            if code >= 300 or code == 0:
                 raise RuntimeError(f"PUT {cid} (decision_request) → HTTP {code}: {payload}")
     return ids, created, updated
 
 
 def cmd_ask(args) -> int:
     """Post a whole round of decision cards from one cards.json."""
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -2424,11 +2447,11 @@ def cmd_ask(args) -> int:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
     elif code == 0:
-        print(f"ERROR: no server answering for {project}/{slug}: {payload}\n"
-              f"  Start it with `{_inv()} publish {record.get('slug_dir', '<slug-dir>')}`",
+        print(f"ERROR: API response unavailable or unusable for {project}/{slug}: {payload}\n"
+              "  Inspect the server and page state before retrying; this write may already have completed.",
               file=sys.stderr)
         return 2
-    elif code >= 400 or not isinstance(payload, dict):
+    elif code >= 300 or not isinstance(payload, dict):
         print(f"ERROR: batch create failed (HTTP {code}): {payload}", file=sys.stderr)
         return 2
     else:
@@ -2536,7 +2559,7 @@ def cmd_claim(args) -> int:
     The hook only notifies the owning session; a handoff (or a page published
     before ownership existed) needs a way to say "this one is mine now".
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -2724,7 +2747,7 @@ def cmd_close(args) -> int:
     ordinary reviewer comment is never touched. The page keeps serving; this
     closes the questions, not the page.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -2905,7 +2928,7 @@ def cmd_retire(args) -> int:
         if not getattr(args, "slug", None):
             print("ERROR: name a slug or pass --dead", file=sys.stderr)
             return 2
-        resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+        resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
         if not resolved:
             return 2
         project, slug, record = resolved
@@ -2923,7 +2946,7 @@ def cmd_retire(args) -> int:
     print(f"  {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 6} {'-' * 40}")
     for project, slug, record in targets:
         print(f"  {project[:15]:<15} {slug[:24]:<24} {str(record.get('pid')):<8} "
-              f"{str(record.get('port')):<6} {record.get('url')}")
+              f"{str(record.get('port')):<6} {page_url(record)}")
     if args.dry_run:
         print(f"  (dry run) would retire {len(targets)} entr(ies); nothing was written.")
         return 0
@@ -2982,6 +3005,7 @@ def _reroute(project: str, slug: str, record: dict, port: int):
     """Re-run a page's route on `port`. Returns (url, details, base_path, error)."""
     details = record.get("transport_details") or {}
     pbp = record.get("public_base_path") or ""
+    base_path = pbp if "public_base_path" in record else f"/{slug}"
     transport_name = record.get("transport") or "local"
     try:
         from .transports import load as _load_transport
@@ -2994,11 +3018,11 @@ def _reroute(project: str, slug: str, record: dict, port: int):
             opts["public"] = _had_public_route(record)
         with _flock(_tunnel_lock_path()):
             result = _load_transport(transport_name).publish(
-                (pbp or f"/{slug}").lstrip("/"), port, **opts)
-        return (result.get("url") or record.get("url"), result.get("details", details),
-                pbp or f"/{slug}", None)
+                base_path.lstrip("/"), port, **opts)
+        return (mounted_url(result.get("url") or record.get("url"), base_path), result.get("details", details),
+                base_path, None)
     except Exception as e:
-        return record.get("url"), details, pbp, str(e)
+        return page_url(record), details, pbp, str(e)
 
 
 def _route_host(record: dict) -> str | None:
@@ -3038,7 +3062,7 @@ def _rerouted_if_renamed(project: str, slug: str, record: dict, live_host: str |
     if error:
         return "failed", f"reroute: {error}"
     record.update({"url": url, "transport_details": details,
-                   "public_url": details.get("public_url") or record.get("public_url")})
+                   "public_url": mounted_url(details.get("public_url") or record.get("public_url"), _pbp)})
     return "rerouted", f"{old} → {live_host}"
 
 
@@ -3114,7 +3138,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             "port": port,
             "local_url": f"http://localhost:{port}/",
             "url": url,
-            "public_url": details.get("public_url") or record.get("public_url"),
+            "public_url": mounted_url(details.get("public_url") or record.get("public_url"), pbp),
             "public_base_path": pbp or None,
             "transport_details": details,
             "transport_error": error,
@@ -3257,7 +3281,7 @@ def cmd_update(args) -> int:
 
 def cmd_deliver(args) -> int:
     from .delivery import dispatch_record
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -3268,7 +3292,8 @@ def cmd_deliver(args) -> int:
 
 def cmd_project(args) -> int:
     from .project_state import load_project, save_project
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolver = _resolve_scoped_slug if args.from_file else _resolve_slug
+    resolved = resolver(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     _project, _slug, record = resolved
@@ -3300,7 +3325,7 @@ def _fleet_snapshot(from_file=None) -> dict:
     for project, slug, record in _registry_entries():
         try:
             target = validate_config({"schema_version": 1, "targets": [{"machine": machine, "project": project,
-                                      "slug": slug, "url": record.get("url")}]})["targets"][0]
+                                      "slug": slug, "url": page_url(record)}]})["targets"][0]
         except ValueError:
             excluded += 1
             continue
@@ -3505,7 +3530,7 @@ def cmd_monitor(args) -> int:
     queued event; the shared byte offset lets a newly armed monitor replay any
     events that arrived while no session monitor was active.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -3668,7 +3693,7 @@ def _comment_call(args, method: str, path: str, body: dict, done: str | None = N
     comment back cost about 530 tokens a call and told the agent nothing it
     had not just sent; `--json` still prints it.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     _project, _slug, record = resolved
@@ -3679,7 +3704,7 @@ def _comment_call(args, method: str, path: str, body: dict, done: str | None = N
         # The reviewer already closed it; there is nothing left to mark.
         print(f"noop {args.comment_id}: already confirmed by the reviewer")
         return 0
-    if code == 0 or code >= 400:
+    if code == 0 or code >= 300:
         print(f"ERROR: {method} {path} → HTTP {code}: {err}", file=sys.stderr)
         closest = payload.get("closest") if isinstance(payload, dict) else None
         if closest:
@@ -3799,6 +3824,23 @@ def _resolve_slug(raw: str, project_hint: str | None = None):
     print(f"ERROR: no page registered as {raw!r}. Registered slugs:", file=sys.stderr)
     print(_registered_listing(), file=sys.stderr)
     return None
+
+
+def _resolve_scoped_slug(raw: str, project_hint: str | None = None):
+    """Exact scope for destructive and MCP calls; no convenience fallback."""
+    slug = (raw or "").strip().strip("/")
+    project = project_hint
+    if "/" in slug:
+        head, slug = slug.split("/", 1)
+        if project is not None and project != head:
+            print("ERROR: conflicting project qualification", file=sys.stderr)
+            return None
+        project = head
+    matches = [(p, s, r) for p, s, r in _registry_entries() if s == slug and (project is None or p == project)]
+    if len(matches) != 1:
+        print(f"ERROR: no unique exact page for {raw!r}; use PROJECT/SLUG or --project PROJECT", file=sys.stderr)
+        return None
+    return matches[0]
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -3948,40 +3990,105 @@ def _verdict_counts(cards: list[dict]) -> dict:
     return counts
 
 
+_LOCAL_API_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+class _LocalAPINoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _local_api_url(record: dict, path: str) -> str:
+    base = record.get("local_url")
+    message = "local_url must be direct loopback HTTP on the recorded port without credentials, query, fragment, or a route; republish the page if its record is stale"
+    try:
+        if (not isinstance(base, str) or len(base) > 2048
+                or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in base)
+                or any(char in base for char in ("\\", "?", "#"))):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(base)
+        host = parsed.hostname
+        if (parsed.scheme != "http" or not host or parsed.username is not None or parsed.password is not None
+                or parsed.path not in ("", "/") or (parsed.port is not None and not 0 < parsed.port < 65536)):
+            raise ValueError
+        expected_port = record.get("port")
+        if type(expected_port) is not int or not 0 < expected_port < 65536 or expected_port != (parsed.port or 80):
+            raise ValueError
+        if host != "localhost" and ("%" in host or not ipaddress.ip_address(host).is_loopback):
+            raise ValueError
+        authority = f"[{host}]" if ":" in host else host
+        if not re.fullmatch(re.escape(authority) + r"(?::[0-9]{1,5})?", parsed.netloc, re.I):
+            raise ValueError
+    except ValueError:
+        raise ValueError(message) from None
+
+    prefix = record.get("public_base_path")
+    if prefix is None:
+        prefix = ""
+    for value, allow_empty in ((prefix, True), (path, False)):
+        try:
+            if (not isinstance(value, str) or len(value) > 4096
+                    or (not value and not allow_empty) or (value and not value.startswith("/"))
+                    or value.startswith("//") or any(char in value for char in ("\\", "?", "#"))
+                    or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)):
+                raise ValueError
+            route = urllib.parse.urlsplit(value)
+            decoded = urllib.parse.unquote(route.path, errors="strict")
+            if (route.scheme or route.netloc or route.query or route.fragment or "\\" in decoded
+                    or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+                    or any(segment in (".", "..") for segment in decoded.split("/"))):
+                raise ValueError
+        except ValueError:
+            raise ValueError("local API prefix and route must be root-relative paths without authority, query, fragment, controls, or traversal") from None
+    return base.rstrip("/") + prefix.rstrip("/") + path
+
+
 def _api(record: dict, method: str, path: str, body, author: str,
          timeout: float = 15.0) -> tuple[int, object]:
     """One local API call against a running server. Returns (status, parsed).
 
-    Status 0 means the request never reached a server; the payload is then the
-    error string.
+    Status 0 means no usable response, not proof that a write never happened.
+    The timeout is per socket operation, not a total wall deadline; only the
+    explicitly recorded loopback server is trusted. Reads are byte-bounded.
     """
-    base = (record.get("local_url") or "").rstrip("/")
-    pbp = record.get("public_base_path") or ""
-    url = f"{base}{pbp}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, method=method, data=data, headers={
-        "Content-Type": "application/json",
-        "X-Annotate-Agent": author if author.startswith("agent:") else f"agent:{author}",
-        "X-Annotate-Session": _session_id(),
-    })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            code = resp.status
-    except urllib.error.HTTPError as e:
-        code = e.code
+        url = _local_api_url(record, path)
+    except ValueError as exc:
+        return 0, str(exc)
+    try:
+        data = json.dumps(body).encode() if body is not None else None
+        agent = author if author.startswith("agent:") else f"agent:{author}"
+        req = urllib.request.Request(url, method=method, data=data, headers={
+            "Content-Type": "application/json",
+            "X-Annotate-Agent": agent,
+            # Older runtimes read only this header. A mandatory agent: tag
+            # preserves attribution; direct-loopback/no-proxy/no-redirect
+            # validation prevents sending a human proxy claim or remote leak.
+            "Cf-Access-Authenticated-User-Email": agent,
+            "X-Annotate-Session": _session_id(),
+        })
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LocalAPINoRedirect())
         try:
-            raw = e.read().decode("utf-8", errors="replace")
-        except Exception:
-            raw = ""
-    except Exception as e:
-        return 0, f"{type(e).__name__}: {e}"
+            response = opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            code = response.status
+            if 300 <= code < 400:
+                return code, {"error": "local API redirect refused; inspect the recorded server before retrying"}
+            raw = response.read(_LOCAL_API_MAX_RESPONSE_BYTES + 1)
+    except (OSError, TypeError, ValueError, HTTPException) as exc:
+        return 0, f"local API request failed ({type(exc).__name__}); check the recorded server and inspect page state before retrying a write"
+    if len(raw) > _LOCAL_API_MAX_RESPONSE_BYTES:
+        error = f"local API response exceeds {_LOCAL_API_MAX_RESPONSE_BYTES} bytes; inspect server logs and page state before retrying a write"
+        return (code, {"error": error}) if code >= 400 else (0, error)
     if not raw.strip():
         return code, None
     try:
         return code, json.loads(raw)
-    except ValueError:
-        return code, raw
+    except (ValueError, RecursionError):
+        error = "local API returned invalid JSON; inspect server logs and page state before retrying a write"
+        return (code, {"error": error}) if code >= 400 else (0, error)
 
 
 def _find_record(slug: str) -> dict | None:
@@ -4001,14 +4108,14 @@ def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev:
 
     comment_ids = ev.get("comment_ids") or ev.get("comments") or []
     count = ev.get("comment_count") or ev.get("count") or len(comment_ids)
-    page_url = record.get("url") or record.get("local_url")
+    url = page_url(record)
     counts = ev.get("verdict_counts") if isinstance(ev.get("verdict_counts"), dict) else None
     tally = (" Verdicts: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v) + "."
              if counts else "")
     message = (
         f"[Agent Annotate] The reviewer pushed {count} feedback item(s) from "
-        f"{project}/{slug} to this session. Page: {page_url}. "
-        f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {slug} --unread`, "
+        f"{project}/{slug} to this session. Page: {url}. "
+        f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {project}/{slug} --unread`, "
         "review the exact comments and anchors, then reply through the annotation API."
     )
     result = CodexAppServerAdapter().deliver(thread_id, message)
@@ -4114,7 +4221,7 @@ def cmd_send(args) -> int:
 
 def cmd_connect(args) -> int:
     """Run the Codex page monitor as a detached delivery worker."""
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, _record = resolved
@@ -4151,7 +4258,7 @@ def cmd_connect(args) -> int:
 
 
 def cmd_disconnect(args) -> int:
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, rec = resolved
@@ -4280,7 +4387,8 @@ def main():
     sp_pub.set_defaults(func=cmd_publish)
 
     sp_unpub = sub.add_parser("unpublish", help="tear down route + stop server")
-    sp_unpub.add_argument("slug")
+    sp_unpub.add_argument("slug", help="<slug> or exact <project>/<slug>")
+    sp_unpub.add_argument("--project", default=None)
     sp_unpub.set_defaults(func=cmd_unpublish)
 
     sp_st = sub.add_parser("status", help="list active slugs")

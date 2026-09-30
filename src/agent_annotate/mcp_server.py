@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from . import cli
 from .paths import MONITOR_ROOT
+from .urls import mounted_url, page_url
 
 
 def _record(slug: str) -> dict[str, Any]:
-    record = cli._find_record(slug)
-    if not record:
-        raise ValueError(f"No published Agent Annotate page named {slug!r}")
-    return record
+    resolved = cli._resolve_scoped_slug(slug)
+    if not resolved:
+        raise ValueError(f"No unique exact Agent Annotate page named {slug!r}; use project/slug")
+    return resolved[2]
 
 
 def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, Any]]:
@@ -38,21 +38,13 @@ def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, A
 
 def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author: str) -> Any:
     record = _record(slug)
-    base = record["local_url"].rstrip("/")
-    public_base_path = record.get("public_base_path") or ""
-    request = urllib.request.Request(
-        f"{base}{public_base_path}{path}",
-        method=method,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "X-Annotate-Agent": author if author.startswith("agent:") else f"agent:{author}",
-            # Every event this request emits is attributed to this session.
-            "X-Annotate-Session": cli._session_id(),
-        },
-    )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
+    code, payload = cli._api(record, method, path, body, author, timeout=5)
+    if code == 0:
+        raise RuntimeError(str(payload))
+    if not 200 <= code < 300:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        raise RuntimeError(f"local annotate API returned HTTP {code}" + (f": {error}" if isinstance(error, str) else ""))
+    return payload
 
 
 def build_server():
@@ -83,7 +75,9 @@ def build_server():
                         lease = json.loads(lease_path.read_text(encoding="utf-8"))
                     except json.JSONDecodeError:
                         pass
-                pages.append({**record, "owner": lease})
+                pages.append({**record, "url": page_url(record),
+                              "public_url": mounted_url(record.get("public_url"), record.get("public_base_path")),
+                              "owner": lease})
         return pages
 
     @server.tool()

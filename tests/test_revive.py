@@ -127,7 +127,7 @@ def test_a_non_local_page_reroutes_before_it_starts(estate, monkeypatch):
     assert cli.cmd_revive(_args()) == 0
     assert calls == [("demo", 8899, {"port": 8899, "details": {"https_port": 8447}})]
     rec = _record()
-    assert rec["url"] == "https://m1max.example.ts.net:8460/"
+    assert rec["url"] == "https://m1max.example.ts.net:8460/demo/"
     assert rec["transport_details"] == {"https_port": 8460}
     assert estate.started == [(str(estate.slug_dir), 8899, "/demo")]
 

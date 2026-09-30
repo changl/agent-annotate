@@ -248,7 +248,7 @@ def test_access_trust_comes_only_from_explicit_project_origin_list(identity_serv
 
 def test_cli_and_mcp_local_calls_are_agent_attribution_not_human_proxy_claims(identity_server, monkeypatch):
     server, _ = identity_server
-    record = {"local_url": f"http://127.0.0.1:{server.server_address[1]}", "public_base_path": "/review"}
+    record = {"local_url": f"http://127.0.0.1:{server.server_address[1]}", "port": server.server_address[1], "public_base_path": "/review"}
     status, result = cli._api(record, "POST", "/api/comments", {"anchor_id": "s:cli", "text": "inert CLI reply"}, "reviewer alias")
     assert status == 201 and result["author"] == "agent:reviewer alias"
     monkeypatch.setattr(mcp_server, "_record", lambda slug: record)

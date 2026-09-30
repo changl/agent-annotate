@@ -276,6 +276,7 @@ def served(tmp_path, monkeypatch):
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     record = {"slug": "live", "slug_dir": str(slug_dir), "project": "proj",
+              "port": httpd.server_address[1],
               "local_url": f"http://127.0.0.1:{httpd.server_address[1]}/",
               "bus_file": str(bus_dir / "live.ndjson")}
     monkeypatch.setattr(cli, "_registry_entries", lambda: [("proj", "live", record)])

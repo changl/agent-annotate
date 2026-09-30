@@ -197,8 +197,12 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
             continue
         # No reviewer text in this prompt: the owner reads trusted routing
         # metadata here, then treats inbox content as reviewer data.
+        from .urls import page_url
+        url = page_url(record)
+        page = f"Page: {url}. " if url else ""
         prompt = (f"[annotate] ROUND SUBMITTED: {project}/{slug}; "
                   f"{row['comment_count']} answer(s), delivery {row['id']}. "
+                  f"{page}"
                   f"Read annotate inbox {project}/{slug} --unread and annotate cards {project}/{slug}. "
                   "Handle this completed feedback round, preserve prior decisions and history, "
                   "and update the project page. Do not wait for a monitor or another user prompt.")

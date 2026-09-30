@@ -9,14 +9,20 @@ otherwise a new turn is started in the selected thread.
 from __future__ import annotations
 
 import json
+import os
 import queue
+import select
 import subprocess
 import threading
 import time
 from contextlib import AbstractContextManager
 from typing import Any
 
+from .. import __version__
 from .base import DeliveryResult
+
+_STDERR_LIMIT = 8192
+_STDOUT_FRAME_LIMIT = 16 * 1024 * 1024
 
 
 class AppServerError(RuntimeError):
@@ -29,6 +35,11 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
         self._request_timeout = request_timeout
         self._messages: queue.Queue[dict[str, Any]] = queue.Queue()
         self._backlog: list[dict[str, Any]] = []
+        self._stop = threading.Event()
+        self._stderr_tail = bytearray()
+        self._stderr_lock = threading.Lock()
+        self._readers: list[threading.Thread] = []
+        self._closed = False
         self._proc = subprocess.Popen(
             [executable, "app-server", "--listen", "stdio://"],
             stdin=subprocess.PIPE,
@@ -37,20 +48,29 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
             text=True,
             bufsize=1,
         )
-        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
-        self._reader.start()
-        self.request(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": "agent_annotate",
-                    "title": "Agent Annotate",
-                    "version": "0.1.0",
+        try:
+            for target in (self._read_stdout, self._read_stderr):
+                reader = threading.Thread(target=target, daemon=True)
+                self._readers.append(reader)
+                reader.start()
+            self.request(
+                "initialize",
+                {
+                    "clientInfo": {
+                        "name": "agent_annotate",
+                        "title": "Agent Annotate",
+                        "version": __version__,
+                    },
+                    "capabilities": {"experimentalApi": True},
                 },
-                "capabilities": {"experimentalApi": True},
-            },
-        )
-        self.notify("initialized", {})
+            )
+            self.notify("initialized", {})
+        except BaseException:
+            try:
+                self.close()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            raise
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
@@ -64,16 +84,75 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self._write({"method": method, "params": params})
 
-    def _read_stdout(self) -> None:
-        if not self._proc.stdout:
-            self._messages.put({"__eof__": True})
+    def _chunks(self, stream):
+        if stream is None:
             return
-        for line in self._proc.stdout:
-            try:
-                self._messages.put(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        self._messages.put({"__eof__": True})
+        try:
+            descriptor = stream.fileno()
+            os.set_blocking(descriptor, False)
+            while not self._stop.is_set():
+                readable, _, _ = select.select([descriptor], [], [], 0.05)
+                if not readable:
+                    continue
+                try:
+                    chunk = os.read(descriptor, 4096)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    return
+                yield chunk
+        except (OSError, ValueError):
+            return
+
+    def _read_stdout(self) -> None:
+        pending = bytearray()
+        try:
+            for chunk in self._chunks(self._proc.stdout):
+                search_from = len(pending)
+                pending.extend(chunk)
+                while (newline := pending.find(b"\n", search_from)) != -1:
+                    if newline > _STDOUT_FRAME_LIMIT:
+                        self._messages.put(
+                            {
+                                "__error__": f"app-server stdout frame exceeds size limit ({_STDOUT_FRAME_LIMIT} bytes)"
+                            }
+                        )
+                        pending.clear()
+                        return
+                    self._queue_frame(bytes(pending[:newline]))
+                    del pending[: newline + 1]
+                    search_from = 0
+                if len(pending) > _STDOUT_FRAME_LIMIT:
+                    self._messages.put(
+                        {
+                            "__error__": f"app-server stdout frame exceeds size limit ({_STDOUT_FRAME_LIMIT} bytes)"
+                        }
+                    )
+                    pending.clear()
+                    return
+            if pending and not self._stop.is_set():
+                self._queue_frame(bytes(pending))
+        finally:
+            self._messages.put({"__eof__": True})
+
+    def _queue_frame(self, line: bytes) -> None:
+        if not line.strip():
+            return
+        try:
+            message = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._messages.put({"__error__": "invalid JSON frame from app-server"})
+            return
+        if not isinstance(message, dict):
+            self._messages.put({"__error__": "app-server JSON frame must be an object"})
+            return
+        self._messages.put(message)
+
+    def _read_stderr(self) -> None:
+        for chunk in self._chunks(self._proc.stderr):
+            with self._stderr_lock:
+                self._stderr_tail.extend(chunk)
+                del self._stderr_tail[:-_STDERR_LIMIT]
 
     def _take_matching(self, predicate, timeout: float) -> dict[str, Any]:
         for index, message in enumerate(self._backlog):
@@ -89,16 +168,17 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
                 message = self._messages.get(timeout=remaining)
             except queue.Empty as exc:
                 raise AppServerError("timed out waiting for app-server") from exc
+            if message.get("__error__"):
+                raise AppServerError(message["__error__"])
             if message.get("__eof__"):
-                stderr = self._proc.stderr.read() if self._proc.stderr else ""
+                with self._stderr_lock:
+                    stderr = self._stderr_tail.decode("utf-8", errors="replace")
                 raise AppServerError(f"app-server stopped unexpectedly: {stderr.strip()}")
             if predicate(message):
                 return message
             self._backlog.append(message)
 
-    def request(
-        self, method: str, params: dict[str, Any], timeout: float | None = None
-    ) -> dict[str, Any]:
+    def request(self, method: str, params: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
         request_id = self._next_id
         self._next_id += 1
         self._write({"method": method, "id": request_id, "params": params})
@@ -112,8 +192,10 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
 
     def wait_for_turn(self, turn_id: str, timeout: float) -> dict[str, Any]:
         message = self._take_matching(
-            lambda item: item.get("method") == "turn/completed"
-            and item.get("params", {}).get("turn", {}).get("id") == turn_id,
+            lambda item: (
+                item.get("method") == "turn/completed"
+                and item.get("params", {}).get("turn", {}).get("id") == turn_id
+            ),
             timeout,
         )
         turn = message.get("params", {}).get("turn", {})
@@ -123,12 +205,28 @@ class CodexAppServerClient(AbstractContextManager["CodexAppServerClient"]):
         return turn
 
     def close(self) -> None:
-        if self._proc.poll() is None:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        try:
+            if self._proc.poll() is None:
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
+                    self._proc.wait(timeout=2)
+        finally:
+            for reader in self._readers:
+                if reader.ident is not None:
+                    reader.join(timeout=0.2)
+            for stream in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
 
 
 class CodexAppServerAdapter:
@@ -174,9 +272,7 @@ class CodexAppServerAdapter:
                 )
                 turn_id = active["id"]
             else:
-                result = client.request(
-                    "turn/start", {"threadId": session_id, "input": input_items}
-                )
+                result = client.request("turn/start", {"threadId": session_id, "input": input_items})
                 turn_id = result.get("turn", {}).get("id", "unknown")
             turn = client.wait_for_turn(turn_id, self.turn_timeout)
             detail = f"completed turn {turn_id} ({turn.get('status', 'unknown')})"

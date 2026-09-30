@@ -11,7 +11,8 @@ Claude Code, Codex and future providers attach to the same runtime.
 ## Install
 
 Requires Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), and
-Python 3.11 or newer (uv can provision Python). Install a tested release tag;
+Python 3.11 or newer (uv can provision Python). Runtime ownership locks require
+POSIX (macOS/Linux); browser reviewers can use other platforms. Install a tested release tag;
 installing Git main is a development checkout and can differ from the stable
 runtime on another machine.
 
@@ -307,6 +308,13 @@ and hook registrations are separate resources: inspect ownership and remove
 only this tool's entries, preserving unrelated settings and edits. Keep the
 registry, page directories, buses and private backups unless you intentionally
 choose to delete that history. No whole-settings restore is required.
+
+Use `annotate unpublish PROJECT/SLUG` to stop an owned page and remove its named
+route. Mutations and ownership changes require an exact project scope when a
+slug appears in multiple projects. Cleanup verifies the current server's
+directory, port and command before signaling it; unknown or reused process IDs
+are refused. A failed or unproven teardown keeps its registry receipt for retry.
+Other pages, review files and event history are retained.
 
 ## Publish verification
 

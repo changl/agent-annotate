@@ -343,6 +343,15 @@ def test_reviewer_text_is_never_in_wakeup_prompt(estate):
     assert "a" * 12 in prompt
 
 
+def test_round_wakeup_uses_mounted_url_from_legacy_registry(estate):
+    estate["record"].update(url="https://page.example:8447/", public_base_path="/demo")
+    _write_registry(estate, estate["record"])
+    _append(estate, _round())
+    _dispatch(estate)
+    prompt = _sends(estate)[0][_sends(estate)[0].index("--text") + 1]
+    assert "Page: https://page.example:8447/demo/." in prompt
+
+
 def test_delivery_cursor_does_not_consume_inbox_hook_or_monitor_cursors(estate):
     cursors = [
         estate["state_dir"] / "bus-offsets" / _OWNER / _PROJECT / f"{_SLUG}.offset",
