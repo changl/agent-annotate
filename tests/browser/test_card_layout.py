@@ -213,7 +213,7 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             assert 'two weeks of dual writes' in migration.inner_text()
             migration.locator('.decision-evidence-goto').click()
             frame.locator('.annotate-back-pill').click()
-            assert page.locator('.citem.hl[data-comment-id="card-1"]').is_visible()
+            playwright.expect(page.locator('.citem.hl[data-comment-id="card-1"]')).to_be_visible()
             browser.close()
     finally:
         process.terminate()
