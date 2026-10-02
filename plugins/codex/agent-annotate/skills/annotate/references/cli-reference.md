@@ -9,6 +9,7 @@ Use the installed package executable. The module fallback works only in its Pyth
 | Create first page | `new DIR --from page.md --project NAME --publish` |
 | Pose new feedback | Add `--ask` only when source has cards |
 | Update progress | `project PROJECT/SLUG --from project.json` |
+| Read/import formatted copy | `copy PROJECT/SLUG [--block ID | --from copy.json]` |
 | Later review version | `new DIR --from page.md --version vN --publish --ask` |
 | Read submitted feedback | `inbox PROJECT/SLUG --unread` and `cards PROJECT/SLUG` |
 | Handoff ownership | `claim PROJECT/SLUG` from successor session |

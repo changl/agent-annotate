@@ -6,6 +6,7 @@
 }
 @source "../src/agent_annotate/web/shell.html";
 @source "../src/agent_annotate/web/shell.js";
+@source "../src/agent_annotate/web/copy-editor.js";
 
 :root {
   --link-color: color-mix(in oklab,var(--color-primary) 50%,var(--color-base-content));

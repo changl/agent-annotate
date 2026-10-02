@@ -1,5 +1,13 @@
 # agent-annotate — changelog
 
+## 2.22.0
+
+- Feedback opens to unified actionable cards; Progress holds status and reference tabs are read-only.
+- Compact headers, panels, popovers and scrollable tables use consistent dark/light themes.
+- Copy supports locally bundled WYSIWYG editing, immutable proposals and collapsed history.
+- Explicit feedback sends use durable owner delivery; unanswered agent questions and draft rounds are excluded.
+- Increased the HTTP request queue for simultaneous theme/editor asset loads.
+
 ## 2.21.0
 
 - One canonical project workspace across providers and worktrees; concise progress updates and no-op saves.

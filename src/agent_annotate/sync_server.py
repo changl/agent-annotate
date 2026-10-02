@@ -186,7 +186,9 @@ def _mime(suffix: str) -> str:
 _NO_STORE = "no-store, max-age=0, must-revalidate"
 
 # /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
-_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|content\.css|daisyui\.css|adapter\.js|diagram-plot\.js)$")
+_WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", "adapter.js", "diagram-plot.js",
+                         "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css"})
+_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
 
 
 def _cache_control_for(suffix: str) -> str:
@@ -215,6 +217,11 @@ def _mtime_stamp(path) -> str:
 _STORE_LOCK = threading.Lock()
 
 
+class ReviewHTTPServer(http.server.ThreadingHTTPServer):
+    # Browsers fetch the locally bundled editor and theme assets concurrently.
+    request_queue_size = 64
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -235,16 +242,21 @@ def _comment_needs_push(comment: dict) -> bool:
     than their last push. Keep the write route on the same contract so an
     active session is not repeatedly notified about every older open comment.
     """
-    if comment.get("status") != "open":
+    if comment.get("status") != "open" or (comment.get("decision") or {}).get("round_pending"):
         return False
-    if not comment.get("flagged_for_session"):
-        return True
     flagged_at = _iso_timestamp(comment.get("flagged_at"))
-    latest = _iso_timestamp(comment.get("edited_at"))
+    latest = 0.0
+    if not str(comment.get("author") or "").startswith("agent:"):
+        latest = _iso_timestamp(comment.get("created_at"))
+    if not str(comment.get("edited_by") or comment.get("author") or "").startswith("agent:"):
+        latest = max(latest, _iso_timestamp(comment.get("edited_at")))
     for reply in comment.get("replies", []):
         if not str(reply.get("author") or "").startswith("agent:"):
             latest = max(latest, _iso_timestamp(reply.get("ts")))
-    return latest > flagged_at
+    decision = comment.get("decision") or {}
+    if decision and not str(decision.get("by") or "").startswith("agent:"):
+        latest = max(latest, _iso_timestamp(decision.get("ts")))
+    return bool(latest) and (not comment.get("flagged_for_session") or latest > flagged_at)
 
 
 # ── decision_request validation (shared by POST create, PUT, batch) ──────
@@ -827,15 +839,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
         if origin[0] == "https" and not self._identity()["authenticated"]:
             route = self._strip_base(path)
-            bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route in ("/shell.js", "/shell.css", "/daisyui.css")
-                         or (_ASSET_PATH_RE.fullmatch(route) and route.endswith(("/shell.js", "/shell.css", "/daisyui.css")))))
+            bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css"}
+            bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route.lstrip("/") in bootstrap_assets
+                         or ((match := _ASSET_PATH_RE.fullmatch(route)) and match[2] in bootstrap_assets)))
             session = self.command == "POST" and route == "/api/reviewer/session"
             if self._is_funnel_origin() and (bootstrap or session):
                 return True
             self._respond(403, b'{"error":"authenticated proxy boundary required"}')
             return False
         try:
-            for name in ("comments.json", "current.meta.json", "project.json", "seen.json", "read-state.json"):
+            for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "seen.json", "read-state.json"):
                 _contained_path(self.artifact_dir, name)
         except PermissionError:
             self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
@@ -1022,11 +1035,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     return self._respond(200, json.dumps(self._project_payload()).encode(), "application/json", cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            if route_path == "/api/copy":
+                from .copy_state import load_copy
+                try:
+                    return self._respond(200, json.dumps(load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
+                except (OSError, ValueError) as exc:
+                    return self._respond(500, json.dumps({"error": str(exc)}).encode())
             if route_path == "/comments.json":
                 return self._v2_get_store()
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
-            if route_path in ("/shell.js", "/shell.css", "/content.css", "/daisyui.css", "/adapter.js"):
+            if route_path.lstrip("/") in _WEB_ASSETS:
                 return self._serve_skill_asset(route_path.lstrip("/"))
             # PATH-versioned assets: /assets/<stamp>/<name>. The stamp segment
             # exists purely as an edge cache key — some CDN configurations
@@ -1056,6 +1075,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if self.v2_mode:
             if route_path == "/api/reviewer/session":
                 return self._reviewer_session()
+            if route_path.startswith("/api/copy/") and route_path.endswith("/proposal"):
+                block_id = route_path[len("/api/copy/"):-len("/proposal")]
+                return self._post_copy_proposal(block_id)
             if route_path == "/api/comments":
                 return self._v2_post_comments(parsed)
             if route_path == "/api/comments/batch":
@@ -1139,6 +1161,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "runtime": RUNTIME_MANIFEST,
             "automatic_round_delivery": True,
             "private_share_links": self._is_funnel_origin(),
+            "copy_blocks": True,
             "batch": True,
             "rounds": True,
             "decision_schema": 2,
@@ -1319,15 +1342,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # insufficient: some CDN configs strip query strings from the
                 # cache key, so the stamped URL still hit the stale entry.)
                 base = self.public_base_path or ""
-                html = html.replace(
-                    'href="daisyui.css"',
-                    f'href="{base}/assets/{_mtime_stamp(self.skill_dir / "daisyui.css")}/daisyui.css"', 1)
-                html = html.replace(
-                    'href="shell.css"',
-                    'href="%s/assets/%s/shell.css"' % (base, _mtime_stamp(self.skill_dir / "shell.css")), 1)
-                html = html.replace(
-                    'src="shell.js"',
-                    'src="%s/assets/%s/shell.js"' % (base, _mtime_stamp(self.skill_dir / "shell.js")), 1)
+                for name in _WEB_ASSETS:
+                    if not (self.skill_dir / name).is_file():
+                        continue
+                    for attribute in ("href", "src"):
+                        html = html.replace(f'{attribute}="{name}"',
+                            f'{attribute}="{base}/assets/{_mtime_stamp(self.skill_dir / name)}/{name}"')
                 self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8",
                               cache_control=_NO_STORE)
                 return
@@ -2291,25 +2311,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             store = self._v2_load()
             flagged_count = 0
             flagged_ids = []
+            feedback = []
             now = _now_iso()
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     if _comment_needs_push(c):
+                        feedback.append(dict(c))
                         c["flagged_for_session"] = True
                         c["flagged_at"] = now
                         c["flagged_by"] = author
                         flagged_count += 1
                         flagged_ids.append(c.get("id"))
-            self._v2_save(store)
-
-        delivery = self._compute_delivery()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push",
-            **delivery,
-            "comment_count": flagged_count,
-            "comment_ids": flagged_ids,
-            "author": author,
-        })
+            delivery = self._compute_delivery()
+            if flagged_ids:
+                self._queue_feedback_delivery(delivery, feedback, author)
+                self._v2_save(store)
+            else:
+                delivery["delivery"] = "noop"
+        if flagged_ids:
+            self._wake_feedback_owner()
         print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2341,16 +2361,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not found:
                 self._respond(404, b'{"error":"not found"}')
                 return
+            delivery = self._compute_delivery()
+            self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             self._v2_save(store)
-        delivery = self._compute_delivery()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push",
-            **delivery,
-            "comment_count": 1,
-            "comment_ids": [comment_id],
-            "anchor_id": found[0],
-            "author": author,
-        })
+        self._wake_feedback_owner()
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2358,6 +2372,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": 1,
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
+
+    def _queue_feedback_delivery(self, delivery, comments, author, **extra):
+        """Explicit Send feedback uses the same durable owner outbox as Finish review."""
+        owner = self._read_meta().get("owner") or {}
+        fingerprint = {"comments": [{key: value for key, value in c.items()
+                                     if key not in ("flagged_at", "flagged_by", "flagged_for_session")}
+                                    for c in comments], "author": author, "owner": owner.get("owner_session")}
+        delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
+        comment_ids = [c["id"] for c in comments]
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
+            "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+            "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
+        })
+
+    def _wake_feedback_owner(self):
+        if record := self._registered_record():
+            from .delivery import dispatch_record
+            threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
 
     # `comment` is the free-text answer path; a reviewer's reply on an
     # unanswered card is recorded as one (see _v2_post_reply).
@@ -2690,9 +2723,66 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             links = {redact_review_key(page_url(child)): page_url(child)
                      for _, _, child in workspace_tab_records(record)}
             for tab in data.get("tabs", []):
-                if tab["url"] in links and links[tab["url"]]:
+                if tab.get("url") in links and links[tab["url"]]:
                     tab["url"] = links[tab["url"]]
         return data
+
+    def _post_copy_proposal(self, block_id: str):
+        from .copy_state import propose_copy
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 256 * 1024:
+                return self._respond(413, b'{"error":"copy proposal body exceeds limit"}')
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or set(payload) != {"delta", "base_revision", "request_id"}:
+                raise ValueError("delta, base_revision, and request_id required")
+            identity = self._identity()
+            if not identity["email"]:
+                return self._respond(403, b'{"error":"reviewer identity required"}')
+            with _STORE_LOCK:
+                document = propose_copy(self.artifact_dir, block_id, payload["delta"],
+                                        {"id": identity["email"], "name": identity.get("name")},
+                                        base_revision=payload["base_revision"], request_id=payload["request_id"])
+                block = next(block for block in document["blocks"] if block["id"] == block_id)
+                revision_id = "r_" + payload["request_id"]
+                comment_id = hashlib.sha256((block_id + ":" + revision_id).encode()).hexdigest()[:12]
+                store = self._v2_load()
+                if not any(c.get("id") == comment_id for items in store["anchors"].values() for c in items):
+                    comment = self._new_comment_from_payload({"id": comment_id, "anchor_id": "copy:" + block_id,
+                        "text": "Copy change proposed: " + block["title"],
+                        "target": {"copy_block": block_id, "copy_revision": revision_id}}, identity, self._read_meta())
+                    comment.update(flagged_for_session=True, flagged_at=_now_iso(), flagged_by=identity["email"])
+                    store["anchors"].setdefault(comment["anchor_id"], []).append(comment)
+                    self._v2_save(store)
+                delivery = self._compute_delivery()
+                delivery["delivery_id"] = hashlib.sha256(("copy:" + comment_id).encode()).hexdigest()[:24]
+                # A retry completes a missing outbox write without duplicating owner input.
+                bus_file = self.bus_dir / f"{self.slug}.ndjson"
+                submitted = False
+                if bus_file.is_file():
+                    for line in bus_file.read_text().splitlines():
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            continue
+                        if event.get("event") == "session_push" and event.get("delivery_id") == delivery["delivery_id"]:
+                            submitted = True
+                            break
+                if not submitted:
+                    owner = self._read_meta().get("owner") or {}
+                    _bus_append(self.bus_dir, self.slug, {"event": "copy_proposed", "block_id": block_id,
+                        "revision_id": revision_id, "comment_id": comment_id, "author": identity["email"]})
+                    _bus_append(self.bus_dir, self.slug, {"event": "session_push", **delivery, "round": True,
+                        "automatic_delivery": True, "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+                        "comment_ids": [comment_id], "comment_count": 1, "author": identity["email"]})
+            if not submitted and (record := self._registered_record()):
+                from .delivery import dispatch_record
+                threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
+            self._respond(200, json.dumps(document, ensure_ascii=False).encode(), cache_control="no-store")
+        except (ValueError, TypeError, KeyError, StopIteration) as exc:
+            self._respond(409 if "current copy changed" in str(exc) else 400, json.dumps({"error": str(exc)}).encode())
+        except OSError:
+            self._respond(500, b'{"error":"copy proposal could not be saved; retry with the same request id"}')
 
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):
@@ -3057,7 +3147,7 @@ def main():
             local_author=local_author,
             local_author_name=local_author_name,
         )
-        server = http.server.ThreadingHTTPServer(("localhost", port), handler)
+        server = ReviewHTTPServer(("localhost", port), handler)
         if public_base_path:
             url = f"http://localhost:{port}{public_base_path}/"
         else:

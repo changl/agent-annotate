@@ -80,6 +80,8 @@ let latestChanges = false;
 let latestSelect = false;
 // {anchorId: {state: 'review'|'waiting'|'done', label}} for question cards.
 let latestCardStates = {};
+const READ_ONLY_REFERENCE = new URL(location.href).searchParams.get('readonly') === '1';
+const SUPPORTING_DOCUMENT = READ_ONLY_REFERENCE || new URL(location.href).searchParams.get('document') === '1';
 
 function cssEsc(s) {
   return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
@@ -233,6 +235,15 @@ function resolveInnerEl(anchorEl, target) {
 
 function wireClicks() {
   document.addEventListener('click', (e) => {
+    if (SUPPORTING_DOCUMENT) {
+      const link = e.target.closest('a[href^="#d:q"]');
+      if (link) {
+        e.preventDefault();
+        postToParent({type:'annotate:feedback-anchor', anchorId:link.getAttribute('href').slice(1)});
+        return;
+      }
+      if (READ_ONLY_REFERENCE) return;
+    }
     // Pin clicks take precedence over everything, including click-to-CREATE:
     // a pin is the reverse-lookup affordance (pin -> its existing comments),
     // whereas clicking the anchor's own text/element still creates. Capture
@@ -336,9 +347,9 @@ function wireClicks() {
 // this the buttons would silently no-op — they are guarded by
 // `typeof openPopover === 'function'`, which fails quietly rather than loudly.
 // Route them through the same pin-click path a normal click takes.
-if (typeof window.openPopover !== 'function') {
+if (READ_ONLY_REFERENCE || typeof window.openPopover !== 'function') {
   window.openPopover = function (anchorId, x, y) {
-    if (!anchorId) return;
+    if (READ_ONLY_REFERENCE || !anchorId) return;
     const el = findAnchorEl(anchorId);
     if (el) {
       document.querySelectorAll('[data-anchor-id].active, .no.active')
@@ -1878,6 +1889,7 @@ function staticCardsFor(anchorId) {
 }
 
 function renderDecisionStrips() {
+  if (SUPPORTING_DOCUMENT) return;
   ensureStripStyle();
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
   // One card per question in the body. A generated card whose question the
@@ -2330,6 +2342,8 @@ function wireBridge() {
       latestChanges = data.changes === true; // absent from an old shell → "Comment"
       latestSelect = data.select === true;   // absent from an old shell → `comment`
       latestCardStates = data.cardStates || {};
+      if (READ_ONLY_REFERENCE) { postExcerpts(); return; }
+      if (SUPPORTING_DOCUMENT) { renderBadges(); postExcerpts(); return; }
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
@@ -2610,6 +2624,22 @@ function detectContentFullscreen() {
 
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
+  if (SUPPORTING_DOCUMENT) {
+    document.body.classList.add(READ_ONLY_REFERENCE ? 'annotate-reference' : 'annotate-document');
+    document.querySelectorAll('table').forEach(table => {
+      if (table.closest('.wrap,.annotate-table-scroll')) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'annotate-table-scroll';
+      wrap.tabIndex = 0;
+      wrap.setAttribute('role', 'region');
+      wrap.setAttribute('aria-label', 'Scrollable table');
+      table.before(wrap);
+      wrap.appendChild(table);
+    });
+    document.querySelectorAll('h2,h3,h4').forEach(heading => {
+      if (/^(questions for chang|open decisions|decision list|questions needing a decision)$/i.test(heading.textContent.trim())) heading.hidden = true;
+    });
+  }
   wireClicks();
   wireBridge();
   installBadgeMutObs();

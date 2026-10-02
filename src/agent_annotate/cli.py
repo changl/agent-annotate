@@ -3427,6 +3427,7 @@ def cmd_project(args) -> int:
     resolved = resolver(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
+
     _project, _slug, record = resolved
     try:
         directory = Path(record["slug_dir"])
@@ -3439,6 +3440,38 @@ def cmd_project(args) -> int:
         return 0
     except (OSError, ValueError) as exc:
         print(f"ERROR: project: {exc}", file=sys.stderr)
+        return 2
+
+
+def cmd_copy(args) -> int:
+    from .copy_state import load_copy, save_copy
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    try:
+        directory = Path(record["slug_dir"])
+        block_id = getattr(args, "block", None)
+        if args.from_file:
+            if block_id:
+                raise ValueError("--block is for reading; import the complete copy document")
+            before = load_copy(directory)
+            document = save_copy(directory, json.loads(Path(args.from_file).read_text()))
+            if before != document:
+                _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug,
+                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"])})
+            print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
+        else:
+            document = load_copy(directory)
+            if block_id:
+                blocks = [block for block in document["blocks"] if block["id"] == block_id]
+                if not blocks:
+                    raise ValueError("copy block not found")
+                document = {**document, "blocks": blocks}
+            print(json.dumps(document, ensure_ascii=False, indent=2))
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: copy: {exc}", file=sys.stderr)
         return 2
 
 
@@ -4488,6 +4521,12 @@ def main():
     sp_project.add_argument("--project", default=None)
     sp_project.add_argument("--from", dest="from_file", default=None)
     sp_project.set_defaults(func=cmd_project)
+    sp_copy = sub.add_parser("copy", help="read/import formatted copy blocks and immutable revision history")
+    sp_copy.add_argument("slug")
+    sp_copy.add_argument("--project", default=None)
+    sp_copy.add_argument("--from", dest="from_file", default=None)
+    sp_copy.add_argument("--block", default=None, help="read one copy block and its history")
+    sp_copy.set_defaults(func=cmd_copy)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 

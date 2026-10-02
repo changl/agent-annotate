@@ -283,3 +283,15 @@ def test_atomic_writes_use_unique_same_directory_temporary_files_and_fsync(tmp_p
     assert all(source.parent == tmp_path for source, _ in replacements)
     assert all(destination == tmp_path / "project.json" for _, destination in replacements)
     assert len(syncs) == 4  # Each write syncs both file contents and directory entry.
+
+
+def test_native_copy_is_one_tab_without_an_external_review_url():
+    data = _project()
+    data["tabs"] = [{"id": "copy", "label": "Copy", "kind": "copy"}]
+    assert project_state.validate_project(data)["tabs"] == data["tabs"]
+    for tab in ({"id": "copy", "label": "Copy", "kind": "copy", "url": "https://example.com/review"},
+                {"id": "other", "label": "Copy", "kind": "copy"},
+                {"id": "plan", "label": "Plan", "kind": "reference"}):
+        data["tabs"] = [tab]
+        with pytest.raises(ValueError):
+            project_state.validate_project(data)

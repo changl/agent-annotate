@@ -101,13 +101,24 @@ def validate_project(data: Any) -> dict:
         normalized["tabs"] = []
         ids = {"progress", "feedback"}
         for tab in tabs:
-            tab = _object(tab, {"id", "label", "url"}, {"id", "label", "url"}, "project.tabs")
+            tab = _object(tab, {"id", "label", "url", "kind"}, {"id", "label"}, "project.tabs")
             tab_id = _string(tab["id"], "tab.id", 80)
             if not _SAFE_ID.fullmatch(tab_id) or tab_id in ids:
                 raise ValueError("tab ids must be unique; progress and feedback are reserved")
             ids.add(tab_id)
-            normalized["tabs"].append({"id": tab_id, "label": _string(tab["label"], "tab.label", 24),
-                                       "url": _url(tab["url"], "tab.url")})
+            kind = tab.get("kind", "reference")
+            if kind not in ("reference", "copy", "document"):
+                raise ValueError("tab.kind must be reference, copy, or document")
+            normalized_tab = {"id": tab_id, "label": _string(tab["label"], "tab.label", 24)}
+            if kind in ("copy", "document"):
+                if tab_id != ("copy" if kind == "copy" else "details") or "url" in tab:
+                    raise ValueError("native tabs use id copy or details and no URL")
+                normalized_tab["kind"] = kind
+            else:
+                normalized_tab["url"] = _url(tab.get("url"), "tab.url")
+                if "kind" in tab:
+                    normalized_tab["kind"] = kind
+            normalized["tabs"].append(normalized_tab)
     normalized["modules"] = []
     ids: set[str] = set()
     for index, module in enumerate(modules):

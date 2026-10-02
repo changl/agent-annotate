@@ -1,6 +1,5 @@
 """Reviewer outcomes: one workspace, quiet updates and reversible answers."""
 
-import http.server
 import json
 import os
 import socket
@@ -101,7 +100,8 @@ def _browser(tmp_path, directory, width=1440):
             page = browser.new_page(viewport={"width": width, "height": 960})
             page.set_default_timeout(5000)
             page.goto(base, wait_until="networkidle")
-            page.frame_locator("#content-frame").locator('[data-strip-item="question-11"]').wait_for()
+            page.locator('[data-workspace-tab="feedback"][aria-selected="true"]').wait_for()
+            page.frame_locator("#content-frame").locator('[data-anchor-id="s:checks"]').wait_for(state="attached")
             try:
                 yield page, base
             finally:
@@ -157,7 +157,7 @@ def _public_funnel_browser(tmp_path):
     bus.mkdir()
     handler = sync_server.make_handler(directory, bus_dir=bus, slug='review',
         public_base_path='/page', v2_mode=True, skill_dir=sync_server.WEB_DIR)
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    server = sync_server.ReviewHTTPServer(('127.0.0.1', 0), handler)
     public = 'https://review-ui.ts.net/page/'
     record = {'slug_dir': str(directory), 'port': server.server_port, 'transport': 'funnel', 'url': public}
     cli._save_state_for_project(bus.name, {'project': bus.name, 'slugs': {'review': record}})
@@ -196,34 +196,32 @@ def _public_funnel_browser(tmp_path):
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 @pytest.mark.parametrize("width", [1440, 390])
-@pytest.mark.parametrize("surface", ["body", "rail"])
+@pytest.mark.parametrize("entry", ["tab", "direct_link"])
 @pytest.mark.parametrize("custom", [True, False], ids=["custom", "built-in"])
-def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, width, surface, custom):
+def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, width, entry, custom):
     directory = _page(tmp_path, custom)
     with _browser(tmp_path, directory, width) as (page, _):
-        if surface == "body":
+        if entry == "direct_link":
             page.locator('[data-workspace-tab="progress"]').click()
-            card = page.frame_locator("#content-frame").locator('[data-strip-item="question-11"]')
-            choices = card.locator('.annotate-decision-btns button')
-            change = card.locator('.annotate-decision-change')
-            note_toggle = card.locator('.annotate-decision-note-toggle')
-            note = card.locator('.annotate-decision-note-form textarea')
-            say = card.locator('.annotate-decision-say')
-            say_text = card.locator('textarea[placeholder="Answer in your own words…"]')
-            say_submit = card.get_by_role('button', name='Send answer', exact=True)
+            page.evaluate("location.hash = 'feedback=question-11'")
+            page.locator('.citem.hl[data-comment-id="question-11"]').wait_for()
         else:
             page.locator('[data-workspace-tab="feedback"]').click()
-            card = page.locator('.citem[data-comment-id="question-11"]')
-            choices = card.locator('.decision-btns button')
-            change = card.locator('[data-decision-action="change"]')
-            note_toggle = card.locator('[data-decision-action="note-toggle"]')
-            note = card.locator('.decision-note-ta')
-            say = card.locator('[data-decision-action="say"]')
-            say_text = card.locator('.decision-say-ta')
-            say_submit = card.locator('[data-decision-action="say-submit"]')
+        card = page.locator('.citem[data-comment-id="question-11"]')
+        choices = card.locator('.decision-btns button')
+        change = card.locator('[data-decision-action="change"]')
+        note_toggle = card.locator('[data-decision-action="note-toggle"]')
+        note = card.locator('.decision-note-ta')
+        say = card.locator('[data-decision-action="say"]')
+        say_text = card.locator('.decision-say-ta')
+        say_submit = card.locator('[data-decision-action="say-submit"]')
         choices.nth(0).click()
         _wait_decision(page, directory, 'select' if custom else 'accept')
+        if custom:
+            playwright.expect(card.locator('.decision-answer')).to_have_text('Ship now')
         change.click()
+        if custom:
+            assert 'Ship now' in card.locator('.decision-changing-note').inner_text()
         assert say.is_visible(), "Changing a choice must preserve Answer in words"
         if note_toggle.get_attribute('aria-expanded') != 'true':
             note_toggle.click()
@@ -232,14 +230,17 @@ def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, widt
         choices.nth(1).click()
         _wait_decision(page, directory, 'select' if custom else 'reject',
                        "Ship later\n\n" + explanation if custom else explanation)
+        playwright.expect(card.locator(".decision-answer")).to_have_text("Ship later" if custom else explanation)
         change.click()
         say.click()
         words = "Release after the copy review; exact time is flexible."
         say_text.fill(words)
         say_submit.click()
         _wait_decision(page, directory, 'comment', words)
+        playwright.expect(card.locator('.decision-answer')).to_have_text(words)
         page.reload(wait_until="networkidle")
         assert words in _stored(directory)["decision"]["text"]
+        playwright.expect(card.locator(".decision-answer")).to_have_text(words)
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
@@ -247,26 +248,29 @@ def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, widt
 def test_whole_card_comment_and_optional_evidence_previews(tmp_path, width):
     directory = _page(tmp_path)
     with _browser(tmp_path, directory, width) as (page, _):
-        page.locator('[data-workspace-tab="progress"]').click()
-        body = page.frame_locator("#content-frame").locator('[data-strip-item="question-11"]')
-        body.locator('.annotate-decision-prompt').click()
-        page.locator('#pop-ta').wait_for(state='visible')
+        card = page.locator('.citem[data-comment-id="question-11"]')
+        card.locator('.decision-evidence-toggle').click()
+        card.locator('.decision-evidence-link').first.click()
+        assert 'Build passed on both machines.' in card.locator('.decision-evidence-preview').inner_text()
+        card.locator('.decision-evidence-goto').click()
+        playwright.expect(page.locator('body')).to_have_attribute('data-workspace-view', 'details')
+        frame = page.frame_locator('#content-frame')
+        back = frame.locator('.annotate-back-pill')
+        back.wait_for()
+        assert frame.locator('[data-anchor-id="s:checks:p1"]').is_visible()
+        back.click()
+        playwright.expect(page.locator('body')).to_have_attribute('data-workspace-view', 'feedback')
+        card.locator('.decision-prompt').click()
+        reply = card.locator('.reply-ta')
+        assert reply.evaluate('el => document.activeElement === el')
         note = "Please also check the tablet layout."
-        page.locator('#pop-ta').fill(note)
-        page.locator('#pop-save').click()
-        page.locator('#popover').wait_for(state='hidden')
-        assert any(c['text'] == note for c in json.loads((directory / 'comments.json').read_text())['anchors']['d:q11'])
-        page.locator('[data-workspace-tab="progress"]').click()
-        body.locator('.annotate-decision-evidence-toggle').click()
-        body.locator('.annotate-decision-evidence-link').first.click()
-        assert 'Build passed on both machines.' in body.locator('.annotate-decision-evidence-preview').inner_text()
-        page.locator('[data-workspace-tab="feedback"]').click()
-        rail = page.locator('.citem[data-comment-id="question-11"]')
-        rail.locator('.decision-evidence-toggle').click()
-        rail.locator('.decision-evidence-link').first.click()
-        assert 'Build passed on both machines.' in rail.locator('.decision-evidence-preview').inner_text()
-        rail.locator('.decision-prompt').click()
-        assert rail.locator('.reply-ta').evaluate('el => document.activeElement === el')
+        reply.fill(note)
+        card.locator('[data-action="reply"]').click()
+        page.locator('[data-filter="waiting"]').click()
+        if card.locator('.feedback-reply').get_attribute('open') is None:
+            card.locator('.feedback-reply > summary').click()
+        playwright.expect(reply).to_have_value('')
+        assert any(item['text'] == note for item in _stored(directory)['replies'])
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
@@ -276,8 +280,12 @@ def test_tabs_theme_and_noop_progress_are_persistent(tmp_path, width):
     save_project(directory, _project())
     with _browser(tmp_path, directory, width) as (page, _):
         def assert_legible_components():
-            frame = page.frame_locator('#content-frame')
-            for locator in (frame.locator('.failed-pill'), frame.locator('.annotate-decision-rec').first,
+            page.locator('[data-workspace-tab="progress"]').click()
+            assert _contrast(page.locator('.failed-pill')) >= 4.5
+            page.locator('[data-workspace-tab="feedback"]').click()
+            if page.locator(".feedback-reply").get_attribute("open") is None:
+                page.locator(".feedback-reply > summary").click()
+            for locator in (page.locator('.decision-rec-badge').first,
                             page.locator('#workspace-tabs [aria-selected="false"]').first,
                             page.locator('.reply-submit').first):
                 assert _contrast(locator) >= 4.5, f'Low contrast text: {locator}'
@@ -311,7 +319,7 @@ def test_tabs_theme_and_noop_progress_are_persistent(tmp_path, width):
         page.reload(wait_until='networkidle')
         assert page.locator('#progress-new').is_hidden(), 'Reposting unchanged progress must not create new activity'
         page.locator('[data-workspace-tab="progress"]').click()
-        panel = page.frame_locator('#content-frame').locator('#project-panel')
+        panel = page.locator('#project-panel')
         playwright.expect(panel.locator('.failed-pill')).to_be_visible()
         assert panel.locator('.failed-pill').inner_text() == 'failed 3x'
         assert panel.locator('a[href="https://linear.app/test/issue/CHA-182"]').is_visible()
@@ -347,33 +355,40 @@ def test_extra_page_is_an_embedded_tab_with_the_same_theme(tmp_path):
             extra = page.frame_locator('#workspace-extra-frame')
             extra.locator('#hdr-title').wait_for(state='attached')
             playwright.expect(extra.locator('#hdr-title')).to_have_text('Content review')
-            assert extra.locator('.hdr-left').is_hidden()
+            assert extra.locator('.hdr').is_hidden()
             assert extra.locator('#owner-chip').is_hidden()
-            assert extra.locator('#theme-toggle').is_hidden()
-            assert extra.locator('#push-session-btn').is_visible(), 'Embedded page needs its own scoped Send feedback control'
-            assert page.locator('#push-session-btn').is_hidden(), 'Primary Send feedback must not target another visible tab'
-            assert page.locator('#mobile-fab').is_hidden()
+            assert extra.locator('#drawer').is_hidden(), 'References have no competing feedback store'
+            assert extra.locator('#push-session-btn').is_hidden()
+            assert page.locator('#push-session-btn').is_hidden()
             assert page.locator('#round-bar').is_hidden()
             assert extra.locator('#workspace-tabs').is_hidden()
             playwright.expect(extra.locator('html')).to_have_attribute('data-theme', 'light')
-            extra.locator('.citem[data-comment-id="question-11"] .reply-ta').fill('Keep this content note while checking progress.')
+            reference = extra.frame_locator('#content-frame')
+            reference.locator('[data-anchor-id="s:checks"]').wait_for()
+            assert reference.locator('[data-anchor-id="d:q11"]').is_hidden()
+            assert reference.locator('.annotate-decision-strip').count() == 0
+            reference.locator('[data-anchor-id="s:checks:p1"]').click()
+            assert extra.locator('#popover').is_hidden(), 'Reference clicks cannot create stray review work'
             assert page.url == base
-            page.locator('[data-workspace-tab="progress"]').click()
+            page.locator('[data-workspace-tab="feedback"]').click()
             assert page.locator('#workspace-extra').is_hidden()
-            assert page.locator('#push-session-btn').is_visible()
+            playwright.expect(page.locator('#round-bar')).to_be_visible()
+            primary = page.locator('.citem[data-comment-id="question-11"]')
+            primary.locator('.feedback-reply > summary').click()
+            primary.locator('.reply-ta').fill('Keep this note while checking reference content.')
             page.locator('[data-workspace-tab="content"]').click()
-            assert extra.locator('.reply-ta').input_value() == 'Keep this content note while checking progress.'
             playwright.expect(page.locator('[data-workspace-tab="content"]')).to_be_focused()
             page.keyboard.press('Home')
             assert page.locator('body').get_attribute('data-workspace-view') == 'progress'
+            page.locator('[data-workspace-tab="feedback"]').click()
+            assert primary.locator('.reply-ta').input_value() == 'Keep this note while checking reference content.'
             page.set_viewport_size({'width': 390, 'height': 960})
-            page.locator('[data-workspace-tab="progress"]').click()
-            playwright.expect(page.locator('#mobile-fab')).to_be_visible()
+            assert page.locator('#drawer').is_visible()
+            assert page.locator('#mobile-fab').is_hidden()
             playwright.expect(page.locator('#round-bar')).to_be_visible()
             page.locator('[data-workspace-tab="content"]').click()
-            assert page.locator('#mobile-fab').is_hidden()
             assert page.locator('#round-bar').is_hidden()
-            assert extra.locator('#push-session-btn').is_visible()
+            assert extra.locator('#push-session-btn').is_hidden()
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -382,10 +397,21 @@ def test_extra_page_is_an_embedded_tab_with_the_same_theme(tmp_path):
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_new_badges_count_changed_progress_and_unread_feedback(tmp_path):
     directory = _page(tmp_path)
+    store_path = directory / 'comments.json'
+    store = json.loads(store_path.read_text())
+    history = {'id':'past-review','anchor_id':'general:past','number':99,
+        'text':'Previously submitted answer','author':'reviewer@example.com',
+        'created_at':'2026-10-01T09:00:00Z','version':'v1','status':'user_confirmed'}
+    waiting = dict(history,id='waiting-owner',anchor_id='general:waiting',number=100,
+                   text='Already sent to the agent',status='open',
+                   flagged_for_session=True,flagged_at='2026-10-02T09:00:00Z')
+    store['anchors']['general:past'] = [history]
+    store['anchors']['general:waiting'] = [waiting]
+    store_path.write_text(json.dumps(store))
     save_project(directory, _project())
     with _browser(tmp_path, directory) as (page, _):
         assert page.locator('#progress-new').inner_text() == '1', 'Static resource links are not progress updates'
-        assert page.locator('#feedback-new').inner_text() == '1'
+        assert page.locator('#feedback-new').inner_text() == '1', 'Unread history and waiting-on-agent items are not new review work'
         page.locator('[data-workspace-tab="feedback"]').click()
         page.locator('#markallread-btn').click()
         page.locator('#feedback-new').wait_for(state='hidden')
@@ -437,8 +463,7 @@ def test_copy_link_preserves_private_sharing_after_address_bar_key_is_removed(tm
         assert 'private review link' in page.locator('#delivery-status').inner_text().lower()
         assert page.evaluate("async () => (await fetch('./api/share-link')).status") == 403
         page.goto(private, wait_until='domcontentloaded')
-        frame = page.frame_locator('#content-frame')
-        frame.locator('[data-strip-item="question-11"]').wait_for()
+        page.locator('.citem[data-comment-id="question-11"]').wait_for()
         playwright.expect(page).to_have_url(public)
         button = page.locator('#copy-link-btn')
         playwright.expect(button).to_be_visible()
@@ -455,7 +480,7 @@ def test_copy_link_preserves_private_sharing_after_address_bar_key_is_removed(tm
                 if page.locator('html').get_attribute('data-theme') != theme:
                     page.locator('#theme-toggle').click()
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-                for selector in ('#copy-link-btn', '#theme-toggle', '#push-session-btn'):
+                for selector in ('#copy-link-btn', '#theme-toggle'):
                     assert page.locator(selector).evaluate("""el => {
                         const r = el.getBoundingClientRect();
                         return r.width > 0 && r.left >= 0 && r.right <= innerWidth;

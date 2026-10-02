@@ -166,104 +166,54 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             page = browser.new_page(viewport={"width": 1400, "height": 900})
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
-            frame = page.frame_locator("#content-frame")
-            strip = frame.locator('.annotate-decision-strip[data-strip-anchor="d:q1"]')
-            strip.wait_for(state="visible")
-
-            # ── Unchanged sections fold; the one an open card cites does not.
-            assert frame.locator('section[data-unchanged-since="v1"]').count() == 2
-            scope = frame.locator('section[data-anchor-id="s:scope"]')
-            assert "annotate-unchanged-collapsed" in scope.get_attribute("class")
-            assert not frame.locator('[data-anchor-id="s:scope:li1"]').is_visible()
-            bar = scope.locator(".annotate-unchanged-toggle")
-            assert bar.get_attribute("aria-expanded") == "false"
-            assert "Scope" in bar.inner_text()
-            assert "Unchanged since v1 — show" in bar.inner_text()
-            columns = frame.locator('section[data-anchor-id="s:columns"]')
-            assert "annotate-unchanged-collapsed" not in (columns.get_attribute("class") or "")
-            assert frame.locator('[data-anchor-id="tbl:columns:row:status"]').is_visible()
-            # Open or folded, the header is one control that carries the
-            # section title; the generated <h2> is not shown twice.
-            open_bar = columns.locator(".annotate-unchanged-toggle")
-            assert open_bar.inner_text().split("\n")[0] == "Columns"
-            assert "Unchanged since v1 — hide" in open_bar.inner_text()
-            assert columns.locator(".annotate-unchanged-bar").get_attribute("role") == "heading"
-            for sec in (scope, columns):
-                assert not sec.locator(":scope > h2").is_visible()
-            assert frame.locator(
-                'section[data-anchor-id="s:migration-sketch"] .annotate-unchanged-bar').count() == 0
-
-            # ── One card per question in the body.
-            assert not frame.locator('.card[data-anchor-id="d:q1"]').is_visible()
-            assert frame.locator('.annotate-decision-strip[data-strip-anchor="d:q1"]').count() == 1
-
-            # ── Strip: number + prompt, full context, recommendation, excerpt, rows.
-            assert strip.locator(".annotate-decision-prompt").inner_text().startswith("#1")
-            assert strip.locator(".annotate-decision-context").inner_text() == CONTEXT
-            assert "Why / details" not in strip.inner_text()
-            assert strip.locator(".annotate-decision-reco-line").count() == 0
-            assert strip.locator(".annotate-decision-rec").inner_text() == "rec"
-            rows = strip.locator(".annotate-decision-btns > .annotate-opt-row")
-            assert rows.count() == 2
-            assert rows.nth(0).locator(".annotate-decision-rec").count() == 1
-            assert "One week of dual writes" in rows.nth(0).inner_text()
-            assert rows.nth(1).locator(".annotate-decision-rec").count() == 0
-
-            # ── Evidence: collapsed, previews in place, Go to leaves Back to #1.
-            toggle = strip.locator(".annotate-decision-evidence-toggle")
-            # Nothing empty sits between the last option and "Evidence (n)".
-            gap = strip.evaluate("""s => {
-                const rows = s.querySelectorAll('.annotate-opt-row');
-                const r = document.createRange();
-                r.selectNodeContents(s.querySelector('.annotate-decision-evidence-toggle'));
-                return r.getBoundingClientRect().top - rows[rows.length - 1].getBoundingClientRect().bottom;
-            }""")
-            assert gap <= 18, gap
-            assert toggle.inner_text() == "Evidence (2)"
-            assert toggle.get_attribute("aria-expanded") == "false"
-            items = strip.locator(".annotate-decision-evidence-link")
-            assert not items.first.is_visible()
-            toggle.click()
-            items.first.click()
-            preview = strip.locator(".annotate-decision-evidence-preview").first
-            assert preview.is_visible()
-            assert "Ambiguous" in preview.inner_text()
-            preview.locator(".annotate-decision-evidence-goto").click()
-            back = frame.locator("[data-annotate-back] .annotate-back-pill, .annotate-back-pill")
-            back.first.wait_for(state="visible")
-            assert back.first.inner_text() == "↩ Back to #1"
-            _wait(lambda: _in_view(frame.locator('[data-anchor-id="tbl:columns:row:status"]')), page)
-            back.first.click()
-            item = frame.locator('[data-strip-item="card-1"]')
-            _wait(lambda: _in_view(item), page)
-            assert frame.locator(".annotate-back-pill").count() == 0
-
-            # ── Rail card: the same layout.
             rail = page.locator('.citem[data-comment-id="card-1"]')
-            assert rail.locator(".decision-context").inner_text() == CONTEXT
-            assert rail.locator(".decision-disclosure-btn").count() == 0
-            assert rail.locator(".decision-reco-line").count() == 0
-            assert rail.locator(".decision-rec-badge").inner_text() == "rec"
-            assert rail.locator(".decision-btns > .decision-btn").count() == 2
-            rail.locator(".decision-evidence-toggle").click()
-            rail.locator(".decision-evidence-link").nth(1).click()
-            rail_preview = rail.locator(".decision-evidence-preview").nth(1)
-            assert "two weeks of dual writes" in rail_preview.inner_text()
-            rail_preview.locator(".decision-evidence-goto").click()
-            frame.locator(".annotate-back-pill").wait_for(state="visible")
-            frame.locator(".annotate-back-pill").click()
-            page.locator('.citem.hl[data-comment-id="card-1"]').wait_for()
-
-            # ── A jump into a folded section opens it.
-            page.locator('[data-filter="all"]').click()
-            page.locator('.citem[data-comment-id="plain-scope"] [data-action="goto"]').click()
-            _wait(lambda: frame.locator('[data-anchor-id="s:scope:li1"]').is_visible(), page)
-            assert "annotate-unchanged-collapsed" not in (scope.get_attribute("class") or "")
-            assert bar.get_attribute("aria-expanded") == "true"
-            assert "Unchanged since v1 — hide" in bar.inner_text()
-            # …and the header folds it again.
+            rail.wait_for()
+            assert rail.locator('.decision-prompt').inner_text() == 'Rename status → lifecycle_state?'
+            assert rail.locator('.decision-context').inner_text() == CONTEXT
+            assert 'Why / details' not in rail.inner_text()
+            assert rail.locator('.decision-reco-line').count() == 0
+            assert rail.locator('.decision-rec-badge').inner_text() == 'rec'
+            rows = rail.locator('.decision-btns > .decision-btn')
+            assert rows.count() == 2
+            assert 'One week of dual writes' in rows.nth(0).inner_text()
+            assert rows.nth(1).locator('.decision-rec-badge').count() == 0
+            toggle = rail.locator('.decision-evidence-toggle')
+            assert toggle.get_attribute('aria-expanded') == 'false'
+            toggle.click()
+            rail.locator('.decision-evidence-link').first.click()
+            preview = rail.locator('.decision-evidence-preview').first
+            assert 'Ambiguous' in preview.inner_text()
+            preview.locator('.decision-evidence-goto').click()
+            playwright.expect(page.locator('body')).to_have_attribute('data-workspace-view','details')
+            frame = page.frame_locator('#content-frame')
+            back = frame.locator('.annotate-back-pill')
+            back.wait_for()
+            assert back.inner_text() == '↩ Back to #1'
+            _wait(lambda: _in_view(frame.locator('[data-anchor-id="tbl:columns:row:status"]')), page)
+            assert frame.locator('.card[data-anchor-id="d:q1"]').is_hidden()
+            assert frame.locator('.annotate-decision-strip').count() == 0
+            assert frame.locator('section[data-unchanged-since="v1"]').count() == 2
+            columns = frame.locator('section[data-anchor-id="s:columns"]')
+            assert 'annotate-unchanged-collapsed' not in (columns.get_attribute('class') or '')
+            scope = frame.locator('section[data-anchor-id="s:scope"]')
+            assert 'annotate-unchanged-collapsed' in scope.get_attribute('class')
+            bar = scope.locator('.annotate-unchanged-toggle')
+            assert 'Scope' in bar.inner_text()
+            assert not scope.locator(':scope > h2').is_visible()
+            bar.click()
+            assert frame.locator('[data-anchor-id="s:scope:li1"]').is_visible()
+            assert bar.get_attribute('aria-expanded') == 'true'
             bar.click()
             assert not frame.locator('[data-anchor-id="s:scope:li1"]').is_visible()
+            back.click()
+            playwright.expect(page.locator('body')).to_have_attribute('data-workspace-view','feedback')
+            assert page.locator('.citem.hl[data-comment-id="card-1"]').is_visible()
+            rail.locator('.decision-evidence-link').nth(1).click()
+            migration = rail.locator('.decision-evidence-preview').nth(1)
+            assert 'two weeks of dual writes' in migration.inner_text()
+            migration.locator('.decision-evidence-goto').click()
+            frame.locator('.annotate-back-pill').click()
+            assert page.locator('.citem.hl[data-comment-id="card-1"]').is_visible()
             browser.close()
     finally:
         process.terminate()
@@ -277,7 +227,7 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
     source.write_text(_doc("v1", "```details\nSupporting evidence\nThis is a hidden detail.\n```"))
     directory = tmp_path / "items-model"
     generate(source, directory)
-    save_project(directory, {"title":"Project workspace", "modules":[
+    save_project(directory, {"title":"Project workspace", "tabs":[{"id":"details","label":"Details","kind":"document"}], "modules":[
         {"id":"resources","title":"Open project","kind":"links","items":[{"label":"Payload CMS","url":"https://cms.example/admin"}]},
         {"id":"progress","title":"Progress","kind":"progress","items":[{"label":"Review pipeline","status":"done"}]}]})
     process, base = _serve(tmp_path, directory)
@@ -291,26 +241,32 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width":1440,"height":1000})
             page.goto(base, wait_until="networkidle")
-            frame = page.frame_locator('#content-frame')
-            panel = frame.locator('#project-panel')
-            panel.locator(':scope > summary').click()
+            page.locator('[data-workspace-tab="progress"]').click()
+            panel = page.locator('#project-panel')
+            panel.wait_for()
             panel.locator('details[data-module="resources"] summary').click()
-            panel.locator('a').wait_for(state="visible")
+            panel.locator('a').wait_for()
             assert panel.locator('a').get_attribute('href') == 'https://cms.example/admin'
-            assert page.locator('#vrail-body .vrow').first.evaluate('e => e.tagName') == 'BUTTON'
-            frame.locator('link[href*="content.css"]').wait_for(state="attached")
-            assert frame.locator('.aa-details').count() == 1
+            assert page.locator('#content-frame').is_hidden()
+            page.locator('[data-workspace-tab="details"]').click()
+            frame = page.frame_locator('#content-frame')
+            frame.locator('.aa-details').wait_for()
             assert frame.locator('.aa-details').get_attribute('open') is None
+            assert page.locator('#mobile-version-select option[value="v1"]').count() == 1
+            page.locator('[data-workspace-tab="feedback"]').click()
             page.locator('#comment-list button').filter(has_text='Shared runtime').click()
-            page.locator('#round-finish-btn').wait_for(state="visible")
-            assert 'PENDING' in page.locator('#comment-list').inner_text()
+            page.locator('#round-finish-btn').wait_for()
+            assert 'pending' in page.locator('#comment-list').inner_text().lower()
             page.screenshot(path='/tmp/annotate-managed-desktop.png', full_page=True)
+            page.locator('[data-workspace-tab="progress"]').click()
             panel.locator('details[data-module="resources"] summary').click()
-            page.reload(wait_until="networkidle")
-            panel.wait_for(state="visible")
+            page.reload(wait_until='networkidle')
+            panel.wait_for()
             assert panel.locator('details[data-module="resources"]').get_attribute('open') is None
-            page.set_viewport_size({"width":390,"height":844})
-            _wait(lambda: _in_view(page.locator("#round-finish-btn")), page)
+            page.set_viewport_size({'width':390,'height':844})
+            assert page.locator('#owner-chip').is_hidden(), 'Missing owner must not add a blank Details row'
+            page.locator('[data-workspace-tab="feedback"]').click()
+            _wait(lambda: _in_view(page.locator('#round-finish-btn')),page)
             page.screenshot(path='/tmp/annotate-managed-mobile.png', full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             browser.close()

@@ -4,7 +4,7 @@ One project page for progress, feedback, and decisions across Claude Code and Co
 
 ## Project workflow
 
-1. Run `annotate workspace --json` once. Reuse its directory and URL across sessions and worktrees. Select an existing main page with `workspace --select PROJECT/SLUG`; keep useful older pages as short tabs.
+1. Run `annotate workspace --json` once. Reuse its directory and URL across sessions and worktrees. Select an existing main page with `workspace --select PROJECT/SLUG`; consolidate useful supporting detail into short read-only tabs.
 2. Share the full URL in the first project response and every update/feedback request. Tailscale Funnel is the default. No new Cloudflare routes.
 3. Update only for a meaningful result, changed blocker, or required decision. Batch related changes; one sentence per item, ideally under 30 words. Identical progress data is a no-op.
 4. Continue authorized work. Routine tests, repeated failures, and annotate upkeep do not create approval requests or feedback rounds.
@@ -21,11 +21,13 @@ Use `--ask` only when the Markdown contains actual decision cards. A changed rev
 
 ## Review interface
 
-Progress and Feedback tabs show red counts for unseen items. Optional short tabs retain other existing reviews; independent worksheets remain resource links. Use linked ticket IDs, concise status, and `failed 3x` pills. Supporting detail stays collapsed.
+Feedback opens directly to actionable cards; Progress holds compact status. Both show red counts for unseen items. Optional short tabs contain read-only supporting detail; independent worksheets remain resource links. Use linked ticket IDs, concise status, and `failed 3x` pills. Supporting detail stays collapsed.
 
 Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Finish review** submits one durable round. Drafts, decisions, numbering, and history survive refreshes and handoffs.
 
-The UI uses [daisyUI](https://github.com/saadeghi/daisyui), with stock `dark` as default and `light` for day mode. CSS is compiled and bundled locally. `ui/package-lock.json` pins build dependencies; `npm ci` and `npm run build` in `ui/` rebuild the packaged asset. Reviewers need neither Node nor a CDN.
+Copy shows formatted current text with WYSIWYG revisions and collapsed history. Proposals leave current copy intact, persist with an idempotent request ID, and deliver through the same owner outbox. Import assets with `annotate copy PROJECT/SLUG --from copy.json`; add `{id:"copy",label:"Copy",kind:"copy"}` to project tabs.
+
+The UI uses [daisyUI](https://github.com/saadeghi/daisyui), with stock `dark` as default and `light` for day mode. Theme CSS and the Quill editor are bundled locally. `ui/package-lock.json` pins build dependencies; `npm ci` and `npm run build` in `ui/` rebuild the packaged asset. Reviewers need neither Node nor a CDN.
 
 Owner labels show available Orca group/project/worktree/terminal names and the terminal handle. Routing still validates the current terminal incarnation and provider process.
 

@@ -152,6 +152,7 @@ def test_a_d2_server_shows_request_changes(tmp_path):
             decision = stored["anchors"]["s:overview"][0]["decision"]
             assert decision["verdict"] == "changes"
             assert decision["text"] == "name the columns first"
+            playwright.expect(page.locator(".decision-answer")).to_have_text("name the columns first")
             browser.close()
     finally:
         process.terminate()
@@ -166,7 +167,7 @@ def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
             browser, page = _open(runner, base, legacy=True)
             btn = page.locator(".decision-btn.decision-comment")
             btn.wait_for(state="visible")
-            assert btn.inner_text().strip() == "💬 Answer in words"
+            assert btn.inner_text().strip() == "Answer in words"
             assert page.locator(".decision-btn.decision-changes").count() == 0
 
             btn.click()
@@ -199,16 +200,17 @@ def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
 
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            assert page.locator('.vrow.current[data-version="v2"]').count() == 1
+            page.locator('[data-workspace-tab="feedback"]').wait_for()
             assert page.locator("#comment-list .citem").count() == 0
-            assert page.locator(".chip-all .chip-n").inner_text() == "0"
-
-            page.locator('.vrow[data-version="v1"]').click()
+            assert page.locator('.chip-review .chip-n').inner_text() == '0'
+            page.locator('[data-filter="done"]').click()
             page.locator("#comment-list .citem").wait_for(state="visible")
-            assert page.locator(".citem-status").inner_text() == "RESOLVED IN V2"
-            assert page.locator('[data-action="resolution"]').inner_text() == (
-                "View resolution in v2"
-            )
+            assert page.locator(".citem-status").inner_text().lower() == "resolved in v2"
+            assert page.locator('.decision-btn').count() == 0
+            assert page.locator('.decision-verdict-chip').inner_text() == 'Resolved in v2'
+            page.reload(wait_until='networkidle')
+            page.locator('[data-filter="done"]').click()
+            assert page.locator('.citem-status').inner_text().lower() == 'resolved in v2'
             browser.close()
     finally:
         process.terminate()
@@ -327,7 +329,7 @@ def test_an_answer_in_words_stops_nagging_the_reviewer(tmp_path):
             assert page.locator(".decision-btn.decision-accept").count() == 0
             assert page.locator(".citem.decision-required").count() == 0
             assert page.locator(".citem.waiting-agent").count() == 1
-            assert "1 of 1 decided" in page.locator("#round-bar-main").inner_text()
+            assert "1 saved draft" in page.locator("#round-bar-main").inner_text()
             browser.close()
     finally:
         process.terminate()
@@ -360,7 +362,7 @@ def test_a_long_option_label_stays_inside_the_rail(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_clicking_into_a_feedback_box_goes_to_the_location(tmp_path):
+def test_clicking_a_feedback_card_focuses_its_reply_and_keeps_the_draft(tmp_path):
     """D3 item 3 (user-reported: "i also would like to be able to automatically
     be brought to the location when i click into the feedback box instead of
     having to do that manually"). Focus alone navigates, and the box keeps
@@ -369,20 +371,18 @@ def test_clicking_into_a_feedback_box_goes_to_the_location(tmp_path):
     try:
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            page.locator(".reply-ta").first.wait_for(state="visible")
-            before = page.evaluate(
-                "() => document.getElementById('content-frame')"
-                ".contentDocument.documentElement.scrollTop")
-            page.locator(".reply-ta").first.click()
-            page.keyboard.type("here")
+            card = page.locator('.citem').first
+            card.locator('.decision-prompt').click()
+            reply = card.locator('.reply-ta')
+            reply.wait_for(state='visible')
+            reply.fill('here')
             page.wait_for_timeout(600)
-            after = page.evaluate(
-                "() => document.getElementById('content-frame')"
-                ".contentDocument.documentElement.scrollTop")
-            assert before == 0 and after > 0
-            assert page.evaluate(
-                "() => document.activeElement.classList.contains('reply-ta')")
-            assert page.locator(".reply-ta").first.input_value() == "here"
+            assert reply.evaluate('el => document.activeElement === el')
+            assert reply.input_value() == 'here'
+            assert page.locator('#content-frame').is_hidden(), 'Replying stays on the full-width question'
+            page.reload(wait_until='networkidle')
+            card.locator('.feedback-reply > summary').click()
+            assert reply.input_value() == 'here'
             browser.close()
     finally:
         process.terminate()

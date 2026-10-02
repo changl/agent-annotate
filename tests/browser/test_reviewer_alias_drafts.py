@@ -22,6 +22,8 @@ def test_reviewer_can_finish_own_legacy_draft_and_other_reviewers_cannot(tmp_pat
     path.write_text(json.dumps(store))
     original = path.read_bytes()
     with _browser(tmp_path, directory) as (page, base):
+        if not mapped:
+            page.locator('[data-filter="waiting"]').click()
         assert page.locator('.citem-txt').is_hidden(), 'The question prompt should appear only once'
         frame = page.frame_locator('#content-frame')
         assert frame.locator('.annotate-decision-text').count() == 0

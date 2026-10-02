@@ -64,6 +64,7 @@ def test_normal_table_words_stay_whole_or_scroll_horizontally(tmp_path, width):
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": width, "height": 900})
             page.goto(base, wait_until="networkidle")
+            page.locator('[data-workspace-tab="details"]').click()
             table = page.frame_locator("#content-frame").locator(".aa table")
             table.wait_for(state="visible")
             page.screenshot(path=f"/tmp/annotate-core-table-{width}.png", full_page=True)
@@ -98,6 +99,7 @@ def test_frontmatter_title_is_visible_in_managed_content_and_shell(tmp_path, wid
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": width, "height": 900})
             page.goto(base, wait_until="networkidle")
+            page.locator('[data-workspace-tab="details"]').click()
             frame = page.frame_locator("#content-frame")
             title = frame.locator(".aa-page-title")
             page.screenshot(path=f"/tmp/annotate-core-title-{width}.png", full_page=True)
@@ -105,6 +107,8 @@ def test_frontmatter_title_is_visible_in_managed_content_and_shell(tmp_path, wid
             assert title.inner_text() == TITLE
             assert title.evaluate("el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }")
             assert page.locator("#hdr-title").inner_text() == TITLE
+            assert page.locator('#hdr-title').evaluate('el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }'), 'Details version controls must not clip the project title'
+            assert page.locator('#owner-chip').is_hidden()
             assert page.title() == TITLE
             assert frame.locator('section[data-anchor-id="s:coverage"]').count() == 1
             browser.close()
@@ -170,11 +174,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
                 for cid, number in expected.items():
                     rail = page.locator(f'.citem[data-comment-id="{cid}"] .citem-num')
                     assert rail.inner_text() == f"#{number}"
-                    strip = frame.locator(f'[data-strip-item="{cid}"] .annotate-decision-prompt')
-                    assert strip.inner_text().startswith(f"#{number}")
-                    pin = frame.locator(f'[data-pin-comments="{cid}"]')
-                    assert pin.first.inner_text() == str(number)
-                    assert frame.locator(f'.card[data-anchor-id="d:q{number}"] .item-num').inner_text() == f"#{number}"
+                    assert page.locator(f'.citem[data-comment-id="{cid}"] .decision-prompt').count() == 1
                 stored = json.loads((directory / "comments.json").read_text())
                 assert {card["id"]: card["number"] for card in _decision_cards(stored)} == expected
 
@@ -183,20 +183,17 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
                 _api(base, f"api/comments/{cid}/decision", {"verdict": "accept", "defer_push": True}, reviewer=True)
             _api(base, "api/rounds/submit", {"note": "Second round complete."}, reviewer=True)
             page.reload(wait_until="networkidle")
+            page.locator('[data-filter="done"]').click()
             assert_labels()
             assert page.title() == second_title
-            if width > 1160:
-                page.locator('#vrail-body button[data-version="v1"]').click()
-            else:
-                page.locator(".mobile-version-select").select_option("v1")
-            page.wait_for_function("title => document.title === title", arg=TITLE)
-            assert frame.locator(".aa-page-title").inner_text() == TITLE
-            assert frame.locator('.card[data-anchor-id="d:q13"] .item-num').inner_text() == "#13"
-            if width > 1160:
-                page.locator('#vrail-body button[data-version="v2"]').click()
-            else:
-                page.locator(".mobile-version-select").select_option("v2")
-            page.wait_for_function("title => document.title === title", arg=second_title)
+            page.locator('[data-workspace-tab="details"]').click()
+            page.locator('#mobile-version-select').select_option('v1')
+            playwright.expect(frame.locator('.aa-page-title')).to_have_text(TITLE)
+            assert frame.locator('.card[data-anchor-id="d:q13"] .item-num').inner_text() == '#13'
+            assert frame.locator('.card[data-anchor-id="d:q13"]').is_hidden()
+            page.locator('#mobile-version-select').select_option('v2')
+            playwright.expect(frame.locator('.aa-page-title')).to_have_text(second_title)
+            page.locator('[data-workspace-tab="feedback"]').click()
             assert_labels()
             page.screenshot(path=f"/tmp/annotate-core-numbering-{width}.png", full_page=True)
             browser.close()

@@ -1,12 +1,6 @@
-"""The generated page, served by the real sync server, in a real browser.
+"""Generated anchors remain readable in Details; requests and comments share Feedback."""
 
-The unit tests assert what `annotate new` writes. This asserts what a reviewer
-sees: the shell mounts the generated canvas, every anchor survives the
-content round-trip through the server, and a decision card from the ```cards
-block renders in the body with its Recommended badge — the one thing that
-doubles a card's answer rate (74% vs 34%).
-"""
-
+import json
 import os
 import socket
 import subprocess
@@ -79,6 +73,14 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
         else:
             raise AssertionError(f"sync server never came up on {PORT}")
 
+        # Publish the generated requests through the same batch endpoint as annotate new --ask.
+        cards = json.loads((slug_dir / 'cards.json').read_text())
+        request = urllib.request.Request(base + 'api/comments/batch', method='POST',
+            data=json.dumps({'items':[dict(card,version='v1') for card in cards]}).encode(),
+            headers={'Content-Type':'application/json','X-Annotate-Agent':'agent:generated-browser'})
+        with urllib.request.urlopen(request) as response:
+            question_ids = json.load(response)['ids']
+
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(
@@ -86,40 +88,39 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
             )
             page.set_default_timeout(10_000)
             page.goto(base, wait_until="networkidle")
-            frame = page.frame_locator("#content-frame")
-
-            # The iframe loads asynchronously; an immediate read sees zero
-            # anchors on a perfectly healthy page.
-            anchors = frame.locator("[data-anchor-id]")
-            anchors.first.wait_for(state="attached")
-            page.wait_for_timeout(300)
-            assert anchors.count() == result["anchors"]
-
-            # Prose, table, KPI tile and code block all survived the round-trip.
+            card = page.locator(f'.citem[data-comment-id="{question_ids[0]}"]')
+            card.wait_for()
+            assert card.locator('.citem-num').inner_text() == '#1'
+            assert 'Rename status to lifecycle_state.' in card.inner_text()
+            badge = card.locator('.decision-rec-badge')
+            assert badge.count() == 1 and badge.inner_text().strip() == 'rec'
+            assert 'Rename with a dual-write week' in badge.locator('xpath=..').inner_text()
+            assert 'blocking' in card.locator('.decision-chip-blocking').inner_text().lower()
+            page.locator('[data-workspace-tab="details"]').click()
+            frame = page.frame_locator('#content-frame')
+            anchors = frame.locator('[data-anchor-id]')
+            anchors.first.wait_for(state='attached')
+            assert anchors.count() == result['anchors']
             assert frame.locator('[data-anchor-id="s:columns"]').count() == 1
             assert frame.locator('table[data-anchor-id="tbl:columns"]').count() == 1
             assert frame.locator('tr[data-anchor-id="tbl:columns:row:status"]').count() == 1
             assert frame.locator('th[data-anchor-id="tbl:columns:col:type"]').count() == 1
-            assert frame.locator(".kpi.bad").count() == 1
+            assert frame.locator('.kpi.bad').count() == 1
             assert frame.locator('pre[data-anchor-id="s:migration-sketch:code1"]').count() == 1
-
-            # The decision card is visible in the body with its recommendation.
-            card = frame.locator('.card[data-anchor-id="d:q1"]')
-            card.wait_for(state="visible")
-            assert card.locator(".item-num").inner_text() == "#1"
-            assert "Rename status to lifecycle_state." in card.inner_text()
-            badge = card.locator(".reco")
-            assert badge.count() == 1
-            assert badge.inner_text().strip() == "rec"
-            assert "Rename with a dual-write week" in badge.locator("xpath=..").inner_text()
-            assert "blocking" in card.locator(".chip.blocking").inner_text()
-
-            # A generated anchor is commentable: the whole point of the page.
+            assert frame.locator('.card[data-anchor-id="d:q1"]').is_hidden()
+            assert frame.locator('.annotate-decision-strip').count() == 0
             frame.locator('[data-anchor-id="s:scope:li1"]').click()
-            page.locator("#pop-ta").fill("This row is the one to decide first")
-            page.locator("#pop-save").click()
-            page.locator("#comment-list .citem").first.wait_for(state="visible")
-            assert "This row is the one to decide first" in page.locator("#comment-list").inner_text()
+            page.locator('#pop-ta').fill('This row is the one to decide first')
+            label = page.locator('#pop-node-name')
+            assert label.get_attribute('title') == label.inner_text(), 'Truncated labels retain their full tooltip'
+            page.locator('#pop-save').click()
+            page.locator('#popover').wait_for(state='hidden')
+            page.locator('[data-workspace-tab="feedback"]').click()
+            page.locator('[data-filter="waiting"]').click()
+            comment = page.locator('.citem').filter(has_text='This row is the one to decide first')
+            comment.wait_for()
+            store = json.loads((slug_dir / 'comments.json').read_text())
+            assert any(item['text'] == 'This row is the one to decide first' for item in store['anchors']['s:scope:li1'])
             browser.close()
     finally:
         process.terminate()

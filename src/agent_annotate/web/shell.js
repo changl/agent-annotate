@@ -37,6 +37,7 @@ let SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
 // null = legacy server (404) → every new behavior is off and the chrome acts
 // exactly as before: no defer_push, no round bar, no /api/rounds calls.
 let CAPS = null;
+const READ_ONLY_REFERENCE = new URL(location.href).searchParams.get('embed') === 'reference';
 let activeFilter = 'all';
 let showArchivedInline = false;
 let showAllVersions = false; // drawer scope: current version only vs every version
@@ -593,6 +594,23 @@ let SUMMARY_DELIVERY = null;
 let projectSnapshot = '';
 let workspaceView = null;
 let theme = 'dark';
+let hasCopy = false;
+let copyController = null;
+let copyMounting = false;
+function updateWorkspaceTitle(fallback) {
+  const title = PROJECT.title || fallback || document.title || 'annotate';
+  document.getElementById('hdr-title').textContent = title;
+  document.getElementById('hdr-title').title = title;
+  document.title = title;
+}
+function mountCopy() {
+  if (copyController || copyMounting || !window.AnnotateCopy) return;
+  copyMounting = true;
+  Promise.resolve(window.AnnotateCopy.mount(document.getElementById('copy-workspace'), {identity:IDENTITY,theme}))
+    .then(controller => { copyController = controller; })
+    .catch(() => {})
+    .finally(() => { copyMounting = false; });
+}
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
   const toggle = document.getElementById('theme-toggle');
@@ -609,16 +627,27 @@ function progressItems() {
 function markProgressSeen() {
   try { localStorage.setItem('annotate:progress:' + location.pathname, JSON.stringify(progressItems())); } catch {}
 }
+function workspaceTabs() {
+  const tabs = PROJECT.tabs || [];
+  return (PROJECT.modules || []).length || tabs.some(t => t.kind === 'document')
+    ? tabs : [...tabs, {id:'details',label:'Details',kind:'document'}];
+}
 function selectWorkspaceView(id) {
+  if (READ_ONLY_REFERENCE) id = 'reference';
   workspaceView = id;
-  const extra = (PROJECT.tabs || []).find(t => t.id === id);
-  document.getElementById('main-workspace').hidden = !!extra;
+  const extra = workspaceTabs().find(t => t.id === id && t.kind !== 'copy' && t.kind !== 'document');
+  const copy = id === 'copy' && hasCopy;
+  document.getElementById('main-workspace').hidden = !!extra || copy;
   document.getElementById('workspace-extra').hidden = !extra;
+  document.getElementById('copy-workspace').hidden = !copy;
   document.body.dataset.workspaceView = extra ? 'extra' : id;
+  document.body.classList.remove('is-mobile-sheet-open');
+  document.getElementById('drawer').classList.remove('collapsed');
+  if (copy) mountCopy();
   if (extra) {
     const frame = document.getElementById('workspace-extra-frame');
     const url = new URL(extra.url);
-    url.searchParams.set('embed', '1');
+    url.searchParams.set('embed', 'reference');
     if (frame.getAttribute('src') !== url.href) frame.src = url.href;
     frame.title = extra.label;
   }
@@ -633,8 +662,6 @@ function selectWorkspaceView(id) {
     }
     markProgressSeen();
   }
-  if (id === 'feedback' && isMobileLayout()) setMobileSheetOpen(true);
-  if (id === 'progress') setMobileSheetOpen(false);
   if (!extra) { mountProjectInDocument(document.getElementById('content-frame')); sendCommentCountsToFrame(); }
   try { localStorage.setItem('annotate:view:' + location.pathname, id); } catch {}
   renderWorkspaceTabs();
@@ -642,21 +669,23 @@ function selectWorkspaceView(id) {
 function renderWorkspaceTabs() {
   const nav = document.getElementById('workspace-tabs');
   if (!nav) return;
-  const keep = new Set((PROJECT.tabs || []).map(t => t.id));
+  hasCopy = (PROJECT.tabs || []).some(t => t.kind === 'copy');
+  const tabs = workspaceTabs();
+  const keep = new Set(tabs.map(t => t.id));
   nav.querySelectorAll('[data-extra-tab]').forEach(n => { if (!keep.has(n.dataset.workspaceTab)) n.remove(); });
-  for (const tab of PROJECT.tabs || []) {
+  for (const tab of tabs) {
     let button = [...nav.querySelectorAll('[data-extra-tab]')].find(n => n.dataset.workspaceTab === tab.id);
     if (!button) { button = document.createElement('button'); nav.appendChild(button); }
     button.type = 'button'; button.className = 'tab'; button.setAttribute('role', 'tab');
     button.dataset.workspaceTab = tab.id; button.dataset.extraTab = '1'; button.textContent = tab.label;
-    button.setAttribute('aria-controls', 'workspace-extra');
+    button.setAttribute('aria-controls', tab.kind === 'copy' ? 'copy-workspace' : tab.kind === 'document' ? 'content-frame' : 'workspace-extra');
   }
-  const valid = ['progress', 'feedback', ...(PROJECT.tabs || []).map(t => t.id)];
-  if (!valid.includes(workspaceView)) workspaceView = flattenAll(false).length ? 'feedback' : 'progress';
+  const valid = ['progress', 'feedback', ...tabs.map(t => t.id), ...(READ_ONLY_REFERENCE ? ['reference'] : [])];
+  if (!valid.includes(workspaceView)) workspaceView = flattenAll(false).length ? 'feedback' : (PROJECT.modules || []).length ? 'progress' : 'details';
   let seen = [];
   try { seen = JSON.parse(localStorage.getItem('annotate:progress:' + location.pathname) || '[]'); } catch {}
   const unseen = progressItems().filter(item => !seen.some(old => old[0] === item[0] && old[1] === item[1])).length;
-  for (const [id, count] of [['progress-new', unseen], ['feedback-new', flattenAll(false).filter(inScope).filter(c => readStateOf(c) !== 'read').length]]) {
+  for (const [id, count] of [['progress-new', unseen], ['feedback-new', flattenAll(false).filter(inScope).filter(c => (classify(c) === 'review' || isRoundPending(c)) && readStateOf(c) !== 'read').length]]) {
     const badge = document.getElementById(id); badge.textContent = count; badge.hidden = count === 0;
   }
   nav.querySelectorAll('[data-workspace-tab]').forEach(button => {
@@ -674,6 +703,11 @@ function wireWorkspace() {
     if (window.parent !== window && event.source === window.parent && event.origin === BRIDGE_ORIGIN
         && event.data && event.data.type === 'annotate:workspace-theme' && ['dark','light'].includes(event.data.theme)) {
       theme = event.data.theme; applyTheme();
+    }
+    if (event.source === document.getElementById('workspace-extra-frame').contentWindow && event.origin === BRIDGE_ORIGIN
+        && event.data && event.data.type === 'annotate:feedback-anchor') {
+      const question = flattenAll(false).find(c => c.anchor_id === event.data.anchorId);
+      if (question) focusSidebarCard(question.id);
     }
   });
   document.getElementById('theme-toggle').addEventListener('click', () => {
@@ -707,6 +741,7 @@ function wireWorkspace() {
     nav.querySelector(`[data-workspace-tab="${tabs[next].dataset.workspaceTab}"]`).focus();
   });
   if (new URL(location.href).searchParams.get('embed') === '1') document.body.classList.add('workspace-embedded');
+  if (READ_ONLY_REFERENCE) document.body.classList.add('workspace-reference');
 }
 const projectPanel = document.getElementById('project-panel');
 function projectPreference(key, value) {
@@ -718,8 +753,10 @@ function projectPreference(key, value) {
 }
 function renderProject() {
   renderWorkspaceTabs();
+  updateWorkspaceTitle();
   const panel = projectPanel;
   const modules = PROJECT.modules || [];
+  document.getElementById('progress-empty').hidden = modules.length > 0;
   if (!modules.length) {
     panel.hidden = true;
     panel.innerHTML = '';
@@ -728,7 +765,7 @@ function renderProject() {
     return;
   }
   panel.hidden = false;
-  panel.open = projectPreference(':summary') === 'open';
+  panel.open = true;
   panel.innerHTML = `<summary>Project summary</summary><div class="project-heading"><span>${esc(PROJECT.title || 'Links and progress')}</span><span>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</span></div>` + modules.map(module => {
     const preference = projectPreference(module.id);
     const open = preference === 'open';
@@ -754,11 +791,7 @@ function mountProjectInDocument(frame) {
     const locationOrigin = frame.contentWindow.location.origin;
     const origin = locationOrigin === 'null' ? frame.contentWindow.origin : locationOrigin;
     if (origin !== BRIDGE_ORIGIN) return;
-    doc.body.classList.toggle('annotate-progress-only', workspaceView === 'progress' && !projectPanel.hidden);
-    if (projectPanel.hidden) return;
-    doc.querySelectorAll('#project-panel[data-annotate-project-panel="runtime"]').forEach(node => {
-      if (node !== projectPanel) node.remove();
-    });
+    doc.body.classList.remove('annotate-progress-only');
     if (!doc.querySelector('link[href*="/assets/"][href$="/content.css"]') && !doc.getElementById('annotate-project-content-style')) {
       const link = doc.createElement('link');
       link.id = 'annotate-project-content-style';
@@ -766,8 +799,10 @@ function mountProjectInDocument(frame) {
       link.href = document.querySelector('link[href*="shell.css"]').href.replace('shell.css', 'content.css');
       doc.head.appendChild(link);
     }
-    doc.body.prepend(projectPanel);
-    // Iframe navigation can discard listeners on adopted nodes; bind after mounting.
+    const staging = document.getElementById('project-staging');
+    staging.hidden = false;
+    staging.appendChild(projectPanel);
+    if (!projectPanel.hidden) projectPanel.open = true;
     projectPanel.querySelector(':scope > summary').onclick = () => projectPreference(':summary', !projectPanel.open);
     projectPanel.querySelectorAll('.project-module').forEach(node => {
       node.querySelector('summary').onclick = () => projectPreference(node.dataset.module, !node.open);
@@ -877,15 +912,11 @@ function loadIframe(v) {
   frame.onload = () => {
     try {
       mountProjectInDocument(frame);
-      const title = frame.contentDocument.title;
-      if (title) {
-        document.getElementById('hdr-title').textContent = title;
-        document.title = title;
-      }
+      updateWorkspaceTitle(frame.contentDocument.title);
     } catch { /* A failed content load keeps the last known page title. */ }
   };
   frame.removeAttribute('srcdoc');
-  frame.src = './content?v=' + encodeURIComponent(v);
+  frame.src = './content?v=' + encodeURIComponent(v) + (READ_ONLY_REFERENCE ? '&readonly=1' : '&document=1');
 }
 
 // ── Drawer ───────────────────────────────────────────────────────
@@ -910,7 +941,7 @@ function anchorLabel(c) {
 // Drawer scope: null = every version ("All versions" toggle on), else the
 // version currently shown in the iframe.
 function drawerScope() {
-  return showAllVersions ? null : CURRENT_VERSION;
+  return workspaceView === 'feedback' || showAllVersions ? null : CURRENT_VERSION;
 }
 // Every stored verdict answers a card. `comment` is the free-text answer;
 // a reviewer's reply on an unanswered card is recorded as one by the server.
@@ -967,7 +998,7 @@ function renderChips() {
   let review = 0, waiting = 0, done = 0, unread = 0;
   for (const c of all) {
     const cls = classify(c);
-    if (cls === 'review') review++;
+    if (cls === 'review' || isRoundPending(c)) review++;
     else if (cls === 'waiting') waiting++;
     else done++;
     if (readStateOf(c) !== 'read') unread++;
@@ -1013,6 +1044,7 @@ function renderDrawer() {
   // is a plain improvement on desktop too.
   const drawerBodyEl = document.getElementById('drawer-body');
   const savedScrollTop = drawerBodyEl ? drawerBodyEl.scrollTop : 0;
+  const openDetails = new Set([...listEl.querySelectorAll('details[open]')].map(node => node.dataset.historyFor || node.dataset.replySection || node.closest('.citem')?.dataset.commentId + ':actions'));
 
   // Preserve in-progress reply drafts across re-renders AND version
   // switches (T11): capture into the persistent DRAFTS store before the
@@ -1042,13 +1074,16 @@ function renderDrawer() {
 
   let all = flattenAll(false).filter(inScope);
   if (activeFilter !== 'all') {
-    all = all.filter(c => classify(c) === activeFilter || (activeFilter === 'review' && isRoundPending(c)));
+    all = all.filter(c => activeFilter === 'review'
+      ? classify(c) === 'review' || isRoundPending(c)
+      : classify(c) === activeFilter && !isRoundPending(c));
   }
 
-  all.sort((a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
+  const feedbackRank = c => isUnresolvedDecision(c) ? 0 : isRoundPending(c) ? 1 : classify(c) === 'review' ? 2 : classify(c) === 'waiting' ? 3 : 4;
+  all.sort((a, b) => feedbackRank(a) - feedbackRank(b) || (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
   if (unreadFirst) {
     const rank = c => (readStateOf(c) === 'read' ? 1 : 0);
-    all.sort((a, b) => rank(a) - rank(b) ||
+    all.sort((a, b) => feedbackRank(a) - feedbackRank(b) || rank(a) - rank(b) ||
       ((NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0)));
   }
 
@@ -1077,6 +1112,10 @@ function renderDrawer() {
   }
 
   listEl.innerHTML = html || '<div class="drawer-empty" style="padding:24px 12px">No comments match this filter.</div>';
+  listEl.querySelectorAll('details').forEach(node => {
+    const key = node.dataset.historyFor || node.dataset.replySection || node.closest('.citem')?.dataset.commentId + ':actions';
+    if (openDetails.has(key)) node.open = true;
+  });
 
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     const draft = DRAFTS[ta.dataset.replyFor];
@@ -1207,7 +1246,7 @@ const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
 // Default button labels/classes. accept/reject/comment are byte-identical to
 // the pre-2.19 markup so a legacy decision_request (string options, nothing
 // else) against a legacy server renders exactly as it always has.
-const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
+const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: 'Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // The same options without their glyphs, for the "Recommended: …" sentence.
 const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Answer in words', changes: 'Request changes' };
@@ -1345,7 +1384,7 @@ function renderDecisionEvidence(c, dr) {
         <button type="button" class="decision-evidence-link" data-decision-action="evidence-preview" data-key="${escAttr(key)}" aria-expanded="${itemOpen ? 'true' : 'false'}" aria-controls="${pid}" title="Preview ${escAttr(e.anchor)}"><span class="decision-evidence-label">${esc(e.label || e.anchor)}</span></button>
         <div class="decision-evidence-preview" id="${pid}"${itemOpen ? '' : ' hidden'}>
           ${preview}
-          <button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll the document to ${escAttr(e.anchor)}; a Back marker there returns here">Go to &rarr;</button>
+          ${workspaceTabs().some(t => t.kind === 'document') ? `<button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Read supporting detail; Back returns here">Go to &rarr;</button>` : ''}
         </div>
       </li>`;
   }).join('');
@@ -1403,11 +1442,15 @@ function renderDecisionBlock(c) {
     </div>`;
   }
   const changing = !!decisionChanging[c.id];
+  const answer = c.decision && typeof c.decision.text === 'string'
+    ? (c.decision.verdict === 'select' ? c.decision.text.split('\n')[0].replace(/^Selected:\s*/, '') : c.decision.text)
+    : '';
   if (decisionAnswer(c) && !changing) {
     const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${esc(displayPrompt(c))}</div>
       <span class="decision-verdict-chip verdict-${escAttr(c.decision.verdict)}">${esc(label)} &middot; ${esc(fmtTs(c.decision.ts))}</span>
+      ${answer ? `<div class="decision-answer">${esc(answer)}</div>` : ''}
       <button class="alink decision-change-link" data-decision-action="change" data-id="${escAttr(c.id)}">&#8634; Change verdict</button>
       ${renderDecisionPending(c)}
     </div>`;
@@ -1437,12 +1480,12 @@ function renderDecisionBlock(c) {
     btns += `<button class="decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   }
   const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
-      <span>Changing verdict &mdash; currently ${esc(DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict)}</span>
+      <span>Changing verdict &mdash; currently ${esc(answer || DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict)}</span>
       <button class="alink" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
     </div>` : '';
   const sayOpen = !!decisionSayOpen[c.id];
   const sayHtml = showSay ? `<div class="decision-say-row">
-      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words.">&#128172; Answer in words</button>
+      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words.">Answer in words</button>
     </div>
     <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
       <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Answer in your own words&hellip;" rows="2"></textarea>
@@ -1479,7 +1522,7 @@ function renderCItem(c) {
   const ts = fmtTs(c.created_at);
   // #n mirrors the numbered pin on the page (pin 7 ↔ card #7).
   const num = NUM_MAP[c.id];
-  const numHtml = num ? `<span class="citem-num">#${num}</span>` : '';
+  const numHtml = num ? `<a class="citem-num" href="#feedback=${encodeURIComponent(c.id)}" data-feedback-id="${escAttr(c.id)}" title="Open feedback #${num}">#${num}</a>` : '';
   const rstate = readStateOf(c);
   let unreadChipHtml = '';
   if (rstate === 'new-activity') unreadChipHtml = '<span class="citem-chip-newreply" title="The agent responded since you last read this">&uarr; NEW reply</span>';
@@ -1552,23 +1595,22 @@ function renderCItem(c) {
       </div>`;
   }
 
-  return `<div class="citem ${clsMap[cls]}${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
+  const decision = !!c.decision_request;
+  const text = c.decision_request && String(c.text || '').trim().replace(/\s+/g, ' ') === String(c.decision_request.prompt || '').trim().replace(/\s+/g, ' ') ? '' : c.text;
+  const history = agentReplyHtml + replyHtml;
+  const discussion = history ? `<details class="feedback-history" data-history-for="${escAttr(c.id)}"><summary>History (${(c.replies || []).length + (c.response_text ? 1 : 0)})</summary>${history}</details>` : '';
+  const replySection = decision ? `<details class="feedback-reply" data-reply-section="${escAttr(c.id)}"><summary>Add a comment</summary>${replyFormHtml}</details>` : replyFormHtml;
+  return `<article class="citem ${clsMap[cls]}${hl}${unreadCls}${decisionCls}" id="feedback-${escAttr(c.id)}" data-comment-id="${escAttr(c.id)}">
     <div class="citem-node">
-      <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
+      <span class="citem-node-name" title="${escAttr(anchorLabel(c) || displayPrompt(c))}">${numHtml}${decision ? '' : esc(anchorLabel(c))}</span>
       ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
-    ${gotoHtml}
-    <div class="citem-txt">${esc(c.decision_request && String(c.text || '').trim().replace(/\s+/g, ' ') === String(c.decision_request.prompt || '').trim().replace(/\s+/g, ' ') ? '' : c.text)}</div>
-    ${agentReplyHtml}
-    ${replyHtml}
-    <div class="citem-meta">
-      <span class="citem-author">${esc(authorLabel(c))}</span>
-      <span>${ts}${c.edited_at ? ' (edited)' : ''}</span>
-    </div>
     ${renderDecisionBlock(c)}
-    <div class="citem-actions">${actions}</div>
-    ${replyFormHtml}
-  </div>`;
+    <div class="citem-txt">${esc(text)}</div>
+    ${discussion}
+    ${replySection}
+    <details class="feedback-actions"><summary>More</summary><div class="citem-meta"><span class="citem-author">${esc(authorLabel(c))}</span><span>${ts}${c.edited_at ? ' (edited)' : ''}</span></div><div class="citem-actions">${actions}</div>${gotoHtml}</details>
+  </article>`;
 }
 
 // The user acted on the comment, so they have unambiguously seen its current
@@ -1589,13 +1631,16 @@ function wireCardActions(root) {
   // sidebar card as the navigation affordance, not just a small button.
   // Buttons/links/textareas inside the card keep their own behavior.
   root.querySelectorAll('.citem').forEach(card => card.addEventListener('click', (e) => {
-    if (e.target.closest('button, textarea, a, input, select')) return;
+    if (e.target.closest('button, textarea, a, input, select, summary')) return;
     const c = findCommentById(card.dataset.commentId);
     if (!c) return;
     markRead([c]);
     highlightedCommentId = c.id;
+    const section = card.querySelector('.feedback-reply');
+    if (section) section.open = true;
     const reply = card.querySelector('.reply-ta');
     if (reply) reply.focus({preventScroll:true});
+    if (workspaceView === 'feedback') { sendCommentCountsToFrame(); return; }
     if (isGeneralAnchor(c.anchor_id)) {
       // No content-doc location by design — just mark active/read; the card
       // already shows the "not tied to a location" notice.
@@ -1619,6 +1664,7 @@ function wireCardActions(root) {
     if (!c || isGeneralAnchor(c.anchor_id)) return;
     if (highlightedCommentId === c.id) return; // already showing this location
     markRead([c]);
+    if (workspaceView === 'feedback') { highlightedCommentId = c.id; sendCommentCountsToFrame(); return; }
     goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id, { quiet: true });
     sendCommentCountsToFrame();
   }));
@@ -1729,6 +1775,7 @@ async function submitDecision(root, id, verdict, text) {
 // goToCommentLocation does.
 function goToEvidence(anchorId, commentId) {
   if (!anchorId) return;
+  selectWorkspaceView('details');
   if (isMobileLayout()) setMobileSheetOpen(false);
   const back = commentId ? { commentId, n: NUM_MAP[commentId] || 0, from: 'rail' } : null;
   scrollToAnchorInFrame(anchorId, null, back);
@@ -1891,6 +1938,7 @@ let pendingAnchor = null; // {anchorId, anchorLabel, target}
 let editingCommentId = null;
 
 function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
+  if (READ_ONLY_REFERENCE) return;
   if (!IDENTITY) {
     updateAuthorIndicator();
     return;
@@ -1899,6 +1947,7 @@ function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
   editingCommentId = null;
   const pop = document.getElementById('popover');
   document.getElementById('pop-node-name').textContent = anchorLabel || anchorId;
+  document.getElementById('pop-node-name').title = anchorLabel || anchorId;
   document.getElementById('pop-ta').value = '';
   positionPopover(x, y);
   pop.classList.add('vis');
@@ -2042,6 +2091,7 @@ function openPinPopover(anchorId, anchorIds, commentIds, anchorLabelText, x, y) 
 
   document.getElementById('pinpop-title').textContent =
     pinPopoverCtx.anchorLabel + ' — ' + comments.length + (comments.length === 1 ? ' comment' : ' comments');
+  document.getElementById('pinpop-title').title = document.getElementById('pinpop-title').textContent;
   const body = document.getElementById('pinpop-body');
 
   // Group by anchor: the pin's own anchor first, nested anchors after.
@@ -2292,13 +2342,16 @@ function wireDrawerControls() {
 // but leaves status open — counting bare open comments made the badge show
 // "1 remaining" forever after a successful push (T6, user-reported).
 function needsPush(c) {
-  if (c.status !== 'open') return false;
-  if (!c.flagged_for_session) return true;
+  if (c.status !== 'open' || (c.decision && c.decision.round_pending)) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
-  let latest = c.edited_at ? new Date(c.edited_at).getTime() : 0;
+  let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
+  if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
   for (const r of (c.replies || [])) {
     if (!isAgentAuthor(r.author)) latest = Math.max(latest, new Date(r.ts).getTime());
   }
+  if (c.decision && !isAgentAuthor(c.decision.by)) latest = Math.max(latest, new Date(c.decision.ts).getTime());
+  if (!latest) return false;
+  if (!c.flagged_for_session) return true;
   return latest > flaggedAt;
 }
 function countOpenComments() {
@@ -2315,12 +2368,10 @@ function updatePushCounter() {
   cnt.textContent = String(n);
   btn.disabled = (n === 0);
   const owner = SESSION_MONITOR.owner && SESSION_MONITOR.owner.owner_session;
-  const route = SESSION_MONITOR.active
-    ? 'The active session monitor is armed' + (owner ? ' by ' + owner : '')
-    : 'No live monitor is armed; a push will be queued for the next session turn';
+  const route = owner ? 'Feedback goes to the owning agent.' : 'Feedback is saved for the project agent.';
   btn.title = n === 0
-    ? 'Nothing new to push — all open comments already sent or queued. ' + route
-    : 'Send ' + n + ' comment(s) with new activity. ' + route;
+    ? 'Nothing new to send. ' + route
+    : 'Send ' + n + ' feedback item(s). ' + route;
 }
 function wirePushSession() {
   document.getElementById('push-session-btn').addEventListener('click', async () => {
@@ -2342,13 +2393,13 @@ function wirePushSession() {
       // ".push-session-label{display:none}" rule still has a label span to
       // target afterward.
       btn.querySelector('span:first-child').textContent = delivered
-        ? '✅ Sent ' + j.flagged_count + ' to active session'
-        : '⏳ Queued ' + j.flagged_count + ' — no monitor armed';
+        ? 'Sent ' + j.flagged_count
+        : 'Saved ' + j.flagged_count;
       await refreshStore();
       setTimeout(() => {
         btn.classList.remove('success', 'queued');
         btn.querySelector('span:first-child').innerHTML =
-          '<span class="push-session-icon">\u{1F4E8}</span><span class="push-session-label"> Push to session</span>';
+          '<span class="push-session-label">Send feedback</span>';
         updatePushCounter();
       }, 3000);
     } else {
@@ -2366,7 +2417,7 @@ function wirePushSession() {
 function roundStats() {
   let pending = 0, decided = 0, total = 0, undecided = 0;
   for (const c of flattenAll(false)) {
-    if (!hasDecisionRequest(c)) continue;
+    if (!hasDecisionRequest(c) || (decisionAnswer(c) && !isRoundPending(c)) || c.status === 'addressed_by_agent') continue;
     total++;
     if (decisionAnswer(c)) decided++; else undecided++;
     if (isRoundPending(c)) pending++;
@@ -2404,7 +2455,7 @@ function renderRoundBar() {
   bar.style.display = show ? 'flex' : 'none';
   document.body.classList.toggle('has-round-bar', show && isMobileLayout());
   if (!show) return;
-  document.getElementById('round-bar-main').textContent = s.decided + ' of ' + s.total + ' decided';
+  document.getElementById('round-bar-main').textContent = s.pending + ' saved draft' + (s.pending === 1 ? '' : 's') + (s.undecided ? ' · ' + s.undecided + ' unanswered' : '');
   document.getElementById('round-pending-n').textContent = String(s.pending);
   const btn = document.getElementById('round-finish-btn');
   btn.disabled = s.pending === 0;
@@ -2416,7 +2467,7 @@ function renderRoundBar() {
     sub.textContent = roundBarNote.text;
     sub.className = 'round-bar-sub' + (roundBarNote.cls ? ' ' + roundBarNote.cls : '');
   } else {
-    sub.textContent = s.pending + ' verdict' + (s.pending === 1 ? '' : 's') + ' pending — not sent yet';
+    sub.textContent = '';
     sub.className = 'round-bar-sub';
   }
 }
@@ -2520,6 +2571,8 @@ function renderOwnerChip() {
   if (parent && el.parentElement !== parent) parent.appendChild(el);
   const o = META && META.owner;
   const label = o && (o.owner_label || o.label || o.owner_agent || o.owner_session);
+  el.hidden = !label;
+  if (mobileRow) mobileRow.hidden = !label || !isMobileLayout();
   if (!label) { el.style.display = 'none'; return; }
   const snapshot = JSON.stringify(o);
   el.style.display = '';
@@ -2571,7 +2624,14 @@ function wireBridge() {
     if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frame || e.source !== frame.contentWindow) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'annotate:pin-click') {
+    if (READ_ONLY_REFERENCE && ['annotate:pin-click', 'annotate:pin-open', 'annotate:decision-posted'].includes(data.type)) return;
+    if (data.type === 'annotate:feedback-anchor') {
+      if (READ_ONLY_REFERENCE) window.parent.postMessage({type:'annotate:feedback-anchor',anchorId:data.anchorId}, BRIDGE_ORIGIN);
+      else {
+        const question = flattenAll(false).find(c => c.anchor_id === data.anchorId);
+        if (question) focusSidebarCard(question.id);
+      }
+    } else if (data.type === 'annotate:pin-click') {
       // Re-pin mode: the click IS the comment's new location.
       if (repinCommentId) {
         completeRepin(data.anchorId, data.anchorLabel, data.target || null);
@@ -2849,9 +2909,11 @@ async function init() {
   wireRoundBar();
   wireBridge();
 
-  await Promise.all([loadStore(), loadMeta(), loadSessionMonitor(), loadCapabilities()]);
+  loadSessionMonitor().then(updatePushCounter);
+  await Promise.all([loadStore(), loadMeta(), loadCapabilities()]);
   document.getElementById('copy-link-btn').hidden = !(CAPS && CAPS.private_share_links);
-  await Promise.all([loadProject(), loadDelivery()]);
+  await loadProject();
+  loadDelivery();
   // // v2.19: the ONE probe; 404 → legacy mode for this page load
 
   const urlV = new URL(window.location.href).searchParams.get('v');
@@ -2873,13 +2935,15 @@ async function init() {
   document.getElementById('hdr-sub').textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
 
   if (CURRENT_VERSION) loadIframe(CURRENT_VERSION);
-  if (flattenAll(false).some(c => inScope(c) && classify(c) === 'review')) {
+  if (!READ_ONLY_REFERENCE) {
     activeFilter = 'review';
     document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('active', chip.dataset.filter === activeFilter));
   }
   renderAll();
   try { workspaceView = localStorage.getItem('annotate:view:' + location.pathname) || workspaceView; } catch {}
   selectWorkspaceView(workspaceView);
+  const linkedFeedback = new URLSearchParams(location.hash.slice(1)).get('feedback');
+  if (linkedFeedback && findCommentById(linkedFeedback)) focusSidebarCard(linkedFeedback);
   const gfInit = document.getElementById('gf-ta');
   if (gfInit && CURRENT_VERSION) gfInit.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
 
@@ -2892,8 +2956,9 @@ async function init() {
     if (document.hidden || refreshing) return;
     refreshing = true;
     try {
-      await Promise.all([loadStore(), loadMeta(), loadReadState(), loadSessionMonitor()]);
-      await Promise.all([loadProject(), loadDelivery()]);
+      await Promise.all([loadStore(), loadMeta(), loadReadState()]);
+      await loadProject();
+      loadDelivery();
       const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
       if (snap !== lastSnap) { lastSnap = snap; renderAll(); } else updatePushCounter();
     } finally {
@@ -2910,6 +2975,9 @@ async function init() {
 
 document.addEventListener('DOMContentLoaded', init);
 window.addEventListener('hashchange', () => {
-  if (new URLSearchParams(location.hash.slice(1)).has('review')) location.reload();
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.has('review')) { location.reload(); return; }
+  const id = params.get('feedback');
+  if (id && findCommentById(id)) focusSidebarCard(id);
 });
 })();
