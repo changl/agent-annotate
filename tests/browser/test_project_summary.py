@@ -48,31 +48,37 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
             panel = frame.locator("#project-panel")
             panel.wait_for(state="visible")
             assert page.locator("#project-toggle").count() == 0
-            assert panel.get_attribute("open") is None
-            assert panel.bounding_box()["height"] < 56
-            assert panel.locator(":scope > summary").inner_text() == "Project summary"
-            pin = frame.locator(f'[data-pin-comments="{cid}"]').first
-            anchor = frame.locator('[data-anchor-id="s:progress:p1"]')
-            pin.wait_for(state="attached")
-            offset = pin.bounding_box()["y"] - anchor.bounding_box()["y"]
-            panel.locator(":scope > summary").focus()
-            page.keyboard.press("Enter")
+            page.locator('[data-workspace-tab="progress"]').click()
             assert panel.get_attribute("open") is not None
+            assert frame.locator('body').evaluate("el => el.classList.contains('annotate-progress-only')")
+            page.locator('[data-workspace-tab="feedback"]').click()
+            if width <= 1160:
+                page.locator('#drawer-collapse').click()
+            pin = frame.locator(f'[data-pin-comments="{cid}"]').first
+            pin.wait_for(state="visible")
+            def pin_offset():
+                return pin.evaluate("el => el.getBoundingClientRect().y - document.querySelector('[data-anchor-id=\"s:progress:p1\"]').getBoundingClientRect().y")
+            offset = pin_offset()
             links = panel.locator('details[data-module="resources"]')
             assert links.get_attribute("open") is None
             links.locator("summary").click()
-            _wait(lambda: abs(pin.bounding_box()["y"] - anchor.bounding_box()["y"] - offset) < 2, page)
+            _wait(lambda: abs(pin_offset() - offset) < 2, page)
             assert links.locator("a").count() == 12
+            assert page.evaluate("localStorage.getItem('annotate:project:/:resources')") == 'open'
             assert panel.evaluate("el => getComputedStyle(el).overflowY") == "visible"
             page.reload(wait_until="networkidle")
+            if width <= 1160:
+                page.locator('#drawer-collapse').click()
             assert panel.get_attribute("open") is not None
-            assert links.get_attribute("open") is not None
+            assert links.get_attribute("open") is not None, page.evaluate('JSON.stringify(localStorage)')
             assert links.locator("a").first.is_visible()
             panel.evaluate("el => window.scrollTo({top: el.offsetHeight + 160, behavior: 'instant'})")
             assert panel.evaluate("el => el.getBoundingClientRect().bottom < 0")
             assert page.locator("#content-frame").bounding_box()["height"] > 700
             if width > 1160:
+                page.locator('[data-workspace-tab="feedback"]').click()
                 page.locator('button[data-version="v1"]').click()
+                page.locator('[data-workspace-tab="progress"]').click()
             else:
                 page.locator(".mobile-version-select").select_option("v1")
             panel.wait_for(state="visible")
@@ -80,6 +86,7 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
             assert panel.get_attribute("open") is not None
             assert links.get_attribute("open") is not None
             assert panel.locator("a").first.get_attribute("href") == "https://example.test/0"
+            page.locator('[data-workspace-tab="progress"]').click()
             page.evaluate("""() => {
                 const frame = document.getElementById('content-frame');
                 frame.srcdoc = frame.contentDocument.documentElement.outerHTML;
@@ -89,7 +96,9 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
             panel.locator(":scope > summary").click()
             assert panel.get_attribute("open") is None
             if width > 1160:
+                page.locator('[data-workspace-tab="feedback"]').click()
                 page.locator('button[data-version="v2"]').click()
+                page.locator('[data-workspace-tab="progress"]').click()
             else:
                 page.locator(".mobile-version-select").select_option("v2")
             panel.wait_for(state="visible")

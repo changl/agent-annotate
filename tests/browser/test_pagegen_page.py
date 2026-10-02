@@ -20,7 +20,7 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from agent_annotate.pagegen import EXAMPLE, generate  # noqa: E402
+from agent_annotate.pagegen import generate  # noqa: E402
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 PORT = 8898
@@ -42,7 +42,7 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
         pytest.skip(f"port {PORT} is already in use on this machine")
 
     source = tmp_path / "page.md"
-    source.write_text(EXAMPLE, encoding="utf-8")
+    source.write_text((Path(__file__).parents[1] / "fixtures/full_review.md").read_text(), encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
     result = generate(source, slug_dir)
     assert result["anchors"] > 20
@@ -110,7 +110,7 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
             assert "Rename status to lifecycle_state." in card.inner_text()
             badge = card.locator(".reco")
             assert badge.count() == 1
-            assert badge.inner_text().strip() == "Recommended"
+            assert badge.inner_text().strip() == "rec"
             assert "Rename with a dual-write week" in badge.locator("xpath=..").inner_text()
             assert "blocking" in card.locator(".chip.blocking").inner_text()
 

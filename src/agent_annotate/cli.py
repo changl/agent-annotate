@@ -56,6 +56,7 @@ skill-directory install used (~/.claude/annotate-state/state and
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import ipaddress
 import json
 import os
@@ -94,7 +95,7 @@ from .paths import (
     WEB_DIR,
     ensure_runtime_dirs,
 )
-from .urls import mounted_url, page_url
+from .urls import mounted_url, page_url, redact_review_key, redact_share_links
 
 SHIM_MARKER = "agent-annotate shim"
 
@@ -229,7 +230,7 @@ def _bus_emit(bus_file, event: dict) -> None:
         payload = {"ts": _now_iso()}
         payload.update(event)
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False,
+            fh.write(json.dumps(redact_share_links(payload), ensure_ascii=False,
                                 separators=(",", ":")) + "\n")
     except Exception:
         pass
@@ -371,11 +372,20 @@ def _load_state_for_project(project: str) -> dict:
 
 
 def _save_state_for_project(project: str, state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    p = STATE_DIR / f"{project}.json"
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, p)
+    _save_private_json(STATE_DIR / f"{project}.json", state)
+
+
+def _save_private_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(redact_share_links(data), output, indent=2, ensure_ascii=False)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _all_state_files() -> list[Path]:
@@ -445,23 +455,30 @@ def _load_projects_toml() -> dict:
 
 
 def _slug_project(slug_dir: Path, explicit_project: str | None = None) -> tuple[str, str]:
-    """Return (project, slug). Project defaults to slug_dir.parent.name."""
+    """An existing directory keeps its registered scope across aliases and sessions."""
+    existing = {(p, s) for p, s, r in _registry_entries() if r.get("slug_dir")
+                and Path(r["slug_dir"]).resolve() == slug_dir.resolve()}
+    if len(existing) > 1:
+        raise ValueError("page directory has ambiguous registrations; no new scope created")
+    if existing:
+        return existing.pop()
     slug = slug_dir.name
     project = explicit_project or slug_dir.parent.name or "default"
     return project, slug
 
 
 def _project_config(project: str) -> dict:
-    cfg = _load_projects_toml().get(project, {})
-    cfg.setdefault("transport", "local")
+    config = _load_projects_toml()
+    cfg = {**config.get("defaults", {}), **config.get(project, {})}
+    cfg.setdefault("transport", "funnel")
     cfg.setdefault("hostname", None)
     cfg.setdefault("port_base", 8800)
     cfg.setdefault("path_prefix", None)
     return cfg
 
 
-_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix", "trusted_access_origins",
-                               "local_author", "local_author_name"})
+_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix", "public", "trusted_access_origins",
+                               "local_author", "local_author_name", "reviewer_aliases"})
 
 
 def _transport_opts(cfg: dict) -> dict:
@@ -991,13 +1008,13 @@ def _owner_fields(session_id: str | None = None) -> dict:
     """
     sid = session_id or _session_id()
     from .delivery import capture_target
-
+    target = capture_target(sid, _session_agent())
     return {
         "owner_session": sid,
         "owner_agent": _session_agent(),
-        "owner_label": _session_label(sid),
+        "owner_label": (target or {}).get("label") or _session_label(sid),
         "owner_claimed_at": _now_iso(),
-        "owner_target": capture_target(sid, _session_agent()),
+        "owner_target": target,
     }
 
 
@@ -1062,7 +1079,7 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
 
     details = transport_details or {}
     ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
-    if ts is None and details.get("transport") == "tailscale":
+    if ts is None and details.get("transport") in {"tailscale", "funnel"}:
         ts = details
     if ts and ts.get("hostname") and ts.get("https_port"):
         report.stages.append(
@@ -1073,7 +1090,7 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
         if report.failed:
             return report
 
-    public = mounted_url(record.get("public_url"), base) or (
+    public = (page_url(record) if record.get("transport") == "funnel" else mounted_url(record.get("public_url"), base)) or (
         page_url(record) if record.get("transport") == "cloudflare" else None) or ""
     if public.startswith("https://"):
         report.stages.append(probe_browser("public", public, timeout=timeout))
@@ -1116,7 +1133,8 @@ def _run_gate(record: dict, args):
     )
     record["verified"] = report.fully_verified
     record["verify_stages"] = [
-        {"name": s.name, "status": s.status, "url": s.url, "detail": s.detail}
+        {"name": s.name, "status": s.status, "url": redact_review_key(s.url),
+         "detail": redact_share_links(s.detail)}
         for s in report.stages
     ]
     return report
@@ -1134,13 +1152,18 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     """
     from .verify import format_report
 
+    if record.get("transport_error"):
+        print(f"ERROR: transport failed: {record['transport_error']}", file=sys.stderr)
+        return 1
+
     print()
     print(f"  annotate publish — {project}/{slug}")
     print("  ─────────────────────────────────────────────")
 
     # The tailnet URL is the page's URL. A broken Cloudflare route only
     # affects outside reviewers, so it warns instead of withholding the URL.
-    blocking = [st for st in (report.failed if report is not None else []) if st.name != "public"]
+    blocking = [st for st in (report.failed if report is not None else [])
+                if st.name != "public" or record.get("transport") == "funnel"]
     if blocking:
         stage = blocking[0]
         _bus_emit(record.get("bus_file"), {
@@ -1148,7 +1171,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
             "slug": slug,
             "stage": stage.name,
             "detail": stage.detail,
-            "url": stage.url,
+            "url": redact_review_key(stage.url),
             "owner_session": record.get("owner_session") or _session_id(),
         })
         print("  NOT PUBLISHED — the page does not render.")
@@ -1198,14 +1221,18 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     # The one URL to hand over. Pid, port, bus and state paths used to follow
     # it; `status` has them, and no round needed them from here.
     print(f"  URL:           {page_url(record)}")
-    if record.get("public_url"):
+    if record.get("public_url") and record.get("transport") != "funnel":
         print(f"  Public URL:    {mounted_url(record['public_url'], record.get('public_base_path'))}   (outside reviewers only)")
     if record.get("transport_error"):
         print(f"  Transport err: {record['transport_error']}")
     if report is not None:
         print("  ─────────────────────────────────────────────")
-        for line in format_report(report):
-            print(line)
+        if record.get("transport") == "funnel":
+            for stage in report.stages:
+                print(f"  {stage.status.upper():<5} {stage.name:<10} {redact_share_links(stage.detail)}")
+        else:
+            for line in format_report(report):
+                print(line)
     print("  ─────────────────────────────────────────────")
     if record.get("owner_label"):
         print(f"  Owner:         {record['owner_label']}")
@@ -1224,7 +1251,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         "owner_session": record.get("owner_session") or _session_id(),
         "owner_agent": record.get("owner_agent") or _session_agent(),
         "version": _read_meta(slug_dir).get("current"),
-        "url": page_url(record),
+        "url": redact_review_key(page_url(record)),
         "transport": record.get("transport"),
         "verified": bool(record.get("verified")),
         "verify_stages": [
@@ -1245,6 +1272,44 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     recorded URL and exit 0, so re-running publish on a page that had just
     failed the gate reported it as fine one command later.
     """
+    wanted = getattr(args, "transport", None) or _project_config(project).get("transport")
+    if wanted == "funnel" and record.get("transport") != "funnel":
+        previous = dict(record)
+        mount = f"/annotate/{project}/{slug}"
+        needs_mount = mount != record.get("public_base_path")
+        remounted = False
+        from .review_access import ensure_key
+        from .transports import load
+        ensure_key(slug_dir)
+        try:
+            from . import __version__
+            code, capabilities = _api(record, "GET", "/api/capabilities", None, "publish")
+            if needs_mount or code != 200 or capabilities.get("version") != __version__:
+                from .deployment import restart_record
+                restart_record(project, slug, Path(sys.executable), **({"mount": mount} if needs_mount else {}))
+                remounted = needs_mount
+                record = _load_state_for_project(project)["slugs"][slug]
+            with _flock(_tunnel_lock_path()):
+                result = load("funnel").publish(mount.lstrip("/"), int(record["port"]),
+                                                **_transport_opts(_project_config(project)))
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                current = state["slugs"].get(slug)
+                if not current or current.get("pid") != record.get("pid"):
+                    raise RuntimeError("page changed during transport migration")
+                current.setdefault("legacy_routes", []).append({k: previous.get(k) for k in ("transport", "transport_details", "url", "public_url", "port", "public_base_path")})
+                current.update(transport="funnel", url=result["url"], public_url=result["url"],
+                               transport_details=result["details"], transport_error=None)
+                _save_state_for_project(project, state)
+                record = current
+        except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+            if remounted:
+                try:
+                    restart_record(project, slug, Path(sys.executable), mount=previous.get("public_base_path") or "")
+                except Exception as rollback:
+                    print(f"ERROR: previous mount could not be restored: {rollback}", file=sys.stderr)
+            print(f"ERROR: Funnel migration failed: {exc}", file=sys.stderr)
+            return 1
     if record.get("owner_session") == _session_id():
         from .delivery import capture_target
         target = capture_target(_session_id(), _session_agent())
@@ -1279,6 +1344,20 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
 def cmd_publish(args) -> int:
+    from .workspace import project_key
+    key = project_key(Path(args.slug_dir)) or project_key(Path.cwd()) or getattr(args, "project", None)
+    if key and not getattr(args, "standalone", False):
+        lock = LOCK_DIR / ("workspace-" + hashlib.sha256(key.encode()).hexdigest()[:20] + ".lock")
+        try:
+            with _flock(lock):
+                return _publish(args)
+        except TimeoutError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 4
+    return _publish(args)
+
+
+def _publish(args) -> int:
     started_at = time.monotonic()
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
@@ -1286,6 +1365,16 @@ def cmd_publish(args) -> int:
         return 2
     project, slug = _slug_project(slug_dir, args.project)
     cfg = _project_config(project)
+    from .workspace import duplicate_page, project_key
+    if not getattr(args, "standalone", False):
+        duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
+        if duplicate:
+            print(f"ERROR: project page already exists: {duplicate['slug_dir']}\n"
+                  f"  URL: {page_url(duplicate)}\nReuse it; independent artifacts require --standalone.", file=sys.stderr)
+            return 2
+    if (args.transport or cfg.get("transport")) == "funnel":
+        from .review_access import ensure_key
+        ensure_key(slug_dir)
 
     # ── Slug-dir preflight: a resolvable current.html + registered history ──
     current_version, notes = _ensure_current_symlink(slug_dir)
@@ -1380,7 +1469,7 @@ def cmd_publish(args) -> int:
             # Transport: publish (insert public route)
             transport_name = args.transport or cfg.get("transport", "local")
             hostname = args.hostname or cfg.get("hostname")
-            path_prefix = args.path_prefix or cfg.get("path_prefix") or f"/{slug}"
+            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{project}/{slug}" if transport_name == "funnel" else f"/{slug}")
             if path_prefix and not path_prefix.startswith("/"):
                 path_prefix = "/" + path_prefix
             path_prefix = path_prefix.rstrip("/")
@@ -1397,7 +1486,7 @@ def cmd_publish(args) -> int:
                         opts["hostname"] = hostname
                     if transport_name == "cloudflare_tailscale":
                         # A page that already had a public route keeps it.
-                        opts["public"] = bool(getattr(args, "public", False)) or bool(
+                        opts["public"] = bool(getattr(args, "public", False) or cfg.get("public")) or bool(
                             existing and _had_public_route(existing))
                     if existing:
                         # What this slug was routed through last time. A
@@ -1442,6 +1531,9 @@ def cmd_publish(args) -> int:
                 "started_at": _now_iso(),
                 "transport_details": transport_details,
                 "transport_error": transport_error,
+                "workspace_key": project_key(slug_dir) or project_key(Path.cwd()),
+                "workspace_primary": not getattr(args, "standalone", False),
+                "standalone": bool(getattr(args, "standalone", False)),
                 **_owner_fields(),
                 "runtime_python": sys.executable,
                 "runtime_manifest": runtime_manifest(),
@@ -1503,6 +1595,9 @@ def cmd_unpublish(args) -> int:
             from .deployment import _identity
             owned = {**record, "project": project}
             before = _identity(owned)
+            from .legacy_routes import cleanup
+            with _flock(_tunnel_lock_path()):
+                cleanup(record, _project_config(project))
 
             # Remove only this recorded route. A root mount is still a route;
             # the transport's origin/port ownership guard decides whether it
@@ -2170,6 +2265,8 @@ def cmd_inbox(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    from .workspace import workspace_owner_record
+    record = workspace_owner_record(record)
     session_id = _session_id()
     bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
     offset_file = _offset_file(project, slug, session_id)
@@ -2563,18 +2660,44 @@ def cmd_claim(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    from .workspace import workspace_owner_record, workspace_tab_records
+    effective = workspace_owner_record(record)
+    canonical = effective.get("workspace_owner")
+    if canonical:
+        resolved = _resolve_scoped_slug(f"{canonical['project']}/{canonical['slug']}")
+        if not resolved:
+            return 2
+        project, slug, record = resolved
     prior = record.get("owner_session")
     fields = _owner_fields()
-    err = _stamp_owner_in_registry(project, slug, fields)
-    if err:
-        print(f"ERROR: could not claim {project}/{slug}: {err}", file=sys.stderr)
+    target = fields.get("owner_target")
+    tabs = workspace_tab_records(record) if isinstance(target, dict) and target.get("session") == fields["owner_session"] else []
+    entries = [(project, slug, record), *tabs]
+    try:
+        with contextlib.ExitStack() as stack:
+            for name in sorted({p for p, _, _ in entries}):
+                stack.enter_context(_flock(_state_lock_path(name)))
+            states = {p: _load_state_for_project(p) for p, _, _ in entries}
+            for p, s, selected in entries:
+                current = states[p]["slugs"].get(s)
+                if not current or current.get("slug_dir") != selected.get("slug_dir"):
+                    raise ValueError("workspace registration changed before claim; no ownership written")
+            for p, s, selected in entries:
+                states[p]["slugs"][s].update(fields)
+                if selected.get("slug_dir"):
+                    meta_err = _write_owner_meta(Path(selected["slug_dir"]), fields)
+                    if meta_err:
+                        print(f"WARN: owner chip not updated: {meta_err}", file=sys.stderr)
+            for p, state in states.items():
+                _save_state_for_project(p, state)
+    except (OSError, ValueError, TimeoutError) as exc:
+        print(f"ERROR: could not claim {project}/{slug}: {exc}", file=sys.stderr)
         return 2
-    if record.get("slug_dir"):
-        meta_err = _write_owner_meta(Path(record["slug_dir"]), fields)
-        if meta_err:
-            print(f"WARN: owner chip not updated: {meta_err}", file=sys.stderr)
+    print(f"  URL: {page_url(record)}")
     print(f"  {project}/{slug} claimed by {fields['owner_label']} "
           f"(session {fields['owner_session']})")
+    if tabs:
+        print("  Shared tabs: " + ", ".join(f"{p}/{s}" for p, s, _ in tabs))
     if prior and prior != fields["owner_session"]:
         print(f"  previous owner: {prior}")
     _bus_emit(record.get("bus_file"), {
@@ -2865,11 +2988,7 @@ def _load_retired_for_project(project: str) -> dict:
 
 
 def _save_retired_for_project(project: str, data: dict) -> None:
-    path = _retired_file(project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    _save_private_json(_retired_file(project), data)
 
 
 def _retired_entries() -> list[tuple[str, str, dict]]:
@@ -3013,7 +3132,7 @@ def _reroute(project: str, slug: str, record: dict, port: int):
         opts = _transport_opts(cfg)
         if cfg.get("hostname"):
             opts["hostname"] = cfg["hostname"]
-        opts["previous"] = {"port": port, "details": details}
+        opts["previous"] = {"port": record.get("port"), "details": details}
         if transport_name == "cloudflare_tailscale":
             opts["public"] = _had_public_route(record)
         with _flock(_tunnel_lock_path()):
@@ -3029,7 +3148,7 @@ def _route_host(record: dict) -> str | None:
     """The tailnet name a page's route was made under, if it has one."""
     details = record.get("transport_details") or {}
     ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
-    if ts is None and details.get("transport") == "tailscale":
+    if ts is None and details.get("transport") in {"tailscale", "funnel"}:
         ts = details
     return (ts or {}).get("hostname")
 
@@ -3079,9 +3198,21 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         record = (state.get("slugs") or {}).get(slug)
         if not isinstance(record, dict):
             return "gone", "no longer registered"
+        if (_project_config(project).get("transport") == "funnel"
+                and record.get("transport") != "funnel"):
+            return "skipped", "non-Funnel page needs explicit publication; no legacy route created"
+        if _entry_is_dead(record, live):
+            live = _running_servers()
         if not _entry_is_dead(record, live):
             procs = live.get(str(Path(record.get("slug_dir", "")).resolve())) or []
             if len(procs) == 1 and procs[0]["pid"] != record.get("pid"):
+                # The fleet snapshot can predate a concurrent runtime restart.
+                # Reconcile again while holding the page state lock.
+                procs = _running_servers().get(str(Path(record.get("slug_dir", "")).resolve())) or []
+                if len(procs) != 1:
+                    return "skipped", "server changed during revive; no stale process adopted"
+                if procs[0]["pid"] == record.get("pid"):
+                    return "alive", ""
                 # Serving under a pid the registry never saw: adopt it.
                 if not dry_run:
                     record["pid"] = procs[0]["pid"]
@@ -3147,7 +3278,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         _save_state_for_project(project, state)
     _bus_emit(record.get("bus_file") or str(bus_dir / f"{slug}.ndjson"),
               {"event": "page_revived", "slug": slug, "pid": pid, "port": port,
-               "url": url, "transport_error": error, "ts": _now_iso()})
+               "url": redact_review_key(url), "transport_error": redact_share_links(error), "ts": _now_iso()})
     return "revived", f"port {port}" + (f" (route: {error})" if error else "")
 
 
@@ -3315,7 +3446,8 @@ def _fleet_snapshot(from_file=None) -> dict:
     from .fleet import collect_fleet, validate_config
 
     path = Path(from_file).expanduser() if from_file else CONFIG_DIR / "fleet.json"
-    config = validate_config(json.loads(path.read_text()) if from_file or path.exists() else {"schema_version": 1, "targets": []})
+    config = validate_config(redact_share_links(json.loads(path.read_text()) if from_file or path.exists()
+                                               else {"schema_version": 1, "targets": []}))
     machine = socket.gethostname().split(".")[0]
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}", machine):
         machine = "local"
@@ -3325,7 +3457,7 @@ def _fleet_snapshot(from_file=None) -> dict:
     for project, slug, record in _registry_entries():
         try:
             target = validate_config({"schema_version": 1, "targets": [{"machine": machine, "project": project,
-                                      "slug": slug, "url": page_url(record)}]})["targets"][0]
+                                      "slug": slug, "url": redact_review_key(page_url(record))}]})["targets"][0]
         except ValueError:
             excluded += 1
             continue
@@ -3337,7 +3469,7 @@ def _fleet_snapshot(from_file=None) -> dict:
         config["targets"].append(target)
         urls[target["url"]] = identity
         identities[identity] = target["url"]
-    snapshot = collect_fleet(config)
+    snapshot = redact_share_links(collect_fleet(config))
     snapshot["observed_at"] = _now_iso()
     snapshot["excluded_local_records"] = excluded
     if excluded:
@@ -3556,6 +3688,14 @@ def cmd_monitor(args) -> int:
             print(f"ERROR: could not stop the current monitor for {project}/{slug}", file=sys.stderr)
             return 3
 
+    # Capture the starting cursor before advertising the lease; feedback can arrive as soon as it exists.
+    offset_file = MONITOR_OFFSET_ROOT / project / f"{slug}.offset"
+    offset_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        offset = int(offset_file.read_text(encoding="utf-8").strip()) if offset_file.exists() else bus_file.stat().st_size
+    except Exception:
+        offset = bus_file.stat().st_size
+
     lease_path = lease_dir / "owner.json"
     owner_session, owner_agent, owner_label = _monitor_owner_label(args.owner)
     provider_name = getattr(args, "provider", None) or "stdout"
@@ -3614,13 +3754,6 @@ def cmd_monitor(args) -> int:
         "owner_agent": owner_agent,
         "pid": os.getpid(),
     })
-
-    offset_file = MONITOR_OFFSET_ROOT / project / f"{slug}.offset"
-    offset_file.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        offset = int(offset_file.read_text(encoding="utf-8").strip()) if offset_file.exists() else bus_file.stat().st_size
-    except Exception:
-        offset = bus_file.stat().st_size
 
     next_heartbeat_at = (
         time.monotonic() + MONITOR_HEARTBEAT_INTERVAL
@@ -4142,7 +4275,7 @@ def cmd_doctor(args) -> int:
          (found + ("" if ours else "   (NOT this package — run install-shim)"))
          if found else f"not on PATH; run `{_module_invocation()} install-shim`"),
         ("config_dir", CONFIG_DIR.is_dir(), str(CONFIG_DIR)),
-        ("projects_toml", True, str(PROJECTS_TOML) + ("" if PROJECTS_TOML.is_file() else "   (absent; local transport only)")),
+        ("projects_toml", True, str(PROJECTS_TOML) + ("" if PROJECTS_TOML.is_file() else "   (absent; Tailscale Funnel default)")),
         ("state_dir", STATE_DIR.is_dir(), str(STATE_DIR)),
         ("bus_root", BUS_ROOT.is_dir(), str(BUS_ROOT)),
         ("web_assets", all((WEB_DIR / n).is_file() for n in
@@ -4313,6 +4446,13 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
+    from .workspace import cmd_workspace
+    sp_workspace = sub.add_parser("workspace", help="find/select the one project page across sessions")
+    sp_workspace.add_argument("--project", default=None)
+    sp_workspace.add_argument("--select", default=None, metavar="PROJECT/SLUG")
+    sp_workspace.add_argument("--root", default=None, help="project folder containing existing review pages")
+    sp_workspace.add_argument("--json", action="store_true")
+    sp_workspace.set_defaults(func=cmd_workspace)
     sp_doc.set_defaults(func=cmd_doctor)
     sp_update = sub.add_parser("update", help="check/apply tested stable releases; opt into daily checks")
     update_mode = sp_update.add_mutually_exclusive_group()
@@ -4353,11 +4493,12 @@ def main():
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
+    sp_pub.add_argument("--standalone", action="store_true", help="explicit independent artifact, outside the project workspace")
     sp_pub.add_argument("--project", default=None)
     sp_pub.add_argument("--port", type=int, default=None)
     sp_pub.add_argument(
         "--transport", default=None,
-        choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"],
+        choices=["funnel", "local", "tailscale", "cloudflare", "cloudflare_tailscale"],
     )
     sp_pub.add_argument("--hostname", default=None)
     sp_pub.add_argument("--public", action="store_true",

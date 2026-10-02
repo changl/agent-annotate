@@ -13,8 +13,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -64,16 +65,72 @@ def _process(pid: int) -> tuple[str, str] | None:
     return (" ".join(parts[:5]), parts[5]) if len(parts) == 6 else None
 
 
+def _parent_handle(expected: str) -> str | None:
+    """Codex can strip Orca variables from exec children; inspect only its provider ancestor."""
+    pid = os.getppid()
+    try:
+        for _ in range(12):
+            proc = _process(pid)
+            if proc and re.search(rf"(?:^|/){expected}(?:$|[.-])", proc[1]):
+                result = subprocess.run(["ps", "eww", "-p", str(pid), "-o", "command="],
+                                        capture_output=True, text=True, timeout=3)
+                match = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(term_[A-Za-z0-9_-]+)(?:\s|$)", result.stdout)
+                return match[1] if match else None
+            parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="], capture_output=True, text=True, timeout=3)
+            pid = int(parent.stdout.strip())
+            if pid < 2:
+                break
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _group_name(group_id: str | None) -> str | None:
+    """Read the name absent from Orca's public repo response; omit ambiguous profiles."""
+    if not group_id:
+        return None
+    root = (Path.home() / "Library/Application Support/Orca" if sys.platform == "darwin"
+            else Path(os.environ.get("APPDATA") or Path.home() / ".config") / "Orca")
+    names = set()
+    for path in (root / "profiles").glob("*/orca-data.json"):
+        try:
+            names.update(g["name"] for g in json.loads(path.read_text()).get("projectGroups", [])
+                         if g.get("id") == group_id and isinstance(g.get("name"), str))
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return names.pop() if len(names) == 1 else None
+
+
+def describe_terminal(terminal: dict) -> dict:
+    display = {}
+    if not terminal.get("title"):
+        return display
+    display["terminal_name"] = terminal["title"]
+    try:
+        worktree = _orca("worktree", "show", "--worktree", "id:" + terminal["worktreeId"])["worktree"]
+        repo = _orca("repo", "show", "--repo", "id:" + worktree["repoId"])["repo"]
+        display.update(group=repo.get("projectGroupName") or _group_name(repo.get("projectGroupId")),
+                       project=repo.get("displayName"), workspace=worktree.get("displayName"))
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        display["workspace"] = Path(terminal.get("worktreePath") or ".").name
+    names = [display.get(k) for k in ("group", "project", "workspace", "terminal_name")]
+    display["label"] = " > ".join(str(n) for n in names if n) + f" [{terminal['handle']}]"
+    return display
+
+
 def capture_target(session: str, agent: str) -> dict | None:
     """Bind only the caller's current terminal and provider process."""
-    handle = os.environ.get("ORCA_TERMINAL_HANDLE")
-    if not handle or session == "unknown":
+    if session == "unknown":
+        return None
+    expected = "codex" if agent == "codex" else "claude"
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE") or _parent_handle(expected)
+    if not handle:
         return None
     try:
         terminal = _orca("terminal", "show", "--terminal", handle)["terminal"]
-        expected = "codex" if agent == "codex" else "claude"
         if terminal.get("agentIdentity") != expected or not terminal.get("connected"):
             return None
+        display = describe_terminal({**terminal, "handle": handle})
         pid = os.getppid()
         for _ in range(12):
             proc = _process(pid)
@@ -81,7 +138,7 @@ def capture_target(session: str, agent: str) -> dict | None:
                 return {"session": session, "handle": handle,
                         "incarnation": terminal["incarnationId"],
                         "worktree": terminal["worktreeId"], "agent": expected,
-                        "pid": pid, "process_start": proc[0]}
+                        "pid": pid, "process_start": proc[0], **display}
             parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="],
                                     capture_output=True, text=True, timeout=3)
             pid = int(parent.stdout.strip())
@@ -156,14 +213,27 @@ def dispatch_record(record: dict, project: str, slug: str, *, dry_run: bool = Fa
             return {"deliveries": list(rows.values())}
         _atomic(journal, state)
         from .cli import _flock, _load_state_for_project, _state_lock_path
-        # Claim uses this same lock: ownership cannot change between the
-        # fresh registry read and terminal input acceptance.
-        with _flock(_state_lock_path(project)):
+        from .workspace import workspace_owner_record
+        current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+        effective = workspace_owner_record(current)
+        owner_project = (effective.get("workspace_owner") or {}).get("project", project)
+        projects = {project, owner_project}
+        # Canonical claims use the same sorted locks for their bounded tabs.
+        with ExitStack() as stack:
+            for name in sorted(projects):
+                stack.enter_context(_flock(_state_lock_path(name)))
             current = _load_state_for_project(project).get("slugs", {}).get(slug)
             # A removed page must never wake the former owner.
             if current is None:
                 current = {}
-            _send_pending(rows, current, project, slug, journal, state)
+            effective = workspace_owner_record(current)
+            fresh_project = (effective.get("workspace_owner") or {}).get("project", project)
+            if fresh_project in projects:
+                _send_pending(rows, effective, project, slug, journal, state)
+            else:
+                for row in rows.values():
+                    if row["state"] == "pending":
+                        row["detail"] = "Workspace ownership changed during delivery; remains pending"
         _atomic(journal, state)
         return {"deliveries": list(rows.values())}
 
@@ -197,15 +267,17 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
             continue
         # No reviewer text in this prompt: the owner reads trusted routing
         # metadata here, then treats inbox content as reviewer data.
-        from .urls import page_url
-        url = page_url(record)
+        from .urls import page_url, redact_review_key
+        url = redact_review_key((record.get("workspace_owner") or {}).get("url") or page_url(record))
         page = f"Page: {url}. " if url else ""
         prompt = (f"[annotate] ROUND SUBMITTED: {project}/{slug}; "
                   f"{row['comment_count']} answer(s), delivery {row['id']}. "
                   f"{page}"
                   f"Read annotate inbox {project}/{slug} --unread and annotate cards {project}/{slug}. "
                   "Handle this completed feedback round, preserve prior decisions and history, "
-                  "and update the project page. Do not wait for a monitor or another user prompt.")
+                  "and continue authorized project work. Update the existing workspace only for a meaningful result or needed decision. "
+                  "Report concisely with the full share URL from your workspace lookup; if missing, run annotate workspace --json once. "
+                  "Do not create another page or wait for a monitor.")
         row.update(state="attempting", attempted_at=_now())
         _atomic(journal, state)
         try:
@@ -229,8 +301,16 @@ def delivery_status(project: str, slug: str) -> dict:
     path = STATE_DIR / "deliveries" / project / f"{slug}.json"
     try:
         rows = list(json.loads(path.read_text()).get("deliveries", {}).values())
-        return {"latest": {k: v for k, v in rows[-1].items()
-                           if k in ("id", "state", "detail", "created_at", "updated_at")} if rows else None}
+        if not rows:
+            return {"latest": None}
+        latest = {k: v for k, v in rows[-1].items()
+                  if k in ("id", "state", "detail", "created_at", "updated_at")}
+        target = rows[-1].get("target") or {}
+        if latest.get("state") in ("accepted", "started") and target.get("pid"):
+            process = _process(int(target["pid"]))
+            if not process or process[0] != target.get("process_start"):
+                latest.update(state="pending", detail="Current agent must claim the workspace")
+        return {"latest": latest}
     except (OSError, ValueError):
         return {"latest": None}
 

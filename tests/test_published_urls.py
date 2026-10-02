@@ -101,7 +101,7 @@ def test_legacy_root_url_is_correct_in_status_handoff_inventory_and_mcp(publishe
     monkeypatch.setattr(cli, "_running_servers", lambda: {})
     monkeypatch.setattr(cli, "_ps_command_snapshot", lambda: "")
     assert cli.cmd_status(SimpleNamespace(slug=None, retired=False)) == 0
-    assert "https://page.example:8447/canary/" in capsys.readouterr().out
+    assert "https://public.example/canary/" in capsys.readouterr().out
     from agent_annotate.providers import codex_app_server
     messages = []
     def deliver(thread, message):
@@ -109,7 +109,7 @@ def test_legacy_root_url_is_correct_in_status_handoff_inventory_and_mcp(publishe
         return SimpleNamespace(accepted=True)
     monkeypatch.setattr(codex_app_server, "CodexAppServerAdapter", lambda: SimpleNamespace(deliver=deliver))
     cli._deliver_to_codex("inert", record, "reviews", "canary", {"comment_count": 1})
-    assert "Page: https://page.example:8447/canary/." in messages[0]
+    assert "Page: https://public.example/canary/." in messages[0]
     assert "inbox reviews/canary --unread" in messages[0]
     captured = []
     def collect(config):
@@ -117,11 +117,11 @@ def test_legacy_root_url_is_correct_in_status_handoff_inventory_and_mcp(publishe
         return {"limitations": []}
     monkeypatch.setattr(fleet, "collect_fleet", collect)
     cli._fleet_snapshot()
-    assert captured[0]["url"] == "https://page.example:8447/canary/"
+    assert captured[0]["url"] == "https://public.example/canary/"
     pytest.importorskip("mcp")
     server = mcp_server.build_server()
     rows = server._tool_manager._tools["list_pages"].fn()
-    assert rows[0]["url"] == "https://page.example:8447/canary/"
+    assert rows[0]["url"] == "https://public.example/canary/"
     assert rows[0]["public_url"] == "https://public.example/canary/"
     assert rows[0]["local_url"] == "http://localhost:8900/"
     assert json.loads((cli.STATE_DIR / "reviews.json").read_text())["slugs"]["canary"] == record

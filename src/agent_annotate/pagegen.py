@@ -513,13 +513,13 @@ class Renderer:
             else:
                 oid = label = str(opt)
                 consequence = (dr.get("consequences") or {}).get(oid, "")
-            badge = ' <span class="reco">Recommended</span>' if reco and oid == str(reco) else ""
+            badge = ' <span class="reco" title="Recommended">rec</span>' if reco and oid == str(reco) else ""
             tail = f" — {inline(str(consequence))}" if consequence else ""
             opts.append(f"<li><b>{inline(label)}</b>{badge}{tail}</li>")
         if opts:
             parts.append(f'<ul class="opts">{"".join(opts)}</ul>')
         elif reco:
-            parts.append(f'<p class="ctx"><span class="reco">Recommended</span> '
+            parts.append(f'<p class="ctx"><span class="reco" title="Recommended">rec</span> '
                          f'{inline(str(reco))}</p>')
         if bound_to:
             name = (self.registry.get(bound_to) or {}).get("name", bound_to)
@@ -629,7 +629,7 @@ def _is_later_version(version: str) -> bool:
 def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
                              registry: dict, version: str) -> list[str]:
     """Authoring contract for cumulative rounds after v1."""
-    if not _is_later_version(version):
+    if not _is_later_version(version) or "full_plan" not in meta:
         return []
     problems = []
     if str(meta.get("full_plan") or "").strip().lower() != "true":
@@ -797,7 +797,7 @@ def mark_unchanged_sections(canvas: str, prev_version: str,
 
 
 def _scope_banner(meta: dict, version: str) -> str:
-    if not _is_later_version(version):
+    if not _is_later_version(version) or str(meta.get("full_plan", "")).lower() != "true":
         return ""
     other = str(meta.get("other_files_required") or "").strip()
     if other.lower() == "none":
@@ -883,7 +883,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     banner = _scope_banner(meta, version)
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
-    warnings = _full_plan_warnings(slug_dir, version, blocks)
+    warnings = _full_plan_warnings(slug_dir, version, blocks) if "full_plan" in meta else []
     from .decision_quality import decision_warnings
     for card in cards:
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
@@ -974,128 +974,24 @@ def _now_iso() -> str:
 # The example document
 # ────────────────────────────────────────────────────────────────────────────
 EXAMPLE = '''---
-title: Items model review
-subtitle: Round 1 — column semantics and the two renames that block v3
-date: 2026-09-18
-slug: items-model-review
-version: v1
-label: round 1
-legend: Red KPI = failing · Amber = costly · Green = working. Answer every card, then press Finish review.
-full_plan: true
-other_files_required: none
+title: Project workspace
 ---
 
-# Items model review
+## Progress
 
-The `items` table backs three services and **two of its columns mean different
-things to each of them**. This round decides the renames only; the archive path
-keeps its own page. Background: *the v3 cutover note* and the
-[schema history](https://example.com/items/history).
+Build passed. Preview is ready for review.
 
-kpi: 64% | of 201 decision cards never got a verdict | bad
-kpi: 6.0 m | median page build before this generator | warn
-kpi: 147 | unit tests green on the packaged runtime | ok
-
-## Scope
-
-What this round decides, and what it deliberately leaves alone. Nothing here
-touches the write path; every change is a rename plus a dual-write window.
-
-- The `status` column rename, and the window it needs
-- Which service owns `tier` after the split
-- Nothing about the archive path or its retention
-
-1. Read the column table
-2. Answer the three cards
-3. Press Finish review — nothing reaches the session until you do
-
-### Out of scope
-
-The archive path, the retention policy and the backfill job keep their own
-review page and their own round.
-
-## Columns
-
-| Column | Type | Services | Note |
-|---|---|---|---|
-| status | text | 3 | Ambiguous: lifecycle and delivery both write it |
-| tier | text | 2 | Stable, but ownership is unassigned |
-| updated_at | timestamptz | 3 | Written by the trigger, never by hand |
-| status | jsonb | 1 | The shadow column added during the last migration |
-
-## Migration sketch
-
-Two statements and a week of dual writes. The trigger is recreated because it
-names the column literally.
-
-```sql
-ALTER TABLE items RENAME COLUMN status TO lifecycle_state;
-CREATE TRIGGER items_touch BEFORE UPDATE ON items
-  FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+```project
+{"title":"Project","modules":[{"id":"status","title":"Progress","kind":"progress","items":[{"label":"Preview build","status":"done","detail":"Checks passed; preview ready."}]}]}
 ```
 
-## Questions for Chang
-
-Three cards. Each states its context, my recommendation, and what each option
-costs.
+## Feedback
 
 ```cards
-[
-  {
-    "number": 1,
-    "anchor_id": "d:q1",
-    "text": "Rename status to lifecycle_state. Three services read the column, so the rename needs a dual-write window before v3 ships.",
-    "decision_request": {
-      "prompt": "Rename status → lifecycle_state?",
-      "context": "Lifecycle and delivery both write `status` today, so every consumer branches on a value whose meaning depends on the writer.",
-      "recommendation": "accept",
-      "options": [
-        {"id": "accept", "label": "Rename with a dual-write week", "consequence": "One week of dual writes, three deploys.", "style": "primary"},
-        {"id": "reject", "label": "Keep status", "consequence": "The name stays ambiguous through v3.", "style": "default"}
-      ],
-      "evidence": [{"label": "the column", "anchor": "tbl:columns:row:status"}],
-      "impact": "medium",
-      "blocking": true
-    }
-  },
-  {
-    "number": 2,
-    "anchor_id": "d:q2",
-    "text": "Give tier to the catalog service.",
-    "decision_request": {
-      "prompt": "Does catalog own tier after the split?",
-      "context": "Two services write it and neither claims it. Unowned columns are how the last drift started.",
-      "recommendation": "accept",
-      "options": ["accept", "reject", "comment"],
-      "consequences": {"accept": "Billing reads it through the catalog API.", "reject": "It stays shared and undocumented."},
-      "evidence": [{"label": "tier row", "anchor": "tbl:columns:row:tier"}],
-      "impact": "low"
-    }
-  },
-  {
-    "number": 3,
-    "anchor_id": "d:q3",
-    "text": "Drop the shadow status column left by the last migration.",
-    "decision_request": {
-      "prompt": "Drop the jsonb shadow column?",
-      "context": "It has had no reader since March and it doubles the row width.",
-      "recommendation": "reject",
-      "options": [
-        {"id": "accept", "label": "Drop it now", "consequence": "Irreversible without a restore.", "style": "danger"},
-        {"id": "reject", "label": "Drop it after v3", "consequence": "One more quarter of dead bytes.", "style": "primary"}
-      ],
-      "evidence": [{"label": "migration sketch", "anchor": "s:migration-sketch"}],
-      "impact": "high"
-    }
-  }
-]
+[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Publish the preview?","context":"Checks passed.","recommendation":"publish","options":[{"id":"publish","label":"Publish","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep it private."}],"evidence":[{"label":"Build result","anchor":"s:progress:p1"}]}}]
 ```
 '''
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# CLI
-# ────────────────────────────────────────────────────────────────────────────
 def cmd_new(args) -> int:
     from .cli import _inv
 
@@ -1112,6 +1008,15 @@ def cmd_new(args) -> int:
         print(f"ERROR: markdown source not found: {source}", file=sys.stderr)
         return 2
     slug_dir = Path(args.slug_dir).expanduser().resolve()
+    from .cli import _slug_project
+    args.project, _ = _slug_project(slug_dir, getattr(args, "project", None))
+    if not getattr(args, "standalone", False):
+        from .workspace import duplicate_page
+        duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
+        if duplicate:
+            from .urls import page_url
+            print(f"ERROR: reuse project page {duplicate['slug_dir']}\n  URL: {page_url(duplicate)}", file=sys.stderr)
+            return 2
     try:
         result = generate(source, slug_dir, args.version, args.label)
     except PageGenError as exc:
@@ -1169,6 +1074,7 @@ def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
         transport=getattr(args, "transport", None),
         hostname=getattr(args, "hostname", None),
         public=getattr(args, "public", False),
+        standalone=getattr(args, "standalone", False),
         path_prefix=None,
         skip_js_lint=False,
         no_verify=False,
@@ -1210,10 +1116,11 @@ def add_parser(sub) -> None:
     sp.add_argument("--example", action="store_true",
                     help="print a complete example document and exit")
     sp.add_argument("--project", default=None)
+    sp.add_argument("--standalone", action="store_true", help="explicit independent artifact")
     sp.add_argument("--port", type=int, default=None)
     sp.add_argument("--transport", default=None,
-                    choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"])
+                    choices=["funnel", "local", "tailscale", "cloudflare", "cloudflare_tailscale"])
     sp.add_argument("--hostname", default=None)
     sp.add_argument("--public", action="store_true",
-                    help="with --publish: also add a Cloudflare route for an outside reviewer")
+                    help="legacy Cloudflare option; Funnel is public by default")
     sp.set_defaults(func=cmd_new)

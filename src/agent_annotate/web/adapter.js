@@ -279,7 +279,14 @@ function wireClicks() {
     // their own click handlers directly on their buttons/textarea. A click on
     // any other part of a strip (prompt text, padding) must never fall
     // through to click-to-CREATE — it isn't a click on the underlying anchor.
-    if (e.target.closest('[data-annotate-strip]')) return;
+    const strip = e.target.closest('[data-annotate-strip]');
+    if (strip) {
+      if (!e.target.closest(INTERACTIVE_SEL)) {
+        postToParent({type: 'annotate:pin-click', anchorId: strip.dataset.stripAnchor,
+          anchorLabel: anchorName(strip.dataset.stripAnchor), x: e.clientX, y: e.clientY});
+      }
+      return;
+    }
     // Same for the chrome this file adds around content: the "Back to #N"
     // marker an evidence jump leaves, and an unchanged section's header.
     if (e.target.closest('[data-annotate-back], .annotate-unchanged-bar')) return;
@@ -375,24 +382,24 @@ function ensurePinStyle() {
     .bpin:hover, .bpin-inline:hover {
       box-shadow: 0 0 0 3px rgba(67,56,202,.35), 0 1px 4px rgba(0,0,0,.25) !important;
     }
-    .bpin-unread { background: #DC2626 !important; }
+    .bpin-unread { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
     .bpin-cluster {
-      background: #312E81 !important;
-      box-shadow: 0 0 0 2px #FFF, 0 1px 4px rgba(0,0,0,.35) !important;
+      background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
+      box-shadow: 0 0 0 2px var(--color-base-100), 0 1px 4px rgba(0,0,0,.35) !important;
     }
     .bpin-cluster:hover {
-      box-shadow: 0 0 0 2px #FFF, 0 0 0 5px rgba(49,46,129,.35) !important;
+      box-shadow: 0 0 0 2px var(--color-base-100), 0 0 0 5px rgba(49,46,129,.35) !important;
     }
     /* Decision pins take priority over unread/cluster styling — placed
        last so equal-specificity !important rules resolve in its favor. */
     .bpin-decision {
-      background: #4338CA !important;
-      box-shadow: 0 0 0 3px #FFF, 0 1px 4px rgba(0,0,0,.3) !important;
+      background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
+      box-shadow: 0 0 0 3px var(--color-base-100), 0 1px 4px rgba(0,0,0,.3) !important;
       animation: bpinDecisionPulse 1.5s ease-in-out 3;
     }
     @keyframes bpinDecisionPulse {
-      0%, 100% { box-shadow: 0 0 0 3px #FFF, 0 0 0 3px rgba(67,56,202,.5); }
-      50% { box-shadow: 0 0 0 3px #FFF, 0 0 0 8px rgba(67,56,202,0); }
+      0%, 100% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 3px rgba(67,56,202,.5); }
+      50% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 8px rgba(67,56,202,0); }
     }
     @media (max-width: 768px), (max-height: 480px) {
       /* No 300ms tap delay + no accidental text selection on a fast tap. */
@@ -422,7 +429,7 @@ const PIN_SIZE_MOBILE = 26;  // px — larger touch target (AC: pins scale up on
 function PIN_SIZE() { return isMobileLayout() ? PIN_SIZE_MOBILE : PIN_SIZE_DESKTOP; }
 function pinBaseCss() {
   const s = PIN_SIZE();
-  return `width:${s}px;height:${s}px;color:#FFF;border-radius:50%;font-size:${s > 20 ? 12 : 10}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.25);background:#4338CA`;
+  return `width:${s}px;height:${s}px;color:var(--color-base-100);border-radius:50%;font-size:${s > 20 ? 12 : 10}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.25);background:color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100))`;
 }
 
 // Build one pin element. `entries` = the comment(s) this pin represents
@@ -645,13 +652,13 @@ function ensureHoverStyle() {
   style.id = 'annotate-hover-style';
   style.textContent = `
     .annotate-anchor-hl {
-      outline: 2px solid #4338CA !important;
+      outline: 2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
       outline-offset: -1px !important;
       background: rgba(67,56,202,0.06) !important;
     }
     .bpin-hl {
       transform: scale(1.25) !important;
-      box-shadow: 0 0 0 3px #FFF, 0 0 0 6px rgba(67,56,202,.45) !important;
+      box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 6px rgba(67,56,202,.45) !important;
     }
   `;
   document.head.appendChild(style);
@@ -801,8 +808,8 @@ function ensureStripStyle() {
   style.textContent = `
     .annotate-decision-strip {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      background: #EEF2FF !important;
-      border: 1.5px solid #4338CA !important;
+      background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important;
+      border: 1.5px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
       border-radius: 8px !important;
       padding: 8px 10px !important;
       margin: 6px 0 !important;
@@ -818,13 +825,13 @@ function ensureStripStyle() {
       border-top: 1px solid rgba(67,56,202,.25) !important;
     }
     .annotate-decision-prompt {
-      font-size: 12px !important; font-weight: 600 !important; color: #312E81 !important;
+      font-size: 12px !important; font-weight: 600 !important; color:var(--link-color) !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
-    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color: #4338CA !important; }
+    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color:var(--link-color) !important; }
     .annotate-decision-resolved .annotate-decision-prompt { margin-bottom: 5px !important; }
     .annotate-decision-text {
-      font-size: 11.5px !important; color: #334155 !important; line-height: 1.5 !important;
+      font-size: 11.5px !important; color: var(--color-base-content) !important; line-height: 1.5 !important;
       margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
     }
     /* Options are rows (radio-tile layout): label, its consequence under it,
@@ -836,7 +843,7 @@ function ensureStripStyle() {
     .annotate-decision-btn {
       font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
-      color: #FFF !important; font-family: inherit !important;
+      color: var(--color-base-100) !important; font-family: inherit !important;
       /* An option label longer than the strip used to force the flex line
          wider than the page; the button and its consequence line then ran
          off the right edge (user-reported). */
@@ -845,11 +852,11 @@ function ensureStripStyle() {
     }
     .annotate-decision-btn:hover { filter: brightness(.92) !important; }
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
-    .annotate-decision-accept { background: #16A34A !important; }
-    .annotate-decision-reject { background: #DC2626 !important; }
-    .annotate-decision-comment, .annotate-decision-submit { background: #4338CA !important; }
+    .annotate-decision-accept { background: color-mix(in oklab,var(--color-success) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-reject { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-comment, .annotate-decision-submit { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
     /* D2 "Request changes": amber, deliberately not Reject's red. */
-    .annotate-decision-changes { background: #B45309 !important; }
+    .annotate-decision-changes { background: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
     /* display is intentionally NOT set here: it's driven entirely by the
        inline style.setProperty(..., 'important') toggle in JS (open/closed),
        which an author-stylesheet !important rule here would permanently
@@ -857,77 +864,77 @@ function ensureStripStyle() {
     .annotate-decision-form { margin-top: 6px !important; flex-direction: column !important; gap: 5px !important; }
     .annotate-decision-ta {
       width: 100% !important; min-height: 40px !important; padding: 5px 7px !important;
-      border: 1px solid #C7D2FE !important; border-radius: 5px !important; font-size: 11px !important;
-      font-family: inherit !important; resize: vertical !important; color: #0F172A !important;
-      background: #FFF !important; box-sizing: border-box !important; line-height: 1.4 !important;
+      border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 5px !important; font-size: 11px !important;
+      font-family: inherit !important; resize: vertical !important; color: var(--color-base-content) !important;
+      background: var(--color-base-100) !important; box-sizing: border-box !important; line-height: 1.4 !important;
     }
-    .annotate-decision-ta:focus { outline: none !important; border-color: #4338CA !important; }
+    .annotate-decision-ta:focus { outline: none !important; border-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
     .annotate-decision-feedback {
       margin-top: 5px !important; font-size: 10.5px !important; font-weight: 600 !important;
-      color: #4338CA !important; min-height: 12px !important;
+      color:var(--link-color) !important; min-height: 12px !important;
     }
-    .annotate-decision-feedback.is-error { color: #DC2626 !important; }
+    .annotate-decision-feedback.is-error { color:var(--error-text) !important; }
     .annotate-decision-feedback:empty { min-height: 0 !important; margin-top: 0 !important; }
     .annotate-decision-delivery {
-      font-size: 11px !important; color: #64748B !important; margin-left: 8px !important;
+      font-size: 11px !important; color: var(--muted) !important; margin-left: 8px !important;
     }
     .annotate-verdict-chip {
       display: inline-block !important; font-size: 11px !important; font-weight: 700 !important;
       padding: 4px 10px !important; border-radius: 10px !important;
     }
-    .annotate-verdict-chip.verdict-accept { background: #DCFCE7 !important; color: #15803D !important; }
-    .annotate-verdict-chip.verdict-reject { background: #FEF2F2 !important; color: #DC2626 !important; }
-    .annotate-verdict-chip.verdict-comment { background: #E0E7FF !important; color: #4338CA !important; }
-    .annotate-verdict-chip.verdict-changes { background: #FEF3C7 !important; color: #B45309 !important; }
+    .annotate-verdict-chip.verdict-accept { background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; color:var(--success-text) !important; }
+    .annotate-verdict-chip.verdict-reject { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)) !important; color:var(--error-text) !important; }
+    .annotate-verdict-chip.verdict-comment { background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; color:var(--link-color) !important; }
+    .annotate-verdict-chip.verdict-changes { background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important; color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
     .annotate-decision-change, .annotate-decision-cancel {
-      background: none !important; color: #4338CA !important; font-weight: 600 !important;
+      background: none !important; color:var(--link-color) !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 6px !important; text-decoration: none !important;
     }
     .annotate-decision-change:hover, .annotate-decision-cancel:hover { filter: none !important; text-decoration: underline !important; }
     .annotate-decision-changing-note {
       display: flex !important; align-items: center !important; justify-content: space-between !important;
-      gap: 8px !important; font-size: 11px !important; font-weight: 600 !important; color: #4338CA !important;
-      background: #E0E7FF !important; border-radius: 6px !important; padding: 5px 8px !important;
+      gap: 8px !important; font-size: 11px !important; font-weight: 600 !important; color:var(--link-color) !important;
+      background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 6px !important; padding: 5px 8px !important;
       margin-bottom: 6px !important;
     }
     .annotate-strip-anchor-label {
-      font-size: 10px !important; font-weight: 700 !important; color: #64748B !important;
+      font-size: 10px !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important;
       margin: 0 0 5px !important; white-space: normal !important;
     }
     /* v2.19 fields. Context is always shown in full: it is what the
        reviewer needs to decide, so it never sits behind a disclosure. */
     .annotate-decision-context {
-      font-size: 11px !important; color: #475569 !important; line-height: 1.5 !important;
+      font-size: 11px !important; color: var(--muted) !important; line-height: 1.5 !important;
       margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
       font-weight: 400 !important;
     }
     .annotate-decision-reco-line {
-      font-size: 11px !important; color: #065F46 !important; font-weight: 600 !important;
+      font-size: 11px !important; color:var(--success-text) !important; font-weight: 600 !important;
       line-height: 1.4 !important; margin: 0 0 6px !important;
     }
     .annotate-decision-reco-line b { font-weight: 800 !important; }
     /* Quoted excerpt of the element the card is about, read from this page. */
     .annotate-excerpt {
-      margin: 0 0 8px !important; padding: 5px 9px !important; background: #FFF !important;
-      border: none !important; border-left: 3px solid #A5B4FC !important; border-radius: 0 6px 6px 0 !important;
+      margin: 0 0 8px !important; padding: 5px 9px !important; background: var(--color-base-100) !important;
+      border: none !important; border-left: 3px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 0 6px 6px 0 !important;
       min-width: 0 !important; max-width: 100% !important; box-sizing: border-box !important;
     }
     .annotate-excerpt-src {
-      font-size: 9.5px !important; font-weight: 700 !important; color: #64748B !important;
+      font-size: 9.5px !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important; margin: 0 0 2px !important;
     }
     .annotate-excerpt-text {
       margin: 0 !important; padding: 0 !important; border: none !important; quotes: none !important;
       font-size: 11px !important; font-style: normal !important; font-weight: 400 !important;
-      color: #334155 !important; line-height: 1.5 !important; white-space: pre-line !important;
+      color: var(--color-base-content) !important; line-height: 1.5 !important; white-space: pre-line !important;
       word-break: break-word !important; overflow-wrap: anywhere !important; background: none !important;
       display: -webkit-box !important; -webkit-box-orient: vertical !important; -webkit-line-clamp: 4 !important;
       overflow: hidden !important;
     }
     .annotate-excerpt.is-open .annotate-excerpt-text { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
     .annotate-excerpt-more {
-      font-size: 10.5px !important; font-weight: 600 !important; color: #4338CA !important;
+      font-size: 10.5px !important; font-weight: 600 !important; color:var(--link-color) !important;
       background: none !important; border: none !important; padding: 2px 0 !important; margin: 2px 0 0 !important;
       cursor: pointer !important; font-family: inherit !important;
     }
@@ -938,38 +945,38 @@ function ensureStripStyle() {
       font-size: 9px !important; font-weight: 700 !important; padding: 2px 7px !important; border-radius: 8px !important;
       text-transform: uppercase !important; letter-spacing: .04em !important; white-space: nowrap !important;
     }
-    .annotate-chip-impact-low { background: #F1F5F9 !important; color: #475569 !important; }
-    .annotate-chip-impact-medium { background: #FEF3C7 !important; color: #B45309 !important; }
-    .annotate-chip-impact-high { background: #FEE2E2 !important; color: #B91C1C !important; }
-    .annotate-chip-blocking { background: #312E81 !important; color: #FFF !important; }
+    .annotate-chip-impact-low { background: var(--color-base-200) !important; color: var(--muted) !important; }
+    .annotate-chip-impact-medium { background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important; color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
+    .annotate-chip-impact-high { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)) !important; color:var(--error-text) !important; }
+    .annotate-chip-blocking { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; color: var(--color-base-100) !important; }
     .annotate-decision-btns > .annotate-decision-btn {
       display: block !important; width: 100% !important; box-sizing: border-box !important;
-      background: #FFF !important; color: #1E1B4B !important; text-align: left !important;
-      border: 1px solid #C7D2FE !important; border-left: 4px solid #94A3B8 !important;
+      background: var(--color-base-100) !important; color:var(--link-color) !important; text-align: left !important;
+      border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-left: 4px solid var(--muted) !important;
       padding: 7px 10px !important; font-weight: 700 !important;
     }
     .annotate-decision-btns > .annotate-decision-btn:hover {
-      filter: none !important; background: #F5F7FF !important;
-      border-top-color: #818CF8 !important; border-right-color: #818CF8 !important; border-bottom-color: #818CF8 !important;
+      filter: none !important; background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important;
+      border-top-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important; border-right-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important; border-bottom-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important;
     }
-    .annotate-decision-btns > .annotate-decision-accept { border-left-color: #16A34A !important; }
-    .annotate-decision-btns > .annotate-decision-reject { border-left-color: #DC2626 !important; }
-    .annotate-decision-btns > .annotate-decision-comment { border-left-color: #4338CA !important; }
-    .annotate-decision-btns > .annotate-decision-changes { border-left-color: #B45309 !important; }
-    .annotate-decision-btns > .annotate-decision-custom { border-left-color: #475569 !important; }
-    .annotate-decision-btns > .annotate-decision-custom.annotate-style-primary { border-left-color: #4338CA !important; }
-    .annotate-decision-btns > .annotate-decision-custom.annotate-style-danger { border-left-color: #DC2626 !important; }
+    .annotate-decision-btns > .annotate-decision-accept { border-left-color: color-mix(in oklab,var(--color-success) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-reject { border-left-color: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-comment { border-left-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-changes { border-left-color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-custom { border-left-color: var(--muted) !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-primary { border-left-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-danger { border-left-color: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
     .annotate-opt-head { display: flex !important; align-items: center !important; gap: 6px !important; flex-wrap: wrap !important; }
     .annotate-opt-label { font-weight: 700 !important; }
     .annotate-decision-consequence {
       display: block !important; margin-top: 2px !important;
-      font-size: 10.5px !important; font-weight: 400 !important; color: #64748B !important; line-height: 1.4 !important;
+      font-size: 10.5px !important; font-weight: 400 !important; color: var(--muted) !important; line-height: 1.4 !important;
       white-space: pre-wrap !important; word-break: break-word !important;
     }
     .annotate-decision-rec {
-      font-size: 8.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
-      text-transform: uppercase !important; background: #D1FAE5 !important; color: #065F46 !important;
-      border: 1px solid #A7F3D0 !important; padding: 1px 6px !important; border-radius: 999px !important;
+      font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0 !important;
+      text-transform: none !important; background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; color:var(--success-text) !important;
+      border: 1px solid color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
     .annotate-decision-say-row {
       display: flex !important; align-items: center !important; gap: 8px !important;
@@ -977,23 +984,23 @@ function ensureStripStyle() {
     }
     .annotate-decision-say {
       font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
-      border-radius: 6px !important; border: 1px solid #C7D2FE !important; cursor: pointer !important;
-      background: #FFF !important; color: #4338CA !important; font-family: inherit !important;
+      border-radius: 6px !important; border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; cursor: pointer !important;
+      background: var(--color-base-100) !important; color:var(--link-color) !important; font-family: inherit !important;
       max-width: 100% !important; text-align: left !important; line-height: 1.35 !important;
       white-space: normal !important; overflow-wrap: anywhere !important;
     }
-    .annotate-decision-say:hover { background: #E0E7FF !important; filter: none !important; }
-    .annotate-decision-say-hint { font-size: 10.5px !important; color: #64748B !important; }
+    .annotate-decision-say:hover { background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; filter: none !important; }
+    .annotate-decision-say-hint { font-size: 10.5px !important; color: var(--muted) !important; }
     .annotate-decision-commented { margin: 0 0 6px !important; }
-    .annotate-decision-commented-txt { font-size: 10.5px !important; color: #64748B !important; margin-left: 6px !important; }
-    .annotate-decision-custom { background: #475569 !important; }
-    .annotate-decision-custom.annotate-style-primary { background: #4338CA !important; }
-    .annotate-decision-custom.annotate-style-danger { background: #DC2626 !important; }
+    .annotate-decision-commented-txt { font-size: 10.5px !important; color: var(--muted) !important; margin-left: 6px !important; }
+    .annotate-decision-custom { background: var(--muted) !important; }
+    .annotate-decision-custom.annotate-style-primary { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-custom.annotate-style-danger { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
     /* Evidence: a collapsed "Evidence (n)" disclosure; each item previews its
        target inside the card, and "Go to" jumps there leaving "Back to #N". */
-    .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: 10.5px !important; color: #64748B !important; }
+    .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: 10.5px !important; color: var(--muted) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link {
-      font-size: 10.5px !important; font-weight: 700 !important; color: #4338CA !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color:var(--link-color) !important;
       background: none !important; border: none !important; padding: 2px 0 !important;
       cursor: pointer !important; font-family: inherit !important; display: inline-flex !important;
       align-items: center !important; gap: 4px !important; text-align: left !important;
@@ -1011,13 +1018,13 @@ function ensureStripStyle() {
     }
     .annotate-decision-evidence-list[hidden], .annotate-decision-evidence-preview[hidden] { display: none !important; }
     .annotate-decision-evidence-preview {
-      margin: 2px 0 2px !important; padding: 6px 8px !important; background: #F8FAFC !important;
-      border: 1px solid #E2E8F0 !important; border-radius: 6px !important; box-sizing: border-box !important;
+      margin: 2px 0 2px !important; padding: 6px 8px !important; background: var(--color-base-200) !important;
+      border: 1px solid var(--color-base-300) !important; border-radius: 6px !important; box-sizing: border-box !important;
     }
     .annotate-decision-evidence-preview .annotate-excerpt { margin: 0 0 6px !important; }
-    .annotate-decision-evidence-missing { font-style: italic !important; color: #94A3B8 !important; margin: 0 0 6px !important; }
+    .annotate-decision-evidence-missing { font-style: italic !important; color: var(--muted) !important; margin: 0 0 6px !important; }
     .annotate-decision-evidence-goto {
-      font-size: 10.5px !important; font-weight: 700 !important; color: #FFF !important; background: #4338CA !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color: var(--color-base-100) !important; background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
       border: none !important; border-radius: 5px !important; padding: 3px 10px !important;
       cursor: pointer !important; font-family: inherit !important;
     }
@@ -1027,28 +1034,28 @@ function ensureStripStyle() {
     .annotate-back-tr > td { padding: 3px 0 !important; border: none !important; background: transparent !important; }
     .annotate-back-pill {
       font: 700 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      color: #FFF !important; background: #312E81 !important; border: none !important; border-radius: 999px !important;
+      color: var(--color-base-100) !important; background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; border: none !important; border-radius: 999px !important;
       padding: 5px 12px !important; cursor: pointer !important; box-shadow: 0 2px 8px rgba(49,46,129,.3) !important;
       line-height: 1.3 !important; white-space: nowrap !important;
     }
-    .annotate-back-pill:hover { background: #4338CA !important; }
+    .annotate-back-pill:hover { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
     .annotate-back-abs { position: absolute !important; pointer-events: auto !important; z-index: 16 !important; }
     .annotate-decision-note-toggle {
-      font-size: 10.5px !important; color: #64748B !important; background: none !important;
+      font-size: 10.5px !important; color: var(--muted) !important; background: none !important;
       border: none !important; padding: 2px 0 !important; cursor: pointer !important;
       font-family: inherit !important; margin-top: 6px !important; display: block !important;
     }
-    .annotate-decision-note-toggle:hover { color: #4338CA !important; filter: none !important; }
+    .annotate-decision-note-toggle:hover { color:var(--link-color) !important; filter: none !important; }
     .annotate-decision-note-form { margin-top: 4px !important; }
     .annotate-decision-note-form[hidden] { display: none !important; }
     .annotate-decision-pending {
       display: inline-block !important; font-size: 9.5px !important; font-weight: 700 !important;
-      padding: 2px 8px !important; border-radius: 8px !important; background: #FEF3C7 !important;
-      color: #B45309 !important; border: 1px dashed #F59E0B !important; text-transform: uppercase !important;
+      padding: 2px 8px !important; border-radius: 8px !important; background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important;
+      color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; border: 1px dashed color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; text-transform: uppercase !important;
       letter-spacing: .04em !important; margin-left: 8px !important; vertical-align: middle !important;
     }
     .annotate-decision-sendnow {
-      background: none !important; color: #4338CA !important; font-weight: 600 !important;
+      background: none !important; color:var(--link-color) !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 4px !important; font-size: 10.5px !important;
     }
     .annotate-decision-sendnow:hover { filter: none !important; text-decoration: underline !important; }
@@ -1260,7 +1267,8 @@ function makeOptionBtn(o, cls, recommended) {
     b.title = 'Recommended by the agent';
     const badge = document.createElement('span');
     badge.className = 'annotate-decision-rec';
-    badge.textContent = 'Recommended';
+    badge.textContent = 'rec';
+    badge.title = 'Recommended';
     head.appendChild(badge);
   }
   b.appendChild(head);
@@ -1501,6 +1509,7 @@ function buildDecisionItemEl(entry) {
       const changeBtn = makeStripBtn('↺ Change', 'annotate-decision-change');
       changeBtn.addEventListener('click', () => {
         stripChanging[id] = true;
+        stripNoteOpen[id] = true;
         renderDecisionStrips();
       });
       item.appendChild(changeBtn);
@@ -1572,26 +1581,6 @@ function buildDecisionItemEl(entry) {
   const opts = stripDecisionOptions(dr);
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
-  if (rec) {
-    const recId = stripCanonicalOptionId(rec);
-    const recOpt = opts.find(o => o.id === recId);
-    const recLine = document.createElement('div');
-    recLine.className = 'annotate-decision-reco-line';
-    recLine.appendChild(document.createTextNode('Recommended: '));
-    const recName = document.createElement('b');
-    recName.textContent = recOpt ? recOpt.plain : (DECISION_PLAIN_LABEL[recId] || rec);
-    recLine.appendChild(recName);
-    item.appendChild(recLine);
-  }
-
-  // The first evidence target, quoted. The strip's own anchor is the element
-  // right above it, so it is never quoted here (the rail card quotes it).
-  const firstTarget = ev.length ? findAnchorEl(ev[0].anchor) : null;
-  if (firstTarget) {
-    const text = excerptText(firstTarget);
-    if (text) item.appendChild(buildExcerptEl(id + '\nfirst', text, excerptSource(ev[0].anchor)));
-  }
-
   const btnRow = document.createElement('div');
   btnRow.className = 'annotate-decision-btns';
   item.appendChild(btnRow);
@@ -1671,19 +1660,18 @@ function buildDecisionItemEl(entry) {
   if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
 
   // Free-text answer. A reviewer reply on an unanswered card also answers it.
-  if (!opts.some(o => o.id === 'comment') && !entry.decisionVerdict) {
+  if (!opts.some(o => o.id === 'comment')) {
     const sayRow = document.createElement('div');
     sayRow.className = 'annotate-decision-say-row';
     const sayBtn = document.createElement('button');
     sayBtn.type = 'button';
     sayBtn.className = 'annotate-decision-say';
-    sayBtn.textContent = '💬 Answer in words';
+    sayBtn.textContent = 'Answer in words';
     sayBtn.title = 'Answer this question in your own words';
     const sayHint = document.createElement('span');
     sayHint.className = 'annotate-decision-say-hint';
     sayHint.textContent = 'counts as answered';
     sayRow.appendChild(sayBtn);
-    sayRow.appendChild(sayHint);
     item.appendChild(sayRow);
 
     const sayForm = document.createElement('div');
@@ -1718,7 +1706,7 @@ function buildDecisionItemEl(entry) {
   }
 
   // v2.19: optional note under Accept/Reject
-  if (opts.some(o => o.id === 'accept' || o.id === 'reject')) {
+  if (opts.some(o => !['comment', 'changes'].includes(o.id))) {
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'annotate-decision-note-toggle';
@@ -1727,7 +1715,7 @@ function buildDecisionItemEl(entry) {
     noteTa = document.createElement('textarea');
     noteTa.className = 'annotate-decision-ta';
     noteTa.rows = 2;
-    noteTa.placeholder = 'Optional note sent with Accept / Reject…';
+    noteTa.placeholder = 'Explain your choice…';
     noteTa.value = stripNoteText[id] || '';
     noteTa.addEventListener('input', () => { stripNoteText[id] = noteTa.value; });
     noteForm.appendChild(noteTa);
@@ -1849,9 +1837,9 @@ function ensureCardStateStyle() {
     .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
       font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .02em; }
-    .annotate-card-state.review { background: #FEF2F2; color: #DC2626; }
-    .annotate-card-state.waiting { background: #F1F5F9; color: #64748B; }
-    .annotate-card-state.done { background: #DCFCE7; color: #15803D; }
+    .annotate-card-state.review { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)); color:var(--error-text); }
+    .annotate-card-state.waiting { background: var(--color-base-200); color: var(--muted); }
+    .annotate-card-state.done { background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)); color:var(--success-text); }
   `;
   document.head.appendChild(style);
 }
@@ -1941,14 +1929,14 @@ function ensureGotoHighlightStyle() {
   style.id = 'goto-highlight-style';
   style.textContent = `
     .goto-highlight{
-      outline: 3px solid #F59E0B !important;
+      outline: 3px solid color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important;
       outline-offset: 2px;
       background: rgba(245,158,11,.14) !important;
       border-radius: 4px;
       animation: gotoHighlightPulse 1.1s ease-in-out 2;
       transition: outline-color .3s, background .3s;
     }
-    svg .goto-highlight-svg{ stroke:#F59E0B !important; stroke-width:3px !important; }
+    svg .goto-highlight-svg{ stroke:color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; stroke-width:3px !important; }
     @keyframes gotoHighlightPulse{
       0%,100%{ box-shadow: 0 0 0 0 rgba(245,158,11,.35); }
       50%{ box-shadow: 0 0 0 6px rgba(245,158,11,0); }
@@ -2199,15 +2187,15 @@ function ensureUnchangedStyle() {
       display: flex !important; align-items: baseline !important; gap: 4px 10px !important; flex-wrap: wrap !important;
       width: 100% !important; box-sizing: border-box !important; text-align: left !important;
       font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      color: #334155 !important; background: #F8FAFC !important; border: 1px dashed #CBD5E1 !important;
+      color: var(--color-base-content) !important; background: var(--color-base-200) !important; border: 1px dashed var(--color-base-300) !important;
       border-radius: 8px !important; padding: 8px 12px !important; cursor: pointer !important; margin: 0 !important;
     }
-    .annotate-unchanged-toggle:hover { background: #F1F5F9 !important; border-color: #94A3B8 !important; }
-    .annotate-unchanged-toggle:focus-visible { outline: 2px solid #4338CA !important; outline-offset: 1px !important; }
-    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: #64748B; transition: transform .12s; align-self: center; }
+    .annotate-unchanged-toggle:hover { background: var(--color-base-200) !important; border-color: var(--muted) !important; }
+    .annotate-unchanged-toggle:focus-visible { outline: 2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; outline-offset: 1px !important; }
+    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: var(--muted); transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-size: 17px !important; font-weight: 700 !important; color: #1F2937 !important; }
-    .annotate-unchanged-note { font-weight: 500 !important; color: #64748B !important; font-size: 12.5px !important; }
+    .annotate-unchanged-title { font-size: 17px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 12.5px !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
     }
@@ -2331,7 +2319,9 @@ function wireBridge() {
     if (!PARENT_ORIGIN || e.origin !== PARENT_ORIGIN || e.source !== window.parent) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'annotate:scroll-to') {
+    if (data.type === 'annotate:theme' && ['dark', 'light'].includes(data.theme)) {
+      document.documentElement.dataset.theme = data.theme;
+    } else if (data.type === 'annotate:scroll-to') {
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};

@@ -1,5 +1,13 @@
 # agent-annotate — changelog
 
+## 2.21.0
+
+- One canonical project workspace across providers and worktrees; concise progress updates and no-op saves.
+- Shared daisyUI dark/light UI, Progress/Feedback tabs, short supporting tabs, accessible named owner, editable decision explanations.
+- Default Tailscale Funnel with private external review links and Copy link; scoped route migration and cleanup.
+- Submitted-round-only notifications, stable cross-provider decisions and reviewer identity, complete packaged skill references.
+
+
 The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.

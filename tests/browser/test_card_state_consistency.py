@@ -18,7 +18,9 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from agent_annotate.pagegen import EXAMPLE, generate  # noqa: E402
+from agent_annotate.pagegen import generate  # noqa: E402
+
+EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
@@ -102,6 +104,8 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
                 '.annotate-decision-strip[data-strip-anchor="d:q2"]').inner_text()
 
             # Same words on both sides, item by item.
+            page.locator('[data-workspace-tab="feedback"]').click()
+            page.locator('[data-filter="all"]').click()
             for cid, anchor in (("withdrawn-1", "d:q1"), ("accepted-2", "d:q2"),
                                 ("open-3", "d:q3")):
                 rail = page.locator(f'.citem[data-comment-id="{cid}"] .citem-status')

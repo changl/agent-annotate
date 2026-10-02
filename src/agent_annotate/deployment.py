@@ -128,7 +128,8 @@ def _verify_server(record: dict, pid: int, expected: dict | None) -> dict:
 
 
 def _restart(project: str, slug: str, python: Path, expected: dict | None,
-             *, argv: list[str] | None = None, provenance: dict | None = None) -> dict:
+             *, argv: list[str] | None = None, provenance: dict | None = None,
+             mount: str | None = None) -> dict:
     with cli._flock(cli._state_lock_path(project)):
         state = cli._load_state_for_project(project)
         record = (state.get("slugs") or {}).get(slug)
@@ -140,6 +141,8 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
         _stop(record, before)  # Immediate second fresh process/listener proof.
         started = None
         try:
+            if mount is not None:
+                record["public_base_path"] = mount
             command = argv or _arguments(record, python)
             if argv is None:
                 for flag in ("--local-author", "--local-author-name"):
@@ -179,9 +182,9 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
                                   project=project, slug=slug, rolled_back=rollback_error is None) from exc
 
 
-def restart_record(project: str, slug: str, python: Path | None = None) -> dict:
+def restart_record(project: str, slug: str, python: Path | None = None, *, mount: str | None = None) -> dict:
     python = Path(python) if python is not None else Path(sys.executable)
-    return _restart(project, slug, python, _target_manifest(python))
+    return _restart(project, slug, python, _target_manifest(python), mount=mount)
 
 
 def _restore_stopped(project: str, slug: str, original: dict) -> None:

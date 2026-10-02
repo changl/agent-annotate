@@ -275,7 +275,9 @@ def test_atomic_writes_use_unique_same_directory_temporary_files_and_fsync(tmp_p
     monkeypatch.setattr(project_state.os, "replace", record_replace)
     monkeypatch.setattr(project_state.os, "fsync", record_fsync)
     project_state.save_project(tmp_path, _project())
-    project_state.save_project(tmp_path, _project())
+    changed = _project()
+    changed["title"] = "Meaningful change"
+    project_state.save_project(tmp_path, changed)
     assert len(replacements) == 2
     assert replacements[0][0] != replacements[1][0]
     assert all(source.parent == tmp_path for source, _ in replacements)

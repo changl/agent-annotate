@@ -1,45 +1,13 @@
 #!/usr/bin/env python3
-"""check-comment-bus — UserPromptSubmit hook for the annotate skill.
+"""UserPromptSubmit notices for submitted rounds and immediate feedback.
 
-Reads Claude Code's hook payload on stdin (``session_id``, ``cwd``), scans
-every ``<bus root>/<project>/<slug>.ndjson`` for reviewer activity this
-SESSION has not been told about, and prints one line per slug.
-
-Runs two ways: as ``annotate hook-check`` (imported, roots from paths.py) and
-as a bare script exec'd by ``check-comment-bus.sh`` next to it (no package
-import; the same default roots are spelled out below so the two can never
-disagree about where a cursor lives).
-
-Three properties earned by v2.19, each fixing a measured failure:
-
-1.  Per-session cursors. The v2.18 hook advanced ONE shared cursor per slug —
-    the same file `annotate inbox --unread` reads — so the first session to get
-    a prompt consumed everybody's delta and every later `inbox --unread`
-    answered "(no new events)". 22 of 22 observed calls. Cursors now live under
-    ``state/hook-offsets/<session>/<project>/<slug>.offset``, and the hook
-    never writes the inbox cursor. It only READS the inbox cursor, so that
-    `inbox --unread` consuming the backlog also stops the notices: the scan
-    starts at max(hook cursor, that session's inbox cursor).
-
-2.  Owner targeting. `publish` stamps the publishing session into the registry.
-    A slug owned by another session is skipped (ANNOTATE_HOOK_ALL=1 overrides);
-    a slug with no owner recorded notifies everyone, as before. 8 of 32
-    deliveries used to land in a session that did not own the page.
-
-3.  Reviewer-only counts with verdicts. Bookkeeping events (seen_updated,
-    notice_emitted, agent-authored creates) are not "new comments"; they used
-    to inflate the count roughly 2x. The notice now names the comment ids, the
-    verdicts, and how many cards are still undecided, so a session can tell a
-    finished round from a round in progress without spending a turn.
-
-Always exits 0 — a prompt is never blocked. Overridable for tests:
-ANNOTATE_BUS_ROOT, ANNOTATE_STATE_ROOT, ANNOTATE_HOOK_ALL, and
-ANNOTATE_HOOK_DRY_RUN=1, which prints what it would say and writes nothing at
-all — no cursor, no bus event, no log line. That is the only safe way to time
-this against the real buses.
+Deferred decision clicks stay silent until Finish review or Send now. Each
+owner gets one concise notice per page; reviewer prose remains in the inbox.
+Hook cursors are per session and never consume the independent inbox cursor.
+Bare-script and module invocation use the same roots. A prompt is never blocked.
+ANNOTATE_HOOK_DRY_RUN=1 writes nothing; ANNOTATE_HOOK_ALL=1 is diagnostic only.
 """
 
-import calendar
 import json
 import os
 import select
@@ -74,16 +42,10 @@ LOG_FILE = os.path.join(STATE, "logs", "check-comment-bus.log")
 DRY_RUN = os.environ.get("ANNOTATE_HOOK_DRY_RUN") == "1"
 
 STALE_LOCK_SECONDS = 60
-MID_ROUND_SECONDS = 180
-TEXT_CLIP = 60
 # The notice is prepended to a prompt, so it is charged to every turn. A page
 # with twenty verdicts must not spend two kilobytes of context saying so; the
 # ids are there to be acted on, and `inbox --unread` has the rest.
 MAX_VERDICTS = 6
-# Verdicts whose note carries the instruction, so the notice prints it.
-# "comment" is the pre-D2 spelling of "changes" and still arrives from a
-# page that was loaded before the server was upgraded.
-TEXT_VERDICTS = ("changes", "comment")
 
 # Events that are machinery, not a reviewer saying something.
 BOOKKEEPING_EVENTS = {
@@ -106,10 +68,6 @@ BOOKKEEPING_EVENTS = {
     # The reviewer cleared their pending verdicts without sending. Nothing was
     # decided and no push follows, so there is nothing for a session to act on.
     "round_discarded",
-    # A session_push mirrors the comment_updated that caused it, 1:1, and
-    # carries the same author and verdict. Counting both is most of the ~2x
-    # inflation the bus audit measured ("25 new events" for six verdicts).
-    "session_push",
 }
 
 _lock_dir = None
@@ -301,26 +259,6 @@ def _load_cards(slug_dir: str) -> dict:
     return cards
 
 
-def _parse_ts(value):
-    """Bus timestamps are UTC ('…Z'); timegm, not mktime, or every comparison
-    is off by the local offset."""
-    if not isinstance(value, str) or not value:
-        return None
-    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ"):
-        try:
-            return float(calendar.timegm(time.strptime(value, fmt)))
-        except ValueError:
-            continue
-    return None
-
-
-def _clip(text: str, n: int = TEXT_CLIP) -> str:
-    text = " ".join((text or "").split())
-    if len(text) <= n:
-        return text
-    return text[: n - 1] + "…"
-
-
 def _is_reviewer_event(ev: dict) -> bool:
     """A human said something. Not machinery, not this agent's own writes.
 
@@ -330,8 +268,11 @@ def _is_reviewer_event(ev: dict) -> bool:
     just because nobody remembered to list it above.
     """
     name = ev.get("event")
-    if not name or name in BOOKKEEPING_EVENTS:
+    if not name or name in BOOKKEEPING_EVENTS or ev.get("deferred"):
         return False
+    if name == "session_push" and (ev.get("round") or ev.get("decision")
+                                   or not (ev.get("comment_ids") or ev.get("comment_count"))):
+        return False  # Submitted rounds and immediate verdicts have their own events.
     author = ev.get("author") or ev.get("by") or ""
     if not isinstance(author, str) or not author.strip():
         return False
@@ -356,20 +297,16 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
     verdict_bits = []
     seen = set()
     for ev in events:
-        verdict = ev.get("decision")
-        cid = ev.get("comment_id")
-        # One line per card, keyed on the comment id. An event without one is a
-        # delivery record for a verdict already listed.
-        if not verdict or not cid or cid in seen:
+        ids = [ev["comment_id"]] if ev.get("comment_id") else ev.get("comment_ids", [])
+        if not isinstance(ids, list):
             continue
-        seen.add(cid)
-        text = (cards.get(cid) or {}).get("text") or ev.get("text") or ""
-        # D2: "changes" (Request changes) is the text verdict; "comment" is
-        # its pre-D2 spelling and still arrives from an already-loaded page.
-        # Both are shown with their note — the note IS the instruction.
-        if verdict in TEXT_VERDICTS and text:
-            verdict_bits.append('%s %s("%s")' % (cid, verdict, _clip(text)))
-        else:
+        for cid in ids:
+            if not isinstance(cid, str) or cid in seen:
+                continue
+            verdict = ev.get("decision") or (cards.get(cid) or {}).get("verdict")
+            if not verdict:
+                continue
+            seen.add(cid)
             verdict_bits.append("%s %s" % (cid, verdict))
 
     total_cards = len(cards)
@@ -385,16 +322,11 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
                      + (f", +{more} more" if more > 0 else ""))
     if total_cards:
         parts.append("; undecided: %d of %d cards" % (undecided, total_cards))
-    parts.append(". Read: %s inbox %s --unread" % (_invocation(), slug))
+    parts.append(". Read: %s inbox %s/%s --unread" % (_invocation(), project, slug))
     line = "".join(parts)
     if round_submitted:
         line = "ROUND SUBMITTED: " + line
 
-    if undecided > 0 and not round_submitted:
-        newest = max((_parse_ts(ev.get("ts")) or 0.0) for ev in events) if events else 0.0
-        if newest and (time.time() - newest) < MID_ROUND_SECONDS:
-            line += (" Reviewer may still be mid-round; wait for round_submitted or "
-                     "the remaining cards before acting.")
     return line
 
 
@@ -475,6 +407,7 @@ def _scan(session_id: str) -> list:
                 continue
 
             events = []
+            announced_ids = set()
             round_submitted = False
             for raw in data.decode("utf-8", errors="replace").splitlines():
                 raw = raw.strip()
@@ -486,10 +419,19 @@ def _scan(session_id: str) -> list:
                     continue
                 if not isinstance(ev, dict):
                     continue
+                if not _is_reviewer_event(ev):
+                    continue
                 if ev.get("event") == "round_submitted":
+                    if not owned_by_me and not hook_all:
+                        continue  # An ownerless review stays queued, not broadcast.
                     round_submitted = True
-                if _is_reviewer_event(ev):
-                    events.append(ev)
+                elif ev.get("event") == "session_push":
+                    pushed = ev.get("comment_ids", [])
+                    if isinstance(pushed, list) and pushed and all(cid in announced_ids for cid in pushed):
+                        continue  # The same non-deferred action already appears above.
+                events.append(ev)
+                if ev.get("comment_id"):
+                    announced_ids.add(ev["comment_id"])
 
             if events:
                 cards = _load_cards(record.get("slug_dir") or "")
@@ -518,6 +460,14 @@ def main():
 
     payload = _read_stdin_payload()
     session_id = _session_id(payload)
+
+    if DRY_RUN:
+        try:
+            for line in _scan(session_id):
+                sys.stdout.write(line + "\n")
+        except Exception:
+            pass
+        _quiet_exit()
 
     for d in (HOOK_OFFSET_ROOT, LOCK_ROOT, os.path.dirname(LOG_FILE)):
         try:

@@ -15,11 +15,11 @@ A transport exposes three functions:
 
 Load by name via `load(name)`. Transports live as sibling modules:
 
+    funnel.py               — default public path via Tailscale Funnel
     cloudflare.py           — Cloudflare Tunnel ingress mutation
     tailscale.py            — `tailscale serve` HTTPS endpoint on the tailnet
     cloudflare_tailscale.py — Cloudflare Tunnel whose origin is the tailnet
-                              endpoint; the only composition that reliably
-                              serves a public page (a loopback origin 502s)
+                              endpoint; legacy compatibility
     local.py                — no-op; just returns http://localhost:<port>/
 """
 

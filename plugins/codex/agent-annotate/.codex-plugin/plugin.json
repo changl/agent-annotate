@@ -1,6 +1,6 @@
 {
   "name": "agent-annotate",
-  "version": "2.20.4",
+  "version": "2.21.0",
   "description": "Interactive annotation pages and feedback delivery for Codex sessions",
   "author": {
     "name": "Chang Lee",
@@ -9,19 +9,26 @@
   "homepage": "https://github.com/changl/agent-annotate",
   "repository": "https://github.com/changl/agent-annotate",
   "license": "MIT",
-  "keywords": ["annotation", "feedback", "coding-agents"],
+  "keywords": [
+    "annotation",
+    "feedback",
+    "coding-agents"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Agent Annotate",
-    "shortDescription": "Review visual artifacts with pinned feedback",
-    "longDescription": "Publish versioned annotation pages, inspect exact feedback anchors, and route push events to an explicitly selected Codex thread.",
+    "shortDescription": "One workspace for progress and feedback",
+    "longDescription": "Share concise project progress and reviewer decisions through one persistent workspace, with submitted feedback delivered to its current Orca owner.",
     "developerName": "Chang Lee",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/changl/agent-annotate",
     "defaultPrompt": [
-      "Publish this as an annotatable review page.",
-      "Show me feedback for the active annotation page."
+      "Use $annotate to update this project's existing workspace.",
+      "Read the submitted feedback in this project's workspace."
     ]
   },
   "mcpServers": "./.mcp.json"

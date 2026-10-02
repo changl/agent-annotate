@@ -67,7 +67,7 @@ def test_local_identity_requires_loopback_peer_and_local_host(identity_server):
 
     status, local = _request(server, "GET", "/review/api/identity", f"localhost:{port}")
     assert status == 200
-    assert local == {"email": "chang@leadory.com", "name": "Chang Lee", "authenticated": True}
+    assert local == {"email": "chang@leadory.com", "name": "Chang Lee", "authenticated": True, "reviewer_authors": ["chang@leadory.com"]}
 
     status, numeric = _request(server, "GET", "/review/api/identity", f"127.0.0.1:{port}")
     assert status == 200
@@ -95,7 +95,7 @@ def test_tailnet_login_identifies_the_reviewer_and_section_comments_work(identit
     status, ident = _request(server, "GET", "/review/api/identity", TAILNET_HOST,
                              headers=TAILNET_LOGIN)
     assert status == 200
-    assert ident == {"email": "changl@gmail.com", "name": "Chang Lee", "authenticated": True}
+    assert ident == {"email": "changl@gmail.com", "name": "Chang Lee", "authenticated": True, "reviewer_authors": ["changl@gmail.com"]}
 
     status, comment = _request(
         server, "POST", "/review/api/comments", TAILNET_HOST, headers=TAILNET_LOGIN,
@@ -145,7 +145,7 @@ def test_oauth_identity_wins_and_local_comment_uses_fallback(identity_server):
         },
     )
     assert status == 200
-    assert oauth == {"email": "oauth@example.com", "name": "OAuth User", "authenticated": True}
+    assert oauth == {"email": "oauth@example.com", "name": "OAuth User", "authenticated": True, "reviewer_authors": ["oauth@example.com"]}
 
     status, comment = _request(
         server,

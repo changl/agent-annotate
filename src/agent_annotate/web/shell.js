@@ -49,7 +49,7 @@ let draftsSaveTimer = null;
 function saveDraftsSoon() {
   clearTimeout(draftsSaveTimer);
   draftsSaveTimer = setTimeout(() => {
-    try { localStorage.setItem('annotate:drafts', JSON.stringify(DRAFTS)); } catch {}
+    try { localStorage.setItem('annotate:drafts:' + location.pathname, JSON.stringify(DRAFTS)); } catch {}
   }, 400);
 }
 function setDraft(key, value) {
@@ -74,6 +74,7 @@ function isMobileLayout() {
 // re-rendered DOM.
 function setMobileSheetOpen(open) {
   document.body.classList.toggle('is-mobile-sheet-open', open);
+  if (open && workspaceView === 'progress') { selectWorkspaceView('feedback'); return; }
   if (open) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
 function isMobileSheetOpen() {
@@ -87,28 +88,19 @@ function normalizeIdentity(payload) {
   const email = payload.email || nested.email || payload.author_email || null;
   const name = payload.name || payload.display_name || nested.name || nested.display_name || null;
   if (!email || email === 'anonymous') return null;
-  return { email: String(email).trim(), name: name ? String(name).trim() : null };
+  const reviewerAuthors = Array.isArray(payload.reviewer_authors) ? payload.reviewer_authors.filter(v => typeof v === 'string') : [String(email).trim()];
+  return { email: String(email).trim(), name: name ? String(name).trim() : null, reviewer_authors: reviewerAuthors };
 }
 
 function authorValue(identity) {
   if (!identity) return null;
+  if (identity.email.startsWith('reviewer:')) return identity.name || 'Reviewer';
   return identity.name && identity.name !== identity.email
     ? `${identity.name} <${identity.email}>`
     : identity.email;
 }
 
 async function resolveIdentity() {
-  // Cloudflare Access exposes the identity already established by OAuth.
-  // This same-origin endpoint is unavailable locally, so fall through to
-  // the annotation server's authenticated-header echo.
-  try {
-    const r = await fetch('/cdn-cgi/access/get-identity', { cache: 'no-store', credentials: 'same-origin' });
-    if (r.ok) {
-      const j = await r.json();
-      const identity = normalizeIdentity(j);
-      if (identity) return identity;
-    }
-  } catch {}
   try {
     const r = await fetch(apiUrl('./api/identity'), { cache: 'no-store' });
     if (r.ok) {
@@ -130,13 +122,16 @@ async function resolveIdentity() {
 function updateAuthorIndicator() {
   const ind = document.getElementById('author-ind');
   ind.textContent = IDENTITY
-    ? '\u{1F464} ' + authorValue(IDENTITY)
-    : '\u{1F512} OAuth sign-in required to comment';
-  ind.title = IDENTITY ? 'Identity supplied by OAuth' : 'No OAuth identity was received';
+    ? authorValue(IDENTITY)
+    : 'Review access required';
+  ind.title = IDENTITY ? 'Reviewer identity' : 'Open the private review link';
 }
 
 function authorLabel(record) {
   if (!record) return 'anonymous';
+  const id = record.author_email || record.author || '';
+  if (id.startsWith('reviewer:')) return record.author_name || 'Reviewer';
+  if (id.startsWith('agent:')) return record.author_name || 'Agent';
   if (record.author_name && record.author_email && record.author_name !== record.author_email) {
     return `${record.author_name} <${record.author_email}>`;
   }
@@ -467,6 +462,7 @@ async function apiRoundDiscard() {
 }
 function isRoundPending(c) {
   return !!(c && c.decision && c.decision.round_pending &&
+    IDENTITY && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(c.decision.by) &&
     c.status !== 'archived' && c.status !== 'resolved_in_version');
 }
 function hasDecisionRequest(c) {
@@ -570,7 +566,7 @@ function countsForVersion(version) {
   let review = 0, waiting = 0, done = 0;
   for (const c of all) {
     const cls = classify(c);
-    if (cls === 'review') review++;
+    if (cls === 'review' || isRoundPending(c)) review++;
     else if (cls === 'waiting') waiting++;
     else done++;
   }
@@ -595,8 +591,124 @@ let HAS_SUMMARY = false;
 let SUMMARY_PROJECT = null;
 let SUMMARY_DELIVERY = null;
 let projectSnapshot = '';
+let workspaceView = null;
+let theme = 'dark';
+function applyTheme() {
+  document.documentElement.dataset.theme = theme;
+  const toggle = document.getElementById('theme-toggle');
+  toggle.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  toggle.setAttribute('aria-label', `Use ${theme === 'dark' ? 'light' : 'dark'} theme`);
+  const frame = document.getElementById('content-frame');
+  if (frame && frame.contentWindow && BRIDGE_ORIGIN) frame.contentWindow.postMessage({type:'annotate:theme', theme}, BRIDGE_ORIGIN);
+  const extra = document.getElementById('workspace-extra-frame');
+  if (extra && extra.contentWindow && BRIDGE_ORIGIN) extra.contentWindow.postMessage({type:'annotate:workspace-theme', theme}, BRIDGE_ORIGIN);
+}
+function progressItems() {
+  return (PROJECT.modules || []).filter(m => m.kind !== 'links').flatMap(m => m.items.map(i => [m.id, JSON.stringify(i)]));
+}
+function markProgressSeen() {
+  try { localStorage.setItem('annotate:progress:' + location.pathname, JSON.stringify(progressItems())); } catch {}
+}
+function selectWorkspaceView(id) {
+  workspaceView = id;
+  const extra = (PROJECT.tabs || []).find(t => t.id === id);
+  document.getElementById('main-workspace').hidden = !!extra;
+  document.getElementById('workspace-extra').hidden = !extra;
+  document.body.dataset.workspaceView = extra ? 'extra' : id;
+  if (extra) {
+    const frame = document.getElementById('workspace-extra-frame');
+    const url = new URL(extra.url);
+    url.searchParams.set('embed', '1');
+    if (frame.getAttribute('src') !== url.href) frame.src = url.href;
+    frame.title = extra.label;
+  }
+  if (id === 'progress') {
+    if (!projectPanel.hidden) {
+      projectPanel.open = true;
+      projectPreference(':summary', true);
+      projectPanel.querySelectorAll('.project-module').forEach(node => {
+        const module = (PROJECT.modules || []).find(m => m.id === node.dataset.module);
+        if (module && module.kind !== 'links') { node.open = true; projectPreference(module.id, true); }
+      });
+    }
+    markProgressSeen();
+  }
+  if (id === 'feedback' && isMobileLayout()) setMobileSheetOpen(true);
+  if (id === 'progress') setMobileSheetOpen(false);
+  if (!extra) { mountProjectInDocument(document.getElementById('content-frame')); sendCommentCountsToFrame(); }
+  try { localStorage.setItem('annotate:view:' + location.pathname, id); } catch {}
+  renderWorkspaceTabs();
+}
+function renderWorkspaceTabs() {
+  const nav = document.getElementById('workspace-tabs');
+  if (!nav) return;
+  const keep = new Set((PROJECT.tabs || []).map(t => t.id));
+  nav.querySelectorAll('[data-extra-tab]').forEach(n => { if (!keep.has(n.dataset.workspaceTab)) n.remove(); });
+  for (const tab of PROJECT.tabs || []) {
+    let button = [...nav.querySelectorAll('[data-extra-tab]')].find(n => n.dataset.workspaceTab === tab.id);
+    if (!button) { button = document.createElement('button'); nav.appendChild(button); }
+    button.type = 'button'; button.className = 'tab'; button.setAttribute('role', 'tab');
+    button.dataset.workspaceTab = tab.id; button.dataset.extraTab = '1'; button.textContent = tab.label;
+    button.setAttribute('aria-controls', 'workspace-extra');
+  }
+  const valid = ['progress', 'feedback', ...(PROJECT.tabs || []).map(t => t.id)];
+  if (!valid.includes(workspaceView)) workspaceView = flattenAll(false).length ? 'feedback' : 'progress';
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem('annotate:progress:' + location.pathname) || '[]'); } catch {}
+  const unseen = progressItems().filter(item => !seen.some(old => old[0] === item[0] && old[1] === item[1])).length;
+  for (const [id, count] of [['progress-new', unseen], ['feedback-new', flattenAll(false).filter(inScope).filter(c => readStateOf(c) !== 'read').length]]) {
+    const badge = document.getElementById(id); badge.textContent = count; badge.hidden = count === 0;
+  }
+  nav.querySelectorAll('[data-workspace-tab]').forEach(button => {
+    const active = button.dataset.workspaceTab === workspaceView;
+    button.classList.toggle('tab-active', active); button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+}
+function wireWorkspace() {
+  try { theme = localStorage.getItem('annotate:theme') === 'light' ? 'light' : 'dark'; } catch {}
+  applyTheme();
+  document.getElementById('workspace-extra-frame').addEventListener('load', applyTheme);
+  window.addEventListener('resize', renderOwnerChip);
+  window.addEventListener('message', event => {
+    if (window.parent !== window && event.source === window.parent && event.origin === BRIDGE_ORIGIN
+        && event.data && event.data.type === 'annotate:workspace-theme' && ['dark','light'].includes(event.data.theme)) {
+      theme = event.data.theme; applyTheme();
+    }
+  });
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('annotate:theme', theme); } catch {}
+    applyTheme();
+  });
+  document.getElementById('copy-link-btn').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    try {
+      const response = await fetch('./api/share-link', {cache:'no-store'});
+      const data = await response.json();
+      if (!response.ok || !data.url) return;
+      await navigator.clipboard.writeText(data.url);
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = 'Copy link'; }, 2000);
+    } catch { button.textContent = 'Copy failed'; }
+  });
+  const nav = document.getElementById('workspace-tabs');
+  nav.addEventListener('click', e => {
+    const button = e.target.closest('[data-workspace-tab]');
+    if (button) selectWorkspaceView(button.dataset.workspaceTab);
+  });
+  nav.addEventListener('keydown', e => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+    e.preventDefault();
+    const tabs = [...nav.querySelectorAll('[data-workspace-tab]')];
+    const index = tabs.findIndex(t => t.dataset.workspaceTab === workspaceView);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    selectWorkspaceView(tabs[next].dataset.workspaceTab);
+    nav.querySelector(`[data-workspace-tab="${tabs[next].dataset.workspaceTab}"]`).focus();
+  });
+  if (new URL(location.href).searchParams.get('embed') === '1') document.body.classList.add('workspace-embedded');
+}
 const projectPanel = document.getElementById('project-panel');
-projectPanel.addEventListener('toggle', () => projectPreference(':summary', projectPanel.open));
 function projectPreference(key, value) {
   try {
     const storageKey = 'annotate:project:' + location.pathname + ':' + key;
@@ -605,12 +717,14 @@ function projectPreference(key, value) {
   } catch { return null; }
 }
 function renderProject() {
+  renderWorkspaceTabs();
   const panel = projectPanel;
   const modules = PROJECT.modules || [];
   if (!modules.length) {
     panel.hidden = true;
     panel.innerHTML = '';
     document.getElementById('project-staging').appendChild(panel);
+    mountProjectInDocument(document.getElementById('content-frame'));
     return;
   }
   panel.hidden = false;
@@ -624,26 +738,24 @@ function renderProject() {
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
         return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${esc(item.description)}</span>` : ''}</li>`;
       }
-      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${esc(item.label)}${item.detail ? `<span class="project-detail">${esc(item.detail)}</span>` : ''}</li>`;
+      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${item.url ? `<a href="${escAttr(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>` : esc(item.label)}${item.failed_count ? `<span class="badge badge-error badge-soft failed-pill">failed ${item.failed_count}x</span>` : ''}${item.detail ? `<span class="project-detail">${esc(item.detail)}</span>` : ''}</li>`;
       return `<li>${esc(item.text)}</li>`;
     }).join('');
     return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
   }).join('');
-  panel.querySelectorAll('details').forEach(node => {
-    node.querySelector('summary').addEventListener('click', () => projectPreference(node.dataset.module, !node.open));
-    node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
-  });
   mountProjectInDocument(document.getElementById('content-frame'));
 }
 
 function mountProjectInDocument(frame) {
-  if (projectPanel.hidden || !frame) return;
+  if (!frame) return;
   try {
     const doc = frame.contentDocument;
     if (!doc || !doc.body) return;
     const locationOrigin = frame.contentWindow.location.origin;
     const origin = locationOrigin === 'null' ? frame.contentWindow.origin : locationOrigin;
     if (origin !== BRIDGE_ORIGIN) return;
+    doc.body.classList.toggle('annotate-progress-only', workspaceView === 'progress' && !projectPanel.hidden);
+    if (projectPanel.hidden) return;
     doc.querySelectorAll('#project-panel[data-annotate-project-panel="runtime"]').forEach(node => {
       if (node !== projectPanel) node.remove();
     });
@@ -655,6 +767,11 @@ function mountProjectInDocument(frame) {
       doc.head.appendChild(link);
     }
     doc.body.prepend(projectPanel);
+    // Iframe navigation can discard listeners on adopted nodes; bind after mounting.
+    projectPanel.querySelector(':scope > summary').onclick = () => projectPreference(':summary', !projectPanel.open);
+    projectPanel.querySelectorAll('.project-module').forEach(node => {
+      node.querySelector('summary').onclick = () => projectPreference(node.dataset.module, !node.open);
+    });
   } catch { /* Foreign or unavailable content never receives project data. */ }
 }
 async function loadProject() {
@@ -886,6 +1003,7 @@ function updateMobileFab(total, unread) {
 }
 
 function renderDrawer() {
+  renderWorkspaceTabs();
   renderChips();
   const listEl = document.getElementById('comment-list');
   const empty = document.getElementById('drawer-empty');
@@ -924,7 +1042,7 @@ function renderDrawer() {
 
   let all = flattenAll(false).filter(inScope);
   if (activeFilter !== 'all') {
-    all = all.filter(c => classify(c) === activeFilter);
+    all = all.filter(c => classify(c) === activeFilter || (activeFilter === 'review' && isRoundPending(c)));
   }
 
   all.sort((a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
@@ -1032,7 +1150,7 @@ function goToCommentLocation(anchorId, version, commentId, opts) {
   // the anchor invisibly behind it. Dismiss so the result is immediately
   // visible (mirrors why goToCommentLocation exists at all — R1, "go-to
   // never a silent no-op").
-  if (isMobileLayout()) setMobileSheetOpen(false);
+  if (isMobileLayout() && !(opts && opts.quiet)) setMobileSheetOpen(false);
   highlightedCommentId = commentId;
   // Granular goto: pass the comment's captured inner target (if any) so the
   // adapter highlights the exact element, not just the section container.
@@ -1169,16 +1287,6 @@ function renderDecisionContext(dr) {
   const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
   return ctx ? `<div class="decision-context">${esc(ctx)}</div>` : '';
 }
-// "Recommended: <option>" — the MADR "chosen option" line, stated once.
-function renderDecisionReco(opts, dr) {
-  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
-  if (!rec) return '';
-  const id = canonicalOptionId(rec);
-  const o = opts.find(x => x.id === id);
-  const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
-  return `<div class="decision-reco-line">Recommended: <b>${esc(label)}</b></div>`;
-}
-
 function idFor(key) {
   let h = 5381;
   const s = String(key);
@@ -1205,18 +1313,6 @@ function renderExcerptBox(key, text, source) {
       <blockquote class="decision-excerpt-text" id="${qid}">${esc(text)}</blockquote>
       <button type="button" class="decision-excerpt-more" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>
     </figure>`;
-}
-// The element the card is about, quoted inside the card: the first evidence
-// anchor, else the card's own anchor when that is not the card itself.
-function renderDecisionExcerpt(c, dr) {
-  const x = excerptsFor(c);
-  if (!x) return '';
-  const ev = evidenceList(dr);
-  const first = ev.length ? x[ev[0].anchor] : null;
-  if (first && first.text) return renderExcerptBox(c.id + '|first', first.text, first.name);
-  const own = x[c.anchor_id];
-  if (own && own.text && !own.card) return renderExcerptBox(c.id + '|own', own.text, own.name);
-  return '';
 }
 function renderDecisionMeta(dr) {
   let h = '';
@@ -1322,7 +1418,7 @@ function renderDecisionBlock(c) {
   const wantsChanges = opts.some(o => o.id === 'changes');
   // Free-text answer. Skipped when `comment` is already one of the posed
   // options and on a card that already carries an answer.
-  const showSay = !opts.some(o => o.id === 'comment') && !decisionAnswer(c);
+  const showSay = !opts.some(o => o.id === 'comment');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
   // Options are rows (radio-tile layout): label, a Recommended badge, and the
@@ -1336,7 +1432,7 @@ function renderDecisionBlock(c) {
       : DECISION_BTN_CLASS[o.id];
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
-    const badge = isRec ? '<span class="decision-rec-badge">Recommended</span>' : '';
+    const badge = isRec ? '<span class="decision-rec-badge badge badge-success badge-soft" title="Recommended">rec</span>' : '';
     const cons = o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : '';
     btns += `<button class="decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   }
@@ -1347,16 +1443,15 @@ function renderDecisionBlock(c) {
   const sayOpen = !!decisionSayOpen[c.id];
   const sayHtml = showSay ? `<div class="decision-say-row">
       <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words.">&#128172; Answer in words</button>
-      <span class="decision-say-hint">counts as answered</span>
     </div>
     <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
       <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Answer in your own words&hellip;" rows="2"></textarea>
       <button class="decision-comment-submit" data-decision-action="say-submit" data-id="${escAttr(c.id)}">Send answer</button>
     </div>` : '';
   const noteOpen = !!decisionNoteOpen[c.id];
-  const noteHtml = opts.some(o => o.id === 'accept' || o.id === 'reject') ? `<div class="decision-note-row">
+  const noteHtml = opts.some(o => o.custom || o.id === 'accept' || o.id === 'reject') ? `<div class="decision-note-row">
       <button type="button" class="decision-note-toggle" data-decision-action="note-toggle" data-id="${escAttr(c.id)}" aria-expanded="${noteOpen ? 'true' : 'false'}">${noteOpen ? '&minus; Remove note' : '+ Add a note'}</button>
-      <div class="decision-note-form"${noteOpen ? '' : ' hidden'}><textarea class="decision-note-ta" data-decision-note-ta="${escAttr(c.id)}" placeholder="Optional note sent with Accept / Reject&hellip;" rows="2"></textarea></div>
+      <div class="decision-note-form"${noteOpen ? '' : ' hidden'}><textarea class="decision-note-ta" data-decision-note-ta="${escAttr(c.id)}" placeholder="Explain your choice&hellip;" rows="2"></textarea></div>
     </div>` : '';
   // One card layout on both surfaces (the body strip in adapter.js matches):
   // prompt, chips, context in full, "Recommended: …", a quoted excerpt of
@@ -1366,8 +1461,6 @@ function renderDecisionBlock(c) {
     <div class="decision-prompt">${esc(displayPrompt(c))}</div>
     ${renderDecisionMeta(dr)}
     ${renderDecisionContext(dr)}
-    ${renderDecisionReco(opts, dr)}
-    ${renderDecisionExcerpt(c, dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
     ${renderDecisionEvidence(c, dr)}
     ${sayHtml}
@@ -1465,7 +1558,7 @@ function renderCItem(c) {
       ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
     ${gotoHtml}
-    <div class="citem-txt">${esc(c.text)}</div>
+    <div class="citem-txt">${esc(c.decision_request && String(c.text || '').trim().replace(/\s+/g, ' ') === String(c.decision_request.prompt || '').trim().replace(/\s+/g, ' ') ? '' : c.text)}</div>
     ${agentReplyHtml}
     ${replyHtml}
     <div class="citem-meta">
@@ -1501,6 +1594,8 @@ function wireCardActions(root) {
     if (!c) return;
     markRead([c]);
     highlightedCommentId = c.id;
+    const reply = card.querySelector('.reply-ta');
+    if (reply) reply.focus({preventScroll:true});
     if (isGeneralAnchor(c.anchor_id)) {
       // No content-doc location by design — just mark active/read; the card
       // already shows the "not tied to a location" notice.
@@ -1763,6 +1858,7 @@ function wireDecisionActions(root) {
   root.querySelectorAll('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     decisionChanging[btn.dataset.id] = true;
+    decisionNoteOpen[btn.dataset.id] = true;
     renderDrawer();
   }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
@@ -1845,6 +1941,7 @@ async function savePopover() {
     await refreshStore();
     // The author has obviously "read" their own new comment.
     markReadAfterAction(created.id);
+    focusSidebarCard(created.id);
   }
 }
 
@@ -2017,6 +2114,7 @@ function wirePinPopover() {
 // Scroll the drawer to a card and mark it active. If the current chip filter
 // hides the card, fall back to the All filter so the focus is never a no-op.
 function focusSidebarCard(commentId) {
+  selectWorkspaceView('feedback');
   if (isMobileLayout()) setMobileSheetOpen(true); // pin/card focus needs the sheet visible, not just scrolled-to
   else if (isDrawerCollapsed()) setDrawerCollapsed(false); // desktop: rail must be expanded
   highlightedCommentId = commentId;
@@ -2413,49 +2511,29 @@ function wireRoundBar() {
 // current.meta.json `owner` is stamped by cli.py publish/claim:
 // {owner_session, owner_agent, owner_label, claimed_at}. Read-only here —
 // no liveness polling; META is refreshed by the existing 8s poll.
-function relTime(iso) {
-  const t = iso ? new Date(iso).getTime() : NaN;
-  if (!t) return '';
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60) return 'just now';
-  const m = s / 60;
-  if (m < 60) return Math.round(m) + ' min ago';
-  const h = m / 60;
-  if (h < 24) return Math.round(h) + ' h ago';
-  const d = h / 24;
-  if (d < 14) return Math.round(d) + ' d ago';
-  try { return 'on ' + new Date(iso).toLocaleDateString(); } catch { return ''; }
-}
+let ownerSnapshot = '';
 function renderOwnerChip() {
   const el = document.getElementById('owner-chip');
   if (!el) return;
+  const mobileRow = document.getElementById('owner-row');
+  const parent = isMobileLayout() ? mobileRow : document.querySelector('.hdr-right');
+  if (parent && el.parentElement !== parent) parent.appendChild(el);
   const o = META && META.owner;
-  const label = o && typeof o === 'object'
-    ? (o.owner_label || o.label || o.owner_agent || o.owner_session || null)
-    : null;
-  if (!label) {
-    el.style.display = 'none';
-    el.textContent = '';
-    el.title = '';
-    return;
-  }
-  const when = o.claimed_at || o.ts || o.since || o.updated_at || null;
-  el.textContent = '';
-  const dot = document.createElement('span');
-  dot.className = 'owner-chip-dot';
-  el.appendChild(dot);
-  el.appendChild(document.createTextNode('Owner: ' + label));
-  const rel = when ? relTime(when) : '';
-  if (rel) {
-    const w = document.createElement('span');
-    w.className = 'owner-chip-when';
-    w.textContent = ' · claimed ' + rel;
-    el.appendChild(w);
-  }
-  el.title = (o.owner_session ? 'Session ' + o.owner_session : 'Owner ' + label)
-    + (o.owner_agent ? ' (' + o.owner_agent + ')' : '')
-    + (when ? '\nclaimed ' + when : '');
+  const label = o && (o.owner_label || o.label || o.owner_agent || o.owner_session);
+  if (!label) { el.style.display = 'none'; return; }
+  const snapshot = JSON.stringify(o);
   el.style.display = '';
+  if (snapshot === ownerSnapshot) return;
+  ownerSnapshot = snapshot;
+  const target = o.target || {};
+  el.textContent = '';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Owner: ' + (o.terminal_name || target.terminal_name || label);
+  const detail = document.createElement('div');
+  detail.className = 'owner-chip-path';
+  detail.textContent = label;
+  el.append(summary, detail);
+  el.title = label + (o.owner_session ? '\nSession ' + o.owner_session : '');
 }
 
 // ── Bridge: postMessage with the content iframe ─────────────────────
@@ -2535,6 +2613,7 @@ function wireBridge() {
       // P1: a full-viewport overlay opened/closed inside the content doc
       autoCollapseForFullscreen(!!data.active);
     } else if (data.type === 'annotate:ready') {
+      applyTheme();
       // content doc finished loading + adapter.js initialized
       autoCollapseForFullscreen(false); // version switch discards any overlay
       mountProjectInDocument(frame);
@@ -2714,6 +2793,7 @@ function wirePopover() {
 
 // ── Master render ─────────────────────────────────────────────────
 function renderAll() {
+  renderWorkspaceTabs();
   const hdrSub = document.getElementById('hdr-sub');
   if (hdrSub) hdrSub.textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
   renderVersionRail();
@@ -2726,12 +2806,25 @@ function renderAll() {
 
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
+  wireWorkspace();
+  const reviewKey = new URLSearchParams(location.hash.slice(1)).get('review');
+  if (reviewKey) {
+    let name = 'Reviewer';
+    try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
+    const response = await fetch('./api/reviewer/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:reviewKey,name})});
+    if (!response.ok) {
+      document.getElementById('delivery-status').hidden = false;
+      document.getElementById('delivery-status').textContent = 'This review link is invalid or expired.';
+      return;
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   document.getElementById('hdr-title').textContent = document.title || 'annotate';
 
   try {
     showAllVersions = localStorage.getItem('annotate:allVersions') === '1';
     unreadFirst = localStorage.getItem('annotate:unreadFirst') === '1';
-    DRAFTS = JSON.parse(localStorage.getItem('annotate:drafts') || '{}') || {};
+    DRAFTS = JSON.parse(localStorage.getItem('annotate:drafts:' + location.pathname) || '{}') || {};
   } catch {}
 
   // T11: live draft capture — every keystroke lands in the persistent
@@ -2757,6 +2850,7 @@ async function init() {
   wireBridge();
 
   await Promise.all([loadStore(), loadMeta(), loadSessionMonitor(), loadCapabilities()]);
+  document.getElementById('copy-link-btn').hidden = !(CAPS && CAPS.private_share_links);
   await Promise.all([loadProject(), loadDelivery()]);
   // // v2.19: the ONE probe; 404 → legacy mode for this page load
 
@@ -2766,6 +2860,12 @@ async function init() {
   IDENTITY = await resolveIdentity();
   AUTHOR = authorValue(IDENTITY);
   updateAuthorIndicator();
+  if (!IDENTITY && location.protocol === 'https:' && !CAPS) {
+    const status = document.getElementById('delivery-status');
+    status.hidden = false;
+    status.textContent = 'Open the private review link to view this page.';
+    return;
+  }
 
   await loadSeen();
   await loadReadState();
@@ -2773,7 +2873,13 @@ async function init() {
   document.getElementById('hdr-sub').textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
 
   if (CURRENT_VERSION) loadIframe(CURRENT_VERSION);
+  if (flattenAll(false).some(c => inScope(c) && classify(c) === 'review')) {
+    activeFilter = 'review';
+    document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('active', chip.dataset.filter === activeFilter));
+  }
   renderAll();
+  try { workspaceView = localStorage.getItem('annotate:view:' + location.pathname) || workspaceView; } catch {}
+  selectWorkspaceView(workspaceView);
   const gfInit = document.getElementById('gf-ta');
   if (gfInit && CURRENT_VERSION) gfInit.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
 
@@ -2803,4 +2909,7 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+window.addEventListener('hashchange', () => {
+  if (new URLSearchParams(location.hash.slice(1)).has('review')) location.reload();
+});
 })();

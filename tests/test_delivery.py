@@ -55,6 +55,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(delivery, "_process", lambda pid: (_START, "/usr/local/bin/codex"))
     monkeypatch.setattr(delivery.os, "getppid", lambda: 4242)
     monkeypatch.delenv("ORCA_TERMINAL_HANDLE", raising=False)
+    monkeypatch.setattr(delivery, "_parent_handle", lambda expected: None)
     terminal = {
         "incarnationId": "incarnation-original",
         "worktreeId": "worktree-original",

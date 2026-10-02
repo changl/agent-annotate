@@ -9,6 +9,7 @@ that binds a root at import time sees the sandbox.
 """
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -25,6 +26,8 @@ _SANDBOX_ENV = {
 }
 for _name, _path in _SANDBOX_ENV.items():
     os.environ[_name] = str(_path)
+(_SANDBOX / "config").mkdir(parents=True)
+(_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\n')
 os.environ.pop("ANNOTATE_STATE_ROOT", None)
 os.environ.pop("ANNOTATE_PROJECTS_TOML", None)
 # A real session id would make the CLI stamp this developer's session into
@@ -40,8 +43,16 @@ from agent_annotate import paths  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _assert_sandboxed():
+def _assert_sandboxed(monkeypatch):
     """Fail loudly if a reload or a test ever points the package at $HOME."""
+    from agent_annotate import delivery
+    monkeypatch.setattr(delivery, "_parent_handle", lambda expected: None)
+    original_run = subprocess.run
+    def safe_run(command, *args, **kwargs):
+        if isinstance(command, (list, tuple)) and command and Path(str(command[0])).name.lower() == "tailscale":
+            raise FileNotFoundError("Tests must mock Tailscale; live routes are off limits")
+        return original_run(command, *args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", safe_run)
     yield
     for name in ("STATE_DIR", "BUS_ROOT", "SETTINGS_JSON", "SHIM_PATH"):
         value = str(getattr(paths, name))

@@ -219,6 +219,8 @@ def unpublish(slug: str, **opts) -> dict:
     new_ingress = []
     for rule in ingress:
         if rule.get("hostname") == hostname and rule.get("path") == target_path:
+            if opts.get("expected_service") and rule.get("service") != opts["expected_service"]:
+                raise RuntimeError("Cloudflare route origin changed; no rule removed")
             removed = True
             continue
         new_ingress.append(rule)

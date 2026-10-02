@@ -186,7 +186,7 @@ def _mime(suffix: str) -> str:
 _NO_STORE = "no-store, max-age=0, must-revalidate"
 
 # /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
-_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|content\.css|adapter\.js|diagram-plot\.js)$")
+_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|content\.css|daisyui\.css|adapter\.js|diagram-plot\.js)$")
 
 
 def _cache_control_for(suffix: str) -> str:
@@ -826,6 +826,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(403, b'{"error":"cross-origin request refused"}')
             return False
         if origin[0] == "https" and not self._identity()["authenticated"]:
+            route = self._strip_base(path)
+            bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route in ("/shell.js", "/shell.css", "/daisyui.css")
+                         or (_ASSET_PATH_RE.fullmatch(route) and route.endswith(("/shell.js", "/shell.css", "/daisyui.css")))))
+            session = self.command == "POST" and route == "/api/reviewer/session"
+            if self._is_funnel_origin() and (bootstrap or session):
+                return True
             self._respond(403, b'{"error":"authenticated proxy boundary required"}')
             return False
         try:
@@ -926,6 +932,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         trusted proxy, never a client-authored JSON/query/proxy claim.
         """
         email, name = self._tailscale_identity()
+        if not email and self._is_funnel_origin():
+            from .review_access import identity
+            email, name = identity(self.artifact_dir, self.headers.get("Cookie") or "")
         origin = self._origin("https://" + (self.headers.get("Host") or ""))
         if (origin in self._published_proxy_origins() and origin in self._access_origins()
                 and not origin[1].endswith(".ts.net") and self.headers.get("Cf-Access-Jwt-Assertion")):
@@ -946,6 +955,32 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _author(self, parsed=None) -> str:
         return self._identity()["email"] or "anonymous"
+
+    def _is_funnel_origin(self) -> bool:
+        origin = self._origin("https://" + (self.headers.get("Host") or ""))
+        if origin not in self._published_proxy_origins():
+            return False
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            record = state.get("slugs", {}).get(self.slug, {})
+            return (record.get("transport") == "funnel" and record.get("port") == self.server.server_address[1]
+                    and Path(record.get("slug_dir", "")).resolve() == self.artifact_dir.resolve())
+        except (OSError, ValueError, TypeError):
+            return False
+
+    def _reviewer_session(self):
+        from .review_access import cookie_name, issue_cookie
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+            if not 0 < length <= 4096 or not self._is_funnel_origin():
+                raise ValueError("invalid reviewer session request")
+            payload = json.loads(self.rfile.read(length))
+            cookie = issue_cookie(self.artifact_dir, payload.get("key"), payload.get("name", "Reviewer"), self.headers.get("Cookie") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            return self._respond(403, b'{"error":"invalid review link"}')
+        path = (self.public_base_path or "") + "/"
+        self._respond(200, b'{"ok":true}', cache_control="no-store", extra_headers={
+            "Set-Cookie": f"{cookie_name(self.artifact_dir)}={cookie}; Path={path}; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict"})
 
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
@@ -973,6 +1008,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_read_state(parsed)
             if route_path == "/api/identity":
                 return self._v2_get_identity(parsed)
+            if route_path == "/api/share-link":
+                return self._v2_get_share_link()
             if route_path == "/api/session-monitor":
                 return self._v2_get_session_monitor(parsed)
             if route_path == "/api/capabilities":
@@ -981,16 +1018,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 from .delivery import delivery_status
                 return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
             if route_path == "/api/project":
-                from .project_state import load_project
                 try:
-                    return self._respond(200, json.dumps(load_project(self.artifact_dir)).encode(), "application/json")
+                    return self._respond(200, json.dumps(self._project_payload()).encode(), "application/json", cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
             if route_path == "/comments.json":
                 return self._v2_get_store()
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
-            if route_path in ("/shell.js", "/shell.css", "/content.css", "/adapter.js"):
+            if route_path in ("/shell.js", "/shell.css", "/content.css", "/daisyui.css", "/adapter.js"):
                 return self._serve_skill_asset(route_path.lstrip("/"))
             # PATH-versioned assets: /assets/<stamp>/<name>. The stamp segment
             # exists purely as an edge cache key — some CDN configurations
@@ -1018,6 +1054,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
 
         if self.v2_mode:
+            if route_path == "/api/reviewer/session":
+                return self._reviewer_session()
             if route_path == "/api/comments":
                 return self._v2_post_comments(parsed)
             if route_path == "/api/comments/batch":
@@ -1100,6 +1138,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "version": __version__,
             "runtime": RUNTIME_MANIFEST,
             "automatic_round_delivery": True,
+            "private_share_links": self._is_funnel_origin(),
             "batch": True,
             "rounds": True,
             "decision_schema": 2,
@@ -1180,13 +1219,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         p = self._meta_path()
         if p.exists():
             try:
-                meta = json.loads(p.read_text())
+                meta = self._read_meta()
                 if isinstance(meta.get("owner"), dict):
+                    target = meta["owner"].get("target") or {}
+                    if isinstance(target.get("terminal_name"), str):
+                        meta["owner"]["terminal_name"] = target["terminal_name"]
                     meta["owner"] = {k: v for k, v in meta["owner"].items() if k != "target"}
                 from .delivery import delivery_status
-                from .project_state import load_project
                 try:
-                    meta["project_info"] = load_project(self.artifact_dir)
+                    meta["project_info"] = self._project_payload()
                 except (OSError, ValueError):
                     meta["project_info"] = {"modules": []}
                 meta["delivery_status"] = delivery_status(_monitor_project(self.bus_dir), self.slug)
@@ -1195,7 +1236,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 data = b"{}"
         else:
             data = json.dumps({"current": "v1", "history": []}).encode()
-        self._respond(200, data, "application/json", conditional=True)
+        self._respond(200, data, "application/json", cache_control="no-store" if self._is_funnel_origin() else "no-cache",
+                      conditional=not self._is_funnel_origin())
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -1264,7 +1306,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # being a baked legacy artifact the server can extract on the fly.
         # Anything else (no sentinels, e.g. hand-written HTML that never went
         # through template.html) still gets the old direct-serve behavior.
-        if self._shell_eligible(parsed):
+        if self._shell_eligible(parsed) or self._is_funnel_origin():
             shell_path = (self.skill_dir / "shell.html") if self.skill_dir else None
             if shell_path and shell_path.exists():
                 try:
@@ -1277,6 +1319,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # insufficient: some CDN configs strip query strings from the
                 # cache key, so the stamped URL still hit the stale entry.)
                 base = self.public_base_path or ""
+                html = html.replace(
+                    'href="daisyui.css"',
+                    f'href="{base}/assets/{_mtime_stamp(self.skill_dir / "daisyui.css")}/daisyui.css"', 1)
                 html = html.replace(
                     'href="shell.css"',
                     'href="%s/assets/%s/shell.css"' % (base, _mtime_stamp(self.skill_dir / "shell.css")), 1)
@@ -1396,7 +1441,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(500, b"Read error")
                 return
             try:
-                html = build_content_document(raw, title=self.slug or "Annotate content")
+                html = build_content_document(raw, title=self.slug or "Annotate content") if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
                 self._respond(
                     500,
@@ -1412,12 +1457,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Both injected refs carry mtime stamps (edge-cache bypass, see
         # _cache_control_for).
         base = self.public_base_path or ""
-        # Generated page styles are runtime-owned. Preserve frozen standalone
-        # snapshots while applying shared style fixes to every generated version.
+        css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "daisyui.css")}/daisyui.css">'
         if '<div class="aa">' in html:
             html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
-            css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
-            html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
+            css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
+        html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug}).replace("<", "\\u003c")
         bootstrap = (
@@ -1525,6 +1569,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if isinstance(payload, dict) and (
             "schema_version" in payload or all(isinstance(v, list) for v in payload.values())
         ):
+            if (not self._is_direct_loopback_request() or self.headers.get("Origin")
+                    or self.headers.get("Sec-Fetch-Site")):
+                self._respond(403, b'{"error":"whole-store replacement requires a local non-browser caller"}')
+                return
             with _STORE_LOCK:
                 store = _coerce_v2(payload)
                 self._v2_save(store)
@@ -1683,8 +1731,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     existing = None
                     if idempotency == "anchor" and fresh.get("decision_request"):
                         for c in store["anchors"].get(aid, []):
+                            shared_decision = (
+                                author.startswith("agent:") and str(c.get("author") or "").startswith("agent:")
+                                and type(fresh.get("number")) is int
+                                and c.get("number") == fresh["number"]
+                                and aid == f"d:q{fresh['number']}"
+                            )
                             if (c.get("status") not in ("archived", "resolved_in_version")
-                                    and c.get("author") == author
+                                    and (c.get("author") == author or shared_decision)
                                     and c.get("decision_request")):
                                 existing = c
                                 break
@@ -1850,6 +1904,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(404, b'{"error":"not found"}')
                 return
             anchor_id, c = found
+            local_authoring = (self._is_direct_loopback_request() and not self.headers.get("Origin")
+                               and not self.headers.get("Sec-Fetch-Site"))
+            if not local_authoring and (
+                    any(key in payload for key in ("decision_request", "response_text", "resolved_in_version", "carry_forward", "number"))
+                    or new_status in ("addressed_by_agent", "resolved_in_version")
+                    or ("text" in payload and c.get("author") != author)):
+                self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
+                return
             old_status = c.get("status")
             if new_status == "addressed_by_agent" and old_status == "user_confirmed":
                 self._respond(
@@ -2496,29 +2558,33 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         payload = payload if isinstance(payload, dict) else {}
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
+        reviewer_authors = self._reviewer_authors(author)
         with _STORE_LOCK:
             store = self._v2_load()
             now = _now_iso()
             pending = []
+            cleared_archived = False
             verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
             undecided_ids = []
             for items in store.get("anchors", {}).values():
                 for c in items:
-                    if c.get("status") in ("archived", "resolved_in_version"):
-                        if isinstance(c.get("decision"), dict):
-                            c["decision"].pop("round_pending", None)
-                        continue
                     decision = c.get("decision")
+                    if c.get("status") in ("archived", "resolved_in_version"):
+                        if isinstance(decision, dict) and decision.get("by") in reviewer_authors and decision.get("round_pending"):
+                            decision.pop("round_pending", None)
+                            cleared_archived = True
+                        continue
                     if (c.get("decision_request") and not self._is_answered(decision)
                             and c.get("status") != "addressed_by_agent"):
                         undecided_ids.append(c.get("id"))
-                    if isinstance(decision, dict) and decision.get("round_pending"):
+                    if isinstance(decision, dict) and decision.get("round_pending") and decision.get("by") in reviewer_authors:
                         pending.append(c)
                         if decision.get("verdict") in verdict_counts:
                             verdict_counts[decision["verdict"]] += 1
             comment_ids = [c["id"] for c in pending]
             if not comment_ids and not note:
-                self._v2_save(store)
+                if cleared_archived:
+                    self._v2_save(store)
                 self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
@@ -2565,16 +2631,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         "Change verdict"); they simply never go out as a round. Emits
         `round_discarded`, never a session_push."""
         author = self._author(parsed)
+        reviewer_authors = self._reviewer_authors(author)
         with _STORE_LOCK:
             store = self._v2_load()
             comment_ids = []
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     d = c.get("decision")
-                    if isinstance(d, dict) and d.get("round_pending"):
+                    if isinstance(d, dict) and d.get("round_pending") and d.get("by") in reviewer_authors:
                         d.pop("round_pending", None)
                         comment_ids.append(c.get("id"))
-            self._v2_save(store)
+            if comment_ids:
+                self._v2_save(store)
         _bus_append(self.bus_dir, self.slug, {
             "event": "round_discarded",
             "comment_ids": comment_ids,
@@ -2590,10 +2658,41 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         p = self._meta_path()
         if p.exists():
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                meta = json.loads(p.read_text(encoding="utf-8"))
+                record = self._registered_record()
+                if record:
+                    from .workspace import owner_data
+                    if owner := owner_data(record):
+                        meta["owner"] = owner
+                return meta
             except Exception:
                 return {}
         return {}
+
+    def _registered_record(self) -> dict | None:
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            record = state.get("slugs", {}).get(self.slug)
+            if (isinstance(record, dict) and Path(record.get("slug_dir") or "").resolve() == self.artifact_dir.resolve()
+                    and record.get("port") == self.server.server_address[1]):
+                return record
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def _project_payload(self) -> dict:
+        from .project_state import load_project
+        data = load_project(self.artifact_dir)
+        record = self._registered_record()
+        if record and self._identity()["authenticated"]:
+            from .urls import page_url, redact_review_key
+            from .workspace import workspace_tab_records
+            links = {redact_review_key(page_url(child)): page_url(child)
+                     for _, _, child in workspace_tab_records(record)}
+            for tab in data.get("tabs", []):
+                if tab["url"] in links and links[tab["url"]]:
+                    tab["url"] = links[tab["url"]]
+        return data
 
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):
@@ -2605,12 +2704,45 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = self._author(parsed)
         with _SEEN_LOCK:
             data = _load_seen(self.artifact_dir)
-        record = data.get(_author_key(author), {})
+        record = self._reviewer_state(data, author)
         self._respond(200, json.dumps({"author": author, "seen": record}, ensure_ascii=False).encode(), "application/json")
 
     def _v2_get_identity(self, parsed):
         identity = self._identity()
+        identity["reviewer_authors"] = sorted(self._reviewer_authors(identity["email"] or "anonymous"))
         self._respond(200, json.dumps(identity, ensure_ascii=False).encode(), "application/json")
+
+    def _reviewer_authors(self, author: str) -> set[str]:
+        """Operator-declared account aliases preserve legacy draft authors."""
+        authors = {author}
+        try:
+            config = tomllib.loads(PROJECTS_TOML.read_text())
+            section = {**config.get("defaults", {}), **config.get(_monitor_project(self.bus_dir), {})}
+            aliases = section.get("reviewer_aliases", {}).get(author, [])
+            if isinstance(aliases, list) and len(aliases) <= 20:
+                authors.update(value for value in aliases if isinstance(value, str) and 0 < len(value) <= 320)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        return authors
+
+    def _reviewer_state(self, data: dict, author: str) -> dict:
+        merged = {}
+        for alias in sorted(self._reviewer_authors(author)):
+            record = data.get(_author_key(alias), {})
+            if not isinstance(record, dict):
+                continue
+            for key, value in record.items():
+                if isinstance(value, dict) and str(value.get("ts") or "") >= str(merged.get(key, {}).get("ts") or ""):
+                    merged[key] = value
+        return merged
+
+    def _v2_get_share_link(self):
+        if not self._is_funnel_origin() or not self._identity()["authenticated"]:
+            return self._respond(403, b'{"error":"review access required"}')
+        from .urls import page_url
+        state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+        url = page_url(state["slugs"][self.slug])
+        self._respond(200, json.dumps({"url": url}).encode(), cache_control="no-store")
 
     def _v2_get_session_monitor(self, parsed):
         monitors = _active_monitor_leases(self.bus_dir, self.slug)
@@ -2630,7 +2762,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = self._author(parsed)
         with _READ_LOCK:
             data = _load_read_state(self.artifact_dir)
-        record = data.get(_author_key(author), {})
+        record = self._reviewer_state(data, author)
         self._respond(200, json.dumps({"author": author, "read": record}, ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_read_state(self, parsed):
@@ -2777,7 +2909,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
-                 cache_control: str = "no-cache", conditional: bool = False):
+                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None):
         etag = '"' + hashlib.sha256(body).hexdigest() + '"' if conditional else None
         if code == 200 and self.command == "GET" and etag and self.headers.get("If-None-Match") == etag:
             self.send_response(304)
@@ -2792,6 +2924,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if etag:
             self.send_header("ETag", etag)
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 

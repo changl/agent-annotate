@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": {"build": "tailwindcss -i app.css -o ../src/agent_annotate/web/daisyui.css --minify"},
+  "devDependencies": {"@tailwindcss/cli": "4.3.3", "tailwindcss": "4.3.3", "daisyui": "5.7.47"}
+}

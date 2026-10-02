@@ -102,7 +102,7 @@ def _create_card(httpd, status="open"):
             "PUT",
             f"/api/comments/{card['id']}",
             {"status": status},
-            author="reviewer@example.com",
+            author="agent:test" if status == "addressed_by_agent" else "reviewer@example.com",
         )
         assert code == 200
     return card

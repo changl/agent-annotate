@@ -12,7 +12,10 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 HOOK = Path(__file__).resolve().parents[1] / "src" / "agent_annotate" / "hooks" / "check_comment_bus.py"
 
@@ -84,7 +87,7 @@ def test_two_sessions_do_not_consume_each_other(tmp_path):
     assert "[annotate] proj/demo: 2 reviewer event(s)" in out_a, out_a
     assert "aaaaaaaaaaaa accept" in out_a
     assert "undecided: 1 of 2 cards" in out_a
-    assert "inbox demo --unread" in out_a
+    assert "inbox proj/demo --unread" in out_a
 
     # A's notice advanced only A's cursor. B still sees the same delta.
     out_b = _run(bus_root, state, "sess-B")
@@ -165,7 +168,7 @@ def test_dry_run_writes_nothing(tmp_path):
 
 
 def test_round_submitted_is_announced(tmp_path):
-    bus_root, state, bus = _estate(tmp_path)
+    bus_root, state, bus = _estate(tmp_path, owner="sess-A")
     with bus.open("a") as fh:
         fh.write(json.dumps({"ts": "2026-09-17T10:01:00Z", "event": "round_submitted", "slug": "demo",
                              "comment_ids": ["aaaaaaaaaaaa"], "by": "r@x",
@@ -194,11 +197,7 @@ def test_the_bare_script_form_matches_the_module_form(tmp_path):
     assert "2 reviewer event(s)" in _run(bus_root, state, "sess-A", as_script=True)
 
 
-def test_a_changes_verdict_shows_its_note_in_the_notice(tmp_path):
-    """D2: "Request changes" carries the instruction in its note, so the
-    one-line notice must print the note, not just the word. The pre-D2
-    spelling `comment` reads the same way — an already-loaded page keeps
-    posting it."""
+def test_notice_identifies_verdict_without_copying_reviewer_prose(tmp_path):
     bus_root, state, bus = _estate(tmp_path)
     store = json.loads((Path(state) / "proj.json").read_text())
     slug_dir = Path(store["slugs"]["demo"]["slug_dir"])
@@ -213,7 +212,9 @@ def test_a_changes_verdict_shows_its_note_in_the_notice(tmp_path):
                              "author": "r@x", "decision": "changes"}) + "\n")
 
     out = _run(bus_root, state, "sess-changes")
-    assert 'bbbbbbbbbbbb changes("cite the source for row 3")' in out, out
+    assert "bbbbbbbbbbbb changes" in out, out
+    assert "cite the source for row 3" not in out
+    assert "inbox proj/demo --unread" in out
     assert "undecided: 0 of 2 cards" in out
 
 
@@ -248,3 +249,95 @@ def test_page_closed_is_bookkeeping_for_the_notice(tmp_path):
                              "slug": "demo", "archived_ids": ["bbbbbbbbbbbb"],
                              "archived_count": 1, "by": "agent:test"}) + "\n")
     assert _run(bus_root, state, "sess-quiet").strip() == ""
+
+
+@pytest.mark.parametrize("age_seconds", [0, 181, 3600])
+@pytest.mark.parametrize("all_answered", [False, True])
+def test_deferred_decisions_are_silent_until_finish_review(tmp_path, age_seconds, all_answered):
+    bus_root, state, bus = _estate(tmp_path, owner="sess-owner")
+    registry = json.loads((state / "proj.json").read_text())
+    comments = Path(registry["slugs"]["demo"]["slug_dir"]) / "comments.json"
+    store = json.loads(comments.read_text())
+    store["anchors"]["s:a"][0]["decision"]["round_pending"] = True
+    if all_answered:
+        store["anchors"]["s:b"][0]["decision"] = {
+            "verdict": "comment", "text": "Private explanation", "round_pending": True,
+        }
+    comments.write_text(json.dumps(store))
+    event = {"ts": (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat(),
+             "event": "comment_updated", "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a",
+             "author": "r@x", "decision": "accept", "deferred": True}
+    bus.write_text(json.dumps(event) + "\n")
+
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+    assert not (state / "bus-offsets").exists()
+    assert not any('"notice_emitted"' in line for line in bus.read_text().splitlines())
+
+    with bus.open("a") as stream:
+        stream.write(json.dumps({"event": "round_submitted", "by": "r@x",
+                                 "comment_ids": ["aaaaaaaaaaaa"]}) + "\n")
+        stream.write(json.dumps({"event": "session_push", "round": True, "automatic_delivery": True,
+                                 "author": "r@x", "comment_count": 1,
+                                 "comment_ids": ["aaaaaaaaaaaa"]}) + "\n")
+    out = _run(bus_root, state, "sess-owner")
+    assert out.startswith("ROUND SUBMITTED: [annotate] proj/demo: 1 reviewer event(s)")
+    assert "Private explanation" not in out
+    assert _run(bus_root, state, "sess-other").strip() == ""
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+
+
+def test_send_now_notifies_after_the_draft_notice_was_suppressed(tmp_path):
+    bus_root, state, bus = _estate(tmp_path, owner="sess-owner")
+    bus.write_text(json.dumps({"event": "comment_updated", "comment_id": "aaaaaaaaaaaa",
+                               "author": "r@x", "decision": "accept", "deferred": True}) + "\n")
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+    with bus.open("a") as stream:
+        stream.write(json.dumps({"event": "session_push", "author": "r@x", "comment_count": 1,
+                                 "comment_ids": ["aaaaaaaaaaaa"]}) + "\n")
+    out = _run(bus_root, state, "sess-owner")
+    assert "1 reviewer event(s)" in out
+    assert "ROUND SUBMITTED" not in out
+    assert "inbox proj/demo --unread" in out
+    assert _run(bus_root, state, "sess-other").strip() == ""
+
+
+def test_immediate_decision_push_does_not_repeat_a_notice_across_scans(tmp_path):
+    bus_root, state, bus = _estate(tmp_path, owner="sess-owner")
+    bus.write_text(json.dumps({"event": "comment_updated", "author": "r@x",
+                               "comment_id": "aaaaaaaaaaaa", "decision": "accept"}) + "\n")
+    assert "1 reviewer event(s)" in _run(bus_root, state, "sess-owner")
+    # The server appends the mirror separately; the hook may run between writes.
+    with bus.open("a") as stream:
+        stream.write(json.dumps({"event": "session_push", "author": "r@x", "decision": "accept",
+                                 "comment_count": 1, "comment_ids": ["aaaaaaaaaaaa"]}) + "\n")
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+
+
+def test_empty_push_and_ownerless_submission_do_not_create_notices(tmp_path):
+    bus_root, state, bus = _estate(tmp_path)
+    events = [{"event": "session_push", "author": "r@x", "comment_count": 0, "comment_ids": []},
+              {"event": "round_submitted", "by": "r@x", "comment_ids": ["aaaaaaaaaaaa"]},
+              {"event": "session_push", "round": True, "automatic_delivery": True,
+               "author": "r@x", "comment_count": 1, "comment_ids": ["aaaaaaaaaaaa"]}]
+    bus.write_text("".join(json.dumps(event) + "\n" for event in events))
+    assert _run(bus_root, state, "sess-other").strip() == ""
+
+
+def test_discarded_deferred_decisions_never_become_actionable(tmp_path):
+    bus_root, state, bus = _estate(tmp_path, owner="sess-owner")
+    events = [{"event": "comment_updated", "author": "r@x", "comment_id": "aaaaaaaaaaaa",
+               "decision": "accept", "deferred": True},
+              {"event": "round_discarded", "by": "r@x", "comment_ids": ["aaaaaaaaaaaa"]}]
+    bus.write_text("".join(json.dumps(event) + "\n" for event in events))
+    assert _run(bus_root, state, "sess-owner").strip() == ""
+
+
+def test_dry_run_preserves_the_entire_fixture_estate(tmp_path):
+    bus_root, state, _ = _estate(tmp_path, owner="sess-owner")
+    before = {str(path.relative_to(tmp_path)): path.read_bytes()
+              for path in tmp_path.rglob("*") if path.is_file()}
+    directories = {str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*") if path.is_dir()}
+    assert "reviewer event" in _run(bus_root, state, "sess-owner", {"ANNOTATE_HOOK_DRY_RUN": "1"})
+    assert before == {str(path.relative_to(tmp_path)): path.read_bytes()
+                      for path in tmp_path.rglob("*") if path.is_file()}
+    assert directories == {str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*") if path.is_dir()}

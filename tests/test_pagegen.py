@@ -9,12 +9,12 @@ be a second file written by hand.
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from agent_annotate import pagegen
 from agent_annotate.pagegen import (
-    EXAMPLE,
     PageGenError,
     generate,
     inline,
@@ -25,6 +25,7 @@ from agent_annotate.pagegen import (
     slugify,
 )
 
+EXAMPLE = (Path(__file__).parent / "fixtures/full_review.md").read_text()
 
 def _doc(body: str, **front) -> str:
     front.setdefault("title", "Doc")
@@ -82,11 +83,12 @@ def test_version_must_look_like_a_version(tmp_path):
         generate(src, tmp_path / "slug", version="round-2")
 
 
-def test_later_version_requires_full_plan_contract(tmp_path):
+def test_progress_versions_do_not_require_plan_boilerplate(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(_doc("## Plan\n\ntext\n", version="v2"), encoding="utf-8")
-    with pytest.raises(PageGenError, match="full_plan: true"):
-        generate(src, tmp_path / "slug")
+    result = generate(src, tmp_path / "slug")
+    assert result["version"] == "v2"
+    assert "Complete plan" not in result["html"].read_text()
 
 
 # ── block parser ────────────────────────────────────────────────────────────
@@ -282,8 +284,8 @@ def test_a_cards_block_renders_visible_cards_and_keeps_the_round_in_cards_json(t
     assert "<h4>Rename status.<span class=\"chip\">impact medium</span>" in html
     assert '<span class="chip blocking">blocking</span>' in html
     # Recommendation is a badge on the option the author recommends.
-    assert '<b>Rename</b> <span class="reco">Recommended</span>' in html
-    assert '<b>reject</b> <span class="reco">Recommended</span>' in html
+    assert '<b>Rename</b> <span class="reco" title="Recommended">rec</span>' in html
+    assert '<b>reject</b> <span class="reco" title="Recommended">rec</span>' in html
 
 
 def test_a_card_pinned_to_an_existing_anchor_does_not_mint_a_second_element(tmp_path):
@@ -634,7 +636,8 @@ def test_new_example_prints_a_document_that_generate_accepts(tmp_path):
     assert proc.returncode == 0, proc.stderr
     src = tmp_path / "page.md"
     src.write_text(proc.stdout, encoding="utf-8")
-    assert generate(src, tmp_path / "slug")["anchors"] > 20
+    result = generate(src, tmp_path / "slug")
+    assert result["anchors"] >= 4 and result["cards"] == 1
 
 
 def test_new_prints_the_anchor_count_and_the_next_commands(tmp_path):

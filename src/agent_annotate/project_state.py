@@ -71,7 +71,7 @@ def _serialize(data: dict) -> bytes:
 
 def validate_project(data: Any) -> dict:
     """Validate and copy project data; absent timestamps are generated in UTC."""
-    data = _object(data, {"schema_version", "title", "updated_at", "modules"}, {"modules"}, "project")
+    data = _object(data, {"schema_version", "title", "updated_at", "modules", "tabs"}, {"modules"}, "project")
     version = data.get("schema_version", 1)
     if type(version) is not int or version != 1:
         raise ValueError("project.schema_version must be 1")
@@ -94,6 +94,20 @@ def validate_project(data: Any) -> dict:
     else:
         normalized["updated_at"] = _timestamp()
 
+    if "tabs" in data:
+        tabs = data["tabs"]
+        if not isinstance(tabs, list) or len(tabs) > 8:
+            raise ValueError("project.tabs must be an array of at most 8 tabs")
+        normalized["tabs"] = []
+        ids = {"progress", "feedback"}
+        for tab in tabs:
+            tab = _object(tab, {"id", "label", "url"}, {"id", "label", "url"}, "project.tabs")
+            tab_id = _string(tab["id"], "tab.id", 80)
+            if not _SAFE_ID.fullmatch(tab_id) or tab_id in ids:
+                raise ValueError("tab ids must be unique; progress and feedback are reserved")
+            ids.add(tab_id)
+            normalized["tabs"].append({"id": tab_id, "label": _string(tab["label"], "tab.label", 24),
+                                       "url": _url(tab["url"], "tab.url")})
     normalized["modules"] = []
     ids: set[str] = set()
     for index, module in enumerate(modules):
@@ -125,7 +139,7 @@ def validate_project(data: Any) -> dict:
             else:
                 optional = "description" if kind == "links" else "detail"
                 field = "url" if kind == "links" else "status"
-                item = _object(item, {"label", field, optional}, {"label", field}, item_location)
+                item = _object(item, {"label", field, optional, "url", "failed_count"}, {"label", field}, item_location)
                 normalized_item = {"label": _string(item["label"], f"{item_location}.label", MAX_LABEL_LENGTH)}
                 if kind == "links":
                     normalized_item["url"] = _url(item["url"], f"{item_location}.url")
@@ -136,6 +150,13 @@ def validate_project(data: Any) -> dict:
                     normalized_item["status"] = status
                 if optional in item:
                     normalized_item[optional] = _string(item[optional], f"{item_location}.{optional}")
+                if kind == "progress" and "url" in item:
+                    normalized_item["url"] = _url(item["url"], f"{item_location}.url")
+                if "failed_count" in item:
+                    count = item["failed_count"]
+                    if kind != "progress" or type(count) is not int or not 1 <= count <= 999:
+                        raise ValueError("failed_count must be a positive integer on a progress item")
+                    normalized_item["failed_count"] = count
             normalized_module["items"].append(normalized_item)
         normalized["modules"].append(normalized_module)
 
@@ -172,6 +193,9 @@ def load_project(slug_dir: Path | str) -> dict:
 def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
     normalized = validate_project(data)
+    previous = load_project(slug_dir)
+    if {k: v for k, v in previous.items() if k != "updated_at"} == {k: v for k, v in normalized.items() if k != "updated_at"}:
+        return previous
     normalized["updated_at"] = _timestamp()
     encoded = _serialize(normalized)
     slug_dir = Path(slug_dir)

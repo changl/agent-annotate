@@ -201,13 +201,8 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             assert strip.locator(".annotate-decision-prompt").inner_text().startswith("#1")
             assert strip.locator(".annotate-decision-context").inner_text() == CONTEXT
             assert "Why / details" not in strip.inner_text()
-            assert strip.locator(".annotate-decision-reco-line").inner_text() == (
-                "Recommended: Rename with a dual-write week")
-            excerpt = strip.locator(".annotate-excerpt").first
-            assert "status" in excerpt.locator(".annotate-excerpt-text").inner_text()
-            assert "Ambiguous" in excerpt.locator(".annotate-excerpt-text").inner_text()
-            assert excerpt.locator(".annotate-excerpt-src").inner_text().lower() == (
-                "columns › status")
+            assert strip.locator(".annotate-decision-reco-line").count() == 0
+            assert strip.locator(".annotate-decision-rec").inner_text() == "rec"
             rows = strip.locator(".annotate-decision-btns > .annotate-opt-row")
             assert rows.count() == 2
             assert rows.nth(0).locator(".annotate-decision-rec").count() == 1
@@ -247,10 +242,8 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             rail = page.locator('.citem[data-comment-id="card-1"]')
             assert rail.locator(".decision-context").inner_text() == CONTEXT
             assert rail.locator(".decision-disclosure-btn").count() == 0
-            assert rail.locator(".decision-reco-line").inner_text() == (
-                "Recommended: Rename with a dual-write week")
-            rail.locator(".decision-excerpt-text").first.wait_for()
-            assert "Ambiguous" in rail.locator(".decision-excerpt-text").first.inner_text()
+            assert rail.locator(".decision-reco-line").count() == 0
+            assert rail.locator(".decision-rec-badge").inner_text() == "rec"
             assert rail.locator(".decision-btns > .decision-btn").count() == 2
             rail.locator(".decision-evidence-toggle").click()
             rail.locator(".decision-evidence-link").nth(1).click()
@@ -262,6 +255,7 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             page.locator('.citem.hl[data-comment-id="card-1"]').wait_for()
 
             # ── A jump into a folded section opens it.
+            page.locator('[data-filter="all"]').click()
             page.locator('.citem[data-comment-id="plain-scope"] [data-action="goto"]').click()
             _wait(lambda: frame.locator('[data-anchor-id="s:scope:li1"]').is_visible(), page)
             assert "annotate-unchanged-collapsed" not in (scope.get_attribute("class") or "")
