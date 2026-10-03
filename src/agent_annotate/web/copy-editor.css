@@ -47,3 +47,9 @@
 
 .annotate-copy .btn{font-size:12px;min-height:28px;border-radius:4px}
 .annotate-copy .copy-block-head h2{flex:1;min-width:0}
+
+[data-theme="dark"] .annotate-copy .copy-block-list .btn{border-bottom:1px solid var(--section-border)}
+[data-theme="dark"] .annotate-copy .copy-block-list .btn[aria-current=true]{background:var(--color-base-300);color:var(--color-base-content)}
+[data-theme="dark"] .annotate-copy .copy-block{border-bottom-color:var(--section-border)}
+[data-theme="dark"] .annotate-copy .copy-history-entry{background:var(--color-base-200);border-color:var(--section-border)}
+[data-theme="dark"] .annotate-copy .copy-proposal{background:var(--color-base-200)}

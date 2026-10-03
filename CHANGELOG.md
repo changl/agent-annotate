@@ -1,5 +1,12 @@
 # agent-annotate — changelog
 
+## 2.23.0
+
+- Rounds restores read-only access to saved documents and immutable submitted answers.
+- Verified Linear issue URLs turn ticket references into links across the workspace.
+- Dark mode separates sections and rows with theme backgrounds and borders.
+- Lightweight PR checks and versioned releases replace duplicate full-suite CI runs.
+
 ## 2.22.0
 
 - Feedback opens to unified actionable cards; Progress holds status and reference tabs are read-only.

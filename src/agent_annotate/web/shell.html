@@ -35,10 +35,23 @@
 <nav class="workspace-tabs tabs tabs-border" id="workspace-tabs" role="tablist" aria-label="Project views">
   <button type="button" class="tab" role="tab" data-workspace-tab="progress" aria-controls="main-workspace">Progress <span class="badge badge-error badge-sm" id="progress-new" hidden></span></button>
   <button type="button" class="tab" role="tab" data-workspace-tab="feedback" aria-controls="main-workspace">Feedback <span class="badge badge-error badge-sm" id="feedback-new" hidden></span></button>
+  <button type="button" class="tab" role="tab" data-workspace-tab="rounds" aria-controls="rounds-workspace">Rounds</button>
 </nav>
 <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
 <div class="workspace-extra" id="workspace-extra" hidden><iframe id="workspace-extra-frame" title="Additional project review"></iframe></div>
 <div class="copy-workspace" id="copy-workspace" hidden></div>
+<section class="rounds-workspace" id="rounds-workspace" aria-label="Previous rounds" hidden>
+  <div class="rounds-toolbar">
+    <label for="rounds-select">Previous rounds</label>
+    <select class="select select-sm" id="rounds-select" aria-label="Select submitted review or document" disabled></select>
+    <span class="rounds-selection-meta" id="rounds-selection-meta"></span>
+  </div>
+  <p class="rounds-status" id="rounds-status" role="status" aria-live="polite"></p>
+  <div class="rounds-review" id="rounds-review" hidden></div>
+  <div class="rounds-document" id="rounds-document" hidden>
+    <iframe id="rounds-frame" title="Historical document" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+  </div>
+</section>
 
 <!-- ── Main ─────────────────────────────────────────────────────────── -->
 <div class="main" id="main-workspace">

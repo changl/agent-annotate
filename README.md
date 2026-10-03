@@ -21,6 +21,8 @@ Use `--ask` only when the Markdown contains actual decision cards. A changed rev
 
 ## Review interface
 
+Rounds revisits published documents and submitted answers without changing the active review. Supplied `project.issue_links` make Linear IDs clickable across the workspace.
+
 Feedback opens directly to actionable cards; Progress holds compact status. Both show red counts for unseen items. Optional short tabs contain read-only supporting detail; independent worksheets remain resource links. Use linked ticket IDs, concise status, and `failed 3x` pills. Supporting detail stays collapsed.
 
 Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Finish review** submits one durable round. Drafts, decisions, numbering, and history survive refreshes and handoffs.

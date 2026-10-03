@@ -127,18 +127,29 @@ def _serve(tmp_path, slug_dir):
     process = subprocess.Popen(
         [sys.executable, "-m", "agent_annotate.sync_server", "--slug-dir", str(slug_dir),
          "--slug", "items-model", "--bus-dir", str(tmp_path / "bus"), "--port", str(port),
+         "--strict-port",
          "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{port}/"
     deadline = time.time() + 5
+    last_error = None
     while time.time() < deadline:
         try:
             urllib.request.urlopen(base, timeout=1).close()
             return process, base
-        except OSError:
+        except OSError as error:
+            last_error = error
+            if process.poll() is not None:
+                break
             time.sleep(0.05)
-    process.terminate()
-    raise AssertionError("sync server did not come up")
+    if process.poll() is None:
+        process.terminate()
+    try:
+        _, stderr = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        _, stderr = process.communicate(timeout=5)
+    raise AssertionError(f"sync server did not come up on port {port}; exit={process.returncode}; last request={last_error}; stderr={stderr}")
 
 
 def _in_view(locator):

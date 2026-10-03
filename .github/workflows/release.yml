@@ -1,0 +1,50 @@
+name: Stable release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: [pyproject.toml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'changl/agent-annotate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      BUILD_ID: ${{ github.sha }}
+      REPOSITORY: ${{ github.repository }}
+      RELEASE_REF: ${{ github.ref }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Check immutable release identity
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py prepare
+      - if: steps.release.outputs.needed == 'true'
+        run: python -m pip install build 'setuptools>=69' 'platformdirs>=4.0' 'mcp>=1.0'
+      - name: Build and verify the shipping wheel
+        if: steps.release.outputs.needed == 'true'
+        run: python scripts/release.py build
+      - name: Publish wheel and updater checksums
+        if: steps.release.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py publish
