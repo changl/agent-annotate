@@ -295,3 +295,31 @@ def test_native_copy_is_one_tab_without_an_external_review_url():
         data["tabs"] = [tab]
         with pytest.raises(ValueError):
             project_state.validate_project(data)
+
+
+def test_issue_links_are_exact_linear_urls_and_survive_noop(tmp_path):
+    data = _project()
+    data["issue_links"] = {"CHA-182": "https://linear.app/leadory/issue/CHA-182/home-speed"}
+    saved = project_state.save_project(tmp_path, data)
+    assert project_state.load_project(tmp_path)["issue_links"] == data["issue_links"]
+    original_mtime = (tmp_path / "project.json").stat().st_mtime_ns
+    assert project_state.save_project(tmp_path, data) == saved
+    assert (tmp_path / "project.json").stat().st_mtime_ns == original_mtime
+    del data["issue_links"]
+    data["modules"][1]["items"][0]["detail"] = "New progress"
+    project_state.save_project(tmp_path, data)
+    assert project_state.load_project(tmp_path)["issue_links"] == saved["issue_links"]
+
+
+@pytest.mark.parametrize("links", [
+    [], {"CHA-0": "https://linear.app/a/issue/CHA-0"},
+    {"<script>": "https://linear.app/a/issue/CHA-1"},
+    {"CHA-1": "javascript:alert(1)"}, {"CHA-1": "https://linear.app.evil/a/issue/CHA-1"},
+    {"CHA-1": "http://linear.app/a/issue/CHA-1"},
+    {"CHA-1": "https://user:secret@linear.app/a/issue/CHA-1"},
+    {"CHA-1": "https://linear.app/a/issue/CHA-10"},
+    {"CHA-1": "https://linear.app/a/issue/CHA-1-extra"},
+])
+def test_issue_links_reject_unsafe_or_mismatched_targets(links):
+    with pytest.raises(ValueError):
+        project_state.validate_project({"modules": [], "issue_links": links})

@@ -71,7 +71,7 @@ def _serialize(data: dict) -> bytes:
 
 def validate_project(data: Any) -> dict:
     """Validate and copy project data; absent timestamps are generated in UTC."""
-    data = _object(data, {"schema_version", "title", "updated_at", "modules", "tabs"}, {"modules"}, "project")
+    data = _object(data, {"schema_version", "title", "updated_at", "modules", "tabs", "issue_links"}, {"modules"}, "project")
     version = data.get("schema_version", 1)
     if type(version) is not int or version != 1:
         raise ValueError("project.schema_version must be 1")
@@ -82,6 +82,22 @@ def validate_project(data: Any) -> dict:
     normalized: dict[str, Any] = {"schema_version": 1}
     if "title" in data:
         normalized["title"] = _string(data["title"], "project.title", MAX_LABEL_LENGTH)
+    if "issue_links" in data:
+        links = data["issue_links"]
+        if not isinstance(links, dict) or len(links) > 250:
+            raise ValueError("project.issue_links must map at most 250 identifiers to Linear URLs")
+        normalized["issue_links"] = {}
+        for identifier, url in links.items():
+            if not isinstance(identifier, str) or not re.fullmatch(r"[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,9}", identifier):
+                raise ValueError("issue_links keys must be Linear issue identifiers")
+            url = _url(url, "Linear issue URL")
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or parsed.hostname != "linear.app" or f"/issue/{identifier}" not in parsed.path:
+                raise ValueError("issue_links values must be the matching HTTPS Linear issue URL")
+            tail = parsed.path.partition(f"/issue/{identifier}")[2]
+            if tail and not tail.startswith("/"):
+                raise ValueError("issue_links URL identifier does not match its key")
+            normalized["issue_links"][identifier] = url
     if "updated_at" in data:
         timestamp = _string(data["updated_at"], "project.updated_at")
         try:
@@ -99,12 +115,12 @@ def validate_project(data: Any) -> dict:
         if not isinstance(tabs, list) or len(tabs) > 8:
             raise ValueError("project.tabs must be an array of at most 8 tabs")
         normalized["tabs"] = []
-        ids = {"progress", "feedback"}
+        ids = {"progress", "feedback", "rounds"}
         for tab in tabs:
             tab = _object(tab, {"id", "label", "url", "kind"}, {"id", "label"}, "project.tabs")
             tab_id = _string(tab["id"], "tab.id", 80)
             if not _SAFE_ID.fullmatch(tab_id) or tab_id in ids:
-                raise ValueError("tab ids must be unique; progress and feedback are reserved")
+                raise ValueError("tab ids must be unique; progress, feedback, and rounds are reserved")
             ids.add(tab_id)
             kind = tab.get("kind", "reference")
             if kind not in ("reference", "copy", "document"):
@@ -205,6 +221,8 @@ def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
     normalized = validate_project(data)
     previous = load_project(slug_dir)
+    if "issue_links" not in data and "issue_links" in previous:
+        normalized["issue_links"] = previous["issue_links"]
     if {k: v for k, v in previous.items() if k != "updated_at"} == {k: v for k, v in normalized.items() if k != "updated_at"}:
         return previous
     normalized["updated_at"] = _timestamp()

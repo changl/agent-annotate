@@ -848,7 +848,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(403, b'{"error":"authenticated proxy boundary required"}')
             return False
         try:
-            for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "seen.json", "read-state.json"):
+            for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
                 _contained_path(self.artifact_dir, name)
         except PermissionError:
             self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
@@ -1039,6 +1039,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 from .copy_state import load_copy
                 try:
                     return self._respond(200, json.dumps(load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
+                except (OSError, ValueError) as exc:
+                    return self._respond(500, json.dumps({"error": str(exc)}).encode())
+            if route_path == "/api/history":
+                from .paths import BUS_ARCHIVE_ROOT
+                from .review_history import review_history
+                try:
+                    with _STORE_LOCK:
+                        history = review_history(self.artifact_dir, self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None, BUS_ARCHIVE_ROOT)
+                    return self._respond(200, json.dumps(history, ensure_ascii=False).encode(), cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode())
             if route_path == "/comments.json":
@@ -2386,6 +2395,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
             "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
         })
+        answers = []
+        for comment in comments:
+            decision = comment.get("decision") or {}
+            human_replies = [reply for reply in comment.get("replies", [])
+                             if not str(reply.get("author", "")).startswith("agent:")]
+            reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
+            if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
+                decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
+            answers.append({"comment_id": comment["id"], "number": comment.get("number"),
+                "prompt": (comment.get("decision_request") or {}).get("prompt", ""),
+                "verdict": decision.get("verdict", "comment"),
+                "text": decision.get("text") or reply.get("text") or comment.get("text", ""),
+                "by": decision.get("by") or reply.get("author") or comment.get("author")})
+        from .review_history import save_round
+        save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
+                                      "version": self._read_meta().get("current"), "note": None,
+                                      "answers": answers, "snapshot": True})
 
     def _wake_feedback_owner(self):
         if record := self._registered_record():
@@ -2624,20 +2650,31 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                               "undecided_ids": undecided_ids}).encode(), "application/json")
                 return
             owner = self._read_meta().get("owner") or {}
+            version = payload.get("version") or self._read_meta().get("current")
+            if version and (not isinstance(version, str) or not _VERSION_ID.fullmatch(version)
+                            or version not in {h.get("version") for h in self._read_meta().get("history", [])}):
+                return self._respond(400, b'{"error":"unknown review version"}')
             fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
                            "note": note, "owner": owner.get("owner_session"),
-                           "version": self._read_meta().get("current")}
+                           "version": version}
             delivery = self._compute_delivery()
             delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
             event = {"comment_ids": comment_ids, "verdict_counts": verdict_counts,
                      "undecided_ids": undecided_ids, "note": note, **self._session_fields()}
+            answers = [{"comment_id": c["id"], "number": c.get("number"),
+                        "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
+                        "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
+                        "by": c["decision"].get("by")} for c in pending]
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
-                                                "round_id": delivery["delivery_id"], **event})
+                                                "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
             _bus_append(self.bus_dir, self.slug, {
                 "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
                 "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
                 "comment_count": len(comment_ids), "author": author, **event,
             })
+            from .review_history import save_round
+            save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
+                                          "version": version, "note": note, "answers": answers, "snapshot": True})
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)

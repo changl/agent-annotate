@@ -197,6 +197,7 @@ async function loadMeta() {
     const r = await fetch(apiUrl('./current.meta.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     const meta = await r.json();
+    if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
       HAS_SUMMARY = true;
       SUMMARY_PROJECT = meta.project_info;
@@ -444,9 +445,9 @@ async function apiRoundSubmit(note) {
     const r = await fetch(apiUrl('./api/rounds/submit' + authorQuery()), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: note || undefined }),
+      body: JSON.stringify({ note: note || undefined, version: CURRENT_VERSION }),
     });
-    if (r.ok) return await r.json();
+    if (r.ok) { historyDirty = true; return await r.json(); }
   } catch {}
   return null;
 }
@@ -597,6 +598,9 @@ let theme = 'dark';
 let hasCopy = false;
 let copyController = null;
 let copyMounting = false;
+let HISTORY_DATA = null;
+let historyLoading = false;
+let historyDirty = false;
 function updateWorkspaceTitle(fallback) {
   const title = PROJECT.title || fallback || document.title || 'annotate';
   document.getElementById('hdr-title').textContent = title;
@@ -611,6 +615,164 @@ function mountCopy() {
     .catch(() => {})
     .finally(() => { copyMounting = false; });
 }
+function applyArchiveTheme() {
+  const frame = document.getElementById('rounds-frame');
+  try {
+    if (!BRIDGE_ORIGIN || frame.contentWindow.location.origin !== BRIDGE_ORIGIN) return;
+    const doc = frame.contentDocument;
+    doc.documentElement.dataset.theme = theme;
+    doc.documentElement.classList.add('annotate-archive');
+    doc.body.classList.add('annotate-archive');
+    const stylesheet = document.querySelector('link[href$="content.css"]');
+    if (stylesheet && !doc.querySelector('link[href$="content.css"]')) {
+      const link = doc.createElement('link');
+      link.rel = 'stylesheet'; link.href = stylesheet.href; doc.head.appendChild(link);
+    }
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement?.namespaceURI !== 'http://www.w3.org/1999/xhtml'
+          || node.parentElement.closest('a,pre,code,script,style,textarea,select,button,[contenteditable]')) continue;
+      const html = ticketsHTML(node.textContent);
+      if (html.includes('class="ticket-link"')) nodes.push([node, html]);
+    }
+    for (const [node, html] of nodes) {
+      const span = doc.createElement('span'); span.innerHTML = html; node.replaceWith(span);
+    }
+    doc.querySelectorAll('a[href]').forEach(link => {
+      try {
+        const url = new URL(link.getAttribute('href'), doc.baseURI);
+        if (['http:','https:'].includes(url.protocol) && !link.getAttribute('href').startsWith('#')) {
+          link.target = '_blank'; link.rel = 'noopener noreferrer';
+        }
+      } catch {}
+    });
+    doc.querySelectorAll('button,input,select,textarea').forEach(control => { control.disabled = true; });
+  } catch { /* A missing or foreign snapshot never gets parent access. */ }
+}
+function historyVersionLabel(version) {
+  return [version.source_page, version.source_version || version.version,
+    version.ts ? fmtTs(version.ts) : null, version.current ? 'current' : null,
+    version.available === false ? 'unavailable' : null].filter(Boolean).join(' · ');
+}
+async function loadHistory() {
+  if ((HISTORY_DATA && !historyDirty) || historyLoading) return;
+  historyLoading = true;
+  const status = document.getElementById('rounds-status');
+  status.textContent = 'Loading previous rounds…';
+  status.hidden = false;
+  try {
+    const response = await fetch(apiUrl('./api/history'), {cache:'no-store',signal:AbortSignal.timeout(10000)});
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.versions) || !Array.isArray(data.rounds)) throw new Error();
+    HISTORY_DATA = data;
+    historyDirty = false;
+    const select = document.getElementById('rounds-select');
+    select.replaceChildren();
+    for (const [label, rows, prefix] of [['Submitted reviews',data.rounds,'round'], ['Documents',data.versions,'version']]) {
+      if (!rows.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      rows.forEach((row, index) => {
+        const option = document.createElement('option');
+        option.value = `${prefix}:${index}`;
+        option.textContent = prefix === 'round'
+          ? [row.ts ? fmtTs(row.ts) : `Review ${index + 1}`, row.version, `${(row.answers || []).length} answers`].filter(Boolean).join(' · ')
+          : historyVersionLabel(row);
+        option.title = row.label || option.textContent;
+        group.appendChild(option);
+      });
+      select.appendChild(group);
+    }
+    select.disabled = !select.options.length;
+    status.textContent = select.options.length ? '' : 'No document versions or submitted reviews were recorded.';
+    status.hidden = !!select.options.length;
+    renderHistorySelection();
+  } catch {
+    status.textContent = 'Previous rounds could not be loaded. ';
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'btn btn-ghost btn-xs'; retry.textContent = 'Retry';
+    retry.onclick = loadHistory;
+    status.appendChild(retry);
+  } finally { historyLoading = false; }
+}
+function historyAnswerHTML(answer, metadata = false) {
+  return `<article class="history-answer"><div class="history-answer-heading">${answer.number ? `<span class="citem-num">#${esc(answer.number)}</span>` : ''}${answer.prompt ? `<strong>${ticketsHTML(answer.prompt)}</strong>` : ''}<span class="history-verdict">${esc(DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '')}</span></div>${answer.text ? `<p>${ticketsHTML(answer.text)}</p>` : ''}${metadata ? `<div class="history-answer-meta">${esc(answer.ts ? fmtTs(answer.ts) : '')}${answer.by ? ' · ' + esc(answer.by) : ''}</div>` : ''}</article>`;
+}
+function historyAnswersHTML(round) {
+  const answers = Array.isArray(round.answers) ? round.answers : [];
+  return `<section class="history-round"><div class="history-round-heading"><strong>${esc(round.ts ? fmtTs(round.ts) : 'Submitted review')}</strong><span>${esc(round.by ? authorLabel({author:round.by}) : '')}</span></div>`
+    + (round.note ? `<p class="history-note">${ticketsHTML(round.note)}</p>` : '')
+    + (answers.length ? answers.map(answer => historyAnswerHTML(answer)).join('') : '<p class="history-empty">No answer details were recorded for this review.</p>')
+    + '</section>';
+}
+function versionAnswersHTML(version) {
+  const answers = Array.isArray(version.answers) ? version.answers : [];
+  if (answers.length) {
+    return '<section class="history-round"><div class="history-round-heading"><strong>Recorded answers during this version</strong></div>'
+      + answers.map(answer => historyAnswerHTML(answer, true)).join('') + '</section>';
+  }
+  const rounds = HISTORY_DATA.rounds.filter(round => round.version === version.version);
+  return rounds.length ? rounds.map(historyAnswersHTML).join('') : '<p class="history-empty">No answers recorded for this version.</p>';
+}
+function showHistoryDocument(version) {
+  if (!version) return;
+  const status = document.getElementById('rounds-status');
+  const meta = document.getElementById('rounds-selection-meta');
+  const description = [version.label, historyVersionLabel(version)].filter(Boolean).join(' · ');
+  meta.textContent = description + (version.available === false ? '' : ' · Read-only snapshot');
+  meta.title = meta.textContent;
+  if (version.available === false) {
+    document.getElementById('rounds-document').hidden = true;
+    status.hidden = false;
+    status.textContent = 'The original document was not retained for this version.';
+    return;
+  }
+  status.hidden = true;
+  const frame = document.getElementById('rounds-frame');
+  document.getElementById('rounds-document').hidden = false;
+  frame.title = `Historical document: ${historyVersionLabel(version)}`;
+  const url = './content?v=' + encodeURIComponent(version.version) + '&readonly=1';
+  if (frame.getAttribute('src') !== url) frame.src = url;
+}
+function renderHistorySelection() {
+  if (!HISTORY_DATA) return;
+  const selected = document.getElementById('rounds-select').value;
+  if (!selected) return;
+  const [kind, value] = selected.split(':');
+  const index = Number(value);
+  const review = document.getElementById('rounds-review');
+  const documentBox = document.getElementById('rounds-document');
+  const meta = document.getElementById('rounds-selection-meta');
+  review.hidden = true; review.replaceChildren(); documentBox.hidden = true; meta.textContent = '';
+  document.getElementById('rounds-status').hidden = true;
+  if (kind === 'round') {
+    const round = HISTORY_DATA.rounds[index];
+    if (!round) return;
+    review.hidden = false; review.innerHTML = historyAnswersHTML(round);
+    meta.textContent = [round.version, 'Submitted review'].filter(Boolean).join(' · ');
+    meta.title = meta.textContent;
+    const version = HISTORY_DATA.versions.find(item => item.version === round.version);
+    if (version && version.available !== false) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'btn btn-ghost btn-sm'; button.textContent = 'Document as recorded';
+      button.onclick = () => showHistoryDocument(version);
+      review.prepend(button);
+    } else {
+      const missing = document.createElement('p');
+      missing.className = 'history-empty';
+      missing.textContent = 'No original document was retained for this review.';
+      review.prepend(missing);
+    }
+  } else if (kind === 'version') {
+    const version = HISTORY_DATA.versions[index];
+    if (!version) return;
+    showHistoryDocument(version);
+    review.hidden = false;
+    review.innerHTML = versionAnswersHTML(version);
+  }
+}
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
   const toggle = document.getElementById('theme-toggle');
@@ -620,6 +782,7 @@ function applyTheme() {
   if (frame && frame.contentWindow && BRIDGE_ORIGIN) frame.contentWindow.postMessage({type:'annotate:theme', theme}, BRIDGE_ORIGIN);
   const extra = document.getElementById('workspace-extra-frame');
   if (extra && extra.contentWindow && BRIDGE_ORIGIN) extra.contentWindow.postMessage({type:'annotate:workspace-theme', theme}, BRIDGE_ORIGIN);
+  applyArchiveTheme();
 }
 function progressItems() {
   return (PROJECT.modules || []).filter(m => m.kind !== 'links').flatMap(m => m.items.map(i => [m.id, JSON.stringify(i)]));
@@ -637,13 +800,16 @@ function selectWorkspaceView(id) {
   workspaceView = id;
   const extra = workspaceTabs().find(t => t.id === id && t.kind !== 'copy' && t.kind !== 'document');
   const copy = id === 'copy' && hasCopy;
-  document.getElementById('main-workspace').hidden = !!extra || copy;
+  const rounds = id === 'rounds';
+  document.getElementById('main-workspace').hidden = !!extra || copy || rounds;
   document.getElementById('workspace-extra').hidden = !extra;
   document.getElementById('copy-workspace').hidden = !copy;
+  document.getElementById('rounds-workspace').hidden = !rounds;
   document.body.dataset.workspaceView = extra ? 'extra' : id;
   document.body.classList.remove('is-mobile-sheet-open');
   document.getElementById('drawer').classList.remove('collapsed');
   if (copy) mountCopy();
+  if (rounds) loadHistory();
   if (extra) {
     const frame = document.getElementById('workspace-extra-frame');
     const url = new URL(extra.url);
@@ -680,7 +846,7 @@ function renderWorkspaceTabs() {
     button.dataset.workspaceTab = tab.id; button.dataset.extraTab = '1'; button.textContent = tab.label;
     button.setAttribute('aria-controls', tab.kind === 'copy' ? 'copy-workspace' : tab.kind === 'document' ? 'content-frame' : 'workspace-extra');
   }
-  const valid = ['progress', 'feedback', ...tabs.map(t => t.id), ...(READ_ONLY_REFERENCE ? ['reference'] : [])];
+  const valid = ['progress', 'feedback', 'rounds', ...tabs.map(t => t.id), ...(READ_ONLY_REFERENCE ? ['reference'] : [])];
   if (!valid.includes(workspaceView)) workspaceView = flattenAll(false).length ? 'feedback' : (PROJECT.modules || []).length ? 'progress' : 'details';
   let seen = [];
   try { seen = JSON.parse(localStorage.getItem('annotate:progress:' + location.pathname) || '[]'); } catch {}
@@ -698,6 +864,8 @@ function wireWorkspace() {
   try { theme = localStorage.getItem('annotate:theme') === 'light' ? 'light' : 'dark'; } catch {}
   applyTheme();
   document.getElementById('workspace-extra-frame').addEventListener('load', applyTheme);
+  document.getElementById('rounds-frame').addEventListener('load', applyArchiveTheme);
+  document.getElementById('rounds-select').addEventListener('change', renderHistorySelection);
   window.addEventListener('resize', renderOwnerChip);
   window.addEventListener('message', event => {
     if (window.parent !== window && event.source === window.parent && event.origin === BRIDGE_ORIGIN
@@ -775,8 +943,8 @@ function renderProject() {
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
         return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${esc(item.description)}</span>` : ''}</li>`;
       }
-      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${item.url ? `<a href="${escAttr(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>` : esc(item.label)}${item.failed_count ? `<span class="badge badge-error badge-soft failed-pill">failed ${item.failed_count}x</span>` : ''}${item.detail ? `<span class="project-detail">${esc(item.detail)}</span>` : ''}</li>`;
-      return `<li>${esc(item.text)}</li>`;
+      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${item.url ? `<a href="${escAttr(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>` : ticketsHTML(item.label)}${item.failed_count ? `<span class="badge badge-error badge-soft failed-pill">failed ${item.failed_count}x</span>` : ''}${item.detail ? `<span class="project-detail">${ticketsHTML(item.detail)}</span>` : ''}</li>`;
+      return `<li>${ticketsHTML(item.text)}</li>`;
     }).join('');
     return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
   }).join('');
@@ -924,6 +1092,27 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+function ticketsHTML(value) {
+  const text = String(value == null ? '' : value);
+  const links = PROJECT.issue_links || {};
+  const ids = /(?<![A-Za-z0-9_-])[A-Z][A-Z0-9]{0,20}-[1-9][0-9]{0,9}(?![A-Za-z0-9_-])/g;
+  let html = '', offset = 0;
+  for (const match of text.matchAll(ids)) {
+    html += esc(text.slice(offset, match.index));
+    const id = match[0];
+    let url;
+    try {
+      const raw = Object.prototype.hasOwnProperty.call(links, id) ? links[id] : null;
+      if (typeof raw === 'string' && !/[\\\u0000-\u0020\u007f]/.test(raw)) {
+        const parsed = new URL(raw);
+        if (parsed.protocol === 'https:' && parsed.hostname === 'linear.app' && !parsed.username && !parsed.password && !parsed.port) url = parsed.href;
+      }
+    } catch {}
+    html += url ? `<a class="ticket-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" title="Open ${escAttr(id)} in Linear">${esc(id)}</a>` : esc(id);
+    offset = match.index + id.length;
+  }
+  return html + esc(text.slice(offset));
+}
 function fmtTs(iso) {
   if (!iso) return '';
   try {
@@ -1324,7 +1513,7 @@ function decisionOptions(dr) {
 // shown in full (NN/g: never hide what the decision depends on).
 function renderDecisionContext(dr) {
   const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
-  return ctx ? `<div class="decision-context">${esc(ctx)}</div>` : '';
+  return ctx ? `<div class="decision-context">${ticketsHTML(ctx)}</div>` : '';
 }
 function idFor(key) {
   let h = 5381;
@@ -1431,13 +1620,13 @@ function renderDecisionBlock(c) {
   const dr = c.decision_request;
   if (c.status === 'resolved_in_version') {
     return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
       <span class="decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')}</span>
     </div>`;
   }
   if (c.status === 'addressed_by_agent' && !decisionAnswer(c)) {
     return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
       <span class="decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
     </div>`;
   }
@@ -1448,9 +1637,9 @@ function renderDecisionBlock(c) {
   if (decisionAnswer(c) && !changing) {
     const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
     return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
       <span class="decision-verdict-chip verdict-${escAttr(c.decision.verdict)}">${esc(label)} &middot; ${esc(fmtTs(c.decision.ts))}</span>
-      ${answer ? `<div class="decision-answer">${esc(answer)}</div>` : ''}
+      ${answer ? `<div class="decision-answer">${ticketsHTML(answer)}</div>` : ''}
       <button class="alink decision-change-link" data-decision-action="change" data-id="${escAttr(c.id)}">&#8634; Change verdict</button>
       ${renderDecisionPending(c)}
     </div>`;
@@ -1501,7 +1690,7 @@ function renderDecisionBlock(c) {
   // what the card is about, the options as rows, then "Evidence (n)".
   return `<div class="decision-block">
     ${changingNote}
-    <div class="decision-prompt">${esc(displayPrompt(c))}</div>
+    <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
     ${renderDecisionMeta(dr)}
     ${renderDecisionContext(dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
@@ -1534,12 +1723,12 @@ function renderCItem(c) {
   const replyHtml = (c.replies || []).map(r => `
     <div class="thread-reply">
       <div class="thread-reply-hdr">${esc(authorLabel(r))} &middot; ${esc(fmtTs(r.ts))}</div>
-      <div>${esc(r.text)}</div>
+      <div>${ticketsHTML(r.text)}</div>
     </div>`).join('');
   const agentReplyHtml = c.response_text ? `
     <div class="agent-reply">
       <div class="agent-reply-hdr">Agent response</div>
-      <div>${esc(c.response_text)}</div>
+      <div>${ticketsHTML(c.response_text)}</div>
     </div>` : '';
 
   let actions = '';
@@ -1606,7 +1795,7 @@ function renderCItem(c) {
       ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
     ${renderDecisionBlock(c)}
-    <div class="citem-txt">${esc(text)}</div>
+    <div class="citem-txt">${ticketsHTML(text)}</div>
     ${discussion}
     ${replySection}
     <details class="feedback-actions"><summary>More</summary><div class="citem-meta"><span class="citem-author">${esc(authorLabel(c))}</span><span>${ts}${c.edited_at ? ' (edited)' : ''}</span></div><div class="citem-actions">${actions}</div>${gotoHtml}</details>
@@ -2053,14 +2242,14 @@ function renderPinPopItem(c) {
   const cls = classify(c);
   const num = NUM_MAP[c.id];
   const respHtml = c.response_text
-    ? `<div class="pinpop-item-resp"><b>Agent:</b> ${esc(c.response_text)}</div>`
+    ? `<div class="pinpop-item-resp"><b>Agent:</b> ${ticketsHTML(c.response_text)}</div>`
     : '';
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
       ${num ? `<span class="citem-num">#${num}</span>` : ''}
       <span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
     </div>
-    <div class="pinpop-item-txt">${esc(c.text)}</div>
+    <div class="pinpop-item-txt">${ticketsHTML(c.text)}</div>
     ${respHtml}
     <div class="pinpop-item-meta">
       <span>${esc(authorLabel(c))}</span>
