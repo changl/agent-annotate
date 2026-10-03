@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape, unescape
 
 CANVAS_START = "<!-- CANVAS CONTENT"
 CANVAS_END = "<!-- END CANVAS CONTENT"
@@ -193,8 +194,14 @@ def build_content_document(html: str, title: str = "") -> str:
     registry = extract_registry(html)
     head_assets = _extract_head_assets(html)
 
-    safe_title = (title or "Annotate content").replace("<", "&lt;").replace(">", "&gt;")
-    registry_json = json.dumps(registry, ensure_ascii=False)
+    # The server's slug is a fallback, not the original author-facing title.
+    # Generated snapshots kept that title in chrome outside the canvas.
+    title_match = re.search(r"<title\b[^>]*>(.*?)</title\s*>", html, re.I | re.S)
+    document_title = unescape(title_match.group(1)).strip() if title_match else ""
+    safe_title = escape(document_title or title or "Annotate content")
+    if '<div class="aa">' in canvas and not re.search(r"<h1\b", canvas, re.I):
+        canvas = canvas.replace('<div class="aa">', f'<div class="aa"><h1 class="aa-page-title">{safe_title}</h1>', 1)
+    registry_json = json.dumps(registry, ensure_ascii=False).replace("<", "\\u003c")
 
     return f"""<!doctype html>
 <html lang="en">

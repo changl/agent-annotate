@@ -1,8 +1,54 @@
 # agent-annotate — changelog
 
+## 2.22.0
+
+- Feedback opens to unified actionable cards; Progress holds status and reference tabs are read-only.
+- Compact headers, panels, popovers and scrollable tables use consistent dark/light themes.
+- Copy supports locally bundled WYSIWYG editing, immutable proposals and collapsed history.
+- Explicit feedback sends use durable owner delivery; unanswered agent questions and draft rounds are excluded.
+- Increased the HTTP request queue for simultaneous theme/editor asset loads.
+
+## 2.21.0
+
+- One canonical project workspace across providers and worktrees; concise progress updates and no-op saves.
+- Shared daisyUI dark/light UI, Progress/Feedback tabs, short supporting tabs, accessible named owner, editable decision explanations.
+- Default Tailscale Funnel with private external review links and Copy link; scoped route migration and cleanup.
+- Submitted-round-only notifications, stable cross-provider decisions and reviewer identity, complete packaged skill references.
+
+
 The entries from v2.19 down are the live skill directory's history, carried
 into the repo unchanged. The package release below is the first one cut from
 this repository.
+
+## v2.20.4 Review reliability and request boundaries (unreleased)
+
+- Project information uses a compact native disclosure inside the document,
+  scrolling away with content. The redundant header Project toggle is removed.
+  Expansion preferences and pins remain correct across versions and srcdoc.
+- Generated and legacy managed pages retain a visible title; the shell title
+  follows the selected version. Tables preserve words and scroll when needed.
+  Decision numbers remain stable across live, archived and resolved history,
+  including the CLI's real store loader.
+- Iframe messages check both sender origin and window, with exact target
+  origins for regular and nested srcdoc pages. Foreign navigation cannot receive
+  review commands or inject feedback.
+- Server requests enforce recorded hosts, origins and mount boundaries;
+  human reviewer identity comes from a declared loopback reviewer or trusted
+  proxy. Arbitrary email headers no longer establish a reviewer. Version and
+  legacy comment paths stay within their artifact root, while safe legacy
+  basenames with spaces and Unicode remain supported.
+- Internal state, hidden files and backups are excluded from static serving.
+  JSON/settings writes preserve permissions and avoid predictable temp paths.
+  Mounted roots redirect to their directory URL without losing query state.
+- Runtime updates leave user-managed skills alone. The Codex MCP plugin uses
+  the installed CLI instead of independently launching moving Git main.
+  Installation, reviewer identity and component removal are documented.
+- CI no longer persists checkout credentials; benchmark archive extraction
+  fails closed if safe tarfile filters are unavailable.
+- Reconstructed anchor metadata retains script-end escaping; authenticated
+  Cloudflare API calls refuse redirects and create private, distinct backups.
+  The development lock updates cryptography and PyJWT past the reviewed
+  advisories without changing the installed MCP SDK version.
 
 ## v2.20.3 Fleet runtime and delivery observations (2026-09-29)
 

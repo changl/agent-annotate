@@ -14,3 +14,4 @@ build/
 # annotate slug dirs are runtime state, never source
 reviews/
 .playwright-mcp/
+ui/node_modules/

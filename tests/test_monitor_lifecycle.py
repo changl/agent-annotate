@@ -8,6 +8,7 @@ was not there.
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -56,6 +57,8 @@ def test_sigterm_releases_the_lease_and_records_the_exit(tmp_path):
         assert recorded["owner_session"] == "sess-mon"
         assert recorded["pid"] == proc.pid
         assert "round_submitted" in recorded["events"]
+        assert select.select([proc.stdout], [], [], 10)[0], 'monitor never armed'
+        armed = proc.stdout.readline()
 
         # A verdict inside a round is not printed; the round submit is.
         with bus.open("a") as fh:
@@ -66,9 +69,11 @@ def test_sigterm_releases_the_lease_and_records_the_exit(tmp_path):
                                  "comment_ids": ["aaaaaaaaaaaa"], "by": "r@x", "note": "ok",
                                  "verdict_counts": {"accept": 1, "reject": 0, "comment": 0},
                                  "undecided_ids": []}) + "\n")
-        time.sleep(1.0)
+        assert select.select([proc.stdout], [], [], 10)[0], 'submitted round was not delivered'
+        delivered = proc.stdout.readline()
         proc.send_signal(signal.SIGTERM)
         out, err = proc.communicate(timeout=10)
+        out = armed + delivered + out
     finally:
         if proc.poll() is None:
             proc.kill()

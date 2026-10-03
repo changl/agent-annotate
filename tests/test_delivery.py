@@ -55,6 +55,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(delivery, "_process", lambda pid: (_START, "/usr/local/bin/codex"))
     monkeypatch.setattr(delivery.os, "getppid", lambda: 4242)
     monkeypatch.delenv("ORCA_TERMINAL_HANDLE", raising=False)
+    monkeypatch.setattr(delivery, "_parent_handle", lambda expected: None)
     terminal = {
         "incarnationId": "incarnation-original",
         "worktreeId": "worktree-original",
@@ -341,6 +342,15 @@ def test_reviewer_text_is_never_in_wakeup_prompt(estate):
     assert "annotate inbox proj/demo --unread" in prompt
     assert "annotate cards proj/demo" in prompt
     assert "a" * 12 in prompt
+
+
+def test_round_wakeup_uses_mounted_url_from_legacy_registry(estate):
+    estate["record"].update(url="https://page.example:8447/", public_base_path="/demo")
+    _write_registry(estate, estate["record"])
+    _append(estate, _round())
+    _dispatch(estate)
+    prompt = _sends(estate)[0][_sends(estate)[0].index("--text") + 1]
+    assert "Page: https://page.example:8447/demo/." in prompt
 
 
 def test_delivery_cursor_does_not_consume_inbox_hook_or_monitor_cursors(estate):

@@ -349,3 +349,20 @@ def test_staged_python_manifest_must_match_reported_version(estate, monkeypatch)
     with pytest.raises(deployment.DeploymentError, match="manifest"):
         REAL_TARGET(estate.new)
     assert estate.stops == []
+
+
+def test_remount_for_funnel_preserves_owner_feedback_and_rolls_back_on_failure(estate, monkeypatch):
+    original = copy.deepcopy(estate.records["review"])
+    def failed(record, pid, expected):
+        if expected:
+            assert record["public_base_path"] == "/annotate/reviews/review"
+            raise deployment.DeploymentError("new mount failed")
+        return {"anchors": 1}
+    monkeypatch.setattr(deployment, "_verify_server", failed)
+    with pytest.raises(deployment.DeploymentError, match="rollback completed"):
+        deployment.restart_record("reviews", "review", estate.new, mount="/annotate/reviews/review")
+    current = cli._load_state_for_project("reviews")["slugs"]["review"]
+    assert current["public_base_path"] == original["public_base_path"]
+    assert current["owner_session"] == original["owner_session"]
+    assert (Path(current["slug_dir"]) / "comments.json").read_text() == '{"keep":"reviewer history"}'
+    assert estate.spawns[-1] == deployment._arguments(original, estate.old)

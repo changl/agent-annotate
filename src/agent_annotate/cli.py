@@ -56,6 +56,8 @@ skill-directory install used (~/.claude/annotate-state/state and
 import argparse
 import contextlib
 import fcntl
+import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -71,6 +73,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
+from http.client import HTTPException
 from pathlib import Path
 
 from . import __version__
@@ -92,6 +95,7 @@ from .paths import (
     WEB_DIR,
     ensure_runtime_dirs,
 )
+from .urls import mounted_url, page_url, redact_review_key, redact_share_links
 
 SHIM_MARKER = "agent-annotate shim"
 
@@ -226,7 +230,7 @@ def _bus_emit(bus_file, event: dict) -> None:
         payload = {"ts": _now_iso()}
         payload.update(event)
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False,
+            fh.write(json.dumps(redact_share_links(payload), ensure_ascii=False,
                                 separators=(",", ":")) + "\n")
     except Exception:
         pass
@@ -368,11 +372,20 @@ def _load_state_for_project(project: str) -> dict:
 
 
 def _save_state_for_project(project: str, state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    p = STATE_DIR / f"{project}.json"
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, p)
+    _save_private_json(STATE_DIR / f"{project}.json", state)
+
+
+def _save_private_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(redact_share_links(data), output, indent=2, ensure_ascii=False)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _all_state_files() -> list[Path]:
@@ -442,22 +455,30 @@ def _load_projects_toml() -> dict:
 
 
 def _slug_project(slug_dir: Path, explicit_project: str | None = None) -> tuple[str, str]:
-    """Return (project, slug). Project defaults to slug_dir.parent.name."""
+    """An existing directory keeps its registered scope across aliases and sessions."""
+    existing = {(p, s) for p, s, r in _registry_entries() if r.get("slug_dir")
+                and Path(r["slug_dir"]).resolve() == slug_dir.resolve()}
+    if len(existing) > 1:
+        raise ValueError("page directory has ambiguous registrations; no new scope created")
+    if existing:
+        return existing.pop()
     slug = slug_dir.name
     project = explicit_project or slug_dir.parent.name or "default"
     return project, slug
 
 
 def _project_config(project: str) -> dict:
-    cfg = _load_projects_toml().get(project, {})
-    cfg.setdefault("transport", "local")
+    config = _load_projects_toml()
+    cfg = {**config.get("defaults", {}), **config.get(project, {})}
+    cfg.setdefault("transport", "funnel")
     cfg.setdefault("hostname", None)
     cfg.setdefault("port_base", 8800)
     cfg.setdefault("path_prefix", None)
     return cfg
 
 
-_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix"})
+_PROJECT_CORE_KEYS = frozenset({"transport", "hostname", "port_base", "path_prefix", "public", "trusted_access_origins",
+                               "local_author", "local_author_name", "reviewer_aliases"})
 
 
 def _transport_opts(cfg: dict) -> dict:
@@ -645,10 +666,16 @@ def _ensure_hook_installed() -> tuple[bool, str]:
         ]
     })
 
-    # Atomic write
-    tmp = SETTINGS_JSON.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, SETTINGS_JSON)
+    # Preserve private settings permissions and never follow a predictable temp symlink.
+    mode = SETTINGS_JSON.stat().st_mode & 0o777
+    descriptor, temporary = tempfile.mkstemp(prefix=".annotate-settings-", dir=SETTINGS_JSON.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(settings, output, indent=2, ensure_ascii=False)
+            os.fchmod(output.fileno(), mode)
+        os.replace(temporary, SETTINGS_JSON)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
     return True, f"added UserPromptSubmit hook → {HOOK_COMMAND}"
 
 
@@ -672,6 +699,16 @@ def _start_server(slug_dir: Path, port: int, bus_dir: Path, public_base_path: st
     ]
     if public_base_path:
         cmd += ["--public-base-path", public_base_path]
+    local = _project_config(bus_dir.name)
+    for key in ("local_author", "local_author_name"):
+        value = local.get(key)
+        if value is not None:
+            if (not isinstance(value, str) or not value.strip() or len(value) > 256
+                    or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+                raise ValueError(f"project {key} must be a nonempty identity without control characters")
+            if key == "local_author_name" and not local.get("local_author"):
+                raise ValueError("project local_author_name requires local_author")
+            cmd += ["--" + key.replace("_", "-"), value.strip()]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{slug_dir.name}.log"
     fh = open(log_path, "ab", buffering=0)
@@ -971,13 +1008,13 @@ def _owner_fields(session_id: str | None = None) -> dict:
     """
     sid = session_id or _session_id()
     from .delivery import capture_target
-
+    target = capture_target(sid, _session_agent())
     return {
         "owner_session": sid,
         "owner_agent": _session_agent(),
-        "owner_label": _session_label(sid),
+        "owner_label": (target or {}).get("label") or _session_label(sid),
         "owner_claimed_at": _now_iso(),
-        "owner_target": capture_target(sid, _session_agent()),
+        "owner_target": target,
     }
 
 
@@ -1042,7 +1079,7 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
 
     details = transport_details or {}
     ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
-    if ts is None and details.get("transport") == "tailscale":
+    if ts is None and details.get("transport") in {"tailscale", "funnel"}:
         ts = details
     if ts and ts.get("hostname") and ts.get("https_port"):
         report.stages.append(
@@ -1053,8 +1090,8 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
         if report.failed:
             return report
 
-    public = record.get("public_url") or (
-        record.get("url") if record.get("transport") == "cloudflare" else None) or ""
+    public = (page_url(record) if record.get("transport") == "funnel" else mounted_url(record.get("public_url"), base)) or (
+        page_url(record) if record.get("transport") == "cloudflare" else None) or ""
     if public.startswith("https://"):
         report.stages.append(probe_browser("public", public, timeout=timeout))
     return report
@@ -1096,7 +1133,8 @@ def _run_gate(record: dict, args):
     )
     record["verified"] = report.fully_verified
     record["verify_stages"] = [
-        {"name": s.name, "status": s.status, "url": s.url, "detail": s.detail}
+        {"name": s.name, "status": s.status, "url": redact_review_key(s.url),
+         "detail": redact_share_links(s.detail)}
         for s in report.stages
     ]
     return report
@@ -1114,13 +1152,18 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
     """
     from .verify import format_report
 
+    if record.get("transport_error"):
+        print(f"ERROR: transport failed: {record['transport_error']}", file=sys.stderr)
+        return 1
+
     print()
     print(f"  annotate publish — {project}/{slug}")
     print("  ─────────────────────────────────────────────")
 
     # The tailnet URL is the page's URL. A broken Cloudflare route only
     # affects outside reviewers, so it warns instead of withholding the URL.
-    blocking = [st for st in (report.failed if report is not None else []) if st.name != "public"]
+    blocking = [st for st in (report.failed if report is not None else [])
+                if st.name != "public" or record.get("transport") == "funnel"]
     if blocking:
         stage = blocking[0]
         _bus_emit(record.get("bus_file"), {
@@ -1128,7 +1171,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
             "slug": slug,
             "stage": stage.name,
             "detail": stage.detail,
-            "url": stage.url,
+            "url": redact_review_key(stage.url),
             "owner_session": record.get("owner_session") or _session_id(),
         })
         print("  NOT PUBLISHED — the page does not render.")
@@ -1136,7 +1179,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         for line in format_report(report):
             print(line)
         print()
-        print(f"  Local URL:     {record['local_url']}   (server is still running)")
+        print(f"  Local URL:     {mounted_url(record['local_url'], record.get('public_base_path'))}   (server is still running)")
         print(f"  PID:           {record['pid']}")
         print(f"  Port:          {record['port']}")
         print(f"  Transport:     {record.get('transport')}")
@@ -1177,15 +1220,19 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
 
     # The one URL to hand over. Pid, port, bus and state paths used to follow
     # it; `status` has them, and no round needed them from here.
-    print(f"  URL:           {record['url']}")
-    if record.get("public_url"):
-        print(f"  Public URL:    {record['public_url']}   (outside reviewers only)")
+    print(f"  URL:           {page_url(record)}")
+    if record.get("public_url") and record.get("transport") != "funnel":
+        print(f"  Public URL:    {mounted_url(record['public_url'], record.get('public_base_path'))}   (outside reviewers only)")
     if record.get("transport_error"):
         print(f"  Transport err: {record['transport_error']}")
     if report is not None:
         print("  ─────────────────────────────────────────────")
-        for line in format_report(report):
-            print(line)
+        if record.get("transport") == "funnel":
+            for stage in report.stages:
+                print(f"  {stage.status.upper():<5} {stage.name:<10} {redact_share_links(stage.detail)}")
+        else:
+            for line in format_report(report):
+                print(line)
     print("  ─────────────────────────────────────────────")
     if record.get("owner_label"):
         print(f"  Owner:         {record['owner_label']}")
@@ -1204,7 +1251,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         "owner_session": record.get("owner_session") or _session_id(),
         "owner_agent": record.get("owner_agent") or _session_agent(),
         "version": _read_meta(slug_dir).get("current"),
-        "url": record.get("url"),
+        "url": redact_review_key(page_url(record)),
         "transport": record.get("transport"),
         "verified": bool(record.get("verified")),
         "verify_stages": [
@@ -1225,6 +1272,44 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     recorded URL and exit 0, so re-running publish on a page that had just
     failed the gate reported it as fine one command later.
     """
+    wanted = getattr(args, "transport", None) or _project_config(project).get("transport")
+    if wanted == "funnel" and record.get("transport") != "funnel":
+        previous = dict(record)
+        mount = f"/annotate/{project}/{slug}"
+        needs_mount = mount != record.get("public_base_path")
+        remounted = False
+        from .review_access import ensure_key
+        from .transports import load
+        ensure_key(slug_dir)
+        try:
+            from . import __version__
+            code, capabilities = _api(record, "GET", "/api/capabilities", None, "publish")
+            if needs_mount or code != 200 or capabilities.get("version") != __version__:
+                from .deployment import restart_record
+                restart_record(project, slug, Path(sys.executable), **({"mount": mount} if needs_mount else {}))
+                remounted = needs_mount
+                record = _load_state_for_project(project)["slugs"][slug]
+            with _flock(_tunnel_lock_path()):
+                result = load("funnel").publish(mount.lstrip("/"), int(record["port"]),
+                                                **_transport_opts(_project_config(project)))
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                current = state["slugs"].get(slug)
+                if not current or current.get("pid") != record.get("pid"):
+                    raise RuntimeError("page changed during transport migration")
+                current.setdefault("legacy_routes", []).append({k: previous.get(k) for k in ("transport", "transport_details", "url", "public_url", "port", "public_base_path")})
+                current.update(transport="funnel", url=result["url"], public_url=result["url"],
+                               transport_details=result["details"], transport_error=None)
+                _save_state_for_project(project, state)
+                record = current
+        except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+            if remounted:
+                try:
+                    restart_record(project, slug, Path(sys.executable), mount=previous.get("public_base_path") or "")
+                except Exception as rollback:
+                    print(f"ERROR: previous mount could not be restored: {rollback}", file=sys.stderr)
+            print(f"ERROR: Funnel migration failed: {exc}", file=sys.stderr)
+            return 1
     if record.get("owner_session") == _session_id():
         from .delivery import capture_target
         target = capture_target(_session_id(), _session_agent())
@@ -1259,6 +1344,20 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
 def cmd_publish(args) -> int:
+    from .workspace import project_key
+    key = project_key(Path(args.slug_dir)) or project_key(Path.cwd()) or getattr(args, "project", None)
+    if key and not getattr(args, "standalone", False):
+        lock = LOCK_DIR / ("workspace-" + hashlib.sha256(key.encode()).hexdigest()[:20] + ".lock")
+        try:
+            with _flock(lock):
+                return _publish(args)
+        except TimeoutError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 4
+    return _publish(args)
+
+
+def _publish(args) -> int:
     started_at = time.monotonic()
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
@@ -1266,6 +1365,16 @@ def cmd_publish(args) -> int:
         return 2
     project, slug = _slug_project(slug_dir, args.project)
     cfg = _project_config(project)
+    from .workspace import duplicate_page, project_key
+    if not getattr(args, "standalone", False):
+        duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
+        if duplicate:
+            print(f"ERROR: project page already exists: {duplicate['slug_dir']}\n"
+                  f"  URL: {page_url(duplicate)}\nReuse it; independent artifacts require --standalone.", file=sys.stderr)
+            return 2
+    if (args.transport or cfg.get("transport")) == "funnel":
+        from .review_access import ensure_key
+        ensure_key(slug_dir)
 
     # ── Slug-dir preflight: a resolvable current.html + registered history ──
     current_version, notes = _ensure_current_symlink(slug_dir)
@@ -1360,7 +1469,7 @@ def cmd_publish(args) -> int:
             # Transport: publish (insert public route)
             transport_name = args.transport or cfg.get("transport", "local")
             hostname = args.hostname or cfg.get("hostname")
-            path_prefix = args.path_prefix or cfg.get("path_prefix") or f"/{slug}"
+            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{project}/{slug}" if transport_name == "funnel" else f"/{slug}")
             if path_prefix and not path_prefix.startswith("/"):
                 path_prefix = "/" + path_prefix
             path_prefix = path_prefix.rstrip("/")
@@ -1377,7 +1486,7 @@ def cmd_publish(args) -> int:
                         opts["hostname"] = hostname
                     if transport_name == "cloudflare_tailscale":
                         # A page that already had a public route keeps it.
-                        opts["public"] = bool(getattr(args, "public", False)) or bool(
+                        opts["public"] = bool(getattr(args, "public", False) or cfg.get("public")) or bool(
                             existing and _had_public_route(existing))
                     if existing:
                         # What this slug was routed through last time. A
@@ -1415,13 +1524,16 @@ def cmd_publish(args) -> int:
                 "port": port,
                 "transport": transport_name,
                 "public_base_path": pbp or None,
-                "url": transport_url or f"http://localhost:{port}/",
-                "public_url": transport_details.get("public_url"),
+                "url": mounted_url(transport_url or f"http://localhost:{port}/", pbp),
+                "public_url": mounted_url(transport_details.get("public_url"), pbp),
                 "local_url": f"http://localhost:{port}/",
                 "bus_file": str(bus_dir / f"{slug}.ndjson"),
                 "started_at": _now_iso(),
                 "transport_details": transport_details,
                 "transport_error": transport_error,
+                "workspace_key": project_key(slug_dir) or project_key(Path.cwd()),
+                "workspace_primary": not getattr(args, "standalone", False),
+                "standalone": bool(getattr(args, "standalone", False)),
                 **_owner_fields(),
                 "runtime_python": sys.executable,
                 "runtime_manifest": runtime_manifest(),
@@ -1463,65 +1575,85 @@ def cmd_publish(args) -> int:
 
 
 def cmd_unpublish(args) -> int:
-    slug = args.slug
-    # Locate the state file that owns this slug
-    record = None
-    project = None
-    for sf in _all_state_files():
-        st = json.loads(sf.read_text(encoding="utf-8"))
-        if slug in st.get("slugs", {}):
-            record = st["slugs"][slug]
-            project = st["project"]
-            break
-    if not record:
-        print(f"ERROR: no state record for slug {slug!r}", file=sys.stderr)
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
         return 2
-
-    # Stop server
-    pid = record.get("pid", 0)
-    stopped = _stop_server(pid)
-    print(f"  Server pid={pid} {'stopped' if stopped else 'not running'}")
-
-    # Transport teardown
-    transport_name = record.get("transport", "local")
-    pbp = (record.get("public_base_path") or "").lstrip("/")
-    if transport_name != "local" and pbp:
-        try:
-            from .transports import load as _load_transport
-            tmod = _load_transport(transport_name)
-            details = record.get("transport_details", {}) or {}
-            opts = _transport_opts(_project_config(project))
-            host = details.get("hostname")
-            if host:
-                opts["hostname"] = host
-            # A tailscale serve mapping is addressed by port, not by slug: pass
-            # both the recorded serve port and the local port so teardown can
-            # identify the mapping and refuse to remove a recycled one.
-            if record.get("port"):
-                opts["port"] = record["port"]
-            https_port = details.get("https_port") or \
-                (details.get("tailscale") or {}).get("https_port")
-            if https_port:
-                opts["https_port"] = https_port
-            with _flock(_tunnel_lock_path()):
-                r = tmod.unpublish(pbp, **opts)
-            print(f"  Transport {transport_name}: {r.get('details', {}).get('action', 'ok')}")
-        except NotImplementedError as e:
-            print(f"WARN: transport {transport_name}: {e}", file=sys.stderr)
-        except TimeoutError as e:
-            print(f"WARN: transport {transport_name} unpublish skipped: {e}", file=sys.stderr)
-        except Exception as e:
-            print(f"WARN: transport {transport_name} unpublish failed: {e}", file=sys.stderr)
-
-    # Remove from state
+    project, slug, selected = resolved
     try:
         with _flock(_state_lock_path(project)):
             state = _load_state_for_project(project)
+            record = state.get("slugs", {}).get(slug)
+            if record != selected:
+                raise RuntimeError("page registration changed during selection; no teardown attempted")
+            directory = Path(record["slug_dir"]).resolve()
+            for other_project, other_slug, other in _registry_entries():
+                if (other_project, other_slug) == (project, slug):
+                    continue
+                if (str(other.get("port")) == str(record.get("port"))
+                        or (other.get("slug_dir") and Path(other["slug_dir"]).resolve() == directory)):
+                    raise RuntimeError("page directory or port is also registered to another scope; no teardown attempted")
+            from .deployment import _identity
+            owned = {**record, "project": project}
+            before = _identity(owned)
+            from .legacy_routes import cleanup
+            with _flock(_tunnel_lock_path()):
+                cleanup(record, _project_config(project))
+
+            # Remove only this recorded route. A root mount is still a route;
+            # the transport's origin/port ownership guard decides whether it
+            # belongs to this page. Failed removal leaves the receipt intact.
+            transport_name = record.get("transport", "local")
+            if transport_name != "local":
+                from .transports import load as _load_transport
+                tmod = _load_transport(transport_name)
+                details = record.get("transport_details") or {}
+                opts = _transport_opts(_project_config(project))
+                if details.get("hostname"):
+                    opts["hostname"] = details["hostname"]
+                opts["port"] = record["port"]
+                https_port = details.get("https_port") or (details.get("tailscale") or {}).get("https_port")
+                if https_port:
+                    opts["https_port"] = https_port
+                with _flock(_tunnel_lock_path()):
+                    result = tmod.unpublish((record.get("public_base_path") or "").lstrip("/"), **opts)
+                if not isinstance(result, dict) or result.get("ok") is not True:
+                    raise RuntimeError(f"transport {transport_name} teardown failed or was refused")
+                transport_details = result.get("details") or {}
+                outcomes = [transport_details.get(name) for name in ("tailscale", "cloudflare")
+                            if isinstance(transport_details.get(name), dict)] or [transport_details]
+                for outcome in outcomes:
+                    reason = outcome.get("reason")
+                    if (outcome.get("action") == "noop"
+                            and not (isinstance(reason, str) and
+                                     (reason.startswith("no serve mapping") or reason == "no matching rule"))):
+                        raise RuntimeError(f"transport {transport_name} ownership not proven; inspect its recorded route")
+                print(f"  Transport {transport_name}: {transport_details.get('action', 'ok')}")
+
+            fresh = _identity(owned)
+            if fresh != before:
+                raise RuntimeError("server identity changed during teardown; no signal sent")
+            pid = before["pid"]
+            if pid is not None:
+                # Avoid _stop_server's unguarded SIGKILL escalation: a reused
+                # PID during its wait must never authorize another signal.
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(20):
+                    if not _is_process_alive(pid):
+                        break
+                    time.sleep(0.1)
+                if _is_process_alive(pid):
+                    raise RuntimeError("server stop unproven after SIGTERM; inspect it before retrying; no hard kill sent")
+            if _identity({**owned, "pid": pid})["pid"] is not None:
+                raise RuntimeError("a page server appeared during teardown; registration retained")
+            print(f"  Server pid={pid if pid is not None else record.get('pid', 0)} {'stopped' if pid is not None else 'already stopped'}")
             state["slugs"].pop(slug, None)
             _save_state_for_project(project, state)
     except TimeoutError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {e}; registration retained for retry", file=sys.stderr)
         return 4
+    except Exception as e:
+        print(f"ERROR: unpublish {project}/{slug}: {e}; registration retained for retry", file=sys.stderr)
+        return 1
     print(f"  Removed from state file: {STATE_DIR / (project + '.json')}")
     return 0
 
@@ -1627,7 +1759,7 @@ def cmd_status(args) -> int:
         print(f"  {'-' * 15} {'-' * 24} {'-' * 21} {'-' * 40}")
         for project, slug, record in retired:
             print(f"  {project[:15]:<15} {slug[:24]:<24} "
-                  f"{str(record.get('retired_at'))[:21]:<21} {record.get('url')}")
+                  f"{str(record.get('retired_at'))[:21]:<21} {page_url(record)}")
         return 0
     rows = []
     live = _running_servers()
@@ -1660,7 +1792,7 @@ def cmd_status(args) -> int:
             # An owner only matters while the page is serving: a dead row's
             # owner is a fact about history, not about who should act.
             owner = _owner_note(rec, ps_snapshot) if state != "dead" else ""
-            rows.append((project, slug, pid, port, rec.get("url"), state, owner))
+            rows.append((project, slug, pid, port, page_url(rec), state, owner))
     if not rows:
         print("(no active slugs)")
         _print_retired_count()
@@ -1937,7 +2069,7 @@ def _auto_dispose(slug_dir: Path, new_version: str, project_hint: str | None) ->
     except (OSError, ValueError, TypeError):
         pass
     mentions = _mentions_by_anchor(html)
-    resolved = _resolve_slug(slug_dir.name, project_hint)
+    resolved = _resolve_scoped_slug(slug_dir.name, project_hint)
     if not resolved:
         return []
     record = resolved[2]
@@ -2046,7 +2178,7 @@ def cmd_publish_version(args) -> int:
     print(f"  history:       {'added' if added and added[0] else 'updated in place'} "
           f"{new_version} ({entries} entr{'y' if entries == 1 else 'ies'} total)")
 
-    resolved = _resolve_slug(slug_dir.name, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(slug_dir.name, getattr(args, "project", None))
     if resolved:
         _project, _slug, record = resolved
         bus_file = record.get("bus_file")
@@ -2133,6 +2265,8 @@ def cmd_inbox(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    from .workspace import workspace_owner_record
+    record = workspace_owner_record(record)
     session_id = _session_id()
     bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
     offset_file = _offset_file(project, slug, session_id)
@@ -2265,7 +2399,10 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
     Keeps the same anchor-idempotency contract: an existing non-archived card
     by this author on the same anchor is updated, not duplicated.
     """
+    author = author if author.startswith("agent:") else f"agent:{author}"
     code, existing = _api(record, "GET", "/api/comments", None, author)
+    if code != 200 or not isinstance(existing, list):
+        raise RuntimeError(f"cannot read existing cards before legacy fallback (HTTP {code}); inspect existing page/history before retrying; fallback stopped before any per-card write")
     by_anchor: dict = {}
     if code == 200 and isinstance(existing, list):
         for c in existing:
@@ -2288,13 +2425,13 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
                 body["decision_request"] = item["decision_request"]
             code, payload = _api(record, "PUT", f"/api/comments/{prior['id']}",
                                  body, author)
-            if code >= 400 or code == 0:
+            if code >= 300 or code == 0:
                 raise RuntimeError(f"PUT {prior['id']} → HTTP {code}: {payload}")
             ids.append(prior["id"])
             updated += 1
             continue
         code, payload = _api(record, "POST", "/api/comments", item, author)
-        if code >= 400 or code == 0 or not isinstance(payload, dict):
+        if code >= 300 or code == 0 or not isinstance(payload, dict):
             raise RuntimeError(f"POST {item['anchor_id']} → HTTP {code}: {payload}")
         cid = payload.get("id")
         ids.append(cid)
@@ -2304,14 +2441,14 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
         if item.get("decision_request") and not payload.get("decision_request"):
             code, payload = _api(record, "PUT", f"/api/comments/{cid}",
                                  {"decision_request": item["decision_request"]}, author)
-            if code >= 400 or code == 0:
+            if code >= 300 or code == 0:
                 raise RuntimeError(f"PUT {cid} (decision_request) → HTTP {code}: {payload}")
     return ids, created, updated
 
 
 def cmd_ask(args) -> int:
     """Post a whole round of decision cards from one cards.json."""
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -2407,11 +2544,11 @@ def cmd_ask(args) -> int:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
     elif code == 0:
-        print(f"ERROR: no server answering for {project}/{slug}: {payload}\n"
-              f"  Start it with `{_inv()} publish {record.get('slug_dir', '<slug-dir>')}`",
+        print(f"ERROR: API response unavailable or unusable for {project}/{slug}: {payload}\n"
+              "  Inspect the server and page state before retrying; this write may already have completed.",
               file=sys.stderr)
         return 2
-    elif code >= 400 or not isinstance(payload, dict):
+    elif code >= 300 or not isinstance(payload, dict):
         print(f"ERROR: batch create failed (HTTP {code}): {payload}", file=sys.stderr)
         return 2
     else:
@@ -2519,22 +2656,48 @@ def cmd_claim(args) -> int:
     The hook only notifies the owning session; a handoff (or a page published
     before ownership existed) needs a way to say "this one is mine now".
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
+    from .workspace import workspace_owner_record, workspace_tab_records
+    effective = workspace_owner_record(record)
+    canonical = effective.get("workspace_owner")
+    if canonical:
+        resolved = _resolve_scoped_slug(f"{canonical['project']}/{canonical['slug']}")
+        if not resolved:
+            return 2
+        project, slug, record = resolved
     prior = record.get("owner_session")
     fields = _owner_fields()
-    err = _stamp_owner_in_registry(project, slug, fields)
-    if err:
-        print(f"ERROR: could not claim {project}/{slug}: {err}", file=sys.stderr)
+    target = fields.get("owner_target")
+    tabs = workspace_tab_records(record) if isinstance(target, dict) and target.get("session") == fields["owner_session"] else []
+    entries = [(project, slug, record), *tabs]
+    try:
+        with contextlib.ExitStack() as stack:
+            for name in sorted({p for p, _, _ in entries}):
+                stack.enter_context(_flock(_state_lock_path(name)))
+            states = {p: _load_state_for_project(p) for p, _, _ in entries}
+            for p, s, selected in entries:
+                current = states[p]["slugs"].get(s)
+                if not current or current.get("slug_dir") != selected.get("slug_dir"):
+                    raise ValueError("workspace registration changed before claim; no ownership written")
+            for p, s, selected in entries:
+                states[p]["slugs"][s].update(fields)
+                if selected.get("slug_dir"):
+                    meta_err = _write_owner_meta(Path(selected["slug_dir"]), fields)
+                    if meta_err:
+                        print(f"WARN: owner chip not updated: {meta_err}", file=sys.stderr)
+            for p, state in states.items():
+                _save_state_for_project(p, state)
+    except (OSError, ValueError, TimeoutError) as exc:
+        print(f"ERROR: could not claim {project}/{slug}: {exc}", file=sys.stderr)
         return 2
-    if record.get("slug_dir"):
-        meta_err = _write_owner_meta(Path(record["slug_dir"]), fields)
-        if meta_err:
-            print(f"WARN: owner chip not updated: {meta_err}", file=sys.stderr)
+    print(f"  URL: {page_url(record)}")
     print(f"  {project}/{slug} claimed by {fields['owner_label']} "
           f"(session {fields['owner_session']})")
+    if tabs:
+        print("  Shared tabs: " + ", ".join(f"{p}/{s}" for p, s, _ in tabs))
     if prior and prior != fields["owner_session"]:
         print(f"  previous owner: {prior}")
     _bus_emit(record.get("bus_file"), {
@@ -2707,7 +2870,7 @@ def cmd_close(args) -> int:
     ordinary reviewer comment is never touched. The page keeps serving; this
     closes the questions, not the page.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -2825,11 +2988,7 @@ def _load_retired_for_project(project: str) -> dict:
 
 
 def _save_retired_for_project(project: str, data: dict) -> None:
-    path = _retired_file(project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    _save_private_json(_retired_file(project), data)
 
 
 def _retired_entries() -> list[tuple[str, str, dict]]:
@@ -2888,7 +3047,7 @@ def cmd_retire(args) -> int:
         if not getattr(args, "slug", None):
             print("ERROR: name a slug or pass --dead", file=sys.stderr)
             return 2
-        resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+        resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
         if not resolved:
             return 2
         project, slug, record = resolved
@@ -2906,7 +3065,7 @@ def cmd_retire(args) -> int:
     print(f"  {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 6} {'-' * 40}")
     for project, slug, record in targets:
         print(f"  {project[:15]:<15} {slug[:24]:<24} {str(record.get('pid')):<8} "
-              f"{str(record.get('port')):<6} {record.get('url')}")
+              f"{str(record.get('port')):<6} {page_url(record)}")
     if args.dry_run:
         print(f"  (dry run) would retire {len(targets)} entr(ies); nothing was written.")
         return 0
@@ -2965,6 +3124,7 @@ def _reroute(project: str, slug: str, record: dict, port: int):
     """Re-run a page's route on `port`. Returns (url, details, base_path, error)."""
     details = record.get("transport_details") or {}
     pbp = record.get("public_base_path") or ""
+    base_path = pbp if "public_base_path" in record else f"/{slug}"
     transport_name = record.get("transport") or "local"
     try:
         from .transports import load as _load_transport
@@ -2972,23 +3132,23 @@ def _reroute(project: str, slug: str, record: dict, port: int):
         opts = _transport_opts(cfg)
         if cfg.get("hostname"):
             opts["hostname"] = cfg["hostname"]
-        opts["previous"] = {"port": port, "details": details}
+        opts["previous"] = {"port": record.get("port"), "details": details}
         if transport_name == "cloudflare_tailscale":
             opts["public"] = _had_public_route(record)
         with _flock(_tunnel_lock_path()):
             result = _load_transport(transport_name).publish(
-                (pbp or f"/{slug}").lstrip("/"), port, **opts)
-        return (result.get("url") or record.get("url"), result.get("details", details),
-                pbp or f"/{slug}", None)
+                base_path.lstrip("/"), port, **opts)
+        return (mounted_url(result.get("url") or record.get("url"), base_path), result.get("details", details),
+                base_path, None)
     except Exception as e:
-        return record.get("url"), details, pbp, str(e)
+        return page_url(record), details, pbp, str(e)
 
 
 def _route_host(record: dict) -> str | None:
     """The tailnet name a page's route was made under, if it has one."""
     details = record.get("transport_details") or {}
     ts = details.get("tailscale") if isinstance(details.get("tailscale"), dict) else None
-    if ts is None and details.get("transport") == "tailscale":
+    if ts is None and details.get("transport") in {"tailscale", "funnel"}:
         ts = details
     return (ts or {}).get("hostname")
 
@@ -3021,7 +3181,7 @@ def _rerouted_if_renamed(project: str, slug: str, record: dict, live_host: str |
     if error:
         return "failed", f"reroute: {error}"
     record.update({"url": url, "transport_details": details,
-                   "public_url": details.get("public_url") or record.get("public_url")})
+                   "public_url": mounted_url(details.get("public_url") or record.get("public_url"), _pbp)})
     return "rerouted", f"{old} → {live_host}"
 
 
@@ -3038,9 +3198,21 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         record = (state.get("slugs") or {}).get(slug)
         if not isinstance(record, dict):
             return "gone", "no longer registered"
+        if (_project_config(project).get("transport") == "funnel"
+                and record.get("transport") != "funnel"):
+            return "skipped", "non-Funnel page needs explicit publication; no legacy route created"
+        if _entry_is_dead(record, live):
+            live = _running_servers()
         if not _entry_is_dead(record, live):
             procs = live.get(str(Path(record.get("slug_dir", "")).resolve())) or []
             if len(procs) == 1 and procs[0]["pid"] != record.get("pid"):
+                # The fleet snapshot can predate a concurrent runtime restart.
+                # Reconcile again while holding the page state lock.
+                procs = _running_servers().get(str(Path(record.get("slug_dir", "")).resolve())) or []
+                if len(procs) != 1:
+                    return "skipped", "server changed during revive; no stale process adopted"
+                if procs[0]["pid"] == record.get("pid"):
+                    return "alive", ""
                 # Serving under a pid the registry never saw: adopt it.
                 if not dry_run:
                     record["pid"] = procs[0]["pid"]
@@ -3097,7 +3269,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             "port": port,
             "local_url": f"http://localhost:{port}/",
             "url": url,
-            "public_url": details.get("public_url") or record.get("public_url"),
+            "public_url": mounted_url(details.get("public_url") or record.get("public_url"), pbp),
             "public_base_path": pbp or None,
             "transport_details": details,
             "transport_error": error,
@@ -3106,7 +3278,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         _save_state_for_project(project, state)
     _bus_emit(record.get("bus_file") or str(bus_dir / f"{slug}.ndjson"),
               {"event": "page_revived", "slug": slug, "pid": pid, "port": port,
-               "url": url, "transport_error": error, "ts": _now_iso()})
+               "url": redact_review_key(url), "transport_error": redact_share_links(error), "ts": _now_iso()})
     return "revived", f"port {port}" + (f" (route: {error})" if error else "")
 
 
@@ -3230,16 +3402,8 @@ def cmd_update(args) -> int:
         result = activate_runtime(python)
         write_enrollment({"active_version": release["version"], "active_build_id": result["runtime"]["build_id"],
                           "active_manifest": result["runtime"], "active_python": str(python), "last_check": _now_iso()})
-        environment = os.environ.copy()
-        environment.pop("PYTHONPATH", None)
-        environment.pop("PYTHONHOME", None)
-        synced = subprocess.run([str(python), "-I", "-m", "agent_annotate.cli", "sync-skills"],
-                                capture_output=True, text=True, env=environment, timeout=30)
         print(json.dumps(result, ensure_ascii=False))
-        if synced.stdout:
-            print(synced.stdout.strip())
-        if synced.returncode:
-            print("WARN: runtime updated; custom skill conflicts require attention", file=sys.stderr)
+        print("Skills are user-managed; reload or synchronize them only when explicitly requested.")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"ERROR: stable update: {exc}", file=sys.stderr)
@@ -3248,7 +3412,7 @@ def cmd_update(args) -> int:
 
 def cmd_deliver(args) -> int:
     from .delivery import dispatch_record
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -3259,9 +3423,11 @@ def cmd_deliver(args) -> int:
 
 def cmd_project(args) -> int:
     from .project_state import load_project, save_project
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolver = _resolve_scoped_slug if args.from_file else _resolve_slug
+    resolved = resolver(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
+
     _project, _slug, record = resolved
     try:
         directory = Path(record["slug_dir"])
@@ -3277,11 +3443,44 @@ def cmd_project(args) -> int:
         return 2
 
 
+def cmd_copy(args) -> int:
+    from .copy_state import load_copy, save_copy
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    try:
+        directory = Path(record["slug_dir"])
+        block_id = getattr(args, "block", None)
+        if args.from_file:
+            if block_id:
+                raise ValueError("--block is for reading; import the complete copy document")
+            before = load_copy(directory)
+            document = save_copy(directory, json.loads(Path(args.from_file).read_text()))
+            if before != document:
+                _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug,
+                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"])})
+            print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
+        else:
+            document = load_copy(directory)
+            if block_id:
+                blocks = [block for block in document["blocks"] if block["id"] == block_id]
+                if not blocks:
+                    raise ValueError("copy block not found")
+                document = {**document, "blocks": blocks}
+            print(json.dumps(document, ensure_ascii=False, indent=2))
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: copy: {exc}", file=sys.stderr)
+        return 2
+
+
 def _fleet_snapshot(from_file=None) -> dict:
     from .fleet import collect_fleet, validate_config
 
     path = Path(from_file).expanduser() if from_file else CONFIG_DIR / "fleet.json"
-    config = validate_config(json.loads(path.read_text()) if from_file or path.exists() else {"schema_version": 1, "targets": []})
+    config = validate_config(redact_share_links(json.loads(path.read_text()) if from_file or path.exists()
+                                               else {"schema_version": 1, "targets": []}))
     machine = socket.gethostname().split(".")[0]
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}", machine):
         machine = "local"
@@ -3291,7 +3490,7 @@ def _fleet_snapshot(from_file=None) -> dict:
     for project, slug, record in _registry_entries():
         try:
             target = validate_config({"schema_version": 1, "targets": [{"machine": machine, "project": project,
-                                      "slug": slug, "url": record.get("url")}]})["targets"][0]
+                                      "slug": slug, "url": redact_review_key(page_url(record))}]})["targets"][0]
         except ValueError:
             excluded += 1
             continue
@@ -3303,7 +3502,7 @@ def _fleet_snapshot(from_file=None) -> dict:
         config["targets"].append(target)
         urls[target["url"]] = identity
         identities[identity] = target["url"]
-    snapshot = collect_fleet(config)
+    snapshot = redact_share_links(collect_fleet(config))
     snapshot["observed_at"] = _now_iso()
     snapshot["excluded_local_records"] = excluded
     if excluded:
@@ -3496,7 +3695,7 @@ def cmd_monitor(args) -> int:
     queued event; the shared byte offset lets a newly armed monitor replay any
     events that arrived while no session monitor was active.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, record = resolved
@@ -3521,6 +3720,14 @@ def cmd_monitor(args) -> int:
         if not _stop_monitor_leases(existing):
             print(f"ERROR: could not stop the current monitor for {project}/{slug}", file=sys.stderr)
             return 3
+
+    # Capture the starting cursor before advertising the lease; feedback can arrive as soon as it exists.
+    offset_file = MONITOR_OFFSET_ROOT / project / f"{slug}.offset"
+    offset_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        offset = int(offset_file.read_text(encoding="utf-8").strip()) if offset_file.exists() else bus_file.stat().st_size
+    except Exception:
+        offset = bus_file.stat().st_size
 
     lease_path = lease_dir / "owner.json"
     owner_session, owner_agent, owner_label = _monitor_owner_label(args.owner)
@@ -3580,13 +3787,6 @@ def cmd_monitor(args) -> int:
         "owner_agent": owner_agent,
         "pid": os.getpid(),
     })
-
-    offset_file = MONITOR_OFFSET_ROOT / project / f"{slug}.offset"
-    offset_file.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        offset = int(offset_file.read_text(encoding="utf-8").strip()) if offset_file.exists() else bus_file.stat().st_size
-    except Exception:
-        offset = bus_file.stat().st_size
 
     next_heartbeat_at = (
         time.monotonic() + MONITOR_HEARTBEAT_INTERVAL
@@ -3659,7 +3859,7 @@ def _comment_call(args, method: str, path: str, body: dict, done: str | None = N
     comment back cost about 530 tokens a call and told the agent nothing it
     had not just sent; `--json` still prints it.
     """
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     _project, _slug, record = resolved
@@ -3670,7 +3870,7 @@ def _comment_call(args, method: str, path: str, body: dict, done: str | None = N
         # The reviewer already closed it; there is nothing left to mark.
         print(f"noop {args.comment_id}: already confirmed by the reviewer")
         return 0
-    if code == 0 or code >= 400:
+    if code == 0 or code >= 300:
         print(f"ERROR: {method} {path} → HTTP {code}: {err}", file=sys.stderr)
         closest = payload.get("closest") if isinstance(payload, dict) else None
         if closest:
@@ -3792,6 +3992,23 @@ def _resolve_slug(raw: str, project_hint: str | None = None):
     return None
 
 
+def _resolve_scoped_slug(raw: str, project_hint: str | None = None):
+    """Exact scope for destructive and MCP calls; no convenience fallback."""
+    slug = (raw or "").strip().strip("/")
+    project = project_hint
+    if "/" in slug:
+        head, slug = slug.split("/", 1)
+        if project is not None and project != head:
+            print("ERROR: conflicting project qualification", file=sys.stderr)
+            return None
+        project = head
+    matches = [(p, s, r) for p, s, r in _registry_entries() if s == slug and (project is None or p == project)]
+    if len(matches) != 1:
+        print(f"ERROR: no unique exact page for {raw!r}; use PROJECT/SLUG or --project PROJECT", file=sys.stderr)
+        return None
+    return matches[0]
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # comments.json — the one place its shape is decoded
 # ────────────────────────────────────────────────────────────────────────────
@@ -3799,7 +4016,7 @@ def _load_store(record: dict) -> dict:
     """Read a slug's comment store.
 
     The shape is {"schema_version":…, "anchors": {anchor_id: [comment, …]},
-    "archived": […]}. Every observed first-attempt parse reached for
+    "archived": {anchor_id: [comment, …]} (or a legacy list)}. Every observed first-attempt parse reached for
     store["comments"], which does not exist and never has.
     """
     slug_dir = record.get("slug_dir")
@@ -3816,7 +4033,7 @@ def _load_store(record: dict) -> dict:
         # v1 store: {anchor_id: [comment, …]} at the top level.
         anchors = {k: v for k, v in data.items() if isinstance(v, list)}
     archived = data.get("archived")
-    return {"anchors": anchors, "archived": archived if isinstance(archived, list) else []}
+    return {"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else []}
 
 
 def _iter_comments(store: dict):
@@ -3830,28 +4047,34 @@ def _iter_comments(store: dict):
 def _decision_cards(store: dict) -> list[dict]:
     """Every live decision card, flattened for printing."""
     comments = list(_iter_comments(store))
+    historical = []
+    archived = store.get("archived") or {}
+    values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
+    for value in values:
+        historical.extend([value] if isinstance(value, dict) else value if isinstance(value, list) else [])
+    allocation = comments + [(c.get("anchor_id"), c) for c in historical if isinstance(c, dict)]
     numbers: dict[str, int] = {}
     used: set[int] = set()
-    for _anchor_id, comment in comments:
+    for _anchor_id, comment in allocation:
         number = comment.get("number")
         cid = comment.get("id")
         if (cid and isinstance(number, int) and not isinstance(number, bool)
-                and number > 0 and number not in used):
+                and number > 0 and cid not in numbers):
             numbers[cid] = number
             used.add(number)
-    for _anchor_id, comment in comments:
+    for _anchor_id, comment in allocation:
         cid = comment.get("id")
         if not cid or cid in numbers:
             continue
         prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
         match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
         number = int(match.group(1)) if match else 0
-        if number > 0 and number not in used:
+        if number > 0:
             numbers[cid] = number
             used.add(number)
     next_number = max(used, default=0) + 1
     for _anchor_id, comment in sorted(
-            comments,
+            allocation,
             key=lambda item: (
                 item[1].get("created_at") or "",
                 item[1].get("id") or "",
@@ -3933,40 +4156,105 @@ def _verdict_counts(cards: list[dict]) -> dict:
     return counts
 
 
+_LOCAL_API_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+class _LocalAPINoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _local_api_url(record: dict, path: str) -> str:
+    base = record.get("local_url")
+    message = "local_url must be direct loopback HTTP on the recorded port without credentials, query, fragment, or a route; republish the page if its record is stale"
+    try:
+        if (not isinstance(base, str) or len(base) > 2048
+                or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in base)
+                or any(char in base for char in ("\\", "?", "#"))):
+            raise ValueError
+        parsed = urllib.parse.urlsplit(base)
+        host = parsed.hostname
+        if (parsed.scheme != "http" or not host or parsed.username is not None or parsed.password is not None
+                or parsed.path not in ("", "/") or (parsed.port is not None and not 0 < parsed.port < 65536)):
+            raise ValueError
+        expected_port = record.get("port")
+        if type(expected_port) is not int or not 0 < expected_port < 65536 or expected_port != (parsed.port or 80):
+            raise ValueError
+        if host != "localhost" and ("%" in host or not ipaddress.ip_address(host).is_loopback):
+            raise ValueError
+        authority = f"[{host}]" if ":" in host else host
+        if not re.fullmatch(re.escape(authority) + r"(?::[0-9]{1,5})?", parsed.netloc, re.I):
+            raise ValueError
+    except ValueError:
+        raise ValueError(message) from None
+
+    prefix = record.get("public_base_path")
+    if prefix is None:
+        prefix = ""
+    for value, allow_empty in ((prefix, True), (path, False)):
+        try:
+            if (not isinstance(value, str) or len(value) > 4096
+                    or (not value and not allow_empty) or (value and not value.startswith("/"))
+                    or value.startswith("//") or any(char in value for char in ("\\", "?", "#"))
+                    or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)):
+                raise ValueError
+            route = urllib.parse.urlsplit(value)
+            decoded = urllib.parse.unquote(route.path, errors="strict")
+            if (route.scheme or route.netloc or route.query or route.fragment or "\\" in decoded
+                    or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+                    or any(segment in (".", "..") for segment in decoded.split("/"))):
+                raise ValueError
+        except ValueError:
+            raise ValueError("local API prefix and route must be root-relative paths without authority, query, fragment, controls, or traversal") from None
+    return base.rstrip("/") + prefix.rstrip("/") + path
+
+
 def _api(record: dict, method: str, path: str, body, author: str,
          timeout: float = 15.0) -> tuple[int, object]:
     """One local API call against a running server. Returns (status, parsed).
 
-    Status 0 means the request never reached a server; the payload is then the
-    error string.
+    Status 0 means no usable response, not proof that a write never happened.
+    The timeout is per socket operation, not a total wall deadline; only the
+    explicitly recorded loopback server is trusted. Reads are byte-bounded.
     """
-    base = (record.get("local_url") or "").rstrip("/")
-    pbp = record.get("public_base_path") or ""
-    url = f"{base}{pbp}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, method=method, data=data, headers={
-        "Content-Type": "application/json",
-        "Cf-Access-Authenticated-User-Email": author,
-        "X-Annotate-Session": _session_id(),
-    })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            code = resp.status
-    except urllib.error.HTTPError as e:
-        code = e.code
+        url = _local_api_url(record, path)
+    except ValueError as exc:
+        return 0, str(exc)
+    try:
+        data = json.dumps(body).encode() if body is not None else None
+        agent = author if author.startswith("agent:") else f"agent:{author}"
+        req = urllib.request.Request(url, method=method, data=data, headers={
+            "Content-Type": "application/json",
+            "X-Annotate-Agent": agent,
+            # Older runtimes read only this header. A mandatory agent: tag
+            # preserves attribution; direct-loopback/no-proxy/no-redirect
+            # validation prevents sending a human proxy claim or remote leak.
+            "Cf-Access-Authenticated-User-Email": agent,
+            "X-Annotate-Session": _session_id(),
+        })
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LocalAPINoRedirect())
         try:
-            raw = e.read().decode("utf-8", errors="replace")
-        except Exception:
-            raw = ""
-    except Exception as e:
-        return 0, f"{type(e).__name__}: {e}"
+            response = opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            code = response.status
+            if 300 <= code < 400:
+                return code, {"error": "local API redirect refused; inspect the recorded server before retrying"}
+            raw = response.read(_LOCAL_API_MAX_RESPONSE_BYTES + 1)
+    except (OSError, TypeError, ValueError, HTTPException) as exc:
+        return 0, f"local API request failed ({type(exc).__name__}); check the recorded server and inspect page state before retrying a write"
+    if len(raw) > _LOCAL_API_MAX_RESPONSE_BYTES:
+        error = f"local API response exceeds {_LOCAL_API_MAX_RESPONSE_BYTES} bytes; inspect server logs and page state before retrying a write"
+        return (code, {"error": error}) if code >= 400 else (0, error)
     if not raw.strip():
         return code, None
     try:
         return code, json.loads(raw)
-    except ValueError:
-        return code, raw
+    except (ValueError, RecursionError):
+        error = "local API returned invalid JSON; inspect server logs and page state before retrying a write"
+        return (code, {"error": error}) if code >= 400 else (0, error)
 
 
 def _find_record(slug: str) -> dict | None:
@@ -3986,14 +4274,14 @@ def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev:
 
     comment_ids = ev.get("comment_ids") or ev.get("comments") or []
     count = ev.get("comment_count") or ev.get("count") or len(comment_ids)
-    page_url = record.get("url") or record.get("local_url")
+    url = page_url(record)
     counts = ev.get("verdict_counts") if isinstance(ev.get("verdict_counts"), dict) else None
     tally = (" Verdicts: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v) + "."
              if counts else "")
     message = (
         f"[Agent Annotate] The reviewer pushed {count} feedback item(s) from "
-        f"{project}/{slug} to this session. Page: {page_url}. "
-        f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {slug} --unread`, "
+        f"{project}/{slug} to this session. Page: {url}. "
+        f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {project}/{slug} --unread`, "
         "review the exact comments and anchors, then reply through the annotation API."
     )
     result = CodexAppServerAdapter().deliver(thread_id, message)
@@ -4020,7 +4308,7 @@ def cmd_doctor(args) -> int:
          (found + ("" if ours else "   (NOT this package — run install-shim)"))
          if found else f"not on PATH; run `{_module_invocation()} install-shim`"),
         ("config_dir", CONFIG_DIR.is_dir(), str(CONFIG_DIR)),
-        ("projects_toml", True, str(PROJECTS_TOML) + ("" if PROJECTS_TOML.is_file() else "   (absent; local transport only)")),
+        ("projects_toml", True, str(PROJECTS_TOML) + ("" if PROJECTS_TOML.is_file() else "   (absent; Tailscale Funnel default)")),
         ("state_dir", STATE_DIR.is_dir(), str(STATE_DIR)),
         ("bus_root", BUS_ROOT.is_dir(), str(BUS_ROOT)),
         ("web_assets", all((WEB_DIR / n).is_file() for n in
@@ -4099,7 +4387,7 @@ def cmd_send(args) -> int:
 
 def cmd_connect(args) -> int:
     """Run the Codex page monitor as a detached delivery worker."""
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, _record = resolved
@@ -4136,7 +4424,7 @@ def cmd_connect(args) -> int:
 
 
 def cmd_disconnect(args) -> int:
-    resolved = _resolve_slug(args.slug, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     project, slug, rec = resolved
@@ -4191,6 +4479,13 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
+    from .workspace import cmd_workspace
+    sp_workspace = sub.add_parser("workspace", help="find/select the one project page across sessions")
+    sp_workspace.add_argument("--project", default=None)
+    sp_workspace.add_argument("--select", default=None, metavar="PROJECT/SLUG")
+    sp_workspace.add_argument("--root", default=None, help="project folder containing existing review pages")
+    sp_workspace.add_argument("--json", action="store_true")
+    sp_workspace.set_defaults(func=cmd_workspace)
     sp_doc.set_defaults(func=cmd_doctor)
     sp_update = sub.add_parser("update", help="check/apply tested stable releases; opt into daily checks")
     update_mode = sp_update.add_mutually_exclusive_group()
@@ -4226,16 +4521,23 @@ def main():
     sp_project.add_argument("--project", default=None)
     sp_project.add_argument("--from", dest="from_file", default=None)
     sp_project.set_defaults(func=cmd_project)
+    sp_copy = sub.add_parser("copy", help="read/import formatted copy blocks and immutable revision history")
+    sp_copy.add_argument("slug")
+    sp_copy.add_argument("--project", default=None)
+    sp_copy.add_argument("--from", dest="from_file", default=None)
+    sp_copy.add_argument("--block", default=None, help="read one copy block and its history")
+    sp_copy.set_defaults(func=cmd_copy)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
+    sp_pub.add_argument("--standalone", action="store_true", help="explicit independent artifact, outside the project workspace")
     sp_pub.add_argument("--project", default=None)
     sp_pub.add_argument("--port", type=int, default=None)
     sp_pub.add_argument(
         "--transport", default=None,
-        choices=["local", "cloudflare", "tailscale", "cloudflare_tailscale"],
+        choices=["funnel", "local", "tailscale", "cloudflare", "cloudflare_tailscale"],
     )
     sp_pub.add_argument("--hostname", default=None)
     sp_pub.add_argument("--public", action="store_true",
@@ -4265,7 +4567,8 @@ def main():
     sp_pub.set_defaults(func=cmd_publish)
 
     sp_unpub = sub.add_parser("unpublish", help="tear down route + stop server")
-    sp_unpub.add_argument("slug")
+    sp_unpub.add_argument("slug", help="<slug> or exact <project>/<slug>")
+    sp_unpub.add_argument("--project", default=None)
     sp_unpub.set_defaults(func=cmd_unpublish)
 
     sp_st = sub.add_parser("status", help="list active slugs")

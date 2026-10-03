@@ -1,9 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>annotate</title>
+<link rel="stylesheet" href="daisyui.css">
+<link rel="stylesheet" href="content.css">
+<link rel="stylesheet" href="quill.snow.css">
+<link rel="stylesheet" href="copy-editor.css">
 <link rel="stylesheet" href="shell.css">
 </head>
 <body>
@@ -16,19 +20,28 @@
     <select class="mobile-version-select" id="mobile-version-select" aria-label="Select version"></select>
   </div>
   <div class="hdr-right">
+    <button type="button" class="btn btn-ghost btn-sm" id="theme-toggle" aria-label="Use light theme">Light</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="copy-link-btn" hidden>Copy link</button>
     <!-- v2.19 owner chip: which agent session published/claimed this page.
          Filled from current.meta.json `owner`; hidden when absent. -->
-    <span class="owner-chip" id="owner-chip" style="display:none"></span>
+    <details class="owner-chip" id="owner-chip" hidden style="display:none"></details>
     <span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span>
-    <button class="btn btn-sec" id="project-toggle" aria-controls="project-panel" aria-expanded="true" hidden>Project</button>
-    <button class="push-session-btn" id="push-session-btn" title="Send comments to an armed session monitor, or queue them for the next turn">
-      <span class="push-session-text"><span class="push-session-icon">&#128238;</span><span class="push-session-label"> Push to session</span></span><span class="push-session-counter" id="push-session-counter">0</span>
+    <button class="push-session-btn" id="push-session-btn" title="Send feedback to the project agent">
+      <span class="push-session-text"><span class="push-session-label"> Send feedback</span></span><span class="push-session-counter" id="push-session-counter">0</span>
     </button>
   </div>
 </header>
+<div id="owner-row" class="owner-row"></div>
+<nav class="workspace-tabs tabs tabs-border" id="workspace-tabs" role="tablist" aria-label="Project views">
+  <button type="button" class="tab" role="tab" data-workspace-tab="progress" aria-controls="main-workspace">Progress <span class="badge badge-error badge-sm" id="progress-new" hidden></span></button>
+  <button type="button" class="tab" role="tab" data-workspace-tab="feedback" aria-controls="main-workspace">Feedback <span class="badge badge-error badge-sm" id="feedback-new" hidden></span></button>
+</nav>
+<div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
+<div class="workspace-extra" id="workspace-extra" hidden><iframe id="workspace-extra-frame" title="Additional project review"></iframe></div>
+<div class="copy-workspace" id="copy-workspace" hidden></div>
 
 <!-- ── Main ─────────────────────────────────────────────────────────── -->
-<div class="main">
+<div class="main" id="main-workspace">
 
   <!-- Version rail -->
   <aside class="vrail" id="vrail">
@@ -43,8 +56,7 @@
 
   <!-- Content iframe -->
   <div class="frame-area" id="frame-area">
-    <section class="project-panel" id="project-panel" aria-label="Project information" hidden></section>
-    <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
+    <div id="project-staging"><p class="progress-empty" id="progress-empty" hidden>No progress update yet.</p><details class="project-panel" id="project-panel" data-annotate-project-panel="runtime" data-annotate-interactive hidden></details></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>
       <button class="repin-banner-cancel" id="repin-cancel">Cancel (Esc)</button>
@@ -63,9 +75,9 @@
         <button type="button" class="rail-collapse" id="drawer-collapse" aria-expanded="true" aria-controls="drawer-body" aria-label="Collapse the feedback rail" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg></button>
       </div>
       <div class="chip-row" id="chip-row">
-        <button class="chip chip-review" data-filter="review">Needs my review <span class="chip-n">0</span></button>
-        <button class="chip chip-waiting" data-filter="waiting">Waiting on agent <span class="chip-n">0</span></button>
-        <button class="chip chip-done" data-filter="done">Done <span class="chip-n">0</span></button>
+        <button class="chip chip-review" data-filter="review">Open <span class="chip-n">0</span></button>
+        <button class="chip chip-waiting" data-filter="waiting">Waiting <span class="chip-n">0</span></button>
+        <button class="chip chip-done" data-filter="done">History <span class="chip-n">0</span></button>
         <button class="chip chip-all active" data-filter="all">All <span class="chip-n">0</span></button>
       </div>
       <div class="drawer-controls">
@@ -76,9 +88,9 @@
     </div>
     <div class="drawer-body" id="drawer-body">
       <div class="drawer-empty" id="drawer-empty">
-        <div class="drawer-empty-ico">&#x1F4AC;</div>
+        <div class="drawer-empty-ico"></div>
         <div style="font-weight:600;color:#64748B">No comments yet</div>
-        <div>Click any element in the document to add feedback.</div>
+        <div>No open feedback. Use History to revisit earlier decisions.</div>
       </div>
       <div id="comment-list" style="display:none"></div>
     </div>
@@ -113,7 +125,7 @@
 <!-- Mobile-only floating action button: opens the feedback bottom sheet.
      Hidden entirely outside the mobile breakpoint (shell.css). -->
 <button class="mobile-fab" id="mobile-fab" title="Open feedback" aria-label="Open feedback panel">
-  <span class="mobile-fab-icon">&#128172;</span>
+  <span class="mobile-fab-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
   <span class="mobile-fab-count" id="mobile-fab-count">0</span>
   <span class="mobile-fab-badge" id="mobile-fab-badge" style="display:none">0</span>
 </button>
@@ -167,6 +179,8 @@
   </div>
 </div>
 
+<script src="quill.js"></script>
+<script src="copy-editor.js"></script>
 <script src="shell.js"></script>
 </body>
 </html>

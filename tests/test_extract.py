@@ -1,4 +1,5 @@
 import json
+from html.parser import HTMLParser
 
 import pytest
 
@@ -103,3 +104,53 @@ def test_build_document_is_chrome_free_and_carries_registry():
 def test_document_without_sentinels_raises():
     with pytest.raises(ExtractionError):
         build_content_document("<html><body>nothing</body></html>")
+
+
+def test_generated_snapshot_recovers_visible_escaped_title_without_rewriting_anchors():
+    baked = BAKED.replace("<title>T</title>", "<title>Audit &amp; progress &lt;safe&gt;</title>")
+    baked = baked.replace('<div class="no" id="s:one">', '<div class="aa"><div class="no" id="s:one">')
+    baked = baked.replace("<!-- END CANVAS CONTENT -->", "</div><!-- END CANVAS CONTENT -->")
+    result = build_content_document(baked, title="slug-fallback")
+    assert '<h1 class="aa-page-title">Audit &amp; progress &lt;safe&gt;</h1>' in result
+    assert "<title>Audit &amp; progress &lt;safe&gt;</title>" in result
+    assert result.count("<h1") == 1
+    assert 'id="s:one"' in result and 'data-anchor-id="s:two"' in result
+    assert extract_registry(baked) == {"s:one": {"name": "One"}, "s:two": {"name": "Two"}}
+
+
+def test_existing_meaningful_h1_is_preserved_without_a_duplicate():
+    baked = BAKED.replace('<div class="no" id="s:one">',
+                          '<div class="aa"><h1 id="existing-title">Meaningful canvas title</h1><div class="no" id="s:one">')
+    baked = baked.replace("<!-- END CANVAS CONTENT -->", "</div><!-- END CANVAS CONTENT -->")
+    result = build_content_document(baked, title="slug-fallback")
+    assert result.count("<h1") == 1
+    assert '<h1 id="existing-title">Meaningful canvas title</h1>' in result
+    assert "aa-page-title" not in result
+
+
+def test_generated_plain_heading_cannot_close_registry_script_during_extraction(tmp_path):
+    from agent_annotate.pagegen import generate
+
+    source = tmp_path / "page.md"
+    source.write_text("---\ntitle: Plain text review\n---\n\n"
+                      "## Coverage </script><script>window.__registry_probe = 1</script>\n\nSafe text.\n")
+    result = generate(source, tmp_path / "review")
+    baked = result["html"].read_text()
+    content = build_content_document(baked)
+
+    class ScriptCounter(HTMLParser):
+        executable = 0
+
+        def handle_starttag(self, tag, attrs):
+            if (tag == "script" and dict(attrs).get("type") != "application/json"
+                    and dict(attrs).get("src") != "../diagram-plot.js"):
+                self.executable += 1
+
+    parsed = ScriptCounter()
+    parsed.feed(content)
+    assert parsed.executable == 0
+    assert "<script>window.__registry_probe = 1</script>" not in content
+    start = content.index('id="anchor-registry-data">') + len('id="anchor-registry-data">')
+    registry = json.loads(content[start:content.index("</script>", start)])
+    assert registry == extract_registry(baked)
+    assert any("</script>" in value["name"] for value in registry.values())

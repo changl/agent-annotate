@@ -1,13 +1,8 @@
 {
   "mcpServers": {
     "agent-annotate": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "agent-annotate[mcp] @ git+https://github.com/changl/agent-annotate.git",
-        "annotate",
-        "mcp"
-      ]
+      "command": "annotate",
+      "args": ["mcp"]
     }
   }
 }

@@ -29,7 +29,8 @@ def server(tmp_path):
         encoding="utf-8")
     bus_dir = tmp_path / "bus"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="review",
-                           bus_dir=bus_dir, v2_mode=True)
+                           bus_dir=bus_dir, v2_mode=True, proxy_urls=("https://review.example.test",),
+                           trusted_access_origins=("https://review.example.test",))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -43,7 +44,10 @@ def server(tmp_path):
 
 def _call(httpd, method, path, body=None, author="agent:test", session=None):
     conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=3)
-    headers = {"Cf-Access-Authenticated-User-Email": author}
+    headers = {"X-Annotate-Agent": author} if author.startswith("agent:") else {
+        "Host": "review.example.test", "Cf-Access-Authenticated-User-Email": author,
+        "Cf-Access-Jwt-Assertion": "inert-proxy-validated-assertion",
+    }
     if session:
         headers["X-Annotate-Session"] = session
     payload = None

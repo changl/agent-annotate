@@ -105,6 +105,41 @@ def test_a_page_served_by_an_unrecorded_pid_is_adopted(estate, monkeypatch):
     assert _record()["pid"] == 5555
 
 
+@pytest.mark.parametrize('fresh_pid', [999999, 6666, None])
+def test_stale_fleet_snapshot_never_overwrites_current_runtime_pid(estate, monkeypatch, fresh_pid):
+    directory = str(estate.slug_dir.resolve())
+    old_snapshot = {directory: [{"pid": 5555, "port": 8899}]}
+    fresh = {directory: [{"pid": fresh_pid, "port": 8899}]} if fresh_pid else {}
+    monkeypatch.setattr(cli, '_running_servers', lambda: fresh)
+    outcome, _ = cli._revive_one('reviews', 'demo', old_snapshot, False)
+    assert _record()['pid'] == (fresh_pid or 999999)
+    assert _record()['pid'] != 5555
+    assert estate.started == []
+    assert outcome == ('alive' if fresh_pid == 999999 else 'adopted' if fresh_pid else 'skipped')
+
+
+def test_empty_stale_snapshot_adopts_fresh_server_without_creating_duplicate(estate, monkeypatch):
+    monkeypatch.setattr(cli, '_is_process_alive', lambda pid: pid == 8888)
+    monkeypatch.setattr(cli, '_running_servers', lambda: {str(estate.slug_dir.resolve()): [{'pid': 8888, 'port': 8899}]})
+    outcome, _ = cli._revive_one('reviews', 'demo', {}, False)
+    assert outcome == 'adopted'
+    assert _record()['pid'] == 8888 and _record()['port'] == 8899
+    assert estate.started == []
+
+
+def test_funnel_default_never_revives_inactive_cloudflare_rounds(estate, monkeypatch):
+    state = cli._load_state_for_project('reviews')
+    state['slugs']['demo']['transport'] = 'cloudflare_tailscale'
+    cli._save_state_for_project('reviews', state)
+    before = (cli.STATE_DIR / 'reviews.json').read_bytes()
+    monkeypatch.setattr(cli, '_project_config', lambda project: {'transport': 'funnel'})
+    monkeypatch.setattr(cli, '_running_servers', lambda: pytest.fail('inactive legacy round must stay inactive'))
+    monkeypatch.setattr(cli, '_reroute', lambda *a: pytest.fail('no new Cloudflare route'))
+    assert cli._revive_one('reviews', 'demo', {}, False)[0] == 'skipped'
+    assert (cli.STATE_DIR / 'reviews.json').read_bytes() == before
+    assert estate.started == []
+
+
 def test_a_non_local_page_reroutes_before_it_starts(estate, monkeypatch):
     """The route is re-run on every revive: it is how a page moves onto the
     machine's current tailnet name after a rename."""
@@ -127,7 +162,7 @@ def test_a_non_local_page_reroutes_before_it_starts(estate, monkeypatch):
     assert cli.cmd_revive(_args()) == 0
     assert calls == [("demo", 8899, {"port": 8899, "details": {"https_port": 8447}})]
     rec = _record()
-    assert rec["url"] == "https://m1max.example.ts.net:8460/"
+    assert rec["url"] == "https://m1max.example.ts.net:8460/demo/"
     assert rec["transport_details"] == {"https_port": 8460}
     assert estate.started == [(str(estate.slug_dir), 8899, "/demo")]
 

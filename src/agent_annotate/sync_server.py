@@ -14,7 +14,7 @@ V1 USAGE (single HTML file; backward compatible)
     Routes:
       GET  /api/comments?doc=<id>  → return <dir>/<id>.comments.json or {}
       POST /api/comments?doc=<id>  → write JSON body to <dir>/<id>.comments.json
-      *                            → serve static files from the artifact's directory
+      *                            → serve public assets/attachments from the artifact's directory
 
 ────────────────────────────────────────────────────────────────────────────
 V2 USAGE (directory layout, version-pivot, comment lifecycle)
@@ -85,7 +85,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
                                               decision.round_pending on every deferred
                                               verdict and emits ONE session_push{round:true}
       POST /api/rounds/discard              → clear round_pending flags without pushing
-      *                                     → serve static files from <slug-dir>
+      *                                     → serve public assets/attachments from <slug-dir>
 
     Optional request header X-Annotate-Session: <id> — when present, every bus
     event the request emits carries session_id (agents/CLIs send it, browsers
@@ -109,7 +109,9 @@ import os
 import re
 import socket
 import sys
+import tempfile
 import threading
+import tomllib
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
@@ -117,7 +119,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
-from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, STATE_DIR, WEB_DIR
+from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
@@ -184,7 +186,9 @@ def _mime(suffix: str) -> str:
 _NO_STORE = "no-store, max-age=0, must-revalidate"
 
 # /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
-_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(shell\.js|shell\.css|content\.css|adapter\.js|diagram-plot\.js)$")
+_WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", "adapter.js", "diagram-plot.js",
+                         "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css"})
+_ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
 
 
 def _cache_control_for(suffix: str) -> str:
@@ -213,6 +217,11 @@ def _mtime_stamp(path) -> str:
 _STORE_LOCK = threading.Lock()
 
 
+class ReviewHTTPServer(http.server.ThreadingHTTPServer):
+    # Browsers fetch the locally bundled editor and theme assets concurrently.
+    request_queue_size = 64
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -233,16 +242,21 @@ def _comment_needs_push(comment: dict) -> bool:
     than their last push. Keep the write route on the same contract so an
     active session is not repeatedly notified about every older open comment.
     """
-    if comment.get("status") != "open":
+    if comment.get("status") != "open" or (comment.get("decision") or {}).get("round_pending"):
         return False
-    if not comment.get("flagged_for_session"):
-        return True
     flagged_at = _iso_timestamp(comment.get("flagged_at"))
-    latest = _iso_timestamp(comment.get("edited_at"))
+    latest = 0.0
+    if not str(comment.get("author") or "").startswith("agent:"):
+        latest = _iso_timestamp(comment.get("created_at"))
+    if not str(comment.get("edited_by") or comment.get("author") or "").startswith("agent:"):
+        latest = max(latest, _iso_timestamp(comment.get("edited_at")))
     for reply in comment.get("replies", []):
         if not str(reply.get("author") or "").startswith("agent:"):
             latest = max(latest, _iso_timestamp(reply.get("ts")))
-    return latest > flagged_at
+    decision = comment.get("decision") or {}
+    if decision and not str(decision.get("by") or "").startswith("agent:"):
+        latest = max(latest, _iso_timestamp(decision.get("ts")))
+    return bool(latest) and (not comment.get("flagged_for_session") or latest > flagged_at)
 
 
 # ── decision_request validation (shared by POST create, PUT, batch) ──────
@@ -432,12 +446,37 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+_VERSION_ID = re.compile(r"v[0-9]{1,10}\Z", re.ASCII)
+_AGENT_ID = re.compile(r"agent:[^\x00-\x1f\x7f]{1,128}\Z")
+
+
+def _contained_path(artifact_dir: Path, relative: str, subtree: str | None = None) -> Path:
+    """Resolve within both the artifact and the intended public subtree."""
+    try:
+        root = artifact_dir.resolve()
+        if subtree and (root / subtree).is_symlink():
+            raise ValueError("version directory must not be a symlink")
+        parent = (root / subtree).resolve() if subtree else root
+        parent.relative_to(root)
+        target = (parent / relative).resolve()
+        target.relative_to(parent)
+        return target
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise PermissionError("artifact path leaves its allowed directory") from exc
+
+
+def _version_file(artifact_dir: Path, version: str, subtree: str = "versions") -> Path:
+    if not isinstance(version, str) or not _VERSION_ID.fullmatch(version):
+        raise ValueError("version must have form vNN")
+    return _contained_path(artifact_dir, f"{version}.html", subtree)
+
+
 def _version_has_anchor(artifact_dir: Path, version: str, anchor_id: str) -> bool:
     """True when a disposition points at a real anchor in the named version."""
-    target = artifact_dir / "versions" / f"{version}.html"
     try:
+        target = _version_file(artifact_dir, version)
         markup = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return False
     pattern = re.compile(r"data-anchor-id=(['\"])" + re.escape(anchor_id) + r"\1")
     return bool(pattern.search(markup))
@@ -450,11 +489,11 @@ def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) ->
     they guessed the anchor, or resolved before generating the version. The
     closest real anchors turn the retry into a copy, not a search.
     """
-    target = artifact_dir / "versions" / f"{version}.html"
     body = {"error": f"{what} target anchor not found", "version": version, "anchor": anchor_id}
     try:
+        target = _version_file(artifact_dir, version)
         markup = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         body["error"] = f"{what} target version {version} has no page yet — generate it first"
         return json.dumps(body).encode()
     anchors = re.findall(r"data-anchor-id=['\"]([^'\"]+)['\"]", markup)
@@ -487,9 +526,15 @@ def _load_v2_store(path: Path) -> dict:
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(data, output, indent=2, ensure_ascii=False)
+            os.fchmod(output.fileno(), mode)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -696,6 +741,119 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     skill_dir: Path | None = None  # packaged web asset directory (shell.*, adapter.js)
     local_author: str | None = None
     local_author_name: str | None = None
+    proxy_urls: tuple[str, ...] = ()
+    trusted_access_origins: tuple[str, ...] = ()
+
+    @staticmethod
+    def _origin(value: str) -> tuple[str, str, int] | None:
+        try:
+            parsed = urllib.parse.urlsplit(value)
+            if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.query or parsed.fragment or any(char.isspace() or ord(char) < 32 for char in value)):
+                return None
+            port = parsed.port
+            if port is not None and not 0 < port < 65536:
+                return None
+            port = port or (443 if parsed.scheme == "https" else 80)
+            return parsed.scheme, parsed.hostname.lower(), port
+        except ValueError:
+            return None
+
+    def _published_proxy_origins(self) -> set[tuple[str, str, int]]:
+        urls = list(self.proxy_urls)
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            slugs = state.get("slugs", {}) if isinstance(state, dict) else {}
+            record = slugs.get(self.slug, {}) if isinstance(slugs, dict) else {}
+            if not isinstance(record, dict):
+                record = {}
+            if (Path(record.get("slug_dir", "")).resolve() == self.artifact_dir.resolve()
+                    and record.get("port") == self.server.server_address[1]
+                    and record.get("transport") != "local"):
+                urls.extend(record.get(field) for field in ("url", "public_url"))
+        except (OSError, ValueError, TypeError):
+            pass
+        return {origin for value in urls if isinstance(value, str)
+                and (origin := self._origin(value)) is not None and origin[0] == "https"}
+
+    def _access_origins(self) -> set[tuple[str, str, int]]:
+        values = list(self.trusted_access_origins)
+        try:
+            config = tomllib.loads(PROJECTS_TOML.read_text())
+            section = config.get(_monitor_project(self.bus_dir), {}) if isinstance(config, dict) else {}
+            configured = section.get("trusted_access_origins", []) if isinstance(section, dict) else []
+            if isinstance(configured, list):
+                values.extend(configured)
+        except (OSError, ValueError, TypeError):
+            pass
+        return {origin for value in values if isinstance(value, str)
+                and (origin := self._origin(value)) is not None and origin[0] == "https"
+                and urllib.parse.urlsplit(value).path in ("", "/")}
+
+    def _request_origin(self) -> tuple[str, str, int] | None:
+        host = self.headers.get("Host") or ""
+        if any(char in host for char in ("/", "\\", "?", "#", "@")):
+            return None
+        direct = self._origin("http://" + host)
+        if direct is not None:
+            try:
+                loopback = direct[1] == "localhost" or ipaddress.ip_address(direct[1]).is_loopback
+            except ValueError:
+                loopback = False
+            legacy_agent = self.headers.get("Cf-Access-Authenticated-User-Email")
+            if (loopback and direct[2] == self.server.server_address[1] and not self._has_proxy_markers()
+                    and (not legacy_agent or (legacy_agent.startswith("agent:") and not self.headers.get("Origin")
+                                              and not self.headers.get("Sec-Fetch-Site")))):
+                return direct
+        proxy = self._origin("https://" + host)
+        return proxy if proxy in self._published_proxy_origins() else None
+
+    def _allow_request(self) -> bool:
+        path = urllib.parse.urlsplit(self.path).path
+        if self.public_base_path and path != self.public_base_path and not path.startswith(self.public_base_path + "/"):
+            self._respond(404, b'{"error":"outside published page mount"}')
+            return False
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                raise ValueError
+        except ValueError:
+            self._respond(403, b'{"error":"loopback listener boundary required"}')
+            return False
+        origin = self._request_origin()
+        supplied = self.headers.get("Origin")
+        if (origin is None or (supplied is not None and (self._origin(supplied) != origin
+                or urllib.parse.urlsplit(supplied).path not in ("", "/")))):
+            self._respond(403, b'{"error":"untrusted host or origin"}')
+            return False
+        agent = self.headers.get("X-Annotate-Agent") or self.headers.get("Cf-Access-Authenticated-User-Email")
+        if origin[0] == "http" and agent is not None and (
+                supplied is not None or self.headers.get("Sec-Fetch-Site") is not None or not _AGENT_ID.fullmatch(agent)):
+            self._respond(403, b'{"error":"local agent attribution requires a direct non-browser request"}')
+            return False
+        site = self.headers.get("Sec-Fetch-Site")
+        navigation = (self.command == "GET" and self.headers.get("Sec-Fetch-Mode") == "navigate"
+                      and self.headers.get("Sec-Fetch-Dest") == "document")
+        if site not in (None, "none", "same-origin") and not navigation:
+            self._respond(403, b'{"error":"cross-origin request refused"}')
+            return False
+        if origin[0] == "https" and not self._identity()["authenticated"]:
+            route = self._strip_base(path)
+            bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css"}
+            bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route.lstrip("/") in bootstrap_assets
+                         or ((match := _ASSET_PATH_RE.fullmatch(route)) and match[2] in bootstrap_assets)))
+            session = self.command == "POST" and route == "/api/reviewer/session"
+            if self._is_funnel_origin() and (bootstrap or session):
+                return True
+            self._respond(403, b'{"error":"authenticated proxy boundary required"}')
+            return False
+        try:
+            for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "seen.json", "read-state.json"):
+                _contained_path(self.artifact_dir, name)
+        except PermissionError:
+            self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
+            return False
+        return True
 
     # ── Path normalization ──────────────────────────────────────────
     def _strip_base(self, path: str) -> str:
@@ -713,6 +871,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # itself a tailnet node, so a public request reaching `tailscale serve`
     # through the tunnel would otherwise carry the connector owner's login.
     _CLOUDFLARE_HEADERS = ("Cf-Ray", "Cf-Connecting-Ip", "Cf-Access-Jwt-Assertion")
+    _PROXY_MARKERS = (*_CLOUDFLARE_HEADERS, "Cf-Access-Authenticated-User-Name", "Forwarded", "Via", "X-Real-IP",
+                      "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Tailscale-User-Login",
+                      "Tailscale-User-Name", "X-Auth-Request-User", "oai-authenticated-user-email",
+                      "oai-authenticated-user-full-name", "oai-authenticated-user-full-name-encoding")
+
+    def _has_proxy_markers(self) -> bool:
+        return any(self.headers.get(name) is not None for name in self._PROXY_MARKERS)
 
     def _tailscale_identity(self) -> tuple[str, str]:
         """The tailnet login `tailscale serve` attaches, or ("", "").
@@ -738,7 +903,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             hostname = urllib.parse.urlsplit("//" + host_header).hostname or ""
         except ValueError:
             return "", ""
-        if not hostname.lower().endswith(".ts.net"):
+        if (not hostname.lower().endswith(".ts.net")
+                or self._origin("https://" + host_header) not in self._published_proxy_origins()):
             return "", ""
         return login, (self.headers.get("Tailscale-User-Name") or "").strip()
 
@@ -753,7 +919,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             peer_is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
         except ValueError:
             return False
-        if not peer_is_loopback:
+        if not peer_is_loopback or self._has_proxy_markers():
             return False
 
         host_header = (self.headers.get("Host") or "").strip()
@@ -771,47 +937,79 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
 
     def _identity(self) -> dict:
-        """Return identity supplied by OAuth or the configured local fallback.
+        """Trust recorded TailServe or an explicitly declared Access edge.
 
-        Client query parameters and JSON bodies are deliberately excluded:
-        they are display input, not authentication evidence. The fallback is
-        available only to direct loopback URLs and never to public/proxy Hosts.
+        Access JWT validation is delegated to that owner-configured edge; token
+        presence here is not cryptographic verification. Local OS callers are
+        attributed as agents. Browser identity uses only the local preset or
+        trusted proxy, never a client-authored JSON/query/proxy claim.
         """
-        email = (
-            self.headers.get("Cf-Access-Authenticated-User-Email")
-            or self.headers.get("oai-authenticated-user-email")
-            or ""
-        ).strip()
-        name = (
-            self.headers.get("Cf-Access-Authenticated-User-Name")
-            or self.headers.get("X-Auth-Request-User")
-            or ""
-        ).strip()
-        oai_name = self.headers.get("oai-authenticated-user-full-name")
-        if not name and oai_name:
-            encoding = self.headers.get("oai-authenticated-user-full-name-encoding", "")
-            name = urllib.parse.unquote(oai_name) if encoding == "percent-encoded-utf-8" else oai_name
-            name = name.strip()
-        if not email:
-            ts_email, ts_name = self._tailscale_identity()
-            if ts_email:
-                email = ts_email
-                name = name or ts_name
+        email, name = self._tailscale_identity()
+        if not email and self._is_funnel_origin():
+            from .review_access import identity
+            email, name = identity(self.artifact_dir, self.headers.get("Cookie") or "")
+        origin = self._origin("https://" + (self.headers.get("Host") or ""))
+        if (origin in self._published_proxy_origins() and origin in self._access_origins()
+                and not origin[1].endswith(".ts.net") and self.headers.get("Cf-Access-Jwt-Assertion")):
+            email = (self.headers.get("Cf-Access-Authenticated-User-Email") or "").strip()
+            name = (self.headers.get("Cf-Access-Authenticated-User-Name") or "").strip()
+        if self._is_direct_loopback_request() and not self.headers.get("Origin") and not self.headers.get("Sec-Fetch-Site"):
+            agent = self.headers.get("X-Annotate-Agent") or self.headers.get("Cf-Access-Authenticated-User-Email") or ""
+            if _AGENT_ID.fullmatch(agent):
+                email, name = agent, ""
         if not email and self.local_author and self._is_direct_loopback_request():
             email = self.local_author
             name = self.local_author_name or name
         return {
             "email": email or None,
             "name": name or None,
-            "authenticated": bool(email),
+            "authenticated": bool(email) and not email.startswith("agent:"),
         }
 
     def _author(self, parsed=None) -> str:
         return self._identity()["email"] or "anonymous"
 
+    def _is_funnel_origin(self) -> bool:
+        origin = self._origin("https://" + (self.headers.get("Host") or ""))
+        if origin not in self._published_proxy_origins():
+            return False
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            record = state.get("slugs", {}).get(self.slug, {})
+            return (record.get("transport") == "funnel" and record.get("port") == self.server.server_address[1]
+                    and Path(record.get("slug_dir", "")).resolve() == self.artifact_dir.resolve())
+        except (OSError, ValueError, TypeError):
+            return False
+
+    def _reviewer_session(self):
+        from .review_access import cookie_name, issue_cookie
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+            if not 0 < length <= 4096 or not self._is_funnel_origin():
+                raise ValueError("invalid reviewer session request")
+            payload = json.loads(self.rfile.read(length))
+            cookie = issue_cookie(self.artifact_dir, payload.get("key"), payload.get("name", "Reviewer"), self.headers.get("Cookie") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            return self._respond(403, b'{"error":"invalid review link"}')
+        path = (self.public_base_path or "") + "/"
+        self._respond(200, b'{"ok":true}', cache_control="no-store", extra_headers={
+            "Set-Cookie": f"{cookie_name(self.artifact_dir)}={cookie}; Path={path}; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict"})
+
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
+        if self.public_base_path and parsed.path == self.public_base_path:
+            # Relative shell assets and API URLs require a directory base.
+            location = self.public_base_path + "/"
+            if parsed.query:
+                location += "?" + parsed.query
+            self.send_response(308)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         route_path = self._strip_base(parsed.path)
 
         if self.v2_mode:
@@ -823,6 +1021,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_read_state(parsed)
             if route_path == "/api/identity":
                 return self._v2_get_identity(parsed)
+            if route_path == "/api/share-link":
+                return self._v2_get_share_link()
             if route_path == "/api/session-monitor":
                 return self._v2_get_session_monitor(parsed)
             if route_path == "/api/capabilities":
@@ -831,16 +1031,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 from .delivery import delivery_status
                 return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
             if route_path == "/api/project":
-                from .project_state import load_project
                 try:
-                    return self._respond(200, json.dumps(load_project(self.artifact_dir)).encode(), "application/json")
+                    return self._respond(200, json.dumps(self._project_payload()).encode(), "application/json", cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            if route_path == "/api/copy":
+                from .copy_state import load_copy
+                try:
+                    return self._respond(200, json.dumps(load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
+                except (OSError, ValueError) as exc:
+                    return self._respond(500, json.dumps({"error": str(exc)}).encode())
             if route_path == "/comments.json":
                 return self._v2_get_store()
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
-            if route_path in ("/shell.js", "/shell.css", "/content.css", "/adapter.js"):
+            if route_path.lstrip("/") in _WEB_ASSETS:
                 return self._serve_skill_asset(route_path.lstrip("/"))
             # PATH-versioned assets: /assets/<stamp>/<name>. The stamp segment
             # exists purely as an edge cache key — some CDN configurations
@@ -862,10 +1067,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── POST ─────────────────────────────────────────────────────────
     def do_POST(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
 
         if self.v2_mode:
+            if route_path == "/api/reviewer/session":
+                return self._reviewer_session()
+            if route_path.startswith("/api/copy/") and route_path.endswith("/proposal"):
+                block_id = route_path[len("/api/copy/"):-len("/proposal")]
+                return self._post_copy_proposal(block_id)
             if route_path == "/api/comments":
                 return self._v2_post_comments(parsed)
             if route_path == "/api/comments/batch":
@@ -906,6 +1118,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b"Not found")
 
     def do_PUT(self):
+        if not self._allow_request():
+            return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
         if self.v2_mode and route_path.startswith("/api/comments/"):
@@ -914,10 +1128,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(404, b'{"error":"Not found"}')
 
     def do_OPTIONS(self):
+        if not self._allow_request():
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Cf-Access-Authenticated-User-Email, X-Annotate-Session")
+        self.send_header("Allow", "GET, POST, PUT, OPTIONS")
         self.end_headers()
 
     # ── v2.19: agent session attribution ─────────────────────────────
@@ -946,6 +1160,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "version": __version__,
             "runtime": RUNTIME_MANIFEST,
             "automatic_round_delivery": True,
+            "private_share_links": self._is_funnel_origin(),
+            "copy_blocks": True,
             "batch": True,
             "rounds": True,
             "decision_schema": 2,
@@ -957,13 +1173,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         }).encode(), "application/json")
 
     # ── V1 routes (backward compat) ─────────────────────────────────
+    def _legacy_comments_path(self, parsed):
+        doc = (urllib.parse.parse_qs(parsed.query).get("doc") or [None])[0]
+        if (not isinstance(doc, str) or not doc or doc in (".", "..")
+                or any(char in doc for char in ("/", "\\"))
+                or any(ord(char) < 32 or ord(char) == 127 for char in doc)):
+            self._respond(400, b'{"error":"safe doc identifier required"}')
+            return None
+        try:
+            return _contained_path(self.artifact_dir, doc + ".comments.json")
+        except PermissionError:
+            self._respond(403, b'{"error":"forbidden comment path"}')
+            return None
+
     def _v1_get_comments(self, parsed):
-        params = urllib.parse.parse_qs(parsed.query)
-        doc = (params.get("doc") or [None])[0]
-        if not doc:
-            self._respond(400, b'{"error":"missing doc param"}')
+        json_path = self._legacy_comments_path(parsed)
+        if json_path is None:
             return
-        json_path = self.artifact_dir / (doc + ".comments.json")
         if json_path.exists():
             try:
                 data = json_path.read_bytes()
@@ -975,10 +1201,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, data, content_type="application/json")
 
     def _v1_post_comments(self, parsed):
-        params = urllib.parse.parse_qs(parsed.query)
-        doc = (params.get("doc") or [None])[0]
-        if not doc:
-            self._respond(400, b'{"error":"missing doc param"}')
+        json_path = self._legacy_comments_path(parsed)
+        if json_path is None:
             return
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
@@ -987,14 +1211,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             self._respond(400, f'{{"error":"invalid json: {exc}"}}'.encode())
             return
-        json_path = self.artifact_dir / (doc + ".comments.json")
         try:
             _atomic_write_json(json_path, data)
         except OSError as exc:
             self._respond(500, f'{{"error":"write error: {exc}"}}'.encode())
             return
         total = sum(len(v) for v in data.values() if isinstance(v, list))
-        print(f"  POST /api/comments?doc={doc} → {total} comment(s) → {json_path}", flush=True)
+        print(f"  POST /api/comments → {total} comment(s)", flush=True)
         self._respond(200, b'{"ok":true}', content_type="application/json")
 
     # ── V2 routes ────────────────────────────────────────────────────
@@ -1019,13 +1242,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         p = self._meta_path()
         if p.exists():
             try:
-                meta = json.loads(p.read_text())
+                meta = self._read_meta()
                 if isinstance(meta.get("owner"), dict):
+                    target = meta["owner"].get("target") or {}
+                    if isinstance(target.get("terminal_name"), str):
+                        meta["owner"]["terminal_name"] = target["terminal_name"]
                     meta["owner"] = {k: v for k, v in meta["owner"].items() if k != "target"}
                 from .delivery import delivery_status
-                from .project_state import load_project
                 try:
-                    meta["project_info"] = load_project(self.artifact_dir)
+                    meta["project_info"] = self._project_payload()
                 except (OSError, ValueError):
                     meta["project_info"] = {"modules": []}
                 meta["delivery_status"] = delivery_status(_monitor_project(self.bus_dir), self.slug)
@@ -1034,7 +1259,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 data = b"{}"
         else:
             data = json.dumps({"current": "v1", "history": []}).encode()
-        self._respond(200, data, "application/json", conditional=True)
+        self._respond(200, data, "application/json", cache_control="no-store" if self._is_funnel_origin() else "no-cache",
+                      conditional=not self._is_funnel_origin())
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -1057,8 +1283,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _version_path(self, version: str | None):
         if version:
-            return self.artifact_dir / "versions" / f"{version}.html"
-        return self.artifact_dir / "current.html"
+            return _version_file(self.artifact_dir, version)
+        return _contained_path(self.artifact_dir, "current.html")
 
     def _extractable_version(self, version: str | None) -> bool:
         """True when a baked legacy version can be served through the shell.
@@ -1070,12 +1296,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         comes from the skill dir on every request like it does for every other
         slug. Nothing is written to disk — see _v2_serve_content.
         """
-        target = self._version_path(version)
-        if not target.exists() or not target.is_file():
-            return False
         try:
+            target = self._version_path(version)
+            if not target.exists() or not target.is_file():
+                return False
             return has_canvas_sentinels(target.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
+        except (OSError, ValueError):
             return False
 
     def _shell_eligible(self, parsed=None) -> bool:
@@ -1090,13 +1316,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self._extractable_version(version)
 
     def _v2_serve_root(self, parsed):
+        v = (urllib.parse.parse_qs(parsed.query).get("v") or [None])[0]
+        try:
+            target = self._version_path(v)
+        except ValueError:
+            return self._respond(400, b'{"error":"invalid version"}')
+        except PermissionError:
+            return self._respond(403, b'{"error":"forbidden version path"}')
         # Universal-shell slugs serve the shared shell.html at root; the shell
         # reads ?v= client-side and loads the right iframe src. A slug earns
         # that path either by having a content/ dir of chrome-free docs, or by
         # being a baked legacy artifact the server can extract on the fly.
         # Anything else (no sentinels, e.g. hand-written HTML that never went
         # through template.html) still gets the old direct-serve behavior.
-        if self._shell_eligible(parsed):
+        if self._shell_eligible(parsed) or self._is_funnel_origin():
             shell_path = (self.skill_dir / "shell.html") if self.skill_dir else None
             if shell_path and shell_path.exists():
                 try:
@@ -1109,12 +1342,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # insufficient: some CDN configs strip query strings from the
                 # cache key, so the stamped URL still hit the stale entry.)
                 base = self.public_base_path or ""
-                html = html.replace(
-                    'href="shell.css"',
-                    'href="%s/assets/%s/shell.css"' % (base, _mtime_stamp(self.skill_dir / "shell.css")), 1)
-                html = html.replace(
-                    'src="shell.js"',
-                    'src="%s/assets/%s/shell.js"' % (base, _mtime_stamp(self.skill_dir / "shell.js")), 1)
+                for name in _WEB_ASSETS:
+                    if not (self.skill_dir / name).is_file():
+                        continue
+                    for attribute in ("href", "src"):
+                        html = html.replace(f'{attribute}="{name}"',
+                            f'{attribute}="{base}/assets/{_mtime_stamp(self.skill_dir / name)}/{name}"')
                 self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8",
                               cache_control=_NO_STORE)
                 return
@@ -1123,12 +1356,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(500, b'{"error":"shell.html not found next to sync_server.py"}')
             return
 
-        params = urllib.parse.parse_qs(parsed.query)
-        v = (params.get("v") or [None])[0]
-        if v:
-            target = self.artifact_dir / "versions" / f"{v}.html"
-        else:
-            target = self.artifact_dir / "current.html"
         if not target.exists() or not target.is_file():
             self._respond(404, b"Not found")
             return
@@ -1200,7 +1427,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not v:
             self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
             return
-        target = self.artifact_dir / "content" / f"{v}.html"
+        try:
+            target = _version_file(self.artifact_dir, v, "content")
+        except ValueError:
+            return self._respond(400, b'{"error":"invalid version"}')
+        except PermissionError:
+            return self._respond(403, b'{"error":"forbidden content path"}')
         if target.exists() and target.is_file():
             try:
                 html = target.read_text(encoding="utf-8")
@@ -1216,7 +1448,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # slug, with no file to re-generate and no stale duplicate on
             # disk. An explicit content/<v>.html always wins, so a hand-tuned
             # extraction is never overridden.
-            baked = self._version_path(v)
+            try:
+                baked = self._version_path(v)
+            except PermissionError:
+                return self._respond(403, b'{"error":"forbidden version path"}')
             if not baked.exists() or not baked.is_file():
                 self._respond(404, f'{{"error":"content not found for version {v}"}}'.encode())
                 return
@@ -1226,7 +1461,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(500, b"Read error")
                 return
             try:
-                html = build_content_document(raw, title=self.slug or "Annotate content")
+                html = build_content_document(raw, title=self.slug or "Annotate content") if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
                 self._respond(
                     500,
@@ -1242,16 +1477,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Both injected refs carry mtime stamps (edge-cache bypass, see
         # _cache_control_for).
         base = self.public_base_path or ""
-        # Generated page styles are runtime-owned. Preserve frozen standalone
-        # snapshots while applying shared style fixes to every generated version.
+        css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "daisyui.css")}/daisyui.css">'
         if '<div class="aa">' in html:
             html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
-            css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
-            html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
+            css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
+        html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
+        content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug}).replace("<", "\\u003c")
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='
-            f'{json.dumps({"version": v, "publicBasePath": base, "slug": self.slug})};</script>\n'
+            f'{content_meta};</script>\n'
             f'<script src="{base}/assets/{adapter_v}/adapter.js"></script>\n'
         )
         if "</body>" in html:
@@ -1267,9 +1502,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # clock — making the whole document byte-different on every request.
         # Strip the tag in that case; otherwise stamp it from the copy that
         # will actually be served.
-        dgplot_local = self.artifact_dir / "diagram-plot.js"
+        try:
+            dgplot_local = _contained_path(self.artifact_dir, "diagram-plot.js")
+            if not self._is_public_static(dgplot_local.relative_to(self.artifact_dir.resolve()).as_posix()):
+                dgplot_local = None
+        except PermissionError:
+            dgplot_local = None
         dgplot_skill = (self.skill_dir / "diagram-plot.js") if self.skill_dir else None
-        dgplot = dgplot_local if dgplot_local.exists() else (
+        dgplot = dgplot_local if dgplot_local is not None and dgplot_local.exists() else (
             dgplot_skill if (dgplot_skill and dgplot_skill.exists()) else None)
         if dgplot is not None:
             html = html.replace(
@@ -1314,9 +1554,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """
         candidates = []
         if name == "diagram-plot.js":
-            candidates.append(self.artifact_dir / name)
+            try:
+                local = _contained_path(self.artifact_dir, name)
+                if self._is_public_static(local.relative_to(self.artifact_dir.resolve()).as_posix()):
+                    candidates.append(local)
+            except PermissionError:
+                pass
         if self.skill_dir:
-            candidates.append(self.skill_dir / name)
+            try:
+                candidates.append(_contained_path(self.skill_dir, name))
+            except PermissionError:
+                pass
         for target in candidates:
             if target.exists() and target.is_file():
                 try:
@@ -1341,6 +1589,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if isinstance(payload, dict) and (
             "schema_version" in payload or all(isinstance(v, list) for v in payload.values())
         ):
+            if (not self._is_direct_loopback_request() or self.headers.get("Origin")
+                    or self.headers.get("Sec-Fetch-Site")):
+                self._respond(403, b'{"error":"whole-store replacement requires a local non-browser caller"}')
+                return
             with _STORE_LOCK:
                 store = _coerce_v2(payload)
                 self._v2_save(store)
@@ -1499,8 +1751,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     existing = None
                     if idempotency == "anchor" and fresh.get("decision_request"):
                         for c in store["anchors"].get(aid, []):
+                            shared_decision = (
+                                author.startswith("agent:") and str(c.get("author") or "").startswith("agent:")
+                                and type(fresh.get("number")) is int
+                                and c.get("number") == fresh["number"]
+                                and aid == f"d:q{fresh['number']}"
+                            )
                             if (c.get("status") not in ("archived", "resolved_in_version")
-                                    and c.get("author") == author
+                                    and (c.get("author") == author or shared_decision)
                                     and c.get("decision_request")):
                                 existing = c
                                 break
@@ -1666,6 +1924,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(404, b'{"error":"not found"}')
                 return
             anchor_id, c = found
+            local_authoring = (self._is_direct_loopback_request() and not self.headers.get("Origin")
+                               and not self.headers.get("Sec-Fetch-Site"))
+            if not local_authoring and (
+                    any(key in payload for key in ("decision_request", "response_text", "resolved_in_version", "carry_forward", "number"))
+                    or new_status in ("addressed_by_agent", "resolved_in_version")
+                    or ("text" in payload and c.get("author") != author)):
+                self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
+                return
             old_status = c.get("status")
             if new_status == "addressed_by_agent" and old_status == "user_confirmed":
                 self._respond(
@@ -2045,25 +2311,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             store = self._v2_load()
             flagged_count = 0
             flagged_ids = []
+            feedback = []
             now = _now_iso()
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     if _comment_needs_push(c):
+                        feedback.append(dict(c))
                         c["flagged_for_session"] = True
                         c["flagged_at"] = now
                         c["flagged_by"] = author
                         flagged_count += 1
                         flagged_ids.append(c.get("id"))
-            self._v2_save(store)
-
-        delivery = self._compute_delivery()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push",
-            **delivery,
-            "comment_count": flagged_count,
-            "comment_ids": flagged_ids,
-            "author": author,
-        })
+            delivery = self._compute_delivery()
+            if flagged_ids:
+                self._queue_feedback_delivery(delivery, feedback, author)
+                self._v2_save(store)
+            else:
+                delivery["delivery"] = "noop"
+        if flagged_ids:
+            self._wake_feedback_owner()
         print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2095,16 +2361,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not found:
                 self._respond(404, b'{"error":"not found"}')
                 return
+            delivery = self._compute_delivery()
+            self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             self._v2_save(store)
-        delivery = self._compute_delivery()
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push",
-            **delivery,
-            "comment_count": 1,
-            "comment_ids": [comment_id],
-            "anchor_id": found[0],
-            "author": author,
-        })
+        self._wake_feedback_owner()
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2112,6 +2372,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": 1,
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
+
+    def _queue_feedback_delivery(self, delivery, comments, author, **extra):
+        """Explicit Send feedback uses the same durable owner outbox as Finish review."""
+        owner = self._read_meta().get("owner") or {}
+        fingerprint = {"comments": [{key: value for key, value in c.items()
+                                     if key not in ("flagged_at", "flagged_by", "flagged_for_session")}
+                                    for c in comments], "author": author, "owner": owner.get("owner_session")}
+        delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
+        comment_ids = [c["id"] for c in comments]
+        _bus_append(self.bus_dir, self.slug, {
+            "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
+            "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+            "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
+        })
+
+    def _wake_feedback_owner(self):
+        if record := self._registered_record():
+            from .delivery import dispatch_record
+            threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
 
     # `comment` is the free-text answer path; a reviewer's reply on an
     # unanswered card is recorded as one (see _v2_post_reply).
@@ -2312,29 +2591,33 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         payload = payload if isinstance(payload, dict) else {}
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
+        reviewer_authors = self._reviewer_authors(author)
         with _STORE_LOCK:
             store = self._v2_load()
             now = _now_iso()
             pending = []
+            cleared_archived = False
             verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
             undecided_ids = []
             for items in store.get("anchors", {}).values():
                 for c in items:
-                    if c.get("status") in ("archived", "resolved_in_version"):
-                        if isinstance(c.get("decision"), dict):
-                            c["decision"].pop("round_pending", None)
-                        continue
                     decision = c.get("decision")
+                    if c.get("status") in ("archived", "resolved_in_version"):
+                        if isinstance(decision, dict) and decision.get("by") in reviewer_authors and decision.get("round_pending"):
+                            decision.pop("round_pending", None)
+                            cleared_archived = True
+                        continue
                     if (c.get("decision_request") and not self._is_answered(decision)
                             and c.get("status") != "addressed_by_agent"):
                         undecided_ids.append(c.get("id"))
-                    if isinstance(decision, dict) and decision.get("round_pending"):
+                    if isinstance(decision, dict) and decision.get("round_pending") and decision.get("by") in reviewer_authors:
                         pending.append(c)
                         if decision.get("verdict") in verdict_counts:
                             verdict_counts[decision["verdict"]] += 1
             comment_ids = [c["id"] for c in pending]
             if not comment_ids and not note:
-                self._v2_save(store)
+                if cleared_archived:
+                    self._v2_save(store)
                 self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
@@ -2381,16 +2664,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         "Change verdict"); they simply never go out as a round. Emits
         `round_discarded`, never a session_push."""
         author = self._author(parsed)
+        reviewer_authors = self._reviewer_authors(author)
         with _STORE_LOCK:
             store = self._v2_load()
             comment_ids = []
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     d = c.get("decision")
-                    if isinstance(d, dict) and d.get("round_pending"):
+                    if isinstance(d, dict) and d.get("round_pending") and d.get("by") in reviewer_authors:
                         d.pop("round_pending", None)
                         comment_ids.append(c.get("id"))
-            self._v2_save(store)
+            if comment_ids:
+                self._v2_save(store)
         _bus_append(self.bus_dir, self.slug, {
             "event": "round_discarded",
             "comment_ids": comment_ids,
@@ -2406,10 +2691,98 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         p = self._meta_path()
         if p.exists():
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                meta = json.loads(p.read_text(encoding="utf-8"))
+                record = self._registered_record()
+                if record:
+                    from .workspace import owner_data
+                    if owner := owner_data(record):
+                        meta["owner"] = owner
+                return meta
             except Exception:
                 return {}
         return {}
+
+    def _registered_record(self) -> dict | None:
+        try:
+            state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+            record = state.get("slugs", {}).get(self.slug)
+            if (isinstance(record, dict) and Path(record.get("slug_dir") or "").resolve() == self.artifact_dir.resolve()
+                    and record.get("port") == self.server.server_address[1]):
+                return record
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def _project_payload(self) -> dict:
+        from .project_state import load_project
+        data = load_project(self.artifact_dir)
+        record = self._registered_record()
+        if record and self._identity()["authenticated"]:
+            from .urls import page_url, redact_review_key
+            from .workspace import workspace_tab_records
+            links = {redact_review_key(page_url(child)): page_url(child)
+                     for _, _, child in workspace_tab_records(record)}
+            for tab in data.get("tabs", []):
+                if tab.get("url") in links and links[tab["url"]]:
+                    tab["url"] = links[tab["url"]]
+        return data
+
+    def _post_copy_proposal(self, block_id: str):
+        from .copy_state import propose_copy
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 256 * 1024:
+                return self._respond(413, b'{"error":"copy proposal body exceeds limit"}')
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or set(payload) != {"delta", "base_revision", "request_id"}:
+                raise ValueError("delta, base_revision, and request_id required")
+            identity = self._identity()
+            if not identity["email"]:
+                return self._respond(403, b'{"error":"reviewer identity required"}')
+            with _STORE_LOCK:
+                document = propose_copy(self.artifact_dir, block_id, payload["delta"],
+                                        {"id": identity["email"], "name": identity.get("name")},
+                                        base_revision=payload["base_revision"], request_id=payload["request_id"])
+                block = next(block for block in document["blocks"] if block["id"] == block_id)
+                revision_id = "r_" + payload["request_id"]
+                comment_id = hashlib.sha256((block_id + ":" + revision_id).encode()).hexdigest()[:12]
+                store = self._v2_load()
+                if not any(c.get("id") == comment_id for items in store["anchors"].values() for c in items):
+                    comment = self._new_comment_from_payload({"id": comment_id, "anchor_id": "copy:" + block_id,
+                        "text": "Copy change proposed: " + block["title"],
+                        "target": {"copy_block": block_id, "copy_revision": revision_id}}, identity, self._read_meta())
+                    comment.update(flagged_for_session=True, flagged_at=_now_iso(), flagged_by=identity["email"])
+                    store["anchors"].setdefault(comment["anchor_id"], []).append(comment)
+                    self._v2_save(store)
+                delivery = self._compute_delivery()
+                delivery["delivery_id"] = hashlib.sha256(("copy:" + comment_id).encode()).hexdigest()[:24]
+                # A retry completes a missing outbox write without duplicating owner input.
+                bus_file = self.bus_dir / f"{self.slug}.ndjson"
+                submitted = False
+                if bus_file.is_file():
+                    for line in bus_file.read_text().splitlines():
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            continue
+                        if event.get("event") == "session_push" and event.get("delivery_id") == delivery["delivery_id"]:
+                            submitted = True
+                            break
+                if not submitted:
+                    owner = self._read_meta().get("owner") or {}
+                    _bus_append(self.bus_dir, self.slug, {"event": "copy_proposed", "block_id": block_id,
+                        "revision_id": revision_id, "comment_id": comment_id, "author": identity["email"]})
+                    _bus_append(self.bus_dir, self.slug, {"event": "session_push", **delivery, "round": True,
+                        "automatic_delivery": True, "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+                        "comment_ids": [comment_id], "comment_count": 1, "author": identity["email"]})
+            if not submitted and (record := self._registered_record()):
+                from .delivery import dispatch_record
+                threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
+            self._respond(200, json.dumps(document, ensure_ascii=False).encode(), cache_control="no-store")
+        except (ValueError, TypeError, KeyError, StopIteration) as exc:
+            self._respond(409 if "current copy changed" in str(exc) else 400, json.dumps({"error": str(exc)}).encode())
+        except OSError:
+            self._respond(500, b'{"error":"copy proposal could not be saved; retry with the same request id"}')
 
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):
@@ -2421,12 +2794,45 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = self._author(parsed)
         with _SEEN_LOCK:
             data = _load_seen(self.artifact_dir)
-        record = data.get(_author_key(author), {})
+        record = self._reviewer_state(data, author)
         self._respond(200, json.dumps({"author": author, "seen": record}, ensure_ascii=False).encode(), "application/json")
 
     def _v2_get_identity(self, parsed):
         identity = self._identity()
+        identity["reviewer_authors"] = sorted(self._reviewer_authors(identity["email"] or "anonymous"))
         self._respond(200, json.dumps(identity, ensure_ascii=False).encode(), "application/json")
+
+    def _reviewer_authors(self, author: str) -> set[str]:
+        """Operator-declared account aliases preserve legacy draft authors."""
+        authors = {author}
+        try:
+            config = tomllib.loads(PROJECTS_TOML.read_text())
+            section = {**config.get("defaults", {}), **config.get(_monitor_project(self.bus_dir), {})}
+            aliases = section.get("reviewer_aliases", {}).get(author, [])
+            if isinstance(aliases, list) and len(aliases) <= 20:
+                authors.update(value for value in aliases if isinstance(value, str) and 0 < len(value) <= 320)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        return authors
+
+    def _reviewer_state(self, data: dict, author: str) -> dict:
+        merged = {}
+        for alias in sorted(self._reviewer_authors(author)):
+            record = data.get(_author_key(alias), {})
+            if not isinstance(record, dict):
+                continue
+            for key, value in record.items():
+                if isinstance(value, dict) and str(value.get("ts") or "") >= str(merged.get(key, {}).get("ts") or ""):
+                    merged[key] = value
+        return merged
+
+    def _v2_get_share_link(self):
+        if not self._is_funnel_origin() or not self._identity()["authenticated"]:
+            return self._respond(403, b'{"error":"review access required"}')
+        from .urls import page_url
+        state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
+        url = page_url(state["slugs"][self.slug])
+        self._respond(200, json.dumps({"url": url}).encode(), cache_control="no-store")
 
     def _v2_get_session_monitor(self, parsed):
         monitors = _active_monitor_leases(self.bus_dir, self.slug)
@@ -2446,7 +2852,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = self._author(parsed)
         with _READ_LOCK:
             data = _load_read_state(self.artifact_dir)
-        record = data.get(_author_key(author), {})
+        record = self._reviewer_state(data, author)
         self._respond(200, json.dumps({"author": author, "read": record}, ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_read_state(self, parsed):
@@ -2522,16 +2928,42 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
+    def _is_public_static(self, relative: str) -> bool:
+        parts = relative.split("/")
+        if any(not part or part in (".", "..") or part.startswith(".") for part in parts):
+            return False
+        name = parts[-1].lower()
+        if (name in {"comments.json", "current.meta.json", "project.json", "cards.json", "metrics.json",
+                     "seen.json", "read-state.json", "weekly-source.md"}
+                or name.endswith((".comments.json", ".tmp", ".bak", ".backup", ".lock", ".log", ".ndjson", ".sqlite", ".db", "~"))):
+            return False
+        if parts[0] in ("assets", "attachments") and len(parts) > 1:
+            return True  # These directories are an explicit publication boundary.
+        if len(parts) == 1:
+            return (relative == self.artifact_file or relative == "current.html"
+                    or Path(name).suffix in {".css", ".js", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+                                            ".webp", ".avif", ".woff", ".woff2", ".ttf", ".mp4", ".webm", ".ogg", ".mp3", ".wav"})
+        return (parts[0] == "versions" and len(parts) == 2 and not self._has_content_dir()
+                and Path(name).suffix == ".html" and bool(_VERSION_ID.fullmatch(Path(name).stem)))
+
     def _serve_static(self, url_path):
-        rel = url_path.lstrip("/") or self._default_file()
-        target = (self.artifact_dir / rel).resolve()
         try:
-            target.relative_to(self.artifact_dir.resolve())
-        except ValueError:
+            rel = urllib.parse.unquote(url_path, errors="strict").lstrip("/") or self._default_file()
+        except UnicodeError:
+            return self._respond(400, b"Invalid path")
+        if "\\" in rel or any(ord(char) < 32 for char in rel):
+            return self._respond(404, b"Not found")
+        try:
+            target = _contained_path(self.artifact_dir, rel)
+        except PermissionError:
             self._respond(403, b"Forbidden")
             return
         if self.v2_mode and target == self._meta_path().resolve():
-            return self._v2_get_meta()
+            return self._v2_get_meta()  # Preserve normalized aliases through the filtered API, never raw bytes.
+        if not self._is_public_static(rel):
+            return self._respond(404, b"Not found")
+        if not self._is_public_static(target.relative_to(self.artifact_dir.resolve()).as_posix()):
+            return self._respond(404, b"Not found")
         # Public-exposure gate: for v2-mode slugs that have been migrated to
         # the universal-shell layout (content/ dir present), the old
         # versions/ tree — including archive-baked/ — holds chrome-
@@ -2567,7 +2999,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
-                 cache_control: str = "no-cache", conditional: bool = False):
+                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None):
         etag = '"' + hashlib.sha256(body).hexdigest() + '"' if conditional else None
         if code == 200 and self.command == "GET" and etag and self.headers.get("If-None-Match") == etag:
             self.send_response(304)
@@ -2581,7 +3013,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache_control)
         if etag:
             self.send_header("ETag", etag)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -2603,6 +3037,8 @@ def make_handler(
     skill_dir: Path | None = None,
     local_author: str | None = None,
     local_author_name: str | None = None,
+    proxy_urls: tuple[str, ...] = (),
+    trusted_access_origins: tuple[str, ...] = (),
 ) -> type:
     class BoundHandler(AnnotateHandler):
         pass
@@ -2615,6 +3051,8 @@ def make_handler(
     BoundHandler.skill_dir = skill_dir
     BoundHandler.local_author = local_author
     BoundHandler.local_author_name = local_author_name
+    BoundHandler.proxy_urls = proxy_urls
+    BoundHandler.trusted_access_origins = trusted_access_origins
     return BoundHandler
 
 
@@ -2709,7 +3147,7 @@ def main():
             local_author=local_author,
             local_author_name=local_author_name,
         )
-        server = http.server.ThreadingHTTPServer(("localhost", port), handler)
+        server = ReviewHTTPServer(("localhost", port), handler)
         if public_base_path:
             url = f"http://localhost:{port}{public_base_path}/"
         else:

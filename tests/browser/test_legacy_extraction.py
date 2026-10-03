@@ -21,6 +21,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from test_interactive_controls import _details_page
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -91,6 +92,7 @@ def _serve(tmp_path):
             "--slug", "baked",
             "--bus-dir", str(tmp_path / "bus"),
             "--port", str(port),
+            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -163,15 +165,7 @@ def test_baked_slug_is_annotatable_through_the_shell(tmp_path):
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(
-                viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Cf-Access-Authenticated-User-Email": "reviewer@example.com",
-                    "Cf-Access-Authenticated-User-Name": "Browser Reviewer",
-                },
-            )
-            page.set_default_timeout(5_000)
-            page.goto(base, wait_until="networkidle")
+            page = _details_page(browser, base)
             frame = page.frame_locator("#content-frame")
             popover = page.locator("#pop-ta")
 
@@ -179,7 +173,7 @@ def test_baked_slug_is_annotatable_through_the_shell(tmp_path):
             frame.locator("#plain-para").click()
             popover.wait_for(state="visible")
             page.keyboard.press("Escape")
-            page.wait_for_timeout(200)
+            popover.wait_for(state="hidden")
 
             # The interactive-control fix now applies to this legacy page
             # WITHOUT its baked chrome being patched — the whole point.
@@ -192,6 +186,22 @@ def test_baked_slug_is_annotatable_through_the_shell(tmp_path):
             # In-canvas openPopover() affordances still work via the shim.
             frame.locator("#legacy-openpopover").click()
             popover.wait_for(state="visible")
+            # Save goes to the canonical store and appears in Feedback.
+            popover.fill("Legacy details note")
+            page.locator("#pop-save").click()
+            popover.wait_for(state="hidden")
+            page.locator('[data-workspace-tab="feedback"]').click()
+            page.locator('#comment-list .citem').filter(has_text="Legacy details note").wait_for(state="visible")
+            with urllib.request.urlopen(base + "comments.json") as response:
+                store = json.load(response)
+            assert any(comment["text"] == "Legacy details note" for comments in store["anchors"].values() for comment in comments)
+
+            # The same legacy affordance must become inert in project references.
+            page.goto(base + "?embed=reference", wait_until="networkidle")
+            frame = page.frame_locator("#content-frame")
+            frame.locator("#legacy-openpopover").click()
+            assert page.locator("#popover").is_hidden()
+            assert page.locator("#drawer").is_hidden()
 
             browser.close()
     finally:

@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Annotate"
-  short_description: "Build and manage interactive annotation review pages"
-  default_prompt: "Use Agent Annotate to publish or manage an interactive review artifact and coordinate its feedback with the active coding-agent session."
+  short_description: "One project page for progress and feedback"
+  default_prompt: "Use $annotate to reuse the project workspace, share its Funnel URL, and record only meaningful concise progress or decisions. Continue project work."

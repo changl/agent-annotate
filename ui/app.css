@@ -1,0 +1,16 @@
+@import "tailwindcss" source(none);
+@plugin "daisyui" {
+  themes: dark --default, light;
+  include: button, badge, tab, textarea, select;
+  logs: false;
+}
+@source "../src/agent_annotate/web/shell.html";
+@source "../src/agent_annotate/web/shell.js";
+@source "../src/agent_annotate/web/copy-editor.js";
+
+:root {
+  --link-color: color-mix(in oklab,var(--color-primary) 50%,var(--color-base-content));
+  --success-text: color-mix(in oklab,var(--color-success) 45%,var(--color-base-content));
+  --error-text: color-mix(in oklab,var(--color-error) 45%,var(--color-base-content));
+  --muted: color-mix(in oklab,var(--color-base-content) 72%,var(--color-base-100));
+}

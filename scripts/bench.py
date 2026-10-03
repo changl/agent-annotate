@@ -43,8 +43,6 @@ REPO = Path(__file__).resolve().parents[1]
 FIXTURES = REPO / "bench" / "fixtures"
 PORT_BASE = 9400            # sandbox pages never share the live 88xx range
 PORT_STRIDE = 20            # per concurrent job
-REVIEWER = {"Cf-Access-Authenticated-User-Email": "chang@example.com",
-            "Cf-Access-Authenticated-User-Name": "Chang"}
 ALLOWED_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Skill"]
 # The harness usually runs inside an agent session; none of that may leak in.
 STRIP_ENV = ("CLAUDECODE", "CLAUDE_CODE_", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PLUGIN_",
@@ -66,7 +64,7 @@ if argv[:1] and argv[0] in ("new", "publish", "publish-version"):
     have = tomllib.loads(toml.read_text()) if toml.exists() else {}
     with toml.open("a") as fh:
         for name in sorted(names - set(have) - {""}):
-            fh.write(f'\\n[{json.dumps(name)}]\\ntransport = "local"\\nport_base = __PORT__\\n')
+            fh.write(f'\\n[{json.dumps(name)}]\\ntransport = "local"\\nport_base = __PORT__\\nlocal_author = "chang@example.com"\\nlocal_author_name = "Benchmark reviewer"\\n')
 os.environ["PYTHONPATH"] = "__SRC__"
 os.execv("__PY__", ["__PY__", "-m", "agent_annotate.cli", *argv])
 """
@@ -287,15 +285,16 @@ def export_ref(ref: str, dest_root: Path) -> dict:
     with tarfile.open(fileobj=io.BytesIO(tar)) as tf:
         try:
             tf.extractall(dest, filter="data")
-        except TypeError:
-            tf.extractall(dest)
+        except TypeError as exc:
+            raise RuntimeError("Benchmark export requires Python tarfile data extraction filters; upgrade Python") from exc
     if not (dest / "src" / "agent_annotate").is_dir():
         sys.exit(f"bench: {ref} ({sha}) has no src/agent_annotate")
     return {"ref": ref, "label": f"{ref}@{sha}", "sha": sha, "src": dest / "src"}
 
 
 def _toml_section(name: str, port_base: int) -> str:
-    return f'\n[{json.dumps(name)}]\ntransport = "local"\nport_base = {port_base}\n'
+    return (f'\n[{json.dumps(name)}]\ntransport = "local"\nport_base = {port_base}\n'
+            'local_author = "chang@example.com"\nlocal_author_name = "Benchmark reviewer"\n')
 
 
 def make_sandbox(build: dict, scenario: dict, port_base: int, python: str) -> dict:
@@ -368,8 +367,10 @@ def page_record(home: Path, slug: str | None = None) -> dict | None:
 
 def _http(method: str, url: str, body=None):
     data = json.dumps(body).encode() if body is not None else None
+    parts = urllib.parse.urlsplit(url)
+    origin = f"{parts.scheme}://{parts.netloc}"
     req = urllib.request.Request(url, data=data, method=method,
-                                 headers={"Content-Type": "application/json", **REVIEWER})
+                                 headers={"Content-Type": "application/json", "Origin": origin})
     with urllib.request.urlopen(req, timeout=15) as resp:
         raw = resp.read()
     return json.loads(raw) if raw.strip() else None

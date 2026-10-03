@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from . import cli
 from .paths import MONITOR_ROOT
+from .urls import mounted_url, page_url
+from .workspace import owner_data, workspace_data
 
 
 def _record(slug: str) -> dict[str, Any]:
-    record = cli._find_record(slug)
-    if not record:
-        raise ValueError(f"No published Agent Annotate page named {slug!r}")
-    return record
+    resolved = cli._resolve_scoped_slug(slug)
+    if not resolved:
+        raise ValueError(f"No unique exact Agent Annotate page named {slug!r}; use project/slug")
+    return resolved[2]
 
 
 def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, Any]]:
@@ -38,21 +39,13 @@ def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, A
 
 def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author: str) -> Any:
     record = _record(slug)
-    base = record["local_url"].rstrip("/")
-    public_base_path = record.get("public_base_path") or ""
-    request = urllib.request.Request(
-        f"{base}{public_base_path}{path}",
-        method=method,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Cf-Access-Authenticated-User-Email": author,
-            # Every event this request emits is attributed to this session.
-            "X-Annotate-Session": cli._session_id(),
-        },
-    )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
+    code, payload = cli._api(record, method, path, body, author, timeout=5)
+    if code == 0:
+        raise RuntimeError(str(payload))
+    if not 200 <= code < 300:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        raise RuntimeError(f"local annotate API returned HTTP {code}" + (f": {error}" if isinstance(error, str) else ""))
+    return payload
 
 
 def build_server():
@@ -70,25 +63,39 @@ def build_server():
 
     @server.tool()
     def list_pages() -> list[dict[str, Any]]:
-        """List published annotation pages and their current owner lease."""
+        """List existing pages, share URLs, and durable owners with recorded terminal names.
+
+        Reuse one project workspace. Legacy monitor metadata is separate from page ownership.
+        """
 
         pages = []
-        for state_file in cli._all_state_files():
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-            for slug, record in state.get("slugs", {}).items():
-                lease_path = MONITOR_ROOT / state["project"] / slug / "owner.json"
-                lease = None
-                if lease_path.exists():
-                    try:
-                        lease = json.loads(lease_path.read_text(encoding="utf-8"))
-                    except json.JSONDecodeError:
-                        pass
-                pages.append({**record, "owner": lease})
+        for project, slug, record in cli._registry_entries():
+            lease_path = MONITOR_ROOT / project / slug / "owner.json"
+            lease = None
+            if lease_path.exists():
+                try:
+                    lease = json.loads(lease_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    pass
+            url = page_url(record)
+            pages.append({**record, "project": project, "slug": slug, "url": url,
+                          "public_url": url if record.get("transport") == "funnel" else
+                          mounted_url(record.get("public_url"), record.get("public_base_path")),
+                          "owner": owner_data(record), "legacy_monitor": lease})
         return pages
 
     @server.tool()
+    def find_workspace(cwd: str | None = None, project: str | None = None) -> dict[str, Any]:
+        """Find and reuse one project page across sessions/worktrees. Funnel is the default share URL.
+
+        Pass the project worktree as cwd. Progress-only updates use annotate project without
+        feedback rounds; create no extra page, monitor, or maintenance task. Discovery is read-only.
+        """
+        return workspace_data(Path(cwd).expanduser().resolve() if cwd else Path.cwd(), project)
+
+    @server.tool()
     def list_comments(slug: str, include_archived: bool = False) -> list[dict[str, Any]]:
-        """List comments and exact anchors for one annotation page."""
+        """Read comments and explanations on the reused page; act on submitted rounds, not draft clicks."""
 
         return _comment_rows(slug, include_archived=include_archived)
 
@@ -123,7 +130,7 @@ def build_server():
 
     @server.tool()
     def list_codex_sessions(cwd: str | None = None) -> list[dict[str, Any]]:
-        """List Codex threads available for explicit page ownership."""
+        """Legacy non-Orca integration: list Codex threads for an explicitly requested monitor connection."""
 
         from .providers.codex_app_server import CodexAppServerAdapter
 
@@ -131,21 +138,25 @@ def build_server():
 
     @server.tool()
     def connect_codex_page(slug: str, thread_id: str, takeover: bool = False) -> str:
-        """Connect a page's push events to an explicitly selected Codex thread."""
+        """Legacy non-Orca integration: start a monitor for an explicitly selected Codex thread.
+
+        This sets monitor delivery, not durable page ownership. Orca submitted-round delivery
+        is server-owned and needs no monitor; successors use annotate claim on the existing page.
+        """
 
         rc = cli.cmd_connect(SimpleNamespace(slug=slug, thread=thread_id, takeover=takeover))
         if rc:
             raise RuntimeError(f"Could not connect {slug!r}; annotate connect exited {rc}")
-        return f"Connected {slug} to {thread_id}"
+        return f"Legacy monitor connected: {slug} to {thread_id}; durable page ownership unchanged"
 
     @server.tool()
     def disconnect_page(slug: str) -> str:
-        """Release a page owner while leaving the review server running."""
+        """Stop the legacy monitor; retain durable page ownership, server, URL, and reviewer feedback."""
 
         rc = cli.cmd_disconnect(SimpleNamespace(slug=slug))
         if rc:
             raise RuntimeError(f"Could not disconnect {slug!r}; annotate disconnect exited {rc}")
-        return f"Disconnected {slug}"
+        return f"Legacy monitor disconnected: {slug}; durable page ownership unchanged"
 
     return server
 

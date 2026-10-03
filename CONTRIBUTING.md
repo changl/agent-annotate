@@ -1,9 +1,7 @@
 # Contributing
 
-Open an issue before large behavioral changes. Preserve the interaction
-contract, add a failing conformance test first, and keep provider-specific code
-outside the core server and browser protocol.
+Preserve the [interaction contract](src/agent_annotate/skills/claude/references/interaction-contract.md)
+and existing feedback. Keep changes small; use synthetic fixtures.
 
-Run `pytest`, `ruff check .`, the browser matrix, and the monitor replay suite
-before requesting review. Do not use private project artifacts as fixtures.
-
+Run `ruff check src tests` and relevant tests. Broad workflow/UI changes need
+the full suite, browser interaction checks, and a real external Funnel reviewer check.

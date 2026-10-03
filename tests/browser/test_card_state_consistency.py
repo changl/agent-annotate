@@ -18,7 +18,9 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from agent_annotate.pagegen import EXAMPLE, generate  # noqa: E402
+from agent_annotate.pagegen import generate  # noqa: E402
+
+EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
@@ -33,7 +35,7 @@ def _card(cid, anchor, number, **extra):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
+def test_questions_have_one_current_status_and_no_competing_reference_surface(tmp_path):
     source = tmp_path / "page.md"
     source.write_text(EXAMPLE, encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
@@ -59,7 +61,7 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
     process = subprocess.Popen(
         [sys.executable, "-m", "agent_annotate.sync_server", "--slug-dir", str(slug_dir),
          "--slug", "items-model-review", "--bus-dir", str(tmp_path / "bus"),
-         "--port", str(port)],
+         "--port", str(port), "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{port}/"
     try:
@@ -72,42 +74,31 @@ def test_body_cards_show_the_same_status_as_the_rail(tmp_path):
                 time.sleep(0.05)
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": 1280, "height": 900}, extra_http_headers={
-                "Cf-Access-Authenticated-User-Email": "reviewer@example.com"})
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.set_default_timeout(5_000)
             page.goto(base, wait_until="networkidle")
-            frame = page.frame_locator("#content-frame")
-            frame.locator('.card[data-anchor-id="d:q3"] .annotate-card-state').wait_for(
-                state="attached")
-
-            expected = {"d:q1": ("done", "Addressed"), "d:q2": ("done", "Done"),
-                        "d:q3": ("review", "Needs my review")}
-            for anchor, (state, label) in expected.items():
-                card = frame.locator(f'.card[data-anchor-id="{anchor}"]')
-                assert card.get_attribute("data-annotate-state") == state
-                assert card.locator(".annotate-card-state").text_content().strip() == label
-
-            # One card per question in the body. A question the chrome renders
-            # as an interactive strip (open, or answered) hides its baked card;
-            # a withdrawn one has no strip, so its baked card stays, marked.
-            assert frame.locator('.card[data-anchor-id="d:q1"]').is_visible()
-            assert not frame.locator('.card[data-anchor-id="d:q1"] p.q').is_visible()
-            for anchor in ("d:q2", "d:q3"):
-                assert not frame.locator(f'.card[data-anchor-id="{anchor}"]').is_visible()
-                strip = frame.locator(f'.annotate-decision-strip[data-strip-anchor="{anchor}"]')
-                assert strip.count() == 1 and strip.is_visible()
-            assert "#3" in frame.locator(
-                '.annotate-decision-strip[data-strip-anchor="d:q3"] .annotate-decision-prompt'
-            ).inner_text()
-            assert "Accepted" in frame.locator(
-                '.annotate-decision-strip[data-strip-anchor="d:q2"]').inner_text()
-
-            # Same words on both sides, item by item.
-            for cid, anchor in (("withdrawn-1", "d:q1"), ("accepted-2", "d:q2"),
-                                ("open-3", "d:q3")):
-                rail = page.locator(f'.citem[data-comment-id="{cid}"] .citem-status')
-                body = frame.locator(f'.card[data-anchor-id="{anchor}"] .annotate-card-state')
-                assert rail.inner_text().strip().lower() == body.text_content().strip().lower()
+            page.locator('.citem[data-comment-id="open-3"]').wait_for()
+            assert page.locator('.citem').count() == 1, 'Only the unanswered question asks for review'
+            assert page.locator('.chip-review .chip-n').inner_text() == '1'
+            assert page.locator('.chip-done .chip-n').inner_text() == '2'
+            page.locator('[data-filter="all"]').click()
+            expected = {'withdrawn-1':('done','Addressed'), 'accepted-2':('done','Done'),
+                        'open-3':('needs-review','Needs my review')}
+            for cid, (state, label) in expected.items():
+                item = page.locator(f'.citem[data-comment-id="{cid}"]')
+                assert state in item.get_attribute('class')
+                assert item.locator('.citem-status').inner_text().strip().lower() == label.lower()
+            assert page.locator('.citem[data-comment-id="withdrawn-1"] .decision-btn').count() == 0
+            assert 'Accepted' in page.locator('.citem[data-comment-id="accepted-2"] .decision-verdict-chip').inner_text()
+            assert page.locator('.citem[data-comment-id="open-3"] .citem-num').inner_text() == '#3'
+            page.locator('[data-workspace-tab="details"]').click()
+            frame = page.frame_locator('#content-frame')
+            frame.locator('.card[data-anchor-id="d:q3"]').wait_for(state='attached')
+            for anchor in ('d:q1','d:q2','d:q3'):
+                assert frame.locator(f'.card[data-anchor-id="{anchor}"]').is_hidden()
+            assert frame.locator('.annotate-decision-strip').count() == 0, 'Reference history never repeats live feedback'
+            page.locator('[data-workspace-tab="feedback"]').click()
+            assert page.locator('.citem[data-comment-id="open-3"]').is_visible()
             browser.close()
     finally:
         process.terminate()

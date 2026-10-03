@@ -20,7 +20,7 @@ def _request(url, method="GET", body=None):
         url,
         method=method,
         data=data,
-        headers={"Content-Type": "application/json", "Cf-Access-Authenticated-User-Email": "test@example.com"},
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=2) as response:
         return response.status, response.read().decode("utf-8")
@@ -60,6 +60,7 @@ def test_server_serves_shell_content_and_comment_lifecycle(tmp_path):
             str(bus_dir),
             "--port",
             str(port),
+            "--local-author", "test@example.com",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
