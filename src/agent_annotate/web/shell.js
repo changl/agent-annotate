@@ -224,6 +224,18 @@ function authorLabel(record) {
   return record.author_email || record.author || 'anonymous';
 }
 
+// Library and Findings name people the way final/ does: the reviewer's own
+// records carry the reviewer's display name (as in the avatar menu), never a
+// raw login; anyone else keeps their name, then their id.
+function whoName(record) {
+  if (!record) return 'anonymous';
+  const id = String(record.author_email || record.author || record.by || '');
+  const mine = IDENTITY && id && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(id);
+  if (mine && IDENTITY.name) return IDENTITY.name;
+  if (record.author_name && record.author_name !== id) return record.author_name;
+  return authorLabel({ author: id, author_name: record.author_name });
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────
 function authorQuery() {
   return AUTHOR ? ('?author=' + encodeURIComponent(AUTHOR)) : '';
@@ -3189,6 +3201,12 @@ function onShellKey(e) {
         submitRound();
       } else if (document.getElementById('popover').classList.contains('vis')) {
         savePopover();
+      } else if (t.dataset && t.dataset.submit) {
+        // Library and Findings boxes name their own Save button: ⌘↵ saves
+        // the typed text there, like the reply box, instead of opening Send.
+        e.preventDefault();
+        const btn = document.querySelector(t.dataset.submit);
+        if (btn && !btn.disabled) btn.click();
       } else if (t.classList && t.classList.contains('reply-ta')) {
         e.preventDefault();
         const btn = document.querySelector('[data-action="reply"][data-id="' + cssEsc(t.dataset.replyFor) + '"]');
@@ -3563,6 +3581,7 @@ window.AnnotateDocs = {
   selectVerdictId,
   ticketsHTML,
   authorLabel,
+  whoName,
   createComment: apiCreateComment,
   decide: apiDecision,
   refreshStore: reloadPage,
