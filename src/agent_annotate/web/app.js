@@ -134,7 +134,14 @@
     const out = {};
     ALL_TABS.forEach(t => {
       const c = cats && cats.categories.find(x => x.id === t.id);
-      const k = c ? c.counts : null;
+      let k = c ? c.counts : null;
+      // UI-26 (final/): a document shown at an older version or revision
+      // counts that version's cards, as its rail does.
+      const d = DOCS();
+      if (k && isDoc(t.id) && d && d.docs.includes(t.id) && d.olderShown && d.olderShown(t.id)) {
+        const own = d.counts(t.id);
+        k = Object.assign({}, k, { needs_you: own.needs, unread: own.unread, waiting: own.waiting });
+      }
       out[t.id] = Object.assign({}, ZERO, k ? { needs: k.needs_you, unread: k.unread, waiting: k.waiting } : {},
         { pending: k ? sendCount(t.id) : 0, known: !!k });
     });
@@ -645,21 +652,38 @@
     p.tabs.forEach(t => {
       if (!t.n) return;
       const lines = AA.isDoc(t.id) ? docs.items(t.id) : (AA.providers[t.id] && AA.providers[t.id].pending ? AA.providers[t.id].pending() : []);
-      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '' }));
+      // `kind` and `id` (UI-2) tell the shell which call carries a line.
+      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id }));
     });
     const libraryPending = !!(AA.providers.library && AA.providers.library.roundPending && AA.providers.library.roundPending());
     let r = null;
     try { r = await docs.submitPage(libraryPending, items); } catch (e) { console.error('[annotate] send', e); }
     submitBtn.innerHTML = submitHtml;
     sending = false;
-    if (!r || !r.ok) {
+    // UI-2: the receipt lists only what was sent; what failed stays pending.
+    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' })) : [];
+    const failed = r ? (r.failed || []).length : items.length;
+    if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
+      if (r) { await docs.reload(); AA.changed(); }
       $('#round-confirm-sub').textContent = 'Failed to submit — try again.';
       return;
     }
-    const n = items.length;
+    const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' : '⏳ Queued — no session listening (' + n + ')';
-    lastSend = { ts: new Date().toISOString(), result, items, fresh: true, send_id: r.send_id };
+    lastSend = { ts: new Date().toISOString(), result, items: sent, fresh: true, send_id: r.send_id };
+    if (failed) {
+      // A partial Send: the summary stays open on what is still pending.
+      setNote(result, r.delivered ? 'is-success' : 'is-queued');
+      await docs.reload();
+      AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
+      btns.forEach(b => { b.disabled = false; });
+      render();
+      $('#round-confirm-sub').textContent = 'Failed to send ' + failed + (failed === 1 ? ' item' : ' items') + ' — try again.';
+      if (AA.rail.tab === 'history') AA.rail.renderHistory();
+      AA.changed();
+      return;
+    }
     close();
     setNote(result, r.delivered ? 'is-success' : 'is-queued');
     await docs.reload();

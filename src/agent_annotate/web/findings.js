@@ -90,12 +90,18 @@
     const d = D(), out = [];
     F.forEach(f => {
       const label = tag(f) + ' · ' + titleOf(f);
-      if (d.isRoundPending(f)) out.push({ item: f.id, label, answer: D().answerLabel(f).text });
+      if (d.isRoundPending(f)) out.push({ item: f.id, label, answer: D().answerLabel(f).text, kind: 'round' });
       if (d.isReopenPending(f)) {
         const r = (f.reopened || []).slice(-1)[0];
-        out.push({ item: f.id, label, answer: 'Reopened' + (r && r.text ? ': ' + r.text.split('\n')[0].slice(0, 60) : '') });
+        out.push({ item: f.id, label, answer: 'Reopened' + (r && r.text ? ': ' + r.text.split('\n')[0].slice(0, 60) : ''), kind: 'round' });
       }
-      commentsOf(f).filter(c => d.needsPush(c)).forEach(c => out.push({ item: f.id, label, answer: 'Comment: ' + c.text.split('\n')[0].slice(0, 60) }));
+      // UI-5: a finding with an answer or reply the agent has not had yet
+      // (answered outside a Send) goes with the push, so it is listed too.
+      if (d.needsPush(f)) {
+        const reply = (f.replies || []).filter(r => !String(r.author || '').startsWith('agent:')).slice(-1)[0];
+        out.push({ item: f.id, label, answer: d.decisionAnswer(f) ? d.answerLabel(f).text : 'Comment: ' + String(reply ? reply.text : f.text || '').split('\n')[0].slice(0, 60), kind: 'push' });
+      }
+      commentsOf(f).filter(c => d.needsPush(c)).forEach(c => out.push({ item: f.id, label, answer: 'Comment: ' + c.text.split('\n')[0].slice(0, 60), kind: 'push' }));
     });
     return out;
   }
