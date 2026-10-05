@@ -307,7 +307,8 @@
     // final/: the first, sent answer reads "answered"; every later answer,
     // and any answer not sent yet, reads "changed the answer · sent | not
     // sent yet" (final/app/findings.js:235-238).
-    (f.decision_history || []).concat(f.decision ? [f.decision] : []).filter(x => x && x.verdict).forEach((x, i) => {
+    // A discarded answer (UI-14) never went out; History leaves it out.
+    (f.decision_history || []).concat(f.decision ? [f.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach((x, i) => {
       const what = i === 0 && !x.round_pending ? 'answered' : 'changed the answer · ' + (x.round_pending ? 'not sent yet' : 'sent');
       e.push({ ts: x.ts, html: `<b>${who(x.by)}</b> · ${what}`, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict) });
     });
