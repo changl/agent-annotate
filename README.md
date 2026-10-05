@@ -4,30 +4,40 @@ One project page for progress, feedback, and decisions across Claude Code and Co
 
 ## Project workflow
 
-1. Run `annotate workspace --json` once. Reuse its directory and URL across sessions and worktrees. Select an existing main page with `workspace --select PROJECT/SLUG`; consolidate useful supporting detail into short read-only tabs.
+1. Run `annotate workspace --json` once. Reuse its directory and URL across sessions and worktrees. Select an existing main page with `workspace --select PROJECT/SLUG`; post into Review, Library, Findings, or Plans on that page.
 2. Share the full URL in the first project response and every update/feedback request. Tailscale Funnel is the default. No new Cloudflare routes.
 3. Update only for a meaningful result, changed blocker, or required decision. Batch related changes; one sentence per item, ideally under 30 words. Identical progress data is a no-op.
 4. Continue authorized work. Routine tests, repeated failures, and annotate upkeep do not create approval requests or feedback rounds.
-5. After **Finish review**, read the submitted answers once and act. A successor claims the same page; the server owns Orca delivery.
+5. After **Send**, read the submitted answers once and act. A successor claims the same page; the server owns Orca delivery.
 
 ```sh
 annotate new reviews/workspace --from page.md --project my-project --publish
 annotate project my-project/workspace --from project.json
 annotate inbox my-project/workspace --unread
-annotate cards my-project/workspace
+annotate cards my-project/workspace --category findings --json
+annotate ask my-project/workspace --from cards.json --category findings --set design --json
+annotate finding my-project/workspace --fixed 11 --proof evidence.png --note "Verified" --json
+annotate plan my-project/workspace rollout --from plan.md --title "Rollout" --json
+annotate library my-project/workspace --from copy.json --json
 ```
 
 Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
 
 ## Review interface
 
-Rounds revisits published documents and submitted answers without changing the active review. Supplied `project.issue_links` make Linear IDs clickable across the workspace.
+Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents holds supporting resources, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. Supplied `project.issue_links` make Linear IDs clickable.
 
-Feedback opens directly to actionable cards; Progress holds compact status. Both show red counts for unseen items. Optional short tabs contain read-only supporting detail; independent worksheets remain resource links. Use linked ticket IDs, concise status, and `failed 3x` pills. Supporting detail stays collapsed.
+Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Send** submits one durable round across categories, including proposed Library revisions and reopened findings. Drafts, decisions, numbering, and history survive refreshes and handoffs.
 
-Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Finish review** submits one durable round. Drafts, decisions, numbering, and history survive refreshes and handoffs.
+Library shows formatted current text with WYSIWYG revisions and immutable history. Import with `annotate library PROJECT/SLUG --from copy.json --json` (`copy` remains equivalent). Blocks accept optional group, where, number, status, alternatives, question_comment_id, and held_note; top-level groups define order. Proposed changes keep current copy intact and wait for the shared Send.
 
-Copy shows formatted current text with WYSIWYG revisions and collapsed history. Proposals leave current copy intact, persist with an idempotent request ID, and deliver through the same owner outbox. Import assets with `annotate copy PROJECT/SLUG --from copy.json`; add `{id:"copy",label:"Copy",kind:"copy"}` to project tabs.
+Mark findings fixed only with proof. `finding --fixed N` accepts repeated `--proof URL|FILE` and an optional note. Files must resolve inside the caller cwd and stay within the 10 MiB attachment limit; they are copied to the page attachments directory. Chang can reopen with an explanation; fix history stays intact. Filter `cards` and `inbox` with `--category review|library|findings|plans`.
+
+`plan SLUG PLAN_ID --from plan.md|plan.html` appends an independent plan revision, optionally with `--title` and `--label`. Markdown uses the renderer and anchors from `new`; Review stays on its current version.
+
+A second page requires `--exception "REASON"`, explicitly requested by the orchestrator. Its reason and parent are recorded, and the main page lists it under Linked pages. `--standalone` remains an alias with reason `standalone`.
+
+MCP exposes `mark_finding_fixed`, `list_cards`, and `read_inbox`; card, inbox, and comment reads support category filters. CLI category commands support `--json`.
 
 The UI uses [daisyUI](https://github.com/saadeghi/daisyui), with stock `dark` as default and `light` for day mode. Theme CSS and the Quill editor are bundled locally. `ui/package-lock.json` pins build dependencies; `npm ci` and `npm run build` in `ui/` rebuild the packaged asset. Reviewers need neither Node nor a CDN.
 

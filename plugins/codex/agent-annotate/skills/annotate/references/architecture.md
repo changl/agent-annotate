@@ -8,7 +8,10 @@ One installed Python package serves shared UI assets, versioned project content,
 | `project_state.py` | Validated persistent progress, links, tabs; atomic/no-op updates |
 | `sync_server.py` | HTTP, identity boundary, comment store, fsynced event bus |
 | `web/` | Shared daisyUI shell, themes, controls, content adapter |
-| `workspace.py` | Discover/select the canonical project page; prevent duplicate workspace creation |
+| `workspace.py` | Discover/select the canonical page; explicit exception links with recorded reasons |
+| `categories.py` | Category defaults/counts, findings proof and fix history, independent plan versions |
+| `copy_state.py` | Library groups, block metadata and immutable revisions |
+| `cli.py`, `mcp_server.py` | Agent category commands and tools |
 | `delivery.py` | One durable Orca wake-up per submitted round |
 | `transports/` | Local, tailnet, and configured public routing |
 | `deployment.py`, `updates.py` | Explicit/operator-managed runtime rollout and rollback |
@@ -19,3 +22,5 @@ Page ownership is durable. Publishing/claiming captures the caller's Orca termin
 State roots remain the configured registry, event bus, and project directories. Updates preserve owners, routes, ports, feedback, and history; they do not install skills. Runtime checksums detect byte mismatch, not publisher identity. Public reviewer authentication is an explicit transport boundary; private tailnet access does not prove outside access.
 
 Feedback stays append-audited. Previous open items must resolve at a real later-version anchor or carry forward before review activation. Reviewer replies reopen resolved items. Accepted terminal input and inbox acknowledgment are distinct from project completion.
+
+Every category lives in the same page directory. Optional comment category/doc/finding/fixed fields preserve schema 2; old copy anchors default to Library, other comments to Review. Optional categories.json stores findings sets. Plans use plans/<id>/meta.json and versions/vN.html independently of current.meta.json. Library remains copy.json schema 1 with optional groups/block fields. Shared submitted rounds carry categories and Library edits; exceptions live in registry metadata and retain separate owners.
