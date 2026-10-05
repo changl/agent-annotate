@@ -1,6 +1,6 @@
 # Commands
 
-Use the installed package executable. The module fallback works only in its Python environment. `doctor` identifies the build and paths. Slugs accept `PROJECT/SLUG`; use that form when names overlap. `COMMAND --help` is the authoritative flag reference.
+Use the installed package executable. The module fallback works only in its Python environment. `doctor` identifies the build and paths; `doctor --versions` exits 1 when the launcher, a skill, the Codex plugin or a live page differs from the installed release, and prints the fix commands. Slugs accept `PROJECT/SLUG`; use that form when names overlap. `COMMAND --help` is the authoritative flag reference.
 
 | Task | Command |
 | --- | --- |

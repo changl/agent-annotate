@@ -207,26 +207,37 @@ def stage_release(release: dict) -> Path:
     return python
 
 
-def runtime_manifest() -> dict:
-    """Identify both release version and actual code/assets of this runtime."""
+def build_identity(package_dir: Path | None = None) -> tuple[str, dict]:
+    """(build id, {asset: sha256}) of the agent_annotate package at `package_dir`.
+
+    Defaults to this runtime. Another install's directory gives that install's
+    identity without running its interpreter (the version guard compares them).
+    """
+    package_dir, web_dir = (PACKAGE_DIR, WEB_DIR) if package_dir is None else (package_dir, package_dir / "web")
     build_id = None
-    build_file = PACKAGE_DIR / "_build.json"
+    build_file = package_dir / "_build.json"
     if build_file.is_file():
         build = json.loads(build_file.read_text(encoding="utf-8"))
         if isinstance(build, dict):
             build_id = next((build[key] for key in ("build_id", "git_commit", "commit", "build")
                              if isinstance(build.get(key), str) and build[key]), None)
-    if build_id is None and (PACKAGE_DIR.parent.parent / ".git").exists():
+    if build_id is None and (package_dir.parent.parent / ".git").exists():
         try:
-            result = subprocess.run(["git", "-C", str(PACKAGE_DIR), "rev-parse", "HEAD"],
+            result = subprocess.run(["git", "-C", str(package_dir), "rev-parse", "HEAD"],
                                     check=True, capture_output=True, text=True, timeout=5)
             build_id = result.stdout.strip() or None
         except (OSError, subprocess.SubprocessError):
             pass
-    assets = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in sorted(WEB_DIR.iterdir()) if path.is_file()}
+    assets = ({path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+               for path in sorted(web_dir.iterdir()) if path.is_file()} if web_dir.is_dir() else {})
     if build_id is None:
         build_id = "assets:" + hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
+    return build_id, assets
+
+
+def runtime_manifest() -> dict:
+    """Identify both release version and actual code/assets of this runtime."""
+    build_id, assets = build_identity()
     return {"package_version": __version__, "build_id": build_id, "assets": assets}
 
 

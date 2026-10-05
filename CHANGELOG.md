@@ -9,6 +9,7 @@
 - Library edits use Quill with comments on selected words, History with Restore, alternatives, and a 409 on edits made over a newer revision. Findings show proof and can be reopened. Plans show changes since the previous revision.
 - Proof files and assets are served with `Content-Security-Policy: sandbox` and `nosniff`; only images and PDF display inline, other types download, and the CLI accepts an allowlist of proof types.
 - Send reports partial failures, keeps failed items pending, and records each round's delivery result.
+- `annotate doctor --versions [--json]` exits 1 when `annotate` on PATH, a skill directory, the Codex plugin or a running page server differs from the installed release, and prints the fix commands without running them. Page servers log the mismatch at start and report it in `/api/capabilities`; the prompt hook and `workspace` show one line per session. Skill install stamps now record the build id.
 
 ## 2.23.0
 

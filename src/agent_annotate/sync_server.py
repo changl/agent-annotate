@@ -124,6 +124,9 @@ from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, S
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
+# (project, slug) of this v2 server, set in main(); /api/capabilities reports
+# it against the installed release (version_guard.cached_server_status).
+VERSION_GUARD_PAGE: tuple[str, str] | None = None
 
 SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server code
 
@@ -1239,11 +1242,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, json.dumps({"error": f"invalid json: {exc}"}).encode())
             return None, b"bad"
 
+    @staticmethod
+    def _version_guard():
+        if VERSION_GUARD_PAGE is None:
+            return None
+        from .version_guard import cached_server_status
+        return cached_server_status(*VERSION_GUARD_PAGE)
+
     def _v2_get_capabilities(self, parsed):
         from . import __version__
         self._respond(200, json.dumps({
             "version": __version__,
             "runtime": RUNTIME_MANIFEST,
+            "version_guard": self._version_guard(),
             "automatic_round_delivery": True,
             "private_share_links": self._is_funnel_origin(),
             "copy_blocks": True,
@@ -3572,6 +3583,12 @@ def main():
         print()
         print("  Ctrl-C to stop. POST/PUT log appears below:")
         print()
+        # Warn loudly, never refuse: a page stays up on a mismatched runtime.
+        # A thread, so the check never delays the listener `publish` waits for.
+        from .version_guard import warn_at_start
+        global VERSION_GUARD_PAGE
+        VERSION_GUARD_PAGE = (_monitor_project(bus_dir), slug)
+        threading.Thread(target=warn_at_start, args=VERSION_GUARD_PAGE, daemon=True).start()
     else:
         # V1 mode (backward compat)
         if not args.artifact:
