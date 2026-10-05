@@ -5,6 +5,10 @@
 - Keep one project page with Review, Library, Findings, and Plans; record explicitly requested second-page exceptions and list Linked pages. Preserve --standalone as an alias.
 - Add finding fixes with proof, independently versioned Markdown/HTML plans, Library metadata and the library alias, findings-set questions, and category filters for CLI/MCP reads.
 - Keep the three provider/plugin skills identical and document category authoring, shared Send, proof, and compatibility. No version bump or installed-skill changes.
+- Replace the 2.21–2.23 front end with the accepted single-page design: project-name header, Review · Library · Findings · Plans · Linked pages tabs, one feedback rail, one History tagged by tab, one Send grouped by tab, stock daisyUI light/dark with lighter dark-mode borders, Roboto and the chosen font sizes, A/F shortcuts. Main's reviewer access, origin boundary, round history and Linear links are kept.
+- Library edits use Quill with comments on selected words, History with Restore, alternatives, and a 409 on edits made over a newer revision. Findings show proof and can be reopened. Plans show changes since the previous revision.
+- Proof files and assets are served with `Content-Security-Policy: sandbox` and `nosniff`; only images and PDF display inline, other types download, and the CLI accepts an allowlist of proof types.
+- Send reports partial failures, keeps failed items pending, and records each round's delivery result.
 
 ## 2.23.0
 
