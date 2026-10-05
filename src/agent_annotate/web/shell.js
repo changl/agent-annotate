@@ -915,6 +915,9 @@ function renderVersionRail() {
   if (!body) return;
   const doc = DOC;
   const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
+  // The keyboard hint belongs to the document on screen only, as in final/.
+  const hint = body.parentNode.querySelector('.unified-history-hint');
+  if (hint) hint.hidden = doc !== VIEW_DOC;
   const history = (META.history || []).slice().reverse();
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
@@ -1579,6 +1582,13 @@ function syncExcerptClamps(root) {
       ? t.scrollHeight > t.clientHeight + 1
       : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
   });
+  // UI-23: long comment text in a card.
+  root.querySelectorAll('.citem-txt-more').forEach(more => {
+    const t = document.getElementById(more.getAttribute('aria-controls'));
+    if (!t) return;
+    if (t.classList.contains('is-open')) { more.hidden = false; return; }
+    more.hidden = !(t.clientHeight > 0 ? t.scrollHeight > t.clientHeight + 1 : true);
+  });
 }
 // A2: no per-card "Pending — not sent" chip or "Send now"; a pending verdict
 // sits in the "Ready to send" section until the one Send.
@@ -1740,6 +1750,24 @@ function isLineCard(c) {
   return !!decisionAnswer(c) || c.status === 'resolved_in_version' || c.status === 'addressed_by_agent';
 }
 
+// U-10: an open card from a newer version than the one on screen says so,
+// with the way to its version; one-line cards too, as in final/ (UI-19).
+function newerLocationHtml(c) {
+  return isNewerThanViewed(c) && followsViewer(c)
+    ? `<div class="citem-loc unified-newer-location">Not in ${esc(CURRENT_VERSION)} — <button type="button" class="btn btn-link btn-xs" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(c.version)}">open ${esc(c.version)}</button></div>`
+    : '';
+}
+// UI-23: a long comment is clamped to a few lines in its card; final/'s
+// "Show more" / "Show less" (as on quoted excerpts) appears only when the
+// clamp cuts the text off (see syncExcerptClamps).
+const commentTextOpen = {};
+function commentTextHtml(c) {
+  const text = String(c.text == null ? '' : c.text);
+  if (text.length < 400 && (text.match(/\n/g) || []).length < 10) return `<div class="citem-txt">${ticketsHTML(text)}</div>`;
+  const open = !!commentTextOpen[c.id];
+  const tid = idFor('txt|' + c.id);
+  return `<div class="citem-txt is-clampable${open ? ' is-open' : ''}" id="${tid}">${ticketsHTML(text)}</div><button type="button" class="decision-excerpt-more citem-txt-more" data-action="text-more" data-id="${escAttr(c.id)}" aria-controls="${tid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
+}
 function renderCItem(c) {
   const cls = classify(c);
   const num = NUM_MAP[c.id];
@@ -1758,7 +1786,7 @@ function renderCItem(c) {
         ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
         ${cardMenuHtml(c, cls)}
       </div>
-      ${cardMenuPanel(c, cls)}
+      ${cardMenuPanel(c, cls)}${newerLocationHtml(c)}
     </div>`;
   }
 
@@ -1822,9 +1850,7 @@ function renderCItem(c) {
   const quote = c.target && c.target.selected_quote;
   const quoteHtml = quote ? `<blockquote class="unified-selected-quote">“${esc(quote)}”</blockquote>` : '';
   // U-10: an open card from a newer version than the one on screen.
-  const newerHtml = isNewerThanViewed(c) && followsViewer(c)
-    ? `<div class="citem-loc unified-newer-location">Not in ${esc(CURRENT_VERSION)} — <button type="button" class="btn btn-link btn-xs" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(c.version)}">open ${esc(c.version)}</button></div>`
-    : '';
+  const newerHtml = newerLocationHtml(c);
   const navKeys = showKbd(c) ? '<span class="citem-kbd"><kbd class="kbd kbd-xs" title="Previous card">A</kbd><kbd class="kbd kbd-xs" title="Next card">F</kbd></span>' : '';
 
   return `<div class="citem${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
@@ -1835,7 +1861,7 @@ function renderCItem(c) {
     </div>
     ${cardMenuPanel(c, cls)}
     ${locHtml}
-    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : `<div class="citem-txt">${ticketsHTML(c.text)}</div>`}
+    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
     ${agentReplyHtml}
     ${replyHtml}
     ${quoteHtml}${newerHtml}
@@ -3374,6 +3400,7 @@ async function activateDoc(doc, version) {
   renderProject();
   loadDelivery();
   renderAll();
+  openLinkedCard();
   return whenFrameReady();
 }
 function parkDoc() {
@@ -3408,10 +3435,32 @@ async function selectPlan(id) {
 }
 
 // ── Init ─────────────────────────────────────────────────────────
+// The address the page was opened with, tidied before anything else runs
+// (this runs when the script loads, before init, any request or the frame):
+// - a private review key (#review=<key>) leaves the address bar at once;
+//   the session exchange below uses this copy (UI-27);
+// - a 2.20.3-era version link (?v=vN, the Review document) moves into the
+//   hash (#view=review&v=vN), where the router reads versions (UI-10).
+const REVIEW_KEY = (() => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const search = new URLSearchParams(location.search);
+  const key = hash.get('review');
+  const v = search.get('v');
+  if (key == null && !v) return null;
+  hash.delete('review');
+  if (v) {
+    search.delete('v');
+    const view = hash.get('view');
+    if (!hash.get('v') && (!view || view === 'review')) { hash.set('view', 'review'); hash.set('v', v); }
+  }
+  const s = search.toString(), h = hash.toString();
+  history.replaceState(null, '', location.pathname + (s ? '?' + s : '') + (h ? '#' + h : ''));
+  return key;
+})();
 // F7: a private review link (#review=<key>) opens a reviewer session first;
 // without it every API call is refused on the public origin.
 async function startReviewerSession() {
-  const reviewKey = new URLSearchParams(location.hash.slice(1)).get('review');
+  const reviewKey = REVIEW_KEY;
   if (!reviewKey) return true;
   let name = 'Reviewer';
   try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
@@ -3420,13 +3469,39 @@ async function startReviewerSession() {
     showStatus('This review link is invalid or expired.');
     return false;
   }
-  history.replaceState(null, '', location.pathname + location.search);
   return true;
 }
 function showStatus(text) {
   const status = document.getElementById('delivery-status');
   status.hidden = false;
   status.textContent = text;
+}
+// UI-24: a card link (#feedback=<id>, main's form; #c=<id> also) opens that
+// card: the router shows its document (at the card's own version unless the
+// card follows the viewer), then the rail shows the card expanded and
+// highlighted. takeCardLink() runs before the router reads the hash.
+let linkedCard = null;
+function takeCardLink() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const id = p.get('feedback') || p.get('c');
+  const c = id ? findCommentById(id) : null;
+  const doc = c && docOf(c);
+  if (!doc || !DOCS.includes(doc)) return;
+  linkedCard = c.id;
+  const sameView = p.get('view') === doc;
+  if (!sameView) p.set('view', doc);
+  if (!sameView || !p.get('v')) {
+    const own = withDoc(doc, () => followsViewer(c) ? null : c.version);
+    if (own) p.set('v', own); else p.delete('v');
+  }
+  history.replaceState(null, '', location.pathname + location.search + '#' + p.toString());
+}
+function openLinkedCard() {
+  const c = linkedCard && findCommentById(linkedCard);
+  linkedCard = null;
+  if (!c || docOf(c) !== VIEW_DOC) return;
+  cardExpanded[c.id] = true;
+  focusSidebarCard(c.id);
 }
 // True while the reviewer is typing in the rail or the document.
 function isEditing() {
@@ -3452,6 +3527,18 @@ async function init() {
     if (e.target && e.target.classList && e.target.classList.contains('reply-ta')) {
       setDraft(e.target.dataset.replyFor, e.target.value || '');
     }
+  });
+  // UI-23: "Show more" / "Show less" under a long comment.
+  document.getElementById('comment-list').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('[data-action="text-more"]');
+    if (!btn) return;
+    e.stopPropagation();
+    const open = !commentTextOpen[btn.dataset.id];
+    commentTextOpen[btn.dataset.id] = open;
+    const t = document.getElementById(btn.getAttribute('aria-controls'));
+    if (t) t.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Show less' : 'Show more';
   });
 
   wireHeader();
@@ -3488,6 +3575,7 @@ async function init() {
   await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);
+  takeCardLink();
   DOCS_LOADED_resolve();
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();
@@ -3591,7 +3679,8 @@ window.AnnotateDocs = {
 document.addEventListener('DOMContentLoaded', init);
 // A new private review link in the address bar starts a new session.
 window.addEventListener('hashchange', () => {
-  if (new URLSearchParams(location.hash.slice(1)).has('review')) location.reload();
+  if (new URLSearchParams(location.hash.slice(1)).has('review')) { location.reload(); return; }
+  takeCardLink(); // runs before the router's own hashchange listener (app.js)
 });
 
 })();

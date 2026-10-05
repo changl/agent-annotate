@@ -214,6 +214,8 @@
     if (p.get('theme') === 'light' || p.get('theme') === 'dark') document.dispatchEvent(new CustomEvent('annotate:set-theme', { detail: p.get('theme') }));
     let next = p.get('view') || UI.local.get('view', 'review');
     if (!tab(next) && !(next === 'linked' && AA.linked)) next = 'review';
+    // UI-28: a tab this page does not have reads as Review in the address too.
+    if (p.get('view') && p.get('view') !== next && DOCS().categories()) { p.set('view', next); history.replaceState(null, '', '#' + p.toString()); }
     if (next === 'plans' && p.get('plan') && p.get('plan') !== DOCS().planId()) {
       await DOCS().selectPlan(p.get('plan'));
       return;
@@ -316,7 +318,8 @@
     const curNeeds = curTab ? counts[cur].needs : 0;
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
-    menu.innerHTML = `<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
+    menu.hidden = AA.TABS.length < 2 && !linked.length; // UI-28: one tab, no menu
+    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
@@ -399,7 +402,8 @@
     const cur = AA.tab(view);
     const f = $('#hist-filter');
     const on = (yes) => yes ? ' btn-soft btn-primary' : ' btn-ghost';
-    f.innerHTML = `<div class="join">${cur ? `<button type="button" class="btn btn-xs join-item${on(filter !== 'all')}" data-hist-filter="tab" aria-pressed="${filter !== 'all'}">${esc(cur.label)}</button>` : ''}<button type="button" class="btn btn-xs join-item${on(filter === 'all' || !cur)}" data-hist-filter="all" aria-pressed="${filter === 'all' || !cur}">All tabs</button></div>`;
+    f.hidden = AA.TABS.length < 2; // UI-28: one tab, nothing to filter
+    f.innerHTML =`<div class="join">${cur ? `<button type="button" class="btn btn-xs join-item${on(filter !== 'all')}" data-hist-filter="tab" aria-pressed="${filter !== 'all'}">${esc(cur.label)}</button>` : ''}<button type="button" class="btn btn-xs join-item${on(filter === 'all' || !cur)}" data-hist-filter="all" aria-pressed="${filter === 'all' || !cur}">All tabs</button></div>`;
     f.querySelectorAll('[data-hist-filter]').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.histFilter)));
     const shown = cur ? shownTabs() : AA.TABS.map(t => t.id);
     const docs = window.AnnotateDocs ? window.AnnotateDocs.docs : [];

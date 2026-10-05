@@ -2780,6 +2780,8 @@ function ensureAffordanceStyle() {
 }
 // U-11: a link to another page on this server opens in the whole window,
 // never inside the document frame. Links into this document stay in place.
+// UI-21: a link to another site opens in a new tab (the browser's own
+// target=_blank, so no pop-up blocker), never inside the document frame.
 function wirePageLinks() {
   document.addEventListener('click', e => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -2787,6 +2789,11 @@ function wirePageLinks() {
     if (!link || (link.target && link.target !== '_self')) return;
     let url;
     try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { return; }
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.origin !== PARENT_ORIGIN) {
+      link.target = '_blank';
+      link.rel = (link.rel ? link.rel + ' ' : '') + 'noopener';
+      return;
+    }
     if (!PARENT_ORIGIN || url.origin !== PARENT_ORIGIN) return;
     if (url.pathname === location.pathname && url.search === location.search) return;
     e.preventDefault();
