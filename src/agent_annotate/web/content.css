@@ -1,6 +1,7 @@
-.aa{max-width:1080px;margin:0 auto;padding:8px 18px 60px;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:var(--color-base-content)}
-.aa .aa-page-title{font-size:24px;line-height:1.25;margin:16px 0 24px;overflow-wrap:break-word}
-.aa h2{font-size:20px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--color-base-300)}
+/* Document styles for .aa content. Tokens and the Roboto faces come from
+   daisyui.css, which the server injects into every document first. */
+.aa{max-width:1080px;margin:0 auto;padding:8px 18px 60px;font:15px/1.55 "Roboto", sans-serif;color:var(--color-base-content)}
+.aa h2{font-size:20px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
 .aa h3{font-size:16px;margin:22px 0 6px}
 .aa p{margin:6px 0 10px}
 .aa ul,.aa ol{margin:6px 0 12px;padding-left:22px}
@@ -8,111 +9,38 @@
 .aa .lede{font-size:16px;color:var(--color-base-content)}
 .aa .muted{color:var(--muted);font-size:13px}
 .aa .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
-.aa .kpi{border:1px solid var(--color-base-300);border-radius:10px;padding:10px 12px;background:var(--color-base-200);min-width:0}
+.aa .kpi{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--color-base-200);min-width:0}
 .aa .kpi b{display:block;font-size:24px;line-height:1.1;margin-bottom:2px;overflow-wrap:anywhere}
-.aa .kpi.bad b{color:var(--error-text)}.aa .kpi.ok b{color:var(--success-text)}.aa .kpi.warn b{color:color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100))}
+.aa .kpi.bad b{color:var(--err-text)}.aa .kpi.ok b{color:var(--ok-text)}.aa .kpi.warn b{color:var(--warn-text)}
 .aa .kpi span{font-size:12px;color:var(--muted)}
 .aa .wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .aa table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:13.5px}
-.aa th,.aa td{border:1px solid var(--color-base-300);padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:normal;word-break:normal}
+.aa th,.aa td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left}
 .aa th{background:var(--color-base-200);font-weight:600}
 .aa tr[data-anchor-id]:hover td{background:var(--color-base-200)}
-.aa pre{background:var(--color-base-content);color:var(--color-base-300);border-radius:8px;padding:10px 12px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;max-width:100%}
-.aa code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--color-base-200);padding:1px 4px;border-radius:4px}
+.aa pre{background:var(--color-base-200);color:var(--color-base-content);border-radius:8px;padding:10px 12px;font:12.5px/1.5 "Roboto", sans-serif;overflow:auto;max-width:100%}
+.aa code{font:12.5px "Roboto", sans-serif;background:var(--color-base-200);padding:1px 4px;border-radius:4px}
 .aa pre code{background:none;padding:0;color:inherit;font:inherit}
-.aa a{color:var(--link-color)}
+.aa a{color:var(--link)}
 .aa .cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin:12px 0}
-.aa .card{border:1px solid var(--color-base-300);border-left:4px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100));border-radius:8px;padding:10px 14px;background:var(--color-base-100);min-width:0}
+.aa .card{border:1px solid var(--line);border-left:4px solid var(--link);border-radius:8px;padding:10px 14px;background:var(--color-base-100);min-width:0}
 .aa .card h4{margin:0 0 4px;font-size:15px}
-.aa .item-num{display:inline-block;min-width:38px;margin-right:7px;font-weight:800;color:var(--link-color)}
-.aa .plan-scope{border:1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));border-radius:8px;background:color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));color:var(--link-color);padding:8px 12px;margin:4px 0 16px;font-size:13px;font-weight:600}
+.aa .item-num{display:inline-block;min-width:38px;margin-right:7px;font-weight:800;color:var(--link)}
+.aa .plan-scope{border:1px solid var(--line);border-radius:8px;background:var(--primary-soft);color:var(--link);padding:8px 12px;margin:4px 0 16px;font-size:13px;font-weight:600}
 .aa .card .ctx{margin:4px 0;color:var(--color-base-content)}
 .aa .card .opts{margin:6px 0 0;padding-left:18px}
 .aa .card .opts li{margin:2px 0}
 .aa .card .q{color:var(--muted);font-style:italic;font-size:12.5px;margin:6px 0 0}
 .aa .card-ref{font-size:12px}
-.aa .reco{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:color-mix(in oklab,var(--color-success) 14%,var(--color-base-100));color:var(--success-text);border:1px solid color-mix(in oklab,var(--color-success) 14%,var(--color-base-100))}
-.aa .chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));color:var(--link-color);border:1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));margin-left:6px}
-.aa .chip.blocking{background:color-mix(in oklab,var(--color-error) 14%,var(--color-base-100));color:var(--error-text);border-color:color-mix(in oklab,var(--color-error) 14%,var(--color-base-100))}
+.aa .reco{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--success-soft);color:var(--ok-text);border:1px solid var(--line)}
+.aa .chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--primary-soft);color:var(--link);border:1px solid var(--line);margin-left:6px}
+.aa .chip.blocking{background:var(--error-soft);color:var(--err-text);border-color:var(--line)}
 .aa section{max-width:100%;overflow-wrap:anywhere}
-.aa .aa-details{border:1px solid var(--color-base-300);border-radius:8px;padding:8px 16px;margin:12px 0}
+.aa .aa-details{border:1px solid var(--line);border-radius:8px;padding:8px 16px;margin:12px 0}
 .aa .aa-details summary{cursor:pointer;font-weight:600;padding:4px 0}
-.aa .aa-details summary:focus-visible{outline:2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100));outline-offset:4px}
+.aa .aa-details summary:focus-visible{outline:2px solid var(--link);outline-offset:4px}
 @media (max-width:760px){.aa{padding:8px 12px 60px}.aa pre{white-space:pre-wrap;word-break:break-word}.aa table{font-size:12.5px}.aa .kpis{grid-template-columns:1fr 1fr}}
-
-/* Persistent project information shares the document's scroll and width. */
-#project-panel{box-sizing:border-box;max-width:1044px;margin:12px auto 0;padding:0 12px;border:1px solid var(--color-base-300);border-radius:8px;background:var(--color-base-100);color:var(--color-base-content);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-#project-panel[hidden]{display:none}
-#project-panel > summary{cursor:pointer;font-weight:600;padding:10px 0}
-#project-panel summary:focus-visible{outline:2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100));outline-offset:2px}
-#project-panel .project-heading{display:flex;justify-content:space-between;gap:12px;padding:4px 0 8px;color:var(--muted);font-size:12px}
-#project-panel .project-module{border-top:1px solid var(--color-base-300);padding:6px 0}
-#project-panel .project-module > summary{cursor:pointer;font-weight:600;padding:4px 0}
-#project-panel ul{list-style:none;padding:4px 0;margin:0}
-#project-panel li{padding:4px 0;overflow-wrap:anywhere}
-#project-panel a{color:var(--link-color);font-weight:600}
-#project-panel .project-detail{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-#project-panel .project-state{display:inline-block;border:1px solid var(--color-base-300);background:var(--color-base-200);color:var(--color-base-content);border-radius:4px;padding:1px 5px;margin-right:6px;font-size:11px}
-#project-panel .project-state.done{border-color:color-mix(in oklab,var(--color-success) 14%,var(--color-base-100));background:color-mix(in oklab,var(--color-success) 14%,var(--color-base-100));color:var(--success-text)}
-#project-panel .project-state.blocked{border-color:color-mix(in oklab,var(--color-error) 14%,var(--color-base-100));background:color-mix(in oklab,var(--color-error) 14%,var(--color-base-100));color:var(--error-text)}
-@media(max-width:1080px){#project-panel{margin:12px 18px 0}}
-@media(max-width:760px){#project-panel{margin:8px 12px 0}}
-:root{--muted:color-mix(in oklab,var(--color-base-content) 72%,var(--color-base-100))}
-body:has(.aa){background:var(--color-base-100);color:var(--color-base-content)}
-.aa{font-size:14px;line-height:1.5;padding:16px 24px 64px}
-.aa .aa-page-title{font-size:24px;margin:8px 0 24px}
-.aa h2{font-size:18px;margin:24px 0 8px;border-bottom-width:1px}
-.aa .lede{font-size:14px}
-.aa .card{border-left-width:1px}
-.aa .plan-scope{display:none}
-#project-panel .failed-pill{margin-left:8px;font-size:11px}
-body.annotate-progress-only > :not(#project-panel){display:none!important}
-.aa th{background:var(--color-base-200)}
-.aa td,.aa th{border-left:0;border-right:0}
-[data-theme="dark"] .annotate-decision-item,[data-theme="dark"] .annotate-decision-strip{color:var(--color-base-content)!important}
-@media(max-width:760px){.aa{padding:16px 12px 64px}}
-
-
-#project-panel .badge-error.badge-soft,.aa .chip.blocking{color:var(--error-text)}
-.aa .reco{color:var(--success-text)}
-.aa a,#project-panel a{color:var(--link-color)}
-
-/* Reference material uses the available width; wide tables scroll locally. */
-.aa{max-width:none;margin:0;padding:8px 12px 24px;font-size:14px;line-height:1.45}
-.aa .aa-page-title{font-size:20px;margin:4px 0 12px}
-.aa h2{font-size:18px;margin:16px 0 8px;padding-bottom:4px}
-.aa h3{font-size:16px;margin:12px 0 4px}
-.aa .wrap,.annotate-table-scroll{display:block;max-width:100%;width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
-.aa .wrap::-webkit-scrollbar,.annotate-table-scroll::-webkit-scrollbar{height:8px}
-.aa .wrap::-webkit-scrollbar-track,.annotate-table-scroll::-webkit-scrollbar-track{background:var(--color-base-200)}
-.aa .wrap::-webkit-scrollbar-thumb,.annotate-table-scroll::-webkit-scrollbar-thumb{background:color-mix(in oklab,var(--color-base-content) 40%,var(--color-base-100));border-radius:4px}
-.annotate-table-scroll:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}
-.aa table{width:100%;min-width:max-content;max-width:none;font-size:13px;margin:4px 0 8px;table-layout:auto}
-.aa th,.aa td{padding:4px 8px;line-height:1.4;overflow-wrap:normal;word-break:normal}
-.aa th{white-space:nowrap}
-.aa td{min-width:100px;max-width:440px}
-.aa .card{padding:8px 12px;border-radius:4px}
-.aa .aa-details{padding:4px 12px;border-radius:4px;margin:8px 0}
-.aa .kpi{padding:8px;border-radius:4px}
-body.annotate-reference .aa .cards,body.annotate-reference [data-anchor-id^="d:q"],body.annotate-reference .annotate-decision-strip,body.annotate-reference .bpin,body.annotate-reference .bpin-inline{display:none!important}
-body.annotate-reference table{min-width:max-content;max-width:none;border-collapse:collapse;font-size:13px}
-body.annotate-reference th,body.annotate-reference td{padding:4px 8px!important;line-height:1.4;overflow-wrap:normal;word-break:normal}
-body.annotate-reference th{white-space:nowrap}
-@media(max-width:760px){.aa{padding:8px 8px 24px}.aa table{font-size:13px}.aa .kpis{gap:8px}}
-
-[data-theme="dark"] .aa h2{border-bottom-color:var(--section-border)}
-[data-theme="dark"] .aa .aa-details,[data-theme="dark"] .aa .kpi{background:var(--color-base-200);border-color:var(--section-border)}
-[data-theme="dark"] .aa th{background:var(--color-base-300)}
-[data-theme="dark"] .aa tbody tr:nth-child(even) td{background:var(--color-base-200)}
-[data-theme="dark"] .aa td,[data-theme="dark"] .aa th{border-bottom-color:var(--section-border)}
-[data-theme="dark"] .aa pre{background:var(--color-base-200);color:var(--color-base-content);outline:1px solid var(--section-border);outline-offset:-1px}
-body.annotate-archive{background:var(--color-base-100);color:var(--color-base-content)}
-html.annotate-archive{height:auto!important;min-height:100%;overflow-y:auto!important}
-body.annotate-archive{display:block!important;height:auto!important;min-height:100%;max-height:none!important;overflow-y:visible!important}
-body.annotate-archive>.canvas-wrapper,body.annotate-archive .canvas-area{height:auto!important;min-height:0!important;max-height:none!important;overflow-y:visible!important}
-body.annotate-archive .tab-panel{display:block!important}
-body.annotate-archive .card p.q{display:none}
-
-body.annotate-document .aa .cards,body.annotate-document [data-anchor-id^="d:q"],body.annotate-document .annotate-decision-strip{display:none!important}
-
-html[data-theme="dark"]{--section-border:color-mix(in oklab,var(--color-base-content) 24%,var(--color-base-100))}
+/* U-01 + final: the page's title lives in the shell (project name and the
+   content title), so the title the server adds to extracted documents is not
+   repeated inside the document. */
+.aa > .aa-page-title{display:none}

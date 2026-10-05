@@ -32,13 +32,13 @@
  *   }
  *
  * Node kinds → fill colors:
- *   hub         #4338CA  indigo
- *   subtype     #0891B2  cyan
- *   sidecar     #7C3AED  purple
- *   catalog     #059669  emerald
- *   derivation  #D97706  amber
- *   audit       #64748B  slate
- *   tooling     #0F766E  teal
+ *   hub         var(--link)  indigo
+ *   subtype     var(--color-info)  cyan
+ *   sidecar     var(--color-secondary)  purple
+ *   catalog     var(--color-success)  emerald
+ *   derivation  var(--color-warning)  amber
+ *   audit       var(--muted)  slate
+ *   tooling     var(--color-accent)  teal
  *
  * Edge kinds:
  *   fk       solid arrow
@@ -52,16 +52,16 @@
 
   // ── Palette ───────────────────────────────────────────────────────
   const KIND_FILL = {
-    hub:        '#4338CA',
-    subtype:    '#0891B2',
-    sidecar:    '#7C3AED',
-    catalog:    '#059669',
-    derivation: '#D97706',
-    audit:      '#64748B',
-    tooling:    '#0F766E',
+    hub:        'var(--color-primary)',
+    subtype:    'var(--color-info)',
+    sidecar:    'var(--color-secondary)',
+    catalog:    'var(--color-success)',
+    derivation: 'var(--color-warning)',
+    audit:      'var(--muted)',
+    tooling:    'var(--color-accent)',
   };
   const KIND_ORDER = ['hub', 'subtype', 'sidecar', 'catalog', 'derivation', 'audit', 'tooling'];
-  const DEFAULT_FILL = '#94A3B8';
+  const DEFAULT_FILL = 'var(--muted)';
 
   function kindFill(kind) {
     return KIND_FILL[kind] || DEFAULT_FILL;
@@ -193,7 +193,7 @@
 
     // 1. Frame
     marks.push(Plot.frame({
-      stroke: '#E2E8F0',
+      stroke: 'var(--line)',
       strokeWidth: 1,
       rx: 6,
     }));
@@ -203,7 +203,7 @@
     //    (data-anchor-id, dash, marker) in a post-Plot d3 step below.
     marks.push(Plot.link(segs, {
       x1: 'x1', y1: 'y1', x2: 'x2', y2: 'y2',
-      stroke: '#CBD5E1',
+      stroke: 'var(--muted)',
       strokeWidth: 1.5,
     }));
 
@@ -215,8 +215,8 @@
         y: (d) => (d.y1 + d.y2) / 2,
         text: 'label',
         fontSize: 9,
-        fill: '#64748B',
-        stroke: 'white',
+        fill: 'var(--muted)',
+        stroke: 'var(--color-base-100)',
         strokeWidth: 3,
         paintOrder: 'stroke',
       }));
@@ -236,7 +236,7 @@
       // top-down (y=0 at top, y grows downward), so this lines up.
       y: { domain: [ext.minY, ext.maxY], axis: null, reverse: true },
       margin: 0,
-      style: { background: 'transparent', fontFamily: "'Helvetica Neue', -apple-system, sans-serif" },
+      style: { background: 'transparent', fontFamily: "Inter, sans-serif" },
       marks,
     });
 
@@ -266,7 +266,7 @@
           if (s.kind === 'ref') el.setAttribute('stroke-dasharray', '5,3');
           if (s.kind === 'inherit') {
             el.setAttribute('marker-end', 'url(#annotate-inherit)');
-            el.setAttribute('stroke', '#94A3B8');
+            el.setAttribute('stroke', 'var(--muted)');
           } else {
             el.setAttribute('marker-end', 'url(#annotate-arrow)');
           }
@@ -308,7 +308,7 @@
         rect.setAttribute('width', String(NODE_W));
         rect.setAttribute('height', String(NODE_H));
         rect.setAttribute('rx', '8');
-        rect.setAttribute('fill', '#FFFFFF');
+        rect.setAttribute('fill', 'var(--color-base-100)');
         rect.setAttribute('stroke', fill);
         rect.setAttribute('stroke-width', '1.5');
         grp.appendChild(rect);
@@ -349,7 +349,7 @@
         label.setAttribute('dominant-baseline', 'central');
         label.setAttribute('font-size', String(labelFs));
         label.setAttribute('font-weight', '600');
-        label.setAttribute('fill', '#0F172A');
+        label.setAttribute('fill', 'var(--color-base-content)');
         label.style.pointerEvents = 'none';
         label.textContent = labelDisplay;
         grp.appendChild(label);
@@ -360,7 +360,7 @@
         sub.setAttribute('text-anchor', 'middle');
         sub.setAttribute('dominant-baseline', 'central');
         sub.setAttribute('font-size', '9');
-        sub.setAttribute('fill', '#94A3B8');
+        sub.setAttribute('fill', 'var(--muted)');
         sub.style.pointerEvents = 'none';
         sub.textContent = n.kind || '';
         grp.appendChild(sub);
@@ -383,7 +383,7 @@
             const seg = segs[Number(m[1])];
             if (!seg) return;
             if (seg.from === n.id || seg.to === n.id) {
-              el.setAttribute('stroke', '#4338CA');
+              el.setAttribute('stroke', 'var(--color-primary)');
               el.setAttribute('stroke-width', '2.5');
             }
           });
@@ -391,7 +391,7 @@
         grp.addEventListener('mouseleave', () => {
           rect.setAttribute('stroke-width', '1.5');
           svg.querySelectorAll('g[aria-label="link"] path[data-anchor-id]').forEach((el) => {
-            el.setAttribute('stroke', '#CBD5E1');
+            el.setAttribute('stroke', 'var(--line)');
             el.setAttribute('stroke-width', '1.5');
           });
         });
@@ -410,8 +410,8 @@
       bg.setAttribute('width', '156');
       bg.setAttribute('height', String(legend.length * 22 + 24));
       bg.setAttribute('rx', '6');
-      bg.setAttribute('fill', 'white');
-      bg.setAttribute('stroke', '#E2E8F0');
+      bg.setAttribute('fill', 'var(--color-base-100)');
+      bg.setAttribute('stroke', 'var(--line)');
       bg.setAttribute('stroke-width', '1');
       legG.appendChild(bg);
       const title = document.createElementNS(ns, 'text');
@@ -420,7 +420,7 @@
       title.setAttribute('text-anchor', 'start');
       title.setAttribute('font-size', '10');
       title.setAttribute('font-weight', '600');
-      title.setAttribute('fill', '#64748B');
+      title.setAttribute('fill', 'var(--muted)');
       title.textContent = 'LEGEND';
       legG.appendChild(title);
       legend.forEach((item, i) => {
@@ -438,7 +438,7 @@
         tx.setAttribute('y', String(gy + 10));
         tx.setAttribute('text-anchor', 'start');
         tx.setAttribute('font-size', '10');
-        tx.setAttribute('fill', '#475569');
+        tx.setAttribute('fill', 'var(--muted)');
         tx.textContent = item.label || item.kind;
         legG.appendChild(tx);
       });
@@ -468,7 +468,7 @@
       m.setAttribute('orient', 'auto');
       const p = document.createElementNS(ns, 'path');
       p.setAttribute('d', 'M0,-5L10,0L0,5');
-      p.setAttribute('fill', '#94A3B8');
+      p.setAttribute('fill', 'var(--muted)');
       m.appendChild(p);
       defs.appendChild(m);
     }
@@ -484,7 +484,7 @@
       const p = document.createElementNS(ns, 'path');
       p.setAttribute('d', 'M0,-6L12,0L0,6Z');
       p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', '#94A3B8');
+      p.setAttribute('stroke', 'var(--muted)');
       p.setAttribute('stroke-width', '1.5');
       m.appendChild(p);
       defs.appendChild(m);
@@ -501,7 +501,7 @@
       const p = document.createElementNS(ns, 'path');
       p.setAttribute('d', 'M0,0L-5,-3L-10,0L-5,3Z');
       p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', '#94A3B8');
+      p.setAttribute('stroke', 'var(--muted)');
       p.setAttribute('stroke-width', '1.5');
       m.appendChild(p);
       defs.appendChild(m);
@@ -540,7 +540,7 @@
       const host = document.createElement('div');
       host.className = 'annotate-diagram-host';
       host.dataset.diagramName = name;
-      host.style.cssText = 'background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:16px;margin:12px 0;overflow-x:auto';
+      host.style.cssText = 'background:var(--color-base-100);border:1px solid var(--line);border-radius:8px;padding:16px;margin:12px 0;overflow-x:auto';
       comment.parentNode.replaceChild(host, comment);
       renderDomainMap(host, spec);
     }

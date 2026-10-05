@@ -1,0 +1,141 @@
+/* One annotate page per project — LAYOUT ONLY.
+   Every visual comes from the accepted unified/ components: the header and
+   rail (shell.css: .hdr, .drawer, .sec-hdr, .citem, .gf-*, .decision-*,
+   .unified-selected-quote, .hist-*), the document styles (aa.css, a copy of
+   content.css: .aa, .plan-scope, h2, .card, .chip, .kpi, tables) and stock
+   daisyUI controls (btn, join, input, badge). Colours are only stock daisyUI
+   tokens and the shell's variables. */
+
+/* ── Header: a fixed-width project block, so the tabs start at the same x
+   on every tab (Chang, 2026-10-04). The sub-title moved to the content title. */
+.hdr{justify-content:flex-start}
+.hdr-left{flex:0 0 200px;width:200px;min-width:0}
+.hdr-right{margin-left:auto}
+.aa-tabs{display:flex;align-items:flex-end;align-self:stretch;min-width:0;margin:-8px 0}
+.aa-tabs .tabs{height:100%;align-items:flex-end;flex-wrap:nowrap}
+.aa-tabs .tab{font-weight:600;gap:6px;height:44px;padding-inline:14px;color:var(--muted);text-decoration:none;white-space:nowrap}
+.aa-tabs .tab:hover{color:var(--color-base-content)}
+.aa-tabs .tab.tab-active{color:var(--color-base-content)}
+.aa-tabs .badge{font-variant-numeric:tabular-nums}
+/* A declared exception: listed after the tabs, set apart */
+.aa-tabs .tab.aa-linked-tab{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
+.aa-tabs-menu{display:none;position:relative}
+.aa-tabs-menu > summary{list-style:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-field);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;background:var(--color-base-100)}
+.aa-tabs-menu > summary::-webkit-details-marker{display:none}
+.aa-tabs-menu > summary svg.i{width:14px;height:14px;color:var(--muted)}
+.aa-tabs-menu[open] > summary svg.i{transform:rotate(180deg)}
+.aa-tabs-list{position:absolute;left:0;top:calc(100% + 6px);z-index:400;width:min(300px,calc(100vw - 20px));padding:6px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-box);box-shadow:0 12px 32px color-mix(in oklab,var(--color-neutral) 28%,transparent)}
+.aa-tabs-list a{display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 10px;border-radius:var(--radius-field);color:var(--color-base-content);text-decoration:none}
+.aa-tabs-list a:hover,.aa-tabs-list a[aria-current="page"]{background:var(--soft)}
+.aa-tabs-list .aa-tab-name{font-weight:600;font-size:14px;min-width:72px}
+.aa-tabs-list .aa-tab-state{flex:1;font-size:12px;color:var(--muted)}
+.aa-tabs-list .aa-tab-state.is-needs{color:var(--err-text);font-weight:600}
+.aa-tabs-list a.aa-linked-tab{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
+
+/* ── Content title: what used to be the header's second line ─────────── */
+.view-hd{flex:none;display:flex;align-items:center;min-height:40px;padding:6px 18px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
+.view-hd-title{margin:0;font-size:14px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.view-hd-sub{font-weight:400;color:var(--muted)}
+.view-hd-sub:not(:empty)::before{content:" · "}
+.view-hd-plan{margin-left:auto;width:auto;max-width:40%}
+.view-hd-plan[hidden]{display:none}
+.frame-area[hidden],.aa-view[hidden]{display:none}
+
+/* ── Views of this page (Library, Findings, Linked pages) ─────────────── */
+.aa-view{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--color-base-100)}
+.aa-scroll{flex:1;min-height:0;overflow-y:auto}
+.lib-main{display:flex;flex:1;min-height:0;overflow:hidden}
+.sp-list{width:340px;flex-shrink:0;background:var(--color-base-100);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sp-list-hd{padding:10px 10px 6px;border-bottom:1px solid var(--line)}
+.sp-list-body{flex:1;overflow-y:auto;padding:10px 10px 16px}
+.sp-list .citem-node .badge{margin-left:auto;flex-shrink:0}
+.sp-list .citem-txt{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;margin-bottom:0;color:var(--muted)}
+.sp-doc{flex:1;min-width:0;overflow-y:auto;background:var(--color-base-100)}
+.sp-back{display:none}
+/* Editor: Quill 2 inside the document; text uses the document's own type */
+.sp-editor-card{border:1px solid var(--line);border-radius:10px;background:var(--color-base-100);margin:12px 0}
+.sp-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.sp-toolbar .btn[aria-pressed="true"]{background:var(--soft)}
+.sp-toolbar .sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+.sp-toolbar .gap{flex:1}
+.sp-toolbar select{width:auto}
+.sp-link-edit{display:flex;align-items:center;gap:4px}
+.sp-link-edit[hidden]{display:none}
+.sp-editor.ql-container.ql-snow{border:none;font:inherit}
+.sp-editor .ql-editor{font:15px/1.55 "Roboto",sans-serif;color:var(--color-base-content);padding:10px 12px;min-height:96px}
+.sp-editor .ql-editor h1,.sp-editor .ql-editor h2,.sp-editor .ql-editor h3{font-weight:700}
+.sp-editor .ql-editor h2{font-size:20px;margin:18px 0 8px}
+.sp-editor .ql-editor h3{font-size:16px;margin:16px 0 6px}
+.sp-editor .ql-editor p{margin:0 0 8px}
+.sp-editor .ql-editor a{color:var(--link)}
+.sp-editor .ql-editor.ql-blank::before{color:var(--faint)}
+.sp-edit-ft{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--line)}
+.sp-edit-ft .gf-hint{margin-right:auto}
+mark.sp-cmark{background:var(--color-base-200);border-bottom:2px solid var(--color-primary);color:inherit;cursor:pointer}
+mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-soft)}
+/* Findings register rows, selected */
+.aa tr.sp-sel td{background:var(--primary-soft)}
+.aa tr[data-f]{cursor:pointer}
+.aa td .chip{white-space:nowrap;margin-left:0}
+.aa td .unread-dot{display:inline-block;vertical-align:middle}
+
+/* ── A finding marked fixed: the agent's note and its proof ──────────── */
+.fix-block{margin:8px 0 6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100)}
+.fix-block.is-reopened{background:var(--color-base-200)}
+.fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--faint);margin-bottom:6px}
+.fix-proof{display:flex;flex-direction:column;gap:8px;margin:6px 0}
+.fix-proof-img{margin:0}
+.fix-proof-img img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
+.fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-top:4px}
+.fix-proof-img figcaption svg.i{width:13px;height:13px}
+.fix-proof-links{margin:0;padding:0}
+.fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
+.fix-proof-links svg.i{width:12px;height:12px}
+.fix-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px}
+.fix-actions .btn svg.i{width:14px;height:14px}
+
+/* ── History: one list, tagged by tab ────────────────────────────────── */
+.hist-filter{display:flex;justify-content:flex-end;padding:2px 4px 6px}
+.hist-cat[hidden]{display:none}
+.hist-tag{font-weight:700;letter-spacing:0;text-transform:none;vertical-align:1px}
+.hist-sub{margin:0 4px 6px}
+.hist-none{padding:0 4px}
+.hist-item{border-bottom:1px solid var(--line);padding:8px 4px;font-size:12.5px}
+.hist-item:last-child{border-bottom:none}
+.hist-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.hist-text{white-space:pre-wrap;word-break:break-word;line-height:1.5}
+.hist-actions{margin-top:4px}
+.hist-text ins{text-decoration:none;background:var(--success-soft);color:inherit}
+.hist-text del{color:var(--muted)}
+#hist-sent-body .unified-receipt li .hist-tag{margin-right:2px}
+.rail-note{padding:8px 4px}
+.aa .card h4 a{display:inline-flex;align-items:center;gap:6px}
+.aa .card h4 svg.i{width:14px;height:14px;flex:none}
+.vrail-body.is-clipped .vrow:nth-child(n+6){display:none}
+.hist-more{margin:2px 0 6px 4px}
+#hist-sent{margin-bottom:6px}
+
+/* ── The one Send summary: grouped by tab ────────────────────────────── */
+.sp-sum-cat{font-size:11.5px;font-weight:700;color:var(--color-base-content);padding:10px 6px 0;border-top:1px solid var(--line);margin-top:6px;display:flex;align-items:center;gap:6px}
+.sum-tab:first-child .sp-sum-cat{border-top:none;margin-top:0;padding-top:2px}
+.sp-sum-cat a{font-weight:600;font-size:11.5px;margin-left:auto;color:var(--link)}
+.sp-sum-note{font-size:11.5px;color:var(--muted);padding:2px 6px 0}
+.sp-sum-note[hidden]{display:none}
+
+/* ── Compact layout (the shell's breakpoint): tabs become one menu, the
+   rail is the bottom sheet on every tab, one Send bar ─────────────────── */
+@media (max-width:1160px),(max-height:480px){
+  .hdr-left{flex-basis:120px;width:120px}
+  .aa-tabs{display:none}
+  .aa-tabs-menu{display:block}
+  .view-hd{padding:6px 12px}
+  .lib-main{flex-direction:column;overflow:hidden}
+  .sp-list{width:100%;border-right:none;flex:1}
+  #view-library.is-item .sp-list{display:none}
+  #view-library.is-list .sp-doc{display:none}
+  #view-library.is-list .sp-list{display:flex}
+  .sp-back{display:inline-flex;margin:8px 0 0}
+  .sp-toolbar .btn{min-width:36px;min-height:36px}
+  .sp-editor .ql-editor{font-size:16px}
+  .aa-scroll,.sp-doc,.sp-list-body{padding-bottom:150px}
+}
