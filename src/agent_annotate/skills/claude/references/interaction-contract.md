@@ -1,13 +1,13 @@
 # Interaction contract
 
-1. One canonical project URL across sessions; Progress and Feedback tabs, plus native Copy and concise supporting detail. Native Details comments enter the same Feedback store; external review tabs are read-only. Feedback appears first with actionable cards at the top; status belongs only in Progress. Existing independent worksheets remain resource links.
+1. One page per project across sessions. Post into Review, Library, Findings, or Plans. Documents holds supporting resources; History holds past versions and rounds. A second page needs `--exception "REASON"`, explicitly requested by the orchestrator, and appears under Linked pages.
 2. Publish supplies the URL; the agent shares it without being asked. The full Tailscale Funnel share link is canonical; explicit local setup is for development.
 3. Updates are meaningful, batched, and concise. Identical project content changes neither timestamp nor unread count. Progress does not create feedback rounds.
 4. Every decision can receive a text answer, an explanation with any choice, and a card comment, including after **Change verdict**. Native controls retain their behavior. Cmd/Ctrl+Enter submits text.
 5. Feedback, decisions, drafts, numbers, and history survive refreshes, versions, and owner changes. An agent never confirms for a reviewer.
-6. **Finish review** persists one round before waking its current owner. A missing owner queues feedback; ambiguous sends are not repeated automatically. The UI distinguishes saved feedback, accepted input, and agent acknowledgment.
+6. **Send** persists one round before waking its current owner. A missing owner queues feedback; ambiguous sends are not repeated automatically. The UI distinguishes saved feedback, accepted input, and agent acknowledgment.
 7. Ownership shows available Orca group, project, worktree, and terminal names, with the terminal handle. Unknown names are omitted, never invented. Routing still validates terminal incarnation and provider process.
-8. Copy shows formatted current text, WYSIWYG revisions and collapsed immutable history. Proposals survive retries and never silently overwrite current copy.
+8. Library shows formatted current text, WYSIWYG revisions and immutable history. Proposed edits join the shared Send and never silently overwrite current copy. Findings are fixed only with proof; reviewer reopens preserve fix history and join Send. Plans have independent version histories and anchored comments.
 9. Dark is daisyUI `dark`; light is daisyUI `light`. The chosen theme persists and applies to generated content and feedback controls. Tabs, long content, tables, and text fields remain usable on mobile and keyboard.
 
 For authoring use [page format](building-pages.md); for decisions use [cards](decision-cards.md). Legacy transport/provider adapters are compatibility paths, not extra steps in normal project work.

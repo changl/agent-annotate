@@ -7,7 +7,12 @@ from test_copy_api import _seed
 from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
-from agent_annotate.categories import mark_finding_fixed, publish_plan_revision, save_findings_sets
+from agent_annotate.categories import (
+    comment_sig,
+    mark_finding_fixed,
+    publish_plan_revision,
+    save_findings_sets,
+)
 from agent_annotate.copy_state import load_copy
 from agent_annotate.project_state import save_project
 
@@ -160,3 +165,12 @@ def test_linked_exception_is_project_scoped_and_registry_based(server):
         assert result["linked_pages"] == [{"slug": "motion-lab", "title": "Motion lab", "url": child["url"], "reason": "Interactive worksheet"}]
     finally:
         registry.unlink()
+
+
+def test_category_unread_uses_the_same_declared_aliases_as_read_state(server, monkeypatch):
+    httpd, _, _ = server
+    monkeypatch.setattr(httpd.RequestHandlerClass, "_reviewer_authors", lambda self, author: {author, "old@example.com"})
+    card = finding(httpd)
+    assert _call(httpd, "POST", "/api/read-state", {"items": [{"id": card["id"], "sig": comment_sig(card)}]}, author="old@example.com")[0] == 200
+    categories = _call(httpd, "GET", "/api/categories", author="new@example.com")[1]["categories"]
+    assert next(c for c in categories if c["id"] == "findings")["counts"]["unread"] == 0

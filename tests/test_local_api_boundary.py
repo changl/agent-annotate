@@ -206,8 +206,10 @@ def test_plain_or_oversized_legacy_error_keeps_status_and_real_cmd_ask_fallback(
         args = SimpleNamespace(slug="demo", project="proj", from_file=str(cards), version="v1", author="agent:test", json=True)
         assert cli.cmd_ask(args) == 0
         assert len(fallback_calls) == 1
-        output = capsys.readouterr().out
-        assert f"batch route absent (HTTP {status})" in output
+        captured = capsys.readouterr()
+        output = captured.out
+        assert f"batch route absent (HTTP {status})" in captured.err
+        assert json.loads(output)["route"] == "fallback"
         assert '"route": "fallback"' in output
 
 

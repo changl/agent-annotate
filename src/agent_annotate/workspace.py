@@ -59,7 +59,7 @@ def candidates(path: Path, project: str | None = None, *, caller: Path | None = 
     from .cli import _registry_entries
     key = project_key(path) or (project_key(caller) if caller is not None else None)
     entries = [(name, slug, record, _record_key(record)) for name, slug, record in _registry_entries()
-               if not record.get("standalone")]
+               if not record.get("standalone") and not record.get("exception")]
     roots = [r["workspace_root"] for _, _, r, record_key in entries if r.get("workspace_root") and (
              _within(path, r["workspace_root"]) or (caller is not None and _within(caller, r["workspace_root"]))
              or (key and key == record_key))]
@@ -77,10 +77,27 @@ def duplicate_page(path: Path, project: str | None = None, *, caller: Path | Non
     entries = candidates(path, project, caller=caller if caller is not None else Path.cwd())
     if any(Path(r["slug_dir"]).resolve() == path.resolve() for _, _, r in entries):
         return None
-    for _, _, record in entries:
+    for _, _, record in sorted(entries, key=lambda item: not item[2].get("workspace_primary")):
         if Path(record["slug_dir"]).resolve() != path.resolve():
             return record
     return None
+
+
+def exception_reason(args) -> str | None:
+    """An explicit exception, with the legacy standalone spelling preserved."""
+    reason = getattr(args, "exception", None)
+    if reason is not None:
+        if not reason.strip():
+            raise ValueError('--exception requires a nonempty reason')
+        return reason.strip()
+    return "standalone" if getattr(args, "standalone", False) else None
+
+
+def duplicate_message(record: dict) -> str:
+    return (f"ERROR: project page already exists: {record.get('slug') or Path(record['slug_dir']).name}\n"
+            f"  Directory: {record['slug_dir']}\n  URL: {page_url(record)}\n"
+            'Post into a category of this page: Review, Library, Findings, or Plans.\n'
+            'A second page requires --exception "REASON".')
 
 
 def _url_identity(url) -> tuple | None:
@@ -122,6 +139,10 @@ def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
     except (OSError, ValueError):
         return []
     entries = _registry_entries()
+    primary_names = {primary.get("slug")} - {None}
+    primary_names.update(name for project, slug, record in entries
+                         if record.get("slug_dir") == primary.get("slug_dir")
+                         for name in (slug, f"{project}/{slug}"))
     result = {}
     for tab in tabs:
         identity = _url_identity(tab.get("url"))
@@ -136,13 +157,23 @@ def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
                 or Path(child["slug_dir"]).resolve() == Path(primary["slug_dir"]).resolve()):
             continue
         result[(project, slug)] = (project, slug, child)
+    # Explicit exception links do not require a manually declared project tab.
+    # They remain independent owners (workspace_owner_record excludes them).
+    for project, slug, child in entries:
+        exception = child.get("exception")
+        if not isinstance(exception, dict) or not _url_identity(_record_url(child)):
+            continue
+        parent = exception.get("parent_slug")
+        if (parent in primary_names and _shared_scope(primary, child)
+                and Path(child["slug_dir"]).resolve() != Path(primary["slug_dir"]).resolve()):
+            result[(project, slug)] = (project, slug, child)
     return list(result.values())
 
 
 def workspace_owner_record(record: dict) -> dict:
     """Listed tabs share their single canonical page's current durable owner."""
     from .cli import _registry_entries
-    if record.get("standalone") or record.get("workspace_primary") or not record.get("slug_dir"):
+    if record.get("standalone") or record.get("exception") or record.get("workspace_primary") or not record.get("slug_dir"):
         return record
     identity = _url_identity(_record_url(record))
     if not identity:
@@ -206,7 +237,7 @@ def cmd_workspace(args) -> int:
             if not root.is_dir() or not _within(record["slug_dir"], root):
                 raise ValueError("workspace root must contain the selected page")
             entries.extend((p, s, r) for p, s, r in _registry_entries()
-                           if not r.get("standalone") and _within(r.get("slug_dir"), root))
+                           if not r.get("standalone") and not r.get("exception") and _within(r.get("slug_dir"), root))
         entries = list({(p, s): (p, s, r) for p, s, r in [*entries, selected]}.values())
         for name in sorted({p for p, _, _ in entries}):
             with _flock(_state_lock_path(name)):

@@ -223,7 +223,7 @@ def test_receipt_shared_with_another_scope_refuses_all_teardown(estate, alias):
 @pytest.mark.parametrize("command", [cli.cmd_claim, cli.cmd_connect, cli.cmd_disconnect, cli.cmd_monitor,
                                       cli.cmd_ask, cli.cmd_close, cli.cmd_archive_comment, cli.cmd_addressed,
                                       cli.cmd_resolve, cli.cmd_carry, cli.cmd_deliver, cli.cmd_project,
-                                      cli.cmd_retire])
+                                      cli.cmd_retire, cli.cmd_finding, cli.cmd_plan, cli.cmd_copy])
 @pytest.mark.parametrize("target", ["shared", "missing/shared"])
 def test_mutations_refuse_ambiguous_and_missing_project_before_action(estate, monkeypatch, command, target):
     estate.add()

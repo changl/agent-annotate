@@ -109,6 +109,9 @@ def test_library_metadata_and_restore_append_without_changing_revision(tmp_path)
     assert block["revisions"][0] == original["blocks"][0]["revisions"][0]
     assert block["revisions"][-1]["delta"] == block["revisions"][0]["delta"]
     assert category_counts(tmp_path)["library"]["ready"] == 1
+    assert category_counts(tmp_path, "chang")["library"]["unread"] == 1
+    (tmp_path / "read-state.json").write_text(json.dumps({"chang": {"copy:home-hero": {"sig": block["revisions"][-1]["id"]}}}))
+    assert category_counts(tmp_path, "chang")["library"]["unread"] == 0
 
 
 def test_defaults_section_rules_and_read_state(tmp_path):
@@ -126,5 +129,8 @@ def test_defaults_section_rules_and_read_state(tmp_path):
     assert category_counts(tmp_path, "chang")["findings"]["unread"] == 0
     for option, section in (("fix", "waiting"), ("keep", "done"), ("no", "done")):
         assert comment_section({**finding, "decision": {"verdict": "select", "option_id": option}}) == section
+    # A preview/acknowledgement from the agent is not proof that a finding
+    # was fixed: the accepted register waits for the explicit fixed record.
+    assert comment_section({**finding, "status": "addressed_by_agent", "response_text": "Agreed preview", "decision": {"verdict": "select", "text": "fix"}}) == "waiting"
     assert load_categories(tmp_path) == {"schema_version": 1, "findings_sets": []}
     assert save_findings_sets(tmp_path, [{"id": "design", "label": "Design"}]) == load_categories(tmp_path)

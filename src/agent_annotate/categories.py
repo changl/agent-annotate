@@ -304,10 +304,10 @@ def comment_section(comment: dict) -> str | None:
     if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
         return "ready"
     if comment_category(comment) == "findings":
-        if comment.get("fixed") or status in {"addressed_by_agent", "resolved_in_version"}:
+        if comment.get("fixed"):
             return "done"
         if not decision.get("verdict"):
-            if comment.get("reopened"):
+            if comment.get("reopened") or comment.get("response_text"):
                 return "waiting"
             return "needs_you"
         choice = decision.get("option_id") or decision.get("option")
@@ -344,10 +344,11 @@ def comment_sig(comment: dict) -> str:
     return result or "0"
 
 
-def category_counts(page_dir: Path | str, author: str | None = None) -> dict:
+def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None) -> dict:
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
-    read = _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {}
+    read = (read_state if read_state is not None else
+            _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
     for items in _comments(page_dir)["anchors"].values():
         for comment in items:
             section = comment_section(comment)
@@ -368,4 +369,8 @@ def category_counts(page_dir: Path | str, author: str | None = None) -> dict:
         if section == "held":
             section = "done"
         counts["library"][section] += 1
+        # Library uses the existing per-item read sidecar too. Revisions have
+        # immutable ids, so the latest id is its activity signature.
+        if author and read.get("copy:" + block["id"], {}).get("sig") != latest["id"]:
+            counts["library"]["unread"] += 1
     return counts
