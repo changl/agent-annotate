@@ -250,6 +250,7 @@ def cmd_workspace(args) -> int:
                             if root:
                                 state["slugs"][s]["workspace_root"] = str(root)
                             state["slugs"][s]["standalone"] = False
+                            state["slugs"][s].pop("exception", None)
                 _save_state_for_project(name, state)
         data = workspace_data(root or Path.cwd(), project)
     else:

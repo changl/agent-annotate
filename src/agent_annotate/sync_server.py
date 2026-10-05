@@ -163,11 +163,17 @@ def _mime(suffix: str) -> str:
         ".jpg":  "image/jpeg",
         ".jpeg": "image/jpeg",
         ".gif":  "image/gif",
+        ".webp": "image/webp",
+        ".pdf":  "application/pdf",
         ".ico":  "image/x-icon",
         ".woff": "font/woff",
         ".woff2": "font/woff2",
         ".ttf":  "font/ttf",
     }.get(suffix.lower(), "application/octet-stream")
+
+
+# Files under assets/ and attachments/ that may open inline (inert types).
+_INLINE_UPLOADS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -2819,9 +2825,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
                         "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
                         "by": c["decision"].get("by"), "ts": c["decision"].get("ts")} for c in pending]
+            def unsent_reopen_text(c):
+                # A reopen, an agent re-fix, then another reopen before Send:
+                # every reopen since the last delivered one goes out.
+                texts = []
+                for entry in reversed(c["reopened"]):
+                    if (c["id"], entry.get("by"), entry.get("ts"), "reopen") in submitted_answers:
+                        break
+                    if entry.get("by") in reviewer_authors:
+                        texts.insert(0, entry.get("text", ""))
+                return "\n\n".join(texts)
             answers += [{"comment_id": c["id"], "number": c.get("number"), "category": "findings",
                          "prompt": (c.get("finding") or {}).get("title", c.get("text", "")),
-                         "verdict": "reopen", "text": c["reopened"][-1]["text"],
+                         "verdict": "reopen", "text": unsent_reopen_text(c),
                          "by": c["reopened"][-1]["by"], "ts": c["reopened"][-1]["ts"]} for c in reopens]
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
@@ -3264,8 +3280,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._respond(500, b"Read error")
             return
+        # Proof attachments and page assets are often generated or third-party
+        # files: never let one run script in the review origin. Only images
+        # and PDF open inline; everything else (HTML and SVG included) downloads.
+        extra = None
+        resolved_rel = target.relative_to(self.artifact_dir.resolve()).as_posix()
+        if {rel.split("/", 1)[0], resolved_rel.split("/", 1)[0]} & {"assets", "attachments"}:
+            extra = {"Content-Security-Policy": "sandbox"}
+            if target.suffix.lower() not in _INLINE_UPLOADS:
+                filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
+                extra["Content-Disposition"] = f'attachment; filename="{filename}"'
         self._respond(200, data, content_type=mime,
-                      cache_control=_cache_control_for(target.suffix))
+                      cache_control=_cache_control_for(target.suffix), extra_headers=extra)
 
     def _default_file(self):
         return self.artifact_file

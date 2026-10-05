@@ -256,16 +256,19 @@ def linked_pages(primary: dict) -> list[dict]:
     from .workspace import workspace_tab_records
 
     entries = _registry_entries()
-    parents = [(project, slug) for project, slug, record in entries
-               if record.get("slug_dir") == primary.get("slug_dir")]
-    if len(parents) != 1:
+    # Every registration of this page (a stale second one included). The CLI
+    # writes parent_slug as "project/slug"; older records use the bare slug.
+    parents = {(project, slug) for project, slug, record in entries
+               if record.get("slug_dir") == primary.get("slug_dir")}
+    if not parents:
         return []
-    project, parent_slug = parents[0]
     children = {(p, s): r for p, s, r in workspace_tab_records(primary)}
     for p, slug, record in entries:
         exception = record.get("exception")
-        if (p == project and slug != parent_slug and isinstance(exception, dict)
-                and exception.get("parent_slug") == parent_slug):
+        if (p, slug) in parents or not isinstance(exception, dict):
+            continue
+        ref = exception.get("parent_slug")
+        if any(ref == f"{pp}/{ps}" or (ref == ps and p == pp) for pp, ps in parents):
             children[(p, slug)] = record
     result = []
     for (_, slug), record in sorted(children.items()):

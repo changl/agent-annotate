@@ -17,6 +17,8 @@ from .copy_state import _link, _text, load_copy
 CATEGORIES = ("review", "library", "findings", "plans")
 MAX_PROOF_BYTES = 10 * 1024 * 1024
 MAX_PLAN_BYTES = 4 * 1024 * 1024
+# Proof files are served from the review origin, so only inert types are taken.
+PROOF_SUFFIXES = ("png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "log", "json", "csv")
 _PLAN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 _ATTACHMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\Z")
 
@@ -182,11 +184,18 @@ def validate_proof(page_dir: Path | str, proof: list[dict]) -> list[dict]:
     return result
 
 
+def check_proof_type(path: Path | str) -> None:
+    if Path(path).suffix.lower().lstrip(".") not in PROOF_SUFFIXES:
+        raise ValueError(f"proof files must be one of: {', '.join(PROOF_SUFFIXES)} "
+                         f"(got {Path(path).name!r}); link other evidence by HTTPS URL")
+
+
 def add_proof_file(page_dir: Path | str, src_path: Path | str) -> dict:
     """Copy a regular file without following any source or destination symlink.
 
     Caller enforces its cwd boundary. The stored attachment is a basename.
     """
+    check_proof_type(src_path)
     source = Path(src_path).absolute()
     # openat + O_NOFOLLOW avoids races as well as static symlink components.
     descriptors = []
@@ -231,9 +240,8 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
         comment["fixed"] = {"by": by, "ts": now, "note": note, "proof": proof}
         comment["status"] = "addressed_by_agent"
         comment["resolved_in_version"] = _json(safe_path(page_dir, "current.meta.json"), {}).get("current", comment.get("version"))
-        comment.pop("round_pending", None)
-        if comment.get("decision"):
-            comment["decision"].pop("round_pending", None)
+        # A reopen or verdict the reviewer has not sent yet stays round-pending:
+        # it still goes out with the next Send, after this fix.
         _atomic_write_json(safe_path(page_dir, "comments.json"), store)
         return comment
 
