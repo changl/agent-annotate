@@ -165,3 +165,10 @@ def test_ui3_restore_refuses_a_stale_latest_and_old_clients_still_restore(tmp_pa
     # An old client sends no base_revision and restores onto the latest.
     old = restore_revision(tmp_path, "home-hero", "r_" + first, {"id": "reviewer:b"}, request_id=str(uuid.uuid4()))
     assert len(old["blocks"][0]["revisions"]) == 4
+
+
+def test_ui28_start_item_is_kept_and_must_name_a_block(tmp_path):
+    saved = save_copy(tmp_path, dict(document(), start_item="home-hero"))
+    assert saved["start_item"] == "home-hero" and load_copy(tmp_path)["start_item"] == "home-hero"
+    with pytest.raises(ValueError, match="start_item"):
+        validate_copy(dict(document(), start_item="missing"))

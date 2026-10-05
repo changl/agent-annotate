@@ -92,7 +92,7 @@ def save_elsewhere(directory, text, block_id="row-14"):
         block_id,
         {"ops": [{"insert": text + "\n"}]},
         {"id": "other@example.com", "name": "Other Reviewer"},
-        base_revision="seed-1",
+        base_revision=revisions(directory, block_id)[-1]["id"],
         request_id=str(uuid.uuid4()),
     )
 
@@ -351,16 +351,10 @@ def test_restore_says_saved_as_final_does(tmp_path, lib_site):
         page.locator("#sp-save").click()
         playwright.expect(status(page)).to_have_text(SAVED)
         sent = []
-
-        def without_base(route):
-            # The restore route takes base_revision after the backend merge;
-            # this worktree's server still takes only revision_id + request_id.
-            body = route.request.post_data_json
-            sent.append(body)
-            body = {k: v for k, v in body.items() if k != "base_revision"}
-            route.continue_(post_data=json.dumps(body))
-
-        page.route("**/api/copy/row-14/restore", without_base)
+        page.on(
+            "request",
+            lambda request: sent.append(request.post_data_json) if request.url.endswith("/restore") else None,
+        )
         history(page)
         page.get_by_role("button", name="Restore the earlier text").click()
         playwright.expect(editor(page)).to_have_text("Start text.")
@@ -392,18 +386,9 @@ def test_restore_refused_with_409_shows_the_notice_and_keeps_unsaved_text(tmp_pa
 
 
 def test_first_visit_opens_the_declared_start_item(tmp_path, lib_site):
-    with browser_page(tmp_path, lib_site) as (page, base):
-        # Simulated: the copy contract has no start_item yet; final/ reads one from its data.
-        def with_start(route):
-            if route.request.method != "GET":
-                return route.continue_()
-            response = route.fetch()
-            data = response.json()
-            data["start_item"] = "article-2"
-            route.fulfill(response=response, json=data)
-
-        page.route("**/api/copy", with_start)
-        page.reload(wait_until="networkidle")
-        ready(page)
+    # final/'s data names the item a first visit opens; the copy contract
+    # carries it as the optional top-level start_item.
+    save_copy(lib_site, dict(load_copy(lib_site), start_item="article-2"))
+    with browser_page(tmp_path, lib_site) as (page, _):
         go(page, "library")
         assert page.locator("#sp-list-body .sp-row.hl").get_attribute("data-item") == "article-2"

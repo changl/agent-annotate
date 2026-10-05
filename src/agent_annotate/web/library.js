@@ -579,7 +579,8 @@
     const entries = [];
     seedHistory(it).forEach(h => entries.push(h));
     const q = question(it);
-    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
+    // A discarded answer (UI-14) never went out; History leaves it out.
+    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
     it.revisions.forEach((r, i) => {
       if (r.status !== 'proposed') return;
       const prev = it.revisions[i - 1];

@@ -117,7 +117,7 @@ def _serialize(data: dict) -> bytes:
 
 
 def validate_copy(value: Any) -> dict:
-    value = _object(value, {"schema_version", "blocks", "groups"}, {"blocks"}, "copy")
+    value = _object(value, {"schema_version", "blocks", "groups", "start_item"}, {"blocks"}, "copy")
     if type(value.get("schema_version", 1)) is not int or value.get("schema_version", 1) != 1:
         raise ValueError("copy.schema_version must be 1")
     if not isinstance(value["blocks"], list) or len(value["blocks"]) > 500:
@@ -196,6 +196,12 @@ def validate_copy(value: Any) -> dict:
             clean_block[field] = item
         result["blocks"].append(clean_block)
     _serialize(result)
+    # The item the Library opens on a first visit (final/'s start_item).
+    if "start_item" in value:
+        start = _id(value["start_item"], "copy start_item")
+        if start not in ids:
+            raise ValueError("copy start_item must name a block")
+        result["start_item"] = start
     return result
 
 
