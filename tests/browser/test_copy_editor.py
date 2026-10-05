@@ -123,9 +123,6 @@ def test_copy_format_save_retry_history_and_reopen(tmp_path, copy_site, width, t
         assert page.locator("#history-body").is_hidden()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="A3b-P2: Library paste retains about:blank href; server refuses Save with HTTP 400"
-)
 def test_editor_paste_undo_and_attack_text_stays_safe(tmp_path, copy_site):
     with browser_page(tmp_path, copy_site) as (page, _):
         go(page, "library", item="hero")
@@ -202,11 +199,6 @@ def test_many_copy_blocks_are_searchable_and_switching_keeps_drafts(tmp_path, co
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="A3b-P4: Library Save retry generates a new request_id and creates a duplicate revision after lost response",
-)
 def test_retry_after_committed_response_is_lost_creates_one_revision(tmp_path, copy_site):
     with browser_page(tmp_path, copy_site) as (page, _):
         go(page, "library", item="hero")
