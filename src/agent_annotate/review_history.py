@@ -42,6 +42,8 @@ def _available(directory, version):
 
 def save_round(directory: Path, event: dict) -> None:
     """A page copy carries its review history even after its bus is pruned."""
+    from .consolidate import refuse_if_moved
+    refuse_if_moved(directory)
     path = directory / "rounds.ndjson"
     with path.open("a+", encoding="utf-8") as source:
         fcntl.flock(source.fileno(), fcntl.LOCK_EX)

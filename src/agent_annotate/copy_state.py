@@ -231,6 +231,8 @@ def load_copy(slug_dir: Path | str) -> dict:
 
 
 def _write(directory: Path, data: dict) -> None:
+    from .consolidate import refuse_if_moved
+    refuse_if_moved(directory)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(prefix=".copy.", suffix=".tmp", dir=directory, delete=False) as target:

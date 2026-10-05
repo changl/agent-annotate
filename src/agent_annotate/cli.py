@@ -1693,7 +1693,7 @@ def cmd_unpublish(args) -> int:
     return 0
 
 
-def _running_servers() -> dict:
+def _running_servers(strict: bool = False) -> dict:
     """Map resolved slug_dir -> [{pid, port}] for every live page server.
 
     The recorded pid is not authoritative: a server restarted outside the CLI
@@ -1703,9 +1703,11 @@ def _running_servers() -> dict:
     """
     try:
         out = subprocess.run(
-            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10
+            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, check=strict
         ).stdout
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise OSError(f"could not list running page servers with ps: {exc}") from exc
         return {}
     found: dict[str, list[dict]] = {}
     for line in out.splitlines():
@@ -1729,7 +1731,8 @@ def _running_servers() -> dict:
         except OSError:
             continue
         port = _arg("--port")
-        found.setdefault(key, []).append({"pid": pid, "port": int(port) if port else None})
+        found.setdefault(key, []).append({"pid": pid, "port": int(port) if port else None,
+                                          "public_base_path": _arg("--public-base-path")})
     return found
 
 
@@ -1827,6 +1830,9 @@ def cmd_status(args) -> int:
             # An owner only matters while the page is serving: a dead row's
             # owner is a fact about history, not about who should act.
             owner = _owner_note(rec, ps_snapshot) if state != "dead" else ""
+            moved = rec.get("consolidated_into")
+            if isinstance(moved, dict):
+                owner = f"moved to {moved.get('project')}/{moved.get('slug')}"
             rows.append((project, slug, pid, port, page_url(rec), state, owner))
     if not rows:
         print("(no active slugs)")
@@ -2009,6 +2015,10 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
 
     blockers = []
     for anchor_id, comment in _iter_comments(store):
+        # A Review version answers Review items. Plans have their own
+        # revisions; Library and Findings items are not tied to a version.
+        if _comment_category({"anchor_id": anchor_id, **comment}) != "review":
+            continue
         version = comment.get("version")
         is_prior = not version or version in prior_versions
         if not is_prior:
@@ -2136,10 +2146,23 @@ def _coerce_store_file(slug_dir: Path) -> dict:
     return _coerce_v2(json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
 
 
+def _moved_page(slug_dir) -> bool:
+    """A consolidated page is frozen: name the page that holds it now."""
+    from .consolidate import marker
+    moved = marker(slug_dir) if slug_dir else None
+    if moved:
+        target = moved.get("target") or {}
+        print(f"ERROR: this page moved to {target.get('project')}/{target.get('slug')} "
+              f"({moved.get('tab', 'review')}); post there. The old page is kept read-only.", file=sys.stderr)
+    return bool(moved)
+
+
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.exists() or not slug_dir.is_dir():
         print(f"ERROR: slug-dir not found: {slug_dir}", file=sys.stderr)
+        return 2
+    if _moved_page(slug_dir):
         return 2
     new_version = args.version
     versions_dir = slug_dir / "versions"
@@ -3089,6 +3112,8 @@ def cmd_close(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    if _moved_page(record.get("slug_dir")):
+        return 2
     try:
         threshold = _parse_age(args.older_than)
     except ValueError as exc:
@@ -3650,6 +3675,8 @@ def cmd_project(args) -> int:
         return 2
 
     _project, _slug, record = resolved
+    if args.from_file and _moved_page(record.get("slug_dir")):
+        return 2
     try:
         directory = Path(record["slug_dir"])
         if args.from_file:
@@ -3675,6 +3702,9 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
     )
     if not proofs or len(proofs) > 30:
         raise ValueError("marking a finding fixed requires 1-30 proof URLs or files")
+    from .consolidate import marker
+    if marker(record["slug_dir"]):
+        raise ValueError("this page was consolidated into another page; mark the finding fixed there")
     directory = Path(record["slug_dir"])
     author = author if author.startswith("agent:") else f"agent:{author}"
     prepared = []
@@ -3764,6 +3794,8 @@ def cmd_plan(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    if _moved_page(record.get("slug_dir")):
+        return 2
     try:
         validate_plan_id(args.plan_id)
         source = Path(args.from_file).expanduser()
@@ -3802,6 +3834,8 @@ def cmd_copy(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    if args.from_file and _moved_page(record.get("slug_dir")):
+        return 2
     try:
         directory = Path(record["slug_dir"])
         block_id = getattr(args, "block", None)
@@ -3830,6 +3864,157 @@ def cmd_copy(args) -> int:
     except (OSError, ValueError) as exc:
         print(f"ERROR: copy: {exc}", file=sys.stderr)
         return 2
+
+
+def _consolidate_run(consolidate, directory: Path, target: tuple[str, str], sources: list, planned: dict):
+    """Freeze, read again, write, verify; on any failure undo this run only."""
+    from .sync_server import _locked_store
+    marked, created = [], False
+    try:
+        # The marker is written under each page's store lock, so a write
+        # already holding it finishes first and every later one is refused.
+        for source in sources:
+            with _locked_store(source.dir):
+                consolidate.mark(source, planned)
+            marked.append(source)
+        result = consolidate.build(directory, target, sources, now=planned["at"])
+        consolidate.write_target(result)
+        created = True
+        problems = consolidate.verify(result)
+        if problems:
+            raise ValueError("verification failed; nothing was kept:\n  " + "\n  ".join(problems[:20]))
+        return result
+    except BaseException as exc:
+        if created:
+            shutil.rmtree(directory)
+        for source in marked:
+            consolidate.unmark(source)
+        if not isinstance(exc, (OSError, ValueError, KeyError, TypeError, AttributeError)):
+            raise
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None
+
+
+def cmd_consolidate(args) -> int:
+    """Merge pages of one project into one new page, one tab per source."""
+    from . import consolidate
+    target = (args.target or "").strip().strip("/")
+    target_project, _, target_slug = target.partition("/")
+    name = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+    if not (name.fullmatch(target_project) and name.fullmatch(target_slug)):
+        print("ERROR: consolidate needs a new target page as PROJECT/SLUG", file=sys.stderr)
+        return 2
+    if any((p, s) == (target_project, target_slug) for p, s, _ in _registry_entries()):
+        print(f"ERROR: {target} is already registered; consolidate into a new page", file=sys.stderr)
+        return 2
+    sources = []
+    try:
+        for value in args.sources:
+            ref, tab, ident = consolidate.parse_source(value)
+            resolved = _resolve_scoped_slug(ref)
+            if not resolved:
+                return 2
+            project, slug, record = resolved
+            if not record.get("slug_dir"):
+                raise ValueError(f"{project}/{slug} has no page directory")
+            sources.append(consolidate.Source(project, slug, record, tab, ident, target_slug))
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    primary = next((s for s in sources if s.tab == "review"), sources[0] if sources else None)
+    if primary is None:
+        print("ERROR: name the pages to merge with --from PROJECT/SLUG:TAB", file=sys.stderr)
+        return 2
+    directory = Path(args.dir).expanduser().resolve() if args.dir else primary.dir.parent / target_slug
+    if directory.name != target_slug:
+        print(f"ERROR: --dir must end in {target_slug!r}: publish names a page after its directory", file=sys.stderr)
+        return 2
+    if directory.exists():
+        print(f"ERROR: target directory already exists: {directory}", file=sys.stderr)
+        return 2
+    # A server from before this release ignores the marker and would keep
+    # taking writes the target never sees. The registry's pid and port can be
+    # stale, so every process serving the directory is asked.
+    stale = []
+    try:
+        running = _running_servers(strict=not args.dry_run)
+    except OSError as exc:
+        print(f"ERROR: {exc}; the check for old servers needs it", file=sys.stderr)
+        return 2
+    for source in sources:
+        processes = list(running.get(str(source.dir)) or [])
+        if _is_process_alive(int(source.record.get("pid") or 0)) and not any(
+                p["pid"] == source.record.get("pid") for p in processes):
+            processes.append({"pid": source.record.get("pid"), "port": source.record.get("port"),
+                              "public_base_path": source.record.get("public_base_path")})
+        for process in processes:
+            port = process.get("port")
+            probe = {"local_url": f"http://localhost:{port}/", "port": port,
+                     "public_base_path": process.get("public_base_path")}
+            code, payload = _api(probe, "GET", "/api/capabilities", None, "agent:annotate", timeout=5)
+            if not (code == 200 and isinstance(payload, dict) and payload.get("consolidation")):
+                stale.append(f"{source.name} (pid {process.get('pid')}, port {port})")
+    if stale and not args.dry_run:
+        print("ERROR: these pages run a server from before this release, which would keep taking writes:\n  "
+              + "\n  ".join(stale) + f"\n  Restart them on this release first ({_inv()} publish DIR), "
+              "or stop their servers.", file=sys.stderr)
+        return 2
+    lock = LOCK_DIR / ("consolidate-" + hashlib.sha256(str(directory).encode()).hexdigest()[:20] + ".lock")
+    try:
+        with _flock(lock):
+            if directory.exists():
+                print(f"ERROR: target directory already exists: {directory}", file=sys.stderr)
+                return 2
+            result = consolidate.build(directory, (target_project, target_slug), sources)
+            if not args.dry_run:
+                result = _consolidate_run(consolidate, directory, (target_project, target_slug), sources, result)
+                if result is None:
+                    return 2
+    except (OSError, ValueError, KeyError, TimeoutError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if not args.dry_run:
+        for project in sorted({s.project for s in sources}):
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                for source in sources:
+                    if source.project == project and source.slug in state["slugs"]:
+                        state["slugs"][source.slug]["consolidated_into"] = {
+                            "project": target_project, "slug": target_slug, "dir": str(directory),
+                            "tab": source.tab, **({"id": source.ident} if source.tab != "review" else {}),
+                            "at": result["at"]}
+                _save_state_for_project(project, state)
+    summary = consolidate.report(result)
+    if getattr(args, "json", False):
+        print(json.dumps({**summary, "dry_run": bool(args.dry_run), "stale_servers": stale}, ensure_ascii=False, indent=2))
+        return 0
+    columns = ("comments", "cards", "verdicts", "earlier_verdicts", "replies", "open")
+    print(f"  {'Dry run: ' if args.dry_run else ''}{len(sources)} pages into {target}  ({directory})")
+    print(f"  {'SOURCE':<34} {'TAB':<9} {'ID':<16} " + " ".join(f"{c[:8]:>8}" for c in columns)
+          + f" {'versions':>8} {'rounds':>6} {'read':>5}")
+    for page, row in summary["sources"].items():
+        print(f"  {page[:34]:<34} {row['tab']:<9} {(row['id'] or '-')[:16]:<16} "
+              + " ".join(f"{row[c]:>8}" for c in columns) + f" {row['versions']:>8} {row['rounds']:>6} {row['read_state']:>5}")
+    print(f"  {'TAB':<61}" + " ".join(f"{c[:8]:>8}" for c in columns))
+    for tab, row in summary["tabs"].items():
+        print(f"  {tab:<61}" + " ".join(f"{row[c]:>8}" for c in columns))
+    print(f"  rounds {summary['rounds']} · plans {', '.join(summary['plans']) or '-'} · findings sets "
+          f"{', '.join(summary['findings_sets']) or '-'} · Library items {summary['library_items']} · "
+          f"read-state entries {summary['read_state']}")
+    for page, row in summary["sources"].items():
+        if row["left_in_old_page"]:
+            print(f"  {page}: kept only in the old page (read-only, ?archived=1): {', '.join(row['left_in_old_page'])}")
+        if row["share_link_read_state"]:
+            print(f"  {page}: {row['share_link_read_state']} read marks of share-link reviewers are kept but will show "
+                  "as unread (the new page gives them a new identity)")
+    if stale:
+        print("  WARN: restart before the real run (server from before this release): " + ", ".join(stale))
+    if not args.dry_run:
+        print(f"  The old pages are frozen and redirect to their tab; ?archived=1 shows them read-only.\n"
+              f"  Next: {_inv()} publish {directory} --project {target_project}\n"
+              f"        {_inv()} workspace --select {target}\n"
+              f"        the owning session: {_inv()} claim {target}")
+    return 0
 
 
 def _fleet_snapshot(from_file=None) -> dict:
@@ -4401,8 +4586,8 @@ def _iter_comments(store: dict):
                     yield anchor_id, c
 
 
-def _decision_cards(store: dict) -> list[dict]:
-    """Every live decision card, flattened for printing."""
+def _item_numbers(store: dict) -> dict[str, int]:
+    """{comment id: the number the page shows}, as shell.js computeNumbers."""
     comments = list(_iter_comments(store))
     historical = []
     archived = store.get("archived") or {}
@@ -4444,7 +4629,13 @@ def _decision_cards(store: dict) -> list[dict]:
         numbers[cid] = next_number
         used.add(next_number)
         next_number += 1
+    return numbers
 
+
+def _decision_cards(store: dict) -> list[dict]:
+    """Every live decision card, flattened for printing."""
+    comments = list(_iter_comments(store))
+    numbers = _item_numbers(store)
     cards = []
     for anchor_id, c in comments:
         dr = c.get("decision_request")
@@ -4938,6 +5129,15 @@ def main():
     sp_plan.add_argument("--project", default=None)
     sp_plan.add_argument("--json", action="store_true")
     sp_plan.set_defaults(func=cmd_plan)
+    sp_cons = sub.add_parser("consolidate", help="merge a project's pages into one new page, one tab per page")
+    sp_cons.add_argument("target", metavar="PROJECT/SLUG", help="the new page")
+    sp_cons.add_argument("--from", dest="sources", action="append", required=True, metavar="PROJECT/SLUG:TAB[=ID]",
+                         help="a page and its tab: review (exactly one), library, findings or plans; "
+                              "ID names the plan, findings set or Library item")
+    sp_cons.add_argument("--dir", default=None, help="the new page directory (default: beside the review page)")
+    sp_cons.add_argument("--dry-run", action="store_true", help="print counts per page and per tab; write nothing")
+    sp_cons.add_argument("--json", action="store_true")
+    sp_cons.set_defaults(func=cmd_consolidate)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 

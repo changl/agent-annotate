@@ -23,6 +23,7 @@ TESTS = (
     "tests/test_categories_api.py",
     "tests/test_categories_parity.py",
     "tests/test_cli_categories.py",
+    "tests/test_consolidate.py",
     "tests/test_backend_review_fixes.py",
     "tests/test_ci_contract.py",
     "tests/test_fix_ui_server.py",
