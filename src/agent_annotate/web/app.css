@@ -99,6 +99,10 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .fix-proof-links{margin:0;padding:0}
 .fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
 .fix-proof-links svg.i{width:12px;height:12px}
+/* Findings on the phone: the comment Save, Reopen and Cancel are ≥44px targets. */
+@media (max-width:1160px),(max-height:480px){
+  #rail-findings .gf-ft .btn,#rail-findings .fix-actions .btn{min-width:44px;min-height:44px}
+}
 .fix-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px}
 .fix-actions .btn svg.i{width:14px;height:14px}
 
