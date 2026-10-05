@@ -13,7 +13,7 @@ def _seed(directory):
         "status": "draft", "delta": {"ops": [{"insert": "Current headline\n"}]}}]}]})
 
 
-def test_copy_proposal_retry_preserves_current_and_one_owner_delivery(server):
+def test_copy_proposal_retry_preserves_current_and_waits_for_shared_send(server):
     httpd, directory, bus = server
     _seed(directory)
     body = {"delta": {"ops": [{"insert": "Proposed headline\n", "attributes": {"bold": True}}]},
@@ -25,11 +25,15 @@ def test_copy_proposal_retry_preserves_current_and_one_owner_delivery(server):
         assert len(result["blocks"][0]["revisions"]) == 2
     revision = load_copy(directory)["blocks"][0]["revisions"][-1]
     assert revision["author"]["id"] == "reviewer@example.com"
+    assert revision["round_pending"] is True
+    assert _events(bus, "session_push") == []
+    assert _store(directory)["anchors"] == {}
+    status, result = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert status == 200 and result["edit_count"] == 1
     pushes = _events(bus, "session_push")
     assert len(pushes) == 1 and pushes[0]["automatic_delivery"] is True
-    assert pushes[0]["comment_count"] == 1
-    comments = [c for items in _store(directory)["anchors"].values() for c in items]
-    assert len(comments) == 1 and comments[0]["flagged_at"]
+    assert pushes[0]["comment_count"] == 0 and len(pushes[0]["edits"]) == 1
+    assert load_copy(directory)["blocks"][0]["revisions"][-1]["round_pending"] is False
     status, result = _call(httpd, "POST", "/api/push-session", {}, author="reviewer@example.com")
     assert status == 200 and result["flagged_count"] == 0
     assert len(_events(bus, "session_push")) == 1

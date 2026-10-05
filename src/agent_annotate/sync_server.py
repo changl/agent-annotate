@@ -114,6 +114,7 @@ import threading
 import tomllib
 import urllib.parse
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -214,7 +215,29 @@ def _mtime_stamp(path) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 # V2 storage helpers (file lock + shape coercion)
 # ────────────────────────────────────────────────────────────────────────────
-_STORE_LOCK = threading.Lock()
+_STORE_LOCK = threading.RLock()
+_STORE_LOCAL = threading.local()
+
+
+@contextmanager
+def _locked_store(directory):
+    """Serialize HTTP and direct agent storage writes across threads/processes."""
+    from .categories import safe_path
+    with _STORE_LOCK:
+        path = safe_path(directory, ".comments.json.lock")
+        held = getattr(_STORE_LOCAL, "held", set())
+        if path in held:
+            yield
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            _STORE_LOCAL.held = held | {path}
+            try:
+                yield
+            finally:
+                _STORE_LOCAL.held = held
+
 
 
 class ReviewHTTPServer(http.server.ThreadingHTTPServer):
@@ -242,7 +265,7 @@ def _comment_needs_push(comment: dict) -> bool:
     than their last push. Keep the write route on the same contract so an
     active session is not repeatedly notified about every older open comment.
     """
-    if comment.get("status") != "open" or (comment.get("decision") or {}).get("round_pending"):
+    if comment.get("status") != "open" or comment.get("round_pending") or (comment.get("decision") or {}).get("round_pending"):
         return False
     flagged_at = _iso_timestamp(comment.get("flagged_at"))
     latest = 0.0
@@ -1041,11 +1064,27 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     return self._respond(200, json.dumps(load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode())
+            if route_path == "/api/categories":
+                return self._get_categories()
+            if route_path.startswith("/api/plans/"):
+                from .categories import plan_meta
+                try:
+                    meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]))
+                    return self._respond(200, json.dumps(meta).encode(), cache_control="no-store")
+                except KeyError:
+                    return self._respond(404, b'{"error":"plan not found"}')
+                except (ValueError, OSError) as exc:
+                    return self._respond(400, json.dumps({"error": str(exc)}).encode())
+            if route_path.startswith("/plans/"):
+                match = re.fullmatch(r"/plans/([^/]+)/(v[0-9]{1,10})\.html", urllib.parse.unquote(route_path))
+                if not match:
+                    return self._respond(400, b'{"error":"invalid plan path"}')
+                return self._v2_serve_content(parsed, plan_id=match[1], plan_version=match[2])
             if route_path == "/api/history":
                 from .paths import BUS_ARCHIVE_ROOT
                 from .review_history import review_history
                 try:
-                    with _STORE_LOCK:
+                    with _locked_store(self.artifact_dir):
                         history = review_history(self.artifact_dir, self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None, BUS_ARCHIVE_ROOT)
                     return self._respond(200, json.dumps(history, ensure_ascii=False).encode(), cache_control="no-store")
                 except (OSError, ValueError) as exc:
@@ -1084,9 +1123,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if self.v2_mode:
             if route_path == "/api/reviewer/session":
                 return self._reviewer_session()
-            if route_path.startswith("/api/copy/") and route_path.endswith("/proposal"):
-                block_id = route_path[len("/api/copy/"):-len("/proposal")]
-                return self._post_copy_proposal(block_id)
+            if route_path.startswith("/api/copy/"):
+                match = re.fullmatch(r"/api/copy/([^/]+)/(proposal|revisions|restore)", route_path)
+                if match:
+                    return self._post_copy_proposal(urllib.parse.unquote(match[1]), restore=match[2] == "restore")
+            if route_path.startswith("/api/comments/") and route_path.endswith("/reopen"):
+                cid = urllib.parse.unquote(route_path[len("/api/comments/"):-len("/reopen")])
+                return self._post_finding_reopen(cid)
             if route_path == "/api/comments":
                 return self._v2_post_comments(parsed)
             if route_path == "/api/comments/batch":
@@ -1243,7 +1286,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         _atomic_write_json(self._store_path(), store)
 
     def _v2_get_store(self):
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
         self._respond(200, json.dumps(store, ensure_ascii=False).encode(), "application/json", conditional=True)
 
@@ -1275,7 +1318,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         flt_status = (params.get("status") or [None])[0]
         flt_version = (params.get("version") or [None])[0]
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
         out = []
         for anchor_id, items in store.get("anchors", {}).items():
@@ -1382,7 +1425,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         every request; the hash recompute itself only runs on a stale/
         missing stamp, not on every GET.
         """
-        with _STORE_LOCK:  # reuse the store lock; meta writes are rare & small
+        with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
             existing = (meta.get("content_stamps") or {}).get(version)
             mtime = content_path.stat().st_mtime
@@ -1423,13 +1466,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_save_meta(self, meta: dict) -> None:
         _atomic_write_json(self._meta_path(), meta)
 
-    def _v2_serve_content(self, parsed):
+    def _v2_serve_content(self, parsed, *, plan_id=None, plan_version=None):
         """GET /content?v=vN — serve the chrome-free extracted content doc
         for version vN, with adapter.js injected before </body>. Falls back
         to 'current' version from current.meta.json when ?v= is omitted.
         """
         params = urllib.parse.parse_qs(parsed.query)
-        v = (params.get("v") or [None])[0]
+        v = plan_version or (params.get("v") or [None])[0]
         if not v:
             meta = self._read_meta()
             v = meta.get("current")
@@ -1437,9 +1480,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
             return
         try:
-            target = _version_file(self.artifact_dir, v, "content")
+            if plan_id is not None:
+                from .categories import plan_meta, safe_path, validate_plan_id
+                validate_plan_id(plan_id)
+                meta = plan_meta(self.artifact_dir, plan_id)
+                if v not in {item.get("version") for item in meta.get("history", [])}:
+                    return self._respond(404, b'{"error":"plan version not found"}')
+                target = safe_path(self.artifact_dir, f"plans/{plan_id}/versions/{v}.html")
+            else:
+                target = _version_file(self.artifact_dir, v, "content")
         except ValueError:
             return self._respond(400, b'{"error":"invalid version"}')
+        except KeyError:
+            return self._respond(404, b'{"error":"plan not found"}')
         except PermissionError:
             return self._respond(403, b'{"error":"forbidden content path"}')
         if target.exists() and target.is_file():
@@ -1448,8 +1501,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 self._respond(500, b"Read error")
                 return
-            self._ensure_content_stamp(v, html, target)
+            if plan_id is None:
+                self._ensure_content_stamp(v, html, target)
         else:
+            if plan_id is not None:
+                return self._respond(404, b'{"error":"plan content not found"}')
             # No content/ doc: recover one from the baked legacy artifact.
             # Doing this at request time rather than as a one-off migration is
             # what keeps chrome fixes universal — a legacy page picks up the
@@ -1486,13 +1542,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Both injected refs carry mtime stamps (edge-cache bypass, see
         # _cache_control_for).
         base = self.public_base_path or ""
+        if plan_id is not None:
+            # A plan version has the same page-local asset root as Review.
+            html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
+            base_tag = f'<base href="{base}/">'
+            html = html.replace("<head>", "<head>" + base_tag, 1) if "<head>" in html else base_tag + html
         css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "daisyui.css")}/daisyui.css">'
         if '<div class="aa">' in html:
             html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
             css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
         html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
-        content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug}).replace("<", "\\u003c")
+        content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
+                                   **({"doc": "plan:" + plan_id, "category": "plans"} if plan_id else {})}).replace("<", "\\u003c")
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='
             f'{content_meta};</script>\n'
@@ -1602,7 +1664,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     or self.headers.get("Sec-Fetch-Site")):
                 self._respond(403, b'{"error":"whole-store replacement requires a local non-browser caller"}')
                 return
-            with _STORE_LOCK:
+            with _locked_store(self.artifact_dir):
                 store = _coerce_v2(payload)
                 self._v2_save(store)
             _bus_append(self.bus_dir, self.slug, {
@@ -1626,7 +1688,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = identity["email"] or "anonymous"
 
         try:
-            with _STORE_LOCK:
+            with _locked_store(self.artifact_dir):
                 meta = self._read_meta()
                 store = self._v2_load()
                 comment = self._new_comment_from_payload(payload, identity, meta)
@@ -1666,6 +1728,23 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """
         anchor_id = payload.get("anchor_id") or payload.get("sectionId") or payload.get("nodeId")
         author = identity["email"] or "anonymous"
+        browser = not (self._is_direct_loopback_request() and not self.headers.get("Origin")
+                       and not self.headers.get("Sec-Fetch-Site"))
+        if any(key in payload for key in ("fixed", "fixed_history", "reopened", "round_pending")):
+            raise DecisionRequestError("finding lifecycle fields require the storage API", 403)
+        if browser and "finding" in payload:
+            raise DecisionRequestError("finding authoring requires a local caller", 403)
+        category_fields = self._comment_category_fields(payload)
+        if "doc" in category_fields:
+            from .categories import plan_meta
+            try:
+                plan = plan_meta(self.artifact_dir, category_fields["doc"][5:])
+            except (KeyError, ValueError) as exc:
+                raise DecisionRequestError("unknown plan document") from exc
+            meta = {**meta, "current": plan["current"]}
+            version = payload.get("version") or plan["current"]
+            if version not in {item.get("version") for item in plan["history"]}:
+                raise DecisionRequestError("unknown plan version")
         author_name = identity["name"] or (payload.get("author_name") if identity["authenticated"] else None)
         version = payload.get("version", "v1")
         if meta.get("current"):
@@ -1683,6 +1762,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "status": "open",
             "response_text": None,
             "replies": [],
+            **category_fields,
         }
         number = _normalize_item_number(payload.get("number"))
         if number is not None:
@@ -1746,7 +1826,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         created = 0
         updated = 0
         try:
-            with _STORE_LOCK:
+            with _locked_store(self.artifact_dir):
                 meta = self._read_meta()
                 store = self._v2_load()
                 # Validate everything first so a 413 on item 3 never leaves
@@ -1793,6 +1873,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             existing["reposed_at"] = now
                         existing["text"] = fresh["text"]
                         existing["decision_request"] = fresh["decision_request"]
+                        for field in ("category", "doc", "finding"):
+                            if field in fresh:
+                                existing[field] = fresh[field]
                         if fresh.get("number") is not None:
                             existing["number"] = fresh["number"]
                         if fresh.get("anchor_label"):
@@ -1919,7 +2002,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             found = None
             for anchor_id, items in store["anchors"].items():
@@ -1936,11 +2019,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             local_authoring = (self._is_direct_loopback_request() and not self.headers.get("Origin")
                                and not self.headers.get("Sec-Fetch-Site"))
             if not local_authoring and (
-                    any(key in payload for key in ("decision_request", "response_text", "resolved_in_version", "carry_forward", "number"))
+                    any(key in payload for key in ("decision_request", "response_text", "resolved_in_version", "carry_forward", "number",
+                                                   "fixed", "fixed_history", "reopened", "round_pending", "category", "doc", "finding"))
                     or new_status in ("addressed_by_agent", "resolved_in_version")
                     or ("text" in payload and c.get("author") != author)):
                 self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
                 return
+            try:
+                c.update(self._comment_category_fields(payload))
+            except DecisionRequestError as exc:
+                return self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             old_status = c.get("status")
             if new_status == "addressed_by_agent" and old_status == "user_confirmed":
                 self._respond(
@@ -2096,7 +2184,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "ts": _now_iso(),
         }
 
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             found = None
             auto_reopened = False
@@ -2179,7 +2267,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_post_archive(self, comment_id: str, parsed):
         author = self._author(parsed)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             archived = store.setdefault("archived", {})
             moved = None
@@ -2217,7 +2305,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         accepted_at/accepted_by in addition to archived_at/archived_by.
         """
         author = self._author(parsed)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             archived = store.setdefault("archived", {})
             moved = None
@@ -2254,7 +2342,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_post_restore(self, comment_id: str, parsed):
         author = self._author(parsed)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             archived = store.setdefault("archived", {})
             anchors = store.setdefault("anchors", {})
@@ -2316,7 +2404,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         Returns the exact count and IDs delivered or queued for the session.
         """
         author = self._author(parsed)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             flagged_count = 0
             flagged_ids = []
@@ -2350,7 +2438,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_post_push_single(self, comment_id: str, parsed):
         """Flag a single comment with flagged_for_session=true."""
         author = self._author(parsed)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             found = None
             for anchor_id, items in store.get("anchors", {}).items():
@@ -2384,6 +2472,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _queue_feedback_delivery(self, delivery, comments, author, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
+        from .categories import comment_category
         owner = self._read_meta().get("owner") or {}
         fingerprint = {"comments": [{key: value for key, value in c.items()
                                      if key not in ("flagged_at", "flagged_by", "flagged_for_session")}
@@ -2404,6 +2493,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
                 decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
             answers.append({"comment_id": comment["id"], "number": comment.get("number"),
+                "category": comment_category(comment),
                 "prompt": (comment.get("decision_request") or {}).get("prompt", ""),
                 "verdict": decision.get("verdict", "comment"),
                 "text": decision.get("text") or reply.get("text") or comment.get("text", ""),
@@ -2411,7 +2501,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
-                                      "answers": answers, "snapshot": True})
+                                      "answers": answers, "edits": [], "snapshot": True})
 
     def _wake_feedback_owner(self):
         if record := self._registered_record():
@@ -2507,7 +2597,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             found = None
             for anchor_id, items in store.get("anchors", {}).items():
@@ -2525,6 +2615,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             old_status = c.get("status")
 
             prior_decision = c.get("decision")
+            if (isinstance(prior_decision, dict) and prior_decision.get("round_pending")
+                    and prior_decision.get("by") not in self._reviewer_authors(author)):
+                return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
             is_revision = prior_decision is not None
             if is_revision:
                 c.setdefault("decision_history", []).append(prior_decision)
@@ -2611,17 +2704,53 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         The fsynced bus is the durable outbox. A retry mints the same delivery
         ID until the pending flags are saved, preventing repeated input.
         """
-        payload, err = self._read_json_body()
-        if err:
+        from .categories import comment_category
+        from .copy_state import load_copy, submit_revisions
+        from .review_history import _events
+        payload = self._bounded_json_body()
+        if payload is None:
             return
-        payload = payload if isinstance(payload, dict) else {}
+        if set(payload) - {"note", "version"} or not isinstance(payload.get("note", ""), (str, type(None))):
+            return self._respond(400, b'{"error":"invalid round fields"}')
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             now = _now_iso()
+            # A persisted round is the receipt if a process died between the
+            # copy/comment writes. Clear only its exact activities on retry.
+            receipts = list(_events(self.artifact_dir / "rounds.ndjson"))
+            submitted_answers = {(a.get("comment_id"), a.get("by"), a.get("ts"), a.get("verdict")): r.get("ts")
+                                 for r in receipts for a in r.get("answers", []) if a.get("ts")}
+            submitted_edits = {e.get("revision_id") for r in receipts for e in r.get("edits", [])
+                               if e.get("by") in reviewer_authors}
+            if submitted_edits:
+                submit_revisions(self.artifact_dir, submitted_edits, reviewer_authors)
+            recovered = False
+            for items in store.get("anchors", {}).values():
+                for c in items:
+                    d = c.get("decision") or {}
+                    if (d.get("round_pending") and d.get("by") in reviewer_authors
+                            and (c["id"], d.get("by"), d.get("ts"), d.get("verdict")) in submitted_answers):
+                        d.pop("round_pending", None)
+                        c.update(flagged_for_session=True, flagged_at=submitted_answers[(c["id"], d.get("by"), d.get("ts"), d.get("verdict"))], flagged_by=author)
+                        recovered = True
+                    reopen = (c.get("reopened") or [{}])[-1]
+                    if (c.get("round_pending") and reopen.get("by") in reviewer_authors
+                            and (c["id"], reopen.get("by"), reopen.get("ts"), "reopen") in submitted_answers):
+                        c.pop("round_pending", None)
+                        c.update(flagged_for_session=True, flagged_at=submitted_answers[(c["id"], reopen.get("by"), reopen.get("ts"), "reopen")], flagged_by=author)
+                        recovered = True
+            if recovered:
+                self._v2_save(store)
             pending = []
+            reopens = []
+            edits = [{"category": "library", "block_id": block["id"], "revision_id": revision["id"],
+                      "title": block["title"], "delta": revision["delta"], "base_revision": revision.get("base_revision"),
+                      "by": revision["author"]["id"], "ts": revision["created_at"]}
+                     for block in load_copy(self.artifact_dir)["blocks"] for revision in block["revisions"]
+                     if revision.get("round_pending") and revision["author"]["id"] in reviewer_authors]
             cleared_archived = False
             verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
             undecided_ids = []
@@ -2640,13 +2769,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         pending.append(c)
                         if decision.get("verdict") in verdict_counts:
                             verdict_counts[decision["verdict"]] += 1
-            comment_ids = [c["id"] for c in pending]
-            if not comment_ids and not note:
+                    if c.get("round_pending") and c.get("reopened") and c["reopened"][-1].get("by") in reviewer_authors:
+                        reopens.append(c)
+            comment_ids = list(dict.fromkeys(c["id"] for c in pending + reopens))
+            if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)
                 self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
+                                              "edits": [], "edit_count": 0,
                                               "undecided_ids": undecided_ids}).encode(), "application/json")
                 return
             owner = self._read_meta().get("owner") or {}
@@ -2655,16 +2787,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             or version not in {h.get("version") for h in self._read_meta().get("history", [])}):
                 return self._respond(400, b'{"error":"unknown review version"}')
             fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
+                           "edits": edits, "reopens": [(c["id"], c["reopened"][-1]) for c in reopens],
                            "note": note, "owner": owner.get("owner_session"),
                            "version": version}
             delivery = self._compute_delivery()
             delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
             event = {"comment_ids": comment_ids, "verdict_counts": verdict_counts,
-                     "undecided_ids": undecided_ids, "note": note, **self._session_fields()}
+                     "undecided_ids": undecided_ids, "note": note, "edits": edits, "edit_count": len(edits), **self._session_fields()}
             answers = [{"comment_id": c["id"], "number": c.get("number"),
+                        "category": comment_category(c),
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
                         "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
-                        "by": c["decision"].get("by")} for c in pending]
+                        "by": c["decision"].get("by"), "ts": c["decision"].get("ts")} for c in pending]
+            answers += [{"comment_id": c["id"], "number": c.get("number"), "category": "findings",
+                         "prompt": (c.get("finding") or {}).get("title", c.get("text", "")),
+                         "verdict": "reopen", "text": c["reopened"][-1]["text"],
+                         "by": c["reopened"][-1]["by"], "ts": c["reopened"][-1]["ts"]} for c in reopens]
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
             _bus_append(self.bus_dir, self.slug, {
@@ -2674,10 +2812,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             })
             from .review_history import save_round
             save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
-                                          "version": version, "note": note, "answers": answers, "snapshot": True})
+                                          "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True})
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
+            for c in reopens:
+                c.pop("round_pending", None)
+                c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
+            if edits:
+                submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)
             self._v2_save(store)
 
         def wake_owner():
@@ -2702,7 +2845,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         `round_discarded`, never a session_push."""
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
-        with _STORE_LOCK:
+        with _locked_store(self.artifact_dir):
             store = self._v2_load()
             comment_ids = []
             for anchor_id, items in store.get("anchors", {}).items():
@@ -2764,60 +2907,132 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     tab["url"] = links[tab["url"]]
         return data
 
-    def _post_copy_proposal(self, block_id: str):
-        from .copy_state import propose_copy
+    @staticmethod
+    def _comment_category_fields(payload):
+        from .categories import CATEGORIES, validate_plan_id
+        result = {}
+        if "category" in payload:
+            if payload["category"] not in CATEGORIES:
+                raise DecisionRequestError("invalid comment category")
+            result["category"] = payload["category"]
+        if "doc" in payload:
+            doc = payload["doc"]
+            try:
+                if not isinstance(doc, str) or not doc.startswith("plan:"):
+                    raise ValueError
+                validate_plan_id(doc[5:])
+            except ValueError as exc:
+                raise DecisionRequestError("invalid plan document") from exc
+            if result.get("category", "plans") != "plans":
+                raise DecisionRequestError("plan documents require category plans")
+            result.update(doc=doc, category="plans")
+        if "finding" in payload:
+            finding = payload["finding"]
+            if (not isinstance(finding, dict) or set(finding) != {"set", "title"}
+                    or not all(isinstance(v, str) and 0 < len(v) <= 200 for v in finding.values())):
+                raise DecisionRequestError("finding needs set and title")
+            try:
+                validate_plan_id(finding["set"])
+            except ValueError as exc:
+                raise DecisionRequestError("invalid finding set") from exc
+            if result.get("category", "findings") != "findings":
+                raise DecisionRequestError("finding metadata requires category findings")
+            result.update(finding=finding, category="findings")
+        return result
+
+    def _get_categories(self):
+        from .categories import CATEGORIES, category_counts, comment_category, list_plans, load_categories
+        from .copy_state import load_copy
+        from .project_state import linked_pages
+        try:
+            with _locked_store(self.artifact_dir):
+                author = self._author()
+                with _READ_LOCK:
+                    read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
+                counts = category_counts(self.artifact_dir, author, read_state=read)
+                plans = list_plans(self.artifact_dir)
+                category_data = load_categories(self.artifact_dir)
+                library = load_copy(self.artifact_dir)
+                store = self._v2_load()
+                present = {comment_category(c) for items in store["anchors"].values() for c in items}
+                available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
+                             "findings": bool(category_data["findings_sets"]) or "findings" in present,
+                             "plans": bool(plans) or "plans" in present}
+                record = self._registered_record()
+                links = linked_pages(record) if record else []
+            result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
+                      "findings_sets": category_data["findings_sets"], "plans": plans,
+                      "library": {"groups": library.get("groups", [])}, "linked_pages": links}
+            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store")
+        except (ValueError, OSError) as exc:
+            return self._respond(400, json.dumps({"error": str(exc)}).encode())
+
+    def _bounded_json_body(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 256 * 1024:
-                return self._respond(413, b'{"error":"copy proposal body exceeds limit"}')
+        except ValueError:
+            self._respond(400, b'{"error":"invalid content length"}')
+            return None
+        if not 0 < length <= 256 * 1024:
+            self._respond(413, b'{"error":"body exceeds limit"}')
+            return None
+        try:
             payload = json.loads(self.rfile.read(length))
-            if not isinstance(payload, dict) or set(payload) != {"delta", "base_revision", "request_id"}:
-                raise ValueError("delta, base_revision, and request_id required")
+            if not isinstance(payload, dict):
+                raise ValueError("expected object")
+            return payload
+        except (ValueError, UnicodeError) as exc:
+            self._respond(400, json.dumps({"error": str(exc)}).encode())
+            return None
+
+    def _post_finding_reopen(self, comment_id):
+        from .categories import reopen_finding
+        payload = self._bounded_json_body()
+        if payload is None:
+            return
+        if set(payload) != {"text"}:
+            return self._respond(400, b'{"error":"text required"}')
+        author = self._author()
+        if not author or author == "anonymous" or author.startswith("agent:"):
+            return self._respond(403, b'{"error":"reviewer identity required"}')
+        try:
+            comment = reopen_finding(self.artifact_dir, comment_id, by=author, text=payload["text"])
+            _bus_append(self.bus_dir, self.slug, {"event": "finding_reopened", "comment_id": comment_id,
+                                                 "by": author, "deferred": True})
+            return self._respond(200, json.dumps(comment).encode())
+        except PermissionError as exc:
+            return self._respond(403, json.dumps({"error": str(exc)}).encode())
+        except KeyError:
+            return self._respond(404, b'{"error":"finding not found"}')
+        except ValueError as exc:
+            return self._respond(400, json.dumps({"error": str(exc)}).encode())
+
+    def _post_copy_proposal(self, block_id: str, *, restore=False):
+        from .copy_state import add_browser_revision, restore_revision
+        payload = self._bounded_json_body()
+        if payload is None:
+            return
+        try:
+            expected = {"revision_id", "request_id"} if restore else {"delta", "base_revision", "request_id"}
+            if set(payload) != expected:
+                raise ValueError("invalid copy revision fields")
             identity = self._identity()
-            if not identity["email"]:
+            if not identity["email"] or identity["email"].startswith("agent:"):
                 return self._respond(403, b'{"error":"reviewer identity required"}')
-            with _STORE_LOCK:
-                document = propose_copy(self.artifact_dir, block_id, payload["delta"],
-                                        {"id": identity["email"], "name": identity.get("name")},
-                                        base_revision=payload["base_revision"], request_id=payload["request_id"])
-                block = next(block for block in document["blocks"] if block["id"] == block_id)
-                revision_id = "r_" + payload["request_id"]
-                comment_id = hashlib.sha256((block_id + ":" + revision_id).encode()).hexdigest()[:12]
-                store = self._v2_load()
-                if not any(c.get("id") == comment_id for items in store["anchors"].values() for c in items):
-                    comment = self._new_comment_from_payload({"id": comment_id, "anchor_id": "copy:" + block_id,
-                        "text": "Copy change proposed: " + block["title"],
-                        "target": {"copy_block": block_id, "copy_revision": revision_id}}, identity, self._read_meta())
-                    comment.update(flagged_for_session=True, flagged_at=_now_iso(), flagged_by=identity["email"])
-                    store["anchors"].setdefault(comment["anchor_id"], []).append(comment)
-                    self._v2_save(store)
-                delivery = self._compute_delivery()
-                delivery["delivery_id"] = hashlib.sha256(("copy:" + comment_id).encode()).hexdigest()[:24]
-                # A retry completes a missing outbox write without duplicating owner input.
-                bus_file = self.bus_dir / f"{self.slug}.ndjson"
-                submitted = False
-                if bus_file.is_file():
-                    for line in bus_file.read_text().splitlines():
-                        try:
-                            event = json.loads(line)
-                        except ValueError:
-                            continue
-                        if event.get("event") == "session_push" and event.get("delivery_id") == delivery["delivery_id"]:
-                            submitted = True
-                            break
-                if not submitted:
-                    owner = self._read_meta().get("owner") or {}
-                    _bus_append(self.bus_dir, self.slug, {"event": "copy_proposed", "block_id": block_id,
-                        "revision_id": revision_id, "comment_id": comment_id, "author": identity["email"]})
-                    _bus_append(self.bus_dir, self.slug, {"event": "session_push", **delivery, "round": True,
-                        "automatic_delivery": True, "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
-                        "comment_ids": [comment_id], "comment_count": 1, "author": identity["email"]})
-            if not submitted and (record := self._registered_record()):
-                from .delivery import dispatch_record
-                threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
+            author = {"id": identity["email"], "name": identity.get("name")}
+            with _locked_store(self.artifact_dir):
+                if restore:
+                    document = restore_revision(self.artifact_dir, block_id, payload["revision_id"], author,
+                                                request_id=payload["request_id"])
+                else:
+                    document = add_browser_revision(self.artifact_dir, block_id, payload["delta"], author,
+                                                    base_revision=payload["base_revision"], request_id=payload["request_id"])
             self._respond(200, json.dumps(document, ensure_ascii=False).encode(), cache_control="no-store")
-        except (ValueError, TypeError, KeyError, StopIteration) as exc:
-            self._respond(409 if "current copy changed" in str(exc) else 400, json.dumps({"error": str(exc)}).encode())
+        except (ValueError, TypeError) as exc:
+            code = 403 if "different proposal" in str(exc) else 400
+            self._respond(code, json.dumps({"error": str(exc)}).encode())
+        except KeyError:
+            self._respond(404, b'{"error":"copy block or revision not found"}')
         except OSError:
             self._respond(500, b'{"error":"copy proposal could not be saved; retry with the same request id"}')
 
