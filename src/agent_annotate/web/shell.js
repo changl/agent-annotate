@@ -870,10 +870,20 @@ function sentRounds() {
     if (withReceipt.length) {
       const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
-      return { ts, result: 'Sent (' + items.length + ')', items, send_id: withReceipt[0].send_id };
+      return { ts, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
     }
-    return legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+    const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+    return Object.assign(legacy, { result: roundResult(g, legacy.n) });
   }).filter(r => r.items.length);
+}
+// UI-13: the delivery the server recorded on the round at Send, so a reload
+// keeps the result line the Send showed. Rounds recorded before that say
+// "Sent (N)".
+function roundResult(records, n) {
+  const how = records.map(r => r.delivery);
+  if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
+  if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
+  return 'Sent (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -887,7 +897,7 @@ function legacyRound(r) {
     (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
     if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
     const n = (r.answers || []).length + (r.edits || []).length;
-    return { ts: r.ts, result: 'Sent (' + n + ')', items };
+    return { ts: r.ts, result: 'Sent (' + n + ')', items, n };
   }
 }
 async function loadDelivery() {

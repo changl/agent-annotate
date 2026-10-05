@@ -2549,7 +2549,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
-                                      "answers": answers, "edits": [], "snapshot": True, **(send or {})})
+                                      "answers": answers, "edits": [], "snapshot": True,
+                                      "delivery": delivery["delivery"], **(send or {})})
 
     def _wake_feedback_owner(self):
         if record := self._registered_record():
@@ -2888,7 +2889,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             from .review_history import save_round
             save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
                                           "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True,
-                                          **send})
+                                          "delivery": delivery["delivery"], **send})
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
