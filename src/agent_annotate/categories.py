@@ -216,6 +216,9 @@ def add_proof_file(page_dir: Path | str, src_path: Path | str) -> dict:
         info = os.fstat(file_fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PROOF_BYTES:
             raise ValueError("proof must be a regular file of at most 10 MB")
+        if info.st_nlink > 1:
+            # A hard link can name a file outside the caller's boundary.
+            raise ValueError("proof file has another hard link; copy it to a new file first")
         with os.fdopen(os.dup(file_fd), "rb") as stream:
             body = stream.read(MAX_PROOF_BYTES + 1)
         if len(body) > MAX_PROOF_BYTES:

@@ -65,6 +65,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -202,6 +203,12 @@ def _offset_file(project: str, slug: str, session_id: str | None = None) -> Path
     if sid == "unknown":
         return BUS_OFFSET_ROOT / project / f"{slug}.offset"
     return BUS_OFFSET_ROOT / _safe_component(sid) / project / f"{slug}.offset"
+
+
+def _category_offset_file(offset_file: Path, category: str) -> Path:
+    """A category's own cursor: "<slug>.offset.<category>". Every slug cursor
+    ends in ".offset", so a dotted slug ("main.findings") cannot collide."""
+    return offset_file.with_name(f"{offset_file.name}.{category}")
 
 
 def _legacy_offset(project: str, slug: str) -> int:
@@ -2370,6 +2377,16 @@ def _category_events(events: list[dict], store: dict, category: str) -> list[dic
     return result
 
 
+def _category_counts(record: dict) -> dict | None:
+    """The page's per-tab counts, as the server shows them (without a
+    reviewer's unread), so the CLI and the UI agree."""
+    from .categories import category_counts
+    try:
+        return category_counts(record["slug_dir"]) if record.get("slug_dir") else None
+    except (OSError, ValueError, LookupError, TypeError):
+        return None
+
+
 def cmd_inbox(args) -> int:
     try:
         category = _category(getattr(args, "category", None))
@@ -2386,7 +2403,7 @@ def cmd_inbox(args) -> int:
     bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
     offset_file = _offset_file(project, slug, session_id)
     if category:
-        offset_file = offset_file.with_name(f"{offset_file.stem}.{category}{offset_file.suffix}")
+        offset_file = _category_offset_file(offset_file, category)
     offset_file.parent.mkdir(parents=True, exist_ok=True)
 
     offset = 0
@@ -2452,6 +2469,7 @@ def cmd_inbox(args) -> int:
             "decisions": counts,
             "card_count": len(cards),
             "undecided": undecided,
+            "category_counts": _category_counts(record),
             **({"category": category} if category else {}),
         }, ensure_ascii=False, indent=2))
     else:
@@ -2630,10 +2648,12 @@ def cmd_ask(args) -> int:
             item["version"] = version
         try:
             category = _category(c.get("category", getattr(args, "category", None)))
-            if category:
-                item["category"] = category
             finding = c.get("finding")
             set_id = c.get("set", getattr(args, "set", None))
+            if category is None and set_id is not None:
+                category = "findings"  # a findings set names a Findings card
+            if category:
+                item["category"] = category
             if finding is not None:
                 if not isinstance(finding, dict):
                     raise ValueError("finding must be an object")
@@ -2649,7 +2669,8 @@ def cmd_ask(args) -> int:
                     raise ValueError("--set/card set requires category findings")
                 if not isinstance(set_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", set_id):
                     raise ValueError("finding set must be a safe lowercase ID")
-                title = c.get("title") or item["text"]
+                # The finding's short name: its own title, else its text.
+                title = c.get("title") or (item["text"] if len(item["text"]) <= 200 else _clip(item["text"], 200))
                 if not isinstance(title, str) or len(title) > 200:
                     raise ValueError("finding title must be text of at most 200 characters")
                 item["finding"] = {"set": set_id, "title": title}
@@ -2698,6 +2719,17 @@ def cmd_ask(args) -> int:
                 print(f"WARN: {item['anchor_id']}: {warning}", file=sys.stderr)
         items.append(item)
 
+    finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
+    if finding_sets:
+        # Check categories.json before posting, so a broken file never
+        # leaves the cards posted and the command failed.
+        from .categories import load_categories
+        try:
+            load_categories(record["slug_dir"])
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: categories.json could not be read; no cards were posted: {exc}", file=sys.stderr)
+            return 2
+
     author = _resolve_author(getattr(args, "author", None))
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
@@ -2724,7 +2756,6 @@ def cmd_ask(args) -> int:
         created = int(payload.get("created") or 0)
         updated = int(payload.get("updated") or 0)
 
-    finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
     if finding_sets:
         from .categories import load_categories, save_findings_sets
         try:
@@ -3647,6 +3678,15 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
         else:
             check_proof_type(value)
             source = Path(value).expanduser().absolute()
+            # The shell's $PWD may reach the cwd through a symlink (/tmp on
+            # macOS); an absolute path spelled that way names a file below it.
+            logical = os.environ.get("PWD")
+            if logical and Path(logical).is_absolute() and Path(logical) != Path.cwd():
+                try:
+                    if os.path.samefile(logical, Path.cwd()):
+                        source = Path.cwd() / source.relative_to(logical)
+                except (OSError, ValueError):
+                    pass
             try:
                 source.resolve(strict=True).relative_to(Path.cwd().resolve())
                 source.relative_to(Path.cwd().absolute())
@@ -3683,9 +3723,10 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
             if "attachment" in item:
                 (directory / "attachments" / item["attachment"]).unlink(missing_ok=True)
         raise
+    # session_id keeps this session's own step out of its own inbox.
     _bus_emit(record.get("bus_file"), {"event": "finding_fixed", "slug": record.get("slug"),
               "comment_id": comment["id"], "category": "findings", "author": author,
-              "note": note, "fixed": comment["fixed"]})
+              "note": note, "fixed": comment["fixed"], "session_id": _session_id()})
     return comment
 
 
@@ -3720,7 +3761,11 @@ def cmd_plan(args) -> int:
         source = Path(args.from_file).expanduser()
         if source.suffix.lower() not in (".md", ".html"):
             raise ValueError("plan source must be .md or .html")
-        with source.open("rb") as stream:
+        # O_NONBLOCK: a FIFO or device must be refused, not waited on.
+        descriptor = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("plan source must be a regular file")
             body = stream.read(MAX_PLAN_BYTES + 1)
         if len(body) > MAX_PLAN_BYTES:
             raise ValueError("plan source exceeds 4 MiB")
@@ -3731,7 +3776,8 @@ def cmd_plan(args) -> int:
         result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
                                        title=title, label=args.label)
         _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
-                  "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"]})
+                  "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"],
+                  "session_id": _session_id()})
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -3758,7 +3804,8 @@ def cmd_copy(args) -> int:
             document = save_copy(directory, json.loads(Path(args.from_file).read_text()))
             if before != document:
                 _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug, "category": "library",
-                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"])})
+                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"]),
+                          "session_id": _session_id()})
             if getattr(args, "json", False):
                 print(json.dumps(document, ensure_ascii=False, indent=2))
             else:
@@ -4826,6 +4873,9 @@ def main():
     sp_project.add_argument("--from", dest="from_file", default=None)
     sp_project.set_defaults(func=cmd_project)
     sp_copy = sub.add_parser("copy", aliases=["library"], help="read/import formatted copy blocks and immutable revision history")
+    # `library --help` names the verb that was typed.
+    if len(sys.argv) > 1 and sys.argv[1] == "library":
+        sp_copy.prog = sp_copy.prog.rsplit(" ", 1)[0] + " library"
     sp_copy.add_argument("slug")
     sp_copy.add_argument("--project", default=None)
     sp_copy.add_argument("--from", dest="from_file", default=None)

@@ -665,6 +665,154 @@ def test_be7_review_unread_is_the_rails_scope(server):
     assert category_counts(directory, "chang@example.com", read_state={})["review"]["unread"] == 2
 
 
+# ── BE-10: the docs describe how delivery is acknowledged ──────────────────
+
+def test_be10_docs_say_the_unfiltered_unread_read_acknowledges(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+    root = Path(cli.__file__).parents[2]
+    for doc in (root / "src/agent_annotate/skills/claude/references/cli-reference.md",
+                root / "plugins/codex/agent-annotate/skills/annotate/references/cli-reference.md"):
+        row = next(line for line in doc.read_text().splitlines() if line.startswith("| Read submitted feedback"))
+        assert "`inbox PROJECT/SLUG --unread` once, unfiltered" in row and "never acknowledges" in row
+    # ...and the code does what they say.
+    page = _finding_page(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(delivery, "acknowledge", lambda *a: calls.append(a) or [])
+    page.bus.write_text(json.dumps({"event": "round_submitted", "automatic_delivery": True, "delivery_id": "d1",
+                                    "answers": [{"comment_id": "f" * 12, "category": "findings"}]}) + "\n")
+    assert cli.cmd_inbox(_args(category="findings", unread=True, all_events=False)) == 0
+    assert calls == []
+    assert cli.cmd_inbox(_args(category=None, unread=True, all_events=False)) == 0
+    assert calls and calls[0][-1] == ["d1"]
+
+
+# ── BE-18: smaller CLI and robustness items ─────────────────────────────────
+
+def _api_ok(monkeypatch, sent):
+    def api(record, method, path, body, author, **kwargs):
+        sent.append(body)
+        return 200, {"ids": ["a"] * len(body.get("items", [])), "created": len(body.get("items", [])), "updated": 0}
+    monkeypatch.setattr(cli, "_api", api)
+
+
+def test_be18_ask_set_long_card_text_gets_a_clipped_title(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    sent = []
+    _api_ok(monkeypatch, sent)
+    long_q = "Should we fix the contrast of " + "the secondary navigation labels " * 8 + "?"
+    (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q7", "text": long_q,
+                                                        "decision_request": {"prompt": long_q, "options": ["fix", "keep"]}}]))
+    assert cli.cmd_ask(_args(from_file="cards.json", category="findings", set="design", version="v1")) == 0
+    title = sent[0]["items"][0]["finding"]["title"]
+    assert len(title) <= 200 and long_q.startswith(title.rstrip("…"))
+
+
+def test_be18_card_set_alone_files_into_findings(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    sent = []
+    _api_ok(monkeypatch, sent)
+    (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q8", "text": "Fix?", "set": "design",
+                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"]}}]))
+    assert cli.cmd_ask(_args(from_file="cards.json", category=None, set=None, version="v1")) == 0
+    assert sent[0]["items"][0]["category"] == "findings"
+
+
+def test_be18_ask_refuses_before_posting_when_categories_json_is_broken(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    sent = []
+    _api_ok(monkeypatch, sent)
+    (page.directory / "categories.json").write_text("{not json")
+    (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q9", "text": "Fix?",
+                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"]}}]))
+    assert cli.cmd_ask(_args(from_file="cards.json", category="findings", set="design", version="v1")) == 2
+    assert sent == [] and "categories.json" in capsys.readouterr().err
+
+
+def test_be18_hard_linked_proof_is_refused(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("TOP SECRET outside cwd")
+    os.link(outside, page.work / "innocent.png")
+    assert cli.cmd_finding(_args(fixed="1", proof=["innocent.png"])) == 2
+    assert "hard link" in capsys.readouterr().err
+    assert not (page.directory / "attachments").exists() or not list((page.directory / "attachments").iterdir())
+
+
+def test_be18_absolute_proof_through_a_symlinked_cwd(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    link = tmp_path / "link"
+    link.symlink_to(page.work)
+    monkeypatch.chdir(link)
+    monkeypatch.setenv("PWD", str(link))
+    (page.work / "proof.txt").write_text("evidence")
+    assert cli.cmd_finding(_args(fixed="1", proof=[str(link / "proof.txt")])) == 0, capsys.readouterr().err
+    # A symlink below the cwd is still refused.
+    (page.work / "real").mkdir()
+    (page.work / "real" / "p.txt").write_text("ok")
+    (page.work / "alias").symlink_to(page.work / "real")
+    assert cli.cmd_finding(_args(fixed="1", proof=["alias/p.txt"])) == 2
+
+
+@pytest.mark.parametrize("value", ["javascript:alert(1)", "data:text/html,<script>1</script>", "ftp://example.test/x",
+                                   " https://example.test/leading-space"])
+def test_be18_non_http_proof_message(tmp_path, monkeypatch, capsys, value):
+    _finding_page(tmp_path, monkeypatch)
+    assert cli.cmd_finding(_args(fixed="1", proof=[value])) == 2
+    assert "must start with http:// or https://" in capsys.readouterr().err
+
+
+def test_be18_plan_from_a_fifo_is_refused_without_blocking(tmp_path, monkeypatch, capsys):
+    import signal
+    page = _finding_page(tmp_path, monkeypatch)
+    os.mkfifo(page.work / "plan.md")
+    signal.alarm(5)
+    try:
+        assert cli.cmd_plan(_args(plan_id="fifo", from_file="plan.md", title=None, label=None)) == 2
+    finally:
+        signal.alarm(0)
+    assert "regular file" in capsys.readouterr().err
+
+
+def test_be18_own_fix_does_not_echo_into_own_inbox(tmp_path, monkeypatch, capsys):
+    _finding_page(tmp_path, monkeypatch)
+    assert cli.cmd_finding(_args(fixed="1", proof=["https://example.test/p"])) == 0
+    capsys.readouterr()
+    assert cli.cmd_inbox(_args(category=None, unread=True, all_events=False)) == 0
+    assert json.loads(capsys.readouterr().out)["events"] == []
+
+
+def test_be18_exception_reason_is_bounded_and_one_line(tmp_path, monkeypatch, capsys):
+    estate = _make_estate(tmp_path, monkeypatch)
+    assert cli.cmd_publish(_publish_args(estate.directory, "canonical")) == 0
+    other = _second(estate)
+    assert cli.cmd_publish(_publish_args(other, "canonical", exception="x" * 201)) == 2
+    assert "200" in capsys.readouterr().err
+    assert cli.cmd_publish(_publish_args(other, "canonical", exception="line1\nline2\x07\x1b[31m red")) == 0
+    assert _rec("canonical", "worksheet")["exception"]["reason"] == "line1 line2[31m red"
+
+
+def test_be18_category_cursor_does_not_collide_with_a_dotted_slug(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "BUS_OFFSET_ROOT", tmp_path)
+    assert cli._category_offset_file(cli._offset_file("proj", "main", "sess"), "findings") \
+        != cli._offset_file("proj", "main.findings", "sess")
+
+
+def test_be18_inbox_json_and_mcp_carry_the_category_counts(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    assert cli.cmd_inbox(_args(category=None, unread=False, all_events=False)) == 0
+    assert json.loads(capsys.readouterr().out)["category_counts"]["findings"]["needs_you"] == 1
+    pytest.importorskip("mcp")
+    from agent_annotate import mcp_server
+    fn = mcp_server.build_server()._tool_manager._tools["read_inbox"].fn
+    assert fn("project/main")["category_counts"] == category_counts(page.directory)
+
+
+def test_be18_library_help_names_library():
+    result = subprocess.run([os.sys.executable, "-m", "agent_annotate.cli", "library", "--help"],
+                            capture_output=True, text=True, timeout=30)
+    assert result.stdout.startswith("usage: annotate library") or "annotate library" in result.stdout.splitlines()[0]
+
+
 # ── helpers for exception tests (from the reviewer's probe) ────────────────
 
 def _publish_args(directory, project=None, **extra):

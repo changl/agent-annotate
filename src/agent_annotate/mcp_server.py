@@ -135,6 +135,7 @@ def build_server():
             cards = [card for card in cards if card["category"] == category]
         return {"slug": slug, "events": events, "event_count": len(events),
                 "card_count": len(cards), "decisions": cli._verdict_counts(cards),
+                "category_counts": cli._category_counts(record),
                 **({"category": category} if category else {})}
 
     @server.tool()
