@@ -8,11 +8,13 @@ revived_at) and what it must keep (port and owner).
 """
 
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from agent_annotate import cli
+from agent_annotate.updates import runtime_manifest
 
 
 @pytest.fixture
@@ -66,6 +68,9 @@ def test_a_dead_page_restarts_on_its_port_with_its_owner(estate, capsys):
     assert rec["owner_session"] == "owner-session-1"
     assert rec["owner_label"] == "other:owner"
     assert rec["revived_at"]
+    # The version guard's local check reads the runtime from the record.
+    assert rec["runtime_python"] == sys.executable
+    assert rec["runtime_manifest"]["build_id"] == runtime_manifest()["build_id"]
     assert "revived" in capsys.readouterr().out
 
 
@@ -97,12 +102,16 @@ def test_a_local_page_on_a_busy_port_moves(estate, monkeypatch):
 
 
 def test_a_page_served_by_an_unrecorded_pid_is_adopted(estate, monkeypatch):
+    state = cli._load_state_for_project("reviews")
+    state["slugs"]["demo"]["runtime_manifest"] = {"package_version": "2.21.0", "build_id": "stale"}
+    cli._save_state_for_project("reviews", state)
     live = {str(estate.slug_dir.resolve()): [{"pid": 5555, "port": 8899}]}
     monkeypatch.setattr(cli, "_running_servers", lambda: live)
     monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid == 5555)
     assert cli.cmd_revive(_args()) == 0
     assert estate.started == []
     assert _record()["pid"] == 5555
+    assert "runtime_manifest" not in _record()  # an adopted server's runtime is unknown
 
 
 @pytest.mark.parametrize('fresh_pid', [999999, 6666, None])

@@ -11,6 +11,7 @@
 - Send reports partial failures, keeps failed items pending, and records each round's delivery result.
 - `annotate consolidate PROJECT/SLUG --from PROJECT/PAGE:TAB …` merges a project's pages into one new page (one Review document; plans, findings sets and Library items for the rest), keeping every comment, verdict, reply, decision history, number, read state and submitted round. `--dry-run` prints the counts per page and per tab. The old pages are kept, refuse writes, redirect to their tab and show read-only with `?archived=1`.
 - A Review version is gated only by Review items, and re-asking a Review card never rewrites a plan card on the same anchor.
+- `annotate doctor --versions [--json]` exits 1 when `annotate` on PATH, a skill directory, the Codex plugin or a running page server differs from the installed release, and prints the fix commands without running them. Page servers log the mismatch at start and report it in `/api/capabilities`; the prompt hook and `workspace` show one line per session. Skill install stamps now record the build id.
 
 ## 2.23.0
 

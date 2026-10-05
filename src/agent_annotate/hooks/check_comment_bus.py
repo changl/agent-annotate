@@ -5,6 +5,8 @@ Deferred decision clicks stay silent until Finish review or Send now. Each
 owner gets one concise notice per page; reviewer prose remains in the inbox.
 Hook cursors are per session and never consume the independent inbox cursor.
 Bare-script and module invocation use the same roots. A prompt is never blocked.
+A session's first prompt also gets one line when installed pieces differ from
+the installed release (version_guard; module invocation only).
 ANNOTATE_HOOK_DRY_RUN=1 writes nothing; ANNOTATE_HOOK_ALL=1 is diagnostic only.
 """
 
@@ -108,6 +110,19 @@ def _invocation() -> str:
         except OSError:
             pass
     return "%s -m agent_annotate.cli" % (sys.executable or "python3")
+
+
+def _version_notice(session_id: str):
+    """One line, once per session, when the launcher, a skill, the Codex plugin
+    or a live page differs from the installed release. Local files only; the
+    bare-script path (no package) stays silent."""
+    if _paths is None:
+        return None
+    try:
+        from agent_annotate.version_guard import session_notice
+        return session_notice(session_id, dry_run=DRY_RUN)
+    except Exception:
+        return None
 
 
 def _safe_component(value: str) -> str:
@@ -460,6 +475,10 @@ def main():
 
     payload = _read_stdin_payload()
     session_id = _session_id(payload)
+
+    notice = _version_notice(session_id)
+    if notice:
+        sys.stdout.write(notice + "\n")
 
     if DRY_RUN:
         try:

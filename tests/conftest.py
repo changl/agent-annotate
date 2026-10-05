@@ -23,9 +23,13 @@ _SANDBOX_ENV = {
     "ANNOTATE_SHIM_PATH": _SANDBOX / "bin" / "annotate",
     "ANNOTATE_BUS_ARCHIVE_ROOT": _SANDBOX / "bus-archive",
     "ANNOTATE_TRANSCRIPT_GLOB": _SANDBOX / "no-transcripts" / "*.jsonl",
+    "ANNOTATE_SKILL_DIRS": _SANDBOX / "skills" / "annotate",
+    "ANNOTATE_CODEX_PLUGIN_CACHE": _SANDBOX / "codex" / "plugins" / "cache",
 }
 for _name, _path in _SANDBOX_ENV.items():
     os.environ[_name] = str(_path)
+# `annotate` on PATH is machine estate; the version-guard tests turn this back on.
+os.environ["ANNOTATE_VERSION_GUARD"] = "0"
 (_SANDBOX / "config").mkdir(parents=True)
 (_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\n')
 os.environ.pop("ANNOTATE_STATE_ROOT", None)

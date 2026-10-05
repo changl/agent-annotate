@@ -22,7 +22,9 @@ Subcommands:
     close <slug> [--older-than 30d]       archive decision cards nobody answered
     retire <slug>|--dead                  move dead registry rows to state/retired/
     revive [--install|--uninstall]        restart dead pages on their port, owner kept
-    doctor                                validate the installation
+    doctor [--versions [--json]]          validate the installation; --versions exits 1
+                                          when launcher/skills/plugin/pages differ from
+                                          the installed release
     migrate <legacy.html>                 one-shot v1→v2 migration
     inbox <slug> [--unread] [--json]      read this session's unseen bus events
     cards <slug>                          list decision cards and their verdicts
@@ -3453,6 +3455,9 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
                 if not dry_run:
                     record["pid"] = procs[0]["pid"]
                     record["port"] = procs[0]["port"] or record.get("port")
+                    # Its runtime is unknown; doctor --versions asks the server.
+                    record.pop("runtime_python", None)
+                    record.pop("runtime_manifest", None)
                     _save_state_for_project(project, state)
                 return "adopted", f"pid {procs[0]['pid']}"
             moved = _rerouted_if_renamed(project, slug, record, live_host, dry_run)
@@ -3500,6 +3505,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         pid = _start_server(slug_dir, port, bus_dir, pbp)
         if not _wait_listening(port, pid):
             return "failed", f"server exited; see {LOG_DIR / (slug_dir.name + '.log')}"
+        from .updates import runtime_manifest
         record.update({
             "pid": pid,
             "port": port,
@@ -3510,6 +3516,8 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             "transport_details": details,
             "transport_error": error,
             "revived_at": _now_iso(),
+            "runtime_python": sys.executable,
+            "runtime_manifest": runtime_manifest(),
         })
         _save_state_for_project(project, state)
     _bus_emit(record.get("bus_file") or str(bus_dir / f"{slug}.ndjson"),
@@ -4821,8 +4829,30 @@ def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev:
     print("ANNOTATE_DELIVERED " + json.dumps(result.__dict__, separators=(",", ":")), flush=True)
 
 
+def cmd_check_versions(args) -> int:
+    """Compare the launcher, skills, Codex plugin and live pages with the
+    installed release. Exit 1 on any difference; read-only."""
+    from .version_guard import check, format_lines
+    result = check()
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        for line in format_lines(result):
+            print(line)
+        if result["ok"]:
+            print(result["summary"])
+    if not result["ok"]:
+        print(f"ERROR: {result['summary']}", file=sys.stderr)
+        for fix in result["fixes"]:
+            print(f"  fix: {fix}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Validate the installation without changing provider config."""
+    if getattr(args, "versions", False):
+        return cmd_check_versions(args)
     ensure_runtime_dirs()
     found = shutil.which("annotate")
     ours = False
@@ -4859,6 +4889,10 @@ def cmd_doctor(args) -> int:
     manifest = runtime_manifest()
     checks.append(("build", True, manifest["build_id"]))
     checks.append(("stable_updates", True, "enabled" if read_enrollment()["enabled"] else "disabled; annotate update --enable"))
+    from .version_guard import check as check_versions
+    versions = check_versions(local_only=True)
+    checks.append(("versions", versions["ok"],
+                   versions["summary"] + ("" if versions["ok"] else f"; details and fixes: {_inv()} doctor --versions")))
     failed = False
     for name, ok, detail in checks:
         hard = name in ("state_dir", "bus_root", "web_assets", "hook_script")
@@ -5012,6 +5046,10 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp_doc = sub.add_parser("doctor", help="validate the installation and local integrations")
+    sp_doc.add_argument("--versions", action="store_true",
+                        help="fail (exit 1) when the launcher, a skill, the Codex plugin or a live page "
+                             "differs from the installed release; prints the fix commands, changes nothing")
+    sp_doc.add_argument("--json", action="store_true", help="with --versions: machine-readable result")
     from .workspace import cmd_workspace
     sp_workspace = sub.add_parser("workspace", help="find/select the one project page across sessions")
     sp_workspace.add_argument("--project", default=None)
