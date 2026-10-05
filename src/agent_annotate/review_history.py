@@ -87,13 +87,17 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
         if not start:
             continue
         for comment in records.values():
-            if item.get("source_page") and (comment.get("target") or {}).get("source_page") != item["source_page"]:
+            target = comment.get("target") if isinstance(comment.get("target"), dict) else {}
+            if item.get("source_page") and target.get("source_page") != item["source_page"]:
                 continue
-            for decision in list(comment.get("decision_history") or []) + [comment.get("decision") or {}]:
+            history = comment.get("decision_history") if isinstance(comment.get("decision_history"), list) else []
+            for decision in history + [comment.get("decision")]:
+                if not isinstance(decision, dict):
+                    continue  # older or hand-edited data
                 if decision.get("verdict") and not decision.get("round_pending") and start <= _time(decision.get("ts")) < end:
                     item["answers"].append({"comment_id": comment["id"],
                         "category": comment_category(comment),
-                        "number": (comment.get("target") or {}).get("source_number", comment.get("number")),
+                        "number": target.get("source_number", comment.get("number")),
                         "prompt": "", "verdict": decision["verdict"], "text": decision.get("text", ""),
                         "by": decision.get("by"), "ts": decision.get("ts")})
     rounds = {event["id"]: event for event in _events(directory / "rounds.ndjson") if event.get("id")}

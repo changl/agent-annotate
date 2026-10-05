@@ -37,15 +37,21 @@ def validate_plan_id(plan_id: str) -> str:
 
 
 def safe_path(page_dir: Path | str, relative: str) -> Path:
-    """Refuse traversal and every symlink component, including in the page root."""
+    """Refuse traversal and every symlink component below the page dir.
+
+    The page dir's own location may go through symlinks (/tmp and /var on
+    macOS, an unresolved registry path); what is stored under it may not.
+    """
     root = Path(page_dir).absolute()
     parts = Path(relative).parts
     if not parts or Path(relative).is_absolute() or any(p in (".", "..") for p in parts) or "\\" in relative:
         raise ValueError("unsafe storage path")
     target = root.joinpath(*parts)
-    for path in (target, *target.parents):
+    path = target
+    while path != root:
         if path.is_symlink():
             raise ValueError("symlink storage paths are refused")
+        path = path.parent
     return target
 
 
@@ -280,8 +286,9 @@ def list_plans(page_dir: Path | str) -> list[dict]:
     directory = safe_path(page_dir, "plans")
     if not directory.exists():
         return []
+    # A folder without meta.json (notes, a half-copied plan) is not a plan.
     return [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
-            if _PLAN_ID.fullmatch(p.name) and p.is_dir()]
+            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()]
 
 
 def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, title: str | None = None,
@@ -343,12 +350,23 @@ def validate_send(payload: dict) -> dict:
     return result
 
 
+def _mapping(value) -> dict:
+    """Older or hand-edited comments may hold a string or null where a
+    newer one holds an object; read those as empty."""
+    return value if isinstance(value, dict) else {}
+
+
+def _replies(comment: dict) -> list[dict]:
+    replies = comment.get("replies")
+    return [reply for reply in replies if isinstance(reply, dict)] if isinstance(replies, list) else []
+
+
 def comment_section(comment: dict) -> str | None:
     """Accepted shell sectionOf; Findings keeps agreed work waiting until fixed."""
     status = comment.get("status", "open")
     if status == "archived":
         return None
-    decision = comment.get("decision") or {}
+    decision = _mapping(comment.get("decision"))
     if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
         return "ready"
     if comment_category(comment) == "findings":
@@ -361,8 +379,8 @@ def comment_section(comment: dict) -> str | None:
         choice = decision.get("option_id") or decision.get("option")
         if choice is None and decision.get("verdict") == "select":
             choice = decision.get("text")
-        options = (comment.get("decision_request") or {}).get("options", [])
-        for option in options:
+        options = _mapping(comment.get("decision_request")).get("options") or []
+        for option in options if isinstance(options, list) else []:
             if isinstance(option, dict) and option.get("label") == choice:
                 choice = option.get("id")
         return "done" if choice in {"keep", "no"} or decision.get("verdict") == "reject" else "waiting"
@@ -370,7 +388,7 @@ def comment_section(comment: dict) -> str | None:
         return "needs_you"
     if status != "open":
         return "done"
-    replies = comment.get("replies") or []
+    replies = _replies(comment)
     if replies and str(replies[-1].get("author", "")).startswith("agent:"):
         return "needs_you"
     from .sync_server import _comment_needs_push
@@ -379,8 +397,10 @@ def comment_section(comment: dict) -> str | None:
 
 def comment_sig(comment: dict) -> str:
     """Mirror shell.js's unsigned djb2 hash over JavaScript UTF-16 code units."""
-    value = "\x01".join([comment.get("status") or "", comment.get("response_text") or "",
-                         str(len(comment.get("replies") or [])), comment.get("edited_at") or ""])
+    replies = comment.get("replies")
+    value = "\x01".join([_js_text(comment.get("status")), _js_text(comment.get("response_text")),
+                         str(len(replies) if isinstance(replies, (list, str)) else 0),
+                         _js_text(comment.get("edited_at"))])
     hash_value = 5381
     encoded = value.encode("utf-16-le", errors="surrogatepass")
     for index in range(0, len(encoded), 2):
@@ -390,6 +410,19 @@ def comment_sig(comment: dict) -> str:
         result = digits[hash_value % 36] + result
         hash_value //= 36
     return result or "0"
+
+
+def _js_text(value) -> str:
+    """JavaScript's `value || ''` inside a string join, for the sig."""
+    if not value:
+        return ""
+    if isinstance(value, bool):
+        return "true"
+    if isinstance(value, dict):
+        return "[object Object]"
+    if isinstance(value, list):
+        return ",".join(_js_text(item) for item in value)
+    return str(value)
 
 
 def _agent(author) -> bool:
@@ -408,14 +441,14 @@ def comment_can_be_unread(comment: dict) -> bool:
         return True
     if category == "findings" and (comment.get("finding") or comment.get("decision_request")):
         return bool(comment.get("fixed"))
-    replies = comment.get("replies") or []
+    replies = _replies(comment)
     return bool(replies) and _agent(replies[-1].get("author"))
 
 
 def _follows_viewer(comment: dict) -> bool:
     """shell.js followsViewer: an unanswered or round-pending card is shown on
     every version of its document."""
-    decision = comment.get("decision") or {}
+    decision = _mapping(comment.get("decision"))
     if decision.get("round_pending"):
         return True
     return bool(comment.get("decision_request") and not decision.get("verdict")
@@ -451,7 +484,7 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
                 continue
             category = comment_category(comment)
             # Copy proposals are counted as their block, never again as a comment.
-            if category == "library" and (comment.get("target") or {}).get("copy_revision"):
+            if category == "library" and _mapping(comment.get("target")).get("copy_revision"):
                 continue
             counts[category][section] += 1
             if (author and comment_can_be_unread(comment)
@@ -464,7 +497,11 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
                     if current and comment.get("version") != current and not _follows_viewer(comment):
                         continue
                 counts[category]["unread"] += 1
-    for block in load_copy(page_dir)["blocks"]:
+    try:
+        blocks = load_copy(page_dir)["blocks"]
+    except ValueError:
+        blocks = []  # an invalid copy.json is reported by /api/categories
+    for block in blocks:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
         latest = block["revisions"][-1]
         section = ("ready" if pending else "waiting" if latest["status"] == "proposed" and latest.get("round_pending") is False

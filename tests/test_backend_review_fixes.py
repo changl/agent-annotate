@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from test_categories_api import finding
-from test_decision_api import _call, _events, _store
+from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
 from agent_annotate import cli, delivery, pagegen, project_state, review_access, transports, workspace
@@ -375,6 +375,151 @@ def test_be5_parent_slug_of_another_project_is_not_matched(tmp_path, monkeypatch
     state["slugs"]["worksheet"]["exception"]["parent_slug"] = "elsewhere/workspace"
     cli._save_state_for_project("canonical", state)
     assert project_state.linked_pages(_rec("canonical", "workspace")) == []
+
+
+# ── BE-6: a malformed copy.json holds back only Library edits ───────────────
+
+def test_be6_invalid_copy_json_does_not_block_a_review_send(server):
+    httpd, directory, bus = server
+    _, card = _call(httpd, "POST", "/api/comments", _card("d:review"))
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "accept", "defer_push": True},
+          author="chang@example.com")
+    (directory / "copy.json").write_text('{"schema_version": 1, "blocks": [{"id": "hero"}]}')
+    status, result = _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")
+    assert status == 200 and result["delivery"] != "noop" and result["comment_ids"] == [card["id"]]
+    assert result["edit_count"] == 0 and "copy.json is invalid" in result["library_skipped"]
+    assert len(_events(bus, "round_submitted")) == 1
+    assert "round_pending" not in _store(directory)["anchors"]["d:review"][0]["decision"]
+    status, categories = _call(httpd, "GET", "/api/categories", author="chang@example.com")
+    assert status == 200 and "copy.json is invalid" in categories["library"]["error"]
+    assert next(c for c in categories["categories"] if c["id"] == "review")["counts"]["done"] == 1
+
+
+def test_be6_invalid_copy_json_with_nothing_else_is_a_noop_that_says_why(server):
+    httpd, directory, _ = server
+    (directory / "copy.json").write_text("{not json")
+    status, result = _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")
+    assert status == 200 and result["delivery"] == "noop" and "copy.json is invalid" in result["library_skipped"]
+
+
+# ── BE-11: unexpected shapes get an answer, never a dropped connection ─────
+
+ODD_SHAPES = {
+    "decision-null-replies-null": {"status": "open", "decision": None, "replies": None},
+    "response-text-number": {"status": "open", "response_text": 5, "replies": []},
+    "target-string": {"anchor_id": "copy:yyy", "status": "open", "target": "legacy", "replies": []},
+    "decision-string": {"status": "open", "decision": "accept", "replies": []},
+    "reply-string": {"status": "open", "replies": ["hi"]},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ODD_SHAPES))
+def test_be11_odd_comment_shapes_answer_every_route(server, shape):
+    httpd, directory, _ = server
+    comment = {"id": shape, "anchor_id": "s:a", "text": "t", "author": "chang@example.com",
+               "created_at": "2026-09-01T00:00:00Z", "version": "v1", **ODD_SHAPES[shape]}
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {comment["anchor_id"]: [comment]},
+                                                         "archived": {}}))
+    for method, path in (("GET", "/api/categories"), ("GET", "/api/comments"), ("GET", "/api/history"),
+                         ("POST", "/api/rounds/submit"), ("POST", "/api/push-session")):
+        status, _ = _call(httpd, method, path, {} if method == "POST" else None, author="chang@example.com")
+        assert status == 200, (method, path)
+
+
+def test_be11_plans_folder_without_meta_is_not_a_plan(server):
+    httpd, directory, _ = server
+    (directory / "plans" / "notes").mkdir(parents=True)
+    status, result = _call(httpd, "GET", "/api/categories", author="chang@example.com")
+    assert status == 200 and result["plans"] == []
+
+
+def test_be11_unexpected_page_data_is_a_400_with_a_message(server, monkeypatch):
+    from agent_annotate import categories
+    httpd, _, _ = server
+    monkeypatch.setattr(categories, "list_plans", lambda page_dir: (_ for _ in ()).throw(KeyError("meta")))
+    status, result = _call(httpd, "GET", "/api/categories", author="chang@example.com")
+    assert status == 400 and "page data could not be read" in result["error"]
+
+
+# ── BE-12: GETs work on a read-only page dir ────────────────────────────────
+
+def test_be12_gets_work_on_a_read_only_page_dir(server):
+    httpd, directory, _ = server
+    _call(httpd, "POST", "/api/comments", _card("d:review"))
+    (directory / ".comments.json.lock").unlink()
+    (directory / "content").mkdir()
+    (directory / "content" / "v1.html").write_text("<html><head></head><body><p>x</p></body></html>")
+    modes = {path: path.stat().st_mode for path in [directory, *directory.rglob("*")]}
+    try:
+        for path in modes:
+            path.chmod(path.stat().st_mode & ~0o222)
+        for route in ("/api/comments", "/comments.json", "/content?v=v1", "/api/history", "/api/categories"):
+            assert _call(httpd, "GET", route, author="chang@example.com")[0] == 200, route
+        assert not (directory / ".comments.json.lock").exists()
+    finally:
+        for path, mode in modes.items():
+            path.chmod(mode)
+
+
+# ── BE-13: rounds/submit takes an empty body and ignores unknown fields ────
+
+def test_be13_rounds_submit_accepts_empty_body_and_unknown_fields(server):
+    httpd, _, _ = server
+    conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=3)
+    conn.request("POST", "/api/rounds/submit", body=b"", headers={
+        "Host": "review.example.test", "Cf-Access-Authenticated-User-Email": "chang@example.com",
+        "Cf-Access-Jwt-Assertion": "inert-proxy-validated-assertion", "Content-Type": "application/json"})
+    resp = conn.getresponse()
+    assert resp.status == 200 and json.loads(resp.read())["delivery"] == "noop"
+    conn.close()
+    status, result = _call(httpd, "POST", "/api/rounds/submit", {"note": "x", "author": "someone@else"},
+                           author="chang@example.com")
+    assert status == 200 and result["note"] == "x"
+    assert _call(httpd, "POST", "/api/rounds/submit", {"note": 5}, author="chang@example.com")[0] == 400
+
+
+# ── BE-17: symlinks are refused only below the page dir ─────────────────────
+
+def test_be17_store_lock_allows_symlinked_ancestors_but_not_symlinks_inside(tmp_path):
+    from agent_annotate.categories import safe_path
+    from agent_annotate.sync_server import _locked_store
+    real = tmp_path / "real" / "page"
+    real.mkdir(parents=True)
+    (tmp_path / "alias").symlink_to(tmp_path / "real")
+    with _locked_store(tmp_path / "alias" / "page"):
+        pass
+    (real / "outside").mkdir()
+    (real / "plans").symlink_to(real / "outside")
+    with pytest.raises(ValueError, match="symlink"):
+        safe_path(tmp_path / "alias" / "page", "plans/p/meta.json")
+
+
+def test_be17_finding_fix_through_a_symlinked_page_dir(tmp_path, monkeypatch, capsys):
+    page = _finding_page(tmp_path, monkeypatch)
+    (tmp_path / "alias").symlink_to(page.directory)
+    page.record["slug_dir"] = str(tmp_path / "alias")
+    assert cli.cmd_finding(_args(fixed="1", proof=["https://example.test/proof"])) == 0, capsys.readouterr().err
+
+
+# ── BE-19: <base> goes inside a <head> that has attributes ──────────────────
+
+@pytest.mark.parametrize("head", ['<head lang="en">', "<HEAD data-x>", "<head>"])
+def test_be19_base_is_inserted_inside_head_with_attributes(server, head):
+    from agent_annotate.categories import publish_plan_revision
+    httpd, directory, _ = server
+    publish_plan_revision(directory, "p", f"<!doctype html><html>{head}<title>t</title></head><body><p>x</p></body></html>")
+    status, _, body = _raw(httpd, "/plans/p/v1.html")
+    text = body.decode()
+    assert status == 200 and text.lower().startswith("<!doctype html>")
+    assert text.index(head) < text.index("<base ") < text.index("<title>")
+
+
+def test_be19_base_without_head_follows_the_doctype(server):
+    from agent_annotate.categories import publish_plan_revision
+    httpd, directory, _ = server
+    publish_plan_revision(directory, "p", "<!DOCTYPE html>\n<p>x</p>")
+    text = _raw(httpd, "/plans/p/v1.html")[2].decode()
+    assert text.startswith("<!DOCTYPE html>") and text.index("<base ") < text.index("<p>x")
 
 
 # ── helpers for exception tests (from the reviewer's probe) ────────────────
