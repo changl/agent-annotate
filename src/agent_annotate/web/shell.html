@@ -4,196 +4,170 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>annotate</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="daisyui.css">
-<link rel="stylesheet" href="content.css">
-<link rel="stylesheet" href="quill.snow.css">
-<link rel="stylesheet" href="copy-editor.css">
 <link rel="stylesheet" href="shell.css">
 </head>
 <body>
+<a class="unified-skip" href="#frame-area" data-skip="document">Skip to document</a>
+<a class="unified-skip" href="#drawer" data-skip="feedback">Skip to feedback</a>
 
-<!-- ── Header (version-stable chrome) ──────────────────────────────── -->
+<!-- ── Header (E1: quieter; A2/B1: one progress count + the one Send) ── -->
 <header class="hdr">
   <div class="hdr-left">
-    <div class="hdr-title" id="hdr-title">annotate</div>
+    <h1 class="hdr-title" id="hdr-title">&nbsp;</h1>
     <div class="hdr-sub" id="hdr-sub">&nbsp;</div>
-    <select class="mobile-version-select" id="mobile-version-select" aria-label="Select version"></select>
   </div>
   <div class="hdr-right">
-    <button type="button" class="btn btn-ghost btn-sm" id="theme-toggle" aria-label="Use light theme">Light</button>
-    <button type="button" class="btn btn-ghost btn-sm" id="copy-link-btn" hidden>Copy link</button>
-    <!-- v2.19 owner chip: which agent session published/claimed this page.
-         Filled from current.meta.json `owner`; hidden when absent. -->
-    <details class="owner-chip" id="owner-chip" hidden style="display:none"></details>
-    <span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span>
-    <button class="push-session-btn" id="push-session-btn" title="Send feedback to the project agent">
-      <span class="push-session-text"><span class="push-session-label"> Send feedback</span></span><span class="push-session-counter" id="push-session-counter">0</span>
-    </button>
+    <button type="button" class="btn btn-ghost btn-sm btn-square" id="theme-toggle" aria-label="Switch to light theme" title="Switch to light theme"></button>
+    <!-- E1: owner + reviewer in one avatar menu -->
+    <div class="who" id="who">
+      <button type="button" class="btn btn-ghost btn-sm btn-circle who-btn" id="who-btn" aria-haspopup="true" aria-expanded="false" aria-controls="who-panel" aria-label="Reviewer and page owner"><span class="who-initials" id="who-initials">?</span></button>
+      <div class="who-panel" id="who-panel" hidden>
+        <div class="who-row"><span class="who-lbl">Reviewer</span><span class="author-ind" id="author-ind" title="Identity supplied by OAuth">&nbsp;</span></div>
+        <div class="who-row" id="owner-row" hidden><span class="who-lbl">Owner</span><span class="owner-chip" id="owner-chip"></span></div>
+        <div class="who-row" id="share-row" hidden><span class="who-lbl">Review link</span><button type="button" class="btn btn-ghost btn-xs" id="copy-link-btn">Copy link</button></div>
+      </div>
+    </div>
+    <span class="send-note" id="send-note" role="status" aria-live="polite"></span>
+    <div class="hdr-progress" id="hdr-progress" hidden>
+      <progress class="progress progress-primary" id="hdr-progress-bar" value="0" max="1"></progress>
+      <span class="hdr-progress-txt" id="hdr-progress-txt">0 of 0 decided</span>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm" id="send-btn" title="Send (⌘↵)">Send <span class="badge badge-sm send-count" id="send-count">0</span></button>
   </div>
 </header>
-<div id="owner-row" class="owner-row"></div>
-<nav class="workspace-tabs tabs tabs-border" id="workspace-tabs" role="tablist" aria-label="Project views">
-  <button type="button" class="tab" role="tab" data-workspace-tab="progress" aria-controls="main-workspace">Progress <span class="badge badge-error badge-sm" id="progress-new" hidden></span></button>
-  <button type="button" class="tab" role="tab" data-workspace-tab="feedback" aria-controls="main-workspace">Feedback <span class="badge badge-error badge-sm" id="feedback-new" hidden></span></button>
-  <button type="button" class="tab" role="tab" data-workspace-tab="rounds" aria-controls="rounds-workspace">Rounds</button>
-</nav>
-<div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
-<div class="workspace-extra" id="workspace-extra" hidden><iframe id="workspace-extra-frame" title="Additional project review"></iframe></div>
-<div class="copy-workspace" id="copy-workspace" hidden></div>
-<section class="rounds-workspace" id="rounds-workspace" aria-label="Previous rounds" hidden>
-  <div class="rounds-toolbar">
-    <label for="rounds-select">Previous rounds</label>
-    <select class="select select-sm" id="rounds-select" aria-label="Select submitted review or document" disabled></select>
-    <span class="rounds-selection-meta" id="rounds-selection-meta"></span>
-  </div>
-  <p class="rounds-status" id="rounds-status" role="status" aria-live="polite"></p>
-  <div class="rounds-review" id="rounds-review" hidden></div>
-  <div class="rounds-document" id="rounds-document" hidden>
-    <iframe id="rounds-frame" title="Historical document" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
-  </div>
-</section>
 
-<!-- ── Main ─────────────────────────────────────────────────────────── -->
-<div class="main" id="main-workspace">
-
-  <!-- Version rail -->
-  <aside class="vrail" id="vrail">
-    <button type="button" class="rail-strip" id="vrail-strip" aria-expanded="false" aria-controls="vrail-body" aria-label="Expand the versions rail" title="Expand the versions rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg></button>
-    <div class="vrail-hdr">Versions
-      <button type="button" class="rail-collapse" id="vrail-collapse" aria-expanded="true" aria-controls="vrail-body" aria-label="Collapse the versions rail" title="Collapse the versions rail (more room for the document)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg></button>
-    </div>
-    <div class="vrail-body" id="vrail-body">
-      <div class="vrail-empty">Loading&hellip;</div>
-    </div>
-  </aside>
+<!-- ── Main: document + feedback rail (the version rail moved into History) ── -->
+<div class="main">
 
   <!-- Content iframe -->
-  <div class="frame-area" id="frame-area">
-    <div id="project-staging"><p class="progress-empty" id="progress-empty" hidden>No progress update yet.</p><details class="project-panel" id="project-panel" data-annotate-project-panel="runtime" data-annotate-interactive hidden></details></div>
+  <div class="frame-area" id="frame-area" role="main" aria-label="Document" tabindex="-1">
+    <div class="unified-version-banner" id="unified-version-banner" hidden></div>
+    <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>
-      <button class="repin-banner-cancel" id="repin-cancel">Cancel (Esc)</button>
+      <button class="btn btn-xs repin-banner-cancel" id="repin-cancel">Cancel (Esc)</button>
     </div>
     <iframe id="content-frame" class="content-frame" title="Document content"></iframe>
   </div>
 
-  <!-- Comment drawer -->
-  <aside class="drawer" id="drawer">
-    <button type="button" class="rail-strip" id="drawer-strip" aria-expanded="false" aria-controls="drawer-body" aria-label="Expand the feedback rail" title="Expand the feedback rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg><span class="rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
+  <!-- Feedback rail: tabs Feedback (first) … History (last) -->
+  <div id="unified-sheet-backdrop"></div>
+  <aside class="drawer" id="drawer" aria-label="Feedback" tabindex="-1">
+    <button type="button" class="rail-strip" id="drawer-strip" aria-expanded="false" aria-controls="drawer-body" aria-label="Expand the feedback rail" title="Expand the feedback rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg><span class="badge badge-error badge-xs rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
     <div class="drawer-hdr">
-      <div class="drawer-hdr-top">
-        <span class="drawer-title">Feedback</span>
-        <span class="unread-badge" id="unread-badge" style="display:none" title="Comments with activity you haven't seen yet">0 unread</span>
-        <span class="cnt-badge" id="cnt-badge">0</span>
-        <button type="button" class="rail-collapse" id="drawer-collapse" aria-expanded="true" aria-controls="drawer-body" aria-label="Collapse the feedback rail" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg></button>
+      <div role="tablist" class="tabs tabs-border drawer-tabs" id="drawer-tabs" aria-label="Rail views">
+        <button type="button" role="tab" class="tab tab-active" id="tab-feedback" data-tab="feedback" aria-selected="true" aria-controls="drawer-body">Feedback <span class="badge badge-error badge-xs tab-n" id="tab-feedback-n" hidden>0</span></button>
+        <button type="button" role="tab" class="tab" id="tab-documents" data-tab="documents" aria-selected="false" aria-controls="documents-body" hidden>Documents</button>
+        <button type="button" role="tab" class="tab" id="tab-history" data-tab="history" aria-selected="false" aria-controls="history-body">History</button>
       </div>
-      <div class="chip-row" id="chip-row">
-        <button class="chip chip-review" data-filter="review">Open <span class="chip-n">0</span></button>
-        <button class="chip chip-waiting" data-filter="waiting">Waiting <span class="chip-n">0</span></button>
-        <button class="chip chip-done" data-filter="done">History <span class="chip-n">0</span></button>
-        <button class="chip chip-all active" data-filter="all">All <span class="chip-n">0</span></button>
-      </div>
-      <div class="drawer-controls">
-        <button class="tgl" id="allversions-toggle" title="Show comments from every version, not just the version being viewed">All versions</button>
-        <button class="tgl" id="unreadfirst-toggle" title="Sort unread comments to the top">Unread first</button>
-        <button class="tgl tgl-action" id="markallread-btn" title="Mark every comment in the current view as read">Mark all read</button>
-      </div>
+      <button type="button" class="btn btn-ghost btn-sm btn-square rail-collapse" id="drawer-collapse" aria-expanded="true" aria-controls="drawer-body" aria-label="Collapse the feedback rail" title="Collapse the feedback rail (full document width, e.g. for expanded diagrams)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg></button>
+      <button type="button" class="btn btn-ghost btn-sm btn-square" id="unified-sheet-close" aria-label="Close feedback">&times;</button>
     </div>
-    <div class="drawer-body" id="drawer-body">
+
+    <!-- Feedback tab -->
+    <div class="drawer-body" id="drawer-body" role="tabpanel" aria-labelledby="tab-feedback">
+      <!-- A3 (Chang: collapsible, collapsed by default) + X2: general feedback at the top, under Send -->
+      <div class="gf" id="gf">
+        <button type="button" class="gf-row" id="general-feedback-toggle" aria-expanded="false" aria-controls="general-feedback-box"></button>
+        <div class="gf-box" id="general-feedback-box" hidden>
+          <textarea class="textarea gf-ta" id="gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea>
+          <div class="gf-ft">
+            <span class="gf-hint">Goes out with Send</span>
+            <button type="button" class="btn btn-ghost btn-xs" id="gf-cancel">Cancel</button>
+            <button type="button" class="btn btn-ghost btn-xs" id="gf-done">Done</button>
+          </div>
+        </div>
+      </div>
       <div class="drawer-empty" id="drawer-empty">
-        <div class="drawer-empty-ico"></div>
-        <div style="font-weight:600;color:#64748B">No comments yet</div>
-        <div>No open feedback. Use History to revisit earlier decisions.</div>
+        <div class="drawer-empty-ico">&#x1F4AC;</div>
+        <div class="drawer-empty-title">No comments yet</div>
+        <div>Click any element in the document to add feedback.</div>
       </div>
       <div id="comment-list" style="display:none"></div>
     </div>
-    <!-- v2.19 round bar (desktop slot: above the rail footer). On mobile
-         shell.js moves the #round-bar node to <body> so it stays visible
-         above the closed bottom sheet. Hidden unless the server reports
-         capabilities.rounds AND at least one verdict is pending. -->
-    <div class="round-bar-slot" id="round-bar-slot">
-      <div class="round-bar" id="round-bar" style="display:none" role="status" aria-live="polite">
-        <div class="round-bar-txt">
-          <span class="round-bar-main" id="round-bar-main">0 of 0 decided</span>
-          <span class="round-bar-sub" id="round-bar-sub"></span>
+
+    <!-- Documents tab (E2: extra tab, only when the page has links) -->
+    <div class="drawer-body tab-pane" id="documents-body" role="tabpanel" aria-labelledby="tab-documents" hidden></div>
+
+    <!-- History tab (B3 + E2: versions and project progress in one place) -->
+    <div class="drawer-body tab-pane" id="history-body" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <section class="hist-section" id="sent-rounds" hidden></section>
+      <section class="project-panel" id="project-panel" aria-label="Project information" hidden></section>
+      <section class="hist-section" aria-labelledby="hist-versions-lbl">
+        <h3 class="hist-lbl" id="hist-versions-lbl">Versions</h3>
+        <p class="unified-history-hint" id="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+        <div class="vrail-body" id="vrail-body" role="listbox" aria-label="Versions">
+          <div class="vrail-empty">Loading&hellip;</div>
         </div>
-        <button type="button" class="round-bar-btn" id="round-finish-btn">Finish review (<span id="round-pending-n">0</span>)</button>
-      </div>
-    </div>
-    <div class="drawer-footer">
-      <button class="footer-link" id="general-feedback-toggle">+ General feedback</button>
-      <button class="footer-link" id="archived-toggle">Archived (<span id="archived-count">0</span>)</button>
-    </div>
-    <div class="general-feedback-box" id="general-feedback-box" style="display:none">
-      <textarea class="gf-ta" id="gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea>
-      <div class="gf-ft">
-        <button class="btn btn-sec btn-sm" id="gf-cancel">Cancel</button>
-        <button class="btn btn-pri btn-sm" id="gf-save">Save</button>
-      </div>
+      </section>
     </div>
   </aside>
 
 </div>
 
-<!-- Mobile-only floating action button: opens the feedback bottom sheet.
-     Hidden entirely outside the mobile breakpoint (shell.css). -->
+<!-- D2: phone-only sticky Send bar (hidden on desktop) -->
+<div class="round-bar" id="round-bar" style="display:none" role="status" aria-live="polite">
+  <div class="round-bar-txt">
+    <span class="round-bar-main" id="round-bar-main">0 of 0 decided</span>
+    <span class="round-bar-sub" id="round-bar-sub"></span>
+  </div>
+  <button type="button" class="btn btn-primary round-bar-btn" id="round-finish-btn">Send &middot; <span id="round-pending-n">0</span></button>
+</div>
+
+<!-- Phone-only floating button: opens the feedback sheet. -->
 <button class="mobile-fab" id="mobile-fab" title="Open feedback" aria-label="Open feedback panel">
-  <span class="mobile-fab-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
+  <span class="mobile-fab-icon">&#128172;</span>
   <span class="mobile-fab-count" id="mobile-fab-count">0</span>
-  <span class="mobile-fab-badge" id="mobile-fab-badge" style="display:none">0</span>
+  <span class="badge badge-error badge-sm mobile-fab-badge" id="mobile-fab-badge" style="display:none">0</span>
 </button>
 
-<!-- Mobile-only dimming backdrop behind the create-comment / pin popovers
-     when they render as bottom sheets. Inert (display:none) outside the
-     mobile breakpoint. -->
 <div id="mobile-dialog-backdrop"></div>
 
-<!-- Pin popover (reverse lookup: shown when a numbered pin is clicked;
-     lists the pin's existing comment(s) and focuses the sidebar card) -->
+<!-- Pin popover (reverse lookup) -->
 <div id="pin-popover">
   <div class="pop-hdr">
     <span class="pop-node" id="pinpop-title"></span>
     <span class="pinpop-hdr-actions">
-      <button class="btn btn-sec btn-sm" id="pinpop-add" title="Add another comment on this element">+ Comment</button>
-      <button class="pop-x" id="pinpop-close" title="Close (Esc)">&times;</button>
+      <button class="btn btn-ghost btn-xs" id="pinpop-add" title="Add another comment on this element">+ Comment</button>
+      <button class="btn btn-ghost btn-xs btn-square pop-x" id="pinpop-close" title="Close (Esc)">&times;</button>
     </span>
   </div>
   <div class="pinpop-body" id="pinpop-body"></div>
 </div>
 
-<!-- v2.19 round submit confirm (rounds capability only) -->
+<!-- D1: send summary (replaces the Finish review dialog) -->
 <div id="round-confirm-backdrop">
   <div id="round-confirm" role="dialog" aria-modal="true" aria-labelledby="round-confirm-title">
-    <div class="round-confirm-title" id="round-confirm-title">Finish review</div>
+    <div class="round-confirm-title" id="round-confirm-title">Send</div>
     <div class="round-confirm-sub" id="round-confirm-sub"></div>
     <div class="round-confirm-warn" id="round-confirm-warn" style="display:none"></div>
-    <label class="round-confirm-label" for="round-note-ta">Note to the agent (optional)</label>
-    <textarea class="round-note-ta" id="round-note-ta" rows="3" placeholder="Anything the agent should know about this round&hellip;"></textarea>
+    <div class="sum-list" id="sum-list"></div>
     <div class="round-confirm-ft">
-      <button type="button" class="btn btn-sec btn-sm" id="round-cancel-btn">Cancel</button>
-      <button type="button" class="btn btn-danger btn-sm" id="round-discard-btn" title="Clear the pending verdicts without sending them as a round (each card keeps its recorded verdict)">Discard pending</button>
-      <button type="button" class="btn btn-pri btn-sm" id="round-submit-btn">Submit review</button>
+      <button type="button" class="btn btn-link btn-sm sum-discard" id="round-discard-btn" title="Clear the pending verdicts without sending them as a round (each card keeps its recorded verdict)">Discard pending</button>
+      <span class="sum-ft-gap"></span>
+      <button type="button" class="btn btn-sm" id="round-cancel-btn">Back</button>
+      <button type="button" class="btn btn-primary btn-sm" id="round-submit-btn">Send <span class="badge badge-sm send-count" id="sum-send-n">0</span><kbd class="kbd kbd-xs sum-kbd">⌘↵</kbd></button>
     </div>
   </div>
 </div>
 
-<!-- Create-comment popover (shown when an anchor element is clicked in the iframe) -->
+<!-- Create-comment popover -->
 <div id="popover">
   <div class="pop-hdr">
     <span class="pop-node" id="pop-node-name"></span>
-    <button class="pop-x" id="pop-close" title="Close (Esc)">&times;</button>
+    <button class="btn btn-ghost btn-xs btn-square pop-x" id="pop-close" title="Close (Esc)">&times;</button>
   </div>
   <div class="pop-body">
-    <textarea class="pop-ta" id="pop-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="4"></textarea>
+    <textarea class="textarea pop-ta" id="pop-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="4"></textarea>
   </div>
   <div class="pop-ft">
-    <button class="btn btn-sec btn-sm" id="pop-cancel">Cancel</button>
-    <button class="btn btn-pri btn-sm" id="pop-save">Save</button>
+    <button class="btn btn-sm" id="pop-cancel">Cancel</button>
+    <button class="btn btn-primary btn-sm" id="pop-save">Save</button>
   </div>
 </div>
 
-<script src="quill.js"></script>
-<script src="copy-editor.js"></script>
 <script src="shell.js"></script>
 </body>
 </html>
