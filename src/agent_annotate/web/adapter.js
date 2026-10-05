@@ -2792,8 +2792,178 @@ function wirePageLinks() {
   });
 }
 
+// ── Plans: what changed since the previous revision ──────────────────
+// A plan revision (plans/<id>/vN.html) reads the previous revision next to
+// it, compares section by section, and offers "show changes": changed
+// sections get a "Changed in vN" tag, and inside them changed words are
+// marked (added: underlined, removed: struck). Comments, pins and decisions
+// are the shell's own and are not touched.
+function initPlanChanges() {
+  const planId = typeof META.doc === 'string' && META.doc.startsWith('plan:') ? META.doc.slice(5) : null;
+  const m = /^v(\d+)$/.exec(META.version || '');
+  if (!planId || !m) return;
+  const N = parseInt(m[1], 10);
+  const V = 'v' + N, PREV = 'v' + (N - 1);
+  const KEY = 'annotate:plan-changes';
+  const css = `
+  .sp-rev button,.sp-rev a{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .sp-chg-tag{display:none}
+  body.sp-show-changes .sp-chg-tag{display:inline-block}
+  ins.sp-ins{text-decoration:none;background:var(--success-soft);color:inherit}
+  del.sp-del{color:var(--muted)}
+  .sp-ins-block{background:var(--success-soft)}
+  .sp-del-block{color:var(--muted);text-decoration:line-through;margin:4px 0}`;
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const LEAF = 'p,li,td,th,h2,h3,h4,figcaption,dt,dd';
+  const leaves = (root) => [...root.querySelectorAll(LEAF)].filter(el => !el.querySelector(LEAF) && !el.closest('.sp-rev'));
+  // Longest-common-subsequence diff over two arrays (small: one section).
+  function lcs(a, b) {
+    const n = a.length, mm = b.length;
+    const t = Array.from({ length: n + 1 }, () => new Int32Array(mm + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = mm - 1; j >= 0; j--)
+      t[i][j] = a[i] === b[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+    const ops = [];
+    let i = 0, j = 0;
+    while (i < n && j < mm) {
+      if (a[i] === b[j]) { ops.push(['=', i, j]); i++; j++; }
+      else if (t[i + 1][j] >= t[i][j + 1]) { ops.push(['-', i, -1]); i++; }
+      else { ops.push(['+', -1, j]); j++; }
+    }
+    while (i < n) ops.push(['-', i++, -1]);
+    while (j < mm) ops.push(['+', -1, j++]);
+    return ops;
+  }
+  const escH = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  function wordDiff(oldText, newText) {
+    const a = oldText.split(/(\s+)/), b = newText.split(/(\s+)/);
+    if (a.length * b.length > 250000) return '<del class="sp-del">' + escH(oldText) + '</del> <ins class="sp-ins">' + escH(newText) + '</ins>';
+    let out = '', del = '', ins = '';
+    const flush = () => { if (del.trim()) out += '<del class="sp-del">' + escH(del) + '</del>'; else out += escH(del); if (ins.trim()) out += '<ins class="sp-ins">' + escH(ins) + '</ins>'; else out += escH(ins); del = ''; ins = ''; };
+    lcs(a, b).forEach(([op, i, j]) => {
+      if (op === '=') { flush(); out += escH(b[j]); }
+      else if (op === '-') del += a[i];
+      else ins += b[j];
+    });
+    flush();
+    return out;
+  }
+  let applied = null; // [{el, html}] originals to restore
+  // Snapshot the document as authored, before pins and strips are added.
+  function sectionsOf(doc) {
+    const map = new Map();
+    doc.querySelectorAll('section[data-anchor-id]').forEach(sec => {
+      const ls = leaves(sec).filter(el => el.tagName !== 'H2');
+      map.set(sec.dataset.anchorId, { sec, text: norm(sec.textContent), leaves: ls, texts: ls.map(el => norm(el.textContent)) });
+    });
+    return map;
+  }
+  const ORIG = sectionsOf(document);
+  function apply(prevDoc) {
+    const cur = ORIG, old = sectionsOf(prevDoc);
+    applied = [];
+    let changed = 0;
+    cur.forEach((c, id) => {
+      const sec = c.sec;
+      const o = old.get(id);
+      const isNew = !o;
+      if (!isNew && o.text === c.text) return;
+      changed++;
+      sec.classList.add('sp-changed');
+      const h = sec.querySelector('h2');
+      if (h && !h.querySelector('.sp-chg-tag')) h.insertAdjacentHTML('beforeend', `<span class="chip sp-chg-tag">${isNew ? 'New in ' + V : 'Changed in ' + V}</span>`);
+      if (isNew) return;
+      const nl = c.leaves, ol = o.leaves;
+      const ops = lcs(o.texts, c.texts);
+      // Pair a removed leaf with the next added leaf as one changed line.
+      for (let k = 0; k < ops.length; k++) {
+        const [op, i, j] = ops[k];
+        if (op === '-' && ops[k + 1] && ops[k + 1][0] === '+') {
+          const el = nl[ops[k + 1][2]];
+          applied.push({ el, html: el.innerHTML, mark: true });
+          el.dataset.spNew = el.innerHTML;
+          el.dataset.spDiff = wordDiff(o.texts[i], c.texts[ops[k + 1][2]]);
+          k++;
+        } else if (op === '+') {
+          applied.push({ el: nl[j], cls: 'sp-ins-block' });
+        } else if (op === '-' && !/^(TD|TH)$/.test(ol[i].tagName)) {
+          // A removed paragraph or list item: shown struck through where it was.
+          const next = ops.slice(k + 1).find(x => x[0] === '=');
+          const anchorEl = next ? nl[next[2]] : null;
+          const ghost = document.createElement(ol[i].tagName === 'LI' ? 'li' : 'p');
+          ghost.className = 'sp-del-block sp-ghost';
+          ghost.textContent = norm(ol[i].textContent);
+          ghost.hidden = true;
+          if (anchorEl && anchorEl.parentNode) anchorEl.parentNode.insertBefore(ghost, anchorEl);
+          else (ol[i].tagName === 'LI' ? (sec.querySelector('ul,ol') || sec) : sec).appendChild(ghost);
+          applied.push({ el: ghost, ghost: true });
+        }
+      }
+    });
+    return changed;
+  }
+  function show(on) {
+    document.body.classList.toggle('sp-show-changes', on);
+    (applied || []).forEach(a => {
+      if (a.mark) a.el.innerHTML = on ? a.el.dataset.spDiff : a.el.dataset.spNew;
+      else if (a.cls) a.el.classList.toggle(a.cls, on);
+      else if (a.ghost) a.el.hidden = !on;
+    });
+    const btn = document.getElementById('sp-rev-toggle');
+    if (btn) { btn.setAttribute('aria-pressed', String(on)); btn.textContent = on ? 'hide changes' : 'show changes'; }
+    try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch {}
+    // Re-place pins after the text moved.
+    window.dispatchEvent(new Event('resize'));
+  }
+  (async () => {
+    const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
+    const base = (META.publicBasePath || '') + '/';
+    let meta = null;
+    try { meta = await (await fetch(base + 'api/plans/' + encodeURIComponent(planId), { cache: 'no-cache' })).json(); } catch {}
+    const hist = (meta && meta.history) || [];
+    const mine = hist.find(h => h.version === V) || {};
+    const total = hist.length || N;
+    const bar = document.createElement('span');
+    bar.className = 'sp-rev';
+    bar.innerHTML = ` · Revision ${V} of ${total}${mine.label ? ' (' + escH(mine.label) + ')' : ''}` +
+      (N > 1 ? ` · <span id="sp-rev-chg">comparing with ${PREV}…</span> — <button type="button" id="sp-rev-toggle" aria-pressed="false">show changes</button> · <a href="#" data-rev="${PREV}" title="Open the previous revision">${PREV}</a>` : ' · first revision') +
+      (N < total ? ` · <a href="#" data-rev="v${N + 1}" title="Open the next revision">v${N + 1}</a>` : '');
+    ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(t => bar.addEventListener(t, e => e.stopPropagation()));
+    // A revision opens in the page's Plans tab (one URL, #view=plans&v=…).
+    bar.addEventListener('click', e => {
+      const a = e.target.closest('a[data-rev]');
+      if (!a) return;
+      e.preventDefault();
+      postToParent({ type: 'annotate:open-version', version: a.dataset.rev });
+    });
+    const scope = document.querySelector('.aa');
+    if (!scope) return;
+    let banner = scope.querySelector('.plan-scope');
+    if (!banner) { banner = document.createElement('div'); banner.className = 'plan-scope'; banner.innerHTML = '<strong>Plan</strong>'; scope.prepend(banner); }
+    banner.appendChild(bar);
+    if (N <= 1) return;
+    let prevDoc;
+    try {
+      const r = await fetch(base + 'plans/' + encodeURIComponent(planId) + '/' + PREV + '.html', { cache: 'no-cache' });
+      if (!r.ok) throw new Error(String(r.status));
+      prevDoc = new DOMParser().parseFromString(await r.text(), 'text/html');
+    } catch { document.getElementById('sp-rev-chg').textContent = PREV + ' could not be read'; return; }
+    const n = apply(prevDoc);
+    document.getElementById('sp-rev-chg').textContent = n ? n + (n === 1 ? ' section' : ' sections') + ' changed since ' + PREV : 'No changes since ' + PREV;
+    const btn = document.getElementById('sp-rev-toggle');
+    btn.addEventListener('click', () => show(btn.getAttribute('aria-pressed') !== 'true'));
+    let pref = null;
+    try { pref = localStorage.getItem(KEY); } catch {}
+    let top = '';
+    try { top = window.parent.location.hash; } catch {}
+    const h = new URLSearchParams(top.replace(/^#/, ''));
+    const want = h.has('changes') ? h.get('changes') === '1' : pref !== 'off';
+    if (n && want) show(true);
+  })();
+}
+
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
+  initPlanChanges();
   wireClicks();
   wireBridge();
   wireSelectionComments();

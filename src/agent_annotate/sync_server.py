@@ -189,7 +189,8 @@ _NO_STORE = "no-store, max-age=0, must-revalidate"
 # /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
 _WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", "adapter.js", "diagram-plot.js",
                          "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css",
-                         "RobotoVariable.ttf", "RobotoVariable-Italic.ttf"})
+                         "RobotoVariable.ttf", "RobotoVariable-Italic.ttf",
+                         "app.js", "app.css", "library.js", "findings.js"})
 _ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
 
 
@@ -864,7 +865,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if origin[0] == "https" and not self._identity()["authenticated"]:
             route = self._strip_base(path)
             bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "copy-editor.js", "copy-editor.css", "quill.js", "quill.snow.css",
-                                "RobotoVariable.ttf", "RobotoVariable-Italic.ttf"}
+                                "RobotoVariable.ttf", "RobotoVariable-Italic.ttf", "app.js", "app.css", "library.js", "findings.js"}
             bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route.lstrip("/") in bootstrap_assets
                          or ((match := _ASSET_PATH_RE.fullmatch(route)) and match[2] in bootstrap_assets)))
             session = self.command == "POST" and route == "/api/reviewer/session"

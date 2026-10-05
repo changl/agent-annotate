@@ -3,12 +3,15 @@
 @import "tailwindcss" source(none);
 @plugin "daisyui" {
   themes: light --default, dark;
-  include: button, badge, tab, textarea, select, input, kbd, menu, progress;
+  include: button, badge, tab, textarea, select, input, kbd, menu, progress, join;
   logs: false;
 }
 @source "../src/agent_annotate/web/shell.html";
 @source "../src/agent_annotate/web/shell.js";
 @source "../src/agent_annotate/web/copy-editor.js";
+@source "../src/agent_annotate/web/app.js";
+@source "../src/agent_annotate/web/library.js";
+@source "../src/agent_annotate/web/findings.js";
 
 /* Roboto variable, The Roboto Project Authors; SIL Open Font License 1.1.
    Bundled locally next to this file; see web/ROBOTO-LICENSE.txt. */

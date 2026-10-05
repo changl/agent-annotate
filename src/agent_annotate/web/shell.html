@@ -7,17 +7,21 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="daisyui.css">
 <link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="quill.snow.css">
+<link rel="stylesheet" href="content.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
 <a class="unified-skip" href="#frame-area" data-skip="document">Skip to document</a>
 <a class="unified-skip" href="#drawer" data-skip="feedback">Skip to feedback</a>
 
-<!-- ── Header (E1: quieter; A2/B1: one progress count + the one Send) ── -->
+<!-- ── Header: the project's name in a fixed-width block, then the tabs ── -->
 <header class="hdr">
   <div class="hdr-left">
     <h1 class="hdr-title" id="hdr-title">&nbsp;</h1>
-    <div class="hdr-sub" id="hdr-sub">&nbsp;</div>
   </div>
+  <nav class="aa-tabs" id="aa-tabs" aria-label="Tabs"></nav>
+  <details class="aa-tabs-menu" id="aa-tabs-menu"><summary>Review</summary></details>
   <div class="hdr-right">
     <button type="button" class="btn btn-ghost btn-sm btn-square" id="theme-toggle" aria-label="Switch to light theme" title="Switch to light theme"></button>
     <!-- E1: owner + reviewer in one avatar menu -->
@@ -38,11 +42,11 @@
   </div>
 </header>
 
-<!-- ── Main: document + feedback rail (the version rail moved into History) ── -->
 <div class="main">
 
-  <!-- Content iframe -->
+  <!-- Review and Plans: a document in the frame (the accepted shell) -->
   <div class="frame-area" id="frame-area" role="main" aria-label="Document" tabindex="-1">
+    <div class="view-hd"><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
     <div class="unified-version-banner" id="unified-version-banner" hidden></div>
     <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
@@ -52,7 +56,34 @@
     <iframe id="content-frame" class="content-frame" title="Document content"></iframe>
   </div>
 
-  <!-- Feedback rail: tabs Feedback (first) … History (last) -->
+  <!-- Library: a list of items and the selected item in an editor -->
+  <section class="aa-view is-item" id="view-library" aria-label="Library" hidden>
+    <div class="view-hd"><h2 class="view-hd-title">Library<span class="view-hd-sub">Copy and policies</span></h2></div>
+    <div class="lib-main">
+      <aside class="sp-list" id="sp-list" aria-label="Library items">
+        <div class="sp-list-hd">
+          <input type="search" class="input input-sm w-full" id="sp-search" placeholder="Find copy…" aria-label="Find copy">
+          <h3 class="hist-lbl" id="sp-list-count"></h3>
+        </div>
+        <div class="sp-list-body" id="sp-list-body"></div>
+      </aside>
+      <div class="sp-doc" id="sp-doc" tabindex="-1"><div class="aa" id="sp-item"></div></div>
+    </div>
+  </section>
+
+  <!-- Findings: the register, a document like Review's -->
+  <section class="aa-view" id="view-findings" aria-label="Findings" hidden>
+    <div class="view-hd"><h2 class="view-hd-title">Findings<span class="view-hd-sub">Audits and recommendations</span></h2></div>
+    <div class="aa-scroll" id="find-scroll"><div class="aa" id="find-register"></div></div>
+  </section>
+
+  <!-- Linked pages: separate pages the owner declared (exceptions) -->
+  <section class="aa-view" id="view-linked" aria-label="Linked pages" hidden>
+    <div class="view-hd"><h2 class="view-hd-title">Linked pages<span class="view-hd-sub">Declared exceptions</span></h2></div>
+    <div class="aa-scroll"><div class="aa" id="linked-list"></div></div>
+  </section>
+
+  <!-- The one feedback rail: Feedback (first) … History (last) -->
   <div id="unified-sheet-backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="Feedback" tabindex="-1">
     <button type="button" class="rail-strip" id="drawer-strip" aria-expanded="false" aria-controls="drawer-body" aria-label="Expand the feedback rail" title="Expand the feedback rail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg><span class="badge badge-error badge-xs rail-strip-badge" id="drawer-strip-unread" style="display:none">0</span></button>
@@ -66,9 +97,9 @@
       <button type="button" class="btn btn-ghost btn-sm btn-square" id="unified-sheet-close" aria-label="Close feedback">&times;</button>
     </div>
 
-    <!-- Feedback tab -->
+    <!-- Feedback: Review and Plans (the shell's cards) -->
     <div class="drawer-body" id="drawer-body" role="tabpanel" aria-labelledby="tab-feedback">
-      <!-- A3 (Chang: collapsible, collapsed by default) + X2: general feedback at the top, under Send -->
+      <!-- A3 + X2: general feedback at the top, collapsed by default -->
       <div class="gf" id="gf">
         <button type="button" class="gf-row" id="general-feedback-toggle" aria-expanded="false" aria-controls="general-feedback-box"></button>
         <div class="gf-box" id="general-feedback-box" hidden>
@@ -87,20 +118,40 @@
       </div>
       <div id="comment-list" style="display:none"></div>
     </div>
+    <!-- Feedback: Library, Findings, Linked pages -->
+    <div class="drawer-body" id="rail-library" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
+    <div class="drawer-body" id="rail-findings" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
+    <div class="drawer-body" id="rail-linked" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
 
-    <!-- Documents tab (E2: extra tab, only when the page has links) -->
+    <!-- Documents (E2: only when the document has links) -->
     <div class="drawer-body tab-pane" id="documents-body" role="tabpanel" aria-labelledby="tab-documents" hidden></div>
 
-    <!-- History tab (B3 + E2: versions and project progress in one place) -->
+    <!-- History: one for the project; each part tagged with its tab -->
     <div class="drawer-body tab-pane" id="history-body" role="tabpanel" aria-labelledby="tab-history" hidden>
-      <section class="hist-section" id="sent-rounds" hidden></section>
-      <section class="project-panel" id="project-panel" aria-label="Project information" hidden></section>
-      <section class="hist-section" aria-labelledby="hist-versions-lbl">
-        <h3 class="hist-lbl" id="hist-versions-lbl">Versions</h3>
-        <p class="unified-history-hint" id="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
-        <div class="vrail-body" id="vrail-body" role="listbox" aria-label="Versions">
-          <div class="vrail-empty">Loading&hellip;</div>
-        </div>
+      <div class="hist-filter" id="hist-filter" role="group" aria-label="Show the history of"></div>
+      <section class="hist-section" id="hist-sent" aria-labelledby="hist-sent-lbl">
+        <h3 class="hist-lbl" id="hist-sent-lbl">Sent rounds</h3>
+        <div id="hist-sent-body"></div>
+      </section>
+      <section class="hist-section hist-cat" data-cat="review" aria-label="Review history">
+        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Review</span> Versions</h3>
+        <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
+        <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+        <div class="vrail-body" id="vrail-body-review" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
+      </section>
+      <section class="hist-section hist-cat" data-cat="library" aria-label="Library history" hidden>
+        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Library</span> <span id="hist-library-title">This item</span></h3>
+        <div class="hist-cat-body" id="hist-library"></div>
+      </section>
+      <section class="hist-section hist-cat" data-cat="findings" aria-label="Findings history" hidden>
+        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Findings</span> This finding</h3>
+        <div class="hist-cat-body" id="hist-findings"></div>
+      </section>
+      <section class="hist-section hist-cat" data-cat="plans" aria-label="Plans history" hidden>
+        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Plans</span> Revisions</h3>
+        <section class="project-panel" id="project-panel-plans" aria-label="Plan information" hidden></section>
+        <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+        <div class="vrail-body" id="vrail-body-plans" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
       </section>
     </div>
   </aside>
@@ -110,7 +161,7 @@
 <!-- D2: phone-only sticky Send bar (hidden on desktop) -->
 <div class="round-bar" id="round-bar" style="display:none" role="status" aria-live="polite">
   <div class="round-bar-txt">
-    <span class="round-bar-main" id="round-bar-main">0 of 0 decided</span>
+    <span class="round-bar-main" id="round-bar-main">Nothing to send yet</span>
     <span class="round-bar-sub" id="round-bar-sub"></span>
   </div>
   <button type="button" class="btn btn-primary round-bar-btn" id="round-finish-btn">Send &middot; <span id="round-pending-n">0</span></button>
@@ -137,7 +188,7 @@
   <div class="pinpop-body" id="pinpop-body"></div>
 </div>
 
-<!-- D1: send summary (replaces the Finish review dialog) -->
+<!-- D1: the one Send summary, grouped by tab -->
 <div id="round-confirm-backdrop">
   <div id="round-confirm" role="dialog" aria-modal="true" aria-labelledby="round-confirm-title">
     <div class="round-confirm-title" id="round-confirm-title">Send</div>
@@ -169,5 +220,9 @@
 </div>
 
 <script src="shell.js"></script>
+<script src="app.js"></script>
+<script src="quill.js"></script>
+<script src="library.js"></script>
+<script src="findings.js"></script>
 </body>
 </html>

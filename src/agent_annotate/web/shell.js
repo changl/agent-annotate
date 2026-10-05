@@ -11,6 +11,20 @@
 // The shell is served at <public_base_path>/ ; all API calls are relative
 // to that same origin+prefix so this works both on localhost and behind
 // the Cloudflare tunnel's /schema (or /prem-fin, etc.) prefix.
+// One page per project: this shell serves every document tab of the
+// project page — Review (the page's own versions) and Plans (the selected
+// plan's revisions, plans/<id>/vN.html). Both share the page's one comment
+// store; a comment belongs to a document by its category and `doc`. DOC is
+// the document whose version state is loaded into the variables below;
+// DOC_STATE keeps the other document's, and withDoc() swaps it in for a
+// synchronous read (counts, Send summary). VIEW_DOC is the document on
+// screen (null while Library, Findings or Linked pages is shown); rendering
+// only ever happens for VIEW_DOC.
+let DOCS = ['review'];
+let DOC = 'review';
+let VIEW_DOC = null;
+let PLANS = [];       // [{id, title, current, history}] from ./api/categories
+let PLAN_ID = null;   // the plan the Plans tab shows
 function apiUrl(path) {
   return path; // relative fetch — browser resolves against current document URL
 }
@@ -26,6 +40,18 @@ const BRIDGE_ORIGIN = (() => {
 function postToFrame(data) {
   const frame = document.getElementById('content-frame');
   if (frame && frame.contentWindow && BRIDGE_ORIGIN) frame.contentWindow.postMessage(data, BRIDGE_ORIGIN);
+}
+// The document a comment belongs to: 'review', 'plans' (the plan on
+// screen), or null for Library and Findings items.
+function commentCategory(c) {
+  if (c.category) return c.category;
+  return String(c.anchor_id || '').startsWith('copy:') ? 'library' : 'review';
+}
+function docOf(c) {
+  const cat = commentCategory(c);
+  if (cat === 'review') return 'review';
+  if (cat === 'plans' && PLAN_ID && c.doc === 'plan:' + PLAN_ID) return 'plans';
+  return null;
 }
 
 let STORE = { schema_version: 2, anchors: {}, archived: {} };
@@ -77,6 +103,7 @@ function applyTheme(t) {
   const content = document.getElementById('content-frame');
   try { if (content && content.contentDocument) content.contentDocument.documentElement.setAttribute('data-theme', t); } catch {}
   postToFrame({ type: 'annotate:theme', theme: t });
+  document.dispatchEvent(new CustomEvent('annotate:theme', { detail: t }));
   const btn = document.getElementById('theme-toggle');
   if (btn) {
     const next = t === 'dark' ? 'light' : 'dark';
@@ -89,12 +116,21 @@ document.getElementById('content-frame').addEventListener('load', () => applyThe
 try { const t = localStorage.getItem('annotate:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch {}
 // T11: unposted drafts survive re-renders, VERSION SWITCHES, and reloads.
 // Keys: comment id for reply boxes, 'gf:<version>' for general feedback.
+// Drafts are kept per page and document, since two documents can share a
+// version name (Review v6, Plans v6).
 let DRAFTS = {};
-let draftsSaveTimer = null;
+const draftsSaveTimer = {};
+function draftsKey(doc) {
+  return 'annotate:drafts:' + location.pathname + ':' + (doc === 'plans' ? 'plan:' + PLAN_ID : doc);
+}
+function loadDrafts(doc) {
+  try { return JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
+}
 function saveDraftsSoon() {
-  clearTimeout(draftsSaveTimer);
-  draftsSaveTimer = setTimeout(() => {
-    try { localStorage.setItem('annotate:drafts:' + location.pathname, JSON.stringify(DRAFTS)); } catch {}
+  const key = draftsKey(DOC), drafts = DRAFTS;
+  clearTimeout(draftsSaveTimer[key]);
+  draftsSaveTimer[key] = setTimeout(() => {
+    try { localStorage.setItem(key, JSON.stringify(drafts)); } catch {}
   }, 400);
 }
 function setDraft(key, value) {
@@ -193,6 +229,7 @@ function authorQuery() {
   return AUTHOR ? ('?author=' + encodeURIComponent(AUTHOR)) : '';
 }
 
+// The page's one comment store, shared by every document and tab.
 async function loadStore() {
   try {
     const r = await fetch(apiUrl('./comments.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
@@ -211,7 +248,7 @@ async function loadStore() {
 // body order, so a response item never has three competing labels.
 function computeNumbers() {
   NUM_MAP = {};
-  const all = flattenAll(true);
+  const all = flattenStore(true);
   const used = new Set();
   for (const c of all) {
     if (Number.isInteger(c.number) && c.number > 0 && !NUM_MAP[c.id]) {
@@ -241,11 +278,17 @@ function computeNumbers() {
   }
 }
 
+// A document's versions: the page's own (current.meta.json) for Review,
+// the selected plan's revisions (./api/plans/<id>) for Plans.
 async function loadMeta() {
+  const doc = DOC;
   try {
-    const r = await fetch(apiUrl('./current.meta.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
+    const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
+    const r = await fetch(apiUrl(url), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     const meta = await r.json();
+    if (doc !== DOC) return false;
+    if (doc === 'plans') { META = { current: meta.current, history: meta.history || [], content_stamps: {}, title: meta.title }; return true; }
     if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
       HAS_SUMMARY = true;
@@ -260,16 +303,21 @@ async function loadMeta() {
 }
 
 async function loadSeen() {
+  const doc = DOC;
+  // ↑NEW compares Review's content stamps; plan revisions have none.
+  if (doc !== 'review') { SEEN = {}; return true; }
   try {
     const r = await fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' });
     if (!r.ok) return false;
     const j = await r.json();
+    if (doc !== DOC) return false;
     SEEN = j.seen || {};
     return true;
   } catch { return false; }
 }
 
 async function markSeen(version) {
+  if (DOC !== 'review') return;
   try {
     await fetch(apiUrl('./api/seen'), {
       method: 'POST',
@@ -300,6 +348,7 @@ function readStateOf(c) {
   return rec.sig === commentSig(c) ? 'read' : 'new-activity';
 }
 
+// Read state is per viewer and shared by every document.
 async function loadReadState() {
   try {
     const r = await fetch(apiUrl('./api/read-state' + authorQuery()), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
@@ -323,6 +372,16 @@ function markRead(comments) {
     READ[c.id] = { ts: now, sig };
     items.push({ id: c.id, sig });
   }
+  return postReadItems(items);
+}
+// Library items are read by key ('copy:<block id>') at their latest revision.
+function markReadItems(list) {
+  const now = new Date().toISOString();
+  const items = list.filter(it => !(READ[it.id] && READ[it.id].sig === it.sig));
+  items.forEach(it => { READ[it.id] = { ts: now, sig: it.sig }; });
+  return postReadItems(items);
+}
+function postReadItems(items) {
   if (!items.length) return Promise.resolve(null);
   return fetch(apiUrl('./api/read-state' + authorQuery()), {
     method: 'POST',
@@ -332,11 +391,13 @@ function markRead(comments) {
 }
 
 function findCommentById(id) {
-  for (const c of flattenAll(true)) if (c.id === id) return c;
+  for (const c of flattenStore(true)) if (c.id === id) return c;
   return null;
 }
 
-async function apiCreateComment(anchorId, anchorLabel, text, version, target) {
+// `extra` carries a Library/Findings comment's category; a Plans comment
+// names its plan document.
+async function apiCreateComment(anchorId, anchorLabel, text, version, target, extra) {
   try {
     const r = await fetch(apiUrl('./api/comments' + authorQuery()), {
       method: 'POST',
@@ -351,6 +412,7 @@ async function apiCreateComment(anchorId, anchorLabel, text, version, target) {
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
+        ...(extra || (DOC === 'plans' ? { category: 'plans', doc: 'plan:' + PLAN_ID } : {})),
       }),
     });
     if (r.ok) return await r.json();
@@ -595,7 +657,8 @@ function statusLabel(c, cls) {
   return 'Done';
 }
 
-function flattenAll(includeArchived) {
+// Every comment on the page (all documents and tabs).
+function flattenStore(includeArchived) {
   const all = [];
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
     for (const c of items) all.push(Object.assign({}, c, { anchor_id: aid }));
@@ -606,6 +669,10 @@ function flattenAll(includeArchived) {
     }
   }
   return all;
+}
+// The comments of the document whose state is loaded (DOC).
+function flattenAll(includeArchived) {
+  return flattenStore(includeArchived).filter(c => docOf(c) === DOC);
 }
 
 function countsForVersion(version) {
@@ -644,7 +711,7 @@ let SUMMARY_DELIVERY = null;
 let projectSnapshot = '';
 function projectPreference(key, value) {
   try {
-    const storageKey = 'annotate:project:' + location.pathname + ':' + key;
+    const storageKey = 'annotate:project:' + location.pathname + DOC + ':' + key;
     if (value !== undefined) localStorage.setItem(storageKey, value ? 'open' : 'closed');
     return localStorage.getItem(storageKey);
   } catch { return null; }
@@ -672,21 +739,25 @@ function updateProjectTitle() {
   const header = document.getElementById('hdr-title');
   header.textContent = title;
   header.title = title;
-  document.title = title;
+  if (window.AA) window.AA.setTitle(title);
 }
 const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-info', todo: 'badge-ghost' };
 function renderProject() {
-  updateProjectTitle();
-  const panel = document.getElementById('project-panel');
-  const modules = PROJECT.modules || [];
+  // The project's links and progress belong to Review; a plan has none.
+  if (DOC === 'review') updateProjectTitle();
+  const panel = document.getElementById('project-panel-' + DOC);
+  if (!panel) return;
+  const modules = DOC === 'review' ? (PROJECT.modules || []) : [];
   const links = modules.filter(m => m.kind === 'links');
-  const refs = referenceTabs();
-  if (refs.length) links.push({ id: 'reference-tabs', title: 'Documents', items: refs.map(t => ({ label: t.label, url: t.url })) });
   const rest = modules.filter(m => m.kind !== 'links');
+  const refs = DOC === 'review' ? referenceTabs() : [];
+  if (refs.length) links.push({ id: 'reference-tabs', title: 'Documents', items: refs.map(t => ({ label: t.label, url: t.url })) });
   // Documents tab
   const docTab = document.getElementById('tab-documents');
   const docBody = document.getElementById('documents-body');
-  if (links.length) {
+  if (DOC !== VIEW_DOC) {
+    // Only the document on screen fills the Documents tab.
+  } else if (links.length) {
     docTab.hidden = false;
     docTab.textContent = links.length === 1 ? links[0].title : 'Documents';
     docBody.innerHTML = links.map(m => `<section class="hist-section">${links.length > 1 ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
@@ -719,9 +790,11 @@ async function loadProject() {
       if (snapshot !== projectSnapshot) { PROJECT = SUMMARY_PROJECT; projectSnapshot = snapshot; renderProject(); }
       return;
     }
+    const doc = DOC;
     const response = await fetch(apiUrl('./api/project'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!response.ok) return;
     const data = await response.json();
+    if (doc !== DOC) return;
     const snapshot = JSON.stringify(data);
     if (snapshot !== projectSnapshot) { PROJECT = data; projectSnapshot = snapshot; renderProject(); }
   } catch {}
@@ -740,7 +813,7 @@ async function loadHistory() {
     if (!r.ok || !Array.isArray(data.rounds)) throw new Error('history');
     HISTORY_DATA = data;
     historyDirty = false;
-    renderSentRounds();
+    if (window.AA) window.AA.changed();
   } catch { /* History keeps the last rounds it had */ } finally { historyLoading = false; }
 }
 function roundItemText(answer) {
@@ -751,30 +824,25 @@ function roundItemText(answer) {
     : (DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '');
   return (n ? '#' + n + ' · ' : '') + prompt + (ans ? ' → ' + firstLine(ans) : '');
 }
-function roundSummaryText(round) {
-  const n = (round.answers || []).length + (round.edits || []).length;
-  return 'Sent (' + n + ')';
-}
-function renderSentRounds() {
-  const node = document.getElementById('sent-rounds');
-  const rounds = (HISTORY_DATA && HISTORY_DATA.rounds) || [];
-  node.hidden = !rounds.length;
-  node.innerHTML = rounds.length ? '<h3 class="hist-lbl">Sent rounds</h3>' + rounds.map(r => {
-    const items = (r.answers || []).map(roundItemText);
-    if (r.note) items.push('General feedback · ' + r.note);
-    return '<details class="unified-receipt"><summary>' + esc(roundSummaryText(r)) + ' · ' + esc(fmtTs(r.ts)) + '</summary><ul>'
-      + items.map(i => '<li>' + ticketsHTML(i) + '</li>').join('') + '</ul></details>';
-  }).join('') : '';
-  updateSendState();
-}
-// This page's last Send result, else the latest round the server recorded.
-let lastSendText = '';
-function latestRoundNote() {
-  if (lastSendText) return lastSendText;
-  const r = HISTORY_DATA && HISTORY_DATA.rounds && HISTORY_DATA.rounds[0];
-  return r ? roundSummaryText(r) + ' · ' + fmtTs(r.ts) : '';
+// The rounds the server recorded, newest first, each line tagged with its
+// tab (app/rail.js renders them under History · Sent rounds).
+function sentRounds() {
+  return ((HISTORY_DATA && HISTORY_DATA.rounds) || []).map(r => {
+    const items = (r.answers || []).map(a => {
+      const c = a.comment_id ? findCommentById(a.comment_id) : null;
+      const cat = a.category || (c ? commentCategory(c) : 'review');
+      const text = roundItemText(a);
+      const at = text.indexOf(' → ');
+      return { cat, label: at === -1 ? text : text.slice(0, at), answer: at === -1 ? '' : text.slice(at + 3) };
+    });
+    (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
+    if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
+    const n = (r.answers || []).length + (r.edits || []).length;
+    return { ts: r.ts, result: 'Sent (' + n + ')', items };
+  });
 }
 async function loadDelivery() {
+  if (DOC !== VIEW_DOC) return;
   const node = document.getElementById('delivery-status');
   if (!CAPS || !CAPS.automatic_round_delivery) {
     node.hidden = !!CAPS;
@@ -797,9 +865,14 @@ async function loadDelivery() {
 }
 
 // ── Version rail ─────────────────────────────────────────────────
+// final/: each document's versions sit in its own History section
+// (#vrail-body-<doc>); a version of a document that is not on screen opens
+// that document's tab at that version.
 function renderVersionRail() {
-  const body = document.getElementById('vrail-body');
-  const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('.vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
+  const body = document.getElementById('vrail-body-' + DOC);
+  if (!body) return;
+  const doc = DOC;
+  const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
   const history = (META.history || []).slice().reverse();
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
@@ -824,11 +897,13 @@ function renderVersionRail() {
   }).join('');
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
     row.addEventListener('click', () => {
+      if (doc !== VIEW_DOC) { if (window.AA) window.AA.go({ view: doc, v: row.dataset.version }); return; }
       switchVersion(row.dataset.version);
       // Phone: the sheet covers the document; show the version just picked.
       if (isMobileLayout()) setMobileSheetOpen(false);
     });
   });
+  // U-14: the version list is a keyboard listbox.
   const rows = [...body.querySelectorAll('.vrow')];
   rows.forEach(r => {
     r.setAttribute('role', 'option');
@@ -849,8 +924,9 @@ function renderVersionRail() {
   });
   const restore = focusedVersion && !document.getElementById('history-body').hidden && (!isMobileLayout() || isMobileSheetOpen()) && rows.find(r => r.dataset.version === focusedVersion);
   if (restore) { rows.forEach(r => { r.tabIndex = r === restore ? 0 : -1; }); restore.focus(); }
-  renderVersionBanner();
+  if (doc === VIEW_DOC) renderVersionBanner();
 }
+// U-10: an older version on screen says so, with the way back.
 function renderVersionBanner() {
   const banner = document.getElementById('unified-version-banner');
   const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
@@ -866,9 +942,9 @@ function switchVersion(v) {
   if (!v || v === CURRENT_VERSION) return;
   CURRENT_VERSION = v;
   loadIframe(v);
-  const u = new URL(window.location.href);
-  u.searchParams.set('v', v);
-  window.history.replaceState({}, '', u.toString());
+  // final/: the version is part of the page's hash (#view=plans&v=v5), since
+  // one URL holds several documents.
+  if (window.AA) window.AA.noteVersion(DOC, v);
   renderAll();
   // T11: the general-feedback draft is per-version
   const gf = document.getElementById('gf-ta');
@@ -879,11 +955,17 @@ function switchVersion(v) {
 
 function loadIframe(v) {
   const frame = document.getElementById('content-frame');
+  frame.dataset.doc = DOC;
+  frame.dataset.version = v;
+  const doc = DOC;
   frame.onload = () => {
+    if (doc !== 'review') return;
     try { documentTitle = frame.contentDocument.title || ''; } catch { /* foreign content keeps the last title */ }
-    updateProjectTitle();
+    if (DOC === 'review') updateProjectTitle();
   };
-  frame.src = './content?v=' + encodeURIComponent(v);
+  frame.src = doc === 'plans'
+    ? './plans/' + encodeURIComponent(PLAN_ID) + '/' + encodeURIComponent(v) + '.html'
+    : './content?v=' + encodeURIComponent(v);
 }
 
 // ── Drawer ───────────────────────────────────────────────────────
@@ -1062,18 +1144,28 @@ function gfDraft() {
   return CURRENT_VERSION ? (DRAFTS['gf:' + CURRENT_VERSION] || '').trim() : '';
 }
 
-function renderCounts() {
+// final/: one count model for the whole page. docCounts() is what the
+// header tabs, the phone menu and the rail badges read for a document.
+function docCounts() {
   const all = flattenAll(false).filter(inScope);
-  let needs = 0, unread = 0;
+  let needs = 0, unread = 0, waiting = 0;
   for (const c of all) {
-    if (sectionOf(c) === 'needs') needs++;
+    const s = sectionOf(c);
+    if (s === 'needs') needs++;
+    if (s === 'waiting') waiting++;
     if (readStateOf(c) !== 'read') unread++;
   }
+  return { needs, unread, waiting, total: all.length, pending: sendables().total };
+}
+function renderCounts() {
+  if (DOC !== VIEW_DOC) return;
+  const k = docCounts();
   // B1: the tab badge counts only the cards that still need you.
   const tb = document.getElementById('tab-feedback-n');
-  if (tb) { tb.textContent = String(needs); tb.hidden = needs === 0; }
+  if (tb) { tb.textContent = String(k.needs); tb.hidden = k.needs === 0; }
   updateStripBadge();
-  updateMobileFab(all.length, unread);
+  updateMobileFab(k.total, k.unread);
+  if (window.AA) window.AA.changed();
 }
 
 // Phone button: 2.20's title; no count badge (B1: one progress count —
@@ -1089,6 +1181,7 @@ function updateMobileFab(total, unread) {
 }
 
 function renderDrawer() {
+  if (DOC !== VIEW_DOC) return;
   renderCounts();
   const listEl = document.getElementById('comment-list');
   const empty = document.getElementById('drawer-empty');
@@ -1110,7 +1203,10 @@ function renderDrawer() {
   const groups = { needs: [], ready: [], waiting: [], done: [], archived: [] };
   for (const c of flattenAll(false).filter(inScope)) groups[sectionOf(c)].push(c);
   for (const [aid, items] of Object.entries(STORE.archived || {})) {
-    for (const c of items) if (inScope(c)) groups.archived.push(Object.assign({}, c, { anchor_id: aid }));
+    for (const c of items) {
+      const item = Object.assign({}, c, { anchor_id: aid });
+      if (docOf(item) === DOC && inScope(item)) groups.archived.push(item);
+    }
   }
   const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   SECTION_ORDER.forEach(k => groups[k].sort(byNum));
@@ -2000,34 +2096,23 @@ function wireDecisionActions(root) {
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
 
+// After an action: the store and the server's counts, then every tab.
 async function refreshStore() {
-  await loadStore();
+  await Promise.all([loadStore(), loadCategories()]);
   renderAll();
+  document.dispatchEvent(new CustomEvent('annotate:store'));
 }
 
 // ── Rail tabs (E2: Feedback first, History last, extra tabs between) ──
+// final/: the rail is shared by every tab of the page, so app/rail.js owns
+// its tabs (Feedback · Documents · History); the shell asks it to switch.
 function setActiveTab(tab) {
-  const panes = { feedback: 'drawer-body', documents: 'documents-body', history: 'history-body' };
-  if (!panes[tab]) tab = 'feedback';
+  if (!['feedback', 'documents', 'history'].includes(tab)) tab = 'feedback';
   activeTab = tab;
-  document.querySelectorAll('#drawer-tabs [role="tab"]').forEach(t => {
-    const on = t.dataset.tab === tab;
-    t.classList.toggle('tab-active', on);
-    t.setAttribute('aria-selected', on ? 'true' : 'false');
-    t.tabIndex = on ? 0 : -1;
-  });
-  Object.entries(panes).forEach(([k, id]) => { document.getElementById(id).hidden = k !== tab; });
+  if (window.AA) window.AA.rail.setTab(tab);
 }
 function wireTabs() {
-  document.querySelectorAll('#drawer-tabs [role="tab"]').forEach(t => t.addEventListener('click', () => setActiveTab(t.dataset.tab)));
-  document.getElementById('drawer-tabs').addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-    const tabs = Array.from(document.querySelectorAll('#drawer-tabs [role="tab"]')).filter(t => !t.hidden);
-    const i = tabs.findIndex(t => t.dataset.tab === activeTab);
-    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
-    setActiveTab(next.dataset.tab);
-    next.focus();
-  });
+  document.addEventListener('annotate:rail-tab', (e) => { activeTab = e.detail; });
 }
 
 // ── Popover (create/edit a comment) ────────────────────────────────
@@ -2285,6 +2370,7 @@ function focusSidebarCard(commentId) {
 // send summary shows the same text (D1) — there is no second box.
 let gfOpen = false;
 function renderGeneralFeedback() {
+  if (DOC !== VIEW_DOC) return;
   const row = document.getElementById('general-feedback-toggle');
   const box = document.getElementById('general-feedback-box');
   if (!row || !box) return;
@@ -2360,7 +2446,7 @@ function isDrawerCollapsed() {
 }
 function updateStripBadge() {
   const el = document.getElementById('drawer-strip-unread');
-  if (!el) return;
+  if (!el || DOC !== VIEW_DOC) return;
   // B1: same "needs you" count as the Feedback tab badge.
   const needs = flattenAll(false).filter(c => inScope(c) && sectionOf(c) === 'needs').length;
   el.textContent = String(needs);
@@ -2418,6 +2504,12 @@ function wireMobileChrome() {
 // ── Header: theme toggle and the avatar menu (E1) ────────────────────
 function wireHeader() {
   applyTheme(currentTheme());
+  // #theme=light|dark deep links (app.js router).
+  document.addEventListener('annotate:set-theme', (e) => {
+    if (e.detail !== 'light' && e.detail !== 'dark') return;
+    applyTheme(e.detail);
+    try { localStorage.setItem('annotate:theme', e.detail); } catch {}
+  });
   document.getElementById('theme-toggle').addEventListener('click', () => {
     const t = currentTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(t);
@@ -2482,103 +2574,62 @@ function roundStats() {
   return { pending, decided, total, undecided };
 }
 
-let sendNote = null; // {text, cls, until} — transient result line after Send/Discard
-let sendNoteTimer = null;
+// ── final/: the one Send ─────────────────────────────────────────────
+// app/send.js owns the header Send, the phone Send bar and the summary
+// dialog for the whole page. For each document the shell supplies what it
+// would send (sendables), its rows in the summary (renderSummaryInto) and
+// its part of the sending (prepareDocCore); submitPage sends the page in
+// one round. Wording is 2.20's.
 function setSendNote(text, cls, ms) {
-  sendNote = { text, cls: cls || '', until: Date.now() + (ms || 6000) };
-  clearTimeout(sendNoteTimer);
-  sendNoteTimer = setTimeout(() => { sendNote = null; updateSendState(); }, (ms || 6000) + 50);
-  updateSendState();
+  if (window.AA) window.AA.send.note(text, cls, ms);
 }
-
-// B1: one progress count (bar + "x of n decided") beside the one Send, whose
-// badge counts what it would send. D2: on phones both live in a sticky
-// bottom bar instead.
 function updateSendState() {
-  const s = roundStats();
-  const q = sendables();
-  const noteLive = !!(sendNote && Date.now() < sendNote.until);
-  const btn = document.getElementById('send-btn');
-  const cnt = document.getElementById('send-count');
-  if (btn && cnt) {
-    cnt.textContent = String(q.total);
-    btn.disabled = q.total === 0;
-    btn.title = q.total === 0 ? 'Nothing to send yet' : 'Send ' + q.total + ' item' + (q.total === 1 ? '' : 's') + ' to the agent (⌘↵)';
-  }
-  const prog = document.getElementById('hdr-progress');
-  if (prog) {
-    prog.hidden = s.total === 0;
-    const bar = document.getElementById('hdr-progress-bar');
-    bar.max = Math.max(1, s.total);
-    bar.value = s.decided;
-    document.getElementById('hdr-progress-txt').textContent = s.decided + ' of ' + s.total + ' decided';
-  }
-  const note = document.getElementById('send-note');
-  if (note) {
-    // U-07: the latest send stays beside Send after its result fades.
-    const durable = noteLive ? '' : latestRoundNote();
-    note.textContent = noteLive ? sendNote.text : durable;
-    note.className = 'send-note' + (noteLive && sendNote.cls ? ' ' + sendNote.cls : '') + (durable ? ' unified-durable-receipt' : '');
-  }
-  // D2: phone bar
-  const pbar = document.getElementById('round-bar');
-  if (pbar) {
-    const show = isMobileLayout() && (s.total > 0 || q.total > 0 || noteLive);
-    pbar.classList.toggle('is-on', show);
-    pbar.style.display = show ? '' : 'none';
-    document.body.classList.toggle('has-round-bar', show);
-    document.getElementById('round-bar-main').textContent = s.total ? (s.decided + ' of ' + s.total + ' decided') : (q.total + ' to send');
-    document.getElementById('round-pending-n').textContent = String(q.total);
-    const fb = document.getElementById('round-finish-btn');
-    fb.disabled = q.total === 0;
-    fb.title = btn ? btn.title : '';
-    const sub = document.getElementById('round-bar-sub');
-    sub.textContent = noteLive ? sendNote.text : '';
-    sub.className = 'round-bar-sub' + (noteLive && sendNote.cls ? ' ' + sendNote.cls : '');
-  }
+  if (window.AA) window.AA.changed();
 }
 // Kept for callers that still name the 2.20 functions.
 function updatePushCounter() { updateSendState(); }
 function renderRoundBar() { updateSendState(); }
 
-// ── D1: send summary ────────────────────────────────────────────────
+// ── D1: send summary rows for this document ─────────────────────────
 // Every decision card with its answer and a pencil to change it in place;
 // unanswered cards highlighted; unsent comments; the one general-feedback
-// field (pencil to edit, + to add). Discard sits away from Send.
+// field (pencil to edit, + to add). Only the document on screen is edited
+// in place; another document's pencil opens that document's tab.
 let sumEditing = null; // card id or 'gf' being edited inside the summary
-function renderSummary() {
+function summarySentence() {
   const s = roundStats();
   const plan = sendPlan();
   const q = sendables();
-  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   // 2.20's own sentences, counted over exactly what this Send sends.
   const roundN = plan.round.length + plan.answers.length;
-  let sub = '';
   if (roundN > 0) {
-    sub = roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
+    return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
       (s.decided + plan.answers.length) + ' of ' + s.total + ' cards decided).';
-  } else if (q.total === 0) {
-    sub = 'Nothing to send yet.';
   }
-  document.getElementById('round-confirm-sub').textContent = sub;
-  const warn = document.getElementById('round-confirm-warn');
+  return q.total === 0 ? 'Nothing to send yet.' : '';
+}
+function summaryWarning() {
+  const plan = sendPlan();
+  const roundN = plan.round.length + plan.answers.length;
   const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c)).length;
   if (undecided > 0 && roundN > 0) {
-    warn.textContent = undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
+    return undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
       ' still undecided — the round will report ' + (undecided === 1 ? 'it' : 'them') + ' as undecided.';
-    warn.style.display = '';
-  } else {
-    warn.style.display = 'none';
   }
-
+  return '';
+}
+function renderSummaryInto(list, editable) {
+  const plan = sendPlan();
+  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
   const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id)).sort(byNum);
+  const doc = DOC;
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
     const answered = !!decisionAnswer(c);
     const draft = !answered && hasSayDraft(c);
     const missing = !answered && !draft;
-    const editing = sumEditing === c.id;
+    const editing = editable && sumEditing === c.id;
     const ansText = answered ? answerLabel(c).text : draft ? '“' + firstLine(sayDraft(c)) + '”' : 'Not answered';
     const sent = answered && !isRoundPending(c);
     const editLabel = missing ? 'Answer' : 'Change';
@@ -2596,7 +2647,7 @@ function renderSummary() {
       </div>`;
     }
     const pencil = (canChangeAnswer(c) || !answered)
-      ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="${escAttr(c.id)}" aria-label="${editLabel} #${num || ''}" title="${editLabel}" aria-expanded="${editing ? 'true' : 'false'}">${ico('pencil')}</button>`
+      ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="${escAttr(c.id)}" data-sum-doc="${doc}" aria-label="${editLabel} #${num || ''}" title="${editLabel}" aria-expanded="${editing ? 'true' : 'false'}">${ico('pencil')}</button>`
       : '<span class="btn btn-xs btn-square btn-ghost" aria-hidden="true" style="visibility:hidden"></span>';
     return `<div class="sum-row${missing ? ' is-missing' : ''}" data-sum-id="${escAttr(c.id)}">
       <div class="sum-main">
@@ -2621,20 +2672,27 @@ function renderSummary() {
   if (plan.push.length) html += group('Open comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
   // General feedback: pencil to edit inline, or + to add (Chang, D1).
   const gf = gfDraft();
-  const gfEditing = sumEditing === 'gf';
+  const gfEditing = editable && sumEditing === 'gf';
   html += group('General feedback', gf ? 1 : 0);
-  html += `<div class="sum-row" data-sum-id="gf">
+  html += `<div class="sum-row" data-sum-id="${editable ? 'gf' : 'gf-' + doc}">
     <div class="sum-main">
       <span class="sum-q">${gf ? '“' + esc(firstLine(gf)) + '”' : '<span class="sum-none">None</span>'}</span>
-      <button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="gf" aria-label="${gf ? 'Edit general feedback' : 'Add general feedback'}" title="${gf ? 'Edit' : 'Add general feedback'}" aria-expanded="${gfEditing ? 'true' : 'false'}">${ico(gf ? 'pencil' : 'plus')}</button>
+      <button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="${gf ? 'Edit general feedback' : 'Add general feedback'}" title="${gf ? 'Edit' : 'Add general feedback'}" aria-expanded="${gfEditing ? 'true' : 'false'}">${ico(gf ? 'pencil' : 'plus')}</button>
     </div>
     ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
   </div>`;
   if (rest.length) html += group('Not in this Send') + rest.map(decisionRow).join('');
-  const list = document.getElementById('sum-list');
   list.innerHTML = html;
 
-  const gta = document.getElementById('sum-gf-ta');
+  // Another document's rows: the pencil opens that document's tab, where
+  // the same summary opens with that row in edit mode.
+  if (!editable) {
+    list.querySelectorAll('[data-sum-edit]').forEach(btn => btn.addEventListener('click', () => {
+      if (window.AA) window.AA.go({ view: btn.dataset.sumDoc, send: '1', sumedit: btn.dataset.sumEdit });
+    }));
+    return;
+  }
+  const gta = list.querySelector('#sum-gf-ta');
   if (gta) {
     gta.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
     gta.addEventListener('input', () => {
@@ -2664,119 +2722,94 @@ function renderSummary() {
     const r = await pickOption(list, btn);
     if (r) { sumEditing = null; renderSummary(); }
   }));
-  syncSummaryCounts();
 }
-// The dialog's Send carries the same count as the header Send.
-function syncSummaryCounts() {
-  const q = sendables();
-  const submit = document.getElementById('round-submit-btn');
-  submit.disabled = q.total === 0;
-  const n = document.getElementById('sum-send-n');
-  if (n) n.textContent = String(q.total);
-  const gfBadge = document.querySelector('#sum-list .sum-row[data-sum-id="gf"]');
-  if (gfBadge && gfBadge.previousElementSibling) {
-    const b = gfBadge.previousElementSibling.querySelector('.badge');
-    if (b) b.textContent = q.gf ? '1' : '0';
-  }
-  document.getElementById('round-discard-btn').disabled = roundStats().pending === 0;
+function renderSummary() { if (window.AA) window.AA.send.render(); }
+function syncSummaryCounts() { if (window.AA) window.AA.send.syncCounts(); }
+function openRoundConfirm() { sumEditing = null; if (window.AA) window.AA.send.open(); }
+function closeRoundConfirm() { sumEditing = null; if (window.AA) window.AA.send.close(); }
+function isRoundConfirmOpen() { return !!(window.AA && window.AA.send.isOpen()); }
+function submitRound() { if (window.AA) return window.AA.send.submit(); }
+
+// What this document's part of one Send carries, as receipt lines.
+function sendItems() {
+  const p = sendPlan();
+  const items = [...p.round, ...p.answers, ...p.push].map(c => {
+    const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
+    const label = hasDecisionRequest(c) ? displayPrompt(c) : firstLine(last ? last.text : c.text);
+    const answer = decisionAnswer(c) ? answerLabel(c).text : hasSayDraft(c) ? sayDraft(c) : '';
+    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer };
+  });
+  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft() });
+  return items;
 }
-function openRoundConfirm() {
-  sumEditing = null;
-  ['round-submit-btn', 'round-cancel-btn'].forEach(id => { document.getElementById(id).disabled = false; });
-  renderSummary();
-  document.body.classList.add('has-summary');
-  document.getElementById('round-confirm-backdrop').classList.add('vis');
-  const b = document.getElementById('round-submit-btn');
-  if (!b.disabled) b.focus(); else document.getElementById('round-cancel-btn').focus();
-}
-function closeRoundConfirm() {
-  const bd = document.getElementById('round-confirm-backdrop');
-  if (bd) bd.classList.remove('vis');
-  document.body.classList.remove('has-summary');
-  sumEditing = null;
-}
-function isRoundConfirmOpen() {
-  const bd = document.getElementById('round-confirm-backdrop');
-  return !!(bd && bd.classList.contains('vis'));
-}
-async function submitRound() {
-  const q = sendables();
-  if (q.total === 0) return;
-  const btns = ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].map(id => document.getElementById(id));
-  btns.forEach(b => { b.disabled = true; });
-  const submitBtn = btns[0];
-  const submitHtml = submitBtn.innerHTML;
-  submitBtn.textContent = 'Sending…';
+// A document's part of one Send (2.20's order): comment-box text on an
+// unanswered card becomes its answer, general feedback becomes its
+// general:* item. No UI here; app/send.js reports it.
+async function prepareDocCore() {
+  const items = sendItems();
   let ok = true;
-  let sentCount = 0;
-  let delivered = false;
-  let last = null;
-  // 1. Comment-box text on unanswered cards becomes that card's answer.
   for (const c of flattenAll(false).filter(hasSayDraft)) {
     let r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
     if (r) clearSayDraft(c.id); else ok = false;
   }
-  // 2. General feedback becomes its general:* item (as 2.20's Save did).
   const gf = gfDraft();
   if (gf && IDENTITY) {
     const created = await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION);
     if (created) setDraft('gf:' + CURRENT_VERSION, ''); else ok = false;
   }
+  if (DOC === VIEW_DOC) {
+    const g = document.getElementById('gf-ta');
+    if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  }
+  return { ok, items };
+}
+// A reopened finding this reviewer has not sent yet.
+function isReopenPending(c) {
+  const last = (c.reopened || []).slice(-1)[0];
+  return !!(c.round_pending && last && IDENTITY && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(last.by));
+}
+// Everything this reviewer has recorded for the page's one round.
+function pageRoundPending() {
+  return flattenStore(false).filter(c => isRoundPending(c) || isReopenPending(c)).length;
+}
+// The page's one Send: every document's drafts, then ONE round (verdicts,
+// reopens and Library revisions across every tab), then ONE push of the open
+// comments with new activity. `alsoPending` says another tab has round-pending
+// work the comment store does not show (Library revisions).
+async function submitPage(alsoPending) {
+  let ok = true, sentCount = 0, delivered = false, last = null;
+  for (const doc of DOCS) {
+    const r = await withDocAsync(doc, prepareDocCore);
+    if (!r.ok) ok = false;
+  }
   await loadStore();
-  // 3. The round (pending verdicts), 4. then any open comments.
-  if (roundsEnabled() && roundStats().pending > 0) {
-    const j = await apiRoundSubmit(null);
-    if (j) { last = j; sentCount += j.comment_count || 0; delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
+  if (roundsEnabled() && (pageRoundPending() > 0 || alsoPending)) {
+    const j = await withDocAsync('review', () => apiRoundSubmit(null));
+    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
     await loadStore();
   }
-  if (flattenAll(false).some(needsPush)) {
+  if (flattenStore(false).some(needsPush)) {
     const j = await apiPushAll();
     if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
-  }
-  submitBtn.innerHTML = submitHtml;
-  if (!ok && !last) {
-    btns.forEach(b => { b.disabled = false; });
-    document.getElementById('round-confirm-sub').textContent = 'Failed to submit — try again.';
-    return;
   }
   if (last) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
   }
-  const g = document.getElementById('gf-ta');
-  if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
-  closeRoundConfirm();
-  lastSendText = (delivered ? '✅ Sent to session (' + sentCount + ')' : '⏳ Queued — no session listening (' + sentCount + ')') + ' · ' + fmtTs(new Date().toISOString());
-  setSendNote(lastSendText, delivered ? 'is-success' : 'is-queued');
   historyDirty = true;
-  await refreshStore();
+  await Promise.all([loadStore(), loadReadState()]);
   loadHistory();
+  return { ok: ok || !!last, sentCount, delivered, any: !!last };
 }
-async function discardRound() {
-  // 2.20 behaviour and wording: clears the pending verdicts only (typed
-  // comments and general feedback stay as drafts).
-  const btns = ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].map(id => document.getElementById(id));
-  btns.forEach(b => { b.disabled = true; });
+// 2.20 behaviour and wording: clears the pending verdicts only (typed
+// comments and general feedback stay as drafts). Returns the count or null.
+async function discardPage() {
   const j = await apiRoundDiscard();
-  if (!j) {
-    btns.forEach(b => { b.disabled = false; });
-    document.getElementById('round-confirm-sub').textContent = 'Failed to discard — try again.';
-    return;
-  }
-  closeRoundConfirm();
-  const n = j.comment_count != null ? j.comment_count : 0;
-  setSendNote('Discarded ' + n + ' pending verdict' + (n === 1 ? '' : 's') + ' — nothing sent', '', 5000);
-  await refreshStore();
+  if (!j) return null;
+  await loadStore();
+  return j.comment_count != null ? j.comment_count : 0;
 }
 function wireRoundBar() {
-  document.getElementById('send-btn').addEventListener('click', openRoundConfirm);
-  document.getElementById('round-finish-btn').addEventListener('click', openRoundConfirm);
-  document.getElementById('round-cancel-btn').addEventListener('click', closeRoundConfirm);
-  document.getElementById('round-submit-btn').addEventListener('click', submitRound);
-  document.getElementById('round-discard-btn').addEventListener('click', discardRound);
-  document.getElementById('round-confirm-backdrop').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) closeRoundConfirm();
-  });
   let t = null;
   window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(updateSendState, 120); });
 }
@@ -2862,8 +2895,9 @@ function frameOffset() {
 
 function wireBridge() {
   window.addEventListener('message', (e) => {
-    const frame = document.getElementById('content-frame');
-    if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frame || e.source !== frame.contentWindow) return;
+    // F1: only our own document frame, on our own origin, is heard.
+    const frameEl = document.getElementById('content-frame');
+    if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frameEl || e.source !== frameEl.contentWindow) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:navigate') {
@@ -2871,7 +2905,19 @@ function wireBridge() {
       let url;
       try { url = new URL(String(data.url || ''), location.href); } catch { return; }
       if (url.origin === BRIDGE_ORIGIN) window.location.assign(url.href);
-    } else if (data.type === 'annotate:pin-click') {
+      return;
+    }
+    if (data.type === 'annotate:open-version') {
+      // A plan revision's previous/next link opens it in the same tab.
+      if (window.AA && VIEW_DOC && /^v\d{1,10}$/.test(String(data.version))) window.AA.go({ view: VIEW_DOC, v: data.version });
+      return;
+    }
+    // The frame shows VIEW_DOC; a message is only handled while that
+    // document's state is the one loaded (and never from a frame that is
+    // still showing the previous document).
+    if (DOC !== VIEW_DOC) return;
+    if (frameEl.dataset.doc !== DOC) return;
+    if (data.type === 'annotate:pin-click') {
       // Re-pin mode: the click IS the comment's new location.
       if (repinCommentId) {
         completeRepin(data.anchorId, data.anchorLabel, data.target || null);
@@ -2979,14 +3025,15 @@ function wireBridge() {
 
 function sendCommentCountsToFrame() {
   const frame = document.getElementById('content-frame');
-  if (!frame || !frame.contentWindow) return;
+  if (!frame || !frame.contentWindow || DOC !== VIEW_DOC) return;
   const counts = {};
   const pins = {};
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
     // F9: unresolved decision cards get a pin + strip on whichever version
     // is being viewed (adapter.js skips the strip if the anchor no longer
     // exists in this version's document).
-    const list = items.filter(onCurrentVersion).filter(c => !isNewerThanViewed(c));
+    const list = items.map(c => Object.assign({}, c, { anchor_id: aid }))
+      .filter(c => docOf(c) === DOC).filter(onCurrentVersion).filter(c => !isNewerThanViewed(c));
     if (!list.length) continue;
     counts[aid] = list.length;
     pins[aid] = list
@@ -3044,7 +3091,7 @@ function sendCommentCountsToFrame() {
   // must never show a question as open when the rail says it is not.
   const cardStates = {};
   const noteCard = (c, archived) => {
-    if (isNewerThanViewed(c)) return;
+    if (docOf(c) !== DOC || isNewerThanViewed(c)) return;
     if (!c.decision_request) return;
     const prev = cardStates[c.anchor_id];
     if (prev && !prev.archived) return; // a live card beats an archived copy
@@ -3121,6 +3168,8 @@ function visibleCards() {
 }
 function handleShortcut(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // final/: on Library and Findings the same keys move through that view.
+  if (DOC !== VIEW_DOC) { if (window.AA) window.AA.shortcut(e); return; }
   const t = e.target;
   if (t && t.closest && (t.isContentEditable || t.closest('textarea, input, select'))) return;
   if (isRoundConfirmOpen() || document.getElementById('popover').classList.contains('vis')) return;
@@ -3158,9 +3207,9 @@ function handleShortcut(e) {
 
 // ── Master render ─────────────────────────────────────────────────
 function renderAll() {
-  const hdrSub = document.getElementById('hdr-sub');
-  if (hdrSub) hdrSub.textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
   renderVersionRail();
+  if (DOC !== VIEW_DOC) return;
+  if (window.AA) window.AA.docTitle(DOC, CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '');
   renderDrawer();
   renderGeneralFeedback();
   updateSendState();
@@ -3168,14 +3217,132 @@ function renderAll() {
   sendCommentCountsToFrame();
 }
 
-// True while the reviewer is typing in the rail or the document.
-function isEditing() {
-  const ae = document.activeElement;
-  if (ae && ae.closest('textarea,input,[contenteditable="true"]')) return true;
+// ── Document state ───────────────────────────────────────────────
+// The variables at the top hold the version state of document DOC; the
+// other document's is kept in DOC_STATE. The comment store, read state,
+// numbering and project are page-wide and never swapped.
+const DOC_STATE = {};
+const lastSnap = {};
+let docBusy = 0;
+let frameReady = { doc: null, version: null };
+let frameWaiters = [];
+function freshDocState(doc) {
+  return {
+    META: { current: null, history: [], content_stamps: {} }, SEEN: {}, CURRENT_VERSION: null, EXCERPTS: {}, EXCERPTS_VERSION: null,
+    DRAFTS: loadDrafts(doc), pendingGoto: null, highlightedCommentId: null, openMenuId: null, sumEditing: null, gfOpen: false,
+  };
+}
+function captureDocState() {
+  return { META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen };
+}
+function installDocState(s) {
+  ({ META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen } = s);
+}
+function enterDoc(doc) {
+  DOC_STATE[DOC] = captureDocState();
+  installDocState(DOC_STATE[doc] || freshDocState(doc));
+  DOC = doc;
+}
+// A synchronous read of another document (counts, summary rows).
+function withDoc(doc, fn) {
+  if (doc === DOC) return fn();
+  const prev = DOC;
+  enterDoc(doc);
+  try { return fn(); } finally { enterDoc(prev); }
+}
+// An asynchronous job on one document (loading, sending). Jobs run one at a
+// time; the page shows a modal (the Send summary) or nothing interactive
+// for that document meanwhile.
+let docQueue = Promise.resolve();
+function withDocAsync(doc, fn) {
+  const run = async () => {
+    const prev = DOC;
+    docBusy++;
+    enterDoc(doc);
+    try { return await fn(); } finally { enterDoc(prev); docBusy--; }
+  };
+  const p = docQueue.then(run, run);
+  docQueue = p.catch(() => {});
+  return p;
+}
+function latestVersion() {
+  return META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
+}
+async function loadDocState(doc) {
+  return withDocAsync(doc, async () => {
+    await loadMeta();
+    const want = window.AA ? window.AA.versionFor(doc) : null;
+    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : latestVersion();
+    await loadSeen();
+    lastSnap[doc] = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+  });
+}
+// Re-read the page from the server (after a Send); renders the document on
+// screen and tells every tab.
+async function reloadPage() {
+  await Promise.all([loadStore(), loadReadState(), loadCategories()]);
+  if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
+  document.dispatchEvent(new CustomEvent('annotate:store'));
+  if (window.AA) window.AA.changed();
+}
+function frameIsReady() {
+  return frameReady.doc === VIEW_DOC && frameReady.version === CURRENT_VERSION;
+}
+function whenFrameReady() {
+  if (frameIsReady()) return Promise.resolve();
+  return new Promise(res => { frameWaiters.push(res); setTimeout(res, 8000); });
+}
+// Show a document: its rail, its frame and its History section.
+async function activateDoc(doc, version) {
+  await DOCS_LOADED;
+  await docQueue;
+  if (!DOCS.includes(doc)) doc = 'review';
+  if (DOC !== doc) enterDoc(doc);
+  VIEW_DOC = doc;
+  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
+  const frame = document.getElementById('content-frame');
+  if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
+    frameReady = { doc: null, version: null };
+    frame.dataset.plan = String(PLAN_ID);
+    loadIframe(CURRENT_VERSION);
+  }
+  const gf = document.getElementById('gf-ta');
+  if (gf) gf.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  projectSnapshot = '';
+  renderProject();
+  loadDelivery();
+  renderAll();
+  return whenFrameReady();
+}
+function parkDoc() {
+  VIEW_DOC = null;
+}
+
+// ── Categories (one page per project) ───────────────────────────────
+// ./api/categories: which tabs exist, the server's counts per tab (so every
+// device agrees), the findings sets, the plans and the linked pages.
+let CATEGORIES = null;
+async function loadCategories() {
   try {
-    const inner = document.getElementById('content-frame').contentDocument.activeElement;
-    return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
+    const r = await fetch(apiUrl('./api/categories'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return false;
+    CATEGORIES = await r.json();
+    PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
+    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = PLANS.length ? PLANS[0].id : null;
+    DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
+    if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
+    return true;
   } catch { return false; }
+}
+// The Plans tab shows one plan; another plan starts from its latest revision.
+async function selectPlan(id) {
+  if (!PLANS.some(p => p.id === id) || id === PLAN_ID) return;
+  await docQueue;
+  if (DOC === 'plans') enterDoc('review');
+  PLAN_ID = id;
+  delete DOC_STATE.plans;
+  await loadDocState('plans');
+  if (window.AA) window.AA.go({ view: 'plans', plan: id });
 }
 
 // ── Init ─────────────────────────────────────────────────────────
@@ -3199,11 +3366,21 @@ function showStatus(text) {
   status.hidden = false;
   status.textContent = text;
 }
+// True while the reviewer is typing in the rail or the document.
+function isEditing() {
+  const ae = document.activeElement;
+  if (ae && ae.closest('textarea,input,[contenteditable="true"]')) return true;
+  try {
+    const inner = document.getElementById('content-frame').contentDocument.activeElement;
+    return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
+  } catch { return false; }
+}
+let DOCS_LOADED_resolve;
+const DOCS_LOADED = new Promise(res => { DOCS_LOADED_resolve = res; });
 async function init() {
   if (!await startReviewerSession()) return;
 
   try {
-    DRAFTS = JSON.parse(localStorage.getItem('annotate:drafts:' + location.pathname) || '{}') || {};
     SECTION_OPEN = JSON.parse(localStorage.getItem('annotate:sections') || '{}') || {};
   } catch {}
 
@@ -3224,14 +3401,17 @@ async function init() {
   wireMobileChrome();
   wireRoundBar();
   wireBridge();
+  window.addEventListener('message', (e) => {
+    const frame = document.getElementById('content-frame');
+    if (!frame || e.source !== frame.contentWindow || e.origin !== BRIDGE_ORIGIN) return;
+    if (!e.data || e.data.type !== 'annotate:ready') return;
+    frameReady = { doc: frame.dataset.doc, version: frame.dataset.version };
+    const w = frameWaiters; frameWaiters = [];
+    setTimeout(() => w.forEach(f => f()), 0);
+  });
 
-  await Promise.all([loadStore(), loadMeta(), loadSessionMonitor(), loadCapabilities()]);
-  await Promise.all([loadProject(), loadDelivery()]);
+  await Promise.all([loadSessionMonitor(), loadCapabilities()]);
   document.getElementById('share-row').hidden = !(CAPS && CAPS.private_share_links);
-  // // v2.19: the ONE probe; 404 → legacy mode for this page load
-
-  const urlV = new URL(window.location.href).searchParams.get('v');
-  CURRENT_VERSION = urlV || META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
 
   IDENTITY = await resolveIdentity();
   AUTHOR = authorValue(IDENTITY);
@@ -3241,31 +3421,40 @@ async function init() {
     return;
   }
 
-  await loadSeen();
-  await loadReadState();
-
-  document.getElementById('hdr-sub').textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
-
-  if (CURRENT_VERSION) loadIframe(CURRENT_VERSION);
-  const gfInit = document.getElementById('gf-ta');
-  if (gfInit && CURRENT_VERSION) gfInit.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
-  renderAll();
+  // The page's store and every document are loaded up front, so the page's
+  // counts and the one Send cover all of them before any tab is opened.
+  await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
+  DRAFTS = loadDrafts(DOC);
+  for (const doc of DOCS) await loadDocState(doc);
+  DOCS_LOADED_resolve();
+  document.dispatchEvent(new CustomEvent('annotate:store'));
+  if (window.AA) window.AA.changed();
   loadHistory();
 
   // One refresh at a time. Hidden tabs make no requests; foreground resumes now.
-  let lastSnap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
   let refreshing = false;
   let refreshTimer;
   async function refresh() {
     clearTimeout(refreshTimer);
-    if (document.hidden || refreshing) return;
+    if (document.hidden || refreshing || docBusy) {
+      if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
+      return;
+    }
     refreshing = true;
     try {
-      await Promise.all([loadStore(), loadMeta(), loadReadState(), loadSessionMonitor()]);
-      await Promise.all([loadProject(), loadDelivery()]);
+      const before = JSON.stringify(STORE) + JSON.stringify(READ);
+      await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
       if (historyDirty) loadHistory();
-      const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
-      if (snap !== lastSnap) { if (!isEditing()) { lastSnap = snap; renderAll(); } } else updateSendState();
+      const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) !== before;
+      if (storeChanged && !isEditing()) document.dispatchEvent(new CustomEvent('annotate:store'));
+      const doc = VIEW_DOC;
+      if (doc && DOC === doc && !docBusy) {
+        await loadMeta();
+        loadDelivery();
+        const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+        if (snap !== lastSnap[doc]) { if (!isEditing()) { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
+      }
+      if (window.AA) window.AA.changed();
     } finally {
       refreshing = false;
       if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
@@ -3277,6 +3466,64 @@ async function init() {
   });
   refreshTimer = setTimeout(refresh, 8000);
 }
+
+// What app/*.js reads and calls. Reads go through withDoc(), so a document
+// that is not on screen answers from its own state.
+window.AnnotateDocs = {
+  docs: DOCS,
+  loaded: DOCS_LOADED,
+  viewDoc: () => VIEW_DOC,
+  activate: activateDoc,
+  park: parkDoc,
+  whenFrameReady,
+  version: (doc) => withDoc(doc, () => CURRENT_VERSION),
+  counts: (doc) => withDoc(doc, docCounts),
+  roundStats: (doc) => withDoc(doc, roundStats),
+  sendables: (doc) => withDoc(doc, sendables),
+  sentence: (doc) => withDoc(doc, summarySentence),
+  warning: (doc) => withDoc(doc, summaryWarning),
+  items: (doc) => withDoc(doc, sendItems),
+  renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
+  renderHistoryInto: (doc) => withDoc(doc, () => { renderVersionRail(); }),
+  submitPage,
+  discardPage,
+  pageRoundPending,
+  reload: reloadPage,
+  sumEdit: (id) => { sumEditing = id; },
+  setDrawerCollapsed: (c) => setDrawerCollapsed(c, false),
+  setMobileSheetOpen,
+  isMobileLayout,
+  // The page's shared state and helpers for Library and Findings.
+  categories: () => CATEGORIES,
+  plans: () => PLANS,
+  planId: () => PLAN_ID,
+  selectPlan,
+  sentRounds,
+  store: () => STORE,
+  comments: (includeArchived) => flattenStore(includeArchived),
+  findComment: findCommentById,
+  commentCategory,
+  number: (id) => NUM_MAP[id],
+  identity: () => IDENTITY,
+  readStateOf,
+  markRead,
+  markReadItems,
+  readRecord: (id) => READ[id] || null,
+  isRoundPending,
+  isReopenPending,
+  needsPush,
+  decisionAnswer,
+  answerLabel,
+  displayPrompt,
+  decisionOptions,
+  selectVerdictId,
+  ticketsHTML,
+  authorLabel,
+  createComment: apiCreateComment,
+  decide: apiDecision,
+  refreshStore: reloadPage,
+  ico,
+};
 
 document.addEventListener('DOMContentLoaded', init);
 // A new private review link in the address bar starts a new session.
