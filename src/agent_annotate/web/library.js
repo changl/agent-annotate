@@ -115,6 +115,8 @@
     });
     const q = questionComment();
     if (q && d.isRoundPending(q)) out.push({ item: null, label: '#' + (d.number(q.id) || '') + ' ' + d.displayPrompt(q), answer: qAnswer(q) });
+    // UI-5: an answer given outside a Send goes with Send's push; list it.
+    else if (q && d.needsPush(q)) out.push({ item: null, label: '#' + (d.number(q.id) || '') + ' ' + d.displayPrompt(q), answer: qAnswer(q) || 'Comment', kind: 'push' });
     return out;
   }
   const isPendingItem = (it) => pendingItems().some(p => p.item === it.id);

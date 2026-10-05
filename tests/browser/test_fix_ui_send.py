@@ -184,6 +184,32 @@ def test_ui5_finding_answered_outside_a_send_is_listed_counted_and_pushed(tmp_pa
         assert "Focus ring" in receipt[0]["label"] and receipt[0]["answer"] == "Fix it"
 
 
+
+def test_ui5_library_question_answered_outside_a_send_is_listed_and_pushed(tmp_path, workspace):  # noqa: F811
+    # The fixture's Library question (#9) was answered but never sent; open, it
+    # goes with Send's push, so the Library tab lists and counts it.
+    store = _store(workspace)
+    store["anchors"]["copy:hero"][0]["status"] = "open"
+    (workspace / "comments.json").write_text(json.dumps(store))
+    with browser_page(tmp_path, workspace) as (page, _):
+        # With a Review answer pending too, the push carries both.
+        feedback(page)
+        page.locator('.citem[data-comment-id="question-11"] .decision-btn').first.click()
+        section(page, "ready")
+        page.locator("#send-btn").click()
+        tab = page.locator('[data-sum-tab="library"]')
+        assert tab.is_visible() and tab.locator(".sp-sum-cat .badge").inner_text() == "1"
+        assert "Which library wording?" in tab.inner_text()
+        assert page.locator("#sum-send-n").inner_text() == "2"
+        page.locator("#round-submit-btn").click()
+        page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+        playwright.expect(page.locator("#send-count")).to_have_text("0")
+        pushes = _pushes(tmp_path)
+        # One Send: the round's push (the Review verdict) and the comment push.
+        assert [p["comment_ids"] for p in pushes] == [["question-11"], ["library-9"]]
+        receipt = [line for r in _rounds(workspace) for line in r.get("receipt", [])]
+        assert sorted(line["cat"] for line in receipt) == ["library", "review"]
+
 # ── UI-14: Discard pending shows the answer the agent has ─────────────────
 def test_ui14_discard_shows_the_sent_answer_again(tmp_path):
     directory = _page(tmp_path)
