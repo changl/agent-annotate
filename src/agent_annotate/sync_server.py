@@ -3121,13 +3121,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return self._respond(400, json.dumps({"error": str(exc)}).encode())
 
     def _post_copy_proposal(self, block_id: str, *, restore=False):
-        from .copy_state import add_browser_revision, restore_revision
+        from .copy_state import StaleRevisionError, add_browser_revision, restore_revision
         payload = self._bounded_json_body()
         if payload is None:
             return
         try:
             expected = {"revision_id", "request_id"} if restore else {"delta", "base_revision", "request_id"}
-            if set(payload) != expected:
+            # Restore may name the latest revision the browser saw (UI-3).
+            if set(payload) != expected and not (restore and set(payload) == expected | {"base_revision"}):
                 raise ValueError("invalid copy revision fields")
             identity = self._identity()
             if not identity["email"] or identity["email"].startswith("agent:"):
@@ -3136,11 +3137,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir):
                 if restore:
                     document = restore_revision(self.artifact_dir, block_id, payload["revision_id"], author,
-                                                request_id=payload["request_id"])
+                                                request_id=payload["request_id"],
+                                                base_revision=payload.get("base_revision"))
                 else:
                     document = add_browser_revision(self.artifact_dir, block_id, payload["delta"], author,
                                                     base_revision=payload["base_revision"], request_id=payload["request_id"])
             self._respond(200, json.dumps(document, ensure_ascii=False).encode(), cache_control="no-store")
+        except StaleRevisionError as exc:
+            self._respond(409, json.dumps({"error": str(exc)}).encode())
         except (ValueError, TypeError) as exc:
             code = 403 if "different proposal" in str(exc) else 400
             self._respond(code, json.dumps({"error": str(exc)}).encode())

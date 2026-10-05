@@ -608,10 +608,13 @@ def test_be16_discard_clears_pending_reopens_and_library_edits(server):
     card = finding(httpd)
     mark_finding_fixed(directory, card["id"], by="agent:builder", note="first", proof=[])
     _call(httpd, "POST", f"/api/comments/{card['id']}/reopen", {"text": "Still broken"}, author="chang@example.com")
-    body = {"delta": {"ops": [{"insert": "Changed\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
-    assert _call(httpd, "POST", "/api/copy/hero/revisions", body, author="chang@example.com")[0] == 200
+    # UI-3: an edit must build on the latest revision, so the other reviewer's
+    # edit comes first and Chang's builds on it.
     other = {"delta": {"ops": [{"insert": "Theirs\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
     assert _call(httpd, "POST", "/api/copy/hero/revisions", other, author="other@example.com")[0] == 200
+    body = {"delta": {"ops": [{"insert": "Changed\n"}]}, "base_revision": "r_" + other["request_id"],
+            "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", body, author="chang@example.com")[0] == 200
     status, result = _call(httpd, "POST", "/api/rounds/discard", {}, author="chang@example.com")
     assert status == 200 and result["comment_ids"] == [card["id"]] and result["edit_count"] == 1
     # Nothing of Chang's goes out with the next Send; the other reviewer's edit is untouched.
