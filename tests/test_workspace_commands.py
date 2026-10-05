@@ -342,3 +342,22 @@ def test_empty_exception_is_refused_before_generating_or_publishing(estate, caps
     assert cli.cmd_publish(publish) == 2
     assert not estate.starts
     assert "nonempty reason" in capsys.readouterr().err
+
+
+def test_exception_parent_uses_registry_identity_for_legacy_records_without_slug_fields(estate):
+    _initial(estate)
+    state = cli._load_state_for_project("canonical")
+    primary = state["slugs"]["workspace"]
+    primary.pop("slug")
+    primary.pop("project")
+    cli._save_state_for_project("canonical", state)
+    other = estate.root / "reviews" / "legacy-linked"
+    source = estate.root / "legacy.md"
+    source.write_text("# Worksheet\n\nEvidence.\n")
+    pagegen.generate(source, other, version="v1")
+    arguments = _publish_args(other, "canonical")
+    arguments.exception = "Explicit worksheet"
+    assert cli.cmd_publish(arguments) == 0
+    child = cli._load_state_for_project("canonical")["slugs"]["legacy-linked"]
+    assert child["exception"]["parent_slug"] == "canonical/workspace"
+    assert [(p, s) for p, s, _ in workspace.workspace_tab_records(primary)] == [("canonical", "legacy-linked")]

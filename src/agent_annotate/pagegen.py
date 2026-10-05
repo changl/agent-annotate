@@ -839,6 +839,26 @@ def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
     return template.replace("{{CANVAS}}", canvas)
 
 
+def render_plan(text: str, plan_id: str, *, title: str | None = None) -> tuple[str, str]:
+    """Render an independent Markdown plan without writing Review/page metadata."""
+    meta, body = parse_front_matter(text)
+    for key in meta:
+        if key not in FRONT_MATTER_KEYS:
+            raise PageGenError(f"unknown front-matter key {key!r}")
+    meta["title"] = title or meta.get("title") or plan_id.replace("-", " ").capitalize()
+    meta["slug"] = f"plan:{plan_id}"
+    meta.setdefault("date", datetime.date.today().isoformat())
+    blocks = parse_blocks(body)
+    if any(block["kind"] in ("cards", "project") for block in blocks):
+        raise PageGenError("plan documents contain prose; post decision cards with ask and project data with project")
+    canvas, registry, _cards = render(meta, blocks)
+    problems = lint(canvas, registry)
+    if problems:
+        raise PageGenError("plan rejected by lint: " + "; ".join(problems))
+    # The HTTP plan route supplies the actual version; no Review version is embedded.
+    return build_html(meta, canvas, registry, ""), meta["title"]
+
+
 def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None) -> dict:
     """Parse, render, lint and write every file a publishable page needs."""

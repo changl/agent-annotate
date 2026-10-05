@@ -139,6 +139,10 @@ def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
     except (OSError, ValueError):
         return []
     entries = _registry_entries()
+    primary_names = {primary.get("slug")} - {None}
+    primary_names.update(name for project, slug, record in entries
+                         if record.get("slug_dir") == primary.get("slug_dir")
+                         for name in (slug, f"{project}/{slug}"))
     result = {}
     for tab in tabs:
         identity = _url_identity(tab.get("url"))
@@ -160,8 +164,7 @@ def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
         if not isinstance(exception, dict) or not _url_identity(_record_url(child)):
             continue
         parent = exception.get("parent_slug")
-        names = {primary.get("slug"), f"{primary.get('project')}/{primary.get('slug')}"} - {None}
-        if (parent in names and _shared_scope(primary, child)
+        if (parent in primary_names and _shared_scope(primary, child)
                 and Path(child["slug_dir"]).resolve() != Path(primary["slug_dir"]).resolve()):
             result[(project, slug)] = (project, slug, child)
     return list(result.values())

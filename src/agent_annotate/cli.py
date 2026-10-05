@@ -77,6 +77,8 @@ from http.client import HTTPException
 from pathlib import Path
 
 from . import __version__
+from .categories import CATEGORIES as CATEGORY_IDS
+from .categories import comment_category as _comment_category
 from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
@@ -1377,8 +1379,10 @@ def _publish(args) -> int:
     if duplicate and not reason:
         print(duplicate_message(duplicate), file=sys.stderr)
         return 2
+    parent_slug = next((f"{p}/{s}" for p, s, r in _registry_entries()
+                        if duplicate and Path(r["slug_dir"]).resolve() == Path(duplicate["slug_dir"]).resolve()), None)
     exception = ({"reason": reason,
-                  "parent_slug": f"{duplicate['project']}/{duplicate['slug']}" if duplicate else (saved_exception or {}).get("parent_slug")}
+                  "parent_slug": parent_slug or (saved_exception or {}).get("parent_slug")}
                  if reason else None)
     if (args.transport or cfg.get("transport")) == "funnel":
         from .review_access import ensure_key
@@ -2269,7 +2273,50 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
     )
 
 
+def _category(value: str | None) -> str | None:
+    if value is not None and value not in CATEGORY_IDS:
+        raise ValueError(f"category must be one of {', '.join(CATEGORY_IDS)}")
+    return value
+
+
+def _category_events(events: list[dict], store: dict, category: str) -> list[dict]:
+    """Filter mixed submitted rounds as well as legacy per-comment events."""
+    comments = {c.get("id"): {"anchor_id": anchor, **c} for anchor, c in _iter_comments(store)}
+    result = []
+    for event in events:
+        row = dict(event)
+        collections = [field for field in ("answers", "edits", "comments") if isinstance(row.get(field), list)]
+        has_ids = isinstance(row.get("comment_ids"), list)
+        if collections or has_ids:
+            for field in collections:
+                row[field] = [item for item in row[field] if isinstance(item, dict) and
+                              _comment_category({**comments.get(item.get("comment_id") or item.get("id"), {}),
+                                                 **item, **({"category": "library"} if field == "edits" else {})}) == category]
+            if has_ids:
+                row["comment_ids"] = [identifier for identifier in row["comment_ids"]
+                                      if _comment_category(comments.get(identifier, {})) == category]
+                if "comment_count" in row:
+                    row["comment_count"] = len(row["comment_ids"])
+            if "edit_count" in row and "edits" in collections:
+                row["edit_count"] = len(row["edits"])
+            if "verdict_counts" in row and "answers" in collections:
+                row["verdict_counts"] = {verdict: sum(item.get("verdict") == verdict for item in row["answers"])
+                                         for verdict in row["verdict_counts"]}
+            if any(row[field] for field in collections) or row.get("comment_ids") or (category == "review" and row.get("note")):
+                result.append(row)
+        else:
+            inferred = {"category": "library"} if str(row.get("event", "")).startswith(("copy_", "library_")) else {}
+            if _comment_category({**comments.get(row.get("comment_id"), {}), **inferred, **row}) == category:
+                result.append(row)
+    return result
+
+
 def cmd_inbox(args) -> int:
+    try:
+        category = _category(getattr(args, "category", None))
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     resolved = _resolve_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
@@ -2279,6 +2326,8 @@ def cmd_inbox(args) -> int:
     session_id = _session_id()
     bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
     offset_file = _offset_file(project, slug, session_id)
+    if category:
+        offset_file = offset_file.with_name(f"{offset_file.stem}.{category}{offset_file.suffix}")
     offset_file.parent.mkdir(parents=True, exist_ok=True)
 
     offset = 0
@@ -2319,12 +2368,16 @@ def cmd_inbox(args) -> int:
     shown = events if getattr(args, "all_events", False) else [
         e for e in events if _inbox_visible(e, session_id)]
     store = _load_store(record)
+    if category:
+        shown = _category_events(shown, store, category)
     texts = _comment_texts(store)
     for ev in shown:
         note = (texts.get(ev.get("comment_id")) or ("", ""))[1]
         if ev.get("decision") and note and "decision_text" not in ev:
             ev["decision_text"] = note
     cards = _decision_cards(store)
+    if category:
+        cards = [card for card in cards if card["category"] == category]
     counts = _verdict_counts(cards)
     undecided = [c["anchor_id"] or c["id"] for c in cards if _is_undecided(c)]
 
@@ -2340,6 +2393,7 @@ def cmd_inbox(args) -> int:
             "decisions": counts,
             "card_count": len(cards),
             "undecided": undecided,
+            **({"category": category} if category else {}),
         }, ensure_ascii=False, indent=2))
     else:
         if not shown:
@@ -2350,7 +2404,7 @@ def cmd_inbox(args) -> int:
             print(_decision_line(cards))
 
     if args.unread and new_offset > offset:
-        if record.get("owner_session") == session_id:
+        if record.get("owner_session") == session_id and not category:
             from .delivery import acknowledge
             delivery_ids = [e.get("delivery_id") for e in events if e.get("automatic_delivery")]
             for delivery_id in acknowledge(project, slug, session_id, delivery_ids):
@@ -2363,6 +2417,7 @@ def cmd_inbox(args) -> int:
             "offset_from": offset,
             "offset_to": new_offset,
             "event_count": len(shown),
+            **({"category": category} if category else {}),
         })
         # Commit only bytes actually read. A round appended while reporting
         # this inbox must remain unread and must not become acknowledged.
@@ -2378,7 +2433,14 @@ def cmd_cards(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    try:
+        category = _category(getattr(args, "category", None))
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     cards = _decision_cards(_load_store(record))
+    if category:
+        cards = [card for card in cards if card["category"] == category]
     if getattr(args, "json", False):
         print(json.dumps(cards, ensure_ascii=False, indent=2))
         return 0
@@ -2432,6 +2494,7 @@ def _ask_fallback(record: dict, slug: str, items: list, author: str) -> tuple[li
                 body["number"] = item["number"]
             if "decision_request" in item:
                 body["decision_request"] = item["decision_request"]
+            body.update({field: item[field] for field in ("category", "finding", "doc") if field in item})
             code, payload = _api(record, "PUT", f"/api/comments/{prior['id']}",
                                  body, author)
             if code >= 300 or code == 0:
@@ -2500,6 +2563,36 @@ def cmd_ask(args) -> int:
             return 2
         if version:
             item["version"] = version
+        try:
+            category = _category(c.get("category", getattr(args, "category", None)))
+            if category:
+                item["category"] = category
+            finding = c.get("finding")
+            set_id = c.get("set", getattr(args, "set", None))
+            if finding is not None:
+                if not isinstance(finding, dict):
+                    raise ValueError("finding must be an object")
+                if set(finding) != {"set", "title"} or not all(isinstance(v, str) and 0 < len(v) <= 200 for v in finding.values()):
+                    raise ValueError("finding needs set and title (at most 200 characters each)")
+                from .categories import validate_plan_id
+                validate_plan_id(finding["set"])
+                if category not in (None, "findings"):
+                    raise ValueError("finding metadata requires category findings")
+                item.update(finding=finding, category="findings")
+            elif set_id is not None:
+                if category != "findings":
+                    raise ValueError("--set/card set requires category findings")
+                if not isinstance(set_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", set_id):
+                    raise ValueError("finding set must be a safe lowercase ID")
+                title = c.get("title") or item["text"]
+                if not isinstance(title, str) or len(title) > 200:
+                    raise ValueError("finding title must be text of at most 200 characters")
+                item["finding"] = {"set": set_id, "title": title}
+            if c.get("doc") is not None:
+                item["doc"] = c["doc"]
+        except ValueError as exc:
+            print(f"ERROR: card #{i}: {exc}", file=sys.stderr)
+            return 2
         if c.get("anchor_label"):
             item["anchor_label"] = c["anchor_label"]
         number = c.get("number")
@@ -2545,7 +2638,8 @@ def cmd_ask(args) -> int:
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)
     if code in (404, 405, 501):
-        print(f"  batch route absent (HTTP {code}) — falling back to per-card POST + PUT")
+        if not getattr(args, "json", False):
+            print(f"  batch route absent (HTTP {code}) — falling back to per-card POST + PUT")
         route = "fallback"
         try:
             ids, created, updated = _ask_fallback(record, slug, items, author)
@@ -2564,6 +2658,19 @@ def cmd_ask(args) -> int:
         ids = payload.get("ids") or []
         created = int(payload.get("created") or 0)
         updated = int(payload.get("updated") or 0)
+
+    finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
+    if finding_sets:
+        from .categories import load_categories, save_findings_sets
+        try:
+            sets = load_categories(record["slug_dir"])["findings_sets"]
+            known = {entry["id"] for entry in sets}
+            additions = [{"id": identifier, "label": identifier} for identifier in sorted(finding_sets - known)]
+            if additions:
+                save_findings_sets(record["slug_dir"], sets + additions)
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: cards posted, but findings sets could not be saved: {exc}", file=sys.stderr)
+            return 2
 
     if getattr(args, "json", False):
         print(json.dumps({"slug": slug, "route": route, "ids": ids,
@@ -3453,6 +3560,106 @@ def cmd_project(args) -> int:
         return 2
 
 
+def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: str) -> dict:
+    """Shared CLI/MCP proof boundary, before trusted storage writes."""
+    from .categories import MAX_PROOF_BYTES, add_proof_file, mark_finding_fixed, validate_proof
+    if not proofs or len(proofs) > 30:
+        raise ValueError("marking a finding fixed requires 1-30 proof URLs or files")
+    directory = Path(record["slug_dir"])
+    author = author if author.startswith("agent:") else f"agent:{author}"
+    prepared = []
+    for value in proofs:
+        if value.lower().startswith(("http://", "https://")):
+            prepared.append(validate_proof(directory, [{"label": value[:200], "url": value}])[0])
+        else:
+            source = Path(value).expanduser().absolute()
+            try:
+                source.resolve(strict=True).relative_to(Path.cwd().resolve())
+                source.relative_to(Path.cwd().absolute())
+            except (OSError, ValueError) as exc:
+                raise ValueError("proof file must be inside the current working directory") from exc
+            if not source.is_file() or source.stat().st_size > MAX_PROOF_BYTES:
+                raise ValueError("proof must be a regular file of at most 10 MiB")
+            prepared.append(source)
+    # Validate the target and all ordinary inputs before copying attachments.
+    matches = [c for anchor, c in _iter_comments(_load_store(record))
+               if _comment_category({"anchor_id": anchor, **c}) == "findings" and
+               (c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier)))]
+    if not matches:
+        raise KeyError(f"finding {identifier} not found")
+    if len(matches) != 1:
+        raise ValueError("ambiguous finding number; use its comment id")
+    if not isinstance(note, str) or len(note) > 10000:
+        raise ValueError("fixed note must be text of at most 10000 characters")
+    proof = []
+    try:
+        for item in prepared:
+            proof.append(add_proof_file(directory, item) if isinstance(item, Path) else item)
+        validate_proof(directory, proof)
+        comment = mark_finding_fixed(directory, identifier, by=author, note=note, proof=proof)
+    except (OSError, ValueError, KeyError):
+        for item in proof:
+            if "attachment" in item:
+                (directory / "attachments" / item["attachment"]).unlink(missing_ok=True)
+        raise
+    _bus_emit(record.get("bus_file"), {"event": "finding_fixed", "slug": record.get("slug"),
+              "comment_id": comment["id"], "category": "findings", "author": author,
+              "note": note, "fixed": comment["fixed"]})
+    return comment
+
+
+def cmd_finding(args) -> int:
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    try:
+        comment = fix_finding(record, args.fixed, args.proof or [], args.note or "",
+                              _resolve_author(getattr(args, "author", None)))
+        if getattr(args, "json", False):
+            print(json.dumps(comment, ensure_ascii=False, indent=2))
+        else:
+            print(f"  {project}/{slug}: finding #{comment.get('number', args.fixed)} fixed with proof\n  URL: {page_url(record)}")
+        return 0
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"ERROR: finding: {exc}", file=sys.stderr)
+        return 2
+
+
+def cmd_plan(args) -> int:
+    from .categories import MAX_PLAN_BYTES, publish_plan_revision, validate_plan_id
+    from .pagegen import PageGenError, render_plan
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    try:
+        validate_plan_id(args.plan_id)
+        source = Path(args.from_file).expanduser()
+        if source.suffix.lower() not in (".md", ".html"):
+            raise ValueError("plan source must be .md or .html")
+        with source.open("rb") as stream:
+            body = stream.read(MAX_PLAN_BYTES + 1)
+        if len(body) > MAX_PLAN_BYTES:
+            raise ValueError("plan source exceeds 4 MiB")
+        content = body.decode("utf-8")
+        title = args.title
+        if source.suffix.lower() == ".md":
+            content, title = render_plan(content, args.plan_id, title=title)
+        result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
+                                       title=title, label=args.label)
+        _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
+                  "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"]})
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(f"  {project}/{slug}: plan {args.plan_id} published as {result['version']}\n  URL: {page_url(record)}")
+        return 0
+    except (OSError, ValueError, KeyError, PageGenError) as exc:
+        print(f"ERROR: plan: {exc}", file=sys.stderr)
+        return 2
+
+
 def cmd_copy(args) -> int:
     from .copy_state import load_copy, save_copy
     resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
@@ -3468,9 +3675,12 @@ def cmd_copy(args) -> int:
             before = load_copy(directory)
             document = save_copy(directory, json.loads(Path(args.from_file).read_text()))
             if before != document:
-                _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug,
+                _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug, "category": "library",
                           "owner_session": record.get("owner_session"), "block_count": len(document["blocks"])})
-            print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
+            if getattr(args, "json", False):
+                print(json.dumps(document, ensure_ascii=False, indent=2))
+            else:
+                print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
         else:
             document = load_copy(directory)
             if block_id:
@@ -4118,6 +4328,8 @@ def _decision_cards(store: dict) -> list[dict]:
             "decided_at": d.get("ts") or "",
             "version": c.get("version") or "",
             "status": c.get("status") or "",
+            "category": _comment_category({"anchor_id": anchor_id, **c}),
+            **{field: c[field] for field in ("doc", "finding", "fixed", "fixed_history", "reopened") if field in c},
         })
     return sorted(cards, key=lambda c: (
         c["number"] if isinstance(c.get("number"), int) else 10**9,
@@ -4531,12 +4743,31 @@ def main():
     sp_project.add_argument("--project", default=None)
     sp_project.add_argument("--from", dest="from_file", default=None)
     sp_project.set_defaults(func=cmd_project)
-    sp_copy = sub.add_parser("copy", help="read/import formatted copy blocks and immutable revision history")
+    sp_copy = sub.add_parser("copy", aliases=["library"], help="read/import formatted copy blocks and immutable revision history")
     sp_copy.add_argument("slug")
     sp_copy.add_argument("--project", default=None)
     sp_copy.add_argument("--from", dest="from_file", default=None)
     sp_copy.add_argument("--block", default=None, help="read one copy block and its history")
+    sp_copy.add_argument("--json", action="store_true")
     sp_copy.set_defaults(func=cmd_copy)
+    sp_finding = sub.add_parser("finding", help="mark a finding fixed with proof")
+    sp_finding.add_argument("slug")
+    sp_finding.add_argument("--fixed", required=True, metavar="N", help="finding number or exact comment ID")
+    sp_finding.add_argument("--proof", action="append", default=[], metavar="URL|FILE")
+    sp_finding.add_argument("--note", default="")
+    sp_finding.add_argument("--author", default=None)
+    sp_finding.add_argument("--project", default=None)
+    sp_finding.add_argument("--json", action="store_true")
+    sp_finding.set_defaults(func=cmd_finding)
+    sp_plan = sub.add_parser("plan", help="publish an independent plan revision")
+    sp_plan.add_argument("slug")
+    sp_plan.add_argument("plan_id")
+    sp_plan.add_argument("--from", dest="from_file", required=True, metavar="plan.md|.html")
+    sp_plan.add_argument("--title", default=None)
+    sp_plan.add_argument("--label", default=None)
+    sp_plan.add_argument("--project", default=None)
+    sp_plan.add_argument("--json", action="store_true")
+    sp_plan.set_defaults(func=cmd_plan)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 
@@ -4611,6 +4842,7 @@ def main():
     sp_in.add_argument("--json", action="store_true", help="raw events as one JSON object")
     sp_in.add_argument("--all-events", dest="all_events", action="store_true",
                        help="include bookkeeping events (seen_updated, notice_emitted, …)")
+    sp_in.add_argument("--category", choices=CATEGORY_IDS)
     sp_in.set_defaults(func=cmd_inbox)
 
     sp_cards = sub.add_parser("cards", aliases=["open-cards"],
@@ -4618,6 +4850,7 @@ def main():
     sp_cards.add_argument("slug", help="<slug> or <project>/<slug>")
     sp_cards.add_argument("--project", default=None)
     sp_cards.add_argument("--json", action="store_true")
+    sp_cards.add_argument("--category", choices=CATEGORY_IDS)
     sp_cards.set_defaults(func=cmd_cards)
 
     sp_ask = sub.add_parser("ask", help="create/refresh decision cards from a cards.json")
@@ -4630,6 +4863,8 @@ def main():
     sp_ask.add_argument("--project", default=None)
     sp_ask.add_argument("--author", default=None)
     sp_ask.add_argument("--json", action="store_true")
+    sp_ask.add_argument("--category", choices=CATEGORY_IDS)
+    sp_ask.add_argument("--set", metavar="ID", help="findings set (requires --category findings)")
     sp_ask.set_defaults(func=cmd_ask)
 
     sp_claim = sub.add_parser("claim", help="take ownership of a page for this session")

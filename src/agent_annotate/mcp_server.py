@@ -20,7 +20,8 @@ def _record(slug: str) -> dict[str, Any]:
     return resolved[2]
 
 
-def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, Any]]:
+def _comment_rows(slug: str, include_archived: bool = False, category: str | None = None) -> list[dict[str, Any]]:
+    category = cli._category(category)
     record = _record(slug)
     store_path = Path(record["slug_dir"]) / "comments.json"
     if not store_path.exists():
@@ -34,7 +35,7 @@ def _comment_rows(slug: str, include_archived: bool = False) -> list[dict[str, A
         for anchor_id, comments in store.get("archived", {}).items():
             for comment in comments:
                 rows.append({"anchor_id": anchor_id, **comment})
-    return rows
+    return [row for row in rows if cli._comment_category(row) == category] if category else rows
 
 
 def _api_request(slug: str, method: str, path: str, body: dict[str, Any], author: str) -> Any:
@@ -94,10 +95,48 @@ def build_server():
         return workspace_data(Path(cwd).expanduser().resolve() if cwd else Path.cwd(), project)
 
     @server.tool()
-    def list_comments(slug: str, include_archived: bool = False) -> list[dict[str, Any]]:
+    def list_comments(slug: str, include_archived: bool = False, category: str | None = None) -> list[dict[str, Any]]:
         """Read comments and explanations on the reused page; act on submitted rounds, not draft clicks."""
 
-        return _comment_rows(slug, include_archived=include_archived)
+        return _comment_rows(slug, include_archived=include_archived, category=category)
+
+    @server.tool()
+    def list_cards(slug: str, category: str | None = None) -> list[dict[str, Any]]:
+        """Read decision cards, including finding fix proof; optionally filter a category."""
+        category = cli._category(category)
+        cards = cli._decision_cards(cli._load_store(_record(slug)))
+        return [card for card in cards if card["category"] == category] if category else cards
+
+    @server.tool()
+    def read_inbox(slug: str, category: str | None = None) -> dict[str, Any]:
+        """Read visible inbox events without advancing any cursor; optionally filter a category."""
+        category = cli._category(category)
+        record = _record(slug)
+        bus = Path(record.get("bus_file") or (cli.BUS_ROOT / record["project"] / f"{record['slug']}.ndjson"))
+        events = []
+        if bus.exists():
+            for line in bus.read_text(encoding="utf-8").splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and cli._inbox_visible(event, cli._session_id()):
+                    events.append(event)
+        store = cli._load_store(record)
+        if category:
+            events = cli._category_events(events, store, category)
+        cards = cli._decision_cards(store)
+        if category:
+            cards = [card for card in cards if card["category"] == category]
+        return {"slug": slug, "events": events, "event_count": len(events),
+                "card_count": len(cards), "decisions": cli._verdict_counts(cards),
+                **({"category": category} if category else {})}
+
+    @server.tool()
+    def mark_finding_fixed(slug: str, number_or_id: str, proof: list[str], note: str = "",
+                           author: str = "agent:codex") -> dict[str, Any]:
+        """Mark a finding fixed only with proof URLs or files inside the server cwd (10 MiB limit)."""
+        return cli.fix_finding(_record(slug), number_or_id, proof, note, cli._resolve_author(author))
 
     @server.tool()
     def reply_to_comment(slug: str, comment_id: str, text: str, author: str = "agent:codex") -> Any:
