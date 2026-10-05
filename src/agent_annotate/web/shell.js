@@ -387,7 +387,14 @@ function postReadItems(items) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items }),
-  }).catch(() => null);
+  }).then(r => { refreshCountsSoon(); return r; }).catch(() => null);
+}
+// The header's unread counts are the server's; refetch them once a burst of
+// read marks has landed, so opening an item clears its count at once.
+let countsRefresh = null;
+function refreshCountsSoon() {
+  clearTimeout(countsRefresh);
+  countsRefresh = setTimeout(async () => { if (await loadCategories() && window.AA) window.AA.changed(); }, 250);
 }
 
 function findCommentById(id) {
@@ -551,12 +558,12 @@ function selectVerdictId() {
 function canonicalOptionId(id) {
   return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
 }
-async function apiRoundSubmit(note) {
+async function apiRoundSubmit(note, send) {
   try {
     const r = await fetch(apiUrl('./api/rounds/submit' + authorQuery()), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: note || undefined, version: CURRENT_VERSION }),
+      body: JSON.stringify(Object.assign({ note: note || undefined, version: CURRENT_VERSION }, send || {})),
     });
     if (r.ok) { historyDirty = true; return await r.json(); }
   } catch {}
@@ -600,9 +607,9 @@ async function apiDecisionFallback(id, verdict, text) {
   return await apiPushSingle(id);
 }
 
-async function apiPushAll() {
+async function apiPushAll(send) {
   try {
-    const r = await fetch(apiUrl('./api/push-session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await fetch(apiUrl('./api/push-session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(send || {}) });
     if (r.ok) return await r.json();
   } catch {}
   return null;
@@ -822,12 +829,35 @@ function roundItemText(answer) {
   const prompt = c ? displayPrompt(c) || firstLine(c.text) : (answer.prompt || '');
   const ans = answer.text ? (answer.verdict === 'select' ? answer.text.replace(/^Selected:\s*/, '') : answer.text)
     : (DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '');
-  return (n ? '#' + n + ' · ' : '') + prompt + (ans ? ' → ' + firstLine(ans) : '');
+  // A plain comment is its own label; never repeat it as the answer.
+  const same = ans && firstLine(ans) === prompt;
+  return (n ? '#' + n + ' · ' : '') + prompt + (ans && !same ? ' → ' + firstLine(ans) : '');
 }
 // The rounds the server recorded, newest first, each line tagged with its
 // tab (app/rail.js renders them under History · Sent rounds).
+// One Send leaves a round record and/or a push record, tied by send_id; its
+// receipt is the Send summary's lines (every tab). Older records without a
+// receipt are listed from their answers and edits.
 function sentRounds() {
-  return ((HISTORY_DATA && HISTORY_DATA.rounds) || []).map(r => {
+  const groups = [], byId = {};
+  for (const r of ((HISTORY_DATA && HISTORY_DATA.rounds) || [])) {
+    if (r.send_id && byId[r.send_id]) { byId[r.send_id].push(r); continue; }
+    const g = [r];
+    if (r.send_id) byId[r.send_id] = g;
+    groups.push(g);
+  }
+  return groups.map(g => {
+    const withReceipt = g.find(r => Array.isArray(r.receipt) && r.receipt.length);
+    const ts = g.map(r => r.ts).sort()[0];
+    if (withReceipt) {
+      const items = withReceipt.receipt.map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }));
+      return { ts, result: 'Sent (' + items.length + ')', items, send_id: withReceipt.send_id };
+    }
+    return legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+  }).filter(r => r.items.length);
+}
+function legacyRound(r) {
+  {
     const items = (r.answers || []).map(a => {
       const c = a.comment_id ? findCommentById(a.comment_id) : null;
       const cat = a.category || (c ? commentCategory(c) : 'review');
@@ -839,7 +869,7 @@ function sentRounds() {
     if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
     const n = (r.answers || []).length + (r.edits || []).length;
     return { ts: r.ts, result: 'Sent (' + n + ')', items };
-  });
+  }
 }
 async function loadDelivery() {
   if (DOC !== VIEW_DOC) return;
@@ -2777,20 +2807,22 @@ function pageRoundPending() {
 // reopens and Library revisions across every tab), then ONE push of the open
 // comments with new activity. `alsoPending` says another tab has round-pending
 // work the comment store does not show (Library revisions).
-async function submitPage(alsoPending) {
+// `receipt`: the Send summary's lines, kept by the server for History.
+async function submitPage(alsoPending, receipt) {
   let ok = true, sentCount = 0, delivered = false, last = null;
+  const send = receiptPayload(receipt);
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
     if (!r.ok) ok = false;
   }
   await loadStore();
   if (roundsEnabled() && (pageRoundPending() > 0 || alsoPending)) {
-    const j = await withDocAsync('review', () => apiRoundSubmit(null));
+    const j = await withDocAsync('review', () => apiRoundSubmit(null, send));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
     await loadStore();
   }
   if (flattenStore(false).some(needsPush)) {
-    const j = await apiPushAll();
+    const j = await apiPushAll(send);
     if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
   }
   if (last) {
@@ -2799,7 +2831,19 @@ async function submitPage(alsoPending) {
   historyDirty = true;
   await Promise.all([loadStore(), loadReadState()]);
   loadHistory();
-  return { ok: ok || !!last, sentCount, delivered, any: !!last };
+  return { ok: ok || !!last, sentCount, delivered, any: !!last, send_id: send.send_id };
+}
+function receiptPayload(receipt) {
+  if (!Array.isArray(receipt) || !receipt.length) return {};
+  const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12));
+  return {
+    send_id: id,
+    receipt: receipt.slice(0, 200).map(it => {
+      const line = { cat: it.cat, label: String(it.label || '—').slice(0, 300) };
+      if (it.answer) line.answer = String(it.answer).slice(0, 600);
+      return line;
+    }),
+  };
 }
 // 2.20 behaviour and wording: clears the pending verdicts only (typed
 // comments and general feedback stay as drafts). Returns the count or null.

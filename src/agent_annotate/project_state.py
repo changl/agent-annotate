@@ -272,6 +272,12 @@ def linked_pages(primary: dict) -> list[dict]:
         exception = record.get("exception") or {}
         url = page_url(record)
         if url:
-            result.append({"slug": slug, "title": record.get("title") or slug, "url": url,
-                           "reason": exception.get("reason") or "Linked page"})
+            item = {"slug": slug, "title": record.get("title") or slug, "url": url,
+                    "reason": exception.get("reason") or "Linked page"}
+            # Optional: who declared the exception, to whom, and when.
+            for key in ("declared_by", "declared_at", "told_to"):
+                value = exception.get(key)
+                if isinstance(value, str) and 0 < len(value) <= 500:
+                    item[key] = value
+            result.append(item)
     return result

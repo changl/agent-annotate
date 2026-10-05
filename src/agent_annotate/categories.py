@@ -95,39 +95,45 @@ def _lock(page_dir: Path | str, name: str):
         yield
 
 
-def load_categories(page_dir: Path | str) -> dict:
-    data = _json(safe_path(page_dir, "categories.json"), {"schema_version": 1, "findings_sets": []})
-    if data.get("schema_version", 1) != 1:
-        raise ValueError("categories.schema_version must be 1")
-    sets = data.get("findings_sets", [])
+# Optional set fields: the short name of each finding ("Gap" → "Gap 1"), the
+# set's introduction and when it was posted.
+_SET_OPTIONAL = {"item_label": 40, "intro": 10000, "created_at": 64}
+
+
+def _findings_sets(sets) -> list[dict]:
     if not isinstance(sets, list) or len(sets) > 100:
         raise ValueError("findings_sets must be an array of at most 100 sets")
     normalized, ids = [], set()
     for item in sets:
-        if not isinstance(item, dict) or set(item) != {"id", "label"}:
-            raise ValueError("a findings set needs id and label")
+        if not isinstance(item, dict) or not {"id", "label"} <= set(item) <= {"id", "label", *_SET_OPTIONAL}:
+            raise ValueError("a findings set needs id and label (optional: item_label, intro, created_at)")
         identifier = validate_plan_id(item["id"])
         if identifier in ids:
             raise ValueError("findings set ids must be unique")
         ids.add(identifier)
-        normalized.append({"id": identifier, "label": _text(item["label"], "set label")})
-    return {"schema_version": 1, "findings_sets": normalized}
+        entry = {"id": identifier, "label": _text(item["label"], "set label")}
+        for key, maximum in _SET_OPTIONAL.items():
+            if key in item:
+                entry[key] = _text(item[key], "set " + key.replace("_", " "), maximum)
+        if "created_at" in entry:
+            try:
+                datetime.fromisoformat(entry["created_at"].replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("set created_at must be an ISO 8601 time") from exc
+        normalized.append(entry)
+    return normalized
+
+
+def load_categories(page_dir: Path | str) -> dict:
+    data = _json(safe_path(page_dir, "categories.json"), {"schema_version": 1, "findings_sets": []})
+    if data.get("schema_version", 1) != 1:
+        raise ValueError("categories.schema_version must be 1")
+    return {"schema_version": 1, "findings_sets": _findings_sets(data.get("findings_sets", []))}
 
 
 def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
     # Use the same validator without writing invalid data to disk.
-    data = {"schema_version": 1, "findings_sets": findings_sets}
-    if not isinstance(findings_sets, list) or len(findings_sets) > 100:
-        raise ValueError("invalid findings sets")
-    ids = set()
-    for item in findings_sets:
-        if not isinstance(item, dict) or set(item) != {"id", "label"}:
-            raise ValueError("a findings set needs id and label")
-        identifier = validate_plan_id(item["id"])
-        _text(item["label"], "set label")
-        if identifier in ids:
-            raise ValueError("findings set ids must be unique")
-        ids.add(identifier)
+    data = {"schema_version": 1, "findings_sets": _findings_sets(findings_sets)}
     with _lock(page_dir, ".categories.json.lock"):
         _write(safe_path(page_dir, "categories.json"), data)
     return data
@@ -154,14 +160,17 @@ def validate_proof(page_dir: Path | str, proof: list[dict]) -> list[dict]:
         raise ValueError("proof must be an array of at most 30 entries")
     result = []
     for item in proof:
-        if not isinstance(item, dict) or set(item) not in ({"label", "url"}, {"label", "attachment"}):
-            raise ValueError("proof needs label and either url or attachment")
+        keys = set(item) - {"detail"} if isinstance(item, dict) else None
+        if keys not in ({"label", "url"}, {"label", "attachment"}):
+            raise ValueError("proof needs label and either url or attachment (optional: detail)")
         label = _text(item["label"], "proof label")
+        # An optional line under a link, e.g. "An agent links the merged change here."
+        detail = {"detail": _text(item["detail"], "proof detail", 500)} if "detail" in item else {}
         if "url" in item:
             url = _link(item["url"])
             if not url.lower().startswith(("http://", "https://")):
                 raise ValueError("proof URLs must use HTTP or HTTPS")
-            result.append({"label": label, "url": url})
+            result.append({"label": label, "url": url, **detail})
         else:
             name = item["attachment"]
             if not isinstance(name, str) or not _ATTACHMENT.fullmatch(name) or ".." in name:
@@ -169,7 +178,7 @@ def validate_proof(page_dir: Path | str, proof: list[dict]) -> list[dict]:
             path = safe_path(page_dir, "attachments/" + name)
             if not path.is_file() or path.stat().st_size > MAX_PROOF_BYTES:
                 raise ValueError("proof attachment missing or oversized")
-            result.append({"label": label, "attachment": name})
+            result.append({"label": label, "attachment": name, **detail})
     return result
 
 
@@ -295,6 +304,37 @@ def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, titl
         return {"id": plan_id, **entry, "title": meta["title"], "current": version, "history": meta["history"]}
 
 
+_SEND_ID = re.compile(r"[A-Za-z0-9-]{8,64}\Z")
+MAX_RECEIPT_ITEMS = 200
+
+
+def validate_send(payload: dict) -> dict:
+    """The optional `send_id` and `receipt` one Send passes to rounds/submit
+    and push-session: the lines the reviewer saw in the Send summary, tagged
+    by tab, kept for History · Sent rounds. Display only; never delivered."""
+    result = {}
+    if payload.get("send_id") is not None:
+        if not isinstance(payload["send_id"], str) or not _SEND_ID.fullmatch(payload["send_id"]):
+            raise ValueError("send_id must be 8-64 letters, digits or hyphens")
+        result["send_id"] = payload["send_id"]
+    if payload.get("receipt") is not None:
+        receipt = payload["receipt"]
+        if not isinstance(receipt, list) or len(receipt) > MAX_RECEIPT_ITEMS:
+            raise ValueError(f"receipt must be an array of at most {MAX_RECEIPT_ITEMS} lines")
+        lines = []
+        for item in receipt:
+            if not isinstance(item, dict) or not {"cat", "label"} <= set(item) <= {"cat", "label", "answer"}:
+                raise ValueError("a receipt line needs cat and label (optional: answer)")
+            if item["cat"] not in CATEGORIES:
+                raise ValueError("receipt cat must be a category")
+            line = {"cat": item["cat"], "label": _text(item["label"], "receipt label", 300)}
+            if item.get("answer"):
+                line["answer"] = _text(item["answer"], "receipt answer", 600)
+            lines.append(line)
+        result["receipt"] = lines
+    return result
+
+
 def comment_section(comment: dict) -> str | None:
     """Accepted shell sectionOf; Findings keeps agreed work waiting until fixed."""
     status = comment.get("status", "open")
@@ -344,11 +384,58 @@ def comment_sig(comment: dict) -> str:
     return result or "0"
 
 
+def _agent(author) -> bool:
+    return str(author or "").startswith("agent:")
+
+
+def comment_can_be_unread(comment: dict) -> bool:
+    """Whether a comment counts toward its tab's unread count.
+
+    Review and Plans: every card (the shell's read model). Findings: a fix not
+    opened yet; the finding's question itself is counted as needs-you, not
+    unread. Other Library and Findings comments: an agent reply not opened yet.
+    """
+    category = comment_category(comment)
+    if category in ("review", "plans"):
+        return True
+    if category == "findings" and (comment.get("finding") or comment.get("decision_request")):
+        return bool(comment.get("fixed"))
+    replies = comment.get("replies") or []
+    return bool(replies) and _agent(replies[-1].get("author"))
+
+
+def _follows_viewer(comment: dict) -> bool:
+    """shell.js followsViewer: an unanswered or round-pending card is shown on
+    every version of its document."""
+    decision = comment.get("decision") or {}
+    if decision.get("round_pending"):
+        return True
+    return bool(comment.get("decision_request") and not decision.get("verdict")
+                and comment.get("status") not in ("archived", "resolved_in_version", "addressed_by_agent"))
+
+
+def _current_versions(page_dir: Path | str) -> dict:
+    """The current version of each document: "review" and "plan:<id>"."""
+    versions = {"review": _json(safe_path(page_dir, "current.meta.json"), {}).get("current")}
+    for plan in list_plans(page_dir):
+        versions["plan:" + plan["id"]] = plan.get("current")
+    return versions
+
+
+def block_can_be_unread(block: dict) -> bool:
+    """A Library item is unread while its agent note (held_note) or a later
+    agent revision has not been opened; its first text alone is not news."""
+    revisions = block.get("revisions") or []
+    later_agent = len(revisions) > 1 and _agent((revisions[-1].get("author") or {}).get("id"))
+    return bool(block.get("held_note")) or later_agent
+
+
 def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None) -> dict:
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
     read = (read_state if read_state is not None else
             _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
+    versions = _current_versions(page_dir) if author else {}
     for items in _comments(page_dir)["anchors"].values():
         for comment in items:
             section = comment_section(comment)
@@ -359,7 +446,15 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
             if category == "library" and (comment.get("target") or {}).get("copy_revision"):
                 continue
             counts[category][section] += 1
-            if author and read.get(comment.get("id"), {}).get("sig") != comment_sig(comment):
+            if (author and comment_can_be_unread(comment)
+                    and read.get(comment.get("id"), {}).get("sig") != comment_sig(comment)):
+                # Review and Plans: unread on the document's current version (the
+                # rail's scope), plus cards that follow the viewer to it.
+                if category in ("review", "plans"):
+                    doc = comment.get("doc") if category == "plans" else "review"
+                    current = versions.get(doc)
+                    if current and comment.get("version") != current and not _follows_viewer(comment):
+                        continue
                 counts[category]["unread"] += 1
     for block in load_copy(page_dir)["blocks"]:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
@@ -371,6 +466,7 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         counts["library"][section] += 1
         # Library uses the existing per-item read sidecar too. Revisions have
         # immutable ids, so the latest id is its activity signature.
-        if author and read.get("copy:" + block["id"], {}).get("sig") != latest["id"]:
+        if (author and block_can_be_unread(block)
+                and read.get("copy:" + block["id"], {}).get("sig") != latest["id"]):
             counts["library"]["unread"] += 1
     return counts

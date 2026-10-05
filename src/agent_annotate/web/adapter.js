@@ -445,7 +445,7 @@ const PIN_SIZE_MOBILE = 26;  // px — larger touch target (AC: pins scale up on
 function PIN_SIZE() { return isMobileLayout() ? PIN_SIZE_MOBILE : PIN_SIZE_DESKTOP; }
 function pinBaseCss() {
   const s = PIN_SIZE();
-  return `width:${s}px;height:${s}px;color:var(--color-primary-content);border-radius:50%;font-size:${s > 20 ? 12 : 10}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent);background:var(--color-primary)`;
+  return `width:${s}px;height:${s}px;color:var(--color-primary-content);border-radius:50%;font-size:${s > 20 ? 11 : 9.5}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent);background:var(--color-primary)`;
 }
 
 // Build one pin element. `entries` = the comment(s) this pin represents
@@ -567,7 +567,9 @@ function pinPoint(anchorEl, entry, wrapperRect) {
 // bound is pulled in: vertical page scroll is normal and expected, so top
 // is left untouched.
 function clampPinLeft(left, wrapperRect, granular) {
-  const inset = 8;
+  // Mobile pins extend their invisible hit area by 9px; reserve all of it
+  // so the touch target does not add a 1px horizontal scrollbar.
+  const inset = isMobileLayout() ? 9 : 8;
   const viewportW = document.documentElement.clientWidth || window.innerWidth;
   // `left` is the pin's CSS left, not its right edge: a granular pin is
   // horizontally centered on it (translate(-50%,...)), so only half its box
@@ -874,7 +876,7 @@ function ensureStripStyle() {
       gap: 6px !important; min-width: 0 !important;
     }
     .annotate-decision-btn {
-      font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
+      font-size: 11px !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
       color:var(--color-primary-content) !important; font-family:"Inter", sans-serif !important;
       /* An option label longer than the strip used to force the flex line
@@ -912,7 +914,7 @@ function ensureStripStyle() {
       font-size: 11px !important; color: var(--muted) !important; margin-left: 8px !important;
     }
     .annotate-verdict-chip {
-      display: inline-block !important; font-size: 11px !important; font-weight: 700 !important;
+      display: inline-block !important; font-size: 10.5px !important; font-weight: 700 !important;
       padding: 4px 10px !important; border-radius: 10px !important;
     }
     .annotate-verdict-chip.verdict-accept { background: var(--success-soft) !important; color: var(--ok-text) !important; }
@@ -954,7 +956,7 @@ function ensureStripStyle() {
       min-width: 0 !important; max-width: 100% !important; box-sizing: border-box !important;
     }
     .annotate-excerpt-src {
-      font-size: 9.5px !important; font-weight: 700 !important; color: var(--muted) !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important; margin: 0 0 2px !important;
     }
     .annotate-excerpt-text {
@@ -1007,7 +1009,7 @@ function ensureStripStyle() {
       white-space: pre-wrap !important; word-break: break-word !important;
     }
     .annotate-decision-rec {
-      font-size: 8.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
+      font-size: 9.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
       text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
       border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
@@ -1115,10 +1117,10 @@ function ensureStripStyle() {
       box-shadow: 0 1px 2px color-mix(in oklab,var(--color-neutral) 6%,transparent) !important; color: var(--color-base-content) !important;
     }
     .annotate-decision-item + .annotate-decision-item { border-top-color: var(--line) !important; }
-    .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: 12.5px !important; }
+    .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: 11px !important; }
     .annotate-decision-num {
       color: var(--color-base-content) !important; background: var(--color-base-300) !important; border-radius: 999px !important;
-      padding: 0 6px !important; font-size: 10.5px !important; font-weight: 700 !important;
+      padding: 0 6px !important; font-size: 9.5px !important; font-weight: 700 !important;
     }
     .annotate-decision-btns > .annotate-decision-btn, .annotate-decision-btns > .annotate-decision-btn:hover {
       background: var(--color-base-200) !important; color: var(--color-base-content) !important;
@@ -1133,7 +1135,7 @@ function ensureStripStyle() {
     .annotate-decision-evidence-goto { background: var(--color-base-300) !important; color: var(--color-base-content) !important; border-radius: .25rem !important; }
     .annotate-decision-ta, .annotate-decision-cmt {
       border: 1px solid color-mix(in oklab,var(--color-base-content) 20%,transparent) !important; border-radius: .25rem !important;
-      background: var(--color-base-100) !important; font-size: 12px !important; margin-top: 8px !important;
+      background: var(--color-base-100) !important; font-size: 11px !important; margin-top: 8px !important;
       min-height: 2.25rem !important; padding: 6px 8px !important;
     }
     .annotate-decision-ta:focus { outline: 2px solid color-mix(in oklab,var(--color-base-content) 50%,transparent) !important; outline-offset: 2px !important; }
@@ -1894,7 +1896,7 @@ function ensureCardStateStyle() {
     .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
     .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
-      font: 700 11px "Inter", sans-serif; letter-spacing: .02em; }
+      font: 700 9.5px "Inter", sans-serif; letter-spacing: .02em; }
     .annotate-card-state.review { background: var(--error-soft); color: var(--color-error); }
     .annotate-card-state.waiting { background: var(--color-base-200); color: var(--muted); }
     .annotate-card-state.done { background: var(--success-soft); color: var(--ok-text); }
@@ -2252,8 +2254,8 @@ function ensureUnchangedStyle() {
     .annotate-unchanged-toggle:focus-visible { outline: 2px solid var(--link) !important; outline-offset: 1px !important; }
     .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: var(--muted); transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-size: 17px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
-    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 12.5px !important; }
+    .annotate-unchanged-title { font-size: 12.5px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 10.5px !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
     }
@@ -2772,7 +2774,7 @@ function ensureAffordanceStyle() {
     .unified-table-scroll table{min-width:1000px;width:100%;max-width:none;table-layout:auto!important}
     .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;min-width:120px}
     .unified-table-scroll th:first-child,.unified-table-scroll td:first-child{min-width:48px}
-    .unified-table-hint{font-size:12px;margin:4px 0 14px 28px;color:var(--color-base-content)}
+    .unified-table-hint{font-size:10.5px;margin:4px 0 14px 28px;color:var(--color-base-content)}
   `;
   document.head.append(style);
 }
@@ -2806,7 +2808,7 @@ function initPlanChanges() {
   const V = 'v' + N, PREV = 'v' + (N - 1);
   const KEY = 'annotate:plan-changes';
   const css = `
-  .sp-rev button,.sp-rev a{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .sp-rev button,.sp-rev a{font:inherit;font-size:10.5px;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
   .sp-chg-tag{display:none}
   body.sp-show-changes .sp-chg-tag{display:inline-block}
   ins.sp-ins{text-decoration:none;background:var(--success-soft);color:inherit}
