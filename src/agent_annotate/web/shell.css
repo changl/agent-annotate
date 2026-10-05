@@ -139,6 +139,8 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .open-doc:hover{text-decoration:underline}
 .open-doc svg.i{width:13px;height:13px}
 .citem-txt{font-size:11px;margin-bottom:6px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.citem-txt.is-clampable:not(.is-open){display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:12;overflow:hidden}
+.citem-txt-more{display:block;margin:-4px 0 6px}
 .citem-meta{font-size:9.5px;color:var(--faint);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
 .citem-author{font-weight:600;color:var(--muted)}
 .agent-reply{background:color-mix(in oklab,var(--color-info) 10%,var(--color-base-100));border:1px solid color-mix(in oklab,var(--color-info) 30%,transparent);border-radius:var(--radius-field);padding:8px;margin:6px 0;font-size:12px;line-height:1.45}

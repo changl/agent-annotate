@@ -108,6 +108,9 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 
 /* ── History: one list, tagged by tab ────────────────────────────────── */
 .hist-filter{display:flex;justify-content:flex-end;padding:2px 4px 6px}
+/* UI-17: daisyUI 5.7 fills every [aria-pressed=true] button; final/'s 5.5
+   build has no such rule, so a pressed soft button keeps its pale chip. */
+.btn-soft:is([aria-pressed=true],[aria-checked=true]):not(:hover,:focus-visible,:active){--btn-bg:color-mix(in oklab,var(--btn-color,var(--color-base-content)) 8%,var(--color-base-100));--btn-border:color-mix(in oklab,var(--btn-color,var(--color-base-content)) 10%,var(--color-base-100));color:var(--btn-color,var(--color-base-content))}
 .hist-cat[hidden]{display:none}
 .hist-tag{font-weight:700;letter-spacing:0;text-transform:none;vertical-align:1px}
 .hist-sub{margin:0 4px 6px}
