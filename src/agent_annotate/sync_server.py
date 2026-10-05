@@ -2946,7 +2946,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .project_state import linked_pages
         try:
             with _locked_store(self.artifact_dir):
-                counts = category_counts(self.artifact_dir, self._author())
+                author = self._author()
+                with _READ_LOCK:
+                    read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
+                counts = category_counts(self.artifact_dir, author, read_state=read)
                 plans = list_plans(self.artifact_dir)
                 category_data = load_categories(self.artifact_dir)
                 library = load_copy(self.artifact_dir)
