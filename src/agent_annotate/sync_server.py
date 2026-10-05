@@ -1051,6 +1051,67 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, b'{"ok":true}', cache_control="no-store", extra_headers={
             "Set-Cookie": f"{cookie_name(self.artifact_dir)}={cookie}; Path={path}; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict"})
 
+    # ── Consolidated pages ───────────────────────────────────────────
+    # `annotate consolidate` leaves consolidated.json in a page it merged
+    # into another page. The page then takes no writes, its address goes to
+    # the matching tab of the new page, and ?archived=1 shows it read-only.
+    def _moved(self) -> dict | None:
+        from .consolidate import marker
+        return marker(self.artifact_dir)
+
+    def _moved_to(self, moved: dict) -> str | None:
+        """The new page's address, for this request's origin."""
+        target = moved.get("target") if isinstance(moved.get("target"), dict) else {}
+        project, slug = target.get("project"), target.get("slug")
+        name = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+        if not (isinstance(project, str) and isinstance(slug, str) and name.fullmatch(project) and name.fullmatch(slug)):
+            return None
+        try:
+            record = json.loads((STATE_DIR / f"{project}.json").read_text(encoding="utf-8"))["slugs"][slug]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        from .urls import mounted_url
+        origin = self._request_origin()
+        fields = ("public_url", "url") if origin and origin[0] == "https" else ("local_url",)
+        url = next((record[f] for f in fields if isinstance(record.get(f), str) and record[f]), None)
+        url = mounted_url(url, record.get("public_base_path"))
+        if not url or not url.lower().startswith(("http://", "https://")):
+            return None
+        return url.split("#", 1)[0].split("?", 1)[0]
+
+    def _redirect_moved(self, parsed, route_path: str) -> bool:
+        moved = self._moved()
+        if not moved or route_path not in ("/", ""):
+            return False
+        if "archived" in urllib.parse.parse_qs(parsed.query, keep_blank_values=True):
+            return False
+        from .consolidate import tab_fragment
+        url = self._moved_to(moved)
+        if not url:
+            target = moved.get("target") if isinstance(moved.get("target"), dict) else {}
+            self._respond(503, f"This page moved to {target.get('project')}/{target.get('slug')}, "
+                          "which is not published yet.".encode(), "text/plain; charset=utf-8", cache_control="no-store")
+            return True
+        self.send_response(302)
+        self.send_header("Location", url + "#" + tab_fragment(moved, parsed.query))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
+    def _refuse_moved_write(self, route_path: str) -> bool:
+        # A reviewer session only issues a cookie, which the read-only view needs.
+        if route_path == "/api/reviewer/session":
+            return False
+        moved = self._moved()
+        if not moved:
+            return False
+        target = moved.get("target") if isinstance(moved.get("target"), dict) else {}
+        body = {"error": f"this page moved to {target.get('project')}/{target.get('slug')}; it is read-only",
+                "moved_to": self._moved_to(moved)}
+        self._respond(410, json.dumps(body).encode(), "application/json", cache_control="no-store")
+        return True
+
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
         if not self._allow_request():
@@ -1067,6 +1128,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         route_path = self._strip_base(parsed.path)
+        if self._redirect_moved(parsed, route_path):
+            return
 
         if self.v2_mode:
             if route_path == "/api/comments":
@@ -1152,6 +1215,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
+        if self._refuse_moved_write(route_path):
+            return
 
         if self.v2_mode:
             if route_path == "/api/reviewer/session":
@@ -1207,6 +1272,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         route_path = self._strip_base(parsed.path)
+        if self._refuse_moved_write(route_path):
+            return
         if self.v2_mode and route_path.startswith("/api/comments/"):
             cid = route_path[len("/api/comments/"):]
             return self._v2_put_comment(cid, parsed)
@@ -1247,6 +1314,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "automatic_round_delivery": True,
             "private_share_links": self._is_funnel_origin(),
             "copy_blocks": True,
+            # This server honors consolidated.json: no writes, redirect home.
+            "consolidation": True,
             "batch": True,
             "rounds": True,
             "decision_schema": 2,
@@ -1880,9 +1949,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 and c.get("number") == fresh["number"]
                                 and aid == f"d:q{fresh['number']}"
                             )
+                            # A card on another document (a plan) with the same
+                            # anchor and number is a different card.
                             if (c.get("status") not in ("archived", "resolved_in_version")
                                     and (c.get("author") == author or shared_decision)
-                                    and c.get("decision_request")):
+                                    and c.get("decision_request") and c.get("doc") == fresh.get("doc")):
                                 existing = c
                                 break
                     if existing is not None:

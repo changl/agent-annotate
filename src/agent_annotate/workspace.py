@@ -59,8 +59,9 @@ def _record_key(record: dict) -> str | None:
 def candidates(path: Path, project: str | None = None, *, caller: Path | None = None) -> list[tuple[str, str, dict]]:
     from .cli import _registry_entries
     key = project_key(path) or (project_key(caller) if caller is not None else None)
+    # A consolidated page lives on as its target's tab, not as a project page.
     entries = [(name, slug, record, _record_key(record)) for name, slug, record in _registry_entries()
-               if not record.get("standalone") and not record.get("exception")]
+               if not record.get("standalone") and not record.get("exception") and not record.get("consolidated_into")]
     roots = [r["workspace_root"] for _, _, r, record_key in entries if r.get("workspace_root") and (
              _within(path, r["workspace_root"]) or (caller is not None and _within(caller, r["workspace_root"]))
              or (key and key == record_key))]

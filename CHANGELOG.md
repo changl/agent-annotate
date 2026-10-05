@@ -9,6 +9,8 @@
 - Library edits use Quill with comments on selected words, History with Restore, alternatives, and a 409 on edits made over a newer revision. Findings show proof and can be reopened. Plans show changes since the previous revision.
 - Proof files and assets are served with `Content-Security-Policy: sandbox` and `nosniff`; only images and PDF display inline, other types download, and the CLI accepts an allowlist of proof types.
 - Send reports partial failures, keeps failed items pending, and records each round's delivery result.
+- `annotate consolidate PROJECT/SLUG --from PROJECT/PAGE:TAB …` merges a project's pages into one new page (one Review document; plans, findings sets and Library items for the rest), keeping every comment, verdict, reply, decision history, number, read state and submitted round. `--dry-run` prints the counts per page and per tab. The old pages are kept, refuse writes, redirect to their tab and show read-only with `?archived=1`.
+- A Review version is gated only by Review items, and re-asking a Review card never rewrites a plan card on the same anchor.
 
 ## 2.23.0
 

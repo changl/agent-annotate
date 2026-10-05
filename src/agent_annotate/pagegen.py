@@ -1026,7 +1026,9 @@ def cmd_new(args) -> int:
         print(f"ERROR: markdown source not found: {source}", file=sys.stderr)
         return 2
     slug_dir = Path(args.slug_dir).expanduser().resolve()
-    from .cli import _slug_project
+    from .cli import _moved_page, _slug_project
+    if _moved_page(slug_dir):
+        return 2
     args.project, _ = _slug_project(slug_dir, getattr(args, "project", None))
     from .workspace import duplicate_message, duplicate_page, exception_reason
     try:
