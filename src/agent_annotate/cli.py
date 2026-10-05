@@ -3432,6 +3432,9 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
                 if not dry_run:
                     record["pid"] = procs[0]["pid"]
                     record["port"] = procs[0]["port"] or record.get("port")
+                    # Its runtime is unknown; doctor --versions asks the server.
+                    record.pop("runtime_python", None)
+                    record.pop("runtime_manifest", None)
                     _save_state_for_project(project, state)
                 return "adopted", f"pid {procs[0]['pid']}"
             moved = _rerouted_if_renamed(project, slug, record, live_host, dry_run)
@@ -3479,6 +3482,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         pid = _start_server(slug_dir, port, bus_dir, pbp)
         if not _wait_listening(port, pid):
             return "failed", f"server exited; see {LOG_DIR / (slug_dir.name + '.log')}"
+        from .updates import runtime_manifest
         record.update({
             "pid": pid,
             "port": port,
@@ -3489,6 +3493,8 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             "transport_details": details,
             "transport_error": error,
             "revived_at": _now_iso(),
+            "runtime_python": sys.executable,
+            "runtime_manifest": runtime_manifest(),
         })
         _save_state_for_project(project, state)
     _bus_emit(record.get("bus_file") or str(bus_dir / f"{slug}.ndjson"),

@@ -5,6 +5,7 @@ The installed release here is this test interpreter (the sandbox launcher
 execs it); older runtimes are fakes on disk or a fake page server.
 """
 
+import fcntl
 import http.server
 import json
 import os
@@ -40,7 +41,8 @@ def estate(monkeypatch, tmp_path):
     shim.chmod(0o755)
     claude, codex = tmp_path / "home" / ".claude" / "skills" / "annotate", tmp_path / "home" / ".agents" / "skills" / "annotate"
     for name, value in {"SHIM_PATH": shim, "CONFIG_DIR": tmp_path / "config", "STATE_DIR": tmp_path / "state",
-                        "HOOK_OFFSET_ROOT": tmp_path / "state" / "hook-offsets", "SKILL_DIRS": (claude, codex),
+                        "HOOK_OFFSET_ROOT": tmp_path / "state" / "hook-offsets", "LOCK_DIR": tmp_path / "state" / "locks",
+                        "SKILL_DIRS": (claude, codex),
                         "CODEX_PLUGIN_CACHE": tmp_path / "codex" / "plugins" / "cache"}.items():
         monkeypatch.setattr(paths, name, value)
     monkeypatch.setattr(skillgen, "CONFIG_DIR", tmp_path / "config")
@@ -176,11 +178,20 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
     _install_everything(estate)
     port = page_server(None)  # a pre-capabilities server: /api/capabilities is 404
     bus = paths.BUS_ROOT / "prem-fin"
-    legacy = (f"  4242 /usr/bin/python3 /home/x/.claude/skills/annotate/sync_server.py --slug-dir /srv/prem-fin "
+    page = estate.root / "prem-fin"
+    page.mkdir()
+    _register("registered", 1)  # pid os.getpid(), port 1
+    legacy = (f"  4242 /usr/bin/python3 /home/x/.claude/skills/annotate/sync_server.py --slug-dir {page} "
               f"--slug prem-fin --bus-dir {bus} --port {port} --public-base-path /prem-fin\n"
               # another estate's sandbox server (its own bus root) is not reported
-              f"  4343 /venv/bin/python -m agent_annotate.sync_server --slug-dir /tmp/x/pages/p --slug p "
-              f"--bus-dir /tmp/x/bus/p --port {port} --strict-port\n")
+              f"  4343 /venv/bin/python -m agent_annotate.sync_server --slug-dir {estate.root} --slug p "
+              f"--bus-dir /tmp/x/bus/p --port {port} --strict-port\n"
+              # a registered server whose spaced path `ps` cannot quote: its pid is a record's, never a kill target
+              f"  {os.getpid()} /venv/bin/python -m agent_annotate.sync_server --slug-dir {estate.root} --slug q "
+              f"--bus-dir {bus} --port {port} --strict-port\n"
+              # a directory that does not exist (a mis-split path) is skipped
+              f"  4545 /venv/bin/python -m agent_annotate.sync_server --slug-dir /no/such/half --slug r "
+              f"--bus-dir {bus} --port {port} --strict-port\n")
     original = subprocess.run
     monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=legacy)
                         if command[:1] == ["ps"] else original(command, *args, **kwargs))
@@ -188,11 +199,11 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
     code, out, _err = _doctor(capsys)
     assert code == 1
     line = next(line for line in out.splitlines() if "prem-fin" in line)
-    assert line.startswith("MISMATCH  page      /srv/prem-fin (unregistered, pid 4242)  runtime unknown "
+    assert line.startswith(f"MISMATCH  page      {page} (unregistered, pid 4242)  runtime unknown "
                            "(/api/capabilities HTTP 404; legacy server)")
-    assert (f"fix: kill 4242 && nohup {sys.executable} -I -m agent_annotate.sync_server --slug-dir /srv/prem-fin "
+    assert (f"fix: kill 4242 && nohup {sys.executable} -I -m agent_annotate.sync_server --slug-dir {page} "
             f"--slug prem-fin --bus-dir {bus} --port {port} --public-base-path /prem-fin >> ") in line
-    assert "4343" not in out
+    assert "4343" not in out and f"pid {os.getpid()}" not in out and "4545" not in out
 
 
 def test_json_output_lists_components_and_fixes(estate, page_server, capsys):
@@ -280,7 +291,7 @@ def test_a_starting_page_server_logs_and_serves_the_mismatch(estate, capsys):
     _install_everything(estate)
     stamp = estate.codex / ".annotate-install.json"
     stamp.write_text(json.dumps({**json.loads(stamp.read_text()), "version": "2.21.0"}))
-    status = version_guard.server_status("proj", "page")
+    status = version_guard.server_status("proj", "page", log=True)
     assert status == {"ok": False, "checked": True,
                       "release": {"version": __version__, "build_id": build_identity()[0]},
                       "mismatched": ["skill:codex"]}
@@ -313,10 +324,53 @@ def test_a_starting_page_server_logs_and_serves_the_mismatch(estate, capsys):
                 time.sleep(0.1)
         assert caps is not None, log_path.read_text()
         assert caps["version_guard"] == status
+        while "WARNING: ANNOTATE VERSION MISMATCH" not in log_path.read_text() and time.monotonic() < deadline:
+            time.sleep(0.1)  # logged by the start thread
         assert "WARNING: ANNOTATE VERSION MISMATCH: 1 of 5 component(s)" in log_path.read_text()
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+def test_an_update_in_progress_defers_the_warning_and_the_served_status(estate, monkeypatch, capsys):
+    """`update --apply` restarts pages before it repoints the launcher; a page
+    restarted on the new runtime must not report itself against the old one."""
+    _install_everything(estate)
+    old = estate.root / "old" / "venv"
+    package = old / "lib" / "python3.12" / "site-packages" / "agent_annotate"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text('__version__ = "2.21.0"\n')
+    (package / "_build.json").write_text(json.dumps({"build_id": "e" * 40}))
+    (old / "bin").mkdir()
+    (old / "bin" / "python").write_text("")
+    current = estate.shim.read_text()
+    estate.shim.write_text(f"#!/bin/sh\n# agent-annotate shim\nexec {old / 'bin' / 'python'} -I -m agent_annotate.cli \"$@\"\n")
+    monkeypatch.setattr(version_guard, "CACHE_SECONDS", 0)
+    lock = paths.LOCK_DIR / "runtime-update.lock"
+    lock.parent.mkdir(parents=True)
+    with lock.open("a") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+        assert version_guard.cached_server_status("proj", "page")["pending"] == "runtime update in progress"
+        thread = threading.Thread(target=version_guard.warn_at_start, args=("proj", "page"), daemon=True)
+        thread.start()
+        thread.join(0.5)
+        assert thread.is_alive() and capsys.readouterr().err == ""
+        estate.shim.write_text(current)  # the update repoints the launcher, then releases the lock
+    thread.join(5)
+    assert not thread.is_alive()
+    assert capsys.readouterr().err == ""  # this server matches the launcher it now finds
+    assert version_guard.cached_server_status("proj", "page")["ok"] is True
+
+
+def test_a_locally_edited_registered_skill_gets_the_overwriting_command(estate, capsys):
+    _install_everything(estate)
+    stamp = estate.claude / ".annotate-install.json"
+    stamp.write_text(json.dumps({**json.loads(stamp.read_text()), "version": "2.21.0"}))
+    (estate.claude / "SKILL.md").write_text("edited by hand")
+    code, out, _err = _doctor(capsys)
+    assert code == 1
+    assert (f"fix: annotate install-skill --provider claude --dest {estate.claude}  "
+            "# overwrites local edits to SKILL.md") in out
 
 
 def test_the_passive_notices_are_off_in_the_suite(estate, monkeypatch):

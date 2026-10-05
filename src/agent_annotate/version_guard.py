@@ -19,6 +19,8 @@ it); `doctor --versions` always runs.
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -26,6 +28,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import __version__, paths
@@ -34,6 +37,7 @@ from .updates import build_identity, runtime_manifest
 OK, MISMATCH, SKIP = "OK", "MISMATCH", "SKIP"
 PLUGIN_NAME = "agent-annotate"
 PAGE_TIMEOUT = 2.0
+CACHE_SECONDS = 60
 _VERSION_RE = re.compile(r"^__version__\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE)
 
 
@@ -57,8 +61,17 @@ def _package_dir(python: Path) -> Path | None:
     else asked of the interpreter (editable and custom installs)."""
     if not python.is_file():
         return None
-    for init in sorted(python.parent.parent.glob("lib/python3*/site-packages/agent_annotate/__init__.py")):
-        return init.parent
+    prefix = python.parent.parent
+    found = sorted(prefix.glob("lib/python3*/site-packages/agent_annotate/__init__.py"))
+    if len(found) > 1:  # an upgraded venv can keep a stale lib/python3.N; pyvenv.cfg names the live one
+        try:
+            cfg = (prefix / "pyvenv.cfg").read_text(encoding="utf-8")
+            live = re.search(r"^version(?:_info)?\s*=\s*(\d+\.\d+)", cfg, re.MULTILINE)
+            found = [init for init in found if live and init.parents[2].name == f"python{live.group(1)}"] or found
+        except OSError:
+            pass
+    if found:
+        return found[0].parent
     try:
         result = subprocess.run(
             [str(python), "-I", "-c", "import agent_annotate, os; print(os.path.dirname(agent_annotate.__file__))"],
@@ -101,6 +114,9 @@ def launcher_python(path: Path) -> Path | None:
     try:
         if lines and lines[0].startswith("#!") and "python" in lines[0]:
             argv = shlex.split(lines[0][2:])
+            if len(argv) > 1 and Path(argv[0]).name == "env":
+                found = shutil.which(argv[1])
+                return Path(found) if found else None
             return Path(argv[0]) if argv and os.path.isabs(argv[0]) else None
         for line in lines:
             line = line.strip()
@@ -196,9 +212,25 @@ def _skill_rows(release: dict, inv: str) -> list[dict]:
             rows.append(_row("skill", str(path), MISMATCH, detail="no install stamp (.annotate-install.json)",
                              fix=fix, label=label))
             continue
+        edited = _edited_files(path, manifest)
+        if edited:  # sync-skills preserves local edits, so only install-skill replaces them
+            fix = (f"{inv} install-skill --provider {provider} --dest {shlex.quote(str(path))}"
+                   f"  # overwrites local edits to {', '.join(edited)}")
         rows.append(_compare("skill", str(path), manifest.get("version"), manifest.get("build_id"),
                              release, fix, label))
     return rows
+
+
+def _edited_files(path: Path, manifest: dict) -> list[str]:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    edited = []
+    for rel, digest in sorted(files.items()):
+        try:
+            if hashlib.sha256((path / rel).read_bytes()).hexdigest() != digest:
+                edited.append(rel)
+        except OSError:
+            edited.append(rel)
+    return edited
 
 
 def _plugin_rows(release: dict) -> list[dict]:
@@ -252,6 +284,8 @@ def _alive(pid) -> bool:
     try:
         os.kill(pid, 0)
         return True
+    except PermissionError:
+        return True  # alive, owned by another user
     except OSError:
         return False
 
@@ -262,7 +296,7 @@ def _restart_fix(release: dict, project: str, slug: str) -> str:
     return f"{shlex.quote(release['python'])} -I -c {shlex.quote(code)}"
 
 
-def _unregistered_servers(registered: set[str]) -> list[dict]:
+def _unregistered_servers(records: list[dict]) -> list[dict]:
     """Running page servers on this estate's bus that no registry record
     knows, e.g. a legacy skill-directory sync_server.py. Servers of another
     estate (a sandbox or preview with its own bus root) are not ours. Read
@@ -272,6 +306,9 @@ def _unregistered_servers(registered: set[str]) -> list[dict]:
     except (OSError, subprocess.SubprocessError):
         return []
     bus_root = os.path.realpath(paths.BUS_ROOT) + os.sep
+    registered = {os.path.realpath(record.get("slug_dir") or "") for record in records}
+    pids = {record.get("pid") for record in records}
+    ports = {record.get("port") for record in records}
     servers = []
     for line in out.splitlines():
         if "sync_server" not in line or "--slug-dir" not in line:
@@ -288,7 +325,11 @@ def _unregistered_servers(registered: set[str]) -> list[dict]:
             ours = (os.path.realpath(flags["--bus-dir"]) + os.sep).startswith(bus_root)
         except (ValueError, StopIteration, KeyError):
             continue
-        if ours and directory not in registered and 0 < port < 65536:
+        # `ps` output is not shell-quoted: a path with a space parses wrong, so
+        # anything a record could own (pid, port, directory) or an unparsable
+        # directory is never offered as a kill target.
+        if (ours and os.path.isdir(directory) and directory not in registered and int(pid) not in pids
+                and port not in ports and 0 < port < 65536):
             servers.append({"pid": int(pid), "port": port, "slug_dir": directory, "tail": tail,
                             "slug": flags.get("--slug") or Path(directory).name,
                             "public_base_path": flags.get("--public-base-path") or None})
@@ -299,8 +340,7 @@ def _page_rows(release: dict, local_only: bool) -> list[dict]:
     rows = []
     entries = _registry()
     if not local_only:
-        for server in _unregistered_servers({os.path.realpath(record.get("slug_dir") or "")
-                                             for _p, _s, record in entries}):
+        for server in _unregistered_servers([record for _p, _s, record in entries]):
             log = paths.LOG_DIR / f"{server['slug']}.log"
             fix = (f"kill {server['pid']} && nohup {shlex.quote(release['python'])} -I -m agent_annotate.sync_server "
                    f"{shlex.join(server['tail'])} >> {shlex.quote(str(log))} 2>&1 &")
@@ -410,7 +450,7 @@ def session_notice(session_id: str, *, dry_run: bool = False) -> str | None:
     line = None
     if result["release"]["version"] and not result["ok"]:
         line = (f"[annotate] {result['summary']}. Details and fix commands: {result['invocation']} doctor --versions")
-    if not dry_run:
+    if not dry_run and session_id != "unknown":  # unknown sessions would share one marker
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text((line or "ok") + "\n", encoding="utf-8")
@@ -419,18 +459,34 @@ def session_notice(session_id: str, *, dry_run: bool = False) -> str | None:
     return line
 
 
-def server_status(project: str, slug: str) -> dict:
-    """Checked once when a page server starts: logged loudly on a mismatch and
-    served in /api/capabilities without local paths. Never raises."""
+def _update_in_progress() -> bool:
+    """`annotate update --apply` holds this lock while it restarts every page
+    on the new runtime, and repoints the launcher only at the end."""
+    lock = paths.LOCK_DIR / "runtime-update.lock"
+    if not lock.exists():
+        return False
+    try:
+        with lock.open("a") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
+def server_status(project: str, slug: str, *, log: bool = False) -> dict:
+    """This page server and the local pieces versus the installed release, as
+    served in /api/capabilities: kinds only, no local paths. Never raises."""
     if not passive_enabled():
         return {"ok": None, "checked": False}
     try:
         result = check(local_only=True, pages=False, server=(project, slug))
-    except Exception as exc:  # A page must start even if the check breaks.
+    except Exception as exc:  # A page must keep serving even if the check breaks.
         return {"ok": None, "checked": False, "error": type(exc).__name__}
     if result["release"]["version"] is None:
         return {"ok": None, "checked": True, "release": None, "mismatched": []}
-    if not result["ok"]:
+    if log and not result["ok"]:
         print(f"WARNING: {result['summary']}. Fix: {' ; '.join(result['fixes'])}", file=sys.stderr, flush=True)
     return {
         "ok": result["ok"],
@@ -438,3 +494,27 @@ def server_status(project: str, slug: str) -> dict:
         "release": {"version": result["release"]["version"], "build_id": result["release"]["build_id"]},
         "mismatched": sorted({row["label"] for row in result["components"] if row["status"] == MISMATCH}),
     }
+
+
+_STATUS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+
+
+def cached_server_status(project: str, slug: str) -> dict:
+    """server_status for /api/capabilities, recomputed at most every
+    CACHE_SECONDS, so a launcher repointed after this server started shows."""
+    if _update_in_progress():
+        return {"ok": None, "checked": False, "pending": "runtime update in progress"}
+    now = time.monotonic()
+    hit = _STATUS_CACHE.get((project, slug))
+    if hit is None or now - hit[0] >= CACHE_SECONDS:
+        hit = _STATUS_CACHE[(project, slug)] = (now, server_status(project, slug))
+    return hit[1]
+
+
+def warn_at_start(project: str, slug: str) -> None:
+    """Thread target when a page server starts: log one loud line on a
+    mismatch. An update restarts pages before it repoints the launcher, so
+    wait for it to finish instead of warning about the old release."""
+    while _update_in_progress():
+        time.sleep(1)
+    server_status(project, slug, log=True)
