@@ -123,7 +123,7 @@ def test_plan_markdown_and_html_have_independent_history_and_review_is_preserved
 
 
 @pytest.mark.parametrize("plan_id,body", [("../escape", "## Scope\n\nText"), ("Bad_ID", "# Text"),
-                                         ("good", "```cards\n[]\n```"), ("good", "---\nunknown: bad\n---\n# Text")])
+                                         ("good", "```cards\n{bad JSON}\n```"), ("good", "---\nunknown: bad\n---\n# Text")])
 def test_plan_invalid_source_or_id_is_refused_without_writes(page, capsys, plan_id, body):
     source = page.root / "bad.md"
     source.write_text(body)

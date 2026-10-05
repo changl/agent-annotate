@@ -849,8 +849,6 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None) -> tuple[s
     meta["slug"] = f"plan:{plan_id}"
     meta.setdefault("date", datetime.date.today().isoformat())
     blocks = parse_blocks(body)
-    if any(block["kind"] in ("cards", "project") for block in blocks):
-        raise PageGenError("plan documents contain prose; post decision cards with ask and project data with project")
     canvas, registry, _cards = render(meta, blocks)
     problems = lint(canvas, registry)
     if problems:

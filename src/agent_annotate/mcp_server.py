@@ -125,6 +125,11 @@ def build_server():
         store = cli._load_store(record)
         if category:
             events = cli._category_events(events, store, category)
+        texts = cli._comment_texts(store)
+        for event in events:
+            note = (texts.get(event.get("comment_id")) or ("", ""))[1]
+            if event.get("decision") and note and "decision_text" not in event:
+                event["decision_text"] = note
         cards = cli._decision_cards(store)
         if category:
             cards = [card for card in cards if card["category"] == category]
@@ -133,7 +138,7 @@ def build_server():
                 **({"category": category} if category else {})}
 
     @server.tool()
-    def mark_finding_fixed(slug: str, number_or_id: str, proof: list[str], note: str = "",
+    def mark_finding_fixed(slug: str, number_or_id: int | str, proof: list[str], note: str = "",
                            author: str = "agent:codex") -> dict[str, Any]:
         """Mark a finding fixed only with proof URLs or files inside the server cwd (10 MiB limit)."""
         return cli.fix_finding(_record(slug), number_or_id, proof, note, cli._resolve_author(author))

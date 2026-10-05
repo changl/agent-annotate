@@ -2302,6 +2302,13 @@ def _category_events(events: list[dict], store: dict, category: str) -> list[dic
             if "verdict_counts" in row and "answers" in collections:
                 row["verdict_counts"] = {verdict: sum(item.get("verdict") == verdict for item in row["answers"])
                                          for verdict in row["verdict_counts"]}
+            elif "verdict_counts" in row:
+                row.pop("verdict_counts")  # no category-tagged snapshot to recompute it from
+            if isinstance(row.get("undecided_ids"), list):
+                row["undecided_ids"] = [identifier for identifier in row["undecided_ids"]
+                                        if _comment_category(comments.get(identifier, {})) == category]
+                if "undecided_count" in row:
+                    row["undecided_count"] = len(row["undecided_ids"])
             if any(row[field] for field in collections) or row.get("comment_ids") or (category == "review" and row.get("note")):
                 result.append(row)
         else:
@@ -2638,8 +2645,8 @@ def cmd_ask(args) -> int:
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)
     if code in (404, 405, 501):
-        if not getattr(args, "json", False):
-            print(f"  batch route absent (HTTP {code}) — falling back to per-card POST + PUT")
+        print(f"  batch route absent (HTTP {code}) — falling back to per-card POST + PUT",
+              file=sys.stderr if getattr(args, "json", False) else sys.stdout)
         route = "fallback"
         try:
             ids, created, updated = _ask_fallback(record, slug, items, author)
