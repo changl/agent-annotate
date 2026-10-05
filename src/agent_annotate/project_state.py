@@ -247,3 +247,31 @@ def save_project(slug_dir: Path | str, data: Any) -> dict:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return normalized
+
+
+def linked_pages(primary: dict) -> list[dict]:
+    """Declared workspace tabs and registered exceptions linked to this page."""
+    from .cli import _registry_entries
+    from .urls import page_url
+    from .workspace import workspace_tab_records
+
+    entries = _registry_entries()
+    parents = [(project, slug) for project, slug, record in entries
+               if record.get("slug_dir") == primary.get("slug_dir")]
+    if len(parents) != 1:
+        return []
+    project, parent_slug = parents[0]
+    children = {(p, s): r for p, s, r in workspace_tab_records(primary)}
+    for p, slug, record in entries:
+        exception = record.get("exception")
+        if (p == project and slug != parent_slug and isinstance(exception, dict)
+                and exception.get("parent_slug") == parent_slug):
+            children[(p, slug)] = record
+    result = []
+    for (_, slug), record in sorted(children.items()):
+        exception = record.get("exception") or {}
+        url = page_url(record)
+        if url:
+            result.append({"slug": slug, "title": record.get("title") or slug, "url": url,
+                           "reason": exception.get("reason") or "Linked page"})
+    return result

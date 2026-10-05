@@ -60,6 +60,7 @@ def save_round(directory: Path, event: dict) -> None:
 
 
 def review_history(directory: Path, bus: Path | None = None, archive: Path | None = None) -> dict:
+    from .categories import comment_category
     meta = json.loads((directory / "current.meta.json").read_text())
     store = json.loads((directory / "comments.json").read_text()) if (directory / "comments.json").exists() else {}
     versions = []
@@ -91,6 +92,7 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
             for decision in list(comment.get("decision_history") or []) + [comment.get("decision") or {}]:
                 if decision.get("verdict") and not decision.get("round_pending") and start <= _time(decision.get("ts")) < end:
                     item["answers"].append({"comment_id": comment["id"],
+                        "category": comment_category(comment),
                         "number": (comment.get("target") or {}).get("source_number", comment.get("number")),
                         "prompt": "", "verdict": decision["verdict"], "text": decision.get("text", ""),
                         "by": decision.get("by"), "ts": decision.get("ts")})
@@ -120,9 +122,11 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
                     if choices:
                         decision = max(choices, key=lambda d: _time(d.get("ts")))
                         answers.append({"comment_id": cid, "number": comment.get("number"),
+                                        "category": comment_category(comment),
                                         "verdict": decision["verdict"], "text": decision.get("text", ""),
                                         "prompt": "", "by": decision.get("by")})
             rounds[identifier] = {"id": identifier, "ts": event.get("ts"), "by": event.get("by"),
                                   "note": event.get("note"), "version": version, "answers": answers,
+                                  "edits": event.get("edits", []),
                                   "snapshot": isinstance(event.get("answers"), list)}
     return {"versions": versions, "rounds": sorted(rounds.values(), key=lambda r: _time(r.get("ts")), reverse=True)}
