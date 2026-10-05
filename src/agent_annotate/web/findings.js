@@ -50,6 +50,14 @@
       const o = optionOf(f, d.option_id || d.option || label);
       return { label, ts: d.ts, fix: !(o && (o.id === 'keep' || o.id === 'no')) && d.verdict !== 'reject', pending: !!d.round_pending };
     }
+    // A reopen moves the verdict to decision_history (it must not answer the
+    // reopened question for the agent); the reviewer still sees their answer.
+    const prev = (f.reopened || []).length ? (f.decision_history || []).filter(x => x && x.verdict).slice(-1)[0] : null;
+    if (prev) {
+      const label = D().answerLabel(Object.assign({}, f, { decision: prev })).text;
+      const o = optionOf(f, prev.option_id || prev.option || label);
+      return { label, ts: prev.ts, fix: !(o && (o.id === 'keep' || o.id === 'no')) && prev.verdict !== 'reject', pending: false };
+    }
     if (f.response_text) {
       const yes = optionOf(f, 'yes') || optionOf(f, 'fix');
       return { label: yes ? yes.label : 'Agreed', ts: null, fix: true, note: f.response_text };
