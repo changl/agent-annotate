@@ -488,15 +488,13 @@
   let noteTimer = null;
   let lastSend = null; // this visit's last Send: {ts, result, items}
 
-  // Sent rounds as the server recorded them. This visit's last Send keeps
-  // its exact result line: on the round the server recorded for it, or as
-  // its own entry when it sent only comments (no round).
+  // Sent rounds as the server recorded them (each Send's summary lines, by
+  // send_id). This visit's last Send keeps its exact result line.
   function receipts() {
     const server = window.AnnotateDocs ? window.AnnotateDocs.sentRounds() : [];
     if (!lastSend) return server;
-    const first = server[0];
-    const ours = first && first.ts && Math.abs(new Date(lastSend.ts) - new Date(first.ts)) < 120000;
-    if (ours) return [Object.assign({}, first, { result: lastSend.result })].concat(server.slice(1));
+    const i = lastSend.send_id ? server.findIndex(r => r.send_id === lastSend.send_id) : -1;
+    if (i !== -1) return server.map((r, j) => j === i ? Object.assign({}, r, { result: lastSend.result }) : r);
     return [lastSend].concat(server);
   }
   // What each tab would send now.
@@ -651,7 +649,7 @@
     });
     const libraryPending = !!(AA.providers.library && AA.providers.library.roundPending && AA.providers.library.roundPending());
     let r = null;
-    try { r = await docs.submitPage(libraryPending); } catch (e) { console.error('[annotate] send', e); }
+    try { r = await docs.submitPage(libraryPending, items); } catch (e) { console.error('[annotate] send', e); }
     submitBtn.innerHTML = submitHtml;
     sending = false;
     if (!r || !r.ok) {
@@ -661,7 +659,7 @@
     }
     const n = items.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' : '⏳ Queued — no session listening (' + n + ')';
-    lastSend = { ts: new Date().toISOString(), result, items, fresh: true };
+    lastSend = { ts: new Date().toISOString(), result, items, fresh: true, send_id: r.send_id };
     close();
     setNote(result, r.delivered ? 'is-success' : 'is-queued');
     await docs.reload();

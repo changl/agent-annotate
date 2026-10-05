@@ -124,9 +124,15 @@ def test_defaults_section_rules_and_read_state(tmp_path):
     assert comment_section({"status": "user_confirmed"}) == "done"
     assert comment_section({"status": "archived"}) is None
     finding = seed_finding(tmp_path)
+    # Findings unread = a fix not opened yet (final/); the question itself is needs-you.
+    assert category_counts(tmp_path, "chang")["findings"]["unread"] == 0
+    finding = mark_finding_fixed(tmp_path, "gap", by="agent:a", note="Done",
+                                 proof=[{"label": "Change", "url": "https://example.com/c"}])
     assert category_counts(tmp_path, "chang")["findings"]["unread"] == 1
     (tmp_path / "read-state.json").write_text(json.dumps({"chang": {"gap": {"sig": comment_sig(finding)}}}))
     assert category_counts(tmp_path, "chang")["findings"]["unread"] == 0
+    finding = {**finding, "status": "open"}
+    finding.pop("fixed")
     for option, section in (("fix", "waiting"), ("keep", "done"), ("no", "done")):
         assert comment_section({**finding, "decision": {"verdict": "select", "option_id": option}}) == section
     # A preview/acknowledgement from the agent is not proof that a finding

@@ -2406,7 +2406,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         This deliberately matches the shell badge's needsPush() contract.
         Returns the exact count and IDs delivered or queued for the session.
         """
+        from .categories import validate_send
         author = self._author(parsed)
+        send = {}
+        if self.headers.get("Content-Length", "0") not in ("", "0"):
+            payload = self._bounded_json_body()
+            if payload is None:
+                return
+            try:
+                send = validate_send(payload)
+            except ValueError as exc:
+                return self._respond(400, json.dumps({"error": str(exc)}).encode())
         with _locked_store(self.artifact_dir):
             store = self._v2_load()
             flagged_count = 0
@@ -2424,7 +2434,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         flagged_ids.append(c.get("id"))
             delivery = self._compute_delivery()
             if flagged_ids:
-                self._queue_feedback_delivery(delivery, feedback, author)
+                # History · Sent rounds merges this record with the Send's
+                # round by send_id and lists the Send summary's lines.
+                self._queue_feedback_delivery(delivery, feedback, author, send=send)
                 self._v2_save(store)
             else:
                 delivery["delivery"] = "noop"
@@ -2473,7 +2485,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
 
-    def _queue_feedback_delivery(self, delivery, comments, author, **extra):
+    def _queue_feedback_delivery(self, delivery, comments, author, send=None, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
         from .categories import comment_category
         owner = self._read_meta().get("owner") or {}
@@ -2504,7 +2516,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
-                                      "answers": answers, "edits": [], "snapshot": True})
+                                      "answers": answers, "edits": [], "snapshot": True, **(send or {})})
 
     def _wake_feedback_owner(self):
         if record := self._registered_record():
@@ -2707,14 +2719,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         The fsynced bus is the durable outbox. A retry mints the same delivery
         ID until the pending flags are saved, preventing repeated input.
         """
-        from .categories import comment_category
+        from .categories import comment_category, validate_send
         from .copy_state import load_copy, submit_revisions
         from .review_history import _events
         payload = self._bounded_json_body()
         if payload is None:
             return
-        if set(payload) - {"note", "version"} or not isinstance(payload.get("note", ""), (str, type(None))):
+        if (set(payload) - {"note", "version", "send_id", "receipt"}
+                or not isinstance(payload.get("note", ""), (str, type(None)))):
             return self._respond(400, b'{"error":"invalid round fields"}')
+        try:
+            send = validate_send(payload)
+        except ValueError as exc:
+            return self._respond(400, json.dumps({"error": str(exc)}).encode())
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
@@ -2815,7 +2832,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             })
             from .review_history import save_round
             save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
-                                          "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True})
+                                          "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True,
+                                          **send})
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
