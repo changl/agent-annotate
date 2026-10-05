@@ -25,6 +25,7 @@ TESTS = (
     "tests/test_cli_categories.py",
     "tests/test_backend_review_fixes.py",
     "tests/test_ci_contract.py",
+    "tests/test_fix_ui_server.py",
     "tests/test_decision_api.py::test_deferred_verdicts_then_submit_emit_exactly_one_session_push",
     "tests/test_decision_api.py::test_an_answer_in_words_rides_the_round_and_counts_as_answered",
     "tests/test_comment_carryover.py::test_carry_forward_moves_card_to_new_version_and_preserves_origin",

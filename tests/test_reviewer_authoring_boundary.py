@@ -270,9 +270,18 @@ def test_declared_account_alias_can_finish_legacy_drafts_without_relabeling_or_f
     assert status == 200 and completed["comment_count"] == 1 and completed["comment_ids"] == ["agent-card"]
     after = json.loads((page.directory / "comments.json").read_text())
     card = after["anchors"]["d:q1"][0]
-    assert card["decision"]["by"] == legacy_author and card["decision"]["text"] == "Saved legacy explanation"
-    assert "round_pending" not in card["decision"]
-    assert card["decision_history"] == legacy["decision_history"] and card["replies"] == legacy["replies"]
+    if operation == "discard" and legacy["decision_history"]:
+        # UI-14: a discarded change puts the sent answer back; the draft stays
+        # in the history under its own author, never relabeled.
+        assert card["decision"] == legacy["decision_history"][-1]
+        draft = card["decision_history"][-1]
+        assert draft["by"] == legacy_author and draft["text"] == "Saved legacy explanation" and draft["discarded"]
+        assert "round_pending" not in draft
+        assert card["decision_history"][:-1] == legacy["decision_history"][:-1] and card["replies"] == legacy["replies"]
+    else:
+        assert card["decision"]["by"] == legacy_author and card["decision"]["text"] == "Saved legacy explanation"
+        assert "round_pending" not in card["decision"]
+        assert card["decision_history"] == legacy["decision_history"] and card["replies"] == legacy["replies"]
     assert after["anchors"]["d:q2"][0] == foreign
 
 

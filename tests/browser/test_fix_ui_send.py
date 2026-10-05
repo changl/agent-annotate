@@ -107,9 +107,9 @@ def test_ui2_push_failure_keeps_the_comment_pending_and_receipt_lists_only_the_r
         history(page)
         page.locator("#hist-sent-body .unified-receipt").first.wait_for()
         texts = page.locator("#hist-sent-body .unified-receipt summary").all_inner_texts()
-        # Two Sends, one line each (after a reload the server-side one reads
-        # "Sent (n)": UI-13, out of this slice).
-        assert sorted(t.split(" · ")[0] for t in texts) == ["Sent (1)", "⏳ Queued — no session listening (1)"]
+        # Two Sends, one line each; both were queued, and the server-side
+        # record keeps that (UI-13).
+        assert [t.split(" · ")[0] for t in texts] == ["⏳ Queued — no session listening (1)"] * 2
 
 
 def test_ui2_round_failure_keeps_the_verdict_pending_and_receipt_lists_only_the_push(tmp_path, workspace):  # noqa: F811
@@ -185,11 +185,6 @@ def test_ui5_finding_answered_outside_a_send_is_listed_counted_and_pushed(tmp_pa
 
 
 # ── UI-14: Discard pending shows the answer the agent has ─────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason="UI-14: rounds/discard keeps the discarded answer as the card's decision; "
-    "needs the server to restore the last sent answer (fixer, after the backend merge)",
-)
 def test_ui14_discard_shows_the_sent_answer_again(tmp_path):
     directory = _page(tmp_path)
     with browser_page(tmp_path, directory) as (page, _):

@@ -2691,6 +2691,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if is_revision:
                 prior_label = self._DECISION_PRIOR_LABEL.get(
                     prior_decision.get("verdict"), prior_decision.get("verdict"))
+                # UI-15: a changed option names the option it replaces.
+                prior_option = str(prior_decision.get("text") or "").split("\n", 1)[0]
+                prior_option = re.sub(r"^Selected:\s*", "", prior_option).strip()
+                if prior_decision.get("verdict") == "select" and prior_option:
+                    prior_label = "☑ " + prior_option
                 if verdict in self._DECISION_TEXT_VERDICTS:
                     reply_text = reply_text + "\n\n(revised verdict; was " + prior_label + ")"
                 else:
@@ -2932,6 +2937,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if isinstance(d, dict) and d.get("round_pending") and d.get("by") in reviewer_authors:
                         d.pop("round_pending", None)
                         comment_ids.append(c.get("id"))
+                        # UI-14: a discarded change of a sent answer puts the
+                        # sent answer back, so the card shows what the agent
+                        # has. The discarded answer stays in the history, and
+                        # its unsent "↺ Changed to …" reply goes with it.
+                        # A first answer that was never sent stays recorded.
+                        history = c.get("decision_history") or []
+                        sent = next((h for h in reversed(history) if isinstance(h, dict)
+                                     and h.get("verdict") and not h.get("round_pending")
+                                     and not h.get("discarded")), None)
+                        if sent is not None:
+                            history.remove(sent)
+                            history.append(dict(d, discarded=True))
+                            c["decision"] = sent
+                            c["replies"] = [r for r in c.get("replies") or []
+                                            if not (r.get("ts") == d.get("ts") and r.get("author") == d.get("by")
+                                                    and ("(revised verdict; was " in str(r.get("text"))
+                                                         or str(r.get("text")).startswith("↺ Changed to ")))]
+                            c["status"] = self._DECISION_STATUS_MAP.get(sent.get("verdict"), c.get("status"))
                     # A pending reopen stays recorded on the finding, unsent.
                     if c.get("round_pending") and (c.get("reopened") or [{}])[-1].get("by") in reviewer_authors:
                         c.pop("round_pending", None)
