@@ -65,6 +65,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -202,6 +203,12 @@ def _offset_file(project: str, slug: str, session_id: str | None = None) -> Path
     if sid == "unknown":
         return BUS_OFFSET_ROOT / project / f"{slug}.offset"
     return BUS_OFFSET_ROOT / _safe_component(sid) / project / f"{slug}.offset"
+
+
+def _category_offset_file(offset_file: Path, category: str) -> Path:
+    """A category's own cursor: "<slug>.offset.<category>". Every slug cursor
+    ends in ".offset", so a dotted slug ("main.findings") cannot collide."""
+    return offset_file.with_name(f"{offset_file.name}.{category}")
 
 
 def _legacy_offset(project: str, slug: str) -> int:
@@ -1372,10 +1379,23 @@ def _publish(args) -> int:
         return 2
     project, slug = _slug_project(slug_dir, args.project)
     cfg = _project_config(project)
-    from .workspace import duplicate_message, duplicate_page, exception_reason, project_key
+    from .workspace import candidates, duplicate_message, duplicate_page, exception_reason, project_key
     saved_exception = (_load_state_for_project(project)["slugs"].get(slug) or {}).get("exception")
-    reason = exception_reason(args) or (saved_exception or {}).get("reason")
+    flagged = exception_reason(args)
     duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
+    if flagged:
+        # The project's own main page is never its own exception: the flag
+        # would demote it and leave the project with no main page.
+        found = candidates(slug_dir, getattr(args, "project", None), caller=Path.cwd())
+        own = [r for _, _, r in found if Path(r["slug_dir"]).resolve() == slug_dir]
+        if own and (own[0].get("workspace_primary") or len(found) == 1):
+            print(f"ERROR: {project}/{slug} is this project's main page; --exception and --standalone are only "
+                  f"for a second page.\n  To make another page the main page: "
+                  f"{_inv()} workspace --select PROJECT/SLUG", file=sys.stderr)
+            return 2
+    # A saved reason applies only while another page is the main page; with
+    # none left, this page is the main page again.
+    reason = flagged or ((saved_exception or {}).get("reason") if duplicate else None)
     if duplicate and not reason:
         print(duplicate_message(duplicate), file=sys.stderr)
         return 2
@@ -2225,6 +2245,10 @@ def _inbox_visible(ev: dict, session_id: str) -> bool:
     """
     if ev.get("event") in _INBOX_HIDDEN:
         return False
+    # A reopen click is a draft until the reviewer's Send, whose round carries
+    # the reopen's words; the bare click invited a re-fix before them.
+    if ev.get("event") == "finding_reopened" and ev.get("deferred"):
+        return False
     if ev.get("session_id") == session_id and session_id != "unknown":
         return False
     return not (ev.get("event") in _INBOX_SELF and ev.get("owner_session", session_id) == session_id)
@@ -2273,6 +2297,41 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
     )
 
 
+def _delta_excerpt(delta, limit: int = 120) -> str:
+    """Plain text of a Library revision's delta, on one line."""
+    ops = delta.get("ops") if isinstance(delta, dict) else None
+    text = "".join(op["insert"] for op in ops or [] if isinstance(op, dict) and isinstance(op.get("insert"), str))
+    return _clip(" ".join(text.split()), limit)
+
+
+def _round_lines(ev: dict) -> list[str]:
+    """One line per answer and Library edit of a submitted round.
+
+    The round's own line carries only its note; these carry what to act on:
+    reopen and verdict words (whole) and each edit's block and new text.
+    """
+    if ev.get("event") != "round_submitted":
+        return []
+    lines = []
+    row = "  %-20s %-17s %-10s %-18s %-24s %-9s %s"
+    for answer in ev.get("answers") or []:
+        if not isinstance(answer, dict):
+            continue
+        number = answer.get("number")
+        prompt = _clip(str(answer.get("prompt") or ""), 60)
+        words = str(answer.get("text") or "")
+        lines.append(row % ("", "  answer", str(answer.get("comment_id") or "")[:10],
+                            f"#{number}" if isinstance(number, int) else "", str(answer.get("by") or "")[:24],
+                            str(answer.get("verdict") or "")[:9], f"{prompt} → {words}" if words else prompt))
+    for edit in ev.get("edits") or []:
+        if not isinstance(edit, dict):
+            continue
+        lines.append(row % ("", "  library edit", "", str(edit.get("block_id") or "")[:18],
+                            str(edit.get("by") or "")[:24], "edit",
+                            f"{_clip(str(edit.get('title') or ''), 60)}: {_delta_excerpt(edit.get('delta'))}"))
+    return lines
+
+
 def _category(value: str | None) -> str | None:
     if value is not None and value not in CATEGORY_IDS:
         raise ValueError(f"category must be one of {', '.join(CATEGORY_IDS)}")
@@ -2318,6 +2377,16 @@ def _category_events(events: list[dict], store: dict, category: str) -> list[dic
     return result
 
 
+def _category_counts(record: dict) -> dict | None:
+    """The page's per-tab counts, as the server shows them (without a
+    reviewer's unread), so the CLI and the UI agree."""
+    from .categories import category_counts
+    try:
+        return category_counts(record["slug_dir"]) if record.get("slug_dir") else None
+    except (OSError, ValueError, LookupError, TypeError):
+        return None
+
+
 def cmd_inbox(args) -> int:
     try:
         category = _category(getattr(args, "category", None))
@@ -2334,7 +2403,7 @@ def cmd_inbox(args) -> int:
     bus_file = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
     offset_file = _offset_file(project, slug, session_id)
     if category:
-        offset_file = offset_file.with_name(f"{offset_file.stem}.{category}{offset_file.suffix}")
+        offset_file = _category_offset_file(offset_file, category)
     offset_file.parent.mkdir(parents=True, exist_ok=True)
 
     offset = 0
@@ -2400,6 +2469,7 @@ def cmd_inbox(args) -> int:
             "decisions": counts,
             "card_count": len(cards),
             "undecided": undecided,
+            "category_counts": _category_counts(record),
             **({"category": category} if category else {}),
         }, ensure_ascii=False, indent=2))
     else:
@@ -2407,6 +2477,8 @@ def cmd_inbox(args) -> int:
             print("(no new events)" if args.unread else "(no events)")
         for ev in shown:
             print(_inbox_line(ev, texts))
+            for line in _round_lines(ev):
+                print(line)
         if cards:
             print(_decision_line(cards))
 
@@ -2464,8 +2536,12 @@ def cmd_cards(args) -> int:
         line = "  %-6s %-12s %-20s %-6s %-9s %s" % (
             item_number, c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
             verdict, _clip(c["prompt"], 64))
+        # The reviewer's words are the instruction, so they print whole.
         if c["verdict_text"]:
-            line += f'  “{_clip(c["verdict_text"], 48)}”'
+            line += f'  “{c["verdict_text"]}”'
+        reopen = (c.get("reopened") or [None])[-1]
+        if isinstance(reopen, dict) and str(reopen.get("ts") or "") > str((c.get("fixed") or {}).get("ts") or ""):
+            line += f'  reopened: “{reopen.get("text") or ""}”'
         print(line)
     print(_decision_line(cards))
     return 0
@@ -2572,10 +2648,12 @@ def cmd_ask(args) -> int:
             item["version"] = version
         try:
             category = _category(c.get("category", getattr(args, "category", None)))
-            if category:
-                item["category"] = category
             finding = c.get("finding")
             set_id = c.get("set", getattr(args, "set", None))
+            if category is None and set_id is not None:
+                category = "findings"  # a findings set names a Findings card
+            if category:
+                item["category"] = category
             if finding is not None:
                 if not isinstance(finding, dict):
                     raise ValueError("finding must be an object")
@@ -2591,7 +2669,8 @@ def cmd_ask(args) -> int:
                     raise ValueError("--set/card set requires category findings")
                 if not isinstance(set_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", set_id):
                     raise ValueError("finding set must be a safe lowercase ID")
-                title = c.get("title") or item["text"]
+                # The finding's short name: its own title, else its text.
+                title = c.get("title") or (item["text"] if len(item["text"]) <= 200 else _clip(item["text"], 200))
                 if not isinstance(title, str) or len(title) > 200:
                     raise ValueError("finding title must be text of at most 200 characters")
                 item["finding"] = {"set": set_id, "title": title}
@@ -2640,6 +2719,17 @@ def cmd_ask(args) -> int:
                 print(f"WARN: {item['anchor_id']}: {warning}", file=sys.stderr)
         items.append(item)
 
+    finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
+    if finding_sets:
+        # Check categories.json before posting, so a broken file never
+        # leaves the cards posted and the command failed.
+        from .categories import load_categories
+        try:
+            load_categories(record["slug_dir"])
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: categories.json could not be read; no cards were posted: {exc}", file=sys.stderr)
+            return 2
+
     author = _resolve_author(getattr(args, "author", None))
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
@@ -2666,7 +2756,6 @@ def cmd_ask(args) -> int:
         created = int(payload.get("created") or 0)
         updated = int(payload.get("updated") or 0)
 
-    finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
     if finding_sets:
         from .categories import load_categories, save_findings_sets
         try:
@@ -3569,7 +3658,13 @@ def cmd_project(args) -> int:
 
 def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: str) -> dict:
     """Shared CLI/MCP proof boundary, before trusted storage writes."""
-    from .categories import MAX_PROOF_BYTES, add_proof_file, mark_finding_fixed, validate_proof
+    from .categories import (
+        MAX_PROOF_BYTES,
+        add_proof_file,
+        check_proof_type,
+        mark_finding_fixed,
+        validate_proof,
+    )
     if not proofs or len(proofs) > 30:
         raise ValueError("marking a finding fixed requires 1-30 proof URLs or files")
     directory = Path(record["slug_dir"])
@@ -3578,8 +3673,20 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
     for value in proofs:
         if value.lower().startswith(("http://", "https://")):
             prepared.append(validate_proof(directory, [{"label": value[:200], "url": value}])[0])
+        elif re.match(r"\s|[A-Za-z][A-Za-z0-9+.-]*:", value):
+            raise ValueError(f"proof URLs must start with http:// or https:// (got {value[:60]!r})")
         else:
+            check_proof_type(value)
             source = Path(value).expanduser().absolute()
+            # The shell's $PWD may reach the cwd through a symlink (/tmp on
+            # macOS); an absolute path spelled that way names a file below it.
+            logical = os.environ.get("PWD")
+            if logical and Path(logical).is_absolute() and Path(logical) != Path.cwd():
+                try:
+                    if os.path.samefile(logical, Path.cwd()):
+                        source = Path.cwd() / source.relative_to(logical)
+                except (OSError, ValueError):
+                    pass
             try:
                 source.resolve(strict=True).relative_to(Path.cwd().resolve())
                 source.relative_to(Path.cwd().absolute())
@@ -3589,13 +3696,20 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
                 raise ValueError("proof must be a regular file of at most 10 MiB")
             prepared.append(source)
     # Validate the target and all ordinary inputs before copying attachments.
-    matches = [c for anchor, c in _iter_comments(_load_store(record))
+    # A number is the one `cards` shows, allocated or stored.
+    store = _load_store(record)
+    matches = [c.get("id") for anchor, c in _iter_comments(store)
                if _comment_category({"anchor_id": anchor, **c}) == "findings" and
                (c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier)))]
+    if str(identifier).isdigit():
+        matches = list(dict.fromkeys(matches + [
+            card["id"] for card in _decision_cards(store)
+            if card["category"] == "findings" and str(card.get("number")) == str(identifier)]))
     if not matches:
-        raise KeyError(f"finding {identifier} not found")
+        raise LookupError(f"finding {identifier} not found")
     if len(matches) != 1:
         raise ValueError("ambiguous finding number; use its comment id")
+    identifier = matches[0]
     if not isinstance(note, str) or len(note) > 10000:
         raise ValueError("fixed note must be text of at most 10000 characters")
     proof = []
@@ -3609,9 +3723,10 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
             if "attachment" in item:
                 (directory / "attachments" / item["attachment"]).unlink(missing_ok=True)
         raise
+    # session_id keeps this session's own step out of its own inbox.
     _bus_emit(record.get("bus_file"), {"event": "finding_fixed", "slug": record.get("slug"),
               "comment_id": comment["id"], "category": "findings", "author": author,
-              "note": note, "fixed": comment["fixed"]})
+              "note": note, "fixed": comment["fixed"], "session_id": _session_id()})
     return comment
 
 
@@ -3628,8 +3743,9 @@ def cmd_finding(args) -> int:
         else:
             print(f"  {project}/{slug}: finding #{comment.get('number', args.fixed)} fixed with proof\n  URL: {page_url(record)}")
         return 0
-    except (OSError, ValueError, KeyError) as exc:
-        print(f"ERROR: finding: {exc}", file=sys.stderr)
+    except (OSError, ValueError, LookupError) as exc:
+        # KeyError's str() quotes its message; print the words.
+        print(f"ERROR: finding: {exc.args[0] if isinstance(exc, LookupError) and exc.args else exc}", file=sys.stderr)
         return 2
 
 
@@ -3645,7 +3761,11 @@ def cmd_plan(args) -> int:
         source = Path(args.from_file).expanduser()
         if source.suffix.lower() not in (".md", ".html"):
             raise ValueError("plan source must be .md or .html")
-        with source.open("rb") as stream:
+        # O_NONBLOCK: a FIFO or device must be refused, not waited on.
+        descriptor = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("plan source must be a regular file")
             body = stream.read(MAX_PLAN_BYTES + 1)
         if len(body) > MAX_PLAN_BYTES:
             raise ValueError("plan source exceeds 4 MiB")
@@ -3656,7 +3776,8 @@ def cmd_plan(args) -> int:
         result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
                                        title=title, label=args.label)
         _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
-                  "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"]})
+                  "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"],
+                  "session_id": _session_id()})
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -3683,7 +3804,8 @@ def cmd_copy(args) -> int:
             document = save_copy(directory, json.loads(Path(args.from_file).read_text()))
             if before != document:
                 _bus_emit(record.get("bus_file"), {"event": "copy_updated", "slug": slug, "category": "library",
-                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"])})
+                          "owner_session": record.get("owner_session"), "block_count": len(document["blocks"]),
+                          "session_id": _session_id()})
             if getattr(args, "json", False):
                 print(json.dumps(document, ensure_ascii=False, indent=2))
             else:
@@ -4751,6 +4873,9 @@ def main():
     sp_project.add_argument("--from", dest="from_file", default=None)
     sp_project.set_defaults(func=cmd_project)
     sp_copy = sub.add_parser("copy", aliases=["library"], help="read/import formatted copy blocks and immutable revision history")
+    # `library --help` names the verb that was typed.
+    if len(sys.argv) > 1 and sys.argv[1] == "library":
+        sp_copy.prog = sp_copy.prog.rsplit(" ", 1)[0] + " library"
     sp_copy.add_argument("slug")
     sp_copy.add_argument("--project", default=None)
     sp_copy.add_argument("--from", dest="from_file", default=None)
