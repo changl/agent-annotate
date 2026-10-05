@@ -1,5 +1,11 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Keep one project page with Review, Library, Findings, and Plans; record explicitly requested second-page exceptions and list Linked pages. Preserve --standalone as an alias.
+- Add finding fixes with proof, independently versioned Markdown/HTML plans, Library metadata and the library alias, findings-set questions, and category filters for CLI/MCP reads.
+- Keep the three provider/plugin skills identical and document category authoring, shared Send, proof, and compatibility. No version bump or installed-skill changes.
+
 ## 2.23.0
 
 - Rounds restores read-only access to saved documents and immutable submitted answers.
