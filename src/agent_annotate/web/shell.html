@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="quill.snow.css">
 <link rel="stylesheet" href="content.css">
 <link rel="stylesheet" href="app.css">
+<script>try{var t=localStorage.getItem('annotate:theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 </head>
 <body>
 <a class="unified-skip" href="#frame-area" data-skip="document">Skip to document</a>
@@ -46,8 +47,8 @@
 
   <!-- Review and Plans: a document in the frame (the accepted shell) -->
   <div class="frame-area" id="frame-area" role="main" aria-label="Document" tabindex="-1">
-    <div class="view-hd"><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
     <div class="unified-version-banner" id="unified-version-banner" hidden></div>
+    <div class="view-hd"><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
     <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>

@@ -117,7 +117,7 @@ def _serialize(data: dict) -> bytes:
 
 
 def validate_copy(value: Any) -> dict:
-    value = _object(value, {"schema_version", "blocks", "groups"}, {"blocks"}, "copy")
+    value = _object(value, {"schema_version", "blocks", "groups", "start_item"}, {"blocks"}, "copy")
     if type(value.get("schema_version", 1)) is not int or value.get("schema_version", 1) != 1:
         raise ValueError("copy.schema_version must be 1")
     if not isinstance(value["blocks"], list) or len(value["blocks"]) > 500:
@@ -196,6 +196,12 @@ def validate_copy(value: Any) -> dict:
             clean_block[field] = item
         result["blocks"].append(clean_block)
     _serialize(result)
+    # The item the Library opens on a first visit (final/'s start_item).
+    if "start_item" in value:
+        start = _id(value["start_item"], "copy start_item")
+        if start not in ids:
+            raise ValueError("copy start_item must name a block")
+        result["start_item"] = start
     return result
 
 
@@ -276,9 +282,20 @@ def save_copy(slug_dir: Path | str, data: Any) -> dict:
     return normalized
 
 
+class StaleRevisionError(ValueError):
+    """A browser edit was made on a revision that is no longer the latest (HTTP 409)."""
+
+
 def add_browser_revision(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
-                         *, base_revision: str, request_id: str, round_pending: bool = True) -> dict:
-    """Append a proposal once; retries preserve its author, time, and revision id."""
+                         *, base_revision: str, request_id: str, round_pending: bool = True,
+                         latest: str | None = None) -> dict:
+    """Append a proposal once; retries preserve its author, time, and revision id.
+
+    An edit must be made on the block's latest revision, so two browsers (or a
+    browser and the agent) never replace each other silently. `latest` is the
+    revision the browser saw as the latest when it differs from
+    `base_revision` (Restore); None means `base_revision` itself.
+    """
     if type(round_pending) is not bool:
         raise ValueError("round_pending must be boolean")
     _id(block_id, "copy block.id")
@@ -306,6 +323,9 @@ def add_browser_revision(slug_dir: Path | str, block_id: str, delta: Any, author
             return data
         if base_revision not in {revision["id"] for revision in block["revisions"]}:
             raise ValueError("copy base_revision no longer exists")
+        seen = base_revision if latest is None else latest
+        if seen != block["revisions"][-1]["id"]:
+            raise StaleRevisionError("copy has a newer revision; reload it before saving")
         block["revisions"].append({"id": revision_id, "created_at": datetime.now(timezone.utc).isoformat(),
                                    "author": author, "status": "proposed", "base_revision": base_revision,
                                    "delta": delta, "round_pending": round_pending})
@@ -322,8 +342,13 @@ def propose_copy(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
 
 
 def restore_revision(slug_dir: Path | str, block_id: str, revision_id: str, author: Any,
-                     *, request_id: str, round_pending: bool = True) -> dict:
-    """Restore by appending a new authored proposal, preserving the old revision."""
+                     *, request_id: str, round_pending: bool = True, base_revision: str | None = None) -> dict:
+    """Restore by appending a new authored proposal, preserving the old revision.
+
+    `base_revision` is the latest revision the browser saw; when given and no
+    longer the latest, the restore is refused (StaleRevisionError). Old
+    clients that omit it restore onto whatever is latest.
+    """
     _id(block_id, "copy block.id")
     _id(revision_id, "copy revision.id")
     data = load_copy(slug_dir)
@@ -333,8 +358,11 @@ def restore_revision(slug_dir: Path | str, block_id: str, revision_id: str, auth
     revision = next((r for r in block["revisions"] if r["id"] == revision_id), None)
     if revision is None:
         raise KeyError(revision_id)
-    return add_browser_revision(slug_dir, block_id, revision["delta"], author,
-                                base_revision=revision_id, request_id=request_id, round_pending=round_pending)
+    if base_revision is not None:
+        _id(base_revision, "copy base_revision")
+    latest = base_revision if base_revision is not None else block["revisions"][-1]["id"]
+    return add_browser_revision(slug_dir, block_id, revision["delta"], author, base_revision=revision_id,
+                                request_id=request_id, round_pending=round_pending, latest=latest)
 
 
 def submit_revisions(slug_dir: Path | str, revision_ids: set[str], authors: set[str]) -> None:

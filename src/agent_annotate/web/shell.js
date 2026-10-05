@@ -224,6 +224,18 @@ function authorLabel(record) {
   return record.author_email || record.author || 'anonymous';
 }
 
+// Library and Findings name people the way final/ does: the reviewer's own
+// records carry the reviewer's display name (as in the avatar menu), never a
+// raw login; anyone else keeps their name, then their id.
+function whoName(record) {
+  if (!record) return 'anonymous';
+  const id = String(record.author_email || record.author || record.by || '');
+  const mine = IDENTITY && id && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(id);
+  if (mine && IDENTITY.name) return IDENTITY.name;
+  if (record.author_name && record.author_name !== id) return record.author_name;
+  return authorLabel({ author: id, author_name: record.author_name });
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────
 function authorQuery() {
   return AUTHOR ? ('?author=' + encodeURIComponent(AUTHOR)) : '';
@@ -826,7 +838,9 @@ async function loadHistory() {
 function roundItemText(answer) {
   const c = answer.comment_id ? findCommentById(answer.comment_id) : null;
   const n = (c && NUM_MAP[c.id]) || answer.number;
-  const prompt = c ? displayPrompt(c) || firstLine(c.text) : (answer.prompt || '');
+  // P5: the prompt the round recorded, even after the card's prompt changed.
+  const prompt = answer.prompt ? displayPrompt({ id: answer.comment_id, decision_request: { prompt: answer.prompt } })
+    : c ? displayPrompt(c) || firstLine(c.text) : '';
   const ans = answer.text ? (answer.verdict === 'select' ? answer.text.replace(/^Selected:\s*/, '') : answer.text)
     : (DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '');
   // A plain comment is its own label; never repeat it as the answer.
@@ -846,15 +860,30 @@ function sentRounds() {
     if (r.send_id) byId[r.send_id] = g;
     groups.push(g);
   }
+  // UI-2: the round and the push each keep the lines they carried; one Send's
+  // receipt is both, in the summary's tab order.
+  const tabOrder = ['review', 'library', 'findings', 'plans'];
   return groups.map(g => {
-    const withReceipt = g.find(r => Array.isArray(r.receipt) && r.receipt.length);
+    const withReceipt = g.filter(r => Array.isArray(r.receipt) && r.receipt.length)
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     const ts = g.map(r => r.ts).sort()[0];
-    if (withReceipt) {
-      const items = withReceipt.receipt.map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }));
-      return { ts, result: 'Sent (' + items.length + ')', items, send_id: withReceipt.send_id };
+    if (withReceipt.length) {
+      const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
+        .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
+      return { ts, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
     }
-    return legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+    const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+    return Object.assign(legacy, { result: roundResult(g, legacy.n) });
   }).filter(r => r.items.length);
+}
+// UI-13: the delivery the server recorded on the round at Send, so a reload
+// keeps the result line the Send showed. Rounds recorded before that say
+// "Sent (N)".
+function roundResult(records, n) {
+  const how = records.map(r => r.delivery);
+  if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
+  if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
+  return 'Sent (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -868,7 +897,7 @@ function legacyRound(r) {
     (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
     if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
     const n = (r.answers || []).length + (r.edits || []).length;
-    return { ts: r.ts, result: 'Sent (' + n + ')', items };
+    return { ts: r.ts, result: 'Sent (' + n + ')', items, n };
   }
 }
 async function loadDelivery() {
@@ -903,6 +932,9 @@ function renderVersionRail() {
   if (!body) return;
   const doc = DOC;
   const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
+  // The keyboard hint belongs to the document on screen only, as in final/.
+  const hint = body.parentNode.querySelector('.unified-history-hint');
+  if (hint) hint.hidden = doc !== VIEW_DOC;
   const history = (META.history || []).slice().reverse();
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
@@ -1140,8 +1172,13 @@ function clearSayDraft(id) {
   document.querySelectorAll('[data-decision-say-ta="' + cssEsc(id) + '"]').forEach(ta => { ta.value = ''; });
   syncStripSayDraft(id);
 }
+// P1: text typed while an answered card's Change is open (on the card or in
+// the Send summary) is that card's new answer at Send, as on an open card.
 function hasSayDraft(c) {
-  return isUnresolvedDecision(c) && !!sayDraft(c);
+  return (isUnresolvedDecision(c) || isChangingAnswer(c)) && !!sayDraft(c);
+}
+function isChangingAnswer(c) {
+  return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
 }
 function sectionOf(c) {
   if (c.status === 'archived') return 'archived';
@@ -1158,8 +1195,8 @@ function sectionOf(c) {
 function sendPlan() {
   const round = [], answers = [], push = [];
   for (const c of flattenAll(false)) {
-    if (isRoundPending(c)) round.push(c);
-    else if (hasSayDraft(c)) answers.push(c);
+    if (hasSayDraft(c)) answers.push(c);
+    else if (isRoundPending(c)) round.push(c);
     else if (needsPush(c)) push.push(c);
   }
   return { round, answers, push };
@@ -1567,6 +1604,13 @@ function syncExcerptClamps(root) {
       ? t.scrollHeight > t.clientHeight + 1
       : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
   });
+  // UI-23: long comment text in a card.
+  root.querySelectorAll('.citem-txt-more').forEach(more => {
+    const t = document.getElementById(more.getAttribute('aria-controls'));
+    if (!t) return;
+    if (t.classList.contains('is-open')) { more.hidden = false; return; }
+    more.hidden = !(t.clientHeight > 0 ? t.scrollHeight > t.clientHeight + 1 : true);
+  });
 }
 // A2: no per-card "Pending — not sent" chip or "Send now"; a pending verdict
 // sits in the "Ready to send" section until the one Send.
@@ -1728,6 +1772,24 @@ function isLineCard(c) {
   return !!decisionAnswer(c) || c.status === 'resolved_in_version' || c.status === 'addressed_by_agent';
 }
 
+// U-10: an open card from a newer version than the one on screen says so,
+// with the way to its version; one-line cards too, as in final/ (UI-19).
+function newerLocationHtml(c) {
+  return isNewerThanViewed(c) && followsViewer(c)
+    ? `<div class="citem-loc unified-newer-location">Not in ${esc(CURRENT_VERSION)} — <button type="button" class="btn btn-link btn-xs" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(c.version)}">open ${esc(c.version)}</button></div>`
+    : '';
+}
+// UI-23: a long comment is clamped to a few lines in its card; final/'s
+// "Show more" / "Show less" (as on quoted excerpts) appears only when the
+// clamp cuts the text off (see syncExcerptClamps).
+const commentTextOpen = {};
+function commentTextHtml(c) {
+  const text = String(c.text == null ? '' : c.text);
+  if (text.length < 400 && (text.match(/\n/g) || []).length < 10) return `<div class="citem-txt">${ticketsHTML(text)}</div>`;
+  const open = !!commentTextOpen[c.id];
+  const tid = idFor('txt|' + c.id);
+  return `<div class="citem-txt is-clampable${open ? ' is-open' : ''}" id="${tid}">${ticketsHTML(text)}</div><button type="button" class="decision-excerpt-more citem-txt-more" data-action="text-more" data-id="${escAttr(c.id)}" aria-controls="${tid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
+}
 function renderCItem(c) {
   const cls = classify(c);
   const num = NUM_MAP[c.id];
@@ -1746,7 +1808,7 @@ function renderCItem(c) {
         ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
         ${cardMenuHtml(c, cls)}
       </div>
-      ${cardMenuPanel(c, cls)}
+      ${cardMenuPanel(c, cls)}${newerLocationHtml(c)}
     </div>`;
   }
 
@@ -1810,9 +1872,7 @@ function renderCItem(c) {
   const quote = c.target && c.target.selected_quote;
   const quoteHtml = quote ? `<blockquote class="unified-selected-quote">“${esc(quote)}”</blockquote>` : '';
   // U-10: an open card from a newer version than the one on screen.
-  const newerHtml = isNewerThanViewed(c) && followsViewer(c)
-    ? `<div class="citem-loc unified-newer-location">Not in ${esc(CURRENT_VERSION)} — <button type="button" class="btn btn-link btn-xs" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(c.version)}">open ${esc(c.version)}</button></div>`
-    : '';
+  const newerHtml = newerLocationHtml(c);
   const navKeys = showKbd(c) ? '<span class="citem-kbd"><kbd class="kbd kbd-xs" title="Previous card">A</kbd><kbd class="kbd kbd-xs" title="Next card">F</kbd></span>' : '';
 
   return `<div class="citem${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
@@ -1823,7 +1883,7 @@ function renderCItem(c) {
     </div>
     ${cardMenuPanel(c, cls)}
     ${locHtml}
-    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : `<div class="citem-txt">${ticketsHTML(c.text)}</div>`}
+    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
     ${agentReplyHtml}
     ${replyHtml}
     ${quoteHtml}${newerHtml}
@@ -2034,10 +2094,24 @@ function goToEvidence(anchorId, commentId) {
 
 // Click on an option, from the card or from the send summary. Request
 // changes still needs words (2.20); with an empty box it asks for them.
+// UI-15: the comment sent with an earlier option answer, so changing the
+// option without typing a new comment keeps it. A word answer (comment,
+// changes) is the answer itself, not a comment beside it.
+function earlierAnswerComment(c) {
+  const d = decisionAnswer(c);
+  if (!d || !d.text) return null;
+  if (d.verdict === 'accept' || d.verdict === 'reject') return d.text;
+  if (d.verdict === 'select' || (d.verdict === 'comment' && /^Selected: /.test(d.text))) {
+    const at = d.text.indexOf('\n\n');
+    return at === -1 ? null : (d.text.slice(at + 2).trim() || null);
+  }
+  return null;
+}
 function pickOption(root, btn) {
   const id = btn.dataset.id;
   const action = btn.dataset.decisionAction;
-  const note = decisionCommentText(root, id);
+  const note = decisionCommentText(root, id) ||
+    (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(findCommentById(id)));
   if (action === 'accept' || action === 'reject') return submitDecision(root, id, action, note);
   if (action === 'comment' || action === 'changes') {
     if (!note) {
@@ -2114,6 +2188,7 @@ function wireDecisionActions(root) {
     decisionChanging[btn.dataset.id] = true;
     highlightedCommentId = btn.dataset.id;
     renderDrawer();
+    updateSendState();
     const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
@@ -2122,6 +2197,7 @@ function wireDecisionActions(root) {
     delete decisionChanging[btn.dataset.id];
     delete decisionHint[btn.dataset.id];
     renderDrawer();
+    updateSendState();
   }));
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
@@ -2581,7 +2657,8 @@ function wireHeader() {
 // A comment needs pushing only if it's open AND has user-side activity newer
 // than its last push (2.20 rule, kept).
 function needsPush(c) {
-  if (c.status !== 'open' || (c.decision && c.decision.round_pending)) return false;
+  // The server's _comment_needs_push: a pending reopen goes with the round.
+  if (c.status !== 'open' || c.round_pending || (c.decision && c.decision.round_pending)) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
   let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
   if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
@@ -2634,7 +2711,7 @@ function summarySentence() {
   const roundN = plan.round.length + plan.answers.length;
   if (roundN > 0) {
     return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
-      (s.decided + plan.answers.length) + ' of ' + s.total + ' cards decided).';
+      (s.decided + plan.answers.filter(c => !decisionAnswer(c)).length) + ' of ' + s.total + ' cards decided).';
   }
   return q.total === 0 ? 'Nothing to send yet.' : '';
 }
@@ -2657,11 +2734,11 @@ function renderSummaryInto(list, editable) {
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
     const answered = !!decisionAnswer(c);
-    const draft = !answered && hasSayDraft(c);
+    const draft = hasSayDraft(c);
     const missing = !answered && !draft;
     const editing = editable && sumEditing === c.id;
-    const ansText = answered ? answerLabel(c).text : draft ? '“' + firstLine(sayDraft(c)) + '”' : 'Not answered';
-    const sent = answered && !isRoundPending(c);
+    const ansText = draft ? '“' + firstLine(sayDraft(c)) + '”' : answered ? answerLabel(c).text : 'Not answered';
+    const sent = answered && !draft && !isRoundPending(c);
     const editLabel = missing ? 'Answer' : 'Change';
     let edit = '';
     if (editing) {
@@ -2766,10 +2843,12 @@ function sendItems() {
   const items = [...p.round, ...p.answers, ...p.push].map(c => {
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
     const label = hasDecisionRequest(c) ? displayPrompt(c) : firstLine(last ? last.text : c.text);
-    const answer = decisionAnswer(c) ? answerLabel(c).text : hasSayDraft(c) ? sayDraft(c) : '';
-    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer };
+    const answer = hasSayDraft(c) ? sayDraft(c) : decisionAnswer(c) ? answerLabel(c).text : '';
+    // UI-2: `kind` says which call carries the line (the round or the push)
+    // and `id` lets a failed draft drop its line; neither goes to the server.
+    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer, kind: p.push.includes(c) ? 'push' : 'round', id: c.id };
   });
-  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft() });
+  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft(), kind: 'push', id: 'gf:' + DOC });
   return items;
 }
 // A document's part of one Send (2.20's order): comment-box text on an
@@ -2778,21 +2857,22 @@ function sendItems() {
 async function prepareDocCore() {
   const items = sendItems();
   let ok = true;
+  const failed = [];
   for (const c of flattenAll(false).filter(hasSayDraft)) {
     let r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
-    if (r) clearSayDraft(c.id); else ok = false;
+    if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   const gf = gfDraft();
-  if (gf && IDENTITY) {
-    const created = await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION);
-    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else ok = false;
+  if (gf) {
+    const created = IDENTITY ? await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION) : null;
+    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else { ok = false; failed.push('gf:' + DOC); }
   }
   if (DOC === VIEW_DOC) {
     const g = document.getElementById('gf-ta');
     if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
   }
-  return { ok, items };
+  return { ok, items, failed };
 }
 // A reopened finding this reviewer has not sent yet.
 function isReopenPending(c) {
@@ -2808,34 +2888,60 @@ function pageRoundPending() {
 // comments with new activity. `alsoPending` says another tab has round-pending
 // work the comment store does not show (Library revisions).
 // `receipt`: the Send summary's lines, kept by the server for History.
+// UI-2: each call carries only its own receipt lines (the round's verdicts,
+// reopens and edits; the push's comments), both under one send_id, so a
+// failed call leaves its lines out of History. Returns the lines actually
+// sent and the lines that were not (they stay pending, as their drafts,
+// verdicts and comments are untouched).
 async function submitPage(alsoPending, receipt) {
-  let ok = true, sentCount = 0, delivered = false, last = null;
-  const send = receiptPayload(receipt);
+  let sentCount = 0, delivered = false, last = null;
+  const lines = Array.isArray(receipt) ? receipt : [];
+  const sendId = lines.length ? newSendId() : null;
+  const failedIds = new Set();
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
-    if (!r.ok) ok = false;
+    (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
   }
+  const failed = lines.filter(it => it.id && failedIds.has(it.cat + '|' + it.id));
+  const sent = [];
+  // Library lines carry no kind: its comments read "Comment: …".
+  const kindOf = (it) => it.kind || (/^Comment: /.test(it.answer || '') ? 'push' : 'round');
+  let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
+  let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
   await loadStore();
-  if (roundsEnabled() && (pageRoundPending() > 0 || alsoPending)) {
-    const j = await withDocAsync('review', () => apiRoundSubmit(null, send));
-    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
+  const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
+  const doPush = flattenStore(false).some(needsPush);
+  // A line whose own call is not needed goes with the other call.
+  if (!doRound) { pushLines = roundLines.concat(pushLines); roundLines = []; }
+  if (!doPush) { roundLines = roundLines.concat(pushLines); pushLines = []; }
+  if (doRound) {
+    const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
+    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
   }
-  if (flattenStore(false).some(needsPush)) {
-    const j = await apiPushAll(send);
-    if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
+  if (doPush) {
+    const j = await apiPushAll(receiptPayload(pushLines, sendId));
+    if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; sent.push(...pushLines); } else failed.push(...pushLines);
   }
+  // Nothing needed a call (an old server answers each verdict as it is posted).
+  if (!doRound && !doPush) sent.push(...roundLines);
   if (last) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
   }
   historyDirty = true;
   await Promise.all([loadStore(), loadReadState()]);
   loadHistory();
-  return { ok: ok || !!last, sentCount, delivered, any: !!last, send_id: send.send_id };
+  const order = (it) => lines.indexOf(it);
+  sent.sort((a, b) => order(a) - order(b));
+  failed.sort((a, b) => order(a) - order(b));
+  return { ok: !failed.length, sent, failed, sentCount, delivered, any: !!last, send_id: sendId };
 }
-function receiptPayload(receipt) {
-  if (!Array.isArray(receipt) || !receipt.length) return {};
-  const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12));
+function newSendId() {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+}
+function receiptPayload(receipt, id) {
+  if (!id) return {};
+  if (!Array.isArray(receipt) || !receipt.length) return { send_id: id };
   return {
     send_id: id,
     receipt: receipt.slice(0, 200).map(it => {
@@ -3189,6 +3295,12 @@ function onShellKey(e) {
         submitRound();
       } else if (document.getElementById('popover').classList.contains('vis')) {
         savePopover();
+      } else if (t.dataset && t.dataset.submit) {
+        // Library and Findings boxes name their own Save button: ⌘↵ saves
+        // the typed text there, like the reply box, instead of opening Send.
+        e.preventDefault();
+        const btn = document.querySelector(t.dataset.submit);
+        if (btn && !btn.disabled) btn.click();
       } else if (t.classList && t.classList.contains('reply-ta')) {
         e.preventDefault();
         const btn = document.querySelector('[data-action="reply"][data-id="' + cssEsc(t.dataset.replyFor) + '"]');
@@ -3356,6 +3468,7 @@ async function activateDoc(doc, version) {
   renderProject();
   loadDelivery();
   renderAll();
+  openLinkedCard();
   return whenFrameReady();
 }
 function parkDoc() {
@@ -3390,10 +3503,32 @@ async function selectPlan(id) {
 }
 
 // ── Init ─────────────────────────────────────────────────────────
+// The address the page was opened with, tidied before anything else runs
+// (this runs when the script loads, before init, any request or the frame):
+// - a private review key (#review=<key>) leaves the address bar at once;
+//   the session exchange below uses this copy (UI-27);
+// - a 2.20.3-era version link (?v=vN, the Review document) moves into the
+//   hash (#view=review&v=vN), where the router reads versions (UI-10).
+const REVIEW_KEY = (() => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const search = new URLSearchParams(location.search);
+  const key = hash.get('review');
+  const v = search.get('v');
+  if (key == null && !v) return null;
+  hash.delete('review');
+  if (v) {
+    search.delete('v');
+    const view = hash.get('view');
+    if (!hash.get('v') && (!view || view === 'review')) { hash.set('view', 'review'); hash.set('v', v); }
+  }
+  const s = search.toString(), h = hash.toString();
+  history.replaceState(null, '', location.pathname + (s ? '?' + s : '') + (h ? '#' + h : ''));
+  return key;
+})();
 // F7: a private review link (#review=<key>) opens a reviewer session first;
 // without it every API call is refused on the public origin.
 async function startReviewerSession() {
-  const reviewKey = new URLSearchParams(location.hash.slice(1)).get('review');
+  const reviewKey = REVIEW_KEY;
   if (!reviewKey) return true;
   let name = 'Reviewer';
   try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
@@ -3402,13 +3537,39 @@ async function startReviewerSession() {
     showStatus('This review link is invalid or expired.');
     return false;
   }
-  history.replaceState(null, '', location.pathname + location.search);
   return true;
 }
 function showStatus(text) {
   const status = document.getElementById('delivery-status');
   status.hidden = false;
   status.textContent = text;
+}
+// UI-24: a card link (#feedback=<id>, main's form; #c=<id> also) opens that
+// card: the router shows its document (at the card's own version unless the
+// card follows the viewer), then the rail shows the card expanded and
+// highlighted. takeCardLink() runs before the router reads the hash.
+let linkedCard = null;
+function takeCardLink() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const id = p.get('feedback') || p.get('c');
+  const c = id ? findCommentById(id) : null;
+  const doc = c && docOf(c);
+  if (!doc || !DOCS.includes(doc)) return;
+  linkedCard = c.id;
+  const sameView = p.get('view') === doc;
+  if (!sameView) p.set('view', doc);
+  if (!sameView || !p.get('v')) {
+    const own = withDoc(doc, () => followsViewer(c) ? null : c.version);
+    if (own) p.set('v', own); else p.delete('v');
+  }
+  history.replaceState(null, '', location.pathname + location.search + '#' + p.toString());
+}
+function openLinkedCard() {
+  const c = linkedCard && findCommentById(linkedCard);
+  linkedCard = null;
+  if (!c || docOf(c) !== VIEW_DOC) return;
+  cardExpanded[c.id] = true;
+  focusSidebarCard(c.id);
 }
 // True while the reviewer is typing in the rail or the document.
 function isEditing() {
@@ -3434,6 +3595,18 @@ async function init() {
     if (e.target && e.target.classList && e.target.classList.contains('reply-ta')) {
       setDraft(e.target.dataset.replyFor, e.target.value || '');
     }
+  });
+  // UI-23: "Show more" / "Show less" under a long comment.
+  document.getElementById('comment-list').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('[data-action="text-more"]');
+    if (!btn) return;
+    e.stopPropagation();
+    const open = !commentTextOpen[btn.dataset.id];
+    commentTextOpen[btn.dataset.id] = open;
+    const t = document.getElementById(btn.getAttribute('aria-controls'));
+    if (t) t.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Show less' : 'Show more';
   });
 
   wireHeader();
@@ -3470,6 +3643,7 @@ async function init() {
   await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);
+  takeCardLink();
   DOCS_LOADED_resolve();
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();
@@ -3522,6 +3696,7 @@ window.AnnotateDocs = {
   whenFrameReady,
   version: (doc) => withDoc(doc, () => CURRENT_VERSION),
   counts: (doc) => withDoc(doc, docCounts),
+  olderShown: (doc) => withDoc(doc, () => !!CURRENT_VERSION && !!latestVersion() && CURRENT_VERSION !== latestVersion()),
   roundStats: (doc) => withDoc(doc, roundStats),
   sendables: (doc) => withDoc(doc, sendables),
   sentence: (doc) => withDoc(doc, summarySentence),
@@ -3563,6 +3738,7 @@ window.AnnotateDocs = {
   selectVerdictId,
   ticketsHTML,
   authorLabel,
+  whoName,
   createComment: apiCreateComment,
   decide: apiDecision,
   refreshStore: reloadPage,
@@ -3572,7 +3748,8 @@ window.AnnotateDocs = {
 document.addEventListener('DOMContentLoaded', init);
 // A new private review link in the address bar starts a new session.
 window.addEventListener('hashchange', () => {
-  if (new URLSearchParams(location.hash.slice(1)).has('review')) location.reload();
+  if (new URLSearchParams(location.hash.slice(1)).has('review')) { location.reload(); return; }
+  takeCardLink(); // runs before the router's own hashchange listener (app.js)
 });
 
 })();

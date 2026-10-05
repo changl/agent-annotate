@@ -94,7 +94,8 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
             for decision in history + [comment.get("decision")]:
                 if not isinstance(decision, dict):
                     continue  # older or hand-edited data
-                if decision.get("verdict") and not decision.get("round_pending") and start <= _time(decision.get("ts")) < end:
+                if (decision.get("verdict") and not decision.get("round_pending") and not decision.get("discarded")
+                        and start <= _time(decision.get("ts")) < end):
                     item["answers"].append({"comment_id": comment["id"],
                         "category": comment_category(comment),
                         "number": target.get("source_number", comment.get("number")),
@@ -122,7 +123,7 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
                     comment = records.get(cid, {})
                     decisions = list(comment.get("decision_history") or []) + [comment.get("decision") or {}]
                     choices = [d for d in decisions if d.get("verdict") and not d.get("round_pending")
-                               and _time(d.get("ts")) <= _time(event.get("ts"))]
+                               and not d.get("discarded") and _time(d.get("ts")) <= _time(event.get("ts"))]
                     if choices:
                         decision = max(choices, key=lambda d: _time(d.get("ts")))
                         answers.append({"comment_id": cid, "number": comment.get("number"),

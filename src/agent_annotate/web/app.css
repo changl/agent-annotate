@@ -99,11 +99,18 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .fix-proof-links{margin:0;padding:0}
 .fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
 .fix-proof-links svg.i{width:12px;height:12px}
+/* Findings on the phone: the comment Save, Reopen and Cancel are ≥44px targets. */
+@media (max-width:1160px),(max-height:480px){
+  #rail-findings .gf-ft .btn,#rail-findings .fix-actions .btn{min-width:44px;min-height:44px}
+}
 .fix-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px}
 .fix-actions .btn svg.i{width:14px;height:14px}
 
 /* ── History: one list, tagged by tab ────────────────────────────────── */
 .hist-filter{display:flex;justify-content:flex-end;padding:2px 4px 6px}
+/* UI-17: daisyUI 5.7 fills every [aria-pressed=true] button; final/'s 5.5
+   build has no such rule, so a pressed soft button keeps its pale chip. */
+.btn-soft:is([aria-pressed=true],[aria-checked=true]):not(:hover,:focus-visible,:active){--btn-bg:color-mix(in oklab,var(--btn-color,var(--color-base-content)) 8%,var(--color-base-100));--btn-border:color-mix(in oklab,var(--btn-color,var(--color-base-content)) 10%,var(--color-base-100));color:var(--btn-color,var(--color-base-content))}
 .hist-cat[hidden]{display:none}
 .hist-tag{font-weight:700;letter-spacing:0;text-transform:none;vertical-align:1px}
 .hist-sub{margin:0 4px 6px}

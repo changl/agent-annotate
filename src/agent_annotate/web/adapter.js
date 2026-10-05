@@ -886,6 +886,8 @@ function ensureStripStyle() {
       line-height: 1.35 !important; white-space: normal !important; overflow-wrap: anywhere !important;
     }
     .annotate-decision-btn:hover { filter: brightness(.92) !important; }
+    /* UI-25: Enter on a focused option answers it, so the focus must show. */
+    .annotate-decision-btn:focus-visible { outline: 2px solid var(--color-primary) !important; outline-offset: 2px !important; }
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
     .annotate-decision-accept { background: var(--color-success) !important; }
     .annotate-decision-reject { background: var(--color-error) !important; }
@@ -2780,6 +2782,8 @@ function ensureAffordanceStyle() {
 }
 // U-11: a link to another page on this server opens in the whole window,
 // never inside the document frame. Links into this document stay in place.
+// UI-21: a link to another site opens in a new tab (the browser's own
+// target=_blank, so no pop-up blocker), never inside the document frame.
 function wirePageLinks() {
   document.addEventListener('click', e => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -2787,6 +2791,11 @@ function wirePageLinks() {
     if (!link || (link.target && link.target !== '_self')) return;
     let url;
     try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { return; }
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.origin !== PARENT_ORIGIN) {
+      link.target = '_blank';
+      link.rel = (link.rel ? link.rel + ' ' : '') + 'noopener';
+      return;
+    }
     if (!PARENT_ORIGIN || url.origin !== PARENT_ORIGIN) return;
     if (url.pathname === location.pathname && url.search === location.search) return;
     e.preventDefault();

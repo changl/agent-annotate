@@ -68,3 +68,22 @@ def test_send_feedback_skips_unanswered_questions_and_other_reviewer_drafts(serv
     assert pushes[0]["round"] is True
     assert _call(httpd, "POST", "/api/push-session", {}, author="reviewer@example.com")[1]["flagged_count"] == 0
     assert len(_events(bus, "session_push")) == 1
+
+
+def test_ui3_edit_or_restore_on_an_older_revision_is_a_409(server):
+    httpd, directory, _ = server
+    _seed(directory)
+    first = {"delta": {"ops": [{"insert": "A\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", first, author="reviewer@example.com")[0] == 200
+    stale = {"delta": {"ops": [{"insert": "B\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
+    status, result = _call(httpd, "POST", "/api/copy/hero/revisions", stale, author="other@example.com")
+    assert status == 409 and "newer revision" in result["error"]
+    restore = {"revision_id": "r1", "request_id": str(uuid.uuid4()), "base_revision": "r1"}
+    assert _call(httpd, "POST", "/api/copy/hero/restore", restore, author="other@example.com")[0] == 409
+    assert len(load_copy(directory)["blocks"][0]["revisions"]) == 2
+    # Clients that send the latest base, or an old Restore without one, are unaffected.
+    restore["base_revision"] = "r_" + first["request_id"]
+    assert _call(httpd, "POST", "/api/copy/hero/restore", restore, author="other@example.com")[0] == 200
+    old = {"revision_id": "r1", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/restore", old, author="other@example.com")[0] == 200
+    assert len(load_copy(directory)["blocks"][0]["revisions"]) == 4

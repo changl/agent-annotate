@@ -134,7 +134,14 @@
     const out = {};
     ALL_TABS.forEach(t => {
       const c = cats && cats.categories.find(x => x.id === t.id);
-      const k = c ? c.counts : null;
+      let k = c ? c.counts : null;
+      // UI-26 (final/): a document shown at an older version or revision
+      // counts that version's cards, as its rail does.
+      const d = DOCS();
+      if (k && isDoc(t.id) && d && d.docs.includes(t.id) && d.olderShown && d.olderShown(t.id)) {
+        const own = d.counts(t.id);
+        k = Object.assign({}, k, { needs_you: own.needs, unread: own.unread, waiting: own.waiting });
+      }
       out[t.id] = Object.assign({}, ZERO, k ? { needs: k.needs_you, unread: k.unread, waiting: k.waiting } : {},
         { pending: k ? sendCount(t.id) : 0, known: !!k });
     });
@@ -214,6 +221,8 @@
     if (p.get('theme') === 'light' || p.get('theme') === 'dark') document.dispatchEvent(new CustomEvent('annotate:set-theme', { detail: p.get('theme') }));
     let next = p.get('view') || UI.local.get('view', 'review');
     if (!tab(next) && !(next === 'linked' && AA.linked)) next = 'review';
+    // UI-28: a tab this page does not have reads as Review in the address too.
+    if (p.get('view') && p.get('view') !== next && DOCS().categories()) { p.set('view', next); history.replaceState(null, '', '#' + p.toString()); }
     if (next === 'plans' && p.get('plan') && p.get('plan') !== DOCS().planId()) {
       await DOCS().selectPlan(p.get('plan'));
       return;
@@ -316,7 +325,8 @@
     const curNeeds = curTab ? counts[cur].needs : 0;
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
-    menu.innerHTML = `<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
+    menu.hidden = AA.TABS.length < 2 && !linked.length; // UI-28: one tab, no menu
+    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
@@ -399,7 +409,8 @@
     const cur = AA.tab(view);
     const f = $('#hist-filter');
     const on = (yes) => yes ? ' btn-soft btn-primary' : ' btn-ghost';
-    f.innerHTML = `<div class="join">${cur ? `<button type="button" class="btn btn-xs join-item${on(filter !== 'all')}" data-hist-filter="tab" aria-pressed="${filter !== 'all'}">${esc(cur.label)}</button>` : ''}<button type="button" class="btn btn-xs join-item${on(filter === 'all' || !cur)}" data-hist-filter="all" aria-pressed="${filter === 'all' || !cur}">All tabs</button></div>`;
+    f.hidden = AA.TABS.length < 2; // UI-28: one tab, nothing to filter
+    f.innerHTML =`<div class="join">${cur ? `<button type="button" class="btn btn-xs join-item${on(filter !== 'all')}" data-hist-filter="tab" aria-pressed="${filter !== 'all'}">${esc(cur.label)}</button>` : ''}<button type="button" class="btn btn-xs join-item${on(filter === 'all' || !cur)}" data-hist-filter="all" aria-pressed="${filter === 'all' || !cur}">All tabs</button></div>`;
     f.querySelectorAll('[data-hist-filter]').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.histFilter)));
     const shown = cur ? shownTabs() : AA.TABS.map(t => t.id);
     const docs = window.AnnotateDocs ? window.AnnotateDocs.docs : [];
@@ -645,21 +656,38 @@
     p.tabs.forEach(t => {
       if (!t.n) return;
       const lines = AA.isDoc(t.id) ? docs.items(t.id) : (AA.providers[t.id] && AA.providers[t.id].pending ? AA.providers[t.id].pending() : []);
-      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '' }));
+      // `kind` and `id` (UI-2) tell the shell which call carries a line.
+      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id }));
     });
     const libraryPending = !!(AA.providers.library && AA.providers.library.roundPending && AA.providers.library.roundPending());
     let r = null;
     try { r = await docs.submitPage(libraryPending, items); } catch (e) { console.error('[annotate] send', e); }
     submitBtn.innerHTML = submitHtml;
     sending = false;
-    if (!r || !r.ok) {
+    // UI-2: the receipt lists only what was sent; what failed stays pending.
+    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' })) : [];
+    const failed = r ? (r.failed || []).length : items.length;
+    if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
+      if (r) { await docs.reload(); AA.changed(); }
       $('#round-confirm-sub').textContent = 'Failed to submit — try again.';
       return;
     }
-    const n = items.length;
+    const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' : '⏳ Queued — no session listening (' + n + ')';
-    lastSend = { ts: new Date().toISOString(), result, items, fresh: true, send_id: r.send_id };
+    lastSend = { ts: new Date().toISOString(), result, items: sent, fresh: true, send_id: r.send_id };
+    if (failed) {
+      // A partial Send: the summary stays open on what is still pending.
+      setNote(result, r.delivered ? 'is-success' : 'is-queued');
+      await docs.reload();
+      AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
+      btns.forEach(b => { b.disabled = false; });
+      render();
+      $('#round-confirm-sub').textContent = 'Failed to send ' + failed + (failed === 1 ? ' item' : ' items') + ' — try again.';
+      if (AA.rail.tab === 'history') AA.rail.renderHistory();
+      AA.changed();
+      return;
+    }
     close();
     setNote(result, r.delivered ? 'is-success' : 'is-queued');
     await docs.reload();

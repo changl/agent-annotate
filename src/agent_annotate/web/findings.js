@@ -17,6 +17,15 @@
   const esc = UI.esc;
   let F = [], BY = {}, SETS = {}, SET_ORDER = [];
   let selected = null, changing = false, reopening = false, shown = false, busy = false;
+  // Unsaved text per finding, kept in this browser until it is saved (UI-8,
+  // UI-9, UI-12): the comment box and the reopen note. A finding with a
+  // reopen note in progress keeps its reopen form open.
+  const drafts = { compose: UI.local.get('find:drafts', {}), reopen: UI.local.get('find:reopen-drafts', {}) };
+  const DRAFT_KEY = { compose: 'find:drafts', reopen: 'find:reopen-drafts' };
+  function setDraft(kind, id, text) {
+    if (text) drafts[kind][id] = text; else delete drafts[kind][id];
+    UI.local.set(DRAFT_KEY[kind], drafts[kind]);
+  }
 
   // ── The store's findings ────────────────────────────────────────────────
   function load() {
@@ -90,12 +99,18 @@
     const d = D(), out = [];
     F.forEach(f => {
       const label = tag(f) + ' · ' + titleOf(f);
-      if (d.isRoundPending(f)) out.push({ item: f.id, label, answer: D().answerLabel(f).text });
+      if (d.isRoundPending(f)) out.push({ item: f.id, label, answer: D().answerLabel(f).text, kind: 'round' });
       if (d.isReopenPending(f)) {
         const r = (f.reopened || []).slice(-1)[0];
-        out.push({ item: f.id, label, answer: 'Reopened' + (r && r.text ? ': ' + r.text.split('\n')[0].slice(0, 60) : '') });
+        out.push({ item: f.id, label, answer: 'Reopened' + (r && r.text ? ': ' + r.text.split('\n')[0].slice(0, 60) : ''), kind: 'round' });
       }
-      commentsOf(f).filter(c => d.needsPush(c)).forEach(c => out.push({ item: f.id, label, answer: 'Comment: ' + c.text.split('\n')[0].slice(0, 60) }));
+      // UI-5: a finding with an answer or reply the agent has not had yet
+      // (answered outside a Send) goes with the push, so it is listed too.
+      if (d.needsPush(f)) {
+        const reply = (f.replies || []).filter(r => !String(r.author || '').startsWith('agent:')).slice(-1)[0];
+        out.push({ item: f.id, label, answer: d.decisionAnswer(f) ? d.answerLabel(f).text : 'Comment: ' + String(reply ? reply.text : f.text || '').split('\n')[0].slice(0, 60), kind: 'push' });
+      }
+      commentsOf(f).filter(c => d.needsPush(c)).forEach(c => out.push({ item: f.id, label, answer: 'Comment: ' + c.text.split('\n')[0].slice(0, 60), kind: 'push' }));
     });
     return out;
   }
@@ -161,14 +176,23 @@
     return `<div class="citem is-line${unread ? ' is-unread' : ''}" data-card="${esc(f.id)}" tabindex="0" role="group" aria-label="${esc(tag(f) + ' · ' + titleOf(f))}"><div class="citem-line">${unread}<span class="citem-num">${esc(tag(f))}</span><span class="citem-line-txt"><span class="citem-line-q">${esc(titleOf(f))}</span>${fx ? '<span class="citem-line-arrow">→</span><span class="ans">Fixed</span>' : a ? `<span class="citem-line-arrow">→</span><span class="ans">${esc(a.label)}</span>` : ''}</span></div></div>`;
   }
   const IMG = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
+  const WEB = /^https?:\/\//i;
   function proofUrl(p) { return p.attachment ? './attachments/' + encodeURIComponent(p.attachment) : p.url; }
+  // UI-1: an agent's attachment never opens as a page on this origin. An
+  // image shows as an <img> only (no click-through); any other attachment
+  // downloads. A proof URL on another site stays a plain link.
+  function proofLink(p) {
+    if (p.attachment) return `<a href="${esc(proofUrl(p))}" download="${esc(p.attachment)}">${esc(p.label)}</a>`;
+    if (WEB.test(p.url || '')) return `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)} ${UI.ico('external')}</a>`;
+    return `<span>${esc(p.label)}</span>`;
+  }
   function proofHtml(fx) {
     const proof = fx.proof || [];
-    const imgs = proof.filter(p => IMG.test(p.attachment || p.url || ''));
+    const imgs = proof.filter(p => IMG.test(p.attachment || p.url || '') && (p.attachment || WEB.test(p.url || '')));
     const links = proof.filter(p => !imgs.includes(p));
     return `<div class="fix-proof" data-proof-count="${proof.length}">
-      ${imgs.map(p => `<figure class="fix-proof-img"><a href="${esc(proofUrl(p))}" target="_blank" rel="noopener"><img src="${esc(proofUrl(p))}" alt="${esc(p.label)}" loading="lazy"></a><figcaption>${UI.ico('image')} ${esc(p.label)}</figcaption></figure>`).join('')}
-      ${links.length ? `<ul class="doc-list fix-proof-links">${links.map(p => `<li><a href="${esc(proofUrl(p))}" target="_blank" rel="noopener noreferrer">${esc(p.label)} ${UI.ico('external')}</a>${p.detail ? `<span class="project-detail">${esc(p.detail)}</span>` : ''}</li>`).join('')}</ul>` : ''}
+      ${imgs.map(p => `<figure class="fix-proof-img"><img src="${esc(proofUrl(p))}" alt="${esc(p.label)}" loading="lazy"><figcaption>${UI.ico('image')} ${esc(p.label)}</figcaption></figure>`).join('')}
+      ${links.length ? `<ul class="doc-list fix-proof-links">${links.map(p => `<li>${proofLink(p)}${p.detail ? `<span class="project-detail">${esc(p.detail)}</span>` : ''}</li>`).join('')}</ul>` : ''}
     </div>`;
   }
   function fixBlock(f) {
@@ -176,12 +200,12 @@
     const fx = r ? lastFixOf(f) : fixOf(f);
     if (!fx) return '';
     const d = D();
-    const head = `<div class="fix-head"><span class="badge badge-sm badge-soft badge-success">Marked fixed</span><span class="citem-author">${esc(d.authorLabel({ author: fx.by }))}</span><span>${esc(UI.fmtTs(fx.ts))}</span></div>`;
+    const head = `<div class="fix-head"><span class="badge badge-sm badge-soft badge-success">Marked fixed</span><span class="citem-author">${esc(d.whoName({ by: fx.by }))}</span><span>${esc(UI.fmtTs(fx.ts))}</span></div>`;
     let action = '';
     if (r) {
-      action = `<div class="citem-meta"><span>${esc(d.authorLabel({ author: r.by }))} reopened it · ${esc(UI.fmtTs(r.ts))} · ${f.round_pending ? 'goes out with Send' : 'sent; waiting on agent'}</span></div>${r.text ? `<div class="citem-txt">${esc(r.text)}</div>` : ''}`;
-    } else if (reopening) {
-      action = `<textarea class="textarea decision-say-ta" id="f-reopen-ta" placeholder="What is still wrong? (optional)" rows="2" aria-label="Why reopen ${esc(tag(f))}"></textarea>
+      action = `<div class="citem-meta"><span>${esc(d.whoName({ by: r.by }))} reopened it · ${esc(UI.fmtTs(r.ts))} · ${f.round_pending ? 'goes out with Send' : 'sent; waiting on agent'}</span></div>${r.text ? `<div class="citem-txt">${esc(r.text)}</div>` : ''}`;
+    } else if (reopening || drafts.reopen[f.id]) {
+      action = `<textarea class="textarea decision-say-ta" id="f-reopen-ta" placeholder="What is still wrong? (optional)" rows="2" aria-label="Why reopen ${esc(tag(f))}" data-submit="#f-reopen-save">${esc(drafts.reopen[f.id] || '')}</textarea>
         <div class="gf-ft"><span class="gf-hint">Goes out with Send</span><button type="button" class="btn btn-ghost btn-xs" id="f-reopen-cancel">Cancel</button><button type="button" class="btn btn-xs" id="f-reopen-save">Reopen</button></div>`;
     } else {
       action = `<div class="fix-actions"><button type="button" class="btn btn-sm" id="f-reopen">${UI.ico('rotate')} Reopen</button><span class="gf-hint">Not fixed? Reopen it with a note; it goes back to the agent with Send.</span></div>`;
@@ -197,10 +221,10 @@
       : optionsHtml(f, a && a.label);
     const fx = fixOf(f) || reopenOf(f);
     const note = fx ? '' : st === 'waiting' ? (a && a.note ? a.note + ' Not marked built yet.' : 'Agreed; not fixed yet. It stays here until the agent marks it fixed, with proof.') : st === 'done' ? 'No change.' : st === 'ready' ? 'Goes out with Send.' : '';
-    const comments = commentsOf(f).map(c => `<div class="citem-meta"><span class="citem-author">${esc(d.authorLabel(c))}</span><span>${esc(UI.fmtTs(c.created_at))}${d.needsPush(c) ? ' · ready to send' : ''}</span></div><div class="citem-txt">${esc(c.text)}</div>`).join('');
+    const comments = commentsOf(f).map(c => `<div class="citem-meta"><span class="citem-author">${esc(d.whoName(c))}</span><span>${esc(UI.fmtTs(c.created_at))}${d.needsPush(c) ? ' · ready to send' : ''}</span></div><div class="citem-txt">${esc(c.text)}</div>`).join('');
     return `<div class="citem hl${st === 'needs' ? ' decision-required' : ''}" data-card="${esc(f.id)}" role="group" aria-label="${esc(tag(f) + ' · ' + titleOf(f))}">
       <div class="citem-node"><span class="citem-node-name"><span class="citem-num">${esc(tag(f))}</span></span><span class="citem-kbd"><kbd class="kbd kbd-xs" title="Previous finding">A</kbd><kbd class="kbd kbd-xs" title="Next finding">F</kbd></span></div>
-      <div class="citem-meta"><span class="citem-author">${esc(d.authorLabel(f))}</span><span>${esc(UI.fmtTs(f.created_at))}</span></div>
+      <div class="citem-meta"><span class="citem-author">${esc(d.whoName(f))}</span><span>${esc(UI.fmtTs(f.created_at))}</span></div>
       <div class="decision-block"><div class="decision-prompt">${d.ticketsHTML(titleOf(f))}</div>
       ${ctx ? `<div class="decision-context">${d.ticketsHTML(ctx)}</div>` : ''}
       ${evidence ? `<figure class="decision-excerpt"><figcaption class="decision-excerpt-src">${esc(tag(f))} evidence</figcaption><blockquote class="decision-excerpt-text">${esc(evidence)}</blockquote></figure>` : ''}
@@ -208,7 +232,7 @@
       <div class="decision-feedback" id="f-feedback"></div></div>
       ${fixBlock(f)}
       ${comments}
-      <textarea class="textarea decision-say-ta" id="f-compose" placeholder="Comment (optional)" rows="2" aria-label="Comment on ${esc(tag(f))}"></textarea>
+      <textarea class="textarea decision-say-ta" id="f-compose" placeholder="Comment (optional)" rows="2" aria-label="Comment on ${esc(tag(f))}" data-submit="#f-save">${esc(drafts.compose[f.id] || '')}</textarea>
       <div class="gf-ft"><span class="gf-hint">Goes out with Send</span><button type="button" class="btn btn-ghost btn-xs" id="f-save">Save</button></div></div>`;
   }
   function renderRail() {
@@ -220,11 +244,21 @@
       html += UI.section(sec.key, sec.label, rows.length, rows.map(f => f.id === selected ? fullCard(f) : lineCard(f)).join(''), { cls: sec.cls, badge: sec.badge || 'badge-ghost', open, scope: 'find' });
     });
     const rail = $('#rail-findings');
-    const draft = $('#f-compose') ? $('#f-compose').value : '';
+    // The boxes' text lives in the per-finding drafts, so a re-render keeps
+    // it; keep the caret too when the reviewer was typing.
+    const ae = document.activeElement;
+    const typing = ae && (ae.id === 'f-compose' || ae.id === 'f-reopen-ta') && rail.contains(ae)
+      ? { id: ae.id, start: ae.selectionStart, end: ae.selectionEnd } : null;
     rail.innerHTML = html || '<p class="project-detail rail-note">No findings yet.</p>';
-    if (draft && $('#f-compose')) $('#f-compose').value = draft;
+    if (typing) {
+      const el = document.getElementById(typing.id);
+      if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(typing.start, typing.end); } catch {} }
+    }
     UI.wireSections(rail);
     const f = BY[selected];
+    const keep = (id, kind) => { const el = document.getElementById(id); if (el && f) el.addEventListener('input', () => setDraft(kind, f.id, el.value)); };
+    keep('f-compose', 'compose');
+    keep('f-reopen-ta', 'reopen');
     rail.querySelectorAll('.citem.is-line[data-card]').forEach(el => {
       el.addEventListener('click', () => select(el.dataset.card, false));
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter') select(el.dataset.card, false); });
@@ -246,16 +280,18 @@
       const t = $('#f-compose').value.trim(); if (!t) return;
       const c = await D().createComment(f.anchor_id, tag(f) + ' · ' + titleOf(f), t, f.version, null, { category: 'findings' });
       if (!c) { fail('Failed to save — try again.'); return; }
-      $('#f-compose').value = '';
+      setDraft('compose', f.id, '');
+      const box = $('#f-compose'); if (box) box.value = '';
       await D().refreshStore();
     });
     on('f-reopen', () => { reopening = true; renderRail(); const ta = $('#f-reopen-ta'); if (ta) ta.focus(); });
-    on('f-reopen-cancel', () => { reopening = false; renderRail(); });
+    on('f-reopen-cancel', () => { reopening = false; setDraft('reopen', f.id, ''); renderRail(); });
     on('f-reopen-save', async () => {
       const text = $('#f-reopen-ta').value.trim() || 'Reopened';
       try { await UI.api('./api/comments/' + encodeURIComponent(f.id) + '/reopen', { text }); }
       catch { fail('Failed to reopen — try again.'); return; }
       reopening = false;
+      setDraft('reopen', f.id, '');
       await D().refreshStore();
     });
     const sel = rail.querySelector('.citem.hl');
@@ -266,15 +302,20 @@
     const f = BY[selected];
     if (!f || !el) { if (el) el.innerHTML = ''; return; }
     const d = D();
-    const who = (a) => esc(d.authorLabel({ author: a }));
-    const e = [{ ts: f.created_at, html: `<b>${esc(d.authorLabel(f))}</b> · posted in ${esc(SETS[f.finding.set].label)}`, text: titleOf(f) }];
-    (f.decision_history || []).concat(f.decision ? [f.decision] : []).filter(x => x && x.verdict).forEach(x => {
-      e.push({ ts: x.ts, html: `<b>${who(x.by)}</b> · answered${x.round_pending ? ' · not sent yet' : ''}`, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict) });
+    const who = (a) => esc(d.whoName({ by: a }));
+    const e = [{ ts: f.created_at, html: `<b>${esc(d.whoName(f))}</b> · posted in ${esc(SETS[f.finding.set].label)}`, text: titleOf(f) }];
+    // final/: the first, sent answer reads "answered"; every later answer,
+    // and any answer not sent yet, reads "changed the answer · sent | not
+    // sent yet" (final/app/findings.js:235-238).
+    // A discarded answer (UI-14) never went out; History leaves it out.
+    (f.decision_history || []).concat(f.decision ? [f.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach((x, i) => {
+      const what = i === 0 && !x.round_pending ? 'answered' : 'changed the answer · ' + (x.round_pending ? 'not sent yet' : 'sent');
+      e.push({ ts: x.ts, html: `<b>${who(x.by)}</b> · ${what}`, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict) });
     });
-    if (f.response_text) e.push({ ts: f.created_at, html: `<b>${esc(d.authorLabel(f))}</b> · resolved in ${esc(f.resolved_in_version || 'v1')}`, text: f.response_text });
+    if (f.response_text) e.push({ ts: f.created_at, html: `<b>${esc(d.whoName(f))}</b> · resolved in ${esc(f.resolved_in_version || 'v1')}`, text: f.response_text });
     (f.fixed_history || []).concat(f.fixed ? [f.fixed] : []).forEach(fx => e.push({ ts: fx.ts, html: `<b>${who(fx.by)}</b> · marked fixed, with ${(fx.proof || []).length} proof item${(fx.proof || []).length === 1 ? '' : 's'}`, text: fx.note || '' }));
     (f.reopened || []).forEach((r, i, all) => e.push({ ts: r.ts, html: `<b>${who(r.by)}</b> · reopened · ${i === all.length - 1 && f.round_pending ? 'not sent yet' : 'sent'}`, text: r.text || '' }));
-    commentsOf(f).forEach(c => e.push({ ts: c.created_at, html: `<b>${esc(d.authorLabel(c))}</b> · comment · ${d.needsPush(c) ? 'not sent yet' : 'sent'}`, text: c.text }));
+    commentsOf(f).forEach(c => e.push({ ts: c.created_at, html: `<b>${esc(d.whoName(c))}</b> · comment · ${d.needsPush(c) ? 'not sent yet' : 'sent'}`, text: c.text }));
     e.sort((x, y) => (x.ts < y.ts ? 1 : -1));
     el.innerHTML = `<p class="project-detail hist-sub">${esc(tag(f) + ' · ' + titleOf(f))}</p>` + e.map(h => `<div class="hist-item"><div class="hist-head">${h.html}<span>· ${esc(UI.fmtTs(h.ts))}</span></div><div class="hist-text">${esc(h.text)}</div></div>`).join('');
   }
