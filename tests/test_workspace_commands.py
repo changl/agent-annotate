@@ -301,3 +301,44 @@ def test_provider_author_change_preserves_canonical_decision_and_keeps_legacy_qu
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("reason,alias", [("Separate worksheet requested", False), (None, True)])
+def test_second_page_requires_exception_and_records_link_without_changing_main(estate, monkeypatch, capsys, reason, alias):
+    primary = _initial(estate)
+    other = estate.root / "reviews" / "worksheet"
+    source = estate.root / "worksheet.md"
+    source.write_text("# Worksheet\n\nIndependent evidence.\n")
+    args = _new_args(other, source, "canonical", version="v1", ask=False)
+    assert pagegen.cmd_new(args) == 2
+    error = capsys.readouterr().err
+    assert "Review, Library, Findings, or Plans" in error
+    assert page_url(primary) in error and "workspace" in error
+    assert not other.exists()
+    pagegen.generate(source, other, version="v1")
+    assert cli.cmd_publish(_publish_args(other, "canonical")) == 2
+    args.exception, args.standalone = reason, alias
+    assert pagegen.cmd_new(args) == 0
+    linked = cli._load_state_for_project("canonical")["slugs"]["worksheet"]
+    assert linked["exception"] == {"reason": reason or "standalone", "parent_slug": "canonical/workspace"}
+    assert linked["standalone"] and not linked["workspace_primary"]
+    assert workspace.workspace_data(estate.repo)["workspace"]["slug"] == "canonical/workspace"
+    assert [(p, s) for p, s, _ in workspace.workspace_tab_records(primary)] == [("canonical", "worksheet")]
+    assert workspace.workspace_owner_record(linked) == linked
+    # An ordinary republish/restart preserves the recorded exception.
+    monkeypatch.setattr(cli, "_is_process_alive", lambda pid: False)
+    assert cli.cmd_publish(_publish_args(other, "canonical")) == 0
+    assert cli._load_state_for_project("canonical")["slugs"]["worksheet"]["exception"] == linked["exception"]
+
+
+def test_empty_exception_is_refused_before_generating_or_publishing(estate, capsys):
+    source = estate.root / "empty.md"
+    source.write_text("# Empty\n")
+    args = _new_args(estate.root / "empty", source, "canonical")
+    args.exception = "  "
+    assert pagegen.cmd_new(args) == 2
+    publish = _publish_args(estate.directory, "canonical")
+    publish.exception = ""
+    assert cli.cmd_publish(publish) == 2
+    assert not estate.starts
+    assert "nonempty reason" in capsys.readouterr().err

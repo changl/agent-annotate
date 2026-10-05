@@ -1344,9 +1344,14 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
 def cmd_publish(args) -> int:
-    from .workspace import project_key
+    from .workspace import exception_reason, project_key
+    try:
+        exception_reason(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     key = project_key(Path(args.slug_dir)) or project_key(Path.cwd()) or getattr(args, "project", None)
-    if key and not getattr(args, "standalone", False):
+    if key:
         lock = LOCK_DIR / ("workspace-" + hashlib.sha256(key.encode()).hexdigest()[:20] + ".lock")
         try:
             with _flock(lock):
@@ -1365,13 +1370,16 @@ def _publish(args) -> int:
         return 2
     project, slug = _slug_project(slug_dir, args.project)
     cfg = _project_config(project)
-    from .workspace import duplicate_page, project_key
-    if not getattr(args, "standalone", False):
-        duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
-        if duplicate:
-            print(f"ERROR: project page already exists: {duplicate['slug_dir']}\n"
-                  f"  URL: {page_url(duplicate)}\nReuse it; independent artifacts require --standalone.", file=sys.stderr)
-            return 2
+    from .workspace import duplicate_message, duplicate_page, exception_reason, project_key
+    saved_exception = (_load_state_for_project(project)["slugs"].get(slug) or {}).get("exception")
+    reason = exception_reason(args) or (saved_exception or {}).get("reason")
+    duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
+    if duplicate and not reason:
+        print(duplicate_message(duplicate), file=sys.stderr)
+        return 2
+    exception = ({"reason": reason,
+                  "parent_slug": f"{duplicate['project']}/{duplicate['slug']}" if duplicate else (saved_exception or {}).get("parent_slug")}
+                 if reason else None)
     if (args.transport or cfg.get("transport")) == "funnel":
         from .review_access import ensure_key
         ensure_key(slug_dir)
@@ -1532,8 +1540,9 @@ def _publish(args) -> int:
                 "transport_details": transport_details,
                 "transport_error": transport_error,
                 "workspace_key": project_key(slug_dir) or project_key(Path.cwd()),
-                "workspace_primary": not getattr(args, "standalone", False),
-                "standalone": bool(getattr(args, "standalone", False)),
+                "workspace_primary": not bool(reason),
+                "standalone": bool(reason),
+                **({"exception": exception} if exception else {}),
                 **_owner_fields(),
                 "runtime_python": sys.executable,
                 "runtime_manifest": runtime_manifest(),
@@ -2671,7 +2680,8 @@ def cmd_claim(args) -> int:
     prior = record.get("owner_session")
     fields = _owner_fields()
     target = fields.get("owner_target")
-    tabs = workspace_tab_records(record) if isinstance(target, dict) and target.get("session") == fields["owner_session"] else []
+    tabs = ([item for item in workspace_tab_records(record) if not item[2].get("exception")]
+            if isinstance(target, dict) and target.get("session") == fields["owner_session"] else [])
     entries = [(project, slug, record), *tabs]
     try:
         with contextlib.ExitStack() as stack:
@@ -4532,7 +4542,8 @@ def main():
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
-    sp_pub.add_argument("--standalone", action="store_true", help="explicit independent artifact, outside the project workspace")
+    sp_pub.add_argument("--exception", metavar="REASON", help="explicit reason for a second project page")
+    sp_pub.add_argument("--standalone", action="store_true", help="alias for --exception standalone")
     sp_pub.add_argument("--project", default=None)
     sp_pub.add_argument("--port", type=int, default=None)
     sp_pub.add_argument(
