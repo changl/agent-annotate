@@ -115,10 +115,24 @@ def test_be1_marker_script_does_not_run_when_opened(server):
     assert "annotate-review-marker" not in (seen["html-title"], seen["svg-title"])
 
 
-def test_be1_findings_ui_renders_png_attachment_as_image_and_svg_as_link():
-    from pathlib import Path
-    source = (Path(cli.__file__).parent / "web" / "findings.js").read_text()
-    assert "const IMG_ATTACHMENT = /\\.(png|jpe?g|gif|webp)$/i;" in source
+@pytest.mark.skipif(not os.environ.get("REVIEW_BROWSER"), reason="set REVIEW_BROWSER=1 to run headless Chromium")
+def test_be1_proof_images_still_render_in_img(server):
+    """findings.js shows image proofs with <img>; a download disposition and
+    CSP sandbox do not stop an image (PNG or an older SVG) from rendering."""
+    from playwright.sync_api import sync_playwright
+    httpd, directory, _ = server
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>'
+    names = [_plant(directory, "attachments", "3a-shot.png", PNG), _plant(directory, "attachments", "3b-shot.svg", svg)]
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(base + "/api/capabilities")
+        sizes = page.evaluate("""names => Promise.all(names.map(n => new Promise(done => {
+            const img = new Image(); img.onload = () => done([img.naturalWidth, img.naturalHeight]);
+            img.onerror = () => done(null); img.src = '/attachments/' + n; })))""", names)
+        browser.close()
+    assert sizes == [[1, 1], [40, 20]]
 
 
 # ── BE-2: an agent re-fix keeps the reviewer's unsent reopen or verdict ────

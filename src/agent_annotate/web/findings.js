@@ -161,13 +161,10 @@
     return `<div class="citem is-line${unread ? ' is-unread' : ''}" data-card="${esc(f.id)}" tabindex="0" role="group" aria-label="${esc(tag(f) + ' · ' + titleOf(f))}"><div class="citem-line">${unread}<span class="citem-num">${esc(tag(f))}</span><span class="citem-line-txt"><span class="citem-line-q">${esc(titleOf(f))}</span>${fx ? '<span class="citem-line-arrow">→</span><span class="ans">Fixed</span>' : a ? `<span class="citem-line-arrow">→</span><span class="ans">${esc(a.label)}</span>` : ''}</span></div></div>`;
   }
   const IMG = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
-  // The server opens only these attachment types inline; others download.
-  const IMG_ATTACHMENT = /\.(png|jpe?g|gif|webp)$/i;
   function proofUrl(p) { return p.attachment ? './attachments/' + encodeURIComponent(p.attachment) : p.url; }
-  function isImage(p) { return p.attachment ? IMG_ATTACHMENT.test(p.attachment) : IMG.test(p.url || ''); }
   function proofHtml(fx) {
     const proof = fx.proof || [];
-    const imgs = proof.filter(isImage);
+    const imgs = proof.filter(p => IMG.test(p.attachment || p.url || ''));
     const links = proof.filter(p => !imgs.includes(p));
     return `<div class="fix-proof" data-proof-count="${proof.length}">
       ${imgs.map(p => `<figure class="fix-proof-img"><a href="${esc(proofUrl(p))}" target="_blank" rel="noopener"><img src="${esc(proofUrl(p))}" alt="${esc(p.label)}" loading="lazy"></a><figcaption>${UI.ico('image')} ${esc(p.label)}</figcaption></figure>`).join('')}
