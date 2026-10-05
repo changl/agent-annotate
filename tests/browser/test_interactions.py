@@ -42,7 +42,10 @@ def test_scroll_jump_granular_pin_and_reverse_lookup(tmp_path):
             str(bus_dir),
             "--port",
             str(port),
-            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
+            "--local-author",
+            "reviewer@example.com",
+            "--local-author-name",
+            "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -69,8 +72,8 @@ def test_scroll_jump_granular_pin_and_reverse_lookup(tmp_path):
                 viewport={"width": 1280, "height": 800},
             )
             page.set_default_timeout(5_000)
-            page.goto(base, wait_until="networkidle")
-            page.locator('[data-workspace-tab="details"]').click()
+            page.goto(base + "#view=review", wait_until="networkidle")
+            page.locator('body[data-ready="1"]').wait_for(state="attached")
             frame = page.frame_locator("#content-frame")
             canvas = frame.locator("#canvas-area")
             document_root = frame.locator("html")
@@ -99,7 +102,7 @@ def test_scroll_jump_granular_pin_and_reverse_lookup(tmp_path):
             anchor.locator("p").click(position={"x": 120, "y": 10})
             page.locator("#pop-ta").fill("Pin should return to this exact card")
             page.locator("#pop-save").click()
-            page.locator('[data-workspace-tab="details"]').click()
+            page.locator('body[data-ready="1"]').wait_for(state="attached")
             pin = frame.locator(".bpin, .bpin-inline").first
             pin.wait_for(state="visible")
             pin.click()

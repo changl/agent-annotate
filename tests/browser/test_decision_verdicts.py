@@ -21,6 +21,8 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
+from single_page import feedback, history, ready, section  # noqa: E402
+
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 CARD = {
@@ -36,26 +38,35 @@ CARD = {
 
 # D3 item 2: the labels Chang's cheerticketing round actually carried — far
 # longer than the rail is wide.
-LONG_LABEL_CARD = dict(CARD, decision_request={
-    "prompt": "Refund button vs the published no-refunds policy — which changes?",
-    "requested_at": "2026-09-17T09:00:00Z",
-    "recommendation": "accept",
-    "options": [
-        {"id": "accept",
-         "label": "Update the policy — refunds are allowed at the client's discretion",
-         "consequence": "docs/ROLES.md and the customer-facing terms both change. "
-                        "The button stays as drawn.",
-         "style": "primary"},
-        {"id": "changes",
-         "label": "Keep the policy, reframe the button as an audited order correction",
-         "consequence": "B4 is redrawn with a required authorization note and a "
-                        "correction label, not the word refund."},
-        {"id": "reject",
-         "label": "Leave both as they are for now",
-         "consequence": "The product and the published policy stay in contradiction; "
-                        "support absorbs it."},
-    ],
-})
+LONG_LABEL_CARD = dict(
+    CARD,
+    decision_request={
+        "prompt": "Refund button vs the published no-refunds policy — which changes?",
+        "requested_at": "2026-09-17T09:00:00Z",
+        "recommendation": "accept",
+        "options": [
+            {
+                "id": "accept",
+                "label": "Update the policy — refunds are allowed at the client's discretion",
+                "consequence": "docs/ROLES.md and the customer-facing terms both change. "
+                "The button stays as drawn.",
+                "style": "primary",
+            },
+            {
+                "id": "changes",
+                "label": "Keep the policy, reframe the button as an audited order correction",
+                "consequence": "B4 is redrawn with a required authorization note and a "
+                "correction label, not the word refund.",
+            },
+            {
+                "id": "reject",
+                "label": "Leave both as they are for now",
+                "consequence": "The product and the published policy stay in contradiction; "
+                "support absorbs it.",
+            },
+        ],
+    },
+)
 
 RESOLVED_PRIOR_CARD = dict(
     CARD,
@@ -66,8 +77,9 @@ RESOLVED_PRIOR_CARD = dict(
     resolved_by="agent:test",
 )
 
-LEGACY_CAPS = json.dumps({"version": "2.19", "batch": True, "rounds": True,
-                          "decision_schema": 2, "decision_request_cap": 8192})
+LEGACY_CAPS = json.dumps(
+    {"version": "2.19", "batch": True, "rounds": True, "decision_schema": 2, "decision_request_cap": 8192}
+)
 
 
 def _free_port():
@@ -82,18 +94,34 @@ def _serve(tmp_path, card=None, anchor="s:overview"):
     slug_dir = tmp_path / "demo"
     shutil.copytree(source, slug_dir)
     seeded = dict(card or CARD, anchor_id=anchor)
-    (slug_dir / "comments.json").write_text(json.dumps(
-        {"schema_version": 2, "anchors": {anchor: [seeded]}, "archived": {}}),
-        encoding="utf-8")
+    (slug_dir / "comments.json").write_text(
+        json.dumps({"schema_version": 2, "anchors": {anchor: [seeded]}, "archived": {}}), encoding="utf-8"
+    )
     port = _free_port()
     env = os.environ.copy()
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(
-        [sys.executable, "-m", "agent_annotate.sync_server",
-         "--slug-dir", str(slug_dir), "--slug", "demo",
-         "--bus-dir", str(tmp_path / "bus"), "--port", str(port),
-         "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        [
+            sys.executable,
+            "-m",
+            "agent_annotate.sync_server",
+            "--slug-dir",
+            str(slug_dir),
+            "--slug",
+            "demo",
+            "--bus-dir",
+            str(tmp_path / "bus"),
+            "--port",
+            str(port),
+            "--local-author",
+            "reviewer@example.com",
+            "--local-author-name",
+            "Browser Reviewer",
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     base = f"http://127.0.0.1:{port}/"
     deadline = time.time() + 5
@@ -117,10 +145,14 @@ def _open(runner, base, legacy=False):
     if legacy:
         # Answer the one capabilities probe with a pre-D2 body. Everything
         # else still hits the real server.
-        page.route("**/api/capabilities", lambda route: route.fulfill(
-            status=200, content_type="application/json", body=LEGACY_CAPS))
+        page.route(
+            "**/api/capabilities",
+            lambda route: route.fulfill(status=200, content_type="application/json", body=LEGACY_CAPS),
+        )
     page.set_default_timeout(5_000)
     page.goto(base, wait_until="networkidle")
+    ready(page)
+    feedback(page)
     return browser, page
 
 
@@ -129,30 +161,24 @@ def test_a_d2_server_shows_request_changes(tmp_path):
     process, base, slug_dir = _serve(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
-            browser, page = _open(runner, base)
+            browser, page = _open(runner, base, legacy=False)
             btn = page.locator(".decision-btn.decision-changes")
             btn.wait_for(state="visible")
-            assert btn.inner_text().strip() == "↻ Request changes"
-            assert page.locator(".decision-btn.decision-comment").count() == 0
-
-            # The note is mandatory: an empty box submits nothing.
             btn.click()
-            page.locator(".decision-comment-ta").wait_for(state="visible")
-            page.locator('[data-decision-action="comment-submit"]').click()
-            page.wait_for_timeout(300)
-            stored = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
-            assert "decision" not in stored["anchors"]["s:overview"][0]
-
-            page.locator(".decision-comment-ta").fill("name the columns first")
-            page.locator('[data-decision-action="comment-submit"]').click()
-            page.locator(".decision-verdict-chip").wait_for(state="visible")
-            assert "Changes requested" in page.locator(".decision-verdict-chip").inner_text()
-
-            stored = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
-            decision = stored["anchors"]["s:overview"][0]["decision"]
-            assert decision["verdict"] == "changes"
-            assert decision["text"] == "name the columns first"
-            playwright.expect(page.locator(".decision-answer")).to_have_text("name the columns first")
+            assert page.locator(".decision-say-ta").evaluate("el => el === document.activeElement")
+            assert (
+                "decision"
+                not in json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0]
+            )
+            page.locator(".decision-say-ta").fill("name the columns first")
+            btn.click()
+            section(page, "ready")
+            playwright.expect(page.locator(".ans")).to_have_text("name the columns first")
+            decision = json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0][
+                "decision"
+            ]
+            assert decision["verdict"] == "changes" and decision["text"] == "name the columns first"
+            assert decision["round_pending"]
             browser.close()
     finally:
         process.terminate()
@@ -167,16 +193,21 @@ def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
             browser, page = _open(runner, base, legacy=True)
             btn = page.locator(".decision-btn.decision-comment")
             btn.wait_for(state="visible")
-            assert btn.inner_text().strip() == "Answer in words"
-            assert page.locator(".decision-btn.decision-changes").count() == 0
-
             btn.click()
-            page.locator(".decision-comment-ta").fill("just a remark")
-            page.locator('[data-decision-action="comment-submit"]').click()
-            page.locator(".decision-verdict-chip").wait_for(state="visible")
-
-            stored = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
-            assert stored["anchors"]["s:overview"][0]["decision"]["verdict"] == "comment"
+            assert page.locator(".decision-say-ta").evaluate("el => el === document.activeElement")
+            assert (
+                "decision"
+                not in json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0]
+            )
+            page.locator(".decision-say-ta").fill("just a remark")
+            btn.click()
+            section(page, "ready")
+            playwright.expect(page.locator(".ans")).to_have_text("just a remark")
+            decision = json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0][
+                "decision"
+            ]
+            assert decision["verdict"] == "comment" and decision["text"] == "just a remark"
+            assert decision["round_pending"]
             browser.close()
     finally:
         process.terminate()
@@ -187,30 +218,26 @@ def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
 def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
     process, base, slug_dir = _serve(tmp_path, card=RESOLVED_PRIOR_CARD)
     try:
-        shutil.copyfile(slug_dir / "versions" / "v1.html", slug_dir / "versions" / "v2.html")
+        shutil.copyfile(slug_dir / "versions/v1.html", slug_dir / "versions/v2.html")
         (slug_dir / "current.html").unlink()
-        (slug_dir / "current.html").symlink_to(Path("versions") / "v2.html")
-        (slug_dir / "current.meta.json").write_text(json.dumps({
-            "current": "v2",
-            "history": [
-                {"version": "v1", "label": "round 1"},
-                {"version": "v2", "label": "round 2"},
-            ],
-        }), encoding="utf-8")
-
+        (slug_dir / "current.html").symlink_to(Path("versions/v2.html"))
+        (slug_dir / "current.meta.json").write_text(
+            json.dumps({"current": "v2", "history": [{"version": "v1"}, {"version": "v2"}]})
+        )
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            page.locator('[data-workspace-tab="feedback"]').wait_for()
-            assert page.locator("#comment-list .citem").count() == 0
-            assert page.locator('.chip-review .chip-n').inner_text() == '0'
-            page.locator('[data-filter="done"]').click()
-            page.locator("#comment-list .citem").wait_for(state="visible")
-            assert page.locator(".citem-status").inner_text().lower() == "resolved in v2"
-            assert page.locator('.decision-btn').count() == 0
-            assert page.locator('.decision-verdict-chip').inner_text() == 'Resolved in v2'
-            page.reload(wait_until='networkidle')
-            page.locator('[data-filter="done"]').click()
-            assert page.locator('.citem-status').inner_text().lower() == 'resolved in v2'
+            assert page.evaluate("() => AA.counts().review.needs") == 0
+            assert page.locator('#comment-list [data-section="needs"]').count() == 0
+            history(page)
+            page.locator('#vrail-body-review .vrow[data-version="v1"]').click()
+            feedback(page)
+            section(page, "done")
+            assert page.locator(".ans").inner_text() == "Resolved in v2"
+            assert page.locator(".decision-btn").count() == 0
+            page.reload(wait_until="networkidle")
+            ready(page)
+            section(page, "done")
+            assert page.locator(".ans").inner_text() == "Resolved in v2"
             browser.close()
     finally:
         process.terminate()
@@ -237,14 +264,19 @@ def test_explicit_item_numbers_control_rail_order(tmp_path):
             text="Fifteen",
             created_at="2026-09-17T09:00:00Z",
         )
-        (slug_dir / "comments.json").write_text(json.dumps({
-            "schema_version": 2,
-            "anchors": {
-                "s:overview": [newer_14],
-                "s:overview:bottom": [older_15],
-            },
-            "archived": {},
-        }), encoding="utf-8")
+        (slug_dir / "comments.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "anchors": {
+                        "s:overview": [newer_14],
+                        "s:overview:bottom": [older_15],
+                    },
+                    "archived": {},
+                }
+            ),
+            encoding="utf-8",
+        )
 
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
@@ -262,39 +294,35 @@ def test_explicit_item_numbers_control_rail_order(tmp_path):
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_one_number_per_item_and_withdrawn_cards_are_done(tmp_path):
-    """Chang, 2026-09-23: '#19, v5 and d:q19 all represent the same item', and
-    a card he had replied to still asked for his review."""
     process, base, slug_dir = _serve(tmp_path)
     try:
-        legacy_10 = dict(CARD, id="card-legacy-10", anchor_id="d:q10",
-                         decision_request={"prompt": "Q10 Build the inbox?",
-                                           "requested_at": "2026-09-17T09:00:00Z"})
-        withdrawn_19 = dict(CARD, id="card-withdrawn-19", number=19, anchor_id="d:q19",
-                            status="addressed_by_agent", response_text="Withdrawn.",
-                            replies=[{"author": "reviewer@example.com", "text": "Why ask?",
-                                      "ts": "2026-09-17T10:00:00Z"}])
-        (slug_dir / "comments.json").write_text(json.dumps({
-            "schema_version": 2,
-            "anchors": {"d:q10": [legacy_10], "d:q19": [withdrawn_19]},
-            "archived": {},
-        }), encoding="utf-8")
-
+        legacy = dict(
+            CARD, id="legacy-10", anchor_id="d:q10", decision_request={"prompt": "Q10 Build the inbox?"}
+        )
+        withdrawn = dict(
+            CARD,
+            id="withdrawn-19",
+            number=19,
+            anchor_id="d:q19",
+            status="addressed_by_agent",
+            response_text="Withdrawn.",
+        )
+        (slug_dir / "comments.json").write_text(
+            json.dumps(
+                {"schema_version": 2, "anchors": {"d:q10": [legacy], "d:q19": [withdrawn]}, "archived": {}}
+            )
+        )
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            page.locator('.chip[data-filter="all"], .chip-all').first.click()
-            items = page.locator("#comment-list .citem")
-            items.first.wait_for(state="visible")
-            headers = [items.nth(i).locator(".citem-node-name").inner_text().strip()
-                       for i in range(items.count())]
-            assert headers == ["#10", "#19"]
+            section(page, "done")
+            assert page.locator('.citem[data-comment-id="legacy-10"] .citem-num').inner_text() == "#10"
+            assert page.locator('.citem[data-comment-id="withdrawn-19"] .citem-num').inner_text() == "#19"
             rail = page.locator("#comment-list").inner_text()
-            assert "d:q" not in rail and "v1" not in rail
-            assert "Build the inbox?" in rail and "Q10" not in rail
-
-            withdrawn = page.locator('.citem[data-comment-id="card-withdrawn-19"]')
-            assert "done" in withdrawn.get_attribute("class")
-            assert withdrawn.locator(".decision-btn").count() == 0
-            assert page.locator(".citem.needs-review").count() == 1
+            assert "d:q" not in rail and "v1" not in rail and "Q10" not in rail
+            assert "Build the inbox?" in rail
+            assert page.locator('.citem[data-comment-id="withdrawn-19"] .decision-btn').count() == 0
+            assert page.locator('#comment-list [data-section="needs"] .badge').inner_text() == "1"
+            assert page.locator('#comment-list [data-section="done"] .badge').inner_text() == "1"
             browser.close()
     finally:
         process.terminate()
@@ -303,33 +331,25 @@ def test_one_number_per_item_and_withdrawn_cards_are_done(tmp_path):
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_an_answer_in_words_stops_nagging_the_reviewer(tmp_path):
-    """A free-text answer closes the question surface and waits on the agent."""
     process, base, slug_dir = _serve(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            say = page.locator('[data-decision-action="say"]')
-            say.wait_for(state="visible")
-            # One slot each: the posed option and the standing affordance.
-            assert page.locator(".decision-btn.decision-changes").count() == 1
-            assert page.locator(".decision-btn.decision-comment").count() == 0
-
-            say.click()
             page.locator(".decision-say-ta").fill("what does legal say?")
-            page.locator('[data-decision-action="say-submit"]').click()
-            page.locator(".decision-block.decision-resolved").wait_for(state="visible")
-
-            stored = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
-            decision = stored["anchors"]["s:overview"][0]["decision"]
-            assert decision["verdict"] == "comment"
-            assert decision["text"] == "what does legal say?"
-            assert stored["anchors"]["s:overview"][0]["replies"][-1]["text"] == (
-                "💬 Answer in words: what does legal say?")
-
-            assert page.locator(".decision-btn.decision-accept").count() == 0
-            assert page.locator(".citem.decision-required").count() == 0
-            assert page.locator(".citem.waiting-agent").count() == 1
-            assert "1 saved draft" in page.locator("#round-bar-main").inner_text()
+            playwright.expect(page.locator("#send-count")).to_have_text("1")
+            page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
+            page.locator("#round-submit-btn").click()
+            page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+            section(page, "waiting")
+            stored = json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0]
+            assert (
+                stored["decision"]["verdict"] == "comment"
+                and stored["decision"]["text"] == "what does legal say?"
+            )
+            assert stored["replies"][-1]["text"] == "💬 Answer in words: what does legal say?"
+            assert page.locator(".decision-btn").count() == 0
+            assert page.evaluate("() => AA.counts().review.needs") == 0
+            assert page.locator("#send-count").inner_text() == "0"
             browser.close()
     finally:
         process.terminate()
@@ -363,26 +383,25 @@ def test_a_long_option_label_stays_inside_the_rail(tmp_path):
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_clicking_a_feedback_card_focuses_its_reply_and_keeps_the_draft(tmp_path):
-    """D3 item 3 (user-reported: "i also would like to be able to automatically
-    be brought to the location when i click into the feedback box instead of
-    having to do that manually"). Focus alone navigates, and the box keeps
-    both focus and what is typed in it."""
     process, base, slug_dir = _serve(tmp_path, anchor="s:overview:bottom")
     try:
         with playwright.sync_playwright() as runner:
             browser, page = _open(runner, base)
-            card = page.locator('.citem').first
-            card.locator('.decision-prompt').click()
-            reply = card.locator('.reply-ta')
-            reply.wait_for(state='visible')
-            reply.fill('here')
-            page.wait_for_timeout(600)
-            assert reply.evaluate('el => document.activeElement === el')
-            assert reply.input_value() == 'here'
-            assert page.locator('#content-frame').is_hidden(), 'Replying stays on the full-width question'
-            page.reload(wait_until='networkidle')
-            card.locator('.feedback-reply > summary').click()
-            assert reply.input_value() == 'here'
+            card = page.locator(".citem").first
+            card.locator(".decision-prompt").click()
+            frame = page.frame_locator("#content-frame")
+            playwright.expect(frame.locator('[data-anchor-id="s:overview:bottom"]')).to_have_class(
+                __import__("re").compile(".*goto-highlight.*")
+            )
+            box = card.locator(".decision-say-ta")
+            box.fill("here")
+            assert box.evaluate("el => el === document.activeElement")
+            assert page.locator("#content-frame").is_visible()
+            page.wait_for_function("() => Object.values(localStorage).some(v => v.includes('here'))")
+            page.reload(wait_until="networkidle")
+            ready(page)
+            feedback(page)
+            assert box.input_value() == "here"
             browser.close()
     finally:
         process.terminate()
