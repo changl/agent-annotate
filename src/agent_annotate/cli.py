@@ -1727,7 +1727,8 @@ def _running_servers() -> dict:
         except OSError:
             continue
         port = _arg("--port")
-        found.setdefault(key, []).append({"pid": pid, "port": int(port) if port else None})
+        found.setdefault(key, []).append({"pid": pid, "port": int(port) if port else None,
+                                          "public_base_path": _arg("--public-base-path")})
     return found
 
 
@@ -3107,6 +3108,8 @@ def cmd_close(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    if _moved_page(record.get("slug_dir")):
+        return 2
     try:
         threshold = _parse_age(args.older_than)
     except ValueError as exc:
@@ -3853,6 +3856,35 @@ def cmd_copy(args) -> int:
         return 2
 
 
+def _consolidate_run(consolidate, directory: Path, target: tuple[str, str], sources: list, planned: dict):
+    """Freeze, read again, write, verify; on any failure undo this run only."""
+    from .sync_server import _locked_store
+    marked, created = [], False
+    try:
+        # The marker is written under each page's store lock, so a write
+        # already holding it finishes first and every later one is refused.
+        for source in sources:
+            with _locked_store(source.dir):
+                consolidate.mark(source, planned)
+            marked.append(source)
+        result = consolidate.build(directory, target, sources, now=planned["at"])
+        consolidate.write_target(result)
+        created = True
+        problems = consolidate.verify(result)
+        if problems:
+            raise ValueError("verification failed; nothing was kept:\n  " + "\n  ".join(problems[:20]))
+        return result
+    except BaseException as exc:
+        if created:
+            shutil.rmtree(directory)
+        for source in marked:
+            consolidate.unmark(source)
+        if not isinstance(exc, (OSError, ValueError, KeyError, TypeError, AttributeError)):
+            raise
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None
+
+
 def cmd_consolidate(args) -> int:
     """Merge pages of one project into one new page, one tab per source."""
     from . import consolidate
@@ -3891,43 +3923,43 @@ def cmd_consolidate(args) -> int:
         print(f"ERROR: target directory already exists: {directory}", file=sys.stderr)
         return 2
     # A server from before this release ignores the marker and would keep
-    # taking writes the target never sees.
+    # taking writes the target never sees. The registry's pid and port can be
+    # stale, so every process serving the directory is asked.
     stale = []
+    running = _running_servers()
     for source in sources:
-        if _is_process_alive(int(source.record.get("pid") or 0)):
-            code, payload = _api(source.record, "GET", "/api/capabilities", None, "agent:annotate", timeout=5)
+        processes = list(running.get(str(source.dir)) or [])
+        if _is_process_alive(int(source.record.get("pid") or 0)) and not any(
+                p["pid"] == source.record.get("pid") for p in processes):
+            processes.append({"pid": source.record.get("pid"), "port": source.record.get("port"),
+                              "public_base_path": source.record.get("public_base_path")})
+        for process in processes:
+            port = process.get("port")
+            probe = {"local_url": f"http://localhost:{port}/", "port": port,
+                     "public_base_path": process.get("public_base_path")}
+            code, payload = _api(probe, "GET", "/api/capabilities", None, "agent:annotate", timeout=5)
             if not (code == 200 and isinstance(payload, dict) and payload.get("consolidation")):
-                stale.append(source.name)
-    try:
-        result = consolidate.build(directory, (target_project, target_slug), sources)
-    except (OSError, ValueError, KeyError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+                stale.append(f"{source.name} (pid {process.get('pid')}, port {port})")
     if stale and not args.dry_run:
         print("ERROR: these pages run a server from before this release, which would keep taking writes:\n  "
-              + "\n  ".join(stale) + f"\n  Restart them first ({_inv()} publish DIR restarts a stopped page), "
+              + "\n  ".join(stale) + f"\n  Restart them on this release first ({_inv()} publish DIR), "
               "or stop their servers.", file=sys.stderr)
         return 2
-    marked = []
-    if not args.dry_run:
-        try:
-            # Freeze first, then read again: what is written is what each
-            # page held once it stopped taking writes.
-            for source in sources:
-                consolidate.mark(source, result)
-                marked.append(source)
-            result = consolidate.build(directory, (target_project, target_slug), sources, now=result["at"])
-            consolidate.write_target(result)
-            problems = consolidate.verify(result)
-            if problems:
-                raise ValueError("verification failed; nothing was kept:\n  " + "\n  ".join(problems[:20]))
-        except (OSError, ValueError, KeyError) as exc:
+    lock = LOCK_DIR / ("consolidate-" + hashlib.sha256(str(directory).encode()).hexdigest()[:20] + ".lock")
+    try:
+        with _flock(lock):
             if directory.exists():
-                shutil.rmtree(directory)
-            for source in marked:
-                consolidate.unmark(source)
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
+                print(f"ERROR: target directory already exists: {directory}", file=sys.stderr)
+                return 2
+            result = consolidate.build(directory, (target_project, target_slug), sources)
+            if not args.dry_run:
+                result = _consolidate_run(consolidate, directory, (target_project, target_slug), sources, result)
+                if result is None:
+                    return 2
+    except (OSError, ValueError, KeyError, TimeoutError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if not args.dry_run:
         for project in sorted({s.project for s in sources}):
             with _flock(_state_lock_path(project)):
                 state = _load_state_for_project(project)
@@ -3955,6 +3987,9 @@ def cmd_consolidate(args) -> int:
     print(f"  rounds {summary['rounds']} · plans {', '.join(summary['plans']) or '-'} · findings sets "
           f"{', '.join(summary['findings_sets']) or '-'} · Library items {summary['library_items']} · "
           f"read-state entries {summary['read_state']}")
+    for page, row in summary["sources"].items():
+        if row["left_in_old_page"]:
+            print(f"  {page}: kept only in the old page (read-only, ?archived=1): {', '.join(row['left_in_old_page'])}")
     if stale:
         print("  WARN: restart before the real run (server from before this release): " + ", ".join(stale))
     if not args.dry_run:

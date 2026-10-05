@@ -109,7 +109,8 @@ def _run(estate, *extra, sources=SOURCES, capsys=None):
 
 def _tree(directory):
     return {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in sorted(directory.rglob("*")) if p.is_file()}
+            # Empty lock files are the only thing a lock leaves behind.
+            for p in sorted(directory.rglob("*")) if p.is_file() and not p.name.endswith(".lock")}
 
 
 def test_dry_run_counts_every_page_and_tab_and_writes_nothing(estate, capsys):
@@ -202,6 +203,55 @@ def test_refusals_leave_everything_untouched(estate, capsys):
     assert _run(estate) == 2
     assert "already exists" in capsys.readouterr().err
     assert {name: _tree(path) for name, path in estate["pages"].items()} == before
+
+
+def test_refuses_what_a_tab_could_not_show_or_send(estate, capsys):
+    gaps = estate["pages"]["shop-gaps"]
+    store = json.loads((gaps / "comments.json").read_text())
+    store["anchors"]["s:scope"] = [{"id": "loose", "anchor_id": "s:scope", "text": "A note", "author": "x",
+                                    "created_at": "2026-10-02T00:00:00Z", "version": "v1", "status": "open", "replies": []}]
+    (gaps / "comments.json").write_text(json.dumps(store))
+    assert _run(estate, "--dry-run") == 2
+    assert "would not show it" in capsys.readouterr().err
+    del store["anchors"]["s:scope"]
+    store["anchors"]["d:q1"][0]["decision"] = {"verdict": "select", "text": "Fix it", "by": "reviewer:0123456789abcdef",
+                                               "ts": "2026-10-03T00:00:00Z", "round_pending": True}
+    (gaps / "comments.json").write_text(json.dumps(store))
+    assert _run(estate, "--dry-run") == 2
+    assert "share-link reviewer has unsent answers" in capsys.readouterr().err
+
+
+def test_store_key_attachments_and_left_behind_files(estate, capsys):
+    gaps = estate["pages"]["shop-gaps"]
+    store = json.loads((gaps / "comments.json").read_text())
+    store["anchors"]["d:q1"][0]["anchor_id"] = "stale-field"  # the page shows it under its key
+    (gaps / "comments.json").write_text(json.dumps(store))
+    (gaps / "attachments").mkdir()
+    (gaps / "attachments" / "abc-proof.png").write_bytes(b"proof")
+    assert _run(estate) == 0
+    report = json.loads(capsys.readouterr().out)
+    target = estate["target"]
+    moved = json.loads((target / "comments.json").read_text())["anchors"]["gaps:d:q1"]
+    assert {c["id"] for c in moved} == {"gap1", "gapnote"}
+    assert next(c for c in moved if c["id"] == "gap1")["moved_from_anchor"] == "d:q1"
+    assert (target / "attachments" / "abc-proof.png").read_bytes() == b"proof"
+    assert "source" in report["sources"]["reviews/shop-gaps"]["left_in_old_page"]
+    assert report["sources"]["reviews/shop-decisions"]["left_in_old_page"] == []
+
+
+def test_every_page_writer_refuses_a_frozen_page(estate, capsys):
+    from agent_annotate import categories, copy_state, review_history
+    assert _run(estate) == 0
+    capsys.readouterr()
+    directory = estate["pages"]["shop-gaps"]
+    before = _tree(directory)
+    for write in (lambda: sync_server._atomic_write_json(directory / "comments.json", {}),
+                  lambda: review_history.save_round(directory, {"id": "late"}),
+                  lambda: copy_state._write(directory, {"schema_version": 1, "blocks": []}),
+                  lambda: categories.save_findings_sets(directory, [])):
+        with pytest.raises(PermissionError):
+            write()
+    assert _tree(directory) == before
 
 
 def _serve(directory, base, slug):

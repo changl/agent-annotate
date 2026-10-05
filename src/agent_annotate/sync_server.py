@@ -581,6 +581,8 @@ def _load_v2_store(path: Path) -> dict:
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
+    from .consolidate import refuse_if_moved
+    refuse_if_moved(path.parent)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:

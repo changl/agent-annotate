@@ -43,7 +43,7 @@ _MUTABLE = ("comments.json", "read-state.json", "seen.json", "current.meta.json"
             "copy.json", "categories.json", "project.json")
 # Fields consolidation may set on a comment. Every other field is compared
 # byte for byte between source and target.
-_TAB_FIELDS = ("category", "doc", "finding", "anchor_id", "number", "moved_from")
+_TAB_FIELDS = ("category", "doc", "finding", "anchor_id", "number", "moved_from", "moved_from_anchor")
 
 
 def _now() -> str:
@@ -72,6 +72,14 @@ def marker(page_dir: Path | str) -> dict | None:
         return data if isinstance(data, dict) else {"error": "invalid marker"}
     except (OSError, ValueError):
         return {"error": "invalid marker"}
+
+
+def refuse_if_moved(directory: Path | str) -> None:
+    """Every page-data writer calls this inside its write, so a request that
+    passed the server's marker check just before the page was frozen still
+    cannot write after it."""
+    if (Path(directory) / MARKER).exists():
+        raise PermissionError("this page was consolidated into another page; it is read-only")
 
 
 def tab_fragment(moved: dict, query: str = "") -> str:
@@ -199,13 +207,31 @@ def _check_source(source: Source, target_dir: Path) -> list[str]:
         if sets:
             problems.append(f"{source.name}: has its own findings sets; make it the Review source")
         store = _read_json(directory / "comments.json", {})
+        cards = {anchor for _b, anchor, comment in _all_comments(store) if isinstance(comment.get("decision_request"), dict)}
         for _bucket, anchor, comment in _all_comments(store):
             category = comment.get("category")
-            library_block = source.tab == "library" and str(comment.get("anchor_id") or anchor).startswith("copy:")
+            library_block = source.tab == "library" and str(anchor).startswith("copy:")
             if category not in (None, "review") and not (library_block and category in (None, "library")):
                 problems.append(f"{source.name}: comment {comment.get('id')} is already in {category}; "
                                 "make this page the Review source")
                 break
+            # Findings shows a comment only beside its card.
+            if source.tab == "findings" and anchor not in cards:
+                problems.append(f"{source.name}: comment {comment.get('id')} is not on a question, so Findings "
+                                "would not show it; consolidate this page into plans")
+                break
+    # Share-link reviewers are a different identity on every page: their
+    # unsent answers could never be sent from the new page.
+    store = _read_json(directory / "comments.json", {})
+    for _bucket, _anchor, comment in _all_comments(store):
+        decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
+        pending_by = [decision.get("by")] if decision.get("round_pending") else []
+        if comment.get("round_pending"):
+            pending_by += [r.get("by") for r in (comment.get("reopened") or [])[-1:] if isinstance(r, dict)]
+        if any(str(by or "").startswith("reviewer:") for by in pending_by):
+            problems.append(f"{source.name}: a share-link reviewer has unsent answers (comment {comment.get('id')}); "
+                            "send or discard them on that page first")
+            break
     return problems
 
 
@@ -249,6 +275,7 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
     copy = load_copy(primary.dir)
     project = load_project(primary.dir)
     assets: dict = {}
+    attachments: dict = {}
     seen_ids: dict = {}
     per_source = {}
     origins: dict = {}
@@ -276,25 +303,25 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
             if not (isinstance(comment.get("number"), int) and not isinstance(comment.get("number"), bool)
                     and comment["number"] > 0) and numbers.get(identifier):
                 comment["number"] = numbers[identifier]
-            anchor = comment.get("anchor_id") or anchor
+            # The store key is where the page showed the comment.
             if source.tab != "review":
                 comment["moved_from"] = source.name
             if source.tab == "plans":
                 comment.update(category="plans", doc="plan:" + source.ident)
             elif source.tab == "findings":
-                comment["category"] = "findings"
-                anchor = f"{source.ident}:{anchor}"
+                comment.update(category="findings", moved_from_anchor=anchor, anchor_id=f"{source.ident}:{anchor}")
+                anchor = comment["anchor_id"]
                 if isinstance(comment.get("decision_request"), dict):
                     prompt = comment["decision_request"].get("prompt") or comment.get("text")
                     comment["finding"] = {"set": source.ident, "title": _clip(prompt)}
             elif source.tab == "library":
                 comment["category"] = "library"
                 if not str(anchor).startswith("copy:"):
-                    anchor = "copy:" + source.ident
+                    comment.update(moved_from_anchor=anchor, anchor_id="copy:" + source.ident)
+                    anchor = comment["anchor_id"]
                     on_pointer += 1
-            comment["anchor_id"] = anchor
             store[bucket].setdefault(anchor, []).append(comment)
-            origins[identifier] = (source, original)
+            origins[identifier] = (source, original, bucket, anchor)
 
         for author, entries in (_read_json(source.dir / "read-state.json", {}) or {}).items():
             if not isinstance(entries, dict):
@@ -374,7 +401,22 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
                                        "revisions": [{"id": "moved", "created_at": now,
                                                       "author": {"id": "agent:annotate", "name": "Annotate"},
                                                       "status": "approved", "delta": {"ops": ops}}]})
+        if source.tab != "review":
+            # Finding proofs are named by their attachment; they move with it.
+            folder = source.dir / "attachments"
+            for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+                if path.is_file() and not path.is_symlink():
+                    body = path.read_bytes()
+                    if attachments.get(path.name, body) != body or (primary.dir / "attachments" / path.name).exists():
+                        raise ValueError(f"attachment {path.name} exists in two pages")
+                    attachments[path.name] = body
+        # Kept only in the old page, which stays readable with ?archived=1.
+        left = [] if source.tab == "review" else [
+            name for name in ("project.json", "seen.json", "cards.json", "source", "archive",
+                              *(() if source.tab == "plans" else ("assets",)))
+            if (source.dir / name).exists()]
         per_source[source.name] = {"tab": source.tab, "id": None if source.tab == "review" else source.ident,
+                                   "left_in_old_page": left,
                                    "title": title, "versions": len(versions), "rounds": len(history["rounds"]),
                                    "read_state": sum(len(v) for v in (_read_json(source.dir / "read-state.json", {}) or {}).values()
                                                      if isinstance(v, dict)),
@@ -408,7 +450,7 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
     return {"target": {"project": target[0], "slug": target[1], "dir": str(Path(target_dir).resolve())},
             "primary": primary, "sources": sources, "store": store, "read_state": read_state,
             "rounds": rounds, "plans": plans, "findings_sets": findings_sets, "copy": copy,
-            "project": project, "assets": assets, "per_source": per_source, "origins": origins,
+            "project": project, "assets": assets, "attachments": attachments, "per_source": per_source, "origins": origins,
             "hashes": hashes, "at": now}
 
 
@@ -459,12 +501,13 @@ def write_target(result: dict) -> Path:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
             _write_json(staging / "plans" / plan_id / "meta.json", plan["meta"])
-        for name, body in result["assets"].items():
-            path = staging / "assets" / name
-            if path.exists() and path.read_bytes() != body:
-                raise ValueError(f"asset {name} differs between the Review page and a plan")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
+        for folder in ("assets", "attachments"):
+            for name, body in result[folder].items():
+                path = staging / folder / name
+                if path.exists() and path.read_bytes() != body:
+                    raise ValueError(f"{folder[:-1]} {name} differs between the Review page and another page")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(body)
         _write_json(staging / MANIFEST, manifest(result))
         os.rename(staging, final)
     except BaseException:
@@ -488,14 +531,18 @@ def verify(result: dict) -> list[str]:
     problems = []
     final = Path(result["target"]["dir"])
     store = _read_json(final / "comments.json", {})
-    written = {comment["id"]: comment for _b, _a, comment in _all_comments(store)}
-    for identifier, (source, original) in result["origins"].items():
-        moved = written.get(identifier)
-        if moved is None:
+    written = {comment["id"]: (comment, bucket, anchor) for bucket, anchor, comment in _all_comments(store)}
+    for identifier, (source, original, bucket, anchor) in result["origins"].items():
+        if identifier not in written:
             problems.append(f"{source.name}: comment {identifier} is missing")
             continue
+        moved, moved_bucket, moved_anchor = written[identifier]
+        if (moved_bucket, moved_anchor) != (bucket, anchor):
+            problems.append(f"{source.name}: comment {identifier} is under {moved_anchor}, not {anchor}")
+        # Review and Plans keep the document anchor; Findings and Library move it.
+        skip = set(_TAB_FIELDS) - ({"anchor_id"} if source.tab in ("review", "plans") else set())
         for key in set(original) | set(moved):
-            if key in _TAB_FIELDS:
+            if key in skip:
                 continue
             if original.get(key) != moved.get(key):
                 problems.append(f"{source.name}: comment {identifier} field {key} changed")
@@ -512,6 +559,8 @@ def verify(result: dict) -> list[str]:
         if source.tab in ("review", "plans"):
             meta = _read_json(source.dir / "current.meta.json", {})
             for entry in meta.get("history", []):
+                if not isinstance(entry, dict):
+                    continue
                 version = entry.get("version")
                 origin = source.dir / "versions" / f"{version}.html"
                 if source.tab == "review":

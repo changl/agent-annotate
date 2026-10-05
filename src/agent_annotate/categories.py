@@ -67,6 +67,9 @@ def _json(path: Path, default: dict) -> dict:
 
 
 def _atomic_bytes(path: Path, body: bytes) -> None:
+    from .consolidate import refuse_if_moved
+    for page in list(path.parents)[:4]:  # page/, attachments/, plans/<id>/versions/
+        refuse_if_moved(page)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
