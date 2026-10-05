@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -261,6 +262,11 @@ def cmd_workspace(args) -> int:
     else:
         data = workspace_data(Path.cwd(), args.project)
     selected = data["workspace"]
+    from .cli import _session_id
+    from .version_guard import session_notice
+    notice = session_notice(_session_id())  # Codex has no prompt hook; workspace starts its sessions.
+    if notice:
+        print(notice, file=sys.stderr)
     if args.json:
         print(json.dumps(data))
     elif selected:

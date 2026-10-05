@@ -124,6 +124,8 @@ from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, S
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
+# This server versus the installed release, checked once at start (main()).
+VERSION_GUARD: dict | None = None
 
 SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server code
 
@@ -1244,6 +1246,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({
             "version": __version__,
             "runtime": RUNTIME_MANIFEST,
+            "version_guard": VERSION_GUARD,
             "automatic_round_delivery": True,
             "private_share_links": self._is_funnel_origin(),
             "copy_blocks": True,
@@ -3572,6 +3575,10 @@ def main():
         print()
         print("  Ctrl-C to stop. POST/PUT log appears below:")
         print()
+        # Warn loudly, never refuse: a page stays up on a mismatched runtime.
+        from .version_guard import server_status
+        global VERSION_GUARD
+        VERSION_GUARD = server_status(_monitor_project(bus_dir), slug)
     else:
         # V1 mode (backward compat)
         if not args.artifact:

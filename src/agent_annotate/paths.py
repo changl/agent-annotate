@@ -20,6 +20,8 @@ a package. Every root can be overridden:
     ANNOTATE_SHIM_PATH        where `install-shim` writes the launcher
     ANNOTATE_BUS_ARCHIVE_ROOT where prune-bus moves quiet buses
     ANNOTATE_TRANSCRIPT_GLOB  the Claude Code transcripts `eval` scans
+    ANNOTATE_SKILL_DIRS       default skill directories `doctor --versions` checks (os.pathsep list)
+    ANNOTATE_CODEX_PLUGIN_CACHE  the Codex plugin cache `doctor --versions` checks
 
 The hook and eval scripts are also runnable as bare files; they carry the
 same defaults so the two never disagree about where a cursor lives.
@@ -91,6 +93,14 @@ SETTINGS_JSON = _override("ANNOTATE_CLAUDE_SETTINGS", CLAUDE_HOME / "settings.js
 SHIM_PATH = _override("ANNOTATE_SHIM_PATH", HOME / ".local" / "bin" / "annotate")
 TRANSCRIPT_GLOB = os.environ.get("ANNOTATE_TRANSCRIPT_GLOB") or str(
     CLAUDE_HOME / "projects" / "*" / "*.jsonl")   # Claude Code transcripts, read by eval
+# Skill directories and Codex plugin trees `doctor --versions` reads (never writes).
+SKILL_DIRS = tuple(
+    Path(p).expanduser().resolve() for p in os.environ["ANNOTATE_SKILL_DIRS"].split(os.pathsep) if p
+) if os.environ.get("ANNOTATE_SKILL_DIRS") else (
+    CLAUDE_HOME / "skills" / "annotate", HOME / ".agents" / "skills" / "annotate")
+CODEX_PLUGIN_CACHE = _override(
+    "ANNOTATE_CODEX_PLUGIN_CACHE",
+    Path(os.environ.get("CODEX_HOME") or HOME / ".codex").expanduser() / "plugins" / "cache")
 
 
 def ensure_runtime_dirs() -> None:

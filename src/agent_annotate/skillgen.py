@@ -151,7 +151,10 @@ def install_skill(provider: str, dest: Path, python: str | None = None) -> list[
     manifest = {"provider": provider, "files": {rel: hashlib.sha256(content.encode()).hexdigest()
                 for rel, (content, _mode) in planned_files(provider, python).items()}}
     from . import __version__
+    from .updates import build_identity
     manifest["version"] = __version__
+    # The build id lets `doctor --versions` tell two builds of one version apart.
+    manifest["build_id"] = build_identity()[0]
     _write_atomic(dest / ".annotate-install.json", json.dumps(manifest, indent=2), 0o644)
     registry = CONFIG_DIR / "skill-installs.json"
     try:
