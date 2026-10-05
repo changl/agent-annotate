@@ -16,11 +16,24 @@
   let selected = null, quill = null, pendingQuote = null, pendingRange = null, query = '';
   const openGroups = UI.local.get('lib:groups', {});
   const drafts = UI.local.get('lib:drafts', {}); // unsaved editor text, per item
+  const draftBases = UI.local.get('lib:draft-base', {}); // the revision each draft started from
+  const commentDrafts = UI.local.get('lib:comment-drafts', {}); // unsaved comment text, per item
+  const saveIntents = UI.local.get('lib:save-intent', {}); // one request id per save attempt, reused on retry
   let shown = false, loading = null;
+  // The open editor: which item, which revision it started from, and whether
+  // the newer-revision notice is showing (a later Save then replaces it).
+  let editorItem = null, editorBase = null, staleSeen = null, saving = false, copySig = '';
+  const STALE_NOTE = 'A newer version was saved while you were editing. Save replaces it with your text; Cancel loads the newer version.';
+  const TOO_BIG_NOTE = 'Too long to save — shorten the text and try again.';
 
   // ── Data ───────────────────────────────────────────────────────────────
   async function loadCopy() {
-    try { DATA = await UI.api('./api/copy'); } catch (e) { console.warn('[annotate] copy', e); DATA = DATA || { blocks: [], groups: [] }; }
+    try { setData(await UI.api('./api/copy')); } catch (e) { console.warn('[annotate] copy', e); setData(DATA || { blocks: [], groups: [] }); }
+    AA.changed();
+  }
+  function setData(data) {
+    DATA = data;
+    copySig = JSON.stringify(DATA);
     ITEMS = DATA.blocks || [];
     BY_ID = {};
     ITEMS.forEach(it => { BY_ID[it.id] = it; });
@@ -31,19 +44,26 @@
     if (ITEMS.some(it => !it.group)) { GROUPS[''] = 'Other copy'; GROUP_ORDER.push(''); }
     if (!selected || !BY_ID[selected]) {
       const s = UI.local.get('lib:selected', null);
-      selected = s && BY_ID[s] ? s : (ITEMS.find(it => it.question_comment_id) || ITEMS[0] || {}).id || null;
+      // As final/: the page's declared first item (start_item), when the copy
+      // data names one; else the first item the question covers.
+      const start = DATA.start_item && BY_ID[DATA.start_item] ? DATA.start_item : null;
+      selected = s && BY_ID[s] ? s : start || (ITEMS.find(it => it.question_comment_id) || ITEMS[0] || {}).id || null;
     }
-    AA.changed();
   }
   const me = () => { const i = D().identity(); return i ? (i.reviewer_authors || [i.email]) : []; };
   const plainOfDelta = (delta) => ((delta && delta.ops) || []).map(op => typeof op.insert === 'string' ? op.insert : '').join('').replace(/\n+$/, '');
   const latestRev = (it) => it.revisions[it.revisions.length - 1];
   const plainOf = (it) => plainOfDelta(latestRev(it).delta);
   const groupLabel = (it) => GROUPS[it.group || ''] || '';
-  const whereShort = (it) => String(it.where || it.title || it.id).replace(/^Store page · /, '');
+  // final/ names an item without a row number by its title, else its place,
+  // and shows its key in the key line. A block's title is its key when the
+  // copy has no human title (a dotted identifier such as "policy.terms").
+  const titleIsKey = (it) => /^[\w.:-]+$/.test(it.title || '') && /[._]/.test(it.title || '');
+  const keyOf = (it) => titleIsKey(it) ? it.title : it.id;
+  const nameOf = (it) => (!titleIsKey(it) && it.title) || String(it.where || it.title || it.id).replace(/^Store page · /, '');
   function labelOf(it) {
     if (it.number != null) return '#' + it.number + ' ' + (it.where || it.title);
-    return whereShort(it) + ' · ' + groupLabel(it);
+    return nameOf(it) + ' · ' + groupLabel(it);
   }
   // The item's recorded history: the agent's seeded events, kept on an
   // archived comment of the item (target.seed_history).
@@ -78,7 +98,7 @@
   // Reviewer and agent comments on the item (page comments on copy:<id>).
   function storedComments(it) {
     return D().comments(false).filter(c => c.anchor_id === 'copy:' + it.id && !c.decision_request && !(c.target && c.target.copy_revision))
-      .map(c => ({ id: c.id, author: c.author, name: D().authorLabel(c), ts: c.created_at, text: c.text, quote: (c.target && c.target.selected_quote) || null, agent: String(c.author || '').startsWith('agent:'), comment: c }));
+      .map(c => ({ id: c.id, author: c.author, name: D().whoName(c), ts: c.created_at, text: c.text, quote: (c.target && c.target.selected_quote) || null, agent: String(c.author || '').startsWith('agent:'), comment: c }));
   }
   const commentsOf = (it) => seedComments(it).concat(storedComments(it));
   const question = (it) => it && it.question_comment_id ? D().findComment(it.question_comment_id) : null;
@@ -123,7 +143,7 @@
   // ── List ───────────────────────────────────────────────────────────────
   function rowHtml(it) {
     const num = it.number != null ? `<span class="citem-num">#${it.number}</span>` : '';
-    const where = it.number != null ? it.where : whereShort(it);
+    const where = it.number != null ? it.where : nameOf(it);
     const unread = isUnread(it) && hasAgentNews(it) ? '<span class="unread-dot" title="You have not opened the agent\'s note on this item yet" role="img" aria-label="Unread"></span>' : '';
     return `<div class="citem sp-row${it.id === selected ? ' hl' : ''}${unread ? ' is-unread' : ''}" data-item="${esc(it.id)}" tabindex="0" role="button" aria-current="${it.id === selected ? 'true' : 'false'}"><div class="citem-node">${unread}<span class="citem-node-name">${num}${esc(where)}</span>${chip(it)}</div><div class="citem-txt">${esc(plainOf(it).slice(0, 160))}</div></div>`;
   }
@@ -173,6 +193,25 @@
       return out;
     }) };
   }
+  // Links the copy may keep (as the server: HTTP, HTTPS or mailto, no
+  // credentials). Quill turns an unsafe pasted href into about:blank; the
+  // text stays and the link is dropped.
+  function safeLink(v) {
+    if (typeof v !== 'string' || /[\s\\]/.test(v) || /[\u0000-\u001f\u007f]/.test(v)) return false;
+    try {
+      const u = new URL(v);
+      if (u.protocol === 'mailto:') return !!u.pathname;
+      return (u.protocol === 'https:' || u.protocol === 'http:') && !!u.hostname && !u.username && !u.password;
+    } catch { return false; }
+  }
+  function forSave(delta) {
+    return { ops: withoutMarks(delta).ops.map(op => {
+      if (!op.attributes || !('link' in op.attributes) || safeLink(op.attributes.link)) return op;
+      const attributes = Object.assign({}, op.attributes); delete attributes.link;
+      const out = Object.assign({}, op); if (Object.keys(attributes).length) out.attributes = attributes; else delete out.attributes;
+      return out;
+    }) };
+  }
 
   function toolbarHtml() {
     const b = (f, label, title, extra) => `<button type="button" class="btn btn-ghost btn-xs" data-fmt="${f}" title="${title}" aria-label="${title}" aria-pressed="false"${extra || ''}>${label}</button>`;
@@ -192,7 +231,7 @@
     const it = BY_ID[selected];
     if (!it) { $('#sp-item').innerHTML = '<p class="muted">No copy yet.</p>'; return; }
     const num = it.number != null ? ' · row ' + it.number : '';
-    const title = it.number != null ? it.where : whereShort(it);
+    const title = it.number != null ? it.where : nameOf(it);
     const alts = (it.alternatives || []).map(a => ({ label: a.label, text: plainOfDelta(a.delta) }));
     const card = (seedHistory(it).find(h => h.kind === 'decision' && h.card) || {}).card;
     const cardRef = card ? (/polic/i.test(groupLabel(it)) ? 'Policies' : 'Copy') + ' card #' + card : '';
@@ -202,7 +241,7 @@
       <button type="button" class="btn btn-ghost btn-sm sp-back" id="sp-back">${UI.ico('chevLeft')} All copy</button>
       <div class="plan-scope"><strong>${esc(groupLabel(it))}</strong>${num}${cardRef ? ' · ' + esc(cardRef) : ''}</div>
       <section><h2>${esc(title)}<span class="chip">${esc(statusLabel(it))}</span></h2>
-      <p class="muted"><code>${esc(it.title)}</code> · ${esc(it.where || '')}</p>
+      <p class="muted"><code>${esc(keyOf(it))}</code> · ${esc(it.where || '')}</p>
       <div class="card"><p class="ctx">${esc(statusText(it))}</p></div>
       <div class="sp-editor-card">
         <div class="sp-toolbar" id="sp-toolbar" role="toolbar" aria-label="Formatting">${toolbarHtml()}</div>
@@ -219,29 +258,45 @@
     }));
   }
   let baseline = '';
+  const latestOf = (id) => BY_ID[id] ? latestRev(BY_ID[id]).id : null;
+  const editorChanged = () => !!quill && JSON.stringify(withoutMarks(quill.getContents()).ops) !== baseline;
+  function forgetDraft(id) {
+    delete drafts[id]; delete draftBases[id];
+    UI.local.set('lib:drafts', drafts); UI.local.set('lib:draft-base', draftBases);
+  }
+  // A newer revision than the one the editor started from is the latest.
+  // The notice stays in the status line until Save (which then replaces the
+  // newer revision with this text) or Cancel (which loads it).
+  function showStale() { staleSeen = latestOf(editorItem); setStatus(STALE_NOTE); }
+  const isStale = () => !!editorItem && latestOf(editorItem) !== editorBase;
   function mountEditor(it) {
     quill = new Quill('#sp-editor', { theme: 'snow', formats: FORMATS, modules: { toolbar: false, history: { userOnly: true } }, placeholder: 'Write the copy…' });
     const draft = drafts[it.id];
     quill.setContents(latestRev(it).delta, 'silent');
     commentsOf(it).forEach(markComment);
     baseline = JSON.stringify(withoutMarks(quill.getContents()).ops);
+    editorItem = it.id; staleSeen = null;
+    editorBase = draft && draftBases[it.id] && it.revisions.some(r => r.id === draftBases[it.id]) ? draftBases[it.id] : latestRev(it).id;
     if (draft) { quill.setContents(draft, 'silent'); commentsOf(it).forEach(markComment); setStatus('Draft kept in this browser.'); }
     quill.history.clear();
     quill.root.setAttribute('aria-label', 'Edit ' + labelOf(it));
     quill.root.setAttribute('role', 'textbox');
     quill.root.setAttribute('aria-multiline', 'true');
     wireToolbar();
-    const changed = () => JSON.stringify(withoutMarks(quill.getContents()).ops) !== baseline;
     quill.on('text-change', (_d, _o, source) => {
       if (source !== 'user') return;
-      const c = changed();
+      const c = editorChanged();
       $('#sp-save').disabled = !c; $('#sp-save').classList.toggle('btn-primary', c);
       $('#sp-discard').disabled = !c;
-      if (c) { drafts[it.id] = withoutMarks(quill.getContents()); setStatus('Draft kept in this browser.'); }
-      else { delete drafts[it.id]; setStatus(''); }
-      UI.local.set('lib:drafts', drafts);
+      if (c) {
+        drafts[it.id] = withoutMarks(quill.getContents());
+        if (!draftBases[it.id]) draftBases[it.id] = editorBase;
+        UI.local.set('lib:drafts', drafts); UI.local.set('lib:draft-base', draftBases);
+        setStatus(staleSeen ? STALE_NOTE : 'Draft kept in this browser.');
+      } else { forgetDraft(it.id); setStatus(''); }
     });
-    if (draft && changed()) { $('#sp-save').disabled = false; $('#sp-save').classList.add('btn-primary'); $('#sp-discard').disabled = false; }
+    if (draft && editorChanged()) { $('#sp-save').disabled = false; $('#sp-save').classList.add('btn-primary'); $('#sp-discard').disabled = false; }
+    if (draft && isStale()) showStale();
     quill.on('selection-change', (range) => {
       if (!range) return;
       syncToolbar(range);
@@ -254,7 +309,24 @@
       if (m) highlightComment(m.getAttribute('data-c'), true);
     });
     $('#sp-save').addEventListener('click', () => saveEdit(it));
-    $('#sp-discard').addEventListener('click', () => { delete drafts[it.id]; UI.local.set('lib:drafts', drafts); renderItem(); });
+    $('#sp-discard').addEventListener('click', () => { forgetDraft(it.id); renderItem(); });
+  }
+  // The copy changed on the server (another browser, the agent, a Send). An
+  // editor with no unsaved text shows the latest revision; one with unsaved
+  // text keeps it and shows the notice.
+  function syncEditor() {
+    const it = BY_ID[selected];
+    if (!it || !quill || saving || editorItem !== it.id) return;
+    const latest = latestRev(it).id;
+    if (latest === editorBase) return;
+    const intent = saveIntents[it.id];
+    if (intent && latest === 'r_' + intent.id) return; // this browser's own save; a retry reuses its request id
+    if (!editorChanged()) {
+      const focus = quill.hasFocus() ? quill.getSelection() : null;
+      forgetDraft(it.id);
+      renderItem();
+      if (focus) { quill.focus(); const n = Math.max(0, quill.getLength() - 1); quill.setSelection(Math.min(focus.index, n), 0, 'silent'); }
+    } else if (staleSeen !== latest) showStale();
   }
   function setStatus(t) { const s = $('#sp-edit-status'); if (s && t) s.textContent = t; }
   function markComment(c) {
@@ -273,13 +345,18 @@
     $('#sp-heading').value = String(f.header || '');
   }
   function wireToolbar() {
+    // The toolbar formats the selection as it is now. Typing moves the caret
+    // without a selection-change event, so read the live selection (Quill
+    // restores the last one when focus is in the link box or the heading).
     let range = { index: 0, length: 0 };
+    const current = () => { const r = quill.getSelection(true); if (r) range = r; return range; };
     quill.on('selection-change', r => { if (r) range = r; });
-    const apply = (fmt, val) => { quill.focus(); quill.setSelection(range.index, range.length, 'silent'); quill.format(fmt, val, 'user'); syncToolbar(quill.getSelection() || range); };
+    quill.on('text-change', () => { const r = quill.getSelection(); if (r) range = r; });
+    const apply = (fmt, val) => { const r = current(); quill.setSelection(r.index, r.length, 'silent'); quill.format(fmt, val, 'user'); syncToolbar(quill.getSelection() || r); };
     document.querySelectorAll('#sp-toolbar [data-fmt]').forEach(b => {
       b.addEventListener('mousedown', e => e.preventDefault());
       b.addEventListener('click', () => {
-        const k = b.dataset.fmt, f = quill.getFormat(range.index, range.length);
+        const r = current(), k = b.dataset.fmt, f = quill.getFormat(r.index, r.length);
         if (k === 'bullet' || k === 'ordered') apply('list', f.list === k ? false : k);
         else apply(k, !f[k]);
       });
@@ -287,7 +364,8 @@
     $('#sp-heading').addEventListener('change', (e) => apply('header', e.target.value ? Number(e.target.value) : false));
     $('#sp-undo').addEventListener('click', () => quill.history.undo());
     $('#sp-redo').addEventListener('click', () => quill.history.redo());
-    $('#sp-link-btn').addEventListener('click', () => { const ed = $('#sp-link-edit'); ed.hidden = !ed.hidden; $('#sp-link-url').value = quill.getFormat(range.index, range.length).link || ''; if (!ed.hidden) $('#sp-link-url').focus(); });
+    $('#sp-link-btn').addEventListener('mousedown', e => e.preventDefault());
+    $('#sp-link-btn').addEventListener('click', () => { const ed = $('#sp-link-edit'); ed.hidden = !ed.hidden; const r = current(); $('#sp-link-url').value = quill.getFormat(r.index, r.length).link || ''; if (!ed.hidden) $('#sp-link-url').focus(); });
     $('#sp-link-apply').addEventListener('click', () => {
       const v = $('#sp-link-url').value.trim();
       if (!/^(https?:|mailto:)/.test(v)) { setStatus('Use an HTTP, HTTPS, or mailto link.'); return; }
@@ -298,33 +376,59 @@
     cs.addEventListener('mousedown', e => e.preventDefault());
     cs.addEventListener('click', () => startComment(pendingRange));
   }
-  async function saveEdit(it) {
-    const delta = withoutMarks(quill.getContents());
-    $('#sp-save').disabled = true;
+  // POST that keeps the HTTP status (UI.api throws only a message).
+  async function post(path, body) {
     try {
-      DATA = await UI.api('./api/copy/' + encodeURIComponent(it.id) + '/revisions', { delta, base_revision: latestRev(it).id, request_id: crypto.randomUUID() });
-    } catch (e) {
-      $('#sp-save').disabled = false;
-      setStatus('Could not save — try again.');
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
+    } catch { return { ok: false, status: 0, data: {} }; }
+  }
+  const tooBig = (r) => r.status === 413 || (r.status === 400 && /^copy (text|document) .*at most \d+ characters/.test(String(r.data.error || '')));
+  async function saveEdit(it) {
+    const delta = forSave(quill.getContents());
+    const content = JSON.stringify(delta.ops);
+    const save = $('#sp-save');
+    // The server takes at most 256 KB per request; say so before sending.
+    if (new Blob([content]).size > 255 * 1024) { setStatus(TOO_BIG_NOTE); return; }
+    save.disabled = true;
+    // A retry of the same save (same item, base and text) reuses its request
+    // id, so a save whose answer was lost is not stored twice.
+    let intent = saveIntents[it.id];
+    if (!(intent && intent.content === content && (intent.base === editorBase || intent.base === staleSeen))) {
+      await loadCopy();
+      if (isStale() && staleSeen !== latestOf(it.id)) { showStale(); save.disabled = false; return; }
+      intent = { id: crypto.randomUUID(), base: latestOf(it.id) || editorBase, content };
+      saveIntents[it.id] = intent; UI.local.set('lib:save-intent', saveIntents);
+    }
+    saving = true;
+    const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/revisions', { delta, base_revision: intent.base, request_id: intent.id });
+    saving = false;
+    if (!r.ok) {
+      // Refused outright (not a lost answer): the next Save is a new attempt.
+      if (r.status >= 400 && r.status < 500) { delete saveIntents[it.id]; UI.local.set('lib:save-intent', saveIntents); }
+      save.disabled = false;
+      if (r.status === 409) { await loadCopy(); showStale(); return; }
+      setStatus(tooBig(r) ? TOO_BIG_NOTE : 'Could not save — try again.');
       return;
     }
-    delete drafts[it.id];
-    UI.local.set('lib:drafts', drafts);
-    await loadCopy();
+    delete saveIntents[it.id]; UI.local.set('lib:save-intent', saveIntents);
+    forgetDraft(it.id);
+    setData(r.data);
     renderAll();
     setStatus('Saved · goes out with Send');
   }
   async function restore(it, revisionId) {
-    try {
-      await UI.api('./api/copy/' + encodeURIComponent(it.id) + '/restore', { revision_id: revisionId, request_id: crypto.randomUUID() });
-    } catch { setStatus('Could not restore — try again.'); return; }
-    delete drafts[it.id];
-    UI.local.set('lib:drafts', drafts);
+    // base_revision: the latest revision this browser has seen; the server
+    // refuses a stale one with 409 (the notice; unsaved text stays).
+    const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/restore', { revision_id: revisionId, base_revision: latestOf(it.id) || latestRev(it).id, request_id: crypto.randomUUID() });
+    if (r.status === 409) { await loadCopy(); if (AA.view === 'library' && editorItem === it.id) showStale(); return; }
+    if (!r.ok) { setStatus('Could not restore — try again.'); return; }
+    forgetDraft(it.id);
     await loadCopy();
     if (AA.view !== 'library') AA.go({ view: 'library', item: it.id });
     renderAll();
     AA.rail.setTab('feedback');
-    setStatus('Restored · goes out with Send');
+    setStatus('Saved · goes out with Send');
   }
 
   // ── Rail: Feedback (question, ready to send, comments) and History ─────
@@ -342,7 +446,7 @@
     const covered = ITEMS.filter(it => it.question_comment_id === q.id).length;
     return `<div class="citem decision-required" data-q="${esc(q.id)}" role="group" aria-label="Feedback #${esc(n)} · ${esc(d.displayPrompt(q))}">
       <div class="citem-node"><span class="citem-node-name"><span class="citem-num">#${esc(n)}</span></span></div>
-      <div class="citem-meta"><span class="citem-author">${esc(d.authorLabel(q))}</span><span>${esc(UI.fmtTs(q.created_at))}${q.edited_at ? ' (edited)' : ''}</span></div>
+      <div class="citem-meta"><span class="citem-author">${esc(d.whoName(q))}</span><span>${esc(UI.fmtTs(q.created_at))}${q.edited_at ? ' (edited)' : ''}</span></div>
       <div class="decision-block"><div class="decision-prompt">${d.ticketsHTML(d.displayPrompt(q))}</div>
       ${dr.context ? `<div class="decision-context">${d.ticketsHTML(dr.context)}</div>` : ''}
       ${reco ? `<div class="decision-reco-line">Recommended: <b>${esc(reco.label)}</b></div>` : ''}
@@ -372,23 +476,27 @@
     if (nReady) {
       html += UI.section('ready', 'Ready to send', nReady,
         (qReady ? qCard(q) : '') +
-        (lastEdit ? `<div class="citem"><div class="citem-meta"><span class="citem-author">${esc(d.authorLabel({ author: lastEdit.author.id, author_name: lastEdit.author.name }))}</span><span>${esc(UI.fmtTs(lastEdit.created_at))}</span></div><div class="citem-txt"><b>Edited</b> · see History for the change</div></div>` : '') +
+        (lastEdit ? `<div class="citem"><div class="citem-meta"><span class="citem-author">${esc(d.whoName({ author: lastEdit.author.id, author_name: lastEdit.author.name }))}</span><span>${esc(UI.fmtTs(lastEdit.created_at))}</span></div><div class="citem-txt"><b>Edited</b> · see History for the change</div></div>` : '') +
         readyC.map(commentCard).join(''), { scope: 'lib' });
     }
-    const others = commentsOf(it).filter(c => !readyC.includes(c));
+    const others = commentsOf(it).filter(c => !readyC.some(r => r.id === c.id));
     html += UI.section('comments', 'Comments', others.length, (others.map(commentCard).join('') || '<p class="project-detail">No comments on this item yet.</p>'), { scope: 'lib' });
     if (q && qAnswer(q) && !qReady) html += UI.section('done', 'Done', 1, qCard(q), { open: false, scope: 'lib' });
-    // The rail's own "+ General feedback" box (A3), for this item.
+    // The rail's own "+ General feedback" box (A3), for this item. Its
+    // unsaved text is this item's draft (kept in this browser until Save).
+    const typed = commentDrafts[it.id] || '';
+    const open = !!(pendingQuote || typed);
     html = `<div class="gf" id="sp-compose">
-      <button type="button" class="gf-row" id="sp-compose-toggle" aria-expanded="${pendingQuote ? 'true' : 'false'}" aria-controls="sp-compose-box">${UI.ico('plus')}<span>Comment on this item</span></button>
-      <div class="gf-box" id="sp-compose-box" ${pendingQuote ? '' : 'hidden'}>
+      <button type="button" class="gf-row" id="sp-compose-toggle" aria-expanded="${open ? 'true' : 'false'}" aria-controls="sp-compose-box">${UI.ico('plus')}<span>Comment on this item</span></button>
+      <div class="gf-box" id="sp-compose-box" ${open ? '' : 'hidden'}>
         <div class="unified-selected-quote" id="sp-compose-quote" ${pendingQuote ? '' : 'hidden'}>${pendingQuote ? '“' + esc(pendingQuote) + '”' : ''}</div>
-        <textarea class="textarea gf-ta" id="sp-compose-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="3" aria-label="Comment on ${esc(labelOf(it))}"></textarea>
+        <textarea class="textarea gf-ta" id="sp-compose-ta" placeholder="Add your feedback, question, or redline note&hellip;" rows="3" aria-label="Comment on ${esc(labelOf(it))}" data-submit="#sp-compose-save"></textarea>
         <div class="gf-ft"><span class="gf-hint">Goes out with Send</span><button type="button" class="btn btn-ghost btn-xs" id="sp-compose-cancel">Cancel</button><button type="button" class="btn btn-ghost btn-xs" id="sp-compose-save">Save</button></div>
       </div></div>` + html;
-    const keep = $('#sp-compose-ta') ? $('#sp-compose-ta').value : '';
     rail.innerHTML = html;
-    if (keep) $('#sp-compose-ta').value = keep;
+    const cta = $('#sp-compose-ta');
+    cta.value = typed;
+    cta.addEventListener('input', () => setCommentDraft(it.id, cta.value));
     UI.wireSections(rail);
     rail.querySelectorAll('[data-q-opt]').forEach(b => b.addEventListener('click', async () => {
       const o = q.decision_request.options.find(x => x.id === b.dataset.qOpt);
@@ -408,10 +516,14 @@
     $('#sp-compose-cancel').addEventListener('click', () => {
       $('#sp-compose-box').hidden = true; $('#sp-compose-toggle').setAttribute('aria-expanded', 'false');
       if (pendingRange && quill) quill.formatText(pendingRange.index, pendingRange.length, 'cmark', false, 'silent');
-      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; $('#sp-compose-quote').hidden = true;
+      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; setCommentDraft(it.id, ''); $('#sp-compose-quote').hidden = true;
     });
     $('#sp-compose-save').addEventListener('click', () => saveComment(it));
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
+  }
+  function setCommentDraft(id, text) {
+    if (text.trim()) commentDrafts[id] = text; else delete commentDrafts[id];
+    UI.local.set('lib:comment-drafts', commentDrafts);
   }
   // "Change" on an answered question shows its options again.
   function qCardOpen(q) {
@@ -447,8 +559,11 @@
     const c = await D().createComment('copy:' + it.id, labelOf(it), text, undefined, target, { category: 'library' });
     if (!c) { setStatus('Could not save the comment — try again.'); return; }
     ta.value = '';
+    setCommentDraft(it.id, '');
     pendingQuote = null; pendingRange = null;
     await D().refreshStore();
+    // ⌘↵ leaves focus in the box, so the store refresh skips the rail.
+    if (shown && selected === it.id) { renderList(); renderRail(); }
     highlightComment(c.id, true);
   }
   function highlightComment(cid, scrollRail, scrollDoc) {
@@ -464,11 +579,11 @@
     const entries = [];
     seedHistory(it).forEach(h => entries.push(h));
     const q = question(it);
-    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict).forEach(x => entries.push({ ts: x.ts, who: d.authorLabel({ author: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
+    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
     it.revisions.forEach((r, i) => {
       if (r.status !== 'proposed') return;
       const prev = it.revisions[i - 1];
-      entries.push({ ts: r.created_at, who: d.authorLabel({ author: r.author.id, author_name: r.author.name }), kind: 'edit', text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
+      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
     });
     storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
     entries.sort((a, b) => (a.ts < b.ts ? 1 : -1));
@@ -546,7 +661,23 @@
   document.addEventListener('annotate:store', async () => {
     await loadCopy();
     if (shown && !UI.isTyping(document.activeElement)) { renderList(); renderRail(); }
+    if (shown) syncEditor();
   });
+  // The shell's refresh watches comments, not copy: while the Library is
+  // open, look for new revisions (another browser, the agent) every 8 s.
+  async function checkCopy() {
+    if (!shown || document.hidden || saving || !DATA) return;
+    let data;
+    try { data = await UI.api('./api/copy'); } catch { return; }
+    if (JSON.stringify(data) === copySig || saving) return;
+    setData(data);
+    AA.changed();
+    if (!shown) return;
+    if (!UI.isTyping(document.activeElement)) { renderList(); renderRail(); }
+    syncEditor();
+  }
+  setInterval(checkCopy, 8000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkCopy(); });
   const ready = () => loading || (loading = loadCopy());
   AA.provider('library', {
     pending: () => (DATA ? pendingItems() : []),
