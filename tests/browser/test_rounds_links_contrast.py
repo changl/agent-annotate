@@ -227,11 +227,6 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="A3b-P5: legacy History receipt uses the current prompt instead of the stored round prompt",
-)
 def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
     directory, process, base = _fixture(tmp_path)
     try:

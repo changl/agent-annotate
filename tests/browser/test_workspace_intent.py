@@ -217,9 +217,6 @@ def _public_funnel_browser(tmp_path):
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("entry", ["tab", "direct_link"])
 @pytest.mark.parametrize("custom", [True, False], ids=["custom", "built-in"])
-@pytest.mark.xfail(
-    strict=True, reason="A3b-P1: Send ignores typed word answer while changing an existing verdict"
-)
 def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, width, entry, custom):
     directory = _page(tmp_path, custom)
     with _browser(tmp_path, directory, width) as (page, base):

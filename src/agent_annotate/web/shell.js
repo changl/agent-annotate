@@ -838,7 +838,9 @@ async function loadHistory() {
 function roundItemText(answer) {
   const c = answer.comment_id ? findCommentById(answer.comment_id) : null;
   const n = (c && NUM_MAP[c.id]) || answer.number;
-  const prompt = c ? displayPrompt(c) || firstLine(c.text) : (answer.prompt || '');
+  // P5: the prompt the round recorded, even after the card's prompt changed.
+  const prompt = answer.prompt ? displayPrompt({ id: answer.comment_id, decision_request: { prompt: answer.prompt } })
+    : c ? displayPrompt(c) || firstLine(c.text) : '';
   const ans = answer.text ? (answer.verdict === 'select' ? answer.text.replace(/^Selected:\s*/, '') : answer.text)
     : (DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '');
   // A plain comment is its own label; never repeat it as the answer.
@@ -858,12 +860,17 @@ function sentRounds() {
     if (r.send_id) byId[r.send_id] = g;
     groups.push(g);
   }
+  // UI-2: the round and the push each keep the lines they carried; one Send's
+  // receipt is both, in the summary's tab order.
+  const tabOrder = ['review', 'library', 'findings', 'plans'];
   return groups.map(g => {
-    const withReceipt = g.find(r => Array.isArray(r.receipt) && r.receipt.length);
+    const withReceipt = g.filter(r => Array.isArray(r.receipt) && r.receipt.length)
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     const ts = g.map(r => r.ts).sort()[0];
-    if (withReceipt) {
-      const items = withReceipt.receipt.map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }));
-      return { ts, result: 'Sent (' + items.length + ')', items, send_id: withReceipt.send_id };
+    if (withReceipt.length) {
+      const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
+        .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
+      return { ts, result: 'Sent (' + items.length + ')', items, send_id: withReceipt[0].send_id };
     }
     return legacyRound(g.find(r => r.kind !== 'push') || g[0]);
   }).filter(r => r.items.length);
@@ -1152,8 +1159,13 @@ function clearSayDraft(id) {
   document.querySelectorAll('[data-decision-say-ta="' + cssEsc(id) + '"]').forEach(ta => { ta.value = ''; });
   syncStripSayDraft(id);
 }
+// P1: text typed while an answered card's Change is open (on the card or in
+// the Send summary) is that card's new answer at Send, as on an open card.
 function hasSayDraft(c) {
-  return isUnresolvedDecision(c) && !!sayDraft(c);
+  return (isUnresolvedDecision(c) || isChangingAnswer(c)) && !!sayDraft(c);
+}
+function isChangingAnswer(c) {
+  return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
 }
 function sectionOf(c) {
   if (c.status === 'archived') return 'archived';
@@ -1170,8 +1182,8 @@ function sectionOf(c) {
 function sendPlan() {
   const round = [], answers = [], push = [];
   for (const c of flattenAll(false)) {
-    if (isRoundPending(c)) round.push(c);
-    else if (hasSayDraft(c)) answers.push(c);
+    if (hasSayDraft(c)) answers.push(c);
+    else if (isRoundPending(c)) round.push(c);
     else if (needsPush(c)) push.push(c);
   }
   return { round, answers, push };
@@ -2046,10 +2058,24 @@ function goToEvidence(anchorId, commentId) {
 
 // Click on an option, from the card or from the send summary. Request
 // changes still needs words (2.20); with an empty box it asks for them.
+// UI-15: the comment sent with an earlier option answer, so changing the
+// option without typing a new comment keeps it. A word answer (comment,
+// changes) is the answer itself, not a comment beside it.
+function earlierAnswerComment(c) {
+  const d = decisionAnswer(c);
+  if (!d || !d.text) return null;
+  if (d.verdict === 'accept' || d.verdict === 'reject') return d.text;
+  if (d.verdict === 'select' || (d.verdict === 'comment' && /^Selected: /.test(d.text))) {
+    const at = d.text.indexOf('\n\n');
+    return at === -1 ? null : (d.text.slice(at + 2).trim() || null);
+  }
+  return null;
+}
 function pickOption(root, btn) {
   const id = btn.dataset.id;
   const action = btn.dataset.decisionAction;
-  const note = decisionCommentText(root, id);
+  const note = decisionCommentText(root, id) ||
+    (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(findCommentById(id)));
   if (action === 'accept' || action === 'reject') return submitDecision(root, id, action, note);
   if (action === 'comment' || action === 'changes') {
     if (!note) {
@@ -2126,6 +2152,7 @@ function wireDecisionActions(root) {
     decisionChanging[btn.dataset.id] = true;
     highlightedCommentId = btn.dataset.id;
     renderDrawer();
+    updateSendState();
     const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
@@ -2134,6 +2161,7 @@ function wireDecisionActions(root) {
     delete decisionChanging[btn.dataset.id];
     delete decisionHint[btn.dataset.id];
     renderDrawer();
+    updateSendState();
   }));
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
@@ -2593,7 +2621,8 @@ function wireHeader() {
 // A comment needs pushing only if it's open AND has user-side activity newer
 // than its last push (2.20 rule, kept).
 function needsPush(c) {
-  if (c.status !== 'open' || (c.decision && c.decision.round_pending)) return false;
+  // The server's _comment_needs_push: a pending reopen goes with the round.
+  if (c.status !== 'open' || c.round_pending || (c.decision && c.decision.round_pending)) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
   let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
   if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
@@ -2646,7 +2675,7 @@ function summarySentence() {
   const roundN = plan.round.length + plan.answers.length;
   if (roundN > 0) {
     return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
-      (s.decided + plan.answers.length) + ' of ' + s.total + ' cards decided).';
+      (s.decided + plan.answers.filter(c => !decisionAnswer(c)).length) + ' of ' + s.total + ' cards decided).';
   }
   return q.total === 0 ? 'Nothing to send yet.' : '';
 }
@@ -2669,11 +2698,11 @@ function renderSummaryInto(list, editable) {
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
     const answered = !!decisionAnswer(c);
-    const draft = !answered && hasSayDraft(c);
+    const draft = hasSayDraft(c);
     const missing = !answered && !draft;
     const editing = editable && sumEditing === c.id;
-    const ansText = answered ? answerLabel(c).text : draft ? '“' + firstLine(sayDraft(c)) + '”' : 'Not answered';
-    const sent = answered && !isRoundPending(c);
+    const ansText = draft ? '“' + firstLine(sayDraft(c)) + '”' : answered ? answerLabel(c).text : 'Not answered';
+    const sent = answered && !draft && !isRoundPending(c);
     const editLabel = missing ? 'Answer' : 'Change';
     let edit = '';
     if (editing) {
@@ -2778,10 +2807,12 @@ function sendItems() {
   const items = [...p.round, ...p.answers, ...p.push].map(c => {
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
     const label = hasDecisionRequest(c) ? displayPrompt(c) : firstLine(last ? last.text : c.text);
-    const answer = decisionAnswer(c) ? answerLabel(c).text : hasSayDraft(c) ? sayDraft(c) : '';
-    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer };
+    const answer = hasSayDraft(c) ? sayDraft(c) : decisionAnswer(c) ? answerLabel(c).text : '';
+    // UI-2: `kind` says which call carries the line (the round or the push)
+    // and `id` lets a failed draft drop its line; neither goes to the server.
+    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer, kind: p.push.includes(c) ? 'push' : 'round', id: c.id };
   });
-  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft() });
+  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft(), kind: 'push', id: 'gf:' + DOC });
   return items;
 }
 // A document's part of one Send (2.20's order): comment-box text on an
@@ -2790,21 +2821,22 @@ function sendItems() {
 async function prepareDocCore() {
   const items = sendItems();
   let ok = true;
+  const failed = [];
   for (const c of flattenAll(false).filter(hasSayDraft)) {
     let r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
-    if (r) clearSayDraft(c.id); else ok = false;
+    if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   const gf = gfDraft();
-  if (gf && IDENTITY) {
-    const created = await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION);
-    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else ok = false;
+  if (gf) {
+    const created = IDENTITY ? await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION) : null;
+    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else { ok = false; failed.push('gf:' + DOC); }
   }
   if (DOC === VIEW_DOC) {
     const g = document.getElementById('gf-ta');
     if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
   }
-  return { ok, items };
+  return { ok, items, failed };
 }
 // A reopened finding this reviewer has not sent yet.
 function isReopenPending(c) {
@@ -2820,34 +2852,60 @@ function pageRoundPending() {
 // comments with new activity. `alsoPending` says another tab has round-pending
 // work the comment store does not show (Library revisions).
 // `receipt`: the Send summary's lines, kept by the server for History.
+// UI-2: each call carries only its own receipt lines (the round's verdicts,
+// reopens and edits; the push's comments), both under one send_id, so a
+// failed call leaves its lines out of History. Returns the lines actually
+// sent and the lines that were not (they stay pending, as their drafts,
+// verdicts and comments are untouched).
 async function submitPage(alsoPending, receipt) {
-  let ok = true, sentCount = 0, delivered = false, last = null;
-  const send = receiptPayload(receipt);
+  let sentCount = 0, delivered = false, last = null;
+  const lines = Array.isArray(receipt) ? receipt : [];
+  const sendId = lines.length ? newSendId() : null;
+  const failedIds = new Set();
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
-    if (!r.ok) ok = false;
+    (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
   }
+  const failed = lines.filter(it => it.id && failedIds.has(it.cat + '|' + it.id));
+  const sent = [];
+  // Library lines carry no kind: its comments read "Comment: …".
+  const kindOf = (it) => it.kind || (/^Comment: /.test(it.answer || '') ? 'push' : 'round');
+  let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
+  let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
   await loadStore();
-  if (roundsEnabled() && (pageRoundPending() > 0 || alsoPending)) {
-    const j = await withDocAsync('review', () => apiRoundSubmit(null, send));
-    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
+  const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
+  const doPush = flattenStore(false).some(needsPush);
+  // A line whose own call is not needed goes with the other call.
+  if (!doRound) { pushLines = roundLines.concat(pushLines); roundLines = []; }
+  if (!doPush) { roundLines = roundLines.concat(pushLines); pushLines = []; }
+  if (doRound) {
+    const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
+    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
   }
-  if (flattenStore(false).some(needsPush)) {
-    const j = await apiPushAll(send);
-    if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; } else ok = false;
+  if (doPush) {
+    const j = await apiPushAll(receiptPayload(pushLines, sendId));
+    if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; sent.push(...pushLines); } else failed.push(...pushLines);
   }
+  // Nothing needed a call (an old server answers each verdict as it is posted).
+  if (!doRound && !doPush) sent.push(...roundLines);
   if (last) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
   }
   historyDirty = true;
   await Promise.all([loadStore(), loadReadState()]);
   loadHistory();
-  return { ok: ok || !!last, sentCount, delivered, any: !!last, send_id: send.send_id };
+  const order = (it) => lines.indexOf(it);
+  sent.sort((a, b) => order(a) - order(b));
+  failed.sort((a, b) => order(a) - order(b));
+  return { ok: !failed.length, sent, failed, sentCount, delivered, any: !!last, send_id: sendId };
 }
-function receiptPayload(receipt) {
-  if (!Array.isArray(receipt) || !receipt.length) return {};
-  const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12));
+function newSendId() {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+}
+function receiptPayload(receipt, id) {
+  if (!id) return {};
+  if (!Array.isArray(receipt) || !receipt.length) return { send_id: id };
   return {
     send_id: id,
     receipt: receipt.slice(0, 200).map(it => {
@@ -3540,6 +3598,7 @@ window.AnnotateDocs = {
   whenFrameReady,
   version: (doc) => withDoc(doc, () => CURRENT_VERSION),
   counts: (doc) => withDoc(doc, docCounts),
+  olderShown: (doc) => withDoc(doc, () => !!CURRENT_VERSION && !!latestVersion() && CURRENT_VERSION !== latestVersion()),
   roundStats: (doc) => withDoc(doc, roundStats),
   sendables: (doc) => withDoc(doc, sendables),
   sentence: (doc) => withDoc(doc, summarySentence),
