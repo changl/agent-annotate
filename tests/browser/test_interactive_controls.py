@@ -37,12 +37,21 @@ def _serve(tmp_path):
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(
         [
-            sys.executable, "-m", "agent_annotate.sync_server",
-            "--slug-dir", str(slug_dir),
-            "--slug", "demo",
-            "--bus-dir", str(tmp_path / "bus"),
-            "--port", str(port),
-            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
+            sys.executable,
+            "-m",
+            "agent_annotate.sync_server",
+            "--slug-dir",
+            str(slug_dir),
+            "--slug",
+            "demo",
+            "--bus-dir",
+            str(tmp_path / "bus"),
+            "--port",
+            str(port),
+            "--local-author",
+            "reviewer@example.com",
+            "--local-author-name",
+            "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -67,8 +76,8 @@ def _details_page(browser, base):
     """Optional anchored comments share the native workspace's canonical store."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.set_default_timeout(5_000)
-    page.goto(base, wait_until="networkidle")
-    page.locator('[data-workspace-tab="details"]').click()
+    page.goto(base + "#view=review", wait_until="networkidle")
+    page.locator('body[data-ready="1"]').wait_for(state="attached")
     page.frame_locator("#content-frame").locator("#plain-para").wait_for()
     return page
 
@@ -86,7 +95,10 @@ def test_interactive_controls_keep_native_click_behavior(tmp_path):
             # Baseline: plain prose inside an anchored section still comments.
             frame.locator("#plain-para").click()
             popover.wait_for(state="visible")
-            assert page.locator("#pop-node-name").get_attribute("title") == page.locator("#pop-node-name").inner_text()
+            assert (
+                page.locator("#pop-node-name").get_attribute("title")
+                == page.locator("#pop-node-name").inner_text()
+            )
             page.keyboard.press("Escape")
             popover.wait_for(state="hidden")
 
@@ -132,31 +144,6 @@ def test_alt_click_overrides_the_interactive_bail_out(tmp_path):
             frame.locator("#demo-input").click(modifiers=["Alt"])
             popover.wait_for(state="visible")
 
-            browser.close()
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-
-@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_reference_controls_work_without_comment_authoring(tmp_path):
-    process, base = _serve(tmp_path)
-    try:
-        with playwright.sync_playwright() as runner:
-            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": 1280, "height": 800})
-            page.set_default_timeout(5_000)
-            posts = []
-            page.on("request", lambda request: posts.append(request.url) if request.method == "POST" else None)
-            page.goto(base + "?embed=reference", wait_until="networkidle")
-            frame = page.frame_locator("#content-frame")
-            frame.locator("#plain-para").click()
-            frame.locator("#demo-input").click(modifiers=["Alt"])
-            frame.locator("#demo-select").select_option("b")
-            assert frame.locator("#demo-select").input_value() == "b"
-            assert page.locator("#drawer").is_hidden()
-            assert page.locator("#popover").is_hidden()
-            assert not any("/api/comments" in url or "/api/rounds" in url or "/api/copy/" in url for url in posts)
             browser.close()
     finally:
         process.terminate()

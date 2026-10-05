@@ -21,15 +21,18 @@ def test_cli_category_lifecycle_over_real_http(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
     bus = tmp_path / "bus/project"
-    record = {"project": "project", "slug": "main", "slug_dir": str(directory), "port": 8984,
-              "local_url": "http://localhost:8984/", "url": "http://localhost:8984/", "transport": "local",
+    record = {"project": "project", "slug": "main", "slug_dir": str(directory), "port": 0,
+              "local_url": "http://localhost:0/", "url": "http://localhost:0/", "transport": "local",
               "bus_file": str(bus / "main.ndjson"), "workspace_primary": True, "workspace_key": "integration:test"}
     (state / "project.json").write_text(json.dumps({"project": "project", "slugs": {"main": record}}))
     monkeypatch.setattr(cli, "STATE_DIR", state)
     monkeypatch.setattr(sync_server, "STATE_DIR", state)
     handler = sync_server.make_handler(artifact_dir=directory, public_base_path="", slug="main", bus_dir=bus,
                                        v2_mode=True, local_author="reviewer@example.test", local_author_name="Reviewer")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 8984), handler)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    base = f"http://localhost:{server.server_port}"
+    record.update(port=server.server_port, local_url=base + "/", url=base + "/")
+    (state / "project.json").write_text(json.dumps({"project": "project", "slugs": {"main": record}}))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     env = {**os.environ, "ANNOTATE_STATE_DIR": str(state)}
@@ -41,7 +44,7 @@ def test_cli_category_lifecycle_over_real_http(tmp_path, monkeypatch):
         return json.loads(result.stdout)
 
     def get(path):
-        with urllib.request.urlopen("http://localhost:8984" + path, timeout=3) as response:
+        with urllib.request.urlopen(base + path, timeout=3) as response:
             return response.read()
 
     try:
