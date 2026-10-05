@@ -387,7 +387,14 @@ function postReadItems(items) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items }),
-  }).catch(() => null);
+  }).then(r => { refreshCountsSoon(); return r; }).catch(() => null);
+}
+// The header's unread counts are the server's; refetch them once a burst of
+// read marks has landed, so opening an item clears its count at once.
+let countsRefresh = null;
+function refreshCountsSoon() {
+  clearTimeout(countsRefresh);
+  countsRefresh = setTimeout(async () => { if (await loadCategories() && window.AA) window.AA.changed(); }, 250);
 }
 
 function findCommentById(id) {

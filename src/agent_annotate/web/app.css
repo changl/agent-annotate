@@ -34,7 +34,7 @@
 
 /* ── Content title: what used to be the header's second line ─────────── */
 .view-hd{flex:none;display:flex;align-items:center;min-height:40px;padding:6px 18px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
-.view-hd-title{margin:0;font-size:14px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.view-hd-title{margin:0;font-size:12.5px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .view-hd-sub{font-weight:400;color:var(--muted)}
 .view-hd-sub:not(:empty)::before{content:" · "}
 .view-hd-plan{margin-left:auto;width:auto;max-width:40%}
@@ -62,7 +62,7 @@
 .sp-link-edit{display:flex;align-items:center;gap:4px}
 .sp-link-edit[hidden]{display:none}
 .sp-editor.ql-container.ql-snow{border:none;font:inherit}
-.sp-editor .ql-editor{font:15px/1.55 "Roboto",sans-serif;color:var(--color-base-content);padding:10px 12px;min-height:96px}
+.sp-editor .ql-editor{font:11px/1.55 "Roboto",sans-serif;color:var(--color-base-content);padding:10px 12px;min-height:96px}
 .sp-editor .ql-editor h1,.sp-editor .ql-editor h2,.sp-editor .ql-editor h3{font-weight:700}
 .sp-editor .ql-editor h2{font-size:20px;margin:18px 0 8px}
 .sp-editor .ql-editor h3{font-size:16px;margin:16px 0 6px}
@@ -78,15 +78,23 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .aa tr[data-f]{cursor:pointer}
 .aa td .chip{white-space:nowrap;margin-left:0}
 .aa td .unread-dot{display:inline-block;vertical-align:middle}
+/* Chang's type sizes where these views differ from the document frame
+   (content.css carries the document sizes). */
+.aa-view .aa .muted{font-size:10.5px}
+.aa-view .aa .plan-scope{font-size:9.5px}
+.aa-view .aa code{font-size:10px}
+.aa-view .aa pre code{font-size:inherit}
+.aa-view .aa .lede{font-size:16px}
+.aa-view .aa .reco{font-size:11px}
 
 /* ── A finding marked fixed: the agent's note and its proof ──────────── */
 .fix-block{margin:8px 0 6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100)}
 .fix-block.is-reopened{background:var(--color-base-200)}
-.fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--faint);margin-bottom:6px}
+.fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:10.5px;color:var(--faint);margin-bottom:6px}
 .fix-proof{display:flex;flex-direction:column;gap:8px;margin:6px 0}
 .fix-proof-img{margin:0}
 .fix-proof-img img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
-.fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-top:4px}
+.fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);margin-top:4px}
 .fix-proof-img figcaption svg.i{width:13px;height:13px}
 .fix-proof-links{margin:0;padding:0}
 .fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
@@ -100,7 +108,7 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .hist-tag{font-weight:700;letter-spacing:0;text-transform:none;vertical-align:1px}
 .hist-sub{margin:0 4px 6px}
 .hist-none{padding:0 4px}
-.hist-item{border-bottom:1px solid var(--line);padding:8px 4px;font-size:12.5px}
+.hist-item{border-bottom:1px solid var(--line);padding:8px 4px;font-size:10.5px}
 .hist-item:last-child{border-bottom:none}
 .hist-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px}
 .hist-text{white-space:pre-wrap;word-break:break-word;line-height:1.5}
@@ -116,15 +124,18 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 #hist-sent{margin-bottom:6px}
 
 /* ── The one Send summary: grouped by tab ────────────────────────────── */
-.sp-sum-cat{font-size:11.5px;font-weight:700;color:var(--color-base-content);padding:10px 6px 0;border-top:1px solid var(--line);margin-top:6px;display:flex;align-items:center;gap:6px}
+.sp-sum-cat{font-size:10.5px;font-weight:700;color:var(--color-base-content);padding:10px 6px 0;border-top:1px solid var(--line);margin-top:6px;display:flex;align-items:center;gap:6px}
 .sum-tab:first-child .sp-sum-cat{border-top:none;margin-top:0;padding-top:2px}
-.sp-sum-cat a{font-weight:600;font-size:11.5px;margin-left:auto;color:var(--link)}
-.sp-sum-note{font-size:11.5px;color:var(--muted);padding:2px 6px 0}
+.sp-sum-cat a{font-weight:600;font-size:10.5px;margin-left:auto;color:var(--link)}
+.sp-sum-note{font-size:10.5px;color:var(--muted);padding:2px 6px 0}
 .sp-sum-note[hidden]{display:none}
 
 /* ── Compact layout (the shell's breakpoint): tabs become one menu, the
    rail is the bottom sheet on every tab, one Send bar ─────────────────── */
 @media (max-width:1160px),(max-height:480px){
+  /* Keep the open tab menu inside the phone viewport. */
+  .aa-tabs-list{position:fixed;left:10px;right:10px;top:50px;width:auto}
+  .aa-tabs-list .aa-tab-name{font-size:12px}
   .hdr-left{flex-basis:120px;width:120px}
   .aa-tabs{display:none}
   .aa-tabs-menu{display:block}
@@ -136,6 +147,6 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
   #view-library.is-list .sp-list{display:flex}
   .sp-back{display:inline-flex;margin:8px 0 0}
   .sp-toolbar .btn{min-width:36px;min-height:36px}
-  .sp-editor .ql-editor{font-size:16px}
+  .sp-editor .ql-editor{font-size:14px}
   .aa-scroll,.sp-doc,.sp-list-body{padding-bottom:150px}
 }

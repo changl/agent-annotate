@@ -47,14 +47,18 @@
   }
   // The item's recorded history: the agent's seeded events, kept on an
   // archived comment of the item (target.seed_history).
+  const seedRecord = (it) => D().comments(true).find(x => x.target && x.target.copy_block === it.id && Array.isArray(x.target.seed_history));
   function seedHistory(it) {
-    const c = D().comments(true).find(x => x.target && x.target.copy_block === it.id && Array.isArray(x.target.seed_history));
+    const c = seedRecord(it);
     return c ? c.target.seed_history : [];
   }
-  // The item's status in the copy page's own words.
+  // The item's status in the copy page's own words: the latest history
+  // status, else the imported record's status line, else the block status.
   function statusText(it) {
     const added = seedHistory(it).filter(h => h.status).slice(-1)[0];
     if (added) return added.status;
+    const rec = seedRecord(it);
+    if (rec && rec.text && it.status !== 'held') return rec.text;
     if (it.status === 'held') return 'held back: ' + (it.held_note || '');
     if (it.status === 'needs_you') return 'draft for your edit';
     if (it.status === 'done') return 'approved';
@@ -96,6 +100,10 @@
   const isPendingItem = (it) => pendingItems().some(p => p.item === it.id);
   const readKey = (it) => 'copy:' + it.id;
   const isUnread = (it) => { const r = D().readRecord(readKey(it)); return !r || r.sig !== latestRev(it).id; };
+  // What counts as unread (as the server's Library count): the agent's note on
+  // the item, or an agent revision after its first text.
+  const hasAgentNews = (it) => !!seedComments(it).length ||
+    (it.revisions.length > 1 && String((latestRev(it).author || {}).id || '').startsWith('agent:'));
   function markSeen(it) {
     if (it && isUnread(it)) D().markReadItems([{ id: readKey(it), sig: latestRev(it).id }]);
   }
@@ -116,7 +124,7 @@
   function rowHtml(it) {
     const num = it.number != null ? `<span class="citem-num">#${it.number}</span>` : '';
     const where = it.number != null ? it.where : whereShort(it);
-    const unread = isUnread(it) && seedComments(it).length ? '<span class="unread-dot" title="You have not opened the agent\'s note on this item yet" role="img" aria-label="Unread"></span>' : '';
+    const unread = isUnread(it) && hasAgentNews(it) ? '<span class="unread-dot" title="You have not opened the agent\'s note on this item yet" role="img" aria-label="Unread"></span>' : '';
     return `<div class="citem sp-row${it.id === selected ? ' hl' : ''}${unread ? ' is-unread' : ''}" data-item="${esc(it.id)}" tabindex="0" role="button" aria-current="${it.id === selected ? 'true' : 'false'}"><div class="citem-node">${unread}<span class="citem-node-name">${num}${esc(where)}</span>${chip(it)}</div><div class="citem-txt">${esc(plainOf(it).slice(0, 160))}</div></div>`;
   }
   function renderList() {

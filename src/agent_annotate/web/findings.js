@@ -37,7 +37,7 @@
   // A reviewer's comments on a finding: plain comments on its anchor.
   const commentsOf = (f) => D().comments(false).filter(c => c.anchor_id === f.anchor_id && !c.decision_request);
   // A finding's short name: its set's item label and number ("Gap 3").
-  const tag = (f) => (SETS[f.finding.set] && SETS[f.finding.set].item_label ? SETS[f.finding.set].item_label + ' ' : '#') + (f.number || '');
+  const tag = (f) => ((SETS[f.finding.set] && SETS[f.finding.set].item_label) || 'Finding') + ' ' + (f.number || '');
   const titleOf = (f) => f.finding.title || D().displayPrompt(f);
   function optionOf(f, choice) {
     const opts = (f.decision_request.options || []).filter(o => o && typeof o === 'object');
