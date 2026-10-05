@@ -8,10 +8,12 @@ import json
 import os
 import subprocess
 import threading
+import uuid
 from types import SimpleNamespace
 
 import pytest
 from test_categories_api import finding
+from test_copy_api import _seed
 from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
@@ -520,6 +522,147 @@ def test_be19_base_without_head_follows_the_doctype(server):
     publish_plan_revision(directory, "p", "<!DOCTYPE html>\n<p>x</p>")
     text = _raw(httpd, "/plans/p/v1.html")[2].decode()
     assert text.startswith("<!DOCTYPE html>") and text.index("<base ") < text.index("<p>x")
+
+
+# ── BE-14: a browser cannot file a comment into Findings or Library at will ─
+
+@pytest.mark.parametrize("body", [
+    {"anchor_id": "s:a", "text": "Not a finding", "category": "findings"},
+    {"anchor_id": "s:a", "text": "Not a copy block", "category": "library"},
+    {"anchor_id": "s:a", "text": "No plan", "category": "plans"},
+])
+def test_be14_browser_category_on_create_is_refused_off_its_anchor(server, body):
+    httpd, directory, _ = server
+    assert _call(httpd, "POST", "/api/comments", body, author="chang@example.com")[0] == 403
+    status, _ = _call(httpd, "POST", "/api/comments/batch", {"items": [body]}, author="chang@example.com")
+    assert status == 403
+    assert _store(directory)["anchors"] == {}
+
+
+def test_be14_browser_may_comment_into_library_and_onto_an_existing_finding(server):
+    httpd, directory, _ = server
+    status, comment = _call(httpd, "POST", "/api/comments",
+                            {"anchor_id": "copy:hero", "text": "Shorter?", "category": "library"}, author="chang@example.com")
+    assert status == 201 and comment["category"] == "library"
+    card = finding(httpd)
+    status, comment = _call(httpd, "POST", "/api/comments",
+                            {"anchor_id": card["anchor_id"], "text": "Also the footer", "category": "findings"},
+                            author="chang@example.com")
+    assert status == 201 and comment["category"] == "findings"
+    # The reviewer's own comment is not a finding that needs the reviewer.
+    counts = category_counts(directory)["findings"]
+    assert counts["needs_you"] == 1 and counts["ready"] == 1
+    # The agent can still file into Findings.
+    assert _call(httpd, "POST", "/api/comments", {"anchor_id": "s:b", "text": "x", "category": "findings"})[0] == 201
+
+
+# ── BE-15: an export taken before a Send can still be imported ─────────────
+
+def test_be15_copy_import_after_send_keeps_stored_round_pending(server):
+    from agent_annotate.copy_state import load_copy, save_copy
+    httpd, directory, bus = server
+    _seed(directory)
+    body = {"delta": {"ops": [{"insert": "Changed\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", body, author="chang@example.com")[0] == 200
+    exported = load_copy(directory)
+    exported["blocks"][0]["status"] = "ready"
+    assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["edit_count"] == 1
+    saved = save_copy(directory, exported)
+    assert saved["blocks"][0]["status"] == "ready"
+    assert saved["blocks"][0]["revisions"][-1]["round_pending"] is False
+    # Nothing goes out a second time.
+    assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["delivery"] == "noop"
+    assert len(_events(bus, "round_submitted")) == 1
+
+
+def test_be15_authored_revision_changes_are_still_refused(server):
+    from agent_annotate.copy_state import load_copy, save_copy
+    _, directory, _ = server
+    _seed(directory)
+    exported = load_copy(directory)
+    exported["blocks"][0]["revisions"][0]["delta"] = {"ops": [{"insert": "Rewritten\n"}]}
+    with pytest.raises(ValueError, match="read copy.json again"):
+        save_copy(directory, exported)
+
+
+# ── BE-16: Discard drops the reviewer's own pending reopens and edits ──────
+
+def test_be16_discard_clears_pending_reopens_and_library_edits(server):
+    from agent_annotate.copy_state import load_copy
+    httpd, directory, bus = server
+    _seed(directory)
+    card = finding(httpd)
+    mark_finding_fixed(directory, card["id"], by="agent:builder", note="first", proof=[])
+    _call(httpd, "POST", f"/api/comments/{card['id']}/reopen", {"text": "Still broken"}, author="chang@example.com")
+    body = {"delta": {"ops": [{"insert": "Changed\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", body, author="chang@example.com")[0] == 200
+    other = {"delta": {"ops": [{"insert": "Theirs\n"}]}, "base_revision": "r1", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", other, author="other@example.com")[0] == 200
+    status, result = _call(httpd, "POST", "/api/rounds/discard", {}, author="chang@example.com")
+    assert status == 200 and result["comment_ids"] == [card["id"]] and result["edit_count"] == 1
+    # Nothing of Chang's goes out with the next Send; the other reviewer's edit is untouched.
+    assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["delivery"] == "noop"
+    assert _events(bus, "round_submitted") == []
+    revisions = load_copy(directory)["blocks"][0]["revisions"]
+    assert [(r["author"]["id"], r.get("round_pending")) for r in revisions] == [("agent:builder", None),
+                                                                                 ("other@example.com", True)]
+    comment = _store(directory)["anchors"]["d:gap"][0]
+    assert "round_pending" not in comment and comment["reopened"][-1]["text"] == "Still broken"
+    assert [e["event"] for e in _events(bus) if e["event"] == "round_discarded"] == ["round_discarded"]
+
+
+# ── BE-7 / BE-8: server counts follow the UI (A3a) on old data ─────────────
+
+def _legacy_copy(directory):
+    from agent_annotate.copy_state import save_copy
+    delta = lambda text: {"ops": [{"insert": text + "\n"}]}  # noqa: E731
+    save_copy(directory, {"schema_version": 1, "blocks": [
+        {"id": "hero", "title": "Hero", "current": "r0", "revisions": [
+            {"id": "r0", "created_at": "2026-09-30T10:00:00+00:00", "author": {"id": "agent:claude"}, "status": "approved",
+             "delta": delta("Old hero")},
+            {"id": "r_old", "created_at": "2026-09-30T11:00:00+00:00", "author": {"id": "chang@example.com", "name": "Chang"},
+             "status": "proposed", "base_revision": "r0", "delta": delta("Chang's hero")}]},
+        {"id": "tagline", "title": "Tagline", "current": "r0", "revisions": [
+            {"id": "r0", "created_at": "2026-09-30T10:00:00+00:00", "author": {"id": "agent:claude"}, "status": "approved",
+             "delta": delta("Tag")}]}]})
+
+
+def test_be8_legacy_library_blocks_do_not_need_you(server):
+    httpd, directory, _ = server
+    _legacy_copy(directory)
+    counts = category_counts(directory, "chang@example.com", read_state={})["library"]
+    assert counts == {"needs_you": 0, "ready": 0, "waiting": 1, "done": 1, "unread": 0}
+    status, result = _call(httpd, "GET", "/api/categories", author="chang@example.com")
+    assert status == 200 and next(c for c in result["categories"] if c["id"] == "library")["counts"] == counts
+    # Nothing old goes out again.
+    assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["delivery"] == "noop"
+
+
+def test_be8_an_explicit_needs_you_status_still_counts(server):
+    from agent_annotate.copy_state import load_copy, save_copy
+    _, directory, _ = server
+    _legacy_copy(directory)
+    document = load_copy(directory)
+    document["blocks"][1]["status"] = "needs_you"
+    save_copy(directory, document)
+    assert category_counts(directory)["library"]["needs_you"] == 1
+
+
+def test_be7_review_unread_is_the_rails_scope(server):
+    """A3a: Review unread = unread cards on the current version plus cards that
+    follow the viewer; a resolved comment on an older version is not counted."""
+    _, directory, _ = server
+    (directory / "current.meta.json").write_text(json.dumps({"current": "v2", "history": [{"version": "v1"}, {"version": "v2"}]}))
+    rows = [{"id": "old-done", "anchor_id": "s:a", "text": "x", "author": "chang@example.com", "status": "resolved_in_version",
+             "version": "v1", "response_text": "Fixed"},
+            {"id": "old-addressed", "anchor_id": "s:b", "text": "x", "author": "chang@example.com",
+             "status": "addressed_by_agent", "version": "v1", "response_text": "Done"},
+            {"id": "old-open-card", "anchor_id": "d:q", "text": "Q", "author": "agent:x", "status": "open", "version": "v1",
+             "decision_request": {"prompt": "Q", "options": ["a", "b"]}},
+            {"id": "current", "anchor_id": "s:c", "text": "x", "author": "chang@example.com", "status": "open", "version": "v2"}]
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {r["anchor_id"]: [r] for r in rows},
+                                                         "archived": {}}))
+    assert category_counts(directory, "chang@example.com", read_state={})["review"]["unread"] == 2
 
 
 # ── helpers for exception tests (from the reviewer's probe) ────────────────

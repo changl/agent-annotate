@@ -244,6 +244,10 @@ def _write(directory: Path, data: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _authored(revision: dict | None) -> dict | None:
+    return None if revision is None else {key: value for key, value in revision.items() if key != "round_pending"}
+
+
 def save_copy(slug_dir: Path | str, data: Any) -> dict:
     """Trusted import/current-pointer updates; existing authored revisions are immutable."""
     directory = Path(slug_dir)
@@ -257,8 +261,16 @@ def save_copy(slug_dir: Path | str, data: Any) -> dict:
             if old["id"] not in new_blocks:
                 raise ValueError("existing copy blocks cannot be removed")
             new_revisions = {revision["id"]: revision for revision in new_blocks[old["id"]]["revisions"]}
-            if any(new_revisions.get(revision["id"]) != revision for revision in old["revisions"]):
-                raise ValueError("existing copy revisions cannot be changed or removed")
+            if any(_authored(new_revisions.get(revision["id"])) != _authored(revision) for revision in old["revisions"]):
+                raise ValueError("existing copy revisions cannot be changed or removed; "
+                                 "read copy.json again and apply your change to it")
+            # round_pending is Send bookkeeping, not authored content: an export
+            # taken before a Send keeps the stored value, so nothing is resent.
+            for revision in old["revisions"]:
+                kept = new_revisions[revision["id"]]
+                kept.pop("round_pending", None)
+                if "round_pending" in revision:
+                    kept["round_pending"] = revision["round_pending"]
         if previous != normalized:
             _write(directory, normalized)
     return normalized
@@ -339,3 +351,29 @@ def submit_revisions(slug_dir: Path | str, revision_ids: set[str], authors: set[
                     changed = True
         if changed:
             _write(directory, data)
+
+
+def discard_revisions(slug_dir: Path | str, authors: set[str]) -> list[str]:
+    """Drop these reviewers' unsent edits (Discard): never delivered, so the
+    agent never saw them. An edit something else builds on stays."""
+    directory = Path(slug_dir)
+    if not (directory / "copy.json").exists():
+        return []
+    with (directory / ".copy.json.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        data = load_copy(directory)
+        dropped = []
+        for block in data["blocks"]:
+            pending = {revision["id"] for revision in block["revisions"]
+                       if revision.get("round_pending") and revision["author"]["id"] in authors}
+            kept = [revision for revision in block["revisions"] if revision["id"] not in pending]
+            needed = {block["current"]} | {revision.get("base_revision") for revision in kept}
+            for revision in block["revisions"]:
+                if revision["id"] in pending and revision["id"] in needed:
+                    revision["round_pending"] = False  # built on: kept, not sent
+            block["revisions"] = [revision for revision in block["revisions"]
+                                  if revision["id"] not in pending or revision["id"] in needed]
+            dropped += sorted(pending - needed)
+        if dropped:
+            _write(directory, validate_copy(data))
+        return dropped

@@ -1723,7 +1723,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir):
                 meta = self._read_meta()
                 store = self._v2_load()
-                comment = self._new_comment_from_payload(payload, identity, meta)
+                comment = self._new_comment_from_payload(payload, identity, meta, store)
                 store["anchors"].setdefault(anchor_id, []).append(comment)
                 self._v2_save(store)
         except DecisionRequestError as exc:
@@ -1751,7 +1751,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
               + (" [decision card]" if comment.get("decision_request") else ""), flush=True)
         self._respond(201, json.dumps(comment, ensure_ascii=False).encode(), "application/json")
 
-    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict) -> dict:
+    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict, store: dict | None = None) -> dict:
         """Build a fresh v2 comment from a create payload (single or batch).
 
         Caller validates anchor_id/text and holds _STORE_LOCK. Raises
@@ -1767,6 +1767,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if browser and "finding" in payload:
             raise DecisionRequestError("finding authoring requires a local caller", 403)
         category_fields = self._comment_category_fields(payload)
+        if browser:
+            self._check_browser_category(category_fields, str(anchor_id or ""), store or {})
         if "doc" in category_fields:
             from .categories import plan_meta
             try:
@@ -1865,7 +1867,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # items 1-2 half-committed.
                 built = []
                 for it in items:
-                    built.append(self._new_comment_from_payload(it, identity, meta))
+                    built.append(self._new_comment_from_payload(it, identity, meta, store))
                 now = _now_iso()
                 for it, fresh in zip(items, built):
                     aid = fresh["anchor_id"]
@@ -2917,6 +2919,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         pushing. The verdicts themselves stay recorded (reversible via
         "Change verdict"); they simply never go out as a round. Emits
         `round_discarded`, never a session_push."""
+        from .copy_state import discard_revisions
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
         with _locked_store(self.artifact_dir):
@@ -2928,17 +2931,30 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if isinstance(d, dict) and d.get("round_pending") and d.get("by") in reviewer_authors:
                         d.pop("round_pending", None)
                         comment_ids.append(c.get("id"))
+                    # A pending reopen stays recorded on the finding, unsent.
+                    if c.get("round_pending") and (c.get("reopened") or [{}])[-1].get("by") in reviewer_authors:
+                        c.pop("round_pending", None)
+                        comment_ids.append(c.get("id"))
+            comment_ids = list(dict.fromkeys(comment_ids))
             if comment_ids:
                 self._v2_save(store)
+            # Unsent Library edits are drafts: Discard drops them.
+            try:
+                revision_ids = discard_revisions(self.artifact_dir, reviewer_authors)
+            except ValueError:
+                revision_ids = []  # an invalid copy.json has nothing to discard
         _bus_append(self.bus_dir, self.slug, {
             "event": "round_discarded",
             "comment_ids": comment_ids,
+            "revision_ids": revision_ids,
             "by": author,
             **self._session_fields(),
         })
-        print(f"  POST /api/rounds/discard → {len(comment_ids)} pending flag(s) cleared by {author}", flush=True)
+        print(f"  POST /api/rounds/discard → {len(comment_ids)} pending flag(s) cleared, "
+              f"{len(revision_ids)} edit(s) dropped by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True, "comment_count": len(comment_ids), "comment_ids": comment_ids,
+            "edit_count": len(revision_ids), "revision_ids": revision_ids,
         }).encode(), "application/json")
 
     def _read_meta(self) -> dict:
@@ -2980,6 +2996,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if tab.get("url") in links and links[tab["url"]]:
                     tab["url"] = links[tab["url"]]
         return data
+
+    @staticmethod
+    def _check_browser_category(fields: dict, anchor_id: str, store: dict):
+        """A reviewer files a comment into Library only on a copy: anchor and
+        into Plans only on a plan document. Findings are agent-created: a
+        reviewer's comment joins Findings only on an existing finding's anchor."""
+        category = fields.get("category")
+        if category == "library" and not anchor_id.startswith("copy:"):
+            raise DecisionRequestError("Library comments belong on a copy: anchor", 403)
+        if category == "plans" and "doc" not in fields:
+            raise DecisionRequestError("Plans comments need a plan document", 403)
+        if category == "findings" and not any(
+                # `finding` metadata is written only by local (agent) callers.
+                isinstance(c, dict) and c.get("category") == "findings" and c.get("finding")
+                for c in (store.get("anchors") or {}).get(anchor_id, [])):
+            raise DecisionRequestError("findings are agent-created; comment on an existing finding", 403)
 
     @staticmethod
     def _comment_category_fields(payload):

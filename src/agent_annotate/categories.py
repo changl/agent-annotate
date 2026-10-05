@@ -369,7 +369,8 @@ def comment_section(comment: dict) -> str | None:
     decision = _mapping(comment.get("decision"))
     if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
         return "ready"
-    if comment_category(comment) == "findings":
+    # A finding (not a reviewer's comment on one) keeps agreed work waiting.
+    if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):
         if comment.get("fixed"):
             return "done"
         if not decision.get("verdict"):
@@ -504,8 +505,11 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
     for block in blocks:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
         latest = block["revisions"][-1]
-        section = ("ready" if pending else "waiting" if latest["status"] == "proposed" and latest.get("round_pending") is False
-                   else block.get("status", "needs_you"))
+        # A proposal without round_pending is from before the shared Send: it
+        # was pushed at once, so it waits on the agent (library.js shows it as
+        # sent). A block without a status asks nothing of the reviewer.
+        section = ("ready" if pending else "waiting" if latest["status"] == "proposed" and not latest.get("round_pending")
+                   else block.get("status") or "done")
         if section == "held":
             section = "done"
         counts["library"][section] += 1
