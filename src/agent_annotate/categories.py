@@ -208,12 +208,12 @@ def add_proof_file(page_dir: Path | str, src_path: Path | str) -> dict:
 
 
 def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str, proof: list[dict]) -> dict:
-    from .sync_server import _STORE_LOCK, _atomic_write_json
+    from .sync_server import _atomic_write_json, _locked_store
     by = _text(by, "fixed by", 500)
     if not isinstance(note, str) or len(note) > 10000:
         raise ValueError("fixed note must be text of at most 10000 characters")
     proof = validate_proof(page_dir, proof)
-    with _STORE_LOCK, _lock(page_dir, ".comments.json.lock"):
+    with _locked_store(page_dir):
         store = _comments(page_dir)
         comment = _finding(store, number_or_id)
         now = datetime.now(timezone.utc).isoformat()
@@ -230,9 +230,9 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
 
 
 def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str) -> dict:
-    from .sync_server import _STORE_LOCK, _atomic_write_json
+    from .sync_server import _atomic_write_json, _locked_store
     by, text = _text(by, "reopen by", 500), _text(text, "reopen text", 10000)
-    with _STORE_LOCK, _lock(page_dir, ".comments.json.lock"):
+    with _locked_store(page_dir):
         store = _comments(page_dir)
         comment = _finding(store, comment_id)
         if comment.get("round_pending") and comment.get("reopened", [])[-1].get("by") != by:
@@ -307,6 +307,8 @@ def comment_section(comment: dict) -> str | None:
         if comment.get("fixed") or status in {"addressed_by_agent", "resolved_in_version"}:
             return "done"
         if not decision.get("verdict"):
+            if comment.get("reopened"):
+                return "waiting"
             return "needs_you"
         choice = decision.get("option_id") or decision.get("option")
         if choice is None and decision.get("verdict") == "select":
@@ -360,7 +362,9 @@ def category_counts(page_dir: Path | str, author: str | None = None) -> dict:
                 counts[category]["unread"] += 1
     for block in load_copy(page_dir)["blocks"]:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
-        section = "ready" if pending else block.get("status", "needs_you")
+        latest = block["revisions"][-1]
+        section = ("ready" if pending else "waiting" if latest["status"] == "proposed" and latest.get("round_pending") is False
+                   else block.get("status", "needs_you"))
         if section == "held":
             section = "done"
         counts["library"][section] += 1
