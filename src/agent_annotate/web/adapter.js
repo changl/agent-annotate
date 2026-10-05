@@ -886,6 +886,8 @@ function ensureStripStyle() {
       line-height: 1.35 !important; white-space: normal !important; overflow-wrap: anywhere !important;
     }
     .annotate-decision-btn:hover { filter: brightness(.92) !important; }
+    /* UI-25: Enter on a focused option answers it, so the focus must show. */
+    .annotate-decision-btn:focus-visible { outline: 2px solid var(--color-primary) !important; outline-offset: 2px !important; }
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
     .annotate-decision-accept { background: var(--color-success) !important; }
     .annotate-decision-reject { background: var(--color-error) !important; }

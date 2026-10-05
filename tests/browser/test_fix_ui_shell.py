@@ -258,6 +258,21 @@ def test_feedback_link_opens_the_cards_own_tab(tmp_path, workspace):  # noqa: F8
         )
 
 
+# ── UI-25: after "Skip to document", Tab reaches the first option of the
+# document's decision strip; Enter answers it (kept), so its focus must show.
+def test_focused_document_option_shows_a_clear_focus_ring(tmp_path, versions):
+    with opened(tmp_path, versions, "#view=review&v=v1") as (page, _, _b):
+        page.keyboard.press("Tab")
+        expect(page.locator(":focus")).to_have_text("Skip to document")
+        page.keyboard.press("Enter")
+        page.keyboard.press("Tab")
+        frame = page.frame_locator("#content-frame")
+        focused = frame.locator(".annotate-decision-btn:focus-visible")
+        expect(focused).to_have_count(1)
+        ring = focused.evaluate("e => { const s = getComputedStyle(e); return [s.outlineStyle, s.outlineWidth, s.outlineOffset]; }")
+        assert ring == ["solid", "2px", "2px"], ring
+
+
 # ── UI-27: the review key leaves the address bar before any request ────────
 RECORD_FETCH = """(() => {
   window.__sessions = [];
