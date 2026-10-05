@@ -1693,7 +1693,7 @@ def cmd_unpublish(args) -> int:
     return 0
 
 
-def _running_servers() -> dict:
+def _running_servers(strict: bool = False) -> dict:
     """Map resolved slug_dir -> [{pid, port}] for every live page server.
 
     The recorded pid is not authoritative: a server restarted outside the CLI
@@ -1703,9 +1703,11 @@ def _running_servers() -> dict:
     """
     try:
         out = subprocess.run(
-            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10
+            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, check=strict
         ).stdout
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise OSError(f"could not list running page servers with ps: {exc}") from exc
         return {}
     found: dict[str, list[dict]] = {}
     for line in out.splitlines():
@@ -3934,7 +3936,11 @@ def cmd_consolidate(args) -> int:
     # taking writes the target never sees. The registry's pid and port can be
     # stale, so every process serving the directory is asked.
     stale = []
-    running = _running_servers()
+    try:
+        running = _running_servers(strict=not args.dry_run)
+    except OSError as exc:
+        print(f"ERROR: {exc}; the check for old servers needs it", file=sys.stderr)
+        return 2
     for source in sources:
         processes = list(running.get(str(source.dir)) or [])
         if _is_process_alive(int(source.record.get("pid") or 0)) and not any(
@@ -3998,6 +4004,9 @@ def cmd_consolidate(args) -> int:
     for page, row in summary["sources"].items():
         if row["left_in_old_page"]:
             print(f"  {page}: kept only in the old page (read-only, ?archived=1): {', '.join(row['left_in_old_page'])}")
+        if row["share_link_read_state"]:
+            print(f"  {page}: {row['share_link_read_state']} read marks of share-link reviewers are kept but will show "
+                  "as unread (the new page gives them a new identity)")
     if stale:
         print("  WARN: restart before the real run (server from before this release): " + ", ".join(stale))
     if not args.dry_run:

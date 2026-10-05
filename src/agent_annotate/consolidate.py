@@ -207,7 +207,9 @@ def _check_source(source: Source, target_dir: Path) -> list[str]:
         if sets:
             problems.append(f"{source.name}: has its own findings sets; make it the Review source")
         store = _read_json(directory / "comments.json", {})
-        cards = {anchor for _b, anchor, comment in _all_comments(store) if isinstance(comment.get("decision_request"), dict)}
+        # Findings lists live questions only (findings.js), not archived ones.
+        cards = {anchor for bucket, anchor, comment in _all_comments(store)
+                 if bucket == "anchors" and isinstance(comment.get("decision_request"), dict)}
         for _bucket, anchor, comment in _all_comments(store):
             category = comment.get("category")
             library_block = source.tab == "library" and str(anchor).startswith("copy:")
@@ -232,6 +234,16 @@ def _check_source(source: Source, target_dir: Path) -> list[str]:
             problems.append(f"{source.name}: a share-link reviewer has unsent answers (comment {comment.get('id')}); "
                             "send or discard them on that page first")
             break
+    if (directory / "copy.json").is_file():
+        try:
+            blocks = _read_json(directory / "copy.json", {}).get("blocks") or []
+        except (OSError, ValueError):
+            blocks = []
+            problems.append(f"{source.name}: copy.json could not be read")
+        if any(isinstance(r, dict) and r.get("round_pending") and str((r.get("author") or {}).get("id", "")).startswith("reviewer:")
+               for block in blocks if isinstance(block, dict) for r in block.get("revisions") or []):
+            problems.append(f"{source.name}: a share-link reviewer has unsent Library edits; "
+                            "send or discard them on that page first")
     return problems
 
 
@@ -420,6 +432,11 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
                                    "title": title, "versions": len(versions), "rounds": len(history["rounds"]),
                                    "read_state": sum(len(v) for v in (_read_json(source.dir / "read-state.json", {}) or {}).values()
                                                      if isinstance(v, dict)),
+                                   # Kept, but a share-link reviewer gets a new identity
+                                   # on the new page, so these show as unread there.
+                                   "share_link_read_state": sum(
+                                       len(v) for k, v in (_read_json(source.dir / "read-state.json", {}) or {}).items()
+                                       if isinstance(v, dict) and str(k).startswith("reviewer:")),
                                    **comment_counts(originals)}
 
     links = [{"label": f"{s.name} → {s.tab.title()}", "url": url,

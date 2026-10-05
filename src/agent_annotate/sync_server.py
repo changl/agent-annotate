@@ -2533,6 +2533,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._respond(400, json.dumps({"error": str(exc)}).encode())
         with _locked_store(self.artifact_dir):
+            # Checked again under the lock: the page may have been frozen
+            # while this request waited, and a push reaches the bus first.
+            if self._refuse_moved_write("/api/push-session"):
+                return
             store = self._v2_load()
             flagged_count = 0
             flagged_ids = []
@@ -2603,6 +2607,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _queue_feedback_delivery(self, delivery, comments, author, send=None, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
         from .categories import comment_category
+        from .consolidate import refuse_if_moved
+        refuse_if_moved(self.artifact_dir)  # nothing reaches the bus from a frozen page
         owner = self._read_meta().get("owner") or {}
         fingerprint = {"comments": [{key: value for key, value in c.items()
                                      if key not in ("flagged_at", "flagged_by", "flagged_for_session")}
@@ -2862,6 +2868,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
         with _locked_store(self.artifact_dir):
+            if self._refuse_moved_write("/api/rounds/submit"):  # see push-session
+                return
             store = self._v2_load()
             now = _now_iso()
             # A persisted round is the receipt if a process died between the

@@ -219,6 +219,22 @@ def test_refuses_what_a_tab_could_not_show_or_send(estate, capsys):
     (gaps / "comments.json").write_text(json.dumps(store))
     assert _run(estate, "--dry-run") == 2
     assert "share-link reviewer has unsent answers" in capsys.readouterr().err
+    # A note beside a question that was archived: Findings lists live questions only.
+    del store["anchors"]["d:q1"][0]["decision"]
+    store["archived"]["d:q1"] = [store["anchors"]["d:q1"].pop(0)]
+    (gaps / "comments.json").write_text(json.dumps(store))
+    assert _run(estate, "--dry-run") == 2
+    assert "would not show it" in capsys.readouterr().err
+    # Unsent Library edits by a share-link reviewer.
+    copy_page = estate["pages"]["shop-copy"]
+    revision = {"id": "r1", "created_at": "2026-10-01T00:00:00Z", "author": {"id": "agent:x"}, "status": "draft",
+                "delta": {"ops": [{"insert": "Hi\n"}]}}
+    edit = {**revision, "id": "r2", "author": {"id": "reviewer:0123456789abcdef"}, "status": "proposed",
+            "base_revision": "r1", "round_pending": True}
+    (copy_page / "copy.json").write_text(json.dumps({"schema_version": 1, "blocks": [
+        {"id": "hero", "title": "Hero", "current": "r1", "revisions": [revision, edit]}]}))
+    assert _run(estate, "--dry-run", sources=["reviews/shop-decisions:review", "reviews/shop-copy:library"]) == 2
+    assert "unsent Library edits" in capsys.readouterr().err
 
 
 def test_store_key_attachments_and_left_behind_files(estate, capsys):
