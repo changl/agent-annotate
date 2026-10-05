@@ -221,7 +221,8 @@ def test_mcp_category_tools_use_same_storage_and_filters(page):
     pytest.importorskip("mcp")
     tools = {item.name: item for item in asyncio.run(mcp_server.build_server().list_tools())}
     for name in ("list_comments", "list_cards", "read_inbox"):
-        assert "category" in tools[name].inputSchema["properties"]
+        schema = getattr(tools[name], "inputSchema", None) or getattr(tools[name], "input_schema")
+        assert "category" in schema["properties"]
     assert len(tool("list_comments")("project/main", category="library")) == 1
     assert tool("list_cards")("project/main", "findings")[0]["number"] == 2
     before = page.bus.read_bytes()

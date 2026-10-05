@@ -686,7 +686,7 @@ def test_be7_review_unread_is_the_rails_scope(server):
 
 def test_be10_docs_say_the_unfiltered_unread_read_acknowledges(tmp_path, monkeypatch, capsys):
     from pathlib import Path
-    root = Path(cli.__file__).parents[2]
+    root = Path(__file__).resolve().parents[1]
     for doc in (root / "src/agent_annotate/skills/claude/references/cli-reference.md",
                 root / "plugins/codex/agent-annotate/skills/annotate/references/cli-reference.md"):
         row = next(line for line in doc.read_text().splitlines() if line.startswith("| Read submitted feedback"))
