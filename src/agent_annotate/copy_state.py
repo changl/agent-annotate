@@ -117,14 +117,27 @@ def _serialize(data: dict) -> bytes:
 
 
 def validate_copy(value: Any) -> dict:
-    value = _object(value, {"schema_version", "blocks"}, {"blocks"}, "copy")
+    value = _object(value, {"schema_version", "blocks", "groups"}, {"blocks"}, "copy")
     if type(value.get("schema_version", 1)) is not int or value.get("schema_version", 1) != 1:
         raise ValueError("copy.schema_version must be 1")
     if not isinstance(value["blocks"], list) or len(value["blocks"]) > 500:
         raise ValueError("copy.blocks must be an array of at most 500 blocks")
     result, ids = {"schema_version": 1, "blocks": []}, set()
+    if "groups" in value:
+        if not isinstance(value["groups"], list) or len(value["groups"]) > 100:
+            raise ValueError("copy.groups must be an array of at most 100 groups")
+        result["groups"] = []
+        group_ids = set()
+        for group in value["groups"]:
+            group = _object(group, {"id", "label"}, {"id", "label"}, "copy group")
+            gid = _id(group["id"], "copy group.id")
+            if gid in group_ids:
+                raise ValueError("copy group ids must be unique")
+            group_ids.add(gid)
+            result["groups"].append({"id": gid, "label": _text(group["label"], "copy group.label")})
     for block in value["blocks"]:
-        block = _object(block, {"id", "title", "current", "revisions"}, {"id", "title", "current", "revisions"}, "copy block")
+        metadata = {"group", "where", "number", "status", "alternatives", "question_comment_id", "held_note"}
+        block = _object(block, {"id", "title", "current", "revisions"} | metadata, {"id", "title", "current", "revisions"}, "copy block")
         block_id = _id(block["id"], "copy block.id")
         if block_id in ids:
             raise ValueError("copy block ids must be unique")
@@ -134,7 +147,7 @@ def validate_copy(value: Any) -> dict:
             raise ValueError("copy block.revisions must contain 1 to 1000 revisions")
         clean_revisions, revision_ids = [], set()
         for revision in revisions:
-            revision = _object(revision, {"id", "created_at", "author", "status", "delta", "base_revision"},
+            revision = _object(revision, {"id", "created_at", "author", "status", "delta", "base_revision", "round_pending"},
                                {"id", "created_at", "author", "status", "delta"}, "copy revision")
             revision_id = _id(revision["id"], "copy revision.id")
             if revision_id in revision_ids:
@@ -149,6 +162,10 @@ def validate_copy(value: Any) -> dict:
                 raise ValueError("copy revision.status must be draft, approved, or proposed")
             clean = {"id": revision_id, "created_at": timestamp, "author": _author(revision["author"]),
                      "status": revision["status"], "delta": validate_delta(revision["delta"])}
+            if "round_pending" in revision:
+                if type(revision["round_pending"]) is not bool or revision["status"] != "proposed":
+                    raise ValueError("round_pending must be boolean on a proposed revision")
+                clean["round_pending"] = revision["round_pending"]
             if "base_revision" in revision:
                 base = _id(revision["base_revision"], "copy revision.base_revision")
                 if base not in revision_ids:
@@ -159,8 +176,25 @@ def validate_copy(value: Any) -> dict:
         current = _id(block["current"], "copy block.current")
         if current not in revision_ids:
             raise ValueError("copy block.current must reference an existing revision")
-        result["blocks"].append({"id": block_id, "title": _text(block["title"], "copy block.title"),
-                                 "current": current, "revisions": clean_revisions})
+        clean_block = {"id": block_id, "title": _text(block["title"], "copy block.title"),
+                       "current": current, "revisions": clean_revisions}
+        for field in metadata & set(block):
+            item = block[field]
+            if field == "number":
+                if type(item) is not int or not 1 <= item <= 999999:
+                    raise ValueError("copy block.number must be a positive integer")
+            elif field == "status":
+                if not isinstance(item, str) or item not in {"needs_you", "ready", "waiting", "done", "held"}:
+                    raise ValueError("invalid copy block.status")
+            elif field == "alternatives":
+                if not isinstance(item, list) or len(item) > 30:
+                    raise ValueError("copy alternatives must be an array of at most 30 alternatives")
+                item = [_object(a, {"label", "delta"}, {"label", "delta"}, "copy alternative") for a in item]
+                item = [{"label": _text(a["label"], "copy alternative.label"), "delta": validate_delta(a["delta"])} for a in item]
+            else:
+                item = _text(item, "copy block." + field, 2000)
+            clean_block[field] = item
+        result["blocks"].append(clean_block)
     _serialize(result)
     return result
 
@@ -230,9 +264,11 @@ def save_copy(slug_dir: Path | str, data: Any) -> dict:
     return normalized
 
 
-def propose_copy(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
-                 *, base_revision: str, request_id: str) -> dict:
+def add_browser_revision(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
+                         *, base_revision: str, request_id: str, round_pending: bool = True) -> dict:
     """Append a proposal once; retries preserve its author, time, and revision id."""
+    if type(round_pending) is not bool:
+        raise ValueError("round_pending must be boolean")
     _id(block_id, "copy block.id")
     _id(base_revision, "copy base_revision")
     delta, author = validate_delta(delta), _author(author)
@@ -260,7 +296,46 @@ def propose_copy(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
             raise ValueError("copy base_revision no longer exists")
         block["revisions"].append({"id": revision_id, "created_at": datetime.now(timezone.utc).isoformat(),
                                    "author": author, "status": "proposed", "base_revision": base_revision,
-                                   "delta": delta})
+                                   "delta": delta, "round_pending": round_pending})
         normalized = validate_copy(data)
         _write(directory, normalized)
         return normalized
+
+
+def propose_copy(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
+                 *, base_revision: str, request_id: str) -> dict:
+    """Compatible alias: browser proposals wait for the shared Send."""
+    return add_browser_revision(slug_dir, block_id, delta, author,
+                                base_revision=base_revision, request_id=request_id)
+
+
+def restore_revision(slug_dir: Path | str, block_id: str, revision_id: str, author: Any,
+                     *, request_id: str, round_pending: bool = True) -> dict:
+    """Restore by appending a new authored proposal, preserving the old revision."""
+    _id(block_id, "copy block.id")
+    _id(revision_id, "copy revision.id")
+    data = load_copy(slug_dir)
+    block = next((b for b in data["blocks"] if b["id"] == block_id), None)
+    if block is None:
+        raise KeyError(block_id)
+    revision = next((r for r in block["revisions"] if r["id"] == revision_id), None)
+    if revision is None:
+        raise KeyError(revision_id)
+    return add_browser_revision(slug_dir, block_id, revision["delta"], author,
+                                base_revision=revision_id, request_id=request_id, round_pending=round_pending)
+
+
+def submit_revisions(slug_dir: Path | str, revision_ids: set[str], authors: set[str]) -> None:
+    """Clear delivery bookkeeping only; authored revision content stays immutable."""
+    directory = Path(slug_dir)
+    with (directory / ".copy.json.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        data = load_copy(directory)
+        changed = False
+        for block in data["blocks"]:
+            for revision in block["revisions"]:
+                if revision["id"] in revision_ids and revision["author"]["id"] in authors and revision.get("round_pending"):
+                    revision["round_pending"] = False
+                    changed = True
+        if changed:
+            _write(directory, data)
