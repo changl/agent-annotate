@@ -8,7 +8,7 @@ Create cards only for decisions requiring Chang. Each asks one concise question 
 
 `prompt` is required. Optional fields: `context`, `recommendation` (option ID), `options` (strings or `{id,label,consequence,style?}`), `consequences`, `evidence` (`{label,anchor}`), `impact` (`low|medium|high`), `blocking` (boolean). Request limit: 8192 bytes; invalid/oversize input fails without writing. Optional `style`: `primary|default|danger`.
 
-Options render once; the recommended choice has a green `rec` badge. Evidence stays collapsed. Nothing is preselected. **Answer in words** and notes remain available when changing a choice; custom choices support notes too. Clicking card text or padding opens a comment without interfering with its controls.
+Options render once; the recommended choice has the recommended badge. Evidence accompanies the question. Nothing is preselected. **Answer in words** and notes remain available when changing a choice; custom choices support notes too. Clicking card text or padding opens a comment without interfering with its controls.
 
 | Verdict | State |
 | --- | --- |
@@ -17,6 +17,10 @@ Options render once; the recommended choice has a green `rec` badge. Evidence st
 
 `changes` and `comment` require text. Custom choices use `select`; read `decision.text` for the choice and explanation. A reply on an unanswered card counts as a text answer. A later reply on an answered card is a thread reply. Revisions preserve `decision_history`.
 
-Clicks save pending verdicts. **Finish review** submits one round and one durable owner wake-up. Read `inbox --unread` and `cards` after submission; do not react separately to every click. `Send now` explicitly sends one item. Delivery acceptance is not implementation completion.
+Clicks save pending verdicts. **Send** submits one round and one durable owner wake-up. Read `inbox --unread` and `cards` after submission; do not react separately to every click. `Send now` explicitly sends one item. Delivery acceptance is not implementation completion.
 
 `ask SLUG --from cards.json` upserts canonical numbered decisions across agent authors, preserving replies and decisions. Legacy arbitrary anchors remain author-scoped. Feedback is never silently discarded across versions: apply it using `resolve --in-version vN --anchor ID`, or `carry --to-version vN --anchor ID`. Reviewer confirmation remains reviewer-owned. Replies reopen resolved items.
+
+## Finding decisions
+
+Use `ask PROJECT/SLUG --from cards.json --category findings --set design`. JSON cards may carry `category: findings`, `set: design` (implies Findings), an optional `title` (the finding's short name; default: its text, clipped to 200 characters), or `finding: {set, title}`. Keep global stable numbers and normal decision requests (for example fix/keep). Read with `cards PROJECT/SLUG --category findings --json`; inbox supports the same filter. Mark fixed only with proof using `finding PROJECT/SLUG --fixed N --proof URL|FILE [--note TEXT]`. This records `fixed`, `status: addressed_by_agent`, and the resolution version; it does not confirm for Chang. Reopen records the reviewer's words, preserves prior fixes, and becomes pending for shared Send.

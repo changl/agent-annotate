@@ -44,7 +44,7 @@ const INTERACTIVE_SEL = [
   'a[href]', 'button', 'input', 'select', 'textarea', 'option', 'optgroup',
   'label', 'summary', 'audio[controls]', 'video[controls]',
   '[contenteditable]:not([contenteditable="false"])',
-  '[tabindex]:not([tabindex="-1"])',
+  '[tabindex]:not([tabindex="-1"]):not(.unified-table-scroll)',
   '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
   '[role="combobox"]', '[role="listbox"]', '[role="option"]', '[role="menu"]',
   '[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]',
@@ -80,8 +80,8 @@ let latestChanges = false;
 let latestSelect = false;
 // {anchorId: {state: 'review'|'waiting'|'done', label}} for question cards.
 let latestCardStates = {};
-const READ_ONLY_REFERENCE = new URL(location.href).searchParams.get('readonly') === '1';
-const SUPPORTING_DOCUMENT = READ_ONLY_REFERENCE || new URL(location.href).searchParams.get('document') === '1';
+// When a text selection opened the composer, swallow the click that ends it.
+let selectionOpenedAt = 0;
 
 function cssEsc(s) {
   return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1');
@@ -127,6 +127,12 @@ function getAnchorIdFromEl(el) {
   return null;
 }
 function anchorName(anchorId) {
+  // A table row reads "<section name> · row <row label>".
+  const row = /^tbl:(.+):row:(.+)$/.exec(anchorId || '');
+  if (row) {
+    const section = ANCHOR_REGISTRY['s:' + row[1]];
+    return ((section && section.name) || anchorName('tbl:' + row[1])) + ' · row ' + row[2];
+  }
   const e = ANCHOR_REGISTRY[anchorId];
   return (e && e.name) ? e.name : anchorId;
 }
@@ -156,7 +162,21 @@ function cssPathFrom(root, el) {
   return cur === root ? segs.join(' > ') : null;
 }
 
+// The text the reviewer selected inside one anchor, or ''.
+function selectedQuoteIn(anchorEl) {
+  const s = getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount || !anchorEl.contains(s.anchorNode) || !anchorEl.contains(s.focusNode)) return '';
+  return normText(s.toString());
+}
+
 function captureTarget(clickEl, anchorEl, ev) {
+  const target = captureClickTarget(clickEl, anchorEl, ev);
+  const quote = anchorEl ? selectedQuoteIn(anchorEl) : '';
+  if (!quote) return target;
+  return Object.assign(target || { schema: 1 }, { selected_quote: quote });
+}
+
+function captureClickTarget(clickEl, anchorEl, ev) {
   const start = clickEl && clickEl.nodeType === 1 ? clickEl : (clickEl && clickEl.parentElement);
   // Climb from the click target to the first meaningful component boundary
   // strictly below the registered anchor.
@@ -235,15 +255,7 @@ function resolveInnerEl(anchorEl, target) {
 
 function wireClicks() {
   document.addEventListener('click', (e) => {
-    if (SUPPORTING_DOCUMENT) {
-      const link = e.target.closest('a[href^="#d:q"]');
-      if (link) {
-        e.preventDefault();
-        postToParent({type:'annotate:feedback-anchor', anchorId:link.getAttribute('href').slice(1)});
-        return;
-      }
-      if (READ_ONLY_REFERENCE) return;
-    }
+    if (selectionOpenedAt && performance.now() - selectionOpenedAt < 250 && !e.target.closest(INTERACTIVE_SEL)) return;
     // Pin clicks take precedence over everything, including click-to-CREATE:
     // a pin is the reverse-lookup affordance (pin -> its existing comments),
     // whereas clicking the anchor's own text/element still creates. Capture
@@ -290,14 +302,7 @@ function wireClicks() {
     // their own click handlers directly on their buttons/textarea. A click on
     // any other part of a strip (prompt text, padding) must never fall
     // through to click-to-CREATE — it isn't a click on the underlying anchor.
-    const strip = e.target.closest('[data-annotate-strip]');
-    if (strip) {
-      if (!e.target.closest(INTERACTIVE_SEL)) {
-        postToParent({type: 'annotate:pin-click', anchorId: strip.dataset.stripAnchor,
-          anchorLabel: anchorName(strip.dataset.stripAnchor), x: e.clientX, y: e.clientY});
-      }
-      return;
-    }
+    if (e.target.closest('[data-annotate-strip]')) return;
     // Same for the chrome this file adds around content: the "Back to #N"
     // marker an evidence jump leaves, and an unchanged section's header.
     if (e.target.closest('[data-annotate-back], .annotate-unchanged-bar')) return;
@@ -347,9 +352,9 @@ function wireClicks() {
 // this the buttons would silently no-op — they are guarded by
 // `typeof openPopover === 'function'`, which fails quietly rather than loudly.
 // Route them through the same pin-click path a normal click takes.
-if (READ_ONLY_REFERENCE || typeof window.openPopover !== 'function') {
+if (typeof window.openPopover !== 'function') {
   window.openPopover = function (anchorId, x, y) {
-    if (READ_ONLY_REFERENCE || !anchorId) return;
+    if (!anchorId) return;
     const el = findAnchorEl(anchorId);
     if (el) {
       document.querySelectorAll('[data-anchor-id].active, .no.active')
@@ -391,26 +396,26 @@ function ensurePinStyle() {
   style.textContent = `
     .bpin, .bpin-inline { pointer-events: auto; cursor: pointer; }
     .bpin:hover, .bpin-inline:hover {
-      box-shadow: 0 0 0 3px rgba(67,56,202,.35), 0 1px 4px rgba(0,0,0,.25) !important;
+      box-shadow: 0 0 0 3px color-mix(in oklab,var(--color-primary) 35%,transparent), 0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent) !important;
     }
-    .bpin-unread { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
+    .bpin-unread { background: var(--color-error) !important; }
     .bpin-cluster {
-      background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
-      box-shadow: 0 0 0 2px var(--color-base-100), 0 1px 4px rgba(0,0,0,.35) !important;
+      background: var(--color-primary) !important;
+      box-shadow: 0 0 0 2px var(--color-base-100), 0 1px 4px color-mix(in oklab,var(--color-neutral) 35%,transparent) !important;
     }
     .bpin-cluster:hover {
-      box-shadow: 0 0 0 2px var(--color-base-100), 0 0 0 5px rgba(49,46,129,.35) !important;
+      box-shadow: 0 0 0 2px var(--color-base-100), 0 0 0 5px color-mix(in oklab,var(--color-primary) 35%,transparent) !important;
     }
     /* Decision pins take priority over unread/cluster styling — placed
        last so equal-specificity !important rules resolve in its favor. */
     .bpin-decision {
-      background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
-      box-shadow: 0 0 0 3px var(--color-base-100), 0 1px 4px rgba(0,0,0,.3) !important;
+      background: var(--color-primary) !important;
+      box-shadow: 0 0 0 3px var(--color-base-100), 0 1px 4px color-mix(in oklab,var(--color-neutral) 30%,transparent) !important;
       animation: bpinDecisionPulse 1.5s ease-in-out 3;
     }
     @keyframes bpinDecisionPulse {
-      0%, 100% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 3px rgba(67,56,202,.5); }
-      50% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 8px rgba(67,56,202,0); }
+      0%, 100% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 3px color-mix(in oklab,var(--color-primary) 50%,transparent); }
+      50% { box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 8px color-mix(in oklab,var(--color-primary) 0%,transparent); }
     }
     @media (max-width: 768px), (max-height: 480px) {
       /* No 300ms tap delay + no accidental text selection on a fast tap. */
@@ -440,7 +445,7 @@ const PIN_SIZE_MOBILE = 26;  // px — larger touch target (AC: pins scale up on
 function PIN_SIZE() { return isMobileLayout() ? PIN_SIZE_MOBILE : PIN_SIZE_DESKTOP; }
 function pinBaseCss() {
   const s = PIN_SIZE();
-  return `width:${s}px;height:${s}px;color:var(--color-base-100);border-radius:50%;font-size:${s > 20 ? 12 : 10}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.25);background:color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100))`;
+  return `width:${s}px;height:${s}px;color:var(--color-primary-content);border-radius:50%;font-size:${s > 20 ? 11 : 9.5}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent);background:var(--color-primary)`;
 }
 
 // Build one pin element. `entries` = the comment(s) this pin represents
@@ -465,6 +470,12 @@ function makePin(anchorId, entries, isCluster) {
       (entries[0].unread ? ' (unread)' : '') +
       (entries[0].decision ? ' — decision needed' : '') + ' — click to view';
   }
+  b.setAttribute('role', 'button');
+  b.tabIndex = 0;
+  b.setAttribute('aria-label', 'Open feedback ' + entries.map(x => '#' + x.n).join(', '));
+  b.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); }
+  });
   return b;
 }
 
@@ -504,6 +515,13 @@ function clamp01(value, fallback) {
 
 function pinPoint(anchorEl, entry, wrapperRect) {
   const resolved = entry && entry.target ? resolveInnerEl(anchorEl, entry.target) : null;
+  const row = (resolved ? resolved.el : anchorEl).closest && (resolved ? resolved.el : anchorEl).closest('tr');
+  if (row) {
+    const rect = row.getBoundingClientRect();
+    const scroll = row.closest('.unified-table-scroll');
+    const edge = scroll ? scroll.getBoundingClientRect().left : rect.left;
+    return { left: edge - wrapperRect.left - PIN_SIZE() - 4, top: rect.top - wrapperRect.top + rect.height / 2 - PIN_SIZE() / 2, granular: false, centered: true };
+  }
   const placementEl = resolved ? resolved.el : anchorEl;
   const rect = placementEl.getBoundingClientRect();
   if (!rect.width && !rect.height) return null;
@@ -549,7 +567,9 @@ function pinPoint(anchorEl, entry, wrapperRect) {
 // bound is pulled in: vertical page scroll is normal and expected, so top
 // is left untouched.
 function clampPinLeft(left, wrapperRect, granular) {
-  const inset = 8;
+  // Mobile pins extend their invisible hit area by 9px; reserve all of it
+  // so the touch target does not add a 1px horizontal scrollbar.
+  const inset = isMobileLayout() ? 9 : 8;
   const viewportW = document.documentElement.clientWidth || window.innerWidth;
   // `left` is the pin's CSS left, not its right edge: a granular pin is
   // horizontally centered on it (translate(-50%,...)), so only half its box
@@ -663,13 +683,13 @@ function ensureHoverStyle() {
   style.id = 'annotate-hover-style';
   style.textContent = `
     .annotate-anchor-hl {
-      outline: 2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
+      outline: 2px solid var(--link) !important;
       outline-offset: -1px !important;
-      background: rgba(67,56,202,0.06) !important;
+      background: color-mix(in oklab,var(--color-primary) 6%,transparent) !important;
     }
     .bpin-hl {
       transform: scale(1.25) !important;
-      box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 6px rgba(67,56,202,.45) !important;
+      box-shadow: 0 0 0 3px var(--color-base-100), 0 0 0 6px color-mix(in oklab,var(--color-primary) 45%,transparent) !important;
     }
   `;
   document.head.appendChild(style);
@@ -818,9 +838,9 @@ function ensureStripStyle() {
   style.id = 'annotate-strip-style';
   style.textContent = `
     .annotate-decision-strip {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important;
-      border: 1.5px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
+      font-family:"Inter", sans-serif !important;
+      background: var(--primary-soft) !important;
+      border: 1.5px solid var(--link) !important;
       border-radius: 8px !important;
       padding: 8px 10px !important;
       margin: 6px 0 !important;
@@ -829,17 +849,21 @@ function ensureStripStyle() {
       display: block !important;
       text-align: left !important;
     }
+    .annotate-decision-accept { color:var(--color-success-content) !important; }
+    .annotate-decision-reject { color:var(--color-error-content) !important; }
+    .annotate-decision-changes { color:var(--color-warning-content) !important; }
+    .bpin-unread { color:var(--color-error-content) !important; }
     .annotate-strip-tr > td { padding: 0 !important; border: none !important; background: transparent !important; }
     .annotate-strip-abs { pointer-events: auto !important; }
     .annotate-decision-item + .annotate-decision-item {
       margin-top: 8px !important; padding-top: 8px !important;
-      border-top: 1px solid rgba(67,56,202,.25) !important;
+      border-top: 1px solid color-mix(in oklab,var(--color-primary) 25%,transparent) !important;
     }
     .annotate-decision-prompt {
-      font-size: 12px !important; font-weight: 600 !important; color:var(--link-color) !important;
+      font-size: 12px !important; font-weight: 600 !important; color: var(--link) !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
-    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color:var(--link-color) !important; }
+    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color: var(--link) !important; }
     .annotate-decision-resolved .annotate-decision-prompt { margin-bottom: 5px !important; }
     .annotate-decision-text {
       font-size: 11.5px !important; color: var(--color-base-content) !important; line-height: 1.5 !important;
@@ -852,9 +876,9 @@ function ensureStripStyle() {
       gap: 6px !important; min-width: 0 !important;
     }
     .annotate-decision-btn {
-      font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
+      font-size: 11px !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
-      color: var(--color-base-100) !important; font-family: inherit !important;
+      color:var(--color-primary-content) !important; font-family:"Inter", sans-serif !important;
       /* An option label longer than the strip used to force the flex line
          wider than the page; the button and its consequence line then ran
          off the right edge (user-reported). */
@@ -862,12 +886,14 @@ function ensureStripStyle() {
       line-height: 1.35 !important; white-space: normal !important; overflow-wrap: anywhere !important;
     }
     .annotate-decision-btn:hover { filter: brightness(.92) !important; }
+    /* UI-25: Enter on a focused option answers it, so the focus must show. */
+    .annotate-decision-btn:focus-visible { outline: 2px solid var(--color-primary) !important; outline-offset: 2px !important; }
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
-    .annotate-decision-accept { background: color-mix(in oklab,var(--color-success) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-reject { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-comment, .annotate-decision-submit { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-accept { background: var(--color-success) !important; }
+    .annotate-decision-reject { background: var(--color-error) !important; }
+    .annotate-decision-comment, .annotate-decision-submit { background: var(--color-primary) !important; }
     /* D2 "Request changes": amber, deliberately not Reject's red. */
-    .annotate-decision-changes { background: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-changes { background: var(--warn-text) !important; }
     /* display is intentionally NOT set here: it's driven entirely by the
        inline style.setProperty(..., 'important') toggle in JS (open/closed),
        which an author-stylesheet !important rule here would permanently
@@ -875,37 +901,37 @@ function ensureStripStyle() {
     .annotate-decision-form { margin-top: 6px !important; flex-direction: column !important; gap: 5px !important; }
     .annotate-decision-ta {
       width: 100% !important; min-height: 40px !important; padding: 5px 7px !important;
-      border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 5px !important; font-size: 11px !important;
-      font-family: inherit !important; resize: vertical !important; color: var(--color-base-content) !important;
+      border: 1px solid var(--line) !important; border-radius: 5px !important; font-size: 11px !important;
+      font-family:"Inter", sans-serif !important; resize: vertical !important; color: var(--color-base-content) !important;
       background: var(--color-base-100) !important; box-sizing: border-box !important; line-height: 1.4 !important;
     }
-    .annotate-decision-ta:focus { outline: none !important; border-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-ta:focus { outline: none !important; border-color: var(--link) !important; }
     .annotate-decision-feedback {
       margin-top: 5px !important; font-size: 10.5px !important; font-weight: 600 !important;
-      color:var(--link-color) !important; min-height: 12px !important;
+      color: var(--link) !important; min-height: 12px !important;
     }
-    .annotate-decision-feedback.is-error { color:var(--error-text) !important; }
+    .annotate-decision-feedback.is-error { color: var(--color-error) !important; }
     .annotate-decision-feedback:empty { min-height: 0 !important; margin-top: 0 !important; }
     .annotate-decision-delivery {
       font-size: 11px !important; color: var(--muted) !important; margin-left: 8px !important;
     }
     .annotate-verdict-chip {
-      display: inline-block !important; font-size: 11px !important; font-weight: 700 !important;
+      display: inline-block !important; font-size: 10.5px !important; font-weight: 700 !important;
       padding: 4px 10px !important; border-radius: 10px !important;
     }
-    .annotate-verdict-chip.verdict-accept { background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; color:var(--success-text) !important; }
-    .annotate-verdict-chip.verdict-reject { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)) !important; color:var(--error-text) !important; }
-    .annotate-verdict-chip.verdict-comment { background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; color:var(--link-color) !important; }
-    .annotate-verdict-chip.verdict-changes { background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important; color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
+    .annotate-verdict-chip.verdict-accept { background: var(--success-soft) !important; color: var(--ok-text) !important; }
+    .annotate-verdict-chip.verdict-reject { background: var(--error-soft) !important; color: var(--color-error) !important; }
+    .annotate-verdict-chip.verdict-comment { background: var(--primary-soft) !important; color: var(--link) !important; }
+    .annotate-verdict-chip.verdict-changes { background: var(--warning-soft) !important; color: var(--warn-text) !important; }
     .annotate-decision-change, .annotate-decision-cancel {
-      background: none !important; color:var(--link-color) !important; font-weight: 600 !important;
+      background: none !important; color: var(--link) !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 6px !important; text-decoration: none !important;
     }
     .annotate-decision-change:hover, .annotate-decision-cancel:hover { filter: none !important; text-decoration: underline !important; }
     .annotate-decision-changing-note {
       display: flex !important; align-items: center !important; justify-content: space-between !important;
-      gap: 8px !important; font-size: 11px !important; font-weight: 600 !important; color:var(--link-color) !important;
-      background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 6px !important; padding: 5px 8px !important;
+      gap: 8px !important; font-size: 11px !important; font-weight: 600 !important; color: var(--link) !important;
+      background: var(--primary-soft) !important; border-radius: 6px !important; padding: 5px 8px !important;
       margin-bottom: 6px !important;
     }
     .annotate-strip-anchor-label {
@@ -921,18 +947,18 @@ function ensureStripStyle() {
       font-weight: 400 !important;
     }
     .annotate-decision-reco-line {
-      font-size: 11px !important; color:var(--success-text) !important; font-weight: 600 !important;
+      font-size: 11px !important; color: var(--ok-text) !important; font-weight: 600 !important;
       line-height: 1.4 !important; margin: 0 0 6px !important;
     }
     .annotate-decision-reco-line b { font-weight: 800 !important; }
     /* Quoted excerpt of the element the card is about, read from this page. */
     .annotate-excerpt {
       margin: 0 0 8px !important; padding: 5px 9px !important; background: var(--color-base-100) !important;
-      border: none !important; border-left: 3px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-radius: 0 6px 6px 0 !important;
+      border: none !important; border-left: 3px solid var(--line) !important; border-radius: 0 6px 6px 0 !important;
       min-width: 0 !important; max-width: 100% !important; box-sizing: border-box !important;
     }
     .annotate-excerpt-src {
-      font-size: 9.5px !important; font-weight: 700 !important; color: var(--muted) !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important; margin: 0 0 2px !important;
     }
     .annotate-excerpt-text {
@@ -945,9 +971,9 @@ function ensureStripStyle() {
     }
     .annotate-excerpt.is-open .annotate-excerpt-text { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
     .annotate-excerpt-more {
-      font-size: 10.5px !important; font-weight: 600 !important; color:var(--link-color) !important;
+      font-size: 10.5px !important; font-weight: 600 !important; color: var(--link) !important;
       background: none !important; border: none !important; padding: 2px 0 !important; margin: 2px 0 0 !important;
-      cursor: pointer !important; font-family: inherit !important;
+      cursor: pointer !important; font-family:"Inter", sans-serif !important;
     }
     .annotate-excerpt-more[hidden] { display: none !important; }
     .annotate-card-replaced { display: none !important; }
@@ -957,26 +983,26 @@ function ensureStripStyle() {
       text-transform: uppercase !important; letter-spacing: .04em !important; white-space: nowrap !important;
     }
     .annotate-chip-impact-low { background: var(--color-base-200) !important; color: var(--muted) !important; }
-    .annotate-chip-impact-medium { background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important; color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
-    .annotate-chip-impact-high { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)) !important; color:var(--error-text) !important; }
-    .annotate-chip-blocking { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; color: var(--color-base-100) !important; }
+    .annotate-chip-impact-medium { background: var(--warning-soft) !important; color: var(--warn-text) !important; }
+    .annotate-chip-impact-high { background: var(--error-soft) !important; color: var(--err-text) !important; }
+    .annotate-chip-blocking { background: var(--color-primary) !important; color:var(--color-primary-content) !important; }
     .annotate-decision-btns > .annotate-decision-btn {
       display: block !important; width: 100% !important; box-sizing: border-box !important;
-      background: var(--color-base-100) !important; color:var(--link-color) !important; text-align: left !important;
-      border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; border-left: 4px solid var(--muted) !important;
+      background: var(--color-base-100) !important; color: var(--color-base-content) !important; text-align: left !important;
+      border: 1px solid var(--line) !important; border-left: 4px solid var(--muted) !important;
       padding: 7px 10px !important; font-weight: 700 !important;
     }
     .annotate-decision-btns > .annotate-decision-btn:hover {
-      filter: none !important; background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important;
-      border-top-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important; border-right-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important; border-bottom-color: color-mix(in oklab,var(--color-primary) 30%,var(--color-base-100)) !important;
+      filter: none !important; background: var(--color-base-200) !important;
+      border-top-color: var(--link) !important; border-right-color: var(--link) !important; border-bottom-color: var(--link) !important;
     }
-    .annotate-decision-btns > .annotate-decision-accept { border-left-color: color-mix(in oklab,var(--color-success) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-btns > .annotate-decision-reject { border-left-color: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-btns > .annotate-decision-comment { border-left-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-btns > .annotate-decision-changes { border-left-color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-accept { border-left-color: var(--color-success) !important; }
+    .annotate-decision-btns > .annotate-decision-reject { border-left-color: var(--color-error) !important; }
+    .annotate-decision-btns > .annotate-decision-comment { border-left-color: var(--link) !important; }
+    .annotate-decision-btns > .annotate-decision-changes { border-left-color: var(--warn-text) !important; }
     .annotate-decision-btns > .annotate-decision-custom { border-left-color: var(--muted) !important; }
-    .annotate-decision-btns > .annotate-decision-custom.annotate-style-primary { border-left-color: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-btns > .annotate-decision-custom.annotate-style-danger { border-left-color: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-primary { border-left-color: var(--link) !important; }
+    .annotate-decision-btns > .annotate-decision-custom.annotate-style-danger { border-left-color: var(--color-error) !important; }
     .annotate-opt-head { display: flex !important; align-items: center !important; gap: 6px !important; flex-wrap: wrap !important; }
     .annotate-opt-label { font-weight: 700 !important; }
     .annotate-decision-consequence {
@@ -985,9 +1011,9 @@ function ensureStripStyle() {
       white-space: pre-wrap !important; word-break: break-word !important;
     }
     .annotate-decision-rec {
-      font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0 !important;
-      text-transform: none !important; background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; color:var(--success-text) !important;
-      border: 1px solid color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)) !important; padding: 1px 6px !important; border-radius: 999px !important;
+      font-size: 9.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
+      text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
+      border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
     .annotate-decision-say-row {
       display: flex !important; align-items: center !important; gap: 8px !important;
@@ -995,25 +1021,25 @@ function ensureStripStyle() {
     }
     .annotate-decision-say {
       font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
-      border-radius: 6px !important; border: 1px solid color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; cursor: pointer !important;
-      background: var(--color-base-100) !important; color:var(--link-color) !important; font-family: inherit !important;
+      border-radius: 6px !important; border: 1px solid var(--line) !important; cursor: pointer !important;
+      background: var(--color-base-100) !important; color: var(--link) !important; font-family:"Inter", sans-serif !important;
       max-width: 100% !important; text-align: left !important; line-height: 1.35 !important;
       white-space: normal !important; overflow-wrap: anywhere !important;
     }
-    .annotate-decision-say:hover { background: color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100)) !important; filter: none !important; }
+    .annotate-decision-say:hover { background: var(--primary-soft) !important; filter: none !important; }
     .annotate-decision-say-hint { font-size: 10.5px !important; color: var(--muted) !important; }
     .annotate-decision-commented { margin: 0 0 6px !important; }
     .annotate-decision-commented-txt { font-size: 10.5px !important; color: var(--muted) !important; margin-left: 6px !important; }
     .annotate-decision-custom { background: var(--muted) !important; }
-    .annotate-decision-custom.annotate-style-primary { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
-    .annotate-decision-custom.annotate-style-danger { background: color-mix(in oklab,var(--color-error) 100%,var(--color-base-100)) !important; }
+    .annotate-decision-custom.annotate-style-primary { background: var(--color-primary) !important; }
+    .annotate-decision-custom.annotate-style-danger { background: var(--color-error) !important; }
     /* Evidence: a collapsed "Evidence (n)" disclosure; each item previews its
        target inside the card, and "Go to" jumps there leaving "Back to #N". */
     .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: 10.5px !important; color: var(--muted) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link {
-      font-size: 10.5px !important; font-weight: 700 !important; color:var(--link-color) !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color: var(--link) !important;
       background: none !important; border: none !important; padding: 2px 0 !important;
-      cursor: pointer !important; font-family: inherit !important; display: inline-flex !important;
+      cursor: pointer !important; font-family:"Inter", sans-serif !important; display: inline-flex !important;
       align-items: center !important; gap: 4px !important; text-align: left !important;
     }
     .annotate-decision-evidence-link { font-weight: 600 !important; text-decoration: none !important; }
@@ -1030,43 +1056,43 @@ function ensureStripStyle() {
     .annotate-decision-evidence-list[hidden], .annotate-decision-evidence-preview[hidden] { display: none !important; }
     .annotate-decision-evidence-preview {
       margin: 2px 0 2px !important; padding: 6px 8px !important; background: var(--color-base-200) !important;
-      border: 1px solid var(--color-base-300) !important; border-radius: 6px !important; box-sizing: border-box !important;
+      border: 1px solid var(--line) !important; border-radius: 6px !important; box-sizing: border-box !important;
     }
     .annotate-decision-evidence-preview .annotate-excerpt { margin: 0 0 6px !important; }
     .annotate-decision-evidence-missing { font-style: italic !important; color: var(--muted) !important; margin: 0 0 6px !important; }
     .annotate-decision-evidence-goto {
-      font-size: 10.5px !important; font-weight: 700 !important; color: var(--color-base-100) !important; background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important;
+      font-size: 10.5px !important; font-weight: 700 !important; color:var(--color-primary-content) !important; background: var(--color-primary) !important;
       border: none !important; border-radius: 5px !important; padding: 3px 10px !important;
-      cursor: pointer !important; font-family: inherit !important;
+      cursor: pointer !important; font-family:"Inter", sans-serif !important;
     }
     .annotate-decision-evidence-goto:disabled { opacity: .5 !important; cursor: not-allowed !important; }
     /* "Back to #N": left on the target by an evidence jump, returns to the card. */
     .annotate-back-row { display: block !important; list-style: none !important; margin: 4px 0 !important; padding: 0 !important; text-align: left !important; }
     .annotate-back-tr > td { padding: 3px 0 !important; border: none !important; background: transparent !important; }
     .annotate-back-pill {
-      font: 700 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      color: var(--color-base-100) !important; background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; border: none !important; border-radius: 999px !important;
-      padding: 5px 12px !important; cursor: pointer !important; box-shadow: 0 2px 8px rgba(49,46,129,.3) !important;
+      font: 700 11.5px "Inter", sans-serif !important;
+      color:var(--color-primary-content) !important; background: var(--color-primary) !important; border: none !important; border-radius: 999px !important;
+      padding: 5px 12px !important; cursor: pointer !important; box-shadow: 0 2px 8px color-mix(in oklab,var(--color-primary) 30%,transparent) !important;
       line-height: 1.3 !important; white-space: nowrap !important;
     }
-    .annotate-back-pill:hover { background: color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; }
+    .annotate-back-pill:hover { background: var(--color-primary) !important; }
     .annotate-back-abs { position: absolute !important; pointer-events: auto !important; z-index: 16 !important; }
     .annotate-decision-note-toggle {
       font-size: 10.5px !important; color: var(--muted) !important; background: none !important;
       border: none !important; padding: 2px 0 !important; cursor: pointer !important;
-      font-family: inherit !important; margin-top: 6px !important; display: block !important;
+      font-family:"Inter", sans-serif !important; margin-top: 6px !important; display: block !important;
     }
-    .annotate-decision-note-toggle:hover { color:var(--link-color) !important; filter: none !important; }
+    .annotate-decision-note-toggle:hover { color: var(--link) !important; filter: none !important; }
     .annotate-decision-note-form { margin-top: 4px !important; }
     .annotate-decision-note-form[hidden] { display: none !important; }
     .annotate-decision-pending {
       display: inline-block !important; font-size: 9.5px !important; font-weight: 700 !important;
-      padding: 2px 8px !important; border-radius: 8px !important; background: color-mix(in oklab,var(--color-warning) 14%,var(--color-base-100)) !important;
-      color: color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; border: 1px dashed color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; text-transform: uppercase !important;
+      padding: 2px 8px !important; border-radius: 8px !important; background: var(--warning-soft) !important;
+      color: var(--warn-text) !important; border: 1px dashed var(--color-warning) !important; text-transform: uppercase !important;
       letter-spacing: .04em !important; margin-left: 8px !important; vertical-align: middle !important;
     }
     .annotate-decision-sendnow {
-      background: none !important; color:var(--link-color) !important; font-weight: 600 !important;
+      background: none !important; color: var(--link) !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 4px !important; font-size: 10.5px !important;
     }
     .annotate-decision-sendnow:hover { filter: none !important; text-decoration: underline !important; }
@@ -1085,6 +1111,55 @@ function ensureStripStyle() {
       .annotate-decision-ta { font-size: 16px !important; min-height: 48px !important; }
       .annotate-decision-change, .annotate-decision-cancel { min-height: 44px !important; padding: 10px 12px !important; touch-action: manipulation !important; }
     }
+    /* ── Feedback prototype (X1/E4): the strip follows the shell
+       using stock daisyUI light/dark tokens. C2 keeps the question bold. */
+    .annotate-decision-strip {
+      background: var(--color-base-100) !important; border: 1px solid var(--line) !important;
+      border-radius: .5rem !important; padding: 10px 12px !important;
+      box-shadow: 0 1px 2px color-mix(in oklab,var(--color-neutral) 6%,transparent) !important; color: var(--color-base-content) !important;
+    }
+    .annotate-decision-item + .annotate-decision-item { border-top-color: var(--line) !important; }
+    .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: 11px !important; }
+    .annotate-decision-num {
+      color: var(--color-base-content) !important; background: var(--color-base-300) !important; border-radius: 999px !important;
+      padding: 0 6px !important; font-size: 9.5px !important; font-weight: 700 !important;
+    }
+    .annotate-decision-btns > .annotate-decision-btn, .annotate-decision-btns > .annotate-decision-btn:hover {
+      background: var(--color-base-200) !important; color: var(--color-base-content) !important;
+      border: 1px solid var(--line) !important; border-radius: .25rem !important; font-weight: 600 !important;
+      box-shadow: 0 1px 1px color-mix(in oklab,var(--color-neutral) 4%,transparent) !important;
+    }
+    .annotate-decision-btns > .annotate-decision-btn:hover { background: var(--color-base-300) !important; }
+    .annotate-decision-rec { background: color-mix(in oklab,var(--color-success) 15%,transparent) !important; color: var(--ok-text) !important; border: none !important; }
+    .annotate-decision-reco-line { color: var(--ok-text) !important; }
+    .annotate-excerpt { background: var(--color-base-200) !important; border-left-color: color-mix(in oklab,var(--color-primary) 45%,transparent) !important; }
+    .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-excerpt-more { color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
+    .annotate-decision-evidence-goto { background: var(--color-base-300) !important; color: var(--color-base-content) !important; border-radius: .25rem !important; }
+    .annotate-decision-ta, .annotate-decision-cmt {
+      border: 1px solid color-mix(in oklab,var(--color-base-content) 20%,transparent) !important; border-radius: .25rem !important;
+      background: var(--color-base-100) !important; font-size: 11px !important; margin-top: 8px !important;
+      min-height: 2.25rem !important; padding: 6px 8px !important;
+    }
+    .annotate-decision-ta:focus { outline: 2px solid color-mix(in oklab,var(--color-base-content) 50%,transparent) !important; outline-offset: 2px !important; }
+    .annotate-decision-cmt-hint { font-size: 11px !important; color: color-mix(in oklab,var(--color-base-content) 75%,transparent) !important; margin-top: 4px !important; }
+    /* Secondary text derives from the active stock foreground token. */
+    .annotate-decision-consequence, .annotate-excerpt-src { color: color-mix(in oklab,var(--color-base-content) 75%,transparent) !important; }
+    .annotate-decision-cmt-hint:empty { display: none !important; }
+    .annotate-decision-feedback { color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; }
+    .annotate-verdict-chip { border-radius: .5rem !important; font-weight: 700 !important; }
+    .annotate-verdict-chip.verdict-accept { background: color-mix(in oklab,var(--color-success) 15%,transparent) !important; color: var(--ok-text) !important; }
+    .annotate-verdict-chip.verdict-reject { background: color-mix(in oklab,var(--color-error) 15%,transparent) !important; color: var(--err-text) !important; }
+    .annotate-verdict-chip.verdict-changes { background: color-mix(in oklab,var(--color-warning) 20%,transparent) !important; color: var(--warn-text) !important; }
+    .annotate-verdict-chip.verdict-comment, .annotate-verdict-chip.verdict-select { background: color-mix(in oklab,var(--color-info) 15%,transparent) !important; color: var(--info-text) !important; }
+    .annotate-decision-change {
+      display: inline-flex !important; align-items: center !important; justify-content: center !important;
+      width: 26px !important; height: 26px !important; padding: 0 !important; margin-left: 6px !important;
+      background: transparent !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; border-radius: .25rem !important;
+      vertical-align: middle !important;
+    }
+    .annotate-decision-change:hover { background: var(--color-base-300) !important; text-decoration: none !important; }
+    .annotate-decision-changing-note { background: var(--color-base-200) !important; color: var(--color-base-content) !important; border: 1px solid var(--line) !important; }
+    .annotate-decision-cancel { color: var(--color-base-content) !important; }
   `;
   document.head.appendChild(style);
 }
@@ -1176,7 +1251,11 @@ function setStripItemDisabled(itemEl, disabled) {
 // v2.19: "Pending — not sent" chip + "Send now" for a verdict parked in the
 // current review round. Send now = the existing single-card push route; the
 // server clears round_pending and the shell refresh removes the chip.
+// Feedback prototype (A2/B2): no "Pending — not sent" chip and no "Send
+// now" — a pending verdict waits for the one Send in the shell header.
 function appendPendingControls(itemEl, id) {
+  return;
+  // eslint-disable-next-line no-unreachable
   const pend = document.createElement('span');
   pend.className = 'annotate-decision-pending';
   pend.textContent = 'Pending — not sent';
@@ -1252,6 +1331,27 @@ async function submitStripDecision(id, verdict, text, itemEl) {
   postToParent({ type: 'annotate:decision-posted', commentId: id });
 }
 
+// Lucide "pencil" (ISC License, (c) Lucide Icons and Contributors).
+function pencilSvg() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  ['M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z', 'm15 5 4 4'].forEach(d => {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  });
+  return svg;
+}
+
 function makeStripBtn(label, cls) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -1278,8 +1378,7 @@ function makeOptionBtn(o, cls, recommended) {
     b.title = 'Recommended by the agent';
     const badge = document.createElement('span');
     badge.className = 'annotate-decision-rec';
-    badge.textContent = 'rec';
-    badge.title = 'Recommended';
+    badge.textContent = 'Recommended';
     head.appendChild(badge);
   }
   b.appendChild(head);
@@ -1509,7 +1608,8 @@ function buildDecisionItemEl(entry) {
     if (entry.decisionRequest) item.appendChild(buildPromptEl(entry, entry.decisionRequest));
     const chip = document.createElement('span');
     chip.className = 'annotate-verdict-chip verdict-' + entry.decisionVerdict;
-    chip.textContent = DECISION_VERDICT_LABEL[entry.decisionVerdict] || entry.decisionVerdict;
+    // C1: the answer itself ("Tonight at 11pm"), not just "Selected".
+    chip.textContent = entry.answerText || DECISION_VERDICT_LABEL[entry.decisionVerdict] || entry.decisionVerdict;
     item.appendChild(chip);
     // T-verdict-reversal: only offer "Change" when the shell still sent the
     // original decisionRequest alongside decisionVerdict (new shell always
@@ -1517,10 +1617,13 @@ function buildDecisionItemEl(entry) {
     // shell that predates this fix never will, so this just quietly shows
     // the plain chip against it instead of erroring.
     if (entry.decisionRequest) {
-      const changeBtn = makeStripBtn('↺ Change', 'annotate-decision-change');
+      // D1 (Chang): "the edit should be a pencil icon".
+      const changeBtn = makeStripBtn('', 'annotate-decision-change');
+      changeBtn.appendChild(pencilSvg());
+      changeBtn.setAttribute('aria-label', 'Change answer');
+      changeBtn.title = 'Change';
       changeBtn.addEventListener('click', () => {
         stripChanging[id] = true;
-        stripNoteOpen[id] = true;
         renderDecisionStrips();
       });
       item.appendChild(changeBtn);
@@ -1569,8 +1672,9 @@ function buildDecisionItemEl(entry) {
     const note = document.createElement('div');
     note.className = 'annotate-decision-changing-note';
     const label = document.createElement('span');
-    label.textContent = 'Changing verdict — currently ' +
-      (DECISION_VERDICT_TEXT[entry.decisionVerdict] || entry.decisionVerdict);
+    label.textContent = 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
+      ? '☑ ' + entry.answerText
+      : (DECISION_VERDICT_TEXT[entry.decisionVerdict] || entry.decisionVerdict));
     note.appendChild(label);
     const cancelBtn = makeStripBtn('Cancel', 'annotate-decision-cancel');
     cancelBtn.addEventListener('click', () => {
@@ -1592,61 +1696,86 @@ function buildDecisionItemEl(entry) {
   const opts = stripDecisionOptions(dr);
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
+  if (rec) {
+    const recId = stripCanonicalOptionId(rec);
+    const recOpt = opts.find(o => o.id === recId);
+    const recLine = document.createElement('div');
+    recLine.className = 'annotate-decision-reco-line';
+    recLine.appendChild(document.createTextNode('Recommended: '));
+    const recName = document.createElement('b');
+    recName.textContent = recOpt ? recOpt.plain : (DECISION_PLAIN_LABEL[recId] || rec);
+    recLine.appendChild(recName);
+    item.appendChild(recLine);
+  }
+
+  // The first evidence target, quoted. The strip's own anchor is the element
+  // right above it, so it is never quoted here (the rail card quotes it).
+  const firstTarget = ev.length ? findAnchorEl(ev[0].anchor) : null;
+  if (firstTarget) {
+    const text = excerptText(firstTarget);
+    if (text) item.appendChild(buildExcerptEl(id + '\nfirst', text, excerptSource(ev[0].anchor)));
+  }
+
   const btnRow = document.createElement('div');
   btnRow.className = 'annotate-decision-btns';
   item.appendChild(btnRow);
+  if (hasCons) btnRow.classList.add('has-consequences');
 
-  const form = document.createElement('div');
-  form.className = 'annotate-decision-form';
-  // The stylesheet's `.annotate-decision-form{display:flex!important}` (needed
-  // to beat host-doc CSS) would otherwise permanently defeat a plain inline
-  // `style.display` toggle — only an inline !important can out-rank it.
-  form.style.setProperty('display', stripFormOpen[id] ? 'flex' : 'none', 'important');
+  // A1: one optional comment box under the options. It is the same draft as
+  // the rail card's box (shared through the shell), goes with whichever
+  // option is clicked, and with no option picked it is the answer at Send.
   const ta = document.createElement('textarea');
-  ta.className = 'annotate-decision-ta';
-  ta.rows = 2;
-  ta.placeholder = latestChanges ? 'What needs to change…' : 'Add your comment…';
-  ta.value = stripDraftText[id] || '';
-  ta.addEventListener('input', () => { stripDraftText[id] = ta.value; });
-  const submitBtn = makeStripBtn('Send', 'annotate-decision-submit');
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      submitBtn.click();
-    }
+  ta.className = 'annotate-decision-ta annotate-decision-cmt';
+  ta.rows = 1;
+  ta.placeholder = 'Comment (optional)';
+  ta.setAttribute('aria-label', 'Comment (optional)');
+  ta.dataset.stripSay = id;
+  ta.value = typeof entry.sayDraft === 'string' ? entry.sayDraft : '';
+  const hint = document.createElement('div');
+  hint.className = 'annotate-decision-cmt-hint';
+  const syncHint = () => {
+    hint.textContent = (ta.value || '').trim()
+      ? 'Saved with your choice. With no choice picked, it counts as your answer when you send.'
+      : '';
+  };
+  syncHint();
+  ta.addEventListener('annotate-sync', syncHint);
+  ta.addEventListener('input', () => {
+    syncHint();
+    postToParent({ type: 'annotate:say-draft', commentId: id, text: ta.value });
   });
-  form.appendChild(ta);
-  form.appendChild(submitBtn);
-  item.appendChild(form);
 
   const feedback = document.createElement('div');
   feedback.className = 'annotate-decision-feedback';
-  item.appendChild(feedback);
 
-  if (hasCons) btnRow.classList.add('has-consequences');
-
-  // Optional note for Accept/Reject ("+ Add a note"); null when closed/empty.
-  let noteTa = null;
   const noteText = () => {
-    if (!stripNoteOpen[id] || !noteTa) return null;
-    const t = (noteTa.value || '').trim();
+    const t = (ta.value || '').trim();
     return t || null;
+  };
+  const clearDraft = () => {
+    postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
   };
 
   const isRec = o => !!rec && stripCanonicalOptionId(rec) === o.id;
   for (const o of opts) {
     if (o.id === 'accept' || o.id === 'reject') {
       const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
-      b.addEventListener('click', () => submitStripDecision(id, o.id, noteText(), item));
+      b.addEventListener('click', () => { const n = noteText(); clearDraft(); submitStripDecision(id, o.id, n, item); });
       btnRow.appendChild(b);
     } else if (o.id === 'comment' || o.id === 'changes') {
-      // One slot, two spellings: "Comment" pre-D2, "Request changes" after.
-      // Both reveal the textarea; neither submits empty.
+      // Request changes (pre-D2: Comment) still needs words.
       const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
       b.addEventListener('click', () => {
-        stripFormOpen[id] = true;
-        form.style.setProperty('display', 'flex', 'important');
-        ta.focus();
+        const n = noteText();
+        if (!n) {
+          ta.placeholder = o.id === 'changes' ? 'What needs to change…' : 'Add your comment…';
+          ta.focus();
+          feedback.classList.remove('is-error');
+          feedback.textContent = o.id === 'changes' ? 'Say what needs to change in the box, then pick it again.' : 'Write your answer in the box, then pick it again.';
+          return;
+        }
+        clearDraft();
+        submitStripDecision(id, o.id, n, item);
       });
       btnRow.appendChild(b);
     } else {
@@ -1657,95 +1786,17 @@ function buildDecisionItemEl(entry) {
         const n = noteText();
         const v = latestSelect ? 'select' : 'comment';
         const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
+        clearDraft();
         submitStripDecision(id, v, text, item);
       });
       btnRow.appendChild(b);
     }
   }
-  submitBtn.addEventListener('click', () => {
-    const text = (ta.value || '').trim();
-    if (!text) { ta.focus(); return; }
-    submitStripDecision(id, opts.some(o => o.id === 'changes') ? 'changes' : 'comment', text, item);
-  });
 
   if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
-
-  // Free-text answer. A reviewer reply on an unanswered card also answers it.
-  if (!opts.some(o => o.id === 'comment')) {
-    const sayRow = document.createElement('div');
-    sayRow.className = 'annotate-decision-say-row';
-    const sayBtn = document.createElement('button');
-    sayBtn.type = 'button';
-    sayBtn.className = 'annotate-decision-say';
-    sayBtn.textContent = 'Answer in words';
-    sayBtn.title = 'Answer this question in your own words';
-    const sayHint = document.createElement('span');
-    sayHint.className = 'annotate-decision-say-hint';
-    sayHint.textContent = 'counts as answered';
-    sayRow.appendChild(sayBtn);
-    item.appendChild(sayRow);
-
-    const sayForm = document.createElement('div');
-    sayForm.className = 'annotate-decision-form';
-    sayForm.style.setProperty('display', stripSayOpen[id] ? 'flex' : 'none', 'important');
-    const sayTa = document.createElement('textarea');
-    sayTa.className = 'annotate-decision-ta';
-    sayTa.rows = 2;
-    sayTa.placeholder = 'Answer in your own words…';
-    sayTa.value = stripSayText[id] || '';
-    sayTa.addEventListener('input', () => { stripSayText[id] = sayTa.value; });
-    const saySubmit = makeStripBtn('Send answer', 'annotate-decision-submit');
-    sayTa.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        saySubmit.click();
-      }
-    });
-    saySubmit.addEventListener('click', () => {
-      const text = (sayTa.value || '').trim();
-      if (!text) { sayTa.focus(); return; }
-      submitStripDecision(id, 'comment', text, item);
-    });
-    sayBtn.addEventListener('click', () => {
-      stripSayOpen[id] = !stripSayOpen[id];
-      sayForm.style.setProperty('display', stripSayOpen[id] ? 'flex' : 'none', 'important');
-      if (stripSayOpen[id]) sayTa.focus();
-    });
-    sayForm.appendChild(sayTa);
-    sayForm.appendChild(saySubmit);
-    item.appendChild(sayForm);
-  }
-
-  // v2.19: optional note under Accept/Reject
-  if (opts.some(o => !['comment', 'changes'].includes(o.id))) {
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'annotate-decision-note-toggle';
-    const noteForm = document.createElement('div');
-    noteForm.className = 'annotate-decision-note-form';
-    noteTa = document.createElement('textarea');
-    noteTa.className = 'annotate-decision-ta';
-    noteTa.rows = 2;
-    noteTa.placeholder = 'Explain your choice…';
-    noteTa.value = stripNoteText[id] || '';
-    noteTa.addEventListener('input', () => { stripNoteText[id] = noteTa.value; });
-    noteForm.appendChild(noteTa);
-    const syncNote = () => {
-      const open = !!stripNoteOpen[id];
-      toggle.textContent = open ? '− Remove note' : '+ Add a note';
-      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-      noteForm.hidden = !open;
-    };
-    toggle.addEventListener('click', () => {
-      stripNoteOpen[id] = !stripNoteOpen[id];
-      if (!stripNoteOpen[id]) { noteTa.value = ''; delete stripNoteText[id]; }
-      syncNote();
-      if (stripNoteOpen[id]) noteTa.focus();
-    });
-    syncNote();
-    item.appendChild(toggle);
-    item.appendChild(noteForm);
-  }
+  item.appendChild(ta);
+  item.appendChild(hint);
+  item.appendChild(feedback);
 
   if (pendingDecisionIds.has(id)) {
     setStripItemDisabled(item, true);
@@ -1847,10 +1898,10 @@ function ensureCardStateStyle() {
     .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
     .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
-      font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .02em; }
-    .annotate-card-state.review { background: color-mix(in oklab,var(--color-error) 14%,var(--color-base-100)); color:var(--error-text); }
+      font: 700 9.5px "Inter", sans-serif; letter-spacing: .02em; }
+    .annotate-card-state.review { background: var(--error-soft); color: var(--color-error); }
     .annotate-card-state.waiting { background: var(--color-base-200); color: var(--muted); }
-    .annotate-card-state.done { background: color-mix(in oklab,var(--color-success) 14%,var(--color-base-100)); color:var(--success-text); }
+    .annotate-card-state.done { background: var(--success-soft); color: var(--ok-text); }
   `;
   document.head.appendChild(style);
 }
@@ -1889,7 +1940,6 @@ function staticCardsFor(anchorId) {
 }
 
 function renderDecisionStrips() {
-  if (SUPPORTING_DOCUMENT) return;
   ensureStripStyle();
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
   // One card per question in the body. A generated card whose question the
@@ -1941,17 +1991,17 @@ function ensureGotoHighlightStyle() {
   style.id = 'goto-highlight-style';
   style.textContent = `
     .goto-highlight{
-      outline: 3px solid color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important;
+      outline: 3px solid var(--color-warning) !important;
       outline-offset: 2px;
-      background: rgba(245,158,11,.14) !important;
+      background: color-mix(in oklab,var(--color-warning) 14%,transparent) !important;
       border-radius: 4px;
       animation: gotoHighlightPulse 1.1s ease-in-out 2;
       transition: outline-color .3s, background .3s;
     }
-    svg .goto-highlight-svg{ stroke:color-mix(in oklab,var(--color-warning) 100%,var(--color-base-100)) !important; stroke-width:3px !important; }
+    svg .goto-highlight-svg{ stroke:var(--color-warning) !important; stroke-width:3px !important; }
     @keyframes gotoHighlightPulse{
-      0%,100%{ box-shadow: 0 0 0 0 rgba(245,158,11,.35); }
-      50%{ box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+      0%,100%{ box-shadow: 0 0 0 0 color-mix(in oklab,var(--color-warning) 35%,transparent); }
+      50%{ box-shadow: 0 0 0 6px color-mix(in oklab,var(--color-warning) 0%,transparent); }
     }
   `;
   document.head.appendChild(style);
@@ -2198,16 +2248,16 @@ function ensureUnchangedStyle() {
     .annotate-unchanged-toggle {
       display: flex !important; align-items: baseline !important; gap: 4px 10px !important; flex-wrap: wrap !important;
       width: 100% !important; box-sizing: border-box !important; text-align: left !important;
-      font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-      color: var(--color-base-content) !important; background: var(--color-base-200) !important; border: 1px dashed var(--color-base-300) !important;
+      font: 600 13px/1.4 "Inter", sans-serif !important;
+      color: var(--color-base-content) !important; background: var(--color-base-200) !important; border: 1px dashed var(--line) !important;
       border-radius: 8px !important; padding: 8px 12px !important; cursor: pointer !important; margin: 0 !important;
     }
     .annotate-unchanged-toggle:hover { background: var(--color-base-200) !important; border-color: var(--muted) !important; }
-    .annotate-unchanged-toggle:focus-visible { outline: 2px solid color-mix(in oklab,var(--color-primary) 100%,var(--color-base-100)) !important; outline-offset: 1px !important; }
+    .annotate-unchanged-toggle:focus-visible { outline: 2px solid var(--link) !important; outline-offset: 1px !important; }
     .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: var(--muted); transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-size: 17px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
-    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 12.5px !important; }
+    .annotate-unchanged-title { font-size: 12.5px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 10.5px !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
     }
@@ -2325,16 +2375,43 @@ function postExcerpts() {
   postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out });
 }
 
+// ── E3 shortcuts while focus is in the document ─────────────────────
+// Clicking the document moves keyboard focus into this frame, where the
+// shell's key handler cannot hear. Pass the shortcut keys up (never while
+// typing, never with Alt/Ctrl/Cmd except ⌘/Ctrl+Enter, and Escape).
+function wireShortcutForwarding() {
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (t && t.closest && (t.isContentEditable || t.closest('input, textarea, select'))) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const send = e.key === 'Enter' && mod;
+    if (e.altKey || (mod && !send)) return;
+    if (!(send || e.key === 'Escape' || /^[afcAFC1-9]$/.test(e.key))) return;
+    if (e.key !== 'Escape') e.preventDefault();
+    postToParent({ type: 'annotate:key', key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey });
+  });
+}
+
 // ── Bridge: listen for shell messages ────────────────────────────────
 function wireBridge() {
+  wireShortcutForwarding();
   window.addEventListener('message', (e) => {
     if (!PARENT_ORIGIN || e.origin !== PARENT_ORIGIN || e.source !== window.parent) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:theme' && ['dark', 'light'].includes(data.theme)) {
       document.documentElement.dataset.theme = data.theme;
+    } else if (data.type === 'annotate:card-hover') {
+      setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
+    } else if (data.type === 'annotate:say-draft-set') {
+      // A1: the rail card's comment box changed; mirror it here.
+      document.querySelectorAll('textarea[data-strip-say]').forEach(ta => {
+        if (ta.dataset.stripSay !== data.commentId || ta === document.activeElement) return;
+        ta.value = typeof data.text === 'string' ? data.text : '';
+        ta.dispatchEvent(new Event('annotate-sync'));
+      });
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
@@ -2342,8 +2419,6 @@ function wireBridge() {
       latestChanges = data.changes === true; // absent from an old shell → "Comment"
       latestSelect = data.select === true;   // absent from an old shell → `comment`
       latestCardStates = data.cardStates || {};
-      if (READ_ONLY_REFERENCE) { postExcerpts(); return; }
-      if (SUPPORTING_DOCUMENT) { renderBadges(); postExcerpts(); return; }
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
@@ -2622,26 +2697,291 @@ function detectContentFullscreen() {
   }
 }
 
+// ── Selection, hover and table affordances (U-03, U-04, U-12) ─────────
+// A drag that selects text inside one anchor opens the composer quoting it.
+function wireSelectionComments() {
+  let gesture = null;
+  document.addEventListener('mousedown', e => { gesture = { x: e.clientX, y: e.clientY }; }, true);
+  document.addEventListener('mouseup', e => {
+    if (!gesture) return;
+    const drag = Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) > 3 || e.detail >= 2;
+    gesture = null;
+    if (!drag) return;
+    const s = getSelection();
+    const start = s && s.anchorNode && s.anchorNode.parentElement;
+    if (!start || start.closest(INTERACTIVE_SEL + ', [data-annotate-strip], #badge-layer')) return;
+    const anchor = findParentAnchor(start);
+    if (!anchor || !selectedQuoteIn(anchor)) return;
+    const aid = getAnchorIdFromEl(anchor);
+    selectionOpenedAt = performance.now();
+    postToParent({ type: 'annotate:pin-click', anchorId: aid, anchorLabel: anchorName(aid),
+      target: captureTarget(start, anchor, e), x: e.clientX, y: e.clientY });
+  }, true);
+}
+// Hovering a rail card outlines what it is about; hovering the document
+// outlines what a click would comment on.
+let cardHoverEl = null;
+function setCardHover(anchorId, target) {
+  if (cardHoverEl) cardHoverEl.classList.remove('unified-annotation-hover');
+  cardHoverEl = null;
+  if (!anchorId) return;
+  const a = displayAnchorEl(anchorId);
+  const inner = a && resolveInnerEl(a, target);
+  cardHoverEl = (inner && inner.el) || a;
+  if (cardHoverEl) cardHoverEl.classList.add('unified-annotation-hover');
+}
+function wireCommentableHover() {
+  let commentable = null;
+  document.addEventListener('mouseover', e => {
+    if (commentable) commentable.classList.remove('unified-commentable');
+    commentable = null;
+    if (e.target.closest(INTERACTIVE_SEL + ', [data-annotate-strip], .annotate-unchanged-bar, #badge-layer')) return;
+    const a = findParentAnchor(e.target);
+    if (a) { commentable = a; a.classList.add('unified-commentable'); }
+  });
+  document.addEventListener('mouseout', e => {
+    if (commentable && !commentable.contains(e.relatedTarget)) {
+      commentable.classList.remove('unified-commentable');
+      commentable = null;
+    }
+  });
+}
+// Wide tables scroll sideways in their own labelled region.
+function wrapScrollTables() {
+  document.querySelectorAll('table').forEach(t => {
+    if (t.closest('.unified-table-scroll') || t.closest('[data-annotate-strip]')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'unified-table-scroll';
+    wrap.tabIndex = 0;
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('aria-label', 'Table · scroll sideways');
+    t.before(wrap);
+    wrap.append(t);
+    const hint = document.createElement('p');
+    hint.className = 'unified-table-hint';
+    hint.textContent = 'Scroll sideways to see all columns';
+    wrap.after(hint);
+  });
+  scheduleBadgeRefresh();
+}
+function ensureAffordanceStyle() {
+  if (document.getElementById('annotate-affordance-style')) return;
+  const style = document.createElement('style');
+  style.id = 'annotate-affordance-style';
+  style.textContent = `
+    .unified-annotation-hover,.unified-commentable{outline:2px solid var(--color-primary)!important;outline-offset:2px!important}
+    .unified-commentable{cursor:crosshair}
+    .bpin[role=button]:focus-visible{outline:3px solid var(--color-primary);outline-offset:3px}
+    .unified-table-scroll{overflow-x:auto;max-width:calc(100% - 28px);margin-left:28px;scrollbar-gutter:stable;overscroll-behavior-x:contain;border-right:2px solid var(--color-base-300)}
+    .unified-table-scroll table{min-width:1000px;width:100%;max-width:none;table-layout:auto!important}
+    .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;min-width:120px}
+    .unified-table-scroll th:first-child,.unified-table-scroll td:first-child{min-width:48px}
+    .unified-table-hint{font-size:10.5px;margin:4px 0 14px 28px;color:var(--color-base-content)}
+  `;
+  document.head.append(style);
+}
+// U-11: a link to another page on this server opens in the whole window,
+// never inside the document frame. Links into this document stay in place.
+// UI-21: a link to another site opens in a new tab (the browser's own
+// target=_blank, so no pop-up blocker), never inside the document frame.
+function wirePageLinks() {
+  document.addEventListener('click', e => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const link = e.target.closest && e.target.closest('a[href]');
+    if (!link || (link.target && link.target !== '_self')) return;
+    let url;
+    try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { return; }
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.origin !== PARENT_ORIGIN) {
+      link.target = '_blank';
+      link.rel = (link.rel ? link.rel + ' ' : '') + 'noopener';
+      return;
+    }
+    if (!PARENT_ORIGIN || url.origin !== PARENT_ORIGIN) return;
+    if (url.pathname === location.pathname && url.search === location.search) return;
+    e.preventDefault();
+    postToParent({ type: 'annotate:navigate', url: url.href });
+  });
+}
+
+// ── Plans: what changed since the previous revision ──────────────────
+// A plan revision (plans/<id>/vN.html) reads the previous revision next to
+// it, compares section by section, and offers "show changes": changed
+// sections get a "Changed in vN" tag, and inside them changed words are
+// marked (added: underlined, removed: struck). Comments, pins and decisions
+// are the shell's own and are not touched.
+function initPlanChanges() {
+  const planId = typeof META.doc === 'string' && META.doc.startsWith('plan:') ? META.doc.slice(5) : null;
+  const m = /^v(\d+)$/.exec(META.version || '');
+  if (!planId || !m) return;
+  const N = parseInt(m[1], 10);
+  const V = 'v' + N, PREV = 'v' + (N - 1);
+  const KEY = 'annotate:plan-changes';
+  const css = `
+  .sp-rev button,.sp-rev a{font:inherit;font-size:10.5px;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .sp-chg-tag{display:none}
+  body.sp-show-changes .sp-chg-tag{display:inline-block}
+  ins.sp-ins{text-decoration:none;background:var(--success-soft);color:inherit}
+  del.sp-del{color:var(--muted)}
+  .sp-ins-block{background:var(--success-soft)}
+  .sp-del-block{color:var(--muted);text-decoration:line-through;margin:4px 0}`;
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const LEAF = 'p,li,td,th,h2,h3,h4,figcaption,dt,dd';
+  const leaves = (root) => [...root.querySelectorAll(LEAF)].filter(el => !el.querySelector(LEAF) && !el.closest('.sp-rev'));
+  // Longest-common-subsequence diff over two arrays (small: one section).
+  function lcs(a, b) {
+    const n = a.length, mm = b.length;
+    const t = Array.from({ length: n + 1 }, () => new Int32Array(mm + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = mm - 1; j >= 0; j--)
+      t[i][j] = a[i] === b[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+    const ops = [];
+    let i = 0, j = 0;
+    while (i < n && j < mm) {
+      if (a[i] === b[j]) { ops.push(['=', i, j]); i++; j++; }
+      else if (t[i + 1][j] >= t[i][j + 1]) { ops.push(['-', i, -1]); i++; }
+      else { ops.push(['+', -1, j]); j++; }
+    }
+    while (i < n) ops.push(['-', i++, -1]);
+    while (j < mm) ops.push(['+', -1, j++]);
+    return ops;
+  }
+  const escH = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  function wordDiff(oldText, newText) {
+    const a = oldText.split(/(\s+)/), b = newText.split(/(\s+)/);
+    if (a.length * b.length > 250000) return '<del class="sp-del">' + escH(oldText) + '</del> <ins class="sp-ins">' + escH(newText) + '</ins>';
+    let out = '', del = '', ins = '';
+    const flush = () => { if (del.trim()) out += '<del class="sp-del">' + escH(del) + '</del>'; else out += escH(del); if (ins.trim()) out += '<ins class="sp-ins">' + escH(ins) + '</ins>'; else out += escH(ins); del = ''; ins = ''; };
+    lcs(a, b).forEach(([op, i, j]) => {
+      if (op === '=') { flush(); out += escH(b[j]); }
+      else if (op === '-') del += a[i];
+      else ins += b[j];
+    });
+    flush();
+    return out;
+  }
+  let applied = null; // [{el, html}] originals to restore
+  // Snapshot the document as authored, before pins and strips are added.
+  function sectionsOf(doc) {
+    const map = new Map();
+    doc.querySelectorAll('section[data-anchor-id]').forEach(sec => {
+      const ls = leaves(sec).filter(el => el.tagName !== 'H2');
+      map.set(sec.dataset.anchorId, { sec, text: norm(sec.textContent), leaves: ls, texts: ls.map(el => norm(el.textContent)) });
+    });
+    return map;
+  }
+  const ORIG = sectionsOf(document);
+  function apply(prevDoc) {
+    const cur = ORIG, old = sectionsOf(prevDoc);
+    applied = [];
+    let changed = 0;
+    cur.forEach((c, id) => {
+      const sec = c.sec;
+      const o = old.get(id);
+      const isNew = !o;
+      if (!isNew && o.text === c.text) return;
+      changed++;
+      sec.classList.add('sp-changed');
+      const h = sec.querySelector('h2');
+      if (h && !h.querySelector('.sp-chg-tag')) h.insertAdjacentHTML('beforeend', `<span class="chip sp-chg-tag">${isNew ? 'New in ' + V : 'Changed in ' + V}</span>`);
+      if (isNew) return;
+      const nl = c.leaves, ol = o.leaves;
+      const ops = lcs(o.texts, c.texts);
+      // Pair a removed leaf with the next added leaf as one changed line.
+      for (let k = 0; k < ops.length; k++) {
+        const [op, i, j] = ops[k];
+        if (op === '-' && ops[k + 1] && ops[k + 1][0] === '+') {
+          const el = nl[ops[k + 1][2]];
+          applied.push({ el, html: el.innerHTML, mark: true });
+          el.dataset.spNew = el.innerHTML;
+          el.dataset.spDiff = wordDiff(o.texts[i], c.texts[ops[k + 1][2]]);
+          k++;
+        } else if (op === '+') {
+          applied.push({ el: nl[j], cls: 'sp-ins-block' });
+        } else if (op === '-' && !/^(TD|TH)$/.test(ol[i].tagName)) {
+          // A removed paragraph or list item: shown struck through where it was.
+          const next = ops.slice(k + 1).find(x => x[0] === '=');
+          const anchorEl = next ? nl[next[2]] : null;
+          const ghost = document.createElement(ol[i].tagName === 'LI' ? 'li' : 'p');
+          ghost.className = 'sp-del-block sp-ghost';
+          ghost.textContent = norm(ol[i].textContent);
+          ghost.hidden = true;
+          if (anchorEl && anchorEl.parentNode) anchorEl.parentNode.insertBefore(ghost, anchorEl);
+          else (ol[i].tagName === 'LI' ? (sec.querySelector('ul,ol') || sec) : sec).appendChild(ghost);
+          applied.push({ el: ghost, ghost: true });
+        }
+      }
+    });
+    return changed;
+  }
+  function show(on) {
+    document.body.classList.toggle('sp-show-changes', on);
+    (applied || []).forEach(a => {
+      if (a.mark) a.el.innerHTML = on ? a.el.dataset.spDiff : a.el.dataset.spNew;
+      else if (a.cls) a.el.classList.toggle(a.cls, on);
+      else if (a.ghost) a.el.hidden = !on;
+    });
+    const btn = document.getElementById('sp-rev-toggle');
+    if (btn) { btn.setAttribute('aria-pressed', String(on)); btn.textContent = on ? 'hide changes' : 'show changes'; }
+    try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch {}
+    // Re-place pins after the text moved.
+    window.dispatchEvent(new Event('resize'));
+  }
+  (async () => {
+    const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
+    const base = (META.publicBasePath || '') + '/';
+    let meta = null;
+    try { meta = await (await fetch(base + 'api/plans/' + encodeURIComponent(planId), { cache: 'no-cache' })).json(); } catch {}
+    const hist = (meta && meta.history) || [];
+    const mine = hist.find(h => h.version === V) || {};
+    const total = hist.length || N;
+    const bar = document.createElement('span');
+    bar.className = 'sp-rev';
+    bar.innerHTML = ` · Revision ${V} of ${total}${mine.label ? ' (' + escH(mine.label) + ')' : ''}` +
+      (N > 1 ? ` · <span id="sp-rev-chg">comparing with ${PREV}…</span> — <button type="button" id="sp-rev-toggle" aria-pressed="false">show changes</button> · <a href="#" data-rev="${PREV}" title="Open the previous revision">${PREV}</a>` : ' · first revision') +
+      (N < total ? ` · <a href="#" data-rev="v${N + 1}" title="Open the next revision">v${N + 1}</a>` : '');
+    ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(t => bar.addEventListener(t, e => e.stopPropagation()));
+    // A revision opens in the page's Plans tab (one URL, #view=plans&v=…).
+    bar.addEventListener('click', e => {
+      const a = e.target.closest('a[data-rev]');
+      if (!a) return;
+      e.preventDefault();
+      postToParent({ type: 'annotate:open-version', version: a.dataset.rev });
+    });
+    const scope = document.querySelector('.aa');
+    if (!scope) return;
+    let banner = scope.querySelector('.plan-scope');
+    if (!banner) { banner = document.createElement('div'); banner.className = 'plan-scope'; banner.innerHTML = '<strong>Plan</strong>'; scope.prepend(banner); }
+    banner.appendChild(bar);
+    if (N <= 1) return;
+    let prevDoc;
+    try {
+      const r = await fetch(base + 'plans/' + encodeURIComponent(planId) + '/' + PREV + '.html', { cache: 'no-cache' });
+      if (!r.ok) throw new Error(String(r.status));
+      prevDoc = new DOMParser().parseFromString(await r.text(), 'text/html');
+    } catch { document.getElementById('sp-rev-chg').textContent = PREV + ' could not be read'; return; }
+    const n = apply(prevDoc);
+    document.getElementById('sp-rev-chg').textContent = n ? n + (n === 1 ? ' section' : ' sections') + ' changed since ' + PREV : 'No changes since ' + PREV;
+    const btn = document.getElementById('sp-rev-toggle');
+    btn.addEventListener('click', () => show(btn.getAttribute('aria-pressed') !== 'true'));
+    let pref = null;
+    try { pref = localStorage.getItem(KEY); } catch {}
+    let top = '';
+    try { top = window.parent.location.hash; } catch {}
+    const h = new URLSearchParams(top.replace(/^#/, ''));
+    const want = h.has('changes') ? h.get('changes') === '1' : pref !== 'off';
+    if (n && want) show(true);
+  })();
+}
+
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
-  if (SUPPORTING_DOCUMENT) {
-    document.body.classList.add(READ_ONLY_REFERENCE ? 'annotate-reference' : 'annotate-document');
-    document.querySelectorAll('table').forEach(table => {
-      if (table.closest('.wrap,.annotate-table-scroll')) return;
-      const wrap = document.createElement('div');
-      wrap.className = 'annotate-table-scroll';
-      wrap.tabIndex = 0;
-      wrap.setAttribute('role', 'region');
-      wrap.setAttribute('aria-label', 'Scrollable table');
-      table.before(wrap);
-      wrap.appendChild(table);
-    });
-    document.querySelectorAll('h2,h3,h4').forEach(heading => {
-      if (/^(questions for chang|open decisions|decision list|questions needing a decision)$/i.test(heading.textContent.trim())) heading.hidden = true;
-    });
-  }
+  initPlanChanges();
   wireClicks();
   wireBridge();
+  wireSelectionComments();
+  wireCommentableHover();
+  wirePageLinks();
+  ensureAffordanceStyle();
+  wrapScrollTables();
   installBadgeMutObs();
   wireHoverLinking();
   // Before the first paint settles, so a later version opens compact.
@@ -2672,4 +3012,5 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+
 })();

@@ -9,9 +9,13 @@ Use the installed package executable. The module fallback works only in its Pyth
 | Create first page | `new DIR --from page.md --project NAME --publish` |
 | Pose new feedback | Add `--ask` only when source has cards |
 | Update progress | `project PROJECT/SLUG --from project.json` |
-| Read/import formatted copy | `copy PROJECT/SLUG [--block ID | --from copy.json]` |
+| Read/import Library | `library PROJECT/SLUG [--block ID | --from copy.json] --json` (`copy` is equivalent) |
+| Findings questions | `ask PROJECT/SLUG --from cards.json --category findings --set design --json` |
+| Fixed with proof | `finding PROJECT/SLUG --fixed 11 --proof proof.png --proof https://example.test/check --note "Verified" --json` |
+| Publish plan revision | `plan PROJECT/SLUG rollout --from plan.md --title "Rollout" --label "Rehearsed" --json` |
+| Explicit second page | `new DIR --from page.md --publish --exception "Orchestrator requested worksheet"` |
 | Later review version | `new DIR --from page.md --version vN --publish --ask` |
-| Read submitted feedback | `inbox PROJECT/SLUG --unread` and `cards PROJECT/SLUG` |
+| Read submitted feedback | `inbox PROJECT/SLUG --unread` once, unfiltered: that read acknowledges the delivered round. Then `cards PROJECT/SLUG`. `--category findings` narrows a later read and never acknowledges delivery |
 | Handoff ownership | `claim PROJECT/SLUG` from successor session |
 | Record response | `addressed PROJECT/SLUG ID --response TEXT` |
 | Apply prior feedback | `resolve PROJECT/SLUG ID --in-version vN --anchor ANCHOR --response TEXT` |
@@ -31,3 +35,5 @@ Environment overrides: `ANNOTATE_CONFIG_DIR`, `ANNOTATE_PROJECTS_TOML`, `ANNOTAT
 `monitor`, `connect`, `disconnect`, `sessions`, `send`, `watch`, and `hook-check` support legacy or non-Orca integration. They are not required for server-owned Orca round delivery. Never claim unrelated pages or manually edit owner metadata.
 
 Account migration: an operator can map a verified reviewer login to prior logins with `[PROJECT.reviewer_aliases]` and `"current@login" = ["previous@login"]`. This permits submitting that reviewer's saved drafts without rewriting authors; other reviewers retain separate drafts.
+
+Categories are `review`, `library`, `findings`, `plans`. Omitted category means all categories when reading; old comments default to Review, or Library for `copy:` anchors. Findings cards can carry `category` and `set` in JSON; flags provide defaults. Fixes require at least one proof URL or file. Files must be png, jpg, jpeg, gif, webp, pdf, txt, md, log, json or csv; link anything else by HTTPS URL. They must resolve inside the caller cwd (for MCP, the MCP server's working directory) and fit the 10 MiB attachment limit; symlink escapes and hard links fail. They are copied into the page attachments directory; the page opens only images and PDF inline. Plans accept Markdown or HTML (at most 4 MiB), validate safe plan IDs, and append revisions without changing Review. MCP offers `mark_finding_fixed`, `list_cards`, and `read_inbox` with category filters; `list_comments` also accepts a category.

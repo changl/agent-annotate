@@ -14,6 +14,7 @@ Covers interaction-contract items 13 (native controls) and 14 (rail collapse).
 """
 
 import json
+import re
 import socket
 from pathlib import Path
 
@@ -55,6 +56,10 @@ def _free_port():
 def _render_legacy_slug(tmp_path):
     """Substitute template.html's placeholders into a legacy slug layout."""
     html = TEMPLATE.read_text(encoding="utf-8")
+    # This controls/rails fixture contains no Mermaid, D3, or Plot diagrams.
+    # Omit their unused CDN scripts so offline conformance cannot fail on a
+    # third-party download; the native template code remains unchanged.
+    html = re.sub(r'<script src="https://cdn\.jsdelivr\.net/[^"\n]+"[^>]*></script>', '', html)
     for token, value in {
         "{{CANVAS}}": CANVAS,
         "{{ANCHOR_REGISTRY}}": json.dumps(REGISTRY),
@@ -105,9 +110,9 @@ class _NullProcess:
 
 
 def _page(browser):
-    return browser.new_page(
-        viewport={"width": 1280, "height": 800},
-    )
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.set_default_navigation_timeout(15_000)
+    return page
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")

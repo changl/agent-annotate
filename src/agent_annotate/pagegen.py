@@ -839,6 +839,24 @@ def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
     return template.replace("{{CANVAS}}", canvas)
 
 
+def render_plan(text: str, plan_id: str, *, title: str | None = None) -> tuple[str, str]:
+    """Render an independent Markdown plan without writing Review/page metadata."""
+    meta, body = parse_front_matter(text)
+    for key in meta:
+        if key not in FRONT_MATTER_KEYS:
+            raise PageGenError(f"unknown front-matter key {key!r}")
+    meta["title"] = title or meta.get("title") or plan_id.replace("-", " ").capitalize()
+    meta["slug"] = f"plan:{plan_id}"
+    meta.setdefault("date", datetime.date.today().isoformat())
+    blocks = parse_blocks(body)
+    canvas, registry, _cards = render(meta, blocks)
+    problems = lint(canvas, registry)
+    if problems:
+        raise PageGenError("plan rejected by lint: " + "; ".join(problems))
+    # The HTTP plan route supplies the actual version; no Review version is embedded.
+    return build_html(meta, canvas, registry, ""), meta["title"]
+
+
 def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None) -> dict:
     """Parse, render, lint and write every file a publishable page needs."""
@@ -1010,12 +1028,16 @@ def cmd_new(args) -> int:
     slug_dir = Path(args.slug_dir).expanduser().resolve()
     from .cli import _slug_project
     args.project, _ = _slug_project(slug_dir, getattr(args, "project", None))
-    if not getattr(args, "standalone", False):
-        from .workspace import duplicate_page
+    from .workspace import duplicate_message, duplicate_page, exception_reason
+    try:
+        reason = exception_reason(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if not reason:
         duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
         if duplicate:
-            from .urls import page_url
-            print(f"ERROR: reuse project page {duplicate['slug_dir']}\n  URL: {page_url(duplicate)}", file=sys.stderr)
+            print(duplicate_message(duplicate), file=sys.stderr)
             return 2
     try:
         result = generate(source, slug_dir, args.version, args.label)
@@ -1052,7 +1074,9 @@ def cmd_new(args) -> int:
         if new_version:
             print(f"    {_inv()} publish-version {slug_dir} {version} "
                   f"--label {result['label']!r}")
-        print(f"    {_inv()} publish {slug_dir}")
+        from shlex import quote
+        exception_flag = f" --exception {quote(reason)}" if reason else ""
+        print(f"    {_inv()} publish {slug_dir}{exception_flag}")
 
     if result["cards"]:
         ask_cmd = (f"{_inv()} ask {slug} --from {result['cards_json']} "
@@ -1075,6 +1099,7 @@ def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
         hostname=getattr(args, "hostname", None),
         public=getattr(args, "public", False),
         standalone=getattr(args, "standalone", False),
+        exception=getattr(args, "exception", None),
         path_prefix=None,
         skip_js_lint=False,
         no_verify=False,
@@ -1116,7 +1141,8 @@ def add_parser(sub) -> None:
     sp.add_argument("--example", action="store_true",
                     help="print a complete example document and exit")
     sp.add_argument("--project", default=None)
-    sp.add_argument("--standalone", action="store_true", help="explicit independent artifact")
+    sp.add_argument("--exception", metavar="REASON", help="explicit reason for a second project page")
+    sp.add_argument("--standalone", action="store_true", help="alias for --exception standalone")
     sp.add_argument("--port", type=int, default=None)
     sp.add_argument("--transport", default=None,
                     choices=["funnel", "local", "tailscale", "cloudflare", "cloudflare_tailscale"])

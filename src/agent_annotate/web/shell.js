@@ -1,8 +1,8 @@
 // ── annotate universal shell — chrome logic ──────────────────────────
 // This file drives the version-stable chrome: version rail, comment
 // drawer, ball-in-court badges, author identity, general feedback.
-// It NEVER reaches into iframe content directly — all cross-frame
-// communication goes through postMessage (see the "Bridge" section).
+// Cross-frame communication goes through postMessage pinned to this
+// page's own origin (see the "Bridge" section).
 // Identical behavior across every slug/project/version.
 (function () {
 'use strict';
@@ -11,6 +11,20 @@
 // The shell is served at <public_base_path>/ ; all API calls are relative
 // to that same origin+prefix so this works both on localhost and behind
 // the Cloudflare tunnel's /schema (or /prem-fin, etc.) prefix.
+// One page per project: this shell serves every document tab of the
+// project page — Review (the page's own versions) and Plans (the selected
+// plan's revisions, plans/<id>/vN.html). Both share the page's one comment
+// store; a comment belongs to a document by its category and `doc`. DOC is
+// the document whose version state is loaded into the variables below;
+// DOC_STATE keeps the other document's, and withDoc() swaps it in for a
+// synchronous read (counts, Send summary). VIEW_DOC is the document on
+// screen (null while Library, Findings or Linked pages is shown); rendering
+// only ever happens for VIEW_DOC.
+let DOCS = ['review'];
+let DOC = 'review';
+let VIEW_DOC = null;
+let PLANS = [];       // [{id, title, current, history}] from ./api/categories
+let PLAN_ID = null;   // the plan the Plans tab shows
 function apiUrl(path) {
   return path; // relative fetch — browser resolves against current document URL
 }
@@ -23,6 +37,22 @@ const BRIDGE_ORIGIN = (() => {
     return /^https?:\/\//.test(inherited) ? inherited : null;
   } catch { return null; }
 })();
+function postToFrame(data) {
+  const frame = document.getElementById('content-frame');
+  if (frame && frame.contentWindow && BRIDGE_ORIGIN) frame.contentWindow.postMessage(data, BRIDGE_ORIGIN);
+}
+// The document a comment belongs to: 'review', 'plans' (the plan on
+// screen), or null for Library and Findings items.
+function commentCategory(c) {
+  if (c.category) return c.category;
+  return String(c.anchor_id || '').startsWith('copy:') ? 'library' : 'review';
+}
+function docOf(c) {
+  const cat = commentCategory(c);
+  if (cat === 'review') return 'review';
+  if (cat === 'plans' && PLAN_ID && c.doc === 'plan:' + PLAN_ID) return 'plans';
+  return null;
+}
 
 let STORE = { schema_version: 2, anchors: {}, archived: {} };
 let META = { current: null, history: [], content_stamps: {} };
@@ -37,20 +67,70 @@ let SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
 // null = legacy server (404) → every new behavior is off and the chrome acts
 // exactly as before: no defer_push, no round bar, no /api/rounds calls.
 let CAPS = null;
-const READ_ONLY_REFERENCE = new URL(location.href).searchParams.get('embed') === 'reference';
-let activeFilter = 'all';
-let showArchivedInline = false;
-let showAllVersions = false; // drawer scope: current version only vs every version
-let unreadFirst = false;     // drawer ordering: unread comments sorted to top
+// Feedback prototype: the chip filters, "All versions" and "Unread first" are
+// replaced by collapsible sections (B2) and the History tab (B3).
+// SECTION_OPEN[key] overrides the default open state of a section.
+let SECTION_OPEN = {};
+const SECTION_DEFAULT_OPEN = { needs: true, ready: true, waiting: true, done: false, archived: false };
+let activeTab = 'feedback';
+const cardExpanded = {};   // C1: answered cards shown in full instead of one line
+const earlierOpen = {};    // B3: "n earlier replies" expanded
+let openMenuId = null;     // C3: the card whose ⋯ menu is open
 let highlightedCommentId = null;
+
+// ── Icons (Lucide, ISC License, (c) Lucide Icons and Contributors) ──
+const ICONS = {
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  chevDown: '<path d="m6 9 6 6 6-6"/>',
+  chevRight: '<path d="m9 18 6-6-6-6"/>',
+  chevUp: '<path d="m18 15-6-6-6 6"/>',
+  locate: '<line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/>',
+};
+function ico(name) {
+  return '<svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (ICONS[name] || '') + '</svg>';
+}
+
+// ── Theme (X1/E4): stock daisyUI dark (default) and light ──
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  const content = document.getElementById('content-frame');
+  try { if (content && content.contentDocument) content.contentDocument.documentElement.setAttribute('data-theme', t); } catch {}
+  postToFrame({ type: 'annotate:theme', theme: t });
+  document.dispatchEvent(new CustomEvent('annotate:theme', { detail: t }));
+  const btn = document.getElementById('theme-toggle');
+  if (btn) {
+    const next = t === 'dark' ? 'light' : 'dark';
+    btn.innerHTML = ico(t === 'dark' ? 'sun' : 'moon');
+    btn.setAttribute('aria-label', 'Switch to ' + next + ' theme');
+    btn.title = 'Switch to ' + next + ' theme';
+  }
+}
+document.getElementById('content-frame').addEventListener('load', () => applyTheme(currentTheme()));
+try { const t = localStorage.getItem('annotate:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch {}
 // T11: unposted drafts survive re-renders, VERSION SWITCHES, and reloads.
 // Keys: comment id for reply boxes, 'gf:<version>' for general feedback.
+// Drafts are kept per page and document, since two documents can share a
+// version name (Review v6, Plans v6).
 let DRAFTS = {};
-let draftsSaveTimer = null;
+const draftsSaveTimer = {};
+function draftsKey(doc) {
+  return 'annotate:drafts:' + location.pathname + ':' + (doc === 'plans' ? 'plan:' + PLAN_ID : doc);
+}
+function loadDrafts(doc) {
+  try { return JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
+}
 function saveDraftsSoon() {
-  clearTimeout(draftsSaveTimer);
-  draftsSaveTimer = setTimeout(() => {
-    try { localStorage.setItem('annotate:drafts:' + location.pathname, JSON.stringify(DRAFTS)); } catch {}
+  const key = draftsKey(DOC), drafts = DRAFTS;
+  clearTimeout(draftsSaveTimer[key]);
+  draftsSaveTimer[key] = setTimeout(() => {
+    try { localStorage.setItem(key, JSON.stringify(drafts)); } catch {}
   }, 400);
 }
 function setDraft(key, value) {
@@ -75,7 +155,6 @@ function isMobileLayout() {
 // re-rendered DOM.
 function setMobileSheetOpen(open) {
   document.body.classList.toggle('is-mobile-sheet-open', open);
-  if (open && workspaceView === 'progress') { selectWorkspaceView('feedback'); return; }
   if (open) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
 function isMobileSheetOpen() {
@@ -123,20 +202,38 @@ async function resolveIdentity() {
 function updateAuthorIndicator() {
   const ind = document.getElementById('author-ind');
   ind.textContent = IDENTITY
-    ? authorValue(IDENTITY)
-    : 'Review access required';
+    ? '\u{1F464} ' + authorValue(IDENTITY)
+    : '\u{1F512} Review access required';
   ind.title = IDENTITY ? 'Reviewer identity' : 'Open the private review link';
+  // E1: the reviewer lives in the avatar menu; the button shows initials.
+  const ini = document.getElementById('who-initials');
+  if (ini) {
+    const src = IDENTITY ? (IDENTITY.name || IDENTITY.email || '') : '';
+    const words = src.replace(/[<(].*$/, '').trim().split(/\s+/).filter(Boolean);
+    ini.textContent = words.length ? words.slice(0, 2).map(w => w[0].toUpperCase()).join('') : '?';
+  }
 }
 
 function authorLabel(record) {
   if (!record) return 'anonymous';
   const id = record.author_email || record.author || '';
   if (id.startsWith('reviewer:')) return record.author_name || 'Reviewer';
-  if (id.startsWith('agent:')) return record.author_name || 'Agent';
   if (record.author_name && record.author_email && record.author_name !== record.author_email) {
     return `${record.author_name} <${record.author_email}>`;
   }
   return record.author_email || record.author || 'anonymous';
+}
+
+// Library and Findings name people the way final/ does: the reviewer's own
+// records carry the reviewer's display name (as in the avatar menu), never a
+// raw login; anyone else keeps their name, then their id.
+function whoName(record) {
+  if (!record) return 'anonymous';
+  const id = String(record.author_email || record.author || record.by || '');
+  const mine = IDENTITY && id && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(id);
+  if (mine && IDENTITY.name) return IDENTITY.name;
+  if (record.author_name && record.author_name !== id) return record.author_name;
+  return authorLabel({ author: id, author_name: record.author_name });
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────
@@ -144,6 +241,7 @@ function authorQuery() {
   return AUTHOR ? ('?author=' + encodeURIComponent(AUTHOR)) : '';
 }
 
+// The page's one comment store, shared by every document and tab.
 async function loadStore() {
   try {
     const r = await fetch(apiUrl('./comments.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
@@ -162,7 +260,7 @@ async function loadStore() {
 // body order, so a response item never has three competing labels.
 function computeNumbers() {
   NUM_MAP = {};
-  const all = flattenAll(true);
+  const all = flattenStore(true);
   const used = new Set();
   for (const c of all) {
     if (Number.isInteger(c.number) && c.number > 0 && !NUM_MAP[c.id]) {
@@ -192,11 +290,17 @@ function computeNumbers() {
   }
 }
 
+// A document's versions: the page's own (current.meta.json) for Review,
+// the selected plan's revisions (./api/plans/<id>) for Plans.
 async function loadMeta() {
+  const doc = DOC;
   try {
-    const r = await fetch(apiUrl('./current.meta.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
+    const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
+    const r = await fetch(apiUrl(url), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     const meta = await r.json();
+    if (doc !== DOC) return false;
+    if (doc === 'plans') { META = { current: meta.current, history: meta.history || [], content_stamps: {}, title: meta.title }; return true; }
     if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
       HAS_SUMMARY = true;
@@ -211,16 +315,21 @@ async function loadMeta() {
 }
 
 async function loadSeen() {
+  const doc = DOC;
+  // ↑NEW compares Review's content stamps; plan revisions have none.
+  if (doc !== 'review') { SEEN = {}; return true; }
   try {
     const r = await fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' });
     if (!r.ok) return false;
     const j = await r.json();
+    if (doc !== DOC) return false;
     SEEN = j.seen || {};
     return true;
   } catch { return false; }
 }
 
 async function markSeen(version) {
+  if (DOC !== 'review') return;
   try {
     await fetch(apiUrl('./api/seen'), {
       method: 'POST',
@@ -251,6 +360,7 @@ function readStateOf(c) {
   return rec.sig === commentSig(c) ? 'read' : 'new-activity';
 }
 
+// Read state is per viewer and shared by every document.
 async function loadReadState() {
   try {
     const r = await fetch(apiUrl('./api/read-state' + authorQuery()), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
@@ -274,20 +384,39 @@ function markRead(comments) {
     READ[c.id] = { ts: now, sig };
     items.push({ id: c.id, sig });
   }
+  return postReadItems(items);
+}
+// Library items are read by key ('copy:<block id>') at their latest revision.
+function markReadItems(list) {
+  const now = new Date().toISOString();
+  const items = list.filter(it => !(READ[it.id] && READ[it.id].sig === it.sig));
+  items.forEach(it => { READ[it.id] = { ts: now, sig: it.sig }; });
+  return postReadItems(items);
+}
+function postReadItems(items) {
   if (!items.length) return Promise.resolve(null);
   return fetch(apiUrl('./api/read-state' + authorQuery()), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items }),
-  }).catch(() => null);
+  }).then(r => { refreshCountsSoon(); return r; }).catch(() => null);
+}
+// The header's unread counts are the server's; refetch them once a burst of
+// read marks has landed, so opening an item clears its count at once.
+let countsRefresh = null;
+function refreshCountsSoon() {
+  clearTimeout(countsRefresh);
+  countsRefresh = setTimeout(async () => { if (await loadCategories() && window.AA) window.AA.changed(); }, 250);
 }
 
 function findCommentById(id) {
-  for (const c of flattenAll(true)) if (c.id === id) return c;
+  for (const c of flattenStore(true)) if (c.id === id) return c;
   return null;
 }
 
-async function apiCreateComment(anchorId, anchorLabel, text, version, target) {
+// `extra` carries a Library/Findings comment's category; a Plans comment
+// names its plan document.
+async function apiCreateComment(anchorId, anchorLabel, text, version, target, extra) {
   try {
     const r = await fetch(apiUrl('./api/comments' + authorQuery()), {
       method: 'POST',
@@ -302,6 +431,7 @@ async function apiCreateComment(anchorId, anchorLabel, text, version, target) {
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
+        ...(extra || (DOC === 'plans' ? { category: 'plans', doc: 'plan:' + PLAN_ID } : {})),
       }),
     });
     if (r.ok) return await r.json();
@@ -440,12 +570,12 @@ function selectVerdictId() {
 function canonicalOptionId(id) {
   return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
 }
-async function apiRoundSubmit(note) {
+async function apiRoundSubmit(note, send) {
   try {
     const r = await fetch(apiUrl('./api/rounds/submit' + authorQuery()), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: note || undefined, version: CURRENT_VERSION }),
+      body: JSON.stringify(Object.assign({ note: note || undefined, version: CURRENT_VERSION }, send || {})),
     });
     if (r.ok) { historyDirty = true; return await r.json(); }
   } catch {}
@@ -489,9 +619,9 @@ async function apiDecisionFallback(id, verdict, text) {
   return await apiPushSingle(id);
 }
 
-async function apiPushAll() {
+async function apiPushAll(send) {
   try {
-    const r = await fetch(apiUrl('./api/push-session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await fetch(apiUrl('./api/push-session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(send || {}) });
     if (r.ok) return await r.json();
   } catch {}
   return null;
@@ -546,7 +676,8 @@ function statusLabel(c, cls) {
   return 'Done';
 }
 
-function flattenAll(includeArchived) {
+// Every comment on the page (all documents and tabs).
+function flattenStore(includeArchived) {
   const all = [];
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
     for (const c of items) all.push(Object.assign({}, c, { anchor_id: aid }));
@@ -558,6 +689,10 @@ function flattenAll(includeArchived) {
   }
   return all;
 }
+// The comments of the document whose state is loaded (DOC).
+function flattenAll(includeArchived) {
+  return flattenStore(includeArchived).filter(c => docOf(c) === DOC);
+}
 
 function countsForVersion(version) {
   // A card that follows the viewer is attributed to the version ON SCREEN
@@ -568,7 +703,7 @@ function countsForVersion(version) {
   let review = 0, waiting = 0, done = 0;
   for (const c of all) {
     const cls = classify(c);
-    if (cls === 'review' || isRoundPending(c)) review++;
+    if (cls === 'review') review++;
     else if (cls === 'waiting') waiting++;
     else done++;
   }
@@ -593,389 +728,79 @@ let HAS_SUMMARY = false;
 let SUMMARY_PROJECT = null;
 let SUMMARY_DELIVERY = null;
 let projectSnapshot = '';
-let workspaceView = null;
-let theme = 'dark';
-let hasCopy = false;
-let copyController = null;
-let copyMounting = false;
-let HISTORY_DATA = null;
-let historyLoading = false;
-let historyDirty = false;
-function updateWorkspaceTitle(fallback) {
-  const title = PROJECT.title || fallback || document.title || 'annotate';
-  document.getElementById('hdr-title').textContent = title;
-  document.getElementById('hdr-title').title = title;
-  document.title = title;
-}
-function mountCopy() {
-  if (copyController || copyMounting || !window.AnnotateCopy) return;
-  copyMounting = true;
-  Promise.resolve(window.AnnotateCopy.mount(document.getElementById('copy-workspace'), {identity:IDENTITY,theme}))
-    .then(controller => { copyController = controller; })
-    .catch(() => {})
-    .finally(() => { copyMounting = false; });
-}
-function applyArchiveTheme() {
-  const frame = document.getElementById('rounds-frame');
-  try {
-    if (!BRIDGE_ORIGIN || frame.contentWindow.location.origin !== BRIDGE_ORIGIN) return;
-    const doc = frame.contentDocument;
-    doc.documentElement.dataset.theme = theme;
-    doc.documentElement.classList.add('annotate-archive');
-    doc.body.classList.add('annotate-archive');
-    const stylesheet = document.querySelector('link[href$="content.css"]');
-    if (stylesheet && !doc.querySelector('link[href$="content.css"]')) {
-      const link = doc.createElement('link');
-      link.rel = 'stylesheet'; link.href = stylesheet.href; doc.head.appendChild(link);
-    }
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      if (node.parentElement?.namespaceURI !== 'http://www.w3.org/1999/xhtml'
-          || node.parentElement.closest('a,pre,code,script,style,textarea,select,button,[contenteditable]')) continue;
-      const html = ticketsHTML(node.textContent);
-      if (html.includes('class="ticket-link"')) nodes.push([node, html]);
-    }
-    for (const [node, html] of nodes) {
-      const span = doc.createElement('span'); span.innerHTML = html; node.replaceWith(span);
-    }
-    doc.querySelectorAll('a[href]').forEach(link => {
-      try {
-        const url = new URL(link.getAttribute('href'), doc.baseURI);
-        if (['http:','https:'].includes(url.protocol) && !link.getAttribute('href').startsWith('#')) {
-          link.target = '_blank'; link.rel = 'noopener noreferrer';
-        }
-      } catch {}
-    });
-    doc.querySelectorAll('button,input,select,textarea').forEach(control => { control.disabled = true; });
-  } catch { /* A missing or foreign snapshot never gets parent access. */ }
-}
-function historyVersionLabel(version) {
-  return [version.source_page, version.source_version || version.version,
-    version.ts ? fmtTs(version.ts) : null, version.current ? 'current' : null,
-    version.available === false ? 'unavailable' : null].filter(Boolean).join(' · ');
-}
-async function loadHistory() {
-  if ((HISTORY_DATA && !historyDirty) || historyLoading) return;
-  historyLoading = true;
-  const status = document.getElementById('rounds-status');
-  status.textContent = 'Loading previous rounds…';
-  status.hidden = false;
-  try {
-    const response = await fetch(apiUrl('./api/history'), {cache:'no-store',signal:AbortSignal.timeout(10000)});
-    const data = await response.json();
-    if (!response.ok || !Array.isArray(data.versions) || !Array.isArray(data.rounds)) throw new Error();
-    HISTORY_DATA = data;
-    historyDirty = false;
-    const select = document.getElementById('rounds-select');
-    select.replaceChildren();
-    for (const [label, rows, prefix] of [['Submitted reviews',data.rounds,'round'], ['Documents',data.versions,'version']]) {
-      if (!rows.length) continue;
-      const group = document.createElement('optgroup');
-      group.label = label;
-      rows.forEach((row, index) => {
-        const option = document.createElement('option');
-        option.value = `${prefix}:${index}`;
-        option.textContent = prefix === 'round'
-          ? [row.ts ? fmtTs(row.ts) : `Review ${index + 1}`, row.version, `${(row.answers || []).length} answers`].filter(Boolean).join(' · ')
-          : historyVersionLabel(row);
-        option.title = row.label || option.textContent;
-        group.appendChild(option);
-      });
-      select.appendChild(group);
-    }
-    select.disabled = !select.options.length;
-    status.textContent = select.options.length ? '' : 'No document versions or submitted reviews were recorded.';
-    status.hidden = !!select.options.length;
-    renderHistorySelection();
-  } catch {
-    status.textContent = 'Previous rounds could not be loaded. ';
-    const retry = document.createElement('button');
-    retry.type = 'button'; retry.className = 'btn btn-ghost btn-xs'; retry.textContent = 'Retry';
-    retry.onclick = loadHistory;
-    status.appendChild(retry);
-  } finally { historyLoading = false; }
-}
-function historyAnswerHTML(answer, metadata = false) {
-  return `<article class="history-answer"><div class="history-answer-heading">${answer.number ? `<span class="citem-num">#${esc(answer.number)}</span>` : ''}${answer.prompt ? `<strong>${ticketsHTML(answer.prompt)}</strong>` : ''}<span class="history-verdict">${esc(DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '')}</span></div>${answer.text ? `<p>${ticketsHTML(answer.text)}</p>` : ''}${metadata ? `<div class="history-answer-meta">${esc(answer.ts ? fmtTs(answer.ts) : '')}${answer.by ? ' · ' + esc(answer.by) : ''}</div>` : ''}</article>`;
-}
-function historyAnswersHTML(round) {
-  const answers = Array.isArray(round.answers) ? round.answers : [];
-  return `<section class="history-round"><div class="history-round-heading"><strong>${esc(round.ts ? fmtTs(round.ts) : 'Submitted review')}</strong><span>${esc(round.by ? authorLabel({author:round.by}) : '')}</span></div>`
-    + (round.note ? `<p class="history-note">${ticketsHTML(round.note)}</p>` : '')
-    + (answers.length ? answers.map(answer => historyAnswerHTML(answer)).join('') : '<p class="history-empty">No answer details were recorded for this review.</p>')
-    + '</section>';
-}
-function versionAnswersHTML(version) {
-  const answers = Array.isArray(version.answers) ? version.answers : [];
-  if (answers.length) {
-    return '<section class="history-round"><div class="history-round-heading"><strong>Recorded answers during this version</strong></div>'
-      + answers.map(answer => historyAnswerHTML(answer, true)).join('') + '</section>';
-  }
-  const rounds = HISTORY_DATA.rounds.filter(round => round.version === version.version);
-  return rounds.length ? rounds.map(historyAnswersHTML).join('') : '<p class="history-empty">No answers recorded for this version.</p>';
-}
-function showHistoryDocument(version) {
-  if (!version) return;
-  const status = document.getElementById('rounds-status');
-  const meta = document.getElementById('rounds-selection-meta');
-  const description = [version.label, historyVersionLabel(version)].filter(Boolean).join(' · ');
-  meta.textContent = description + (version.available === false ? '' : ' · Read-only snapshot');
-  meta.title = meta.textContent;
-  if (version.available === false) {
-    document.getElementById('rounds-document').hidden = true;
-    status.hidden = false;
-    status.textContent = 'The original document was not retained for this version.';
-    return;
-  }
-  status.hidden = true;
-  const frame = document.getElementById('rounds-frame');
-  document.getElementById('rounds-document').hidden = false;
-  frame.title = `Historical document: ${historyVersionLabel(version)}`;
-  const url = './content?v=' + encodeURIComponent(version.version) + '&readonly=1';
-  if (frame.getAttribute('src') !== url) frame.src = url;
-}
-function renderHistorySelection() {
-  if (!HISTORY_DATA) return;
-  const selected = document.getElementById('rounds-select').value;
-  if (!selected) return;
-  const [kind, value] = selected.split(':');
-  const index = Number(value);
-  const review = document.getElementById('rounds-review');
-  const documentBox = document.getElementById('rounds-document');
-  const meta = document.getElementById('rounds-selection-meta');
-  review.hidden = true; review.replaceChildren(); documentBox.hidden = true; meta.textContent = '';
-  document.getElementById('rounds-status').hidden = true;
-  if (kind === 'round') {
-    const round = HISTORY_DATA.rounds[index];
-    if (!round) return;
-    review.hidden = false; review.innerHTML = historyAnswersHTML(round);
-    meta.textContent = [round.version, 'Submitted review'].filter(Boolean).join(' · ');
-    meta.title = meta.textContent;
-    const version = HISTORY_DATA.versions.find(item => item.version === round.version);
-    if (version && version.available !== false) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'btn btn-ghost btn-sm'; button.textContent = 'Document as recorded';
-      button.onclick = () => showHistoryDocument(version);
-      review.prepend(button);
-    } else {
-      const missing = document.createElement('p');
-      missing.className = 'history-empty';
-      missing.textContent = 'No original document was retained for this review.';
-      review.prepend(missing);
-    }
-  } else if (kind === 'version') {
-    const version = HISTORY_DATA.versions[index];
-    if (!version) return;
-    showHistoryDocument(version);
-    review.hidden = false;
-    review.innerHTML = versionAnswersHTML(version);
-  }
-}
-function applyTheme() {
-  document.documentElement.dataset.theme = theme;
-  const toggle = document.getElementById('theme-toggle');
-  toggle.textContent = theme === 'dark' ? 'Light' : 'Dark';
-  toggle.setAttribute('aria-label', `Use ${theme === 'dark' ? 'light' : 'dark'} theme`);
-  const frame = document.getElementById('content-frame');
-  if (frame && frame.contentWindow && BRIDGE_ORIGIN) frame.contentWindow.postMessage({type:'annotate:theme', theme}, BRIDGE_ORIGIN);
-  const extra = document.getElementById('workspace-extra-frame');
-  if (extra && extra.contentWindow && BRIDGE_ORIGIN) extra.contentWindow.postMessage({type:'annotate:workspace-theme', theme}, BRIDGE_ORIGIN);
-  applyArchiveTheme();
-}
-function progressItems() {
-  return (PROJECT.modules || []).filter(m => m.kind !== 'links').flatMap(m => m.items.map(i => [m.id, JSON.stringify(i)]));
-}
-function markProgressSeen() {
-  try { localStorage.setItem('annotate:progress:' + location.pathname, JSON.stringify(progressItems())); } catch {}
-}
-function workspaceTabs() {
-  const tabs = PROJECT.tabs || [];
-  return (PROJECT.modules || []).length || tabs.some(t => t.kind === 'document')
-    ? tabs : [...tabs, {id:'details',label:'Details',kind:'document'}];
-}
-function selectWorkspaceView(id) {
-  if (READ_ONLY_REFERENCE) id = 'reference';
-  workspaceView = id;
-  const extra = workspaceTabs().find(t => t.id === id && t.kind !== 'copy' && t.kind !== 'document');
-  const copy = id === 'copy' && hasCopy;
-  const rounds = id === 'rounds';
-  document.getElementById('main-workspace').hidden = !!extra || copy || rounds;
-  document.getElementById('workspace-extra').hidden = !extra;
-  document.getElementById('copy-workspace').hidden = !copy;
-  document.getElementById('rounds-workspace').hidden = !rounds;
-  document.body.dataset.workspaceView = extra ? 'extra' : id;
-  document.body.classList.remove('is-mobile-sheet-open');
-  document.getElementById('drawer').classList.remove('collapsed');
-  if (copy) mountCopy();
-  if (rounds) loadHistory();
-  if (extra) {
-    const frame = document.getElementById('workspace-extra-frame');
-    const url = new URL(extra.url);
-    url.searchParams.set('embed', 'reference');
-    if (frame.getAttribute('src') !== url.href) frame.src = url.href;
-    frame.title = extra.label;
-  }
-  if (id === 'progress') {
-    if (!projectPanel.hidden) {
-      projectPanel.open = true;
-      projectPreference(':summary', true);
-      projectPanel.querySelectorAll('.project-module').forEach(node => {
-        const module = (PROJECT.modules || []).find(m => m.id === node.dataset.module);
-        if (module && module.kind !== 'links') { node.open = true; projectPreference(module.id, true); }
-      });
-    }
-    markProgressSeen();
-  }
-  if (!extra) { mountProjectInDocument(document.getElementById('content-frame')); sendCommentCountsToFrame(); }
-  try { localStorage.setItem('annotate:view:' + location.pathname, id); } catch {}
-  renderWorkspaceTabs();
-}
-function renderWorkspaceTabs() {
-  const nav = document.getElementById('workspace-tabs');
-  if (!nav) return;
-  hasCopy = (PROJECT.tabs || []).some(t => t.kind === 'copy');
-  const tabs = workspaceTabs();
-  const keep = new Set(tabs.map(t => t.id));
-  nav.querySelectorAll('[data-extra-tab]').forEach(n => { if (!keep.has(n.dataset.workspaceTab)) n.remove(); });
-  for (const tab of tabs) {
-    let button = [...nav.querySelectorAll('[data-extra-tab]')].find(n => n.dataset.workspaceTab === tab.id);
-    if (!button) { button = document.createElement('button'); nav.appendChild(button); }
-    button.type = 'button'; button.className = 'tab'; button.setAttribute('role', 'tab');
-    button.dataset.workspaceTab = tab.id; button.dataset.extraTab = '1'; button.textContent = tab.label;
-    button.setAttribute('aria-controls', tab.kind === 'copy' ? 'copy-workspace' : tab.kind === 'document' ? 'content-frame' : 'workspace-extra');
-  }
-  const valid = ['progress', 'feedback', 'rounds', ...tabs.map(t => t.id), ...(READ_ONLY_REFERENCE ? ['reference'] : [])];
-  if (!valid.includes(workspaceView)) workspaceView = flattenAll(false).length ? 'feedback' : (PROJECT.modules || []).length ? 'progress' : 'details';
-  let seen = [];
-  try { seen = JSON.parse(localStorage.getItem('annotate:progress:' + location.pathname) || '[]'); } catch {}
-  const unseen = progressItems().filter(item => !seen.some(old => old[0] === item[0] && old[1] === item[1])).length;
-  for (const [id, count] of [['progress-new', unseen], ['feedback-new', flattenAll(false).filter(inScope).filter(c => (classify(c) === 'review' || isRoundPending(c)) && readStateOf(c) !== 'read').length]]) {
-    const badge = document.getElementById(id); badge.textContent = count; badge.hidden = count === 0;
-  }
-  nav.querySelectorAll('[data-workspace-tab]').forEach(button => {
-    const active = button.dataset.workspaceTab === workspaceView;
-    button.classList.toggle('tab-active', active); button.setAttribute('aria-selected', String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-}
-function wireWorkspace() {
-  try { theme = localStorage.getItem('annotate:theme') === 'light' ? 'light' : 'dark'; } catch {}
-  applyTheme();
-  document.getElementById('workspace-extra-frame').addEventListener('load', applyTheme);
-  document.getElementById('rounds-frame').addEventListener('load', applyArchiveTheme);
-  document.getElementById('rounds-select').addEventListener('change', renderHistorySelection);
-  window.addEventListener('resize', renderOwnerChip);
-  window.addEventListener('message', event => {
-    if (window.parent !== window && event.source === window.parent && event.origin === BRIDGE_ORIGIN
-        && event.data && event.data.type === 'annotate:workspace-theme' && ['dark','light'].includes(event.data.theme)) {
-      theme = event.data.theme; applyTheme();
-    }
-    if (event.source === document.getElementById('workspace-extra-frame').contentWindow && event.origin === BRIDGE_ORIGIN
-        && event.data && event.data.type === 'annotate:feedback-anchor') {
-      const question = flattenAll(false).find(c => c.anchor_id === event.data.anchorId);
-      if (question) focusSidebarCard(question.id);
-    }
-  });
-  document.getElementById('theme-toggle').addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem('annotate:theme', theme); } catch {}
-    applyTheme();
-  });
-  document.getElementById('copy-link-btn').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    try {
-      const response = await fetch('./api/share-link', {cache:'no-store'});
-      const data = await response.json();
-      if (!response.ok || !data.url) return;
-      await navigator.clipboard.writeText(data.url);
-      button.textContent = 'Copied';
-      setTimeout(() => { button.textContent = 'Copy link'; }, 2000);
-    } catch { button.textContent = 'Copy failed'; }
-  });
-  const nav = document.getElementById('workspace-tabs');
-  nav.addEventListener('click', e => {
-    const button = e.target.closest('[data-workspace-tab]');
-    if (button) selectWorkspaceView(button.dataset.workspaceTab);
-  });
-  nav.addEventListener('keydown', e => {
-    if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
-    e.preventDefault();
-    const tabs = [...nav.querySelectorAll('[data-workspace-tab]')];
-    const index = tabs.findIndex(t => t.dataset.workspaceTab === workspaceView);
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-    selectWorkspaceView(tabs[next].dataset.workspaceTab);
-    nav.querySelector(`[data-workspace-tab="${tabs[next].dataset.workspaceTab}"]`).focus();
-  });
-  if (new URL(location.href).searchParams.get('embed') === '1') document.body.classList.add('workspace-embedded');
-  if (READ_ONLY_REFERENCE) document.body.classList.add('workspace-reference');
-}
-const projectPanel = document.getElementById('project-panel');
 function projectPreference(key, value) {
   try {
-    const storageKey = 'annotate:project:' + location.pathname + ':' + key;
+    const storageKey = 'annotate:project:' + location.pathname + DOC + ':' + key;
     if (value !== undefined) localStorage.setItem(storageKey, value ? 'open' : 'closed');
     return localStorage.getItem(storageKey);
   } catch { return null; }
 }
+// E2 (Chang: "we can consolidate progress and history … documents or other
+// assets and decisions … can be additional tabs"): the project's progress and
+// notes modules render at the top of the History tab; a links module becomes
+// its own tab (named after the module) between Feedback and History.
+function projectLinkItems(module) {
+  return module.items.map(item => {
+    let url; try { url = new URL(item.url); } catch { return ''; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+    return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${ticketsHTML(item.description)}</span>` : ''}</li>`;
+  }).join('');
+}
+// PROJECT.tabs of kind reference (F5) are listed with the project's links.
+function referenceTabs() {
+  return (PROJECT.tabs || []).filter(t => t && t.url && (!t.kind || t.kind === 'reference'));
+}
+// U-01 + F2: the header names the project only — PROJECT.title, else the
+// document's own title.
+let documentTitle = '';
+function updateProjectTitle() {
+  const title = PROJECT.title || documentTitle || 'annotate';
+  const header = document.getElementById('hdr-title');
+  header.textContent = title;
+  header.title = title;
+  if (window.AA) window.AA.setTitle(title);
+}
+const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-info', todo: 'badge-ghost' };
 function renderProject() {
-  renderWorkspaceTabs();
-  updateWorkspaceTitle();
-  const panel = projectPanel;
-  const modules = PROJECT.modules || [];
-  document.getElementById('progress-empty').hidden = modules.length > 0;
-  if (!modules.length) {
-    panel.hidden = true;
-    panel.innerHTML = '';
-    document.getElementById('project-staging').appendChild(panel);
-    mountProjectInDocument(document.getElementById('content-frame'));
-    return;
+  // The project's links and progress belong to Review; a plan has none.
+  if (DOC === 'review') updateProjectTitle();
+  const panel = document.getElementById('project-panel-' + DOC);
+  if (!panel) return;
+  const modules = DOC === 'review' ? (PROJECT.modules || []) : [];
+  const links = modules.filter(m => m.kind === 'links');
+  const rest = modules.filter(m => m.kind !== 'links');
+  const refs = DOC === 'review' ? referenceTabs() : [];
+  if (refs.length) links.push({ id: 'reference-tabs', title: 'Documents', items: refs.map(t => ({ label: t.label, url: t.url })) });
+  // Documents tab
+  const docTab = document.getElementById('tab-documents');
+  const docBody = document.getElementById('documents-body');
+  if (DOC !== VIEW_DOC) {
+    // Only the document on screen fills the Documents tab.
+  } else if (links.length) {
+    docTab.hidden = false;
+    docTab.textContent = links.length === 1 ? links[0].title : 'Documents';
+    docBody.innerHTML = links.map(m => `<section class="hist-section">${links.length > 1 ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
+  } else {
+    docTab.hidden = true;
+    docBody.innerHTML = '';
+    if (activeTab === 'documents') setActiveTab('feedback');
   }
+  // Progress (History tab)
+  if (!rest.length) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.hidden = false;
-  panel.open = true;
-  panel.innerHTML = `<summary>Project summary</summary><div class="project-heading"><span>${esc(PROJECT.title || 'Links and progress')}</span><span>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</span></div>` + modules.map(module => {
+  panel.innerHTML = `<div class="project-heading"><strong>${esc(PROJECT.title || 'Project links and progress')}</strong><small>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</small></div>` + rest.map((module) => {
     const preference = projectPreference(module.id);
-    const open = preference === 'open';
+    // 2.20: progress and notes modules start collapsed.
+    const open = preference ? preference === 'open' : false;
     const items = module.items.map(item => {
-      if (module.kind === 'links') {
-        let url; try { url = new URL(item.url); } catch { return ''; }
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
-        return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${esc(item.description)}</span>` : ''}</li>`;
-      }
-      if (module.kind === 'progress') return `<li><span class="project-state ${escAttr(item.status)}">${esc(item.status.replace(/_/g, ' '))}</span>${item.url ? `<a href="${escAttr(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>` : ticketsHTML(item.label)}${item.failed_count ? `<span class="badge badge-error badge-soft failed-pill">failed ${item.failed_count}x</span>` : ''}${item.detail ? `<span class="project-detail">${ticketsHTML(item.detail)}</span>` : ''}</li>`;
+      if (module.kind === 'progress') return `<li><span class="badge badge-sm badge-soft ${PROJECT_STATE_BADGE[item.status] || 'badge-ghost'} project-state">${esc(item.status.replace(/_/g, ' '))}</span>${safeHttpUrl(item.url) ? `<a href="${escAttr(safeHttpUrl(item.url))}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>` : ticketsHTML(item.label)}${item.failed_count ? `<span class="badge badge-error badge-soft badge-sm failed-pill">failed ${esc(item.failed_count)}x</span>` : ''}${item.detail ? `<span class="project-detail">${ticketsHTML(item.detail)}</span>` : ''}</li>`;
       return `<li>${ticketsHTML(item.text)}</li>`;
     }).join('');
     return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
   }).join('');
-  mountProjectInDocument(document.getElementById('content-frame'));
-}
-
-function mountProjectInDocument(frame) {
-  if (!frame) return;
-  try {
-    const doc = frame.contentDocument;
-    if (!doc || !doc.body) return;
-    const locationOrigin = frame.contentWindow.location.origin;
-    const origin = locationOrigin === 'null' ? frame.contentWindow.origin : locationOrigin;
-    if (origin !== BRIDGE_ORIGIN) return;
-    doc.body.classList.remove('annotate-progress-only');
-    if (!doc.querySelector('link[href*="/assets/"][href$="/content.css"]') && !doc.getElementById('annotate-project-content-style')) {
-      const link = doc.createElement('link');
-      link.id = 'annotate-project-content-style';
-      link.rel = 'stylesheet';
-      link.href = document.querySelector('link[href*="shell.css"]').href.replace('shell.css', 'content.css');
-      doc.head.appendChild(link);
-    }
-    const staging = document.getElementById('project-staging');
-    staging.hidden = false;
-    staging.appendChild(projectPanel);
-    if (!projectPanel.hidden) projectPanel.open = true;
-    projectPanel.querySelector(':scope > summary').onclick = () => projectPreference(':summary', !projectPanel.open);
-    projectPanel.querySelectorAll('.project-module').forEach(node => {
-      node.querySelector('summary').onclick = () => projectPreference(node.dataset.module, !node.open);
-    });
-  } catch { /* Foreign or unavailable content never receives project data. */ }
+  panel.querySelectorAll('details').forEach(node => {
+    node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
+  });
 }
 async function loadProject() {
   try {
@@ -984,14 +809,99 @@ async function loadProject() {
       if (snapshot !== projectSnapshot) { PROJECT = SUMMARY_PROJECT; projectSnapshot = snapshot; renderProject(); }
       return;
     }
+    const doc = DOC;
     const response = await fetch(apiUrl('./api/project'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!response.ok) return;
     const data = await response.json();
+    if (doc !== DOC) return;
     const snapshot = JSON.stringify(data);
     if (snapshot !== projectSnapshot) { PROJECT = data; projectSnapshot = snapshot; renderProject(); }
   } catch {}
 }
+// F17 + U-07: History lists the rounds the server recorded, newest first,
+// each with its answers; the header keeps the latest one beside Send.
+let HISTORY_DATA = null;
+let historyDirty = true;
+let historyLoading = false;
+async function loadHistory() {
+  if ((HISTORY_DATA && !historyDirty) || historyLoading) return;
+  historyLoading = true;
+  try {
+    const r = await fetch(apiUrl('./api/history'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    const data = await r.json();
+    if (!r.ok || !Array.isArray(data.rounds)) throw new Error('history');
+    HISTORY_DATA = data;
+    historyDirty = false;
+    if (window.AA) window.AA.changed();
+  } catch { /* History keeps the last rounds it had */ } finally { historyLoading = false; }
+}
+function roundItemText(answer) {
+  const c = answer.comment_id ? findCommentById(answer.comment_id) : null;
+  const n = (c && NUM_MAP[c.id]) || answer.number;
+  // P5: the prompt the round recorded, even after the card's prompt changed.
+  const prompt = answer.prompt ? displayPrompt({ id: answer.comment_id, decision_request: { prompt: answer.prompt } })
+    : c ? displayPrompt(c) || firstLine(c.text) : '';
+  const ans = answer.text ? (answer.verdict === 'select' ? answer.text.replace(/^Selected:\s*/, '') : answer.text)
+    : (DECISION_VERDICT_LABEL[answer.verdict] || answer.verdict || '');
+  // A plain comment is its own label; never repeat it as the answer.
+  const same = ans && firstLine(ans) === prompt;
+  return (n ? '#' + n + ' · ' : '') + prompt + (ans && !same ? ' → ' + firstLine(ans) : '');
+}
+// The rounds the server recorded, newest first, each line tagged with its
+// tab (app/rail.js renders them under History · Sent rounds).
+// One Send leaves a round record and/or a push record, tied by send_id; its
+// receipt is the Send summary's lines (every tab). Older records without a
+// receipt are listed from their answers and edits.
+function sentRounds() {
+  const groups = [], byId = {};
+  for (const r of ((HISTORY_DATA && HISTORY_DATA.rounds) || [])) {
+    if (r.send_id && byId[r.send_id]) { byId[r.send_id].push(r); continue; }
+    const g = [r];
+    if (r.send_id) byId[r.send_id] = g;
+    groups.push(g);
+  }
+  // UI-2: the round and the push each keep the lines they carried; one Send's
+  // receipt is both, in the summary's tab order.
+  const tabOrder = ['review', 'library', 'findings', 'plans'];
+  return groups.map(g => {
+    const withReceipt = g.filter(r => Array.isArray(r.receipt) && r.receipt.length)
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    const ts = g.map(r => r.ts).sort()[0];
+    if (withReceipt.length) {
+      const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
+        .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
+      return { ts, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
+    }
+    const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
+    return Object.assign(legacy, { result: roundResult(g, legacy.n) });
+  }).filter(r => r.items.length);
+}
+// UI-13: the delivery the server recorded on the round at Send, so a reload
+// keeps the result line the Send showed. Rounds recorded before that say
+// "Sent (N)".
+function roundResult(records, n) {
+  const how = records.map(r => r.delivery);
+  if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
+  if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
+  return 'Sent (' + n + ')';
+}
+function legacyRound(r) {
+  {
+    const items = (r.answers || []).map(a => {
+      const c = a.comment_id ? findCommentById(a.comment_id) : null;
+      const cat = a.category || (c ? commentCategory(c) : 'review');
+      const text = roundItemText(a);
+      const at = text.indexOf(' → ');
+      return { cat, label: at === -1 ? text : text.slice(0, at), answer: at === -1 ? '' : text.slice(at + 3) };
+    });
+    (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
+    if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
+    const n = (r.answers || []).length + (r.edits || []).length;
+    return { ts: r.ts, result: 'Sent (' + n + ')', items, n };
+  }
+}
 async function loadDelivery() {
+  if (DOC !== VIEW_DOC) return;
   const node = document.getElementById('delivery-status');
   if (!CAPS || !CAPS.automatic_round_delivery) {
     node.hidden = !!CAPS;
@@ -1014,8 +924,17 @@ async function loadDelivery() {
 }
 
 // ── Version rail ─────────────────────────────────────────────────
+// final/: each document's versions sit in its own History section
+// (#vrail-body-<doc>); a version of a document that is not on screen opens
+// that document's tab at that version.
 function renderVersionRail() {
-  const body = document.getElementById('vrail-body');
+  const body = document.getElementById('vrail-body-' + DOC);
+  if (!body) return;
+  const doc = DOC;
+  const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
+  // The keyboard hint belongs to the document on screen only, as in final/.
+  const hint = body.parentNode.querySelector('.unified-history-hint');
+  if (hint) hint.hidden = doc !== VIEW_DOC;
   const history = (META.history || []).slice().reverse();
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
@@ -1028,8 +947,8 @@ function renderVersionRail() {
     let dotHtml = '<span class="vrow-dot"></span>';
     if (counts.waiting > 0 && counts.review === 0) dotHtml = '<span class="vrow-dot-hollow" title="Your comments awaiting agent"></span>';
     const badgeHtml = counts.review > 0
-      ? `<span class="vrow-badge">${counts.review}</span>`
-      : `<span class="vrow-badge zero">0</span>`;
+      ? `<span class="badge badge-error badge-xs vrow-badge">${counts.review}</span>`
+      : '';
     const newHtml = isNew ? '<span class="vrow-new" title="Content updated since your last visit">↑NEW</span>' : '';
     return `<button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
       ${dotHtml}
@@ -1039,52 +958,76 @@ function renderVersionRail() {
     </button>`;
   }).join('');
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
-    row.addEventListener('click', () => switchVersion(row.dataset.version));
+    row.addEventListener('click', () => {
+      if (doc !== VIEW_DOC) { if (window.AA) window.AA.go({ view: doc, v: row.dataset.version }); return; }
+      switchVersion(row.dataset.version);
+      // Phone: the sheet covers the document; show the version just picked.
+      if (isMobileLayout()) setMobileSheetOpen(false);
+    });
   });
-  renderMobileVersionSelect(history);
+  // U-14: the version list is a keyboard listbox.
+  const rows = [...body.querySelectorAll('.vrow')];
+  rows.forEach(r => {
+    r.setAttribute('role', 'option');
+    r.setAttribute('aria-selected', String(r.dataset.version === CURRENT_VERSION));
+    r.tabIndex = r.dataset.version === CURRENT_VERSION ? 0 : -1;
+    r.addEventListener('keydown', e => {
+      let n = rows.indexOf(r);
+      if (e.key === 'ArrowDown') n++;
+      else if (e.key === 'ArrowUp') n--;
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = rows.length - 1;
+      else return;
+      e.preventDefault();
+      const next = rows[Math.max(0, Math.min(rows.length - 1, n))];
+      rows.forEach(x => { x.tabIndex = x === next ? 0 : -1; });
+      next.focus();
+    });
+  });
+  const restore = focusedVersion && !document.getElementById('history-body').hidden && (!isMobileLayout() || isMobileSheetOpen()) && rows.find(r => r.dataset.version === focusedVersion);
+  if (restore) { rows.forEach(r => { r.tabIndex = r === restore ? 0 : -1; }); restore.focus(); }
+  if (doc === VIEW_DOC) renderVersionBanner();
 }
-
-// Mobile replacement for the version rail (hidden on mobile — see
-// shell.css): a native <select> in the header. Rebuilt alongside the rail
-// itself so the two can never drift out of sync. Each option's label
-// carries a review-count suffix so the "needs my review" signal the rail's
-// red badge conveys isn't lost in the mobile layout.
-function renderMobileVersionSelect(history) {
-  const sel = document.getElementById('mobile-version-select');
-  if (!sel) return;
-  sel.innerHTML = history.map(h => {
-    const counts = countsForVersion(h.version);
-    const suffix = counts.review > 0 ? ` (${counts.review})` : '';
-    return `<option value="${escAttr(h.version)}">${esc(h.version)}${h.label ? ' · ' + esc(h.label) : ''}${suffix}</option>`;
-  }).join('');
-  sel.value = CURRENT_VERSION || '';
+// U-10: an older version on screen says so, with the way back.
+function renderVersionBanner() {
+  const banner = document.getElementById('unified-version-banner');
+  const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
+  banner.hidden = !latest || CURRENT_VERSION === latest;
+  if (banner.hidden) return;
+  banner.innerHTML = 'Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest) + ' — <button type="button" class="btn btn-link btn-sm">back to latest</button>';
+  banner.querySelector('button').onclick = () => switchVersion(latest);
 }
+// (The phone header's version <select> is gone: History is the one version
+// picker on every layout — B3.)
 
 function switchVersion(v) {
   if (!v || v === CURRENT_VERSION) return;
   CURRENT_VERSION = v;
   loadIframe(v);
-  const u = new URL(window.location.href);
-  u.searchParams.set('v', v);
-  window.history.replaceState({}, '', u.toString());
+  // final/: the version is part of the page's hash (#view=plans&v=v5), since
+  // one URL holds several documents.
+  if (window.AA) window.AA.noteVersion(DOC, v);
   renderAll();
   // T11: the general-feedback draft is per-version
   const gf = document.getElementById('gf-ta');
   if (gf) gf.value = DRAFTS['gf:' + v] || '';
+  renderGeneralFeedback();
+  updateSendState();
 }
 
 function loadIframe(v) {
   const frame = document.getElementById('content-frame');
-  // Keep the live summary out of the outgoing document during navigation.
-  document.getElementById('project-staging').appendChild(projectPanel);
+  frame.dataset.doc = DOC;
+  frame.dataset.version = v;
+  const doc = DOC;
   frame.onload = () => {
-    try {
-      mountProjectInDocument(frame);
-      updateWorkspaceTitle(frame.contentDocument.title);
-    } catch { /* A failed content load keeps the last known page title. */ }
+    if (doc !== 'review') return;
+    try { documentTitle = frame.contentDocument.title || ''; } catch { /* foreign content keeps the last title */ }
+    if (DOC === 'review') updateProjectTitle();
   };
-  frame.removeAttribute('srcdoc');
-  frame.src = './content?v=' + encodeURIComponent(v) + (READ_ONLY_REFERENCE ? '&readonly=1' : '&document=1');
+  frame.src = doc === 'plans'
+    ? './plans/' + encodeURIComponent(PLAN_ID) + '/' + encodeURIComponent(v) + '.html'
+    : './content?v=' + encodeURIComponent(v);
 }
 
 // ── Drawer ───────────────────────────────────────────────────────
@@ -1092,6 +1035,13 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}
+// Escaped text with known Linear issue ids (PROJECT.issue_links) as links.
 function ticketsHTML(value) {
   const text = String(value == null ? '' : value);
   const links = PROJECT.issue_links || {};
@@ -1130,7 +1080,8 @@ function anchorLabel(c) {
 // Drawer scope: null = every version ("All versions" toggle on), else the
 // version currently shown in the iframe.
 function drawerScope() {
-  return workspaceView === 'feedback' || showAllVersions ? null : CURRENT_VERSION;
+  // B3: no "All versions" toggle; other versions are opened from History.
+  return CURRENT_VERSION;
 }
 // Every stored verdict answers a card. `comment` is the free-text answer;
 // a reviewer's reply on an unanswered card is recorded as one by the server.
@@ -1179,107 +1130,156 @@ function inScope(c) {
 // from an older version is located on the CURRENT document (its anchor id
 // is expected to survive a republish), not by switching back to its origin.
 function gotoVersionFor(c) {
+  if (isNewerThanViewed(c)) return c.version;
   return followsViewer(c) ? CURRENT_VERSION : c.version;
 }
-
-function renderChips() {
-  const all = flattenAll(false).filter(inScope);
-  let review = 0, waiting = 0, done = 0, unread = 0;
-  for (const c of all) {
-    const cls = classify(c);
-    if (cls === 'review' || isRoundPending(c)) review++;
-    else if (cls === 'waiting') waiting++;
-    else done++;
-    if (readStateOf(c) !== 'read') unread++;
-  }
-  const total = all.length;
-  const row = document.getElementById('chip-row');
-  row.querySelector('.chip-review .chip-n').textContent = review;
-  row.querySelector('.chip-waiting .chip-n').textContent = waiting;
-  row.querySelector('.chip-done .chip-n').textContent = done;
-  row.querySelector('.chip-all .chip-n').textContent = total;
-  document.getElementById('cnt-badge').textContent = total + (total === 1 ? ' comment' : ' comments');
-  const ub = document.getElementById('unread-badge');
-  ub.textContent = unread + ' unread';
-  ub.style.display = unread > 0 ? '' : 'none';
-  updateStripBadge();
-  updateMobileFab(total, unread);
+// Position in the published history, so any version label orders correctly.
+function versionIndex(v) {
+  return (META.history || []).findIndex(h => h.version === v);
+}
+// A card posed on a version published after the one being viewed.
+function isNewerThanViewed(c) {
+  const at = versionIndex(c.version), viewing = versionIndex(CURRENT_VERSION);
+  return at !== -1 && viewing !== -1 && at > viewing;
 }
 
-// Mobile FAB mirrors the drawer's own total/unread counts (renderChips is
-// the single place that computes both, scoped to the current drawer scope
-// exactly like the badges above it).
+// ── Sections (B2) and counts (B1) ────────────────────────────────────
+// Four sections replace the chip filters, "Mark all read" and the per-card
+// status pill: Needs you · Ready to send · Waiting on agent · Done (plus
+// Archived at the bottom when there is any).
+const SECTION_ORDER = ['needs', 'ready', 'waiting', 'done', 'archived'];
+const SECTION_LABEL = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', archived: 'Archived' };
+function sectionOpen(k) {
+  return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
+}
+function setSectionOpen(k, open) {
+  SECTION_OPEN[k] = !!open;
+  try { localStorage.setItem('annotate:sections', JSON.stringify(SECTION_OPEN)); } catch {}
+}
+// A reviewer's own comment or reply that has not gone to the agent yet.
+function userNeedsSend(c) {
+  return c.status === 'open' && classify(c) === 'waiting' && needsPush(c);
+}
+// A1: text typed in an unanswered card's comment box, with no option
+// picked, is that card's answer once Send is pressed.
+function sayDraft(c) {
+  return (DRAFTS['say:' + c.id] || '').trim();
+}
+// Clear a card's comment draft everywhere it is shown (rail, summary, body
+// strip), so a re-render cannot read the old text back out of a box.
+function clearSayDraft(id) {
+  setDraft('say:' + id, '');
+  document.querySelectorAll('[data-decision-say-ta="' + cssEsc(id) + '"]').forEach(ta => { ta.value = ''; });
+  syncStripSayDraft(id);
+}
+// P1: text typed while an answered card's Change is open (on the card or in
+// the Send summary) is that card's new answer at Send, as on an open card.
+function hasSayDraft(c) {
+  return (isUnresolvedDecision(c) || isChangingAnswer(c)) && !!sayDraft(c);
+}
+function isChangingAnswer(c) {
+  return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
+}
+function sectionOf(c) {
+  if (c.status === 'archived') return 'archived';
+  if (isRoundPending(c) || userNeedsSend(c)) return 'ready';
+  const cls = classify(c);
+  return cls === 'review' ? 'needs' : cls === 'waiting' ? 'waiting' : 'done';
+}
+// Everything one Send would send (A2). Spans every version, like a round.
+// Exactly what one Send sends, in the same order Send sends it (High 1 /
+// Medium 1 of the check): pending verdicts and typed answers go as the round;
+// every other open item with unsent activity is pushed — the same rule 2.20's
+// "Push to session" counted, so open cards are never stranded; general
+// feedback becomes one more pushed item.
+function sendPlan() {
+  const round = [], answers = [], push = [];
+  for (const c of flattenAll(false)) {
+    if (hasSayDraft(c)) answers.push(c);
+    else if (isRoundPending(c)) round.push(c);
+    else if (needsPush(c)) push.push(c);
+  }
+  return { round, answers, push };
+}
+function sendables() {
+  const p = sendPlan();
+  const gf = !!gfDraft();
+  return { verdicts: p.round.length, answers: p.answers.length, comments: p.push.length, gf,
+    total: p.round.length + p.answers.length + p.push.length + (gf ? 1 : 0) };
+}
+function gfDraft() {
+  return CURRENT_VERSION ? (DRAFTS['gf:' + CURRENT_VERSION] || '').trim() : '';
+}
+
+// final/: one count model for the whole page. docCounts() is what the
+// header tabs, the phone menu and the rail badges read for a document.
+function docCounts() {
+  const all = flattenAll(false).filter(inScope);
+  let needs = 0, unread = 0, waiting = 0;
+  for (const c of all) {
+    const s = sectionOf(c);
+    if (s === 'needs') needs++;
+    if (s === 'waiting') waiting++;
+    if (readStateOf(c) !== 'read') unread++;
+  }
+  return { needs, unread, waiting, total: all.length, pending: sendables().total };
+}
+function renderCounts() {
+  if (DOC !== VIEW_DOC) return;
+  const k = docCounts();
+  // B1: the tab badge counts only the cards that still need you.
+  const tb = document.getElementById('tab-feedback-n');
+  if (tb) { tb.textContent = String(k.needs); tb.hidden = k.needs === 0; }
+  updateStripBadge();
+  updateMobileFab(k.total, k.unread);
+  if (window.AA) window.AA.changed();
+}
+
+// Phone button: 2.20's title; no count badge (B1: one progress count —
+// the bottom bar and the Feedback tab already carry the numbers).
 function updateMobileFab(total, unread) {
   const fab = document.getElementById('mobile-fab');
   if (!fab) return;
   const badge = document.getElementById('mobile-fab-badge');
   const countEl = document.getElementById('mobile-fab-count');
   if (countEl) countEl.textContent = String(total);
-  if (badge) {
-    badge.textContent = String(unread > 99 ? '99+' : unread);
-    badge.style.display = unread > 0 ? 'flex' : 'none';
-  }
+  if (badge) badge.style.display = 'none';
   fab.title = total + (total === 1 ? ' comment' : ' comments') + (unread > 0 ? ', ' + unread + ' unread' : '') + ' — open feedback';
 }
 
 function renderDrawer() {
-  renderWorkspaceTabs();
-  renderChips();
+  if (DOC !== VIEW_DOC) return;
+  renderCounts();
   const listEl = document.getElementById('comment-list');
   const empty = document.getElementById('drawer-empty');
-  // The 8s poll (and any other re-render) rebuilds #comment-list wholesale,
-  // which resets scroll to the top. Preserve it — matters most for the
-  // mobile bottom sheet, where a re-render mid-scroll is jarring, but this
-  // is a plain improvement on desktop too.
   const drawerBodyEl = document.getElementById('drawer-body');
   const savedScrollTop = drawerBodyEl ? drawerBodyEl.scrollTop : 0;
-  const openDetails = new Set([...listEl.querySelectorAll('details[open]')].map(node => node.dataset.historyFor || node.dataset.replySection || node.closest('.citem')?.dataset.commentId + ':actions'));
 
-  // Preserve in-progress reply drafts across re-renders AND version
-  // switches (T11): capture into the persistent DRAFTS store before the
-  // innerHTML swap — cards filtered out by the new scope keep their draft
-  // for when they render again.
-  let focusedDraftFor = null;
+  // Keep half-typed text across re-renders (T11).
   let focusedTa = null;
+  const unifiedCaret = document.activeElement && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd, document.activeElement.selectionDirection] : null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     setDraft(ta.dataset.replyFor, ta.value || '');
-    if (ta === document.activeElement) focusedDraftFor = ta.dataset.replyFor;
-  });
-  // v2.19: the optional verdict note survives re-renders the same way, and
-  // so (D3) do the "Request changes" and standing-Comment boxes — a focus-
-  // driven goto or an 8s poll must never eat what is half-typed in one.
-  listEl.querySelectorAll('.decision-note-ta').forEach(ta => {
-    setDraft('note:' + ta.dataset.decisionNoteTa, ta.value || '');
-    if (ta === document.activeElement) focusedTa = '[data-decision-note-ta="' + cssEsc(ta.dataset.decisionNoteTa) + '"]';
-  });
-  listEl.querySelectorAll('.decision-comment-ta').forEach(ta => {
-    setDraft('changes:' + ta.dataset.decisionCommentTa, ta.value || '');
-    if (ta === document.activeElement) focusedTa = '[data-decision-comment-ta="' + cssEsc(ta.dataset.decisionCommentTa) + '"]';
+    if (ta === document.activeElement) focusedTa = '[data-reply-for="' + cssEsc(ta.dataset.replyFor) + '"]';
   });
   listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
 
-  let all = flattenAll(false).filter(inScope);
-  if (activeFilter !== 'all') {
-    all = all.filter(c => activeFilter === 'review'
-      ? classify(c) === 'review' || isRoundPending(c)
-      : classify(c) === activeFilter && !isRoundPending(c));
+  const groups = { needs: [], ready: [], waiting: [], done: [], archived: [] };
+  for (const c of flattenAll(false).filter(inScope)) groups[sectionOf(c)].push(c);
+  for (const [aid, items] of Object.entries(STORE.archived || {})) {
+    for (const c of items) {
+      const item = Object.assign({}, c, { anchor_id: aid });
+      if (docOf(item) === DOC && inScope(item)) groups.archived.push(item);
+    }
   }
+  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+  SECTION_ORDER.forEach(k => groups[k].sort(byNum));
 
-  const feedbackRank = c => isUnresolvedDecision(c) ? 0 : isRoundPending(c) ? 1 : classify(c) === 'review' ? 2 : classify(c) === 'waiting' ? 3 : 4;
-  all.sort((a, b) => feedbackRank(a) - feedbackRank(b) || (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
-  if (unreadFirst) {
-    const rank = c => (readStateOf(c) === 'read' ? 1 : 0);
-    all.sort((a, b) => feedbackRank(a) - feedbackRank(b) || rank(a) - rank(b) ||
-      ((NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0)));
-  }
-
-  document.getElementById('archived-count').textContent =
-    Object.values(STORE.archived || {}).reduce((n, l) => n + l.filter(inScope).length, 0);
-
-  if (!all.length && !showArchivedInline) {
+  const anything = SECTION_ORDER.some(k => groups[k].length);
+  if (!anything) {
     empty.style.display = 'flex';
     listEl.style.display = 'none';
     listEl.innerHTML = '';
@@ -1288,55 +1288,37 @@ function renderDrawer() {
   empty.style.display = 'none';
   listEl.style.display = 'block';
 
-  let html = all.map(renderCItem).join('');
-
-  if (showArchivedInline) {
-    const arch = [];
-    for (const [aid, items] of Object.entries(STORE.archived || {})) {
-      for (const c of items) if (inScope(c)) arch.push(Object.assign({}, c, { anchor_id: aid }));
-    }
-    if (arch.length) {
-      html += `<div class="cgroup"><div class="cgroup-lbl">Archived</div>${arch.map(renderCItem).join('')}</div>`;
-    }
-  }
-
-  listEl.innerHTML = html || '<div class="drawer-empty" style="padding:24px 12px">No comments match this filter.</div>';
-  listEl.querySelectorAll('details').forEach(node => {
-    const key = node.dataset.historyFor || node.dataset.replySection || node.closest('.citem')?.dataset.commentId + ':actions';
-    if (openDetails.has(key)) node.open = true;
-  });
+  listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
+    const open = sectionOpen(k);
+    const bodyId = 'sec-body-' + k;
+    const badgeCls = k === 'needs' ? 'badge-error' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
+    return `<section class="sec sec-${k}" data-section="${k}">
+      <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
+      <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
+    </section>`;
+  }).join('');
 
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     const draft = DRAFTS[ta.dataset.replyFor];
     if (draft) ta.value = draft;
   });
-  listEl.querySelectorAll('.decision-note-ta').forEach(ta => {
-    const draft = DRAFTS['note:' + ta.dataset.decisionNoteTa];
-    if (draft) ta.value = draft;
-  });
-  listEl.querySelectorAll('.decision-comment-ta').forEach(ta => {
-    const draft = DRAFTS['changes:' + ta.dataset.decisionCommentTa];
-    if (draft) ta.value = draft;
-  });
   listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
     const draft = DRAFTS['say:' + ta.dataset.decisionSayTa];
     if (draft) ta.value = draft;
+    syncSayHint(ta);
   });
-  if (focusedTa && !focusedDraftFor) {
+  if (focusedTa) {
     const ta = listEl.querySelector(focusedTa);
     if (ta) {
       ta.focus();
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
-    }
-  }
-  if (focusedDraftFor) {
-    const ta = listEl.querySelector('[data-reply-for="' + cssEsc(focusedDraftFor) + '"]');
-    if (ta) {
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
+      if (unifiedCaret) ta.setSelectionRange(...unifiedCaret); else ta.selectionStart = ta.selectionEnd = ta.value.length;
     }
   }
 
+  listEl.querySelectorAll('[data-section-toggle]').forEach(btn => btn.addEventListener('click', () => {
+    setSectionOpen(btn.dataset.sectionToggle, !sectionOpen(btn.dataset.sectionToggle));
+    renderDrawer();
+  }));
   Array.from(listEl.querySelectorAll('[data-action="goto"]')).forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1347,10 +1329,7 @@ function renderDrawer() {
   wireCardActions(listEl);
   wireDecisionActions(listEl);
   syncExcerptClamps(listEl);
-  // Skip when a reply textarea just reclaimed focus above — the browser's
-  // own scroll-into-view for that focus is the more correct outcome, and
-  // forcing the old scrollTop back would fight it mid-keystroke.
-  if (drawerBodyEl && !focusedDraftFor && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
+  if (drawerBodyEl && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -1378,7 +1357,7 @@ function goToCommentLocation(anchorId, version, commentId, opts) {
   // the anchor invisibly behind it. Dismiss so the result is immediately
   // visible (mirrors why goToCommentLocation exists at all — R1, "go-to
   // never a silent no-op").
-  if (isMobileLayout() && !(opts && opts.quiet)) setMobileSheetOpen(false);
+  if (isMobileLayout()) setMobileSheetOpen(false);
   highlightedCommentId = commentId;
   // Granular goto: pass the comment's captured inner target (if any) so the
   // adapter highlights the exact element, not just the section container.
@@ -1435,7 +1414,7 @@ const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
 // Default button labels/classes. accept/reject/comment are byte-identical to
 // the pre-2.19 markup so a legacy decision_request (string options, nothing
 // else) against a legacy server renders exactly as it always has.
-const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: 'Answer in words', changes: '&#8635; Request changes' };
+const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // The same options without their glyphs, for the "Recommended: …" sentence.
 const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Answer in words', changes: 'Request changes' };
@@ -1447,6 +1426,8 @@ const DECISION_IMPACTS = ['low', 'medium', 'high'];
 // state) so the 8s poll's re-render doesn't silently snap the card back to
 // the chip mid-correction; cleared on submit or explicit Cancel.
 const decisionChanging = {};
+// Request-changes hint per card (placeholder + message), until it is answered.
+const decisionHint = {};
 // v2.19 per-card UI state that must survive the 8s re-render: whether the
 // optional "Add a note" form is open. Note TEXT lives in DRAFTS under
 // 'note:<id>' (same store as replies).
@@ -1515,6 +1496,16 @@ function renderDecisionContext(dr) {
   const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
   return ctx ? `<div class="decision-context">${ticketsHTML(ctx)}</div>` : '';
 }
+// "Recommended: <option>" — the MADR "chosen option" line, stated once.
+function renderDecisionReco(opts, dr) {
+  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
+  if (!rec) return '';
+  const id = canonicalOptionId(rec);
+  const o = opts.find(x => x.id === id);
+  const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
+  return `<div class="decision-reco-line">Recommended: <b>${esc(label)}</b></div>`;
+}
+
 function idFor(key) {
   let h = 5381;
   const s = String(key);
@@ -1533,14 +1524,31 @@ function excerptsFor(c) {
 }
 // A quoted excerpt clamped to four lines; "Show more" appears only when the
 // text is cut off (see syncExcerptClamps).
-function renderExcerptBox(key, text, source) {
+function renderExcerptBox(key, text, source, footExtra) {
   const open = !!decisionExcerptOpen[key];
   const qid = idFor('q|' + key);
   return `<figure class="decision-excerpt${open ? ' is-open' : ''}">
       ${source ? `<figcaption class="decision-excerpt-src">${esc(source)}</figcaption>` : ''}
       <blockquote class="decision-excerpt-text" id="${qid}">${esc(text)}</blockquote>
-      <button type="button" class="decision-excerpt-more" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>
+      <div class="decision-excerpt-ft">
+        <button type="button" class="decision-excerpt-more" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>
+        ${footExtra || ''}
+      </div>
     </figure>`;
+}
+// The element the card is about, quoted inside the card: the first evidence
+// anchor, else the card's own anchor when that is not the card itself.
+// C2: the quote carries "Open in document" (the card's own location).
+function renderDecisionExcerpt(c, dr) {
+  const x = excerptsFor(c);
+  if (!x) return '';
+  const link = isGeneralAnchor(c.anchor_id) || gotoUnavailable[c.id] ? '' : openDocBtn(c, ' data-excerpt-goto="1"');
+  const ev = evidenceList(dr);
+  const first = ev.length ? x[ev[0].anchor] : null;
+  if (first && first.text) return renderExcerptBox(c.id + '|first', first.text, first.name, link);
+  const own = x[c.anchor_id];
+  if (own && own.text && !own.card) return renderExcerptBox(c.id + '|own', own.text, own.name, link);
+  return '';
 }
 function renderDecisionMeta(dr) {
   let h = '';
@@ -1573,7 +1581,7 @@ function renderDecisionEvidence(c, dr) {
         <button type="button" class="decision-evidence-link" data-decision-action="evidence-preview" data-key="${escAttr(key)}" aria-expanded="${itemOpen ? 'true' : 'false'}" aria-controls="${pid}" title="Preview ${escAttr(e.anchor)}"><span class="decision-evidence-label">${esc(e.label || e.anchor)}</span></button>
         <div class="decision-evidence-preview" id="${pid}"${itemOpen ? '' : ' hidden'}>
           ${preview}
-          ${workspaceTabs().some(t => t.kind === 'document') ? `<button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Read supporting detail; Back returns here">Go to &rarr;</button>` : ''}
+          <button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll the document to ${escAttr(e.anchor)}; a Back marker there returns here">Go to &rarr;</button>
         </div>
       </li>`;
   }).join('');
@@ -1596,210 +1604,305 @@ function syncExcerptClamps(root) {
       ? t.scrollHeight > t.clientHeight + 1
       : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
   });
+  // UI-23: long comment text in a card.
+  root.querySelectorAll('.citem-txt-more').forEach(more => {
+    const t = document.getElementById(more.getAttribute('aria-controls'));
+    if (!t) return;
+    if (t.classList.contains('is-open')) { more.hidden = false; return; }
+    more.hidden = !(t.clientHeight > 0 ? t.scrollHeight > t.clientHeight + 1 : true);
+  });
 }
-function renderDecisionPending(c) {
-  if (!isRoundPending(c)) return '';
-  return `<div class="decision-pending-row">
-      <span class="decision-pending-chip" title="This verdict is recorded but has not been sent to the agent yet. Finish the review to send every pending verdict at once.">Pending &mdash; not sent</span>
-      <button type="button" class="alink decision-send-now" data-decision-action="send-now" data-id="${escAttr(c.id)}" title="Send just this verdict now, outside the round">Send now</button>
-    </div>`;
+// A2: no per-card "Pending — not sent" chip or "Send now"; a pending verdict
+// sits in the "Ready to send" section until the one Send.
+function verdictBadgeClass(v) {
+  return v === 'accept' ? 'badge-success' : v === 'reject' ? 'badge-error' : v === 'changes' ? 'badge-warning' : 'badge-info';
+}
+function firstLine(s) {
+  return String(s || '').split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+}
+// C1: the answer as one short phrase, for the one-line card and the summary.
+function answerLabel(c) {
+  const d = decisionAnswer(c);
+  if (!d) {
+    if (c.status === 'resolved_in_version') return { text: 'Resolved in ' + (c.resolved_in_version || 'later version'), muted: true };
+    if (c.status === 'addressed_by_agent') return { text: 'Addressed by agent — no answer needed', muted: true };
+    return { text: 'Not answered', muted: true };
+  }
+  // U-06-r2: show the saved answer itself, without a verdict prefix or quotes.
+  // The same text feeds the rail cards, Send summary and document strips.
+  if (d.text) return { text: d.verdict === 'select' ? d.text.replace(/^Selected:\s*/, '') : d.text };
+  return { text: DECISION_VERDICT_LABEL[d.verdict] || d.verdict };
+}
+function canChangeAnswer(c) {
+  return !!(decisionAnswer(c) && c.decision_request && c.status !== 'archived' && c.status !== 'resolved_in_version');
+}
+function changeBtnHtml(c) {
+  return `<button type="button" class="btn btn-ghost btn-xs btn-square change-btn" data-decision-action="change" data-id="${escAttr(c.id)}" aria-label="Change answer to #${NUM_MAP[c.id] || ''}" title="Change">${ico('pencil')}</button>`;
+}
+// Shortcut hints (E3) are drawn only on the active card, and never on phones.
+function showKbd(c) {
+  return c.id === highlightedCommentId && !isMobileLayout();
 }
 
-// One-click decision block: an agent poses accept/reject/changes via
-// c.decision_request; a click on Accept/Reject submits immediately, Request
-// changes (Comment on a pre-D2 server) reveals an inline textarea whose text
-// is mandatory. Once c.decision exists, the same slot renders
-// a resolved verdict chip (plus a "Change verdict" link, unless the card is
-// mid-correction, in which case it shows the buttons again).
-// v2.19 additions (all optional, all absent on a legacy request): context
-// paragraph / disclosure, "Recommended" badge, per-option consequences,
-// impact + blocking chips, evidence links, "Pending — not sent" chip with
-// "Send now" in round mode, and an optional note on Accept/Reject.
+// One-click decision block (2.20 behaviour kept: one click on an option
+// answers; nothing is preselected; Request changes needs text). A1: one
+// optional comment box under the options replaces "Answer in words",
+// "+ Add a note" and the Request-changes box.
 function renderDecisionBlock(c) {
   if (!c.decision_request || c.status === 'archived') return '';
   const dr = c.decision_request;
   if (c.status === 'resolved_in_version') {
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
-      <span class="decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')}</span>
+      <span class="badge badge-soft badge-ghost decision-verdict-chip">Resolved in ${esc(c.resolved_in_version || 'later version')}</span>
     </div>`;
   }
   if (c.status === 'addressed_by_agent' && !decisionAnswer(c)) {
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
-      <span class="decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
+      <span class="badge badge-soft badge-ghost decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
     </div>`;
   }
   const changing = !!decisionChanging[c.id];
-  const answer = c.decision && typeof c.decision.text === 'string'
-    ? (c.decision.verdict === 'select' ? c.decision.text.split('\n')[0].replace(/^Selected:\s*/, '') : c.decision.text)
-    : '';
   if (decisionAnswer(c) && !changing) {
-    const label = DECISION_VERDICT_LABEL[c.decision.verdict] || c.decision.verdict;
+    const a = answerLabel(c);
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
-      <span class="decision-verdict-chip verdict-${escAttr(c.decision.verdict)}">${esc(label)} &middot; ${esc(fmtTs(c.decision.ts))}</span>
-      ${answer ? `<div class="decision-answer">${ticketsHTML(answer)}</div>` : ''}
-      <button class="alink decision-change-link" data-decision-action="change" data-id="${escAttr(c.id)}">&#8634; Change verdict</button>
-      ${renderDecisionPending(c)}
+      <div class="decision-resolved-row">
+        <div class="decision-answer-text">${esc(a.text)}</div>
+        ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
+      </div>
     </div>`;
   }
   const opts = decisionOptions(dr);
-  // D2: the free-text slot posts `changes` (note mandatory) when this card
-  // carries the Request-changes option, `comment` otherwise.
   const wantsChanges = opts.some(o => o.id === 'changes');
-  // Free-text answer. Skipped when `comment` is already one of the posed
-  // options and on a card that already carries an answer.
-  const showSay = !opts.some(o => o.id === 'comment');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
-  // Options are rows (radio-tile layout): label, a Recommended badge, and the
-  // consequence on the line under it. The whole row is the button, nothing
-  // is preselected, and one click answers exactly as before.
+  const kbd = showKbd(c);
   let btns = '';
-  for (const o of opts) {
+  opts.forEach((o, i) => {
     const isRec = !!rec && canonicalOptionId(rec) === o.id;
     const cls = o.custom
       ? ('decision-custom' + (o.style ? ' decision-style-' + o.style : ''))
       : DECISION_BTN_CLASS[o.id];
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
-    const badge = isRec ? '<span class="decision-rec-badge badge badge-success badge-soft" title="Recommended">rec</span>' : '';
+    const badge = isRec ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : '';
     const cons = o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : '';
-    btns += `<button class="decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
-  }
+    const k = kbd && i < 9 ? `<kbd class="kbd kbd-xs">${i + 1}</kbd>` : '';
+    btns += `<button class="btn decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head">${k}<span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
+  });
   const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
-      <span>Changing verdict &mdash; currently ${esc(answer || DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict)}</span>
-      <button class="alink" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
+      <span>Changing verdict &mdash; currently ${esc(c.decision.verdict === 'select' ? '☑ ' + answerLabel(c).text : (DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict))}</span>
+      <button class="btn btn-ghost btn-xs" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
     </div>` : '';
-  const sayOpen = !!decisionSayOpen[c.id];
-  const sayHtml = showSay ? `<div class="decision-say-row">
-      <button type="button" class="decision-say" data-decision-action="say" data-id="${escAttr(c.id)}" aria-expanded="${sayOpen ? 'true' : 'false'}" title="Answer this question in your own words.">Answer in words</button>
-    </div>
-    <div class="decision-comment-form decision-say-form" data-decision-say-for="${escAttr(c.id)}" style="display:${sayOpen ? 'flex' : 'none'}">
-      <textarea class="decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Answer in your own words&hellip;" rows="2"></textarea>
-      <button class="decision-comment-submit" data-decision-action="say-submit" data-id="${escAttr(c.id)}">Send answer</button>
-    </div>` : '';
-  const noteOpen = !!decisionNoteOpen[c.id];
-  const noteHtml = opts.some(o => o.custom || o.id === 'accept' || o.id === 'reject') ? `<div class="decision-note-row">
-      <button type="button" class="decision-note-toggle" data-decision-action="note-toggle" data-id="${escAttr(c.id)}" aria-expanded="${noteOpen ? 'true' : 'false'}">${noteOpen ? '&minus; Remove note' : '+ Add a note'}</button>
-      <div class="decision-note-form"${noteOpen ? '' : ' hidden'}><textarea class="decision-note-ta" data-decision-note-ta="${escAttr(c.id)}" placeholder="Explain your choice&hellip;" rows="2"></textarea></div>
-    </div>` : '';
-  // One card layout on both surfaces (the body strip in adapter.js matches):
-  // prompt, chips, context in full, "Recommended: …", a quoted excerpt of
-  // what the card is about, the options as rows, then "Evidence (n)".
+  const cmtHtml = `<div class="decision-cmt">
+      <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(decisionHint[c.id] ? decisionHint[c.id].ph : 'Comment (optional)')}" rows="1" aria-label="Comment on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
+      ${kbd ? '<kbd class="kbd kbd-xs">C</kbd>' : ''}
+      <div class="decision-cmt-hint" data-say-hint="${escAttr(c.id)}"></div>
+    </div>`;
   return `<div class="decision-block">
     ${changingNote}
     <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
     ${renderDecisionMeta(dr)}
     ${renderDecisionContext(dr)}
+    ${renderDecisionReco(opts, dr)}
+    ${renderDecisionExcerpt(c, dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
     ${renderDecisionEvidence(c, dr)}
-    ${sayHtml}
-    ${noteHtml}
-    <div class="decision-comment-form" data-decision-comment-for="${escAttr(c.id)}" style="display:${decisionChangesOpen[c.id] ? 'flex' : 'none'}">
-      <textarea class="decision-comment-ta" data-decision-comment-ta="${escAttr(c.id)}" placeholder="${wantsChanges ? 'What needs to change&hellip;' : 'Add your comment&hellip;'}" rows="2"></textarea>
-      <button class="decision-comment-submit" data-decision-action="comment-submit" data-id="${escAttr(c.id)}"${wantsChanges ? ' data-verdict="changes"' : ''}>Send</button>
-    </div>
-    <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div>
+    ${cmtHtml}
+    <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}">${decisionHint[c.id] ? esc(decisionHint[c.id].msg) : ''}</div>
   </div>`;
 }
+// The hint under the comment box says what typed text will do.
+function syncSayHint(ta) {
+  const id = ta.dataset.decisionSayTa;
+  const hint = document.querySelector('[data-say-hint="' + cssEsc(id) + '"]');
+  if (!hint) return;
+  hint.textContent = (ta.value || '').trim()
+    ? 'Saved with your choice. With no choice picked, it counts as your answer when you send.'
+    : '';
+}
 
+// C3: rare actions in one ⋯ menu (Resolve, Re-open, Archive, Re-pin, …).
+function cardMenuItems(c, cls) {
+  const id = escAttr(c.id);
+  const items = [];
+  if (c.status !== 'archived') {
+    if (cls === 'review' || c.status === 'user_confirmed' || c.status === 'resolved_in_version') {
+      items.push(`<li><button type="button" data-action="accept" data-id="${id}">Resolve</button></li>`);
+      items.push(`<li><button type="button" data-action="reopen" data-id="${id}" data-anchor="${escAttr(c.anchor_id)}">Re-open</button></li>`);
+    } else {
+      items.push(`<li><button type="button" data-action="archive" data-id="${id}">Archive</button></li>`);
+    }
+    if (!isGeneralAnchor(c.anchor_id) && c.version === CURRENT_VERSION) {
+      items.push(`<li><button type="button" data-action="repin" data-id="${id}" title="Click a new location in the document to move this comment's pin">&#128204; Re-pin</button></li>`);
+    }
+    if (c.status === 'resolved_in_version' && c.resolved_in_version && c.resolution_anchor_id) {
+      items.push(`<li><button type="button" data-action="resolution" data-id="${id}">View resolution in ${esc(c.resolved_in_version)}</button></li>`);
+    }
+  } else {
+    items.push(`<li><button type="button" data-action="restore" data-id="${id}">Restore</button></li>`);
+  }
+  return items.join('');
+}
+function cardMenuHtml(c, cls) {
+  const num = NUM_MAP[c.id];
+  const open = openMenuId === c.id;
+  return `<button type="button" class="btn btn-ghost btn-xs btn-square citem-menu-btn" data-action="menu" data-id="${escAttr(c.id)}" aria-haspopup="menu" aria-expanded="${open ? 'true' : 'false'}" aria-label="More actions${num ? ' for #' + num : ''}" title="More actions">${ico('more')}</button>`;
+}
+function cardMenuPanel(c, cls) {
+  return `<ul class="menu menu-sm citem-menu" role="menu" data-menu-for="${escAttr(c.id)}"${openMenuId === c.id ? '' : ' hidden'}>${cardMenuItems(c, cls)}</ul>`;
+}
+function unreadDotHtml(c) {
+  const rstate = readStateOf(c);
+  if (rstate === 'new-activity') return '<span class="unread-dot new-reply" title="The agent responded since you last read this" role="img" aria-label="↑ NEW reply"></span>';
+  if (rstate === 'unread') return '<span class="unread-dot" title="You have not opened this comment yet" role="img" aria-label="Unread"></span>';
+  return '';
+}
+// A1: a reply box only once the agent has said something on this item.
+function agentResponded(c) {
+  if (c.response_text) return true;
+  if ((c.replies || []).some(r => isAgentAuthor(r.author))) return true;
+  return !c.decision_request && isAgentAuthor(c.author);
+}
+function isLineCard(c) {
+  if (cardExpanded[c.id] || decisionChanging[c.id]) return false;
+  if (!c.decision_request || c.status === 'archived') return false;
+  return !!decisionAnswer(c) || c.status === 'resolved_in_version' || c.status === 'addressed_by_agent';
+}
+
+// U-10: an open card from a newer version than the one on screen says so,
+// with the way to its version; one-line cards too, as in final/ (UI-19).
+function newerLocationHtml(c) {
+  return isNewerThanViewed(c) && followsViewer(c)
+    ? `<div class="citem-loc unified-newer-location">Not in ${esc(CURRENT_VERSION)} — <button type="button" class="btn btn-link btn-xs" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(c.version)}">open ${esc(c.version)}</button></div>`
+    : '';
+}
+// UI-23: a long comment is clamped to a few lines in its card; final/'s
+// "Show more" / "Show less" (as on quoted excerpts) appears only when the
+// clamp cuts the text off (see syncExcerptClamps).
+const commentTextOpen = {};
+function commentTextHtml(c) {
+  const text = String(c.text == null ? '' : c.text);
+  if (text.length < 400 && (text.match(/\n/g) || []).length < 10) return `<div class="citem-txt">${ticketsHTML(text)}</div>`;
+  const open = !!commentTextOpen[c.id];
+  const tid = idFor('txt|' + c.id);
+  return `<div class="citem-txt is-clampable${open ? ' is-open' : ''}" id="${tid}">${ticketsHTML(text)}</div><button type="button" class="decision-excerpt-more citem-txt-more" data-action="text-more" data-id="${escAttr(c.id)}" aria-controls="${tid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
+}
 function renderCItem(c) {
   const cls = classify(c);
-  const clsMap = { review: 'needs-review', waiting: 'waiting-agent', done: 'done' };
-  const ts = fmtTs(c.created_at);
-  // #n mirrors the numbered pin on the page (pin 7 ↔ card #7).
   const num = NUM_MAP[c.id];
-  const numHtml = num ? `<a class="citem-num" href="#feedback=${encodeURIComponent(c.id)}" data-feedback-id="${escAttr(c.id)}" title="Open feedback #${num}">#${num}</a>` : '';
+  const numHtml = num ? `<span class="citem-num">#${num}</span>` : '';
   const rstate = readStateOf(c);
-  let unreadChipHtml = '';
-  if (rstate === 'new-activity') unreadChipHtml = '<span class="citem-chip-newreply" title="The agent responded since you last read this">&uarr; NEW reply</span>';
-  else if (rstate === 'unread') unreadChipHtml = '<span class="citem-chip-unread" title="You have not opened this comment yet">Unread</span>';
   const unreadCls = rstate !== 'read' ? ' is-unread' : '';
   const hl = c.id === highlightedCommentId ? ' hl' : '';
-  const decisionCls = isUnresolvedDecision(c) ? ' decision-required' : '';
 
-  const replyHtml = (c.replies || []).map(r => `
+  // C1: an answered card is one line: number, question → answer, Change.
+  if (isLineCard(c)) {
+    const a = answerLabel(c);
+    return `<div class="citem is-line${hl}${unreadCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
+      <div class="citem-line">
+        ${unreadDotHtml(c)}${numHtml}
+        <span class="citem-line-txt"><span class="citem-line-q">${ticketsHTML(displayPrompt(c))}</span><span class="citem-line-arrow" aria-hidden="true">&rarr;</span><span class="ans${a.muted ? ' is-muted' : ''}">${esc(a.text)}</span></span>
+        ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
+        ${cardMenuHtml(c, cls)}
+      </div>
+      ${cardMenuPanel(c, cls)}${newerLocationHtml(c)}
+    </div>`;
+  }
+
+  const decisionCls = isUnresolvedDecision(c) ? ' decision-required' : '';
+  // B3: the latest reply inline; older ones behind "n earlier replies".
+  // The saved answer is already rendered below. Omit only the server's
+  // duplicate reply for that exact decision; keep user replies and history.
+  const d = !decisionChanging[c.id] && decisionAnswer(c);
+  const generatedAnswer = d && ((d.verdict === 'comment' ? '💬 Answer in words: '
+    : d.verdict === 'changes' ? '↻ Changes requested: '
+    : d.verdict === 'select' ? '☑ Selected: ' : '') +
+    (['comment', 'changes', 'select'].includes(d.verdict) ? (d.text || '')
+      : (DECISION_VERDICT_TEXT[d.verdict] || d.verdict) + (d.text ? '\n\n' + d.text : '')));
+  const replies = (c.replies || []).filter(r => !(d && r.ts === d.ts && r.author === d.by &&
+    (r.text === generatedAnswer || r.text.startsWith(generatedAnswer + '\n\n(revised verdict'))));
+  const renderReply = r => `
     <div class="thread-reply">
       <div class="thread-reply-hdr">${esc(authorLabel(r))} &middot; ${esc(fmtTs(r.ts))}</div>
       <div>${ticketsHTML(r.text)}</div>
-    </div>`).join('');
+    </div>`;
+  let replyHtml = '';
+  if (replies.length > 1) {
+    const n = replies.length - 1;
+    const open = !!earlierOpen[c.id];
+    const lid = idFor('er|' + c.id);
+    replyHtml += `<button type="button" class="earlier-toggle" data-action="earlier" data-id="${escAttr(c.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${lid}">${ico('chevRight')}${n} earlier repl${n === 1 ? 'y' : 'ies'}</button>
+      <div class="earlier-list" id="${lid}"${open ? '' : ' hidden'}>${replies.slice(0, -1).map(renderReply).join('')}</div>`;
+  }
+  if (replies.length) replyHtml += renderReply(replies[replies.length - 1]);
   const agentReplyHtml = c.response_text ? `
     <div class="agent-reply">
       <div class="agent-reply-hdr">Agent response</div>
       <div>${ticketsHTML(c.response_text)}</div>
     </div>` : '';
 
-  let actions = '';
-  if (c.status !== 'archived') {
-    if (cls === 'review') {
-      actions += `<button class="alink accept" data-action="accept" data-id="${escAttr(c.id)}">&#10003; Accept &amp; archive</button>`;
-      actions += `<button class="alink" data-action="reopen" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}">Reopen</button>`;
-    } else if (c.status === 'user_confirmed' || c.status === 'resolved_in_version') {
-      actions += `<button class="alink accept" data-action="accept" data-id="${escAttr(c.id)}">&#10003; Accept &amp; archive</button>`;
-      actions += `<button class="alink" data-action="reopen" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}">Reopen</button>`;
-    } else {
-      actions += `<button class="alink" data-action="archive" data-id="${escAttr(c.id)}">Archive</button>`;
-    }
-    // Re-pin: correct a mis-anchored comment by clicking its true location.
-    // Only meaningful when the comment's version is the one on screen.
-    if (!isGeneralAnchor(c.anchor_id) && c.version === CURRENT_VERSION) {
-      actions += `<button class="alink" data-action="repin" data-id="${escAttr(c.id)}" title="Click a new location in the document to move this comment's pin">&#128204; Re-pin</button>`;
-    }
-    if (c.status === 'resolved_in_version' && c.resolved_in_version && c.resolution_anchor_id) {
-      actions += `<button class="alink" data-action="resolution" data-id="${escAttr(c.id)}">View resolution in ${esc(c.resolved_in_version)}</button>`;
-    }
-  } else {
-    actions += `<button class="alink" data-action="restore" data-id="${escAttr(c.id)}">Restore</button>`;
-  }
-
-  const replyFormHtml = c.status !== 'archived' ? `
+  const showReply = c.status !== 'archived' && agentResponded(c) && !isUnresolvedDecision(c) && !decisionChanging[c.id];
+  const replyFormHtml = showReply ? `
     <div class="reply-form">
-      <textarea class="reply-ta" data-reply-for="${escAttr(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
-      <button class="reply-submit" data-action="reply" data-id="${escAttr(c.id)}">Post reply</button>
+      <textarea class="textarea textarea-sm reply-ta" data-reply-for="${escAttr(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
+      <button class="btn btn-sm reply-submit" data-action="reply" data-id="${escAttr(c.id)}">Post reply</button>
     </div>` : '';
 
-  // ── Go-to-location affordance: ALWAYS visible, never a silent no-op.
-  // general:* comments have no content-doc location by design (they're the
-  // "+ General feedback" bucket, not anchored to a section) -- say so
-  // explicitly rather than offering a button that can't do anything.
-  // gotoUnavailable[c.id] is set once adapter.js has told us (via
-  // 'annotate:scroll-result', see wireBridge) that this anchor genuinely
-  // does not resolve to any node in its tagged version's content doc.
-  let gotoHtml;
+  // Location: always visible, never a silent no-op (2.20). C2: decision
+  // cards carry "Open in document" on their quoted excerpt instead.
+  const decisionHtml = renderDecisionBlock(c);
+  const hasExcerptLink = decisionHtml.indexOf('data-excerpt-goto') !== -1;
+  let locHtml = '';
   if (isGeneralAnchor(c.anchor_id)) {
-    gotoHtml = `<div class="citem-goto unavailable">
-        <span class="citem-goto-label">General feedback &mdash; not tied to a location</span>
-      </div>`;
+    locHtml = `<div class="citem-loc unavailable">General feedback &mdash; not tied to a location</div>`;
   } else if (gotoUnavailable[c.id]) {
-    gotoHtml = `<div class="citem-goto unavailable">
-        <span class="citem-goto-label">Location unavailable in this version</span>
-        <button class="citem-goto-btn err" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(gotoVersionFor(c))}" title="Content may have been restructured since this comment was made">&#10007; Not found</button>
+    locHtml = `<div class="citem-loc unavailable">Location unavailable in this version
+        <button class="btn btn-ghost btn-xs err" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(gotoVersionFor(c))}" title="Content may have been restructured since this comment was made">&#10007; Not found</button>
       </div>`;
-  } else {
-    gotoHtml = `<div class="citem-goto" data-goto-row data-goto-id="${escAttr(c.id)}">
-        <span class="citem-goto-label">${esc(anchorLabel(c))}</span>
-        <button class="citem-goto-btn" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(gotoVersionFor(c))}">&rarr; Go to location</button>
-      </div>`;
+  } else if (!hasExcerptLink) {
+    locHtml = `<div class="citem-loc">${openDocBtn(c)}</div>`;
   }
+  const collapseHtml = (c.decision_request && cardExpanded[c.id] && !decisionChanging[c.id] && (decisionAnswer(c) || c.status === 'resolved_in_version' || c.status === 'addressed_by_agent'))
+    ? `<button type="button" class="btn btn-ghost btn-xs btn-square collapse-btn" data-action="collapse" data-id="${escAttr(c.id)}" aria-label="Collapse to one line" title="Collapse">${ico('chevUp')}</button>`
+    : '';
+  // U-03: the phrase the reviewer selected when commenting.
+  const quote = c.target && c.target.selected_quote;
+  const quoteHtml = quote ? `<blockquote class="unified-selected-quote">“${esc(quote)}”</blockquote>` : '';
+  // U-10: an open card from a newer version than the one on screen.
+  const newerHtml = newerLocationHtml(c);
+  const navKeys = showKbd(c) ? '<span class="citem-kbd"><kbd class="kbd kbd-xs" title="Previous card">A</kbd><kbd class="kbd kbd-xs" title="Next card">F</kbd></span>' : '';
 
-  const decision = !!c.decision_request;
-  const text = c.decision_request && String(c.text || '').trim().replace(/\s+/g, ' ') === String(c.decision_request.prompt || '').trim().replace(/\s+/g, ' ') ? '' : c.text;
-  const history = agentReplyHtml + replyHtml;
-  const discussion = history ? `<details class="feedback-history" data-history-for="${escAttr(c.id)}"><summary>History (${(c.replies || []).length + (c.response_text ? 1 : 0)})</summary>${history}</details>` : '';
-  const replySection = decision ? `<details class="feedback-reply" data-reply-section="${escAttr(c.id)}"><summary>Add a comment</summary>${replyFormHtml}</details>` : replyFormHtml;
-  return `<article class="citem ${clsMap[cls]}${hl}${unreadCls}${decisionCls}" id="feedback-${escAttr(c.id)}" data-comment-id="${escAttr(c.id)}">
+  return `<div class="citem${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
-      <span class="citem-node-name" title="${escAttr(anchorLabel(c) || displayPrompt(c))}">${numHtml}${decision ? '' : esc(anchorLabel(c))}</span>
-      ${unreadChipHtml}<span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
+      ${unreadDotHtml(c)}
+      <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
+      ${navKeys}${collapseHtml}${cardMenuHtml(c, cls)}
     </div>
-    ${renderDecisionBlock(c)}
-    <div class="citem-txt">${ticketsHTML(text)}</div>
-    ${discussion}
-    ${replySection}
-    <details class="feedback-actions"><summary>More</summary><div class="citem-meta"><span class="citem-author">${esc(authorLabel(c))}</span><span>${ts}${c.edited_at ? ' (edited)' : ''}</span></div><div class="citem-actions">${actions}</div>${gotoHtml}</details>
-  </article>`;
+    ${cardMenuPanel(c, cls)}
+    ${locHtml}
+    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
+    ${agentReplyHtml}
+    ${replyHtml}
+    ${quoteHtml}${newerHtml}
+    <div class="citem-meta">
+      <span class="citem-author">${esc(authorLabel(c))}</span>
+      <span>${fmtTs(c.created_at)}${c.edited_at ? ' (edited)' : ''}</span>
+    </div>
+    ${decisionHtml}
+    ${replyFormHtml}
+  </div>`;
+}
+// The card's own text is left out when it only repeats the question (the
+// body strip in adapter.js already does this).
+function sameText(a, b) {
+  const n = s => String(s || '').replace(/^\s*(?:Q|#)\s*\d+[\s:.\-—–]*/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return !!b && n(a) === n(b);
+}
+function openDocBtn(c, extraAttr) {
+  return `<button type="button" class="open-doc" data-action="goto" data-id="${escAttr(c.id)}" data-anchor="${escAttr(c.anchor_id)}" data-version="${escAttr(gotoVersionFor(c))}"${extraAttr || ''}>${ico('locate')}Open in document</button>`;
 }
 
 // The user acted on the comment, so they have unambiguously seen its current
@@ -1816,95 +1919,129 @@ function markReadAfterAction(commentId) {
 }
 
 function wireCardActions(root) {
-  // Whole-card click navigates (T1): every surveyed review tool treats the
-  // sidebar card as the navigation affordance, not just a small button.
-  // Buttons/links/textareas inside the card keep their own behavior.
+  // U-14: each card is a named, focusable group; Enter opens it.
+  // U-04: hovering a card outlines what it is about in the document.
+  root.querySelectorAll('.citem').forEach(card => {
+    const c = findCommentById(card.dataset.commentId);
+    if (!c) return;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', 'Feedback #' + (NUM_MAP[c.id] || '') + ' · ' + displayPrompt(c));
+    card.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.target !== card) return;
+      e.preventDefault();
+      card.click();
+      const next = root.querySelector('[data-comment-id="' + cssEsc(c.id) + '"]');
+      if (next) next.focus();
+    });
+    const hover = on => {
+      if (gotoVersionFor(c) !== CURRENT_VERSION || isGeneralAnchor(c.anchor_id)) return;
+      postToFrame({ type: 'annotate:card-hover', anchorId: c.anchor_id, target: c.target || null, on });
+    };
+    card.addEventListener('mouseenter', () => hover(true));
+    card.addEventListener('mouseleave', () => hover(false));
+  });
+  // Whole-card click navigates (T1). On a one-line answered card (C1) it
+  // also expands the card.
   root.querySelectorAll('.citem').forEach(card => card.addEventListener('click', (e) => {
-    if (e.target.closest('button, textarea, a, input, select, summary')) return;
+    if (e.target.closest('button, textarea, a, input, select, .citem-menu')) return;
     const c = findCommentById(card.dataset.commentId);
     if (!c) return;
     markRead([c]);
     highlightedCommentId = c.id;
-    const section = card.querySelector('.feedback-reply');
-    if (section) section.open = true;
-    const reply = card.querySelector('.reply-ta');
-    if (reply) reply.focus({preventScroll:true});
-    if (workspaceView === 'feedback') { sendCommentCountsToFrame(); return; }
+    if (card.classList.contains('is-line')) cardExpanded[c.id] = true;
     if (isGeneralAnchor(c.anchor_id)) {
-      // No content-doc location by design — just mark active/read; the card
-      // already shows the "not tied to a location" notice.
       renderDrawer();
       sendCommentCountsToFrame();
       return;
     }
-    goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id);
+    // Fix (not a sheet item): rebuild the body strips BEFORE asking the
+    // document to scroll. 2.20.3 did it after, so the strip the scroll was
+    // aimed at was replaced mid-flight and decision cards read "Not found".
     sendCommentCountsToFrame();
+    goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id);
   }));
-  // D3 item 3 (user-reported: "i also would like to be able to automatically
-  // be brought to the location when i click into the feedback box instead of
-  // having to do that manually"). The whole-card click above deliberately
-  // ignores clicks that land in a control, so typing a reply or a verdict
-  // note never moved the document. Focus entering any of the card's boxes is
-  // the same intent as clicking the card, so it navigates too — quietly, so
-  // the box the reviewer just clicked into survives.
+  // D3 item 3 (2.20): focus entering a card's box navigates too, quietly.
   root.querySelectorAll('.citem').forEach(card => card.addEventListener('focusin', (e) => {
     if (!e.target.closest('textarea, input')) return;
     const c = findCommentById(card.dataset.commentId);
     if (!c || isGeneralAnchor(c.anchor_id)) return;
-    if (highlightedCommentId === c.id) return; // already showing this location
+    if (highlightedCommentId === c.id) return;
     markRead([c]);
-    if (workspaceView === 'feedback') { highlightedCommentId = c.id; sendCommentCountsToFrame(); return; }
-    goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id, { quiet: true });
     sendCommentCountsToFrame();
+    // Keep the phone composer reachable; explicit Open in document still navigates.
+    if (isMobileLayout()) {
+      highlightedCommentId = c.id;
+      markActiveCardInPlace(c.id);
+    } else goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id, { quiet: true });
   }));
-  root.querySelectorAll('[data-action="accept"]').forEach(btn => btn.addEventListener('click', async (e) => {
+  // C3: the ⋯ menu
+  root.querySelectorAll('[data-action="menu"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    await apiAccept(btn.dataset.id);
+    const id = btn.dataset.id;
+    openMenuId = openMenuId === id ? null : id;
+    root.querySelectorAll('.citem-menu').forEach(m => { m.hidden = m.dataset.menuFor !== openMenuId; });
+    root.querySelectorAll('[data-action="menu"]').forEach(b => b.setAttribute('aria-expanded', b.dataset.id === openMenuId ? 'true' : 'false'));
+    const first = openMenuId && root.querySelector('.citem-menu[data-menu-for="' + cssEsc(openMenuId) + '"] button');
+    if (first) first.focus();
+  }));
+  const closeMenuThen = (fn) => async (e) => {
+    e.stopPropagation();
+    openMenuId = null;
+    await fn(e.currentTarget);
+  };
+  root.querySelectorAll('[data-action="earlier"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !earlierOpen[btn.dataset.id];
+    earlierOpen[btn.dataset.id] = open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const list = document.getElementById(btn.getAttribute('aria-controls'));
+    if (list) list.hidden = !open;
+  }));
+  root.querySelectorAll('[data-action="collapse"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    delete cardExpanded[btn.dataset.id];
+    renderDrawer();
+  }));
+  root.querySelectorAll('[data-action="accept"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    await apiAccept(b.dataset.id);
     await refreshStore();
-  }));
-  root.querySelectorAll('[data-action="archive"]').forEach(btn => btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    await apiArchive(btn.dataset.id);
+  })));
+  root.querySelectorAll('[data-action="archive"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    await apiArchive(b.dataset.id);
     await refreshStore();
-  }));
-  root.querySelectorAll('[data-action="restore"]').forEach(btn => btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    await apiRestore(btn.dataset.id);
+  })));
+  root.querySelectorAll('[data-action="restore"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    await apiRestore(b.dataset.id);
     await refreshStore();
-    markReadAfterAction(btn.dataset.id);
-  }));
-  root.querySelectorAll('[data-action="reopen"]').forEach(btn => btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    await apiPutComment(btn.dataset.id, { status: 'open' });
+    markReadAfterAction(b.dataset.id);
+  })));
+  root.querySelectorAll('[data-action="reopen"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    await apiPutComment(b.dataset.id, { status: 'open' });
     await refreshStore();
-    markReadAfterAction(btn.dataset.id);
-  }));
-  root.querySelectorAll('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const c = findCommentById(btn.dataset.id);
+    markReadAfterAction(b.dataset.id);
+  })));
+  root.querySelectorAll('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    const c = findCommentById(b.dataset.id);
     if (!c || !c.resolved_in_version || !c.resolution_anchor_id) return;
     goToCommentLocation(c.resolution_anchor_id, c.resolved_in_version, null);
-  }));
+  })));
+  root.querySelectorAll('[data-action="repin"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    renderDrawer();
+    startRepin(b.dataset.id);
+  })));
   root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const ta = root.querySelector('[data-reply-for="' + cssEsc(btn.dataset.id) + '"]');
     const text = (ta && ta.value || '').trim();
     if (!text) { if (ta) ta.focus(); return; }
     const posted = await apiReply(btn.dataset.id, text);
-    // Clear BEFORE the re-render: renderDrawer preserves non-empty reply
-    // drafts across re-renders, so a successfully-posted text left in the
-    // box would be re-injected forever (T8, user-reported). On failure the
-    // text stays so nothing typed is lost.
     if (posted) {
       if (ta) ta.value = '';
-      setDraft(btn.dataset.id, ''); // posted — drop the persistent draft too
+      setDraft(btn.dataset.id, '');
     }
     await refreshStore();
     markReadAfterAction(btn.dataset.id);
-  }));
-  root.querySelectorAll('[data-action="repin"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    startRepin(btn.dataset.id);
   }));
 }
 
@@ -1917,16 +2054,13 @@ function setDecisionFeedback(root, id, msg, isError) {
 }
 function setDecisionButtonsDisabled(root, id, disabled) {
   root.querySelectorAll('.decision-btn[data-id="' + cssEsc(id) + '"]').forEach(b => { b.disabled = disabled; });
-  const submitBtn = root.querySelector('[data-decision-action="comment-submit"][data-id="' + cssEsc(id) + '"]');
-  if (submitBtn) submitBtn.disabled = disabled;
 }
 
-// Optional note typed under Accept/Reject ("+ Add a note"); null when the form
-// is closed or empty, so a plain click posts exactly what it always did.
-function decisionNoteText(root, id) {
-  if (!decisionNoteOpen[id]) return null;
-  const ta = root.querySelector('[data-decision-note-ta="' + cssEsc(id) + '"]');
-  const t = (ta && ta.value || '').trim();
+// A1: the one comment box under the options. Its text goes with whichever
+// option is clicked (2.20's optional note); null when empty.
+function decisionCommentText(root, id) {
+  const ta = root.querySelector('[data-decision-say-ta="' + cssEsc(id) + '"]');
+  const t = ((ta ? ta.value : DRAFTS['say:' + id]) || '').trim();
   return t || null;
 }
 
@@ -1938,60 +2072,77 @@ async function submitDecision(root, id, verdict, text) {
   if (!result) {
     setDecisionFeedback(root, id, 'Failed to send — try again.', true);
     setDecisionButtonsDisabled(root, id, false);
-    return;
+    return null;
   }
-  delete decisionChanging[id]; // resolved again (first vote or a correction) — drop back to the chip
-  delete decisionNoteOpen[id];
-  setDraft('note:' + id, '');
-  delete decisionSayOpen[id];
-  delete decisionChangesOpen[id];
-  setDraft('say:' + id, '');
-  setDraft('changes:' + id, '');
-  if (result.delivery === 'deferred' || (roundsEnabled() && result.decision && result.decision.round_pending)) {
-    setDecisionFeedback(root, id, 'Pending — not sent. Finish review to send.', false);
-  } else {
-    const delivered = result.delivery === 'active_monitor';
-    setDecisionFeedback(root, id, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed', false);
-  }
+  delete decisionChanging[id];
+  delete cardExpanded[id];
+  delete decisionHint[id];
+  clearSayDraft(id);
   await refreshStore();
   markReadAfterAction(id);
+  updateSendState();
+  return result;
 }
 
-// Evidence "Go to" → scroll + flash the referenced anchor in the content doc
-// (same postMessage path as "Go to location"), leaving a "Back to #N" marker
-// on it that brings this card back ('annotate:back-to-card'). On mobile the
-// sheet covers the document, so dismiss it first exactly like
-// goToCommentLocation does.
+// Evidence "Go to" (2.20, unchanged).
 function goToEvidence(anchorId, commentId) {
   if (!anchorId) return;
-  selectWorkspaceView('details');
   if (isMobileLayout()) setMobileSheetOpen(false);
   const back = commentId ? { commentId, n: NUM_MAP[commentId] || 0, from: 'rail' } : null;
   scrollToAnchorInFrame(anchorId, null, back);
 }
 
+// Click on an option, from the card or from the send summary. Request
+// changes still needs words (2.20); with an empty box it asks for them.
+// UI-15: the comment sent with an earlier option answer, so changing the
+// option without typing a new comment keeps it. A word answer (comment,
+// changes) is the answer itself, not a comment beside it.
+function earlierAnswerComment(c) {
+  const d = decisionAnswer(c);
+  if (!d || !d.text) return null;
+  if (d.verdict === 'accept' || d.verdict === 'reject') return d.text;
+  if (d.verdict === 'select' || (d.verdict === 'comment' && /^Selected: /.test(d.text))) {
+    const at = d.text.indexOf('\n\n');
+    return at === -1 ? null : (d.text.slice(at + 2).trim() || null);
+  }
+  return null;
+}
+function pickOption(root, btn) {
+  const id = btn.dataset.id;
+  const action = btn.dataset.decisionAction;
+  const note = decisionCommentText(root, id) ||
+    (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(findCommentById(id)));
+  if (action === 'accept' || action === 'reject') return submitDecision(root, id, action, note);
+  if (action === 'comment' || action === 'changes') {
+    if (!note) {
+      // Kept in state (not only in the DOM) so a re-render that lands right
+      // after — e.g. the excerpts refresh that follows an earlier verdict —
+      // draws the same hint again instead of wiping it.
+      decisionHint[id] = action === 'changes'
+        ? { ph: 'What needs to change…', msg: 'Say what needs to change in the box, then pick it again.' }
+        : { ph: 'Add your comment…', msg: 'Write your answer in the box, then pick it again.' };
+      const ta = root.querySelector('[data-decision-say-ta="' + cssEsc(id) + '"]');
+      if (ta) {
+        ta.placeholder = decisionHint[id].ph;
+        ta.focus();
+      }
+      setDecisionFeedback(root, id, decisionHint[id].msg, false);
+      return null;
+    }
+    return submitDecision(root, id, action, note);
+  }
+  // custom option → `select` naming the choice (or pre-D3 `comment`)
+  const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
+  const v = selectVerdictId();
+  const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
+  return submitDecision(root, id, v, text);
+}
+
 function wireDecisionActions(root) {
-  root.querySelectorAll('[data-decision-action="accept"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('.decision-btn[data-decision-action]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    submitDecision(root, btn.dataset.id, 'accept', decisionNoteText(root, btn.dataset.id));
+    pickOption(root, btn);
   }));
-  root.querySelectorAll('[data-decision-action="reject"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    submitDecision(root, btn.dataset.id, 'reject', decisionNoteText(root, btn.dataset.id));
-  }));
-  // Custom option (object form with an id outside accept/reject/changes):
-  // a real choice, so it posts the `select` verdict naming it. Against a
-  // server that predates `select` it posts `comment` with the pre-D3 text.
-  root.querySelectorAll('[data-decision-action="custom"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
-    const note = decisionNoteText(root, btn.dataset.id);
-    const v = selectVerdictId();
-    const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
-    submitDecision(root, btn.dataset.id, v, text);
-  }));
-  // Disclosures toggle in place (no re-render): focus stays on the button,
-  // which is what assistive tech expects from aria-expanded.
   const toggleRegion = (btn, open) => {
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     const region = document.getElementById(btn.getAttribute('aria-controls'));
@@ -2026,100 +2177,48 @@ function wireDecisionActions(root) {
     e.stopPropagation();
     goToEvidence(btn.dataset.anchor, btn.dataset.id);
   }));
-  root.querySelectorAll('[data-decision-action="note-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    const open = !decisionNoteOpen[id];
-    decisionNoteOpen[id] = open;
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    btn.innerHTML = open ? '&minus; Remove note' : '+ Add a note';
-    const form = btn.parentElement && btn.parentElement.querySelector('.decision-note-form');
-    if (form) {
-      form.hidden = !open;
-      const ta = form.querySelector('.decision-note-ta');
-      if (open && ta) ta.focus();
-      if (!open && ta) { ta.value = ''; setDraft('note:' + id, ''); }
-    }
-  }));
-  root.querySelectorAll('[data-decision-action="send-now"]').forEach(btn => btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    btn.disabled = true;
-    btn.textContent = 'Sending…';
-    const j = await apiPushSingle(btn.dataset.id);
-    if (!j) { btn.disabled = false; btn.textContent = 'Send now'; return; }
-    await refreshStore();
-    markReadAfterAction(btn.dataset.id);
-  }));
-  // "Comment" (legacy server) and "Request changes" (D2) share one slot: both
-  // reveal the inline textarea, and neither submits without text.
-  root.querySelectorAll('[data-decision-action="comment"], [data-decision-action="changes"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const form = root.querySelector('[data-decision-comment-for="' + cssEsc(btn.dataset.id) + '"]');
-    if (!form) return;
-    decisionChangesOpen[btn.dataset.id] = true;
-    form.style.display = 'flex';
-    const ta = form.querySelector('.decision-comment-ta');
-    if (ta) ta.focus();
-  }));
-  // D3: the standing Comment button. Its own form and its own verdict, so a
-  // card that offers "Request changes" still lets a reviewer just talk.
-  root.querySelectorAll('[data-decision-action="say"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    const open = !decisionSayOpen[id];
-    decisionSayOpen[id] = open;
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    const form = root.querySelector('[data-decision-say-for="' + cssEsc(id) + '"]');
-    if (!form) return;
-    form.style.display = open ? 'flex' : 'none';
-    const ta = form.querySelector('.decision-say-ta');
-    if (open && ta) ta.focus();
-  }));
-  root.querySelectorAll('[data-decision-action="say-submit"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    const ta = root.querySelector('[data-decision-say-ta="' + cssEsc(id) + '"]');
-    const text = (ta && ta.value || '').trim();
-    if (!text) { if (ta) ta.focus(); return; }
-    submitDecision(root, id, 'comment', text);
-  }));
-  root.querySelectorAll('[data-decision-action="comment-submit"]').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    const ta = root.querySelector('[data-decision-comment-ta="' + cssEsc(id) + '"]');
-    const text = (ta && ta.value || '').trim();
-    if (!text) { if (ta) ta.focus(); return; }
-    submitDecision(root, id, btn.dataset.verdict || 'comment', text);
+  root.querySelectorAll('.decision-say-ta').forEach(ta => ta.addEventListener('input', () => {
+    setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+    syncSayHint(ta);
+    syncStripSayDraft(ta.dataset.decisionSayTa);
+    updateSendState();
   }));
   root.querySelectorAll('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     decisionChanging[btn.dataset.id] = true;
-    decisionNoteOpen[btn.dataset.id] = true;
+    highlightedCommentId = btn.dataset.id;
     renderDrawer();
+    updateSendState();
+    const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
+    if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     delete decisionChanging[btn.dataset.id];
+    delete decisionHint[btn.dataset.id];
     renderDrawer();
+    updateSendState();
   }));
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
 
+// After an action: the store and the server's counts, then every tab.
 async function refreshStore() {
-  await loadStore();
+  await Promise.all([loadStore(), loadCategories()]);
   renderAll();
+  document.dispatchEvent(new CustomEvent('annotate:store'));
 }
 
-// ── Filter chips ─────────────────────────────────────────────────
-function wireChips() {
-  document.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      activeFilter = chip.dataset.filter;
-      renderDrawer();
-    });
-  });
+// ── Rail tabs (E2: Feedback first, History last, extra tabs between) ──
+// final/: the rail is shared by every tab of the page, so app/rail.js owns
+// its tabs (Feedback · Documents · History); the shell asks it to switch.
+function setActiveTab(tab) {
+  if (!['feedback', 'documents', 'history'].includes(tab)) tab = 'feedback';
+  activeTab = tab;
+  if (window.AA) window.AA.rail.setTab(tab);
+}
+function wireTabs() {
+  document.addEventListener('annotate:rail-tab', (e) => { activeTab = e.detail; });
 }
 
 // ── Popover (create/edit a comment) ────────────────────────────────
@@ -2127,7 +2226,6 @@ let pendingAnchor = null; // {anchorId, anchorLabel, target}
 let editingCommentId = null;
 
 function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
-  if (READ_ONLY_REFERENCE) return;
   if (!IDENTITY) {
     updateAuthorIndicator();
     return;
@@ -2135,8 +2233,11 @@ function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
   pendingAnchor = { anchorId, anchorLabel, target: target || null };
   editingCommentId = null;
   const pop = document.getElementById('popover');
-  document.getElementById('pop-node-name').textContent = anchorLabel || anchorId;
-  document.getElementById('pop-node-name').title = anchorLabel || anchorId;
+  const node = document.getElementById('pop-node-name');
+  const quote = target && target.selected_quote;
+  node.classList.toggle('unified-selection-title', !!quote);
+  node.textContent = quote ? '“' + quote + '”' : (anchorLabel || anchorId);
+  node.title = node.textContent;
   document.getElementById('pop-ta').value = '';
   positionPopover(x, y);
   pop.classList.add('vis');
@@ -2165,6 +2266,9 @@ function setMobileBackdropVisible(visible) {
 }
 function closePopover() {
   document.getElementById('popover').classList.remove('vis');
+  // Release focus from the hidden box so keys (E3) are not typed into it.
+  const pta = document.getElementById('pop-ta');
+  if (pta && document.activeElement === pta) pta.blur();
   pendingAnchor = null;
   editingCommentId = null;
   if (!document.getElementById('pin-popover').classList.contains('vis')) setMobileBackdropVisible(false);
@@ -2179,6 +2283,7 @@ async function savePopover() {
     await refreshStore();
     // The author has obviously "read" their own new comment.
     markReadAfterAction(created.id);
+    setActiveTab('feedback');
     focusSidebarCard(created.id);
   }
 }
@@ -2246,8 +2351,7 @@ function renderPinPopItem(c) {
     : '';
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
-      ${num ? `<span class="citem-num">#${num}</span>` : ''}
-      <span class="citem-status cstatus-${cls}">${esc(statusLabel(c, cls))}</span>
+      ${unreadDotHtml(c)}${num ? `<span class="citem-num">#${num}</span>` : ''}
     </div>
     <div class="pinpop-item-txt">${ticketsHTML(c.text)}</div>
     ${respHtml}
@@ -2280,7 +2384,6 @@ function openPinPopover(anchorId, anchorIds, commentIds, anchorLabelText, x, y) 
 
   document.getElementById('pinpop-title').textContent =
     pinPopoverCtx.anchorLabel + ' — ' + comments.length + (comments.length === 1 ? ' comment' : ' comments');
-  document.getElementById('pinpop-title').title = document.getElementById('pinpop-title').textContent;
   const body = document.getElementById('pinpop-body');
 
   // Group by anchor: the pin's own anchor first, nested anchors after.
@@ -2353,57 +2456,62 @@ function wirePinPopover() {
 // Scroll the drawer to a card and mark it active. If the current chip filter
 // hides the card, fall back to the All filter so the focus is never a no-op.
 function focusSidebarCard(commentId) {
-  selectWorkspaceView('feedback');
   if (isMobileLayout()) setMobileSheetOpen(true); // pin/card focus needs the sheet visible, not just scrolled-to
   else if (isDrawerCollapsed()) setDrawerCollapsed(false); // desktop: rail must be expanded
   highlightedCommentId = commentId;
+  // The card must be visible: Feedback tab, and its section open.
+  if (activeTab !== 'feedback') setActiveTab('feedback');
+  const fc = findCommentById(commentId);
+  if (fc && !sectionOpen(sectionOf(fc))) SECTION_OPEN[sectionOf(fc)] = true; // for this visit only
   renderDrawer();
-  let el = document.querySelector('#comment-list [data-comment-id="' + cssEsc(commentId) + '"]');
-  if (!el && activeFilter !== 'all') {
-    activeFilter = 'all';
-    document.querySelectorAll('.chip').forEach(ch => ch.classList.toggle('active', ch.dataset.filter === 'all'));
-    renderDrawer();
-    el = document.querySelector('#comment-list [data-comment-id="' + cssEsc(commentId) + '"]');
-  }
+  const el = document.querySelector('#comment-list [data-comment-id="' + cssEsc(commentId) + '"]');
   if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   sendCommentCountsToFrame(); // pin unread coloring may have changed via markRead
 }
 
-// ── General feedback (inline textarea — no window.prompt, AC7) ─────
-function wireGeneralFeedback() {
-  const toggle = document.getElementById('general-feedback-toggle');
+// ── General feedback (A3 + X2) ─────────────────────────────────────
+// One field at the top of the Feedback tab, collapsed by default (Chang:
+// "it needs to be collapsible/expandable. collapsed by default as it's not a
+// box that's often used"). Its text is a draft that goes out with Send; the
+// send summary shows the same text (D1) — there is no second box.
+let gfOpen = false;
+function renderGeneralFeedback() {
+  if (DOC !== VIEW_DOC) return;
+  const row = document.getElementById('general-feedback-toggle');
   const box = document.getElementById('general-feedback-box');
-  const cancel = document.getElementById('gf-cancel');
-  const save = document.getElementById('gf-save');
-  toggle.addEventListener('click', () => {
-    box.style.display = box.style.display === 'none' ? 'flex' : 'none';
-    box.style.flexDirection = 'column';
-    if (box.style.display !== 'none') document.getElementById('gf-ta').focus();
-  });
-  cancel.addEventListener('click', () => {
+  if (!row || !box) return;
+  const text = gfDraft();
+  row.classList.toggle('has-text', !!text);
+  row.setAttribute('aria-expanded', gfOpen ? 'true' : 'false');
+  if (text && !gfOpen) {
+    row.innerHTML = `<span class="gf-preview"><b>General feedback:</b> “${esc(firstLine(text))}”</span><span class="gf-edit" title="Edit">${ico('pencil')}</span>`;
+    row.setAttribute('aria-label', 'Edit general feedback');
+  } else {
+    row.innerHTML = `${ico(gfOpen ? 'chevDown' : 'plus')}<span>General feedback</span>`;
+    row.setAttribute('aria-label', gfOpen ? 'Collapse general feedback' : 'Add general feedback');
+  }
+  box.hidden = !gfOpen;
+}
+function setGeneralFeedbackOpen(open) {
+  gfOpen = !!open;
+  renderGeneralFeedback();
+  if (gfOpen) document.getElementById('gf-ta').focus();
+}
+function wireGeneralFeedback() {
+  document.getElementById('general-feedback-toggle').addEventListener('click', () => setGeneralFeedbackOpen(!gfOpen));
+  document.getElementById('gf-done').addEventListener('click', () => setGeneralFeedbackOpen(false));
+  document.getElementById('gf-cancel').addEventListener('click', () => {
     document.getElementById('gf-ta').value = '';
-    box.style.display = 'none';
-  });
-  save.addEventListener('click', async () => {
-    if (!IDENTITY) {
-      updateAuthorIndicator();
-      return;
-    }
-    const ta = document.getElementById('gf-ta');
-    const text = ta.value.trim();
-    if (!text) { ta.focus(); return; }
-    const anchorId = 'general:' + CURRENT_VERSION;
-    const created = await apiCreateComment(anchorId, 'General feedback', text, CURRENT_VERSION);
-    ta.value = '';
     setDraft('gf:' + CURRENT_VERSION, '');
-    box.style.display = 'none';
-    await refreshStore();
-    if (created) markReadAfterAction(created.id);
+    setGeneralFeedbackOpen(false);
+    updateSendState();
   });
   // T11: general-feedback drafts persist per version
   document.getElementById('gf-ta').addEventListener('input', (e) => {
     setDraft('gf:' + CURRENT_VERSION, e.target.value || '');
+    updateSendState();
   });
+  renderGeneralFeedback();
 }
 
 // ── Collapsible rails (T7) ───────────────────────────────────────────
@@ -2421,12 +2529,8 @@ function setDrawerCollapsed(collapsed, persist) {
   updateStripBadge();
   if (!collapsed) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
-function setVrailCollapsed(collapsed, persist) {
-  document.getElementById('vrail').classList.toggle('collapsed', collapsed);
-  if (persist !== false) {
-    try { localStorage.setItem('annotate:vrailCollapsed', collapsed ? '1' : '0'); } catch {}
-  }
-}
+// (The left version rail moved into the History tab, so only the feedback
+// rail collapses now.)
 
 // P1: content fullscreen (a diagram's ⛶ overlay inside the iframe)
 // auto-collapses both rails so the overlay gets the full window — the user
@@ -2436,15 +2540,10 @@ let railsBeforeFullscreen = null;
 function autoCollapseForFullscreen(active) {
   if (active) {
     if (railsBeforeFullscreen) return; // already handled this overlay
-    railsBeforeFullscreen = {
-      drawer: isDrawerCollapsed(),
-      vrail: document.getElementById('vrail').classList.contains('collapsed'),
-    };
+    railsBeforeFullscreen = { drawer: isDrawerCollapsed() };
     setDrawerCollapsed(true, false);
-    setVrailCollapsed(true, false);
   } else if (railsBeforeFullscreen) {
     setDrawerCollapsed(railsBeforeFullscreen.drawer, false);
-    setVrailCollapsed(railsBeforeFullscreen.vrail, false);
     railsBeforeFullscreen = null;
   }
 }
@@ -2453,10 +2552,11 @@ function isDrawerCollapsed() {
 }
 function updateStripBadge() {
   const el = document.getElementById('drawer-strip-unread');
-  if (!el) return;
-  const unread = flattenAll(false).filter(c => inScope(c) && readStateOf(c) !== 'read').length;
-  el.textContent = String(unread);
-  el.style.display = unread > 0 ? '' : 'none';
+  if (!el || DOC !== VIEW_DOC) return;
+  // B1: same "needs you" count as the Feedback tab badge.
+  const needs = flattenAll(false).filter(c => inScope(c) && sectionOf(c) === 'needs').length;
+  el.textContent = String(needs);
+  el.style.display = needs > 0 ? '' : 'none';
 }
 function wireRailCollapse() {
   // On mobile the drawer is a bottom sheet, not a collapsible rail — this
@@ -2468,70 +2568,97 @@ function wireRailCollapse() {
     setDrawerCollapsed(true);
   });
   document.getElementById('drawer-strip').addEventListener('click', () => setDrawerCollapsed(false));
-  document.getElementById('vrail-collapse').addEventListener('click', () => setVrailCollapsed(true));
-  document.getElementById('vrail-strip').addEventListener('click', () => setVrailCollapsed(false));
   try {
     // A collapsed-rail preference saved from a prior desktop session must
     // not apply on a phone: mobile visibility is owned entirely by
     // body.is-mobile-sheet-open, never by .collapsed.
     if (!isMobileLayout() && localStorage.getItem('annotate:drawerCollapsed') === '1') setDrawerCollapsed(true);
-    if (localStorage.getItem('annotate:vrailCollapsed') === '1') setVrailCollapsed(true);
   } catch {}
 }
 
-// ── Mobile-only chrome: FAB, version <select>, dialog backdrop ─────────
+// ── Mobile-only chrome: FAB, dialog backdrop ─────────────────────────
 function wireMobileChrome() {
   const fab = document.getElementById('mobile-fab');
   if (fab) fab.addEventListener('click', () => setMobileSheetOpen(true));
-  const sel = document.getElementById('mobile-version-select');
-  if (sel) sel.addEventListener('change', () => switchVersion(sel.value));
+  // U-12: the phone sheet closes with ×, a tap outside it or a swipe down.
+  document.getElementById('unified-sheet-close').addEventListener('click', () => setMobileSheetOpen(false));
+  document.getElementById('unified-sheet-backdrop').addEventListener('click', () => setMobileSheetOpen(false));
+  const hdr = document.querySelector('.drawer-hdr');
+  let touchY = null;
+  hdr.addEventListener('touchstart', e => { touchY = e.touches[0] ? e.touches[0].clientY : null; }, { passive: true });
+  hdr.addEventListener('touchend', e => {
+    if (touchY !== null && e.changedTouches[0].clientY - touchY > 65) setMobileSheetOpen(false);
+    touchY = null;
+  }, { passive: true });
+  // U-14: skip links.
+  document.querySelectorAll('.unified-skip').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    if (a.dataset.skip === 'document') {
+      if (isMobileLayout()) setMobileSheetOpen(false);
+      document.getElementById('content-frame').focus();
+    } else {
+      setActiveTab('feedback');
+      setDrawerCollapsed(false, false);
+      if (isMobileLayout()) setMobileSheetOpen(true);
+      document.getElementById('drawer').focus();
+    }
+  }));
   const backdrop = document.getElementById('mobile-dialog-backdrop');
   if (backdrop) backdrop.addEventListener('click', () => { closePopover(); closePinPopover(); cancelRepin(); });
 }
 
-// ── Archived toggle ─────────────────────────────────────────────────
-function wireArchivedToggle() {
-  document.getElementById('archived-toggle').addEventListener('click', () => {
-    showArchivedInline = !showArchivedInline;
-    document.getElementById('archived-toggle').classList.toggle('active', showArchivedInline);
-    renderDrawer();
+// ── Header: theme toggle and the avatar menu (E1) ────────────────────
+function wireHeader() {
+  applyTheme(currentTheme());
+  // #theme=light|dark deep links (app.js router).
+  document.addEventListener('annotate:set-theme', (e) => {
+    if (e.detail !== 'light' && e.detail !== 'dark') return;
+    applyTheme(e.detail);
+    try { localStorage.setItem('annotate:theme', e.detail); } catch {}
+  });
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const t = currentTheme() === 'dark' ? 'light' : 'dark';
+    applyTheme(t);
+    try { localStorage.setItem('annotate:theme', t); } catch {}
+  });
+  document.getElementById('copy-link-btn').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    try {
+      const response = await fetch(apiUrl('./api/share-link'), { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !data.url) return;
+      await navigator.clipboard.writeText(data.url);
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = 'Copy link'; }, 2000);
+    } catch { button.textContent = 'Copy failed'; }
+  });
+  const btn = document.getElementById('who-btn');
+  const panel = document.getElementById('who-panel');
+  const setOpen = (open) => { panel.hidden = !open; btn.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(panel.hidden); });
+  document.addEventListener('click', (e) => {
+    if (!panel.hidden && !e.target.closest('#who')) setOpen(false);
+    // C3: a click anywhere else closes an open ⋯ menu
+    if (openMenuId && !e.target.closest('.citem-menu, [data-action="menu"]')) {
+      openMenuId = null;
+      document.querySelectorAll('.citem-menu').forEach(m => { m.hidden = true; });
+      document.querySelectorAll('[data-action="menu"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+    }
   });
 }
 
-// ── Drawer view controls: all-versions / unread-first / mark-all-read ──
-function wireDrawerControls() {
-  const av = document.getElementById('allversions-toggle');
-  const uf = document.getElementById('unreadfirst-toggle');
-  av.classList.toggle('active', showAllVersions);
-  uf.classList.toggle('active', unreadFirst);
-  av.addEventListener('click', () => {
-    showAllVersions = !showAllVersions;
-    try { localStorage.setItem('annotate:allVersions', showAllVersions ? '1' : '0'); } catch {}
-    av.classList.toggle('active', showAllVersions);
-    renderDrawer();
-  });
-  uf.addEventListener('click', () => {
-    unreadFirst = !unreadFirst;
-    try { localStorage.setItem('annotate:unreadFirst', unreadFirst ? '1' : '0'); } catch {}
-    uf.classList.toggle('active', unreadFirst);
-    renderDrawer();
-  });
-  document.getElementById('markallread-btn').addEventListener('click', async () => {
-    // Scoped to the current view (version scope; chip filter ignored).
-    const targets = flattenAll(false).filter(c => inScope(c) && readStateOf(c) !== 'read');
-    await markRead(targets);
-    renderDrawer();
-    sendCommentCountsToFrame();
-  });
-}
-
-// ── Push to session ─────────────────────────────────────────────────
+// ── Send (A2: one Send for everything) ─────────────────────────────
+// 2.20 had three paths: header "Push to session" (comments), the round
+// bar's "Finish review" (verdicts) and a per-card "Send now". Here every
+// verdict, comment and general-feedback draft waits for one Send, which
+// does what those did, in one go: answers typed without an option are
+// recorded, general feedback is posted, the round is submitted, and open
+// comments are pushed.
 // A comment needs pushing only if it's open AND has user-side activity newer
-// than its last push. Pushing sets flagged_for_session/flagged_at server-side
-// but leaves status open — counting bare open comments made the badge show
-// "1 remaining" forever after a successful push (T6, user-reported).
+// than its last push (2.20 rule, kept).
 function needsPush(c) {
-  if (c.status !== 'open' || (c.decision && c.decision.round_pending)) return false;
+  // The server's _comment_needs_push: a pending reopen goes with the round.
+  if (c.status !== 'open' || c.round_pending || (c.decision && c.decision.round_pending)) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
   let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
   if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
@@ -2543,239 +2670,348 @@ function needsPush(c) {
   if (!c.flagged_for_session) return true;
   return latest > flaggedAt;
 }
-function countOpenComments() {
-  let n = 0;
-  for (const items of Object.values(STORE.anchors || {})) {
-    for (const c of items) if (needsPush(c)) n++;
-  }
-  return n;
-}
-function updatePushCounter() {
-  const btn = document.getElementById('push-session-btn');
-  const cnt = document.getElementById('push-session-counter');
-  const n = countOpenComments();
-  cnt.textContent = String(n);
-  btn.disabled = (n === 0);
-  const owner = SESSION_MONITOR.owner && SESSION_MONITOR.owner.owner_session;
-  const route = owner ? 'Feedback goes to the owning agent.' : 'Feedback is saved for the project agent.';
-  btn.title = n === 0
-    ? 'Nothing new to send. ' + route
-    : 'Send ' + n + ' feedback item(s). ' + route;
-}
-function wirePushSession() {
-  document.getElementById('push-session-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('push-session-btn');
-    btn.disabled = true;
-    const j = await apiPushAll();
-    if (j) {
-      SESSION_MONITOR = {
-        active: j.delivery === 'active_monitor',
-        monitor_count: j.monitor_count || 0,
-        delivery: j.delivery || 'queued',
-        owner: j.monitor_owner || null,
-      };
-      const delivered = j.delivery === 'active_monitor';
-      btn.classList.add(delivered ? 'success' : 'queued');
-      // textContent here (not innerHTML): this transient status string is
-      // plain text, and using textContent replaces the icon/label spans
-      // below wholesale — restored on reset so the mobile
-      // ".push-session-label{display:none}" rule still has a label span to
-      // target afterward.
-      btn.querySelector('span:first-child').textContent = delivered
-        ? 'Sent ' + j.flagged_count
-        : 'Saved ' + j.flagged_count;
-      await refreshStore();
-      setTimeout(() => {
-        btn.classList.remove('success', 'queued');
-        btn.querySelector('span:first-child').innerHTML =
-          '<span class="push-session-label">Send feedback</span>';
-        updatePushCounter();
-      }, 3000);
-    } else {
-      btn.disabled = false;
-    }
-  });
-}
-
-// ── v2.19 review rounds: sticky bar + submit confirm ─────────────────
-// Only active when the server advertised capabilities.rounds. Verdicts are
-// posted with defer_push (see apiDecision) and accumulate as
-// decision.round_pending; the bar shows how many are waiting and submits
-// them as ONE session_push{round:true} so the agent never reacts to a
-// half-finished review. Counts span every version (a round is per page).
 function roundStats() {
   let pending = 0, decided = 0, total = 0, undecided = 0;
   for (const c of flattenAll(false)) {
-    if (!hasDecisionRequest(c) || (decisionAnswer(c) && !isRoundPending(c)) || c.status === 'addressed_by_agent') continue;
+    if (!hasDecisionRequest(c) || c.status === 'addressed_by_agent') continue;
     total++;
     if (decisionAnswer(c)) decided++; else undecided++;
     if (isRoundPending(c)) pending++;
   }
   return { pending, decided, total, undecided };
 }
-// The bar lives inside the drawer above its footer on desktop. On mobile the
-// drawer is a translated-off-screen bottom sheet (a transform makes it the
-// containing block for position:fixed descendants), so the node is moved to
-// <body> where body>.round-bar pins it to the viewport bottom.
-function placeRoundBar() {
-  const bar = document.getElementById('round-bar');
-  const slot = document.getElementById('round-bar-slot');
-  if (!bar || !slot) return;
-  if (isMobileLayout()) {
-    if (bar.parentElement !== document.body) document.body.appendChild(bar);
-  } else if (bar.parentElement !== slot) {
-    slot.appendChild(bar);
-  }
+
+// ── final/: the one Send ─────────────────────────────────────────────
+// app/send.js owns the header Send, the phone Send bar and the summary
+// dialog for the whole page. For each document the shell supplies what it
+// would send (sendables), its rows in the summary (renderSummaryInto) and
+// its part of the sending (prepareDocCore); submitPage sends the page in
+// one round. Wording is 2.20's.
+function setSendNote(text, cls, ms) {
+  if (window.AA) window.AA.send.note(text, cls, ms);
 }
-let roundBarNote = null; // {text, cls, until} — transient result line after submit/discard
-let roundBarNoteTimer = null;
-function setRoundBarNote(text, cls, ms) {
-  roundBarNote = { text, cls: cls || '', until: Date.now() + (ms || 6000) };
-  clearTimeout(roundBarNoteTimer);
-  roundBarNoteTimer = setTimeout(() => { roundBarNote = null; renderRoundBar(); }, (ms || 6000) + 50);
+function updateSendState() {
+  if (window.AA) window.AA.changed();
 }
-function renderRoundBar() {
-  const bar = document.getElementById('round-bar');
-  if (!bar) return;
-  placeRoundBar();
+// Kept for callers that still name the 2.20 functions.
+function updatePushCounter() { updateSendState(); }
+function renderRoundBar() { updateSendState(); }
+
+// ── D1: send summary rows for this document ─────────────────────────
+// Every decision card with its answer and a pencil to change it in place;
+// unanswered cards highlighted; unsent comments; the one general-feedback
+// field (pencil to edit, + to add). Only the document on screen is edited
+// in place; another document's pencil opens that document's tab.
+let sumEditing = null; // card id or 'gf' being edited inside the summary
+function summarySentence() {
   const s = roundStats();
-  const noteLive = !!(roundBarNote && Date.now() < roundBarNote.until);
-  const show = roundsEnabled() && (s.pending > 0 || noteLive);
-  bar.style.display = show ? 'flex' : 'none';
-  document.body.classList.toggle('has-round-bar', show && isMobileLayout());
-  if (!show) return;
-  document.getElementById('round-bar-main').textContent = s.pending + ' saved draft' + (s.pending === 1 ? '' : 's') + (s.undecided ? ' · ' + s.undecided + ' unanswered' : '');
-  document.getElementById('round-pending-n').textContent = String(s.pending);
-  const btn = document.getElementById('round-finish-btn');
-  btn.disabled = s.pending === 0;
-  btn.title = s.pending === 0
-    ? 'No pending verdicts'
-    : 'Send ' + s.pending + ' pending verdict' + (s.pending === 1 ? '' : 's') + ' to the agent as one review round';
-  const sub = document.getElementById('round-bar-sub');
-  if (noteLive) {
-    sub.textContent = roundBarNote.text;
-    sub.className = 'round-bar-sub' + (roundBarNote.cls ? ' ' + roundBarNote.cls : '');
-  } else {
-    sub.textContent = '';
-    sub.className = 'round-bar-sub';
+  const plan = sendPlan();
+  const q = sendables();
+  // 2.20's own sentences, counted over exactly what this Send sends.
+  const roundN = plan.round.length + plan.answers.length;
+  if (roundN > 0) {
+    return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
+      (s.decided + plan.answers.filter(c => !decisionAnswer(c)).length) + ' of ' + s.total + ' cards decided).';
   }
+  return q.total === 0 ? 'Nothing to send yet.' : '';
 }
-function openRoundConfirm() {
-  const s = roundStats();
-  if (!roundsEnabled() || s.pending === 0) return;
-  document.getElementById('round-confirm-sub').textContent =
-    s.pending + ' pending verdict' + (s.pending === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
-    s.decided + ' of ' + s.total + ' cards decided).';
-  const warn = document.getElementById('round-confirm-warn');
-  if (s.undecided > 0) {
-    warn.textContent = s.undecided + ' card' + (s.undecided === 1 ? ' is' : 's are') +
-      ' still undecided — the round will report ' + (s.undecided === 1 ? 'it' : 'them') + ' as undecided.';
-    warn.style.display = '';
-  } else {
-    warn.style.display = 'none';
+function summaryWarning() {
+  const plan = sendPlan();
+  const roundN = plan.round.length + plan.answers.length;
+  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c)).length;
+  if (undecided > 0 && roundN > 0) {
+    return undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
+      ' still undecided — the round will report ' + (undecided === 1 ? 'it' : 'them') + ' as undecided.';
   }
-  const ta = document.getElementById('round-note-ta');
-  ta.value = DRAFTS['round-note'] || '';
-  ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].forEach(id => { document.getElementById(id).disabled = false; });
-  document.getElementById('round-confirm-backdrop').classList.add('vis');
-  ta.focus();
+  return '';
 }
-function closeRoundConfirm() {
-  const bd = document.getElementById('round-confirm-backdrop');
-  if (bd) bd.classList.remove('vis');
-}
-function isRoundConfirmOpen() {
-  const bd = document.getElementById('round-confirm-backdrop');
-  return !!(bd && bd.classList.contains('vis'));
-}
-async function submitRound() {
-  const ta = document.getElementById('round-note-ta');
-  const note = (ta.value || '').trim();
-  const btns = ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].map(id => document.getElementById(id));
-  btns.forEach(b => { b.disabled = true; });
-  const submitBtn = btns[0];
-  submitBtn.textContent = 'Sending…';
-  const j = await apiRoundSubmit(note);
-  submitBtn.textContent = 'Submit review';
-  if (!j) {
-    btns.forEach(b => { b.disabled = false; });
-    document.getElementById('round-confirm-sub').textContent = 'Failed to submit — try again.';
-    return;
-  }
-  ta.value = '';
-  setDraft('round-note', '');
-  closeRoundConfirm();
-  const delivered = j.delivery === 'active_monitor';
-  SESSION_MONITOR = {
-    active: delivered,
-    monitor_count: j.monitor_count || 0,
-    delivery: j.delivery || 'queued',
-    owner: j.monitor_owner || null,
+function renderSummaryInto(list, editable) {
+  const plan = sendPlan();
+  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+  const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
+  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id)).sort(byNum);
+  const doc = DOC;
+  const decisionRow = (c) => {
+    const num = NUM_MAP[c.id];
+    const answered = !!decisionAnswer(c);
+    const draft = hasSayDraft(c);
+    const missing = !answered && !draft;
+    const editing = editable && sumEditing === c.id;
+    const ansText = draft ? '“' + firstLine(sayDraft(c)) + '”' : answered ? answerLabel(c).text : 'Not answered';
+    const sent = answered && !draft && !isRoundPending(c);
+    const editLabel = missing ? 'Answer' : 'Change';
+    let edit = '';
+    if (editing) {
+      const opts = decisionOptions(c.decision_request);
+      edit = `<div class="sum-edit">
+        <div class="sum-opts">${opts.map(o => {
+          const action = o.custom ? 'custom' : o.id;
+          const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
+          return `<button type="button" class="btn btn-sm decision-btn-sum" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}>${o.labelHtml}</button>`;
+        }).join('')}</div>
+        <textarea class="textarea textarea-sm sum-gf-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Comment (optional)" rows="2"></textarea>
+        <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div>
+      </div>`;
+    }
+    const pencil = (canChangeAnswer(c) || !answered)
+      ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="${escAttr(c.id)}" data-sum-doc="${doc}" aria-label="${editLabel} #${num || ''}" title="${editLabel}" aria-expanded="${editing ? 'true' : 'false'}">${ico('pencil')}</button>`
+      : '<span class="btn btn-xs btn-square btn-ghost" aria-hidden="true" style="visibility:hidden"></span>';
+    return `<div class="sum-row${missing ? ' is-missing' : ''}" data-sum-id="${escAttr(c.id)}">
+      <div class="sum-main">
+        <span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(displayPrompt(c))}</span>
+        <span class="sum-a${sent ? ' is-sent' : ''}">${esc(ansText)}${sent ? ' · sent' : ''}</span>
+        ${pencil}
+      </div>
+      ${edit}
+    </div>`;
   };
-  const n = j.comment_count != null ? j.comment_count : 0;
-  setRoundBarNote(
-    delivered ? '✅ Sent to session (' + n + ')' : '⏳ Queued — no session listening (' + n + ')',
-    delivered ? 'is-success' : 'is-queued');
-  await refreshStore();
-}
-async function discardRound() {
-  const btns = ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].map(id => document.getElementById(id));
-  btns.forEach(b => { b.disabled = true; });
-  const j = await apiRoundDiscard();
-  if (!j) {
-    btns.forEach(b => { b.disabled = false; });
-    document.getElementById('round-confirm-sub').textContent = 'Failed to discard — try again.';
+  const commentRow = (c) => {
+    if (hasDecisionRequest(c)) return decisionRow(c);
+    const num = NUM_MAP[c.id];
+    const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
+    const text = last ? last.text : c.text;
+    return `<div class="sum-row"><div class="sum-main"><span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(firstLine(text))}</span></div></div>`;
+  };
+  const group = (label, n) => `<div class="sum-group">${label}${n == null ? '' : ` <span class="badge badge-sm badge-ghost">${n}</span>`}</div>`;
+  let html = '';
+  const verdictRows = [...plan.round, ...plan.answers].sort(byNum);
+  if (verdictRows.length) html += group('Verdicts', verdictRows.length) + verdictRows.map(decisionRow).join('');
+  if (plan.push.length) html += group('Open comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
+  // General feedback: pencil to edit inline, or + to add (Chang, D1).
+  const gf = gfDraft();
+  const gfEditing = editable && sumEditing === 'gf';
+  html += group('General feedback', gf ? 1 : 0);
+  html += `<div class="sum-row" data-sum-id="${editable ? 'gf' : 'gf-' + doc}">
+    <div class="sum-main">
+      <span class="sum-q">${gf ? '“' + esc(firstLine(gf)) + '”' : '<span class="sum-none">None</span>'}</span>
+      <button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="${gf ? 'Edit general feedback' : 'Add general feedback'}" title="${gf ? 'Edit' : 'Add general feedback'}" aria-expanded="${gfEditing ? 'true' : 'false'}">${ico(gf ? 'pencil' : 'plus')}</button>
+    </div>
+    ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
+  </div>`;
+  if (rest.length) html += group('Not in this Send') + rest.map(decisionRow).join('');
+  list.innerHTML = html;
+
+  // Another document's rows: the pencil opens that document's tab, where
+  // the same summary opens with that row in edit mode.
+  if (!editable) {
+    list.querySelectorAll('[data-sum-edit]').forEach(btn => btn.addEventListener('click', () => {
+      if (window.AA) window.AA.go({ view: btn.dataset.sumDoc, send: '1', sumedit: btn.dataset.sumEdit });
+    }));
     return;
   }
-  closeRoundConfirm();
-  const n = j.comment_count != null ? j.comment_count : 0;
-  setRoundBarNote('Discarded ' + n + ' pending verdict' + (n === 1 ? '' : 's') + ' — nothing sent', '', 5000);
-  await refreshStore();
+  const gta = list.querySelector('#sum-gf-ta');
+  if (gta) {
+    gta.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+    gta.addEventListener('input', () => {
+      setDraft('gf:' + CURRENT_VERSION, gta.value || '');
+      const box = document.getElementById('gf-ta');
+      if (box) box.value = gta.value;
+      renderGeneralFeedback();
+      updateSendState();
+      syncSummaryCounts();
+    });
+    gta.focus();
+  }
+  list.querySelectorAll('[data-decision-say-ta]').forEach(ta => {
+    ta.value = DRAFTS['say:' + ta.dataset.decisionSayTa] || '';
+    ta.addEventListener('input', () => {
+      setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+      syncStripSayDraft(ta.dataset.decisionSayTa);
+      updateSendState();
+    });
+  });
+  list.querySelectorAll('[data-sum-edit]').forEach(btn => btn.addEventListener('click', () => {
+    sumEditing = sumEditing === btn.dataset.sumEdit ? null : btn.dataset.sumEdit;
+    renderSummary();
+    if (sumEditing === 'gf') renderGeneralFeedback();
+  }));
+  list.querySelectorAll('.decision-btn-sum').forEach(btn => btn.addEventListener('click', async () => {
+    const r = await pickOption(list, btn);
+    if (r) { sumEditing = null; renderSummary(); }
+  }));
+}
+function renderSummary() { if (window.AA) window.AA.send.render(); }
+function syncSummaryCounts() { if (window.AA) window.AA.send.syncCounts(); }
+function openRoundConfirm() { sumEditing = null; if (window.AA) window.AA.send.open(); }
+function closeRoundConfirm() { sumEditing = null; if (window.AA) window.AA.send.close(); }
+function isRoundConfirmOpen() { return !!(window.AA && window.AA.send.isOpen()); }
+function submitRound() { if (window.AA) return window.AA.send.submit(); }
+
+// What this document's part of one Send carries, as receipt lines.
+function sendItems() {
+  const p = sendPlan();
+  const items = [...p.round, ...p.answers, ...p.push].map(c => {
+    const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
+    const label = hasDecisionRequest(c) ? displayPrompt(c) : firstLine(last ? last.text : c.text);
+    const answer = hasSayDraft(c) ? sayDraft(c) : decisionAnswer(c) ? answerLabel(c).text : '';
+    // UI-2: `kind` says which call carries the line (the round or the push)
+    // and `id` lets a failed draft drop its line; neither goes to the server.
+    return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer, kind: p.push.includes(c) ? 'push' : 'round', id: c.id };
+  });
+  if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft(), kind: 'push', id: 'gf:' + DOC });
+  return items;
+}
+// A document's part of one Send (2.20's order): comment-box text on an
+// unanswered card becomes its answer, general feedback becomes its
+// general:* item. No UI here; app/send.js reports it.
+async function prepareDocCore() {
+  const items = sendItems();
+  let ok = true;
+  const failed = [];
+  for (const c of flattenAll(false).filter(hasSayDraft)) {
+    let r = await apiDecision(c.id, 'comment', sayDraft(c));
+    if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
+    if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
+  }
+  const gf = gfDraft();
+  if (gf) {
+    const created = IDENTITY ? await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION) : null;
+    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else { ok = false; failed.push('gf:' + DOC); }
+  }
+  if (DOC === VIEW_DOC) {
+    const g = document.getElementById('gf-ta');
+    if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  }
+  return { ok, items, failed };
+}
+// A reopened finding this reviewer has not sent yet.
+function isReopenPending(c) {
+  const last = (c.reopened || []).slice(-1)[0];
+  return !!(c.round_pending && last && IDENTITY && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(last.by));
+}
+// Everything this reviewer has recorded for the page's one round.
+function pageRoundPending() {
+  return flattenStore(false).filter(c => isRoundPending(c) || isReopenPending(c)).length;
+}
+// The page's one Send: every document's drafts, then ONE round (verdicts,
+// reopens and Library revisions across every tab), then ONE push of the open
+// comments with new activity. `alsoPending` says another tab has round-pending
+// work the comment store does not show (Library revisions).
+// `receipt`: the Send summary's lines, kept by the server for History.
+// UI-2: each call carries only its own receipt lines (the round's verdicts,
+// reopens and edits; the push's comments), both under one send_id, so a
+// failed call leaves its lines out of History. Returns the lines actually
+// sent and the lines that were not (they stay pending, as their drafts,
+// verdicts and comments are untouched).
+async function submitPage(alsoPending, receipt) {
+  let sentCount = 0, delivered = false, last = null;
+  const lines = Array.isArray(receipt) ? receipt : [];
+  const sendId = lines.length ? newSendId() : null;
+  const failedIds = new Set();
+  for (const doc of DOCS) {
+    const r = await withDocAsync(doc, prepareDocCore);
+    (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
+  }
+  const failed = lines.filter(it => it.id && failedIds.has(it.cat + '|' + it.id));
+  const sent = [];
+  // Library lines carry no kind: its comments read "Comment: …".
+  const kindOf = (it) => it.kind || (/^Comment: /.test(it.answer || '') ? 'push' : 'round');
+  let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
+  let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
+  await loadStore();
+  const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
+  const doPush = flattenStore(false).some(needsPush);
+  // A line whose own call is not needed goes with the other call.
+  if (!doRound) { pushLines = roundLines.concat(pushLines); roundLines = []; }
+  if (!doPush) { roundLines = roundLines.concat(pushLines); pushLines = []; }
+  if (doRound) {
+    const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
+    if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
+    await loadStore();
+  }
+  if (doPush) {
+    const j = await apiPushAll(receiptPayload(pushLines, sendId));
+    if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; sent.push(...pushLines); } else failed.push(...pushLines);
+  }
+  // Nothing needed a call (an old server answers each verdict as it is posted).
+  if (!doRound && !doPush) sent.push(...roundLines);
+  if (last) {
+    SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
+  }
+  historyDirty = true;
+  await Promise.all([loadStore(), loadReadState()]);
+  loadHistory();
+  const order = (it) => lines.indexOf(it);
+  sent.sort((a, b) => order(a) - order(b));
+  failed.sort((a, b) => order(a) - order(b));
+  return { ok: !failed.length, sent, failed, sentCount, delivered, any: !!last, send_id: sendId };
+}
+function newSendId() {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+}
+function receiptPayload(receipt, id) {
+  if (!id) return {};
+  if (!Array.isArray(receipt) || !receipt.length) return { send_id: id };
+  return {
+    send_id: id,
+    receipt: receipt.slice(0, 200).map(it => {
+      const line = { cat: it.cat, label: String(it.label || '—').slice(0, 300) };
+      if (it.answer) line.answer = String(it.answer).slice(0, 600);
+      return line;
+    }),
+  };
+}
+// 2.20 behaviour and wording: clears the pending verdicts only (typed
+// comments and general feedback stay as drafts). Returns the count or null.
+async function discardPage() {
+  const j = await apiRoundDiscard();
+  if (!j) return null;
+  await loadStore();
+  return j.comment_count != null ? j.comment_count : 0;
 }
 function wireRoundBar() {
-  const finish = document.getElementById('round-finish-btn');
-  if (!finish) return;
-  finish.addEventListener('click', openRoundConfirm);
-  document.getElementById('round-cancel-btn').addEventListener('click', closeRoundConfirm);
-  document.getElementById('round-submit-btn').addEventListener('click', submitRound);
-  document.getElementById('round-discard-btn').addEventListener('click', discardRound);
-  document.getElementById('round-confirm-backdrop').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) closeRoundConfirm();
-  });
-  document.getElementById('round-note-ta').addEventListener('input', (e) => setDraft('round-note', e.target.value || ''));
   let t = null;
-  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(renderRoundBar, 120); });
+  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(updateSendState, 120); });
 }
 
 // ── v2.19 owner chip ─────────────────────────────────────────────────
 // current.meta.json `owner` is stamped by cli.py publish/claim:
 // {owner_session, owner_agent, owner_label, claimed_at}. Read-only here —
 // no liveness polling; META is refreshed by the existing 8s poll.
-let ownerSnapshot = '';
+function relTime(iso) {
+  const t = iso ? new Date(iso).getTime() : NaN;
+  if (!t) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = s / 60;
+  if (m < 60) return Math.round(m) + ' min ago';
+  const h = m / 60;
+  if (h < 24) return Math.round(h) + ' h ago';
+  const d = h / 24;
+  if (d < 14) return Math.round(d) + ' d ago';
+  try { return 'on ' + new Date(iso).toLocaleDateString(); } catch { return ''; }
+}
 function renderOwnerChip() {
   const el = document.getElementById('owner-chip');
   if (!el) return;
-  const mobileRow = document.getElementById('owner-row');
-  const parent = isMobileLayout() ? mobileRow : document.querySelector('.hdr-right');
-  if (parent && el.parentElement !== parent) parent.appendChild(el);
   const o = META && META.owner;
-  const label = o && (o.owner_label || o.label || o.owner_agent || o.owner_session);
-  el.hidden = !label;
-  if (mobileRow) mobileRow.hidden = !label || !isMobileLayout();
-  if (!label) { el.style.display = 'none'; return; }
-  const snapshot = JSON.stringify(o);
-  el.style.display = '';
-  if (snapshot === ownerSnapshot) return;
-  ownerSnapshot = snapshot;
-  const target = o.target || {};
+  const label = o && typeof o === 'object'
+    ? (o.owner_label || o.label || o.owner_agent || o.owner_session || null)
+    : null;
+  const row = document.getElementById('owner-row');
+  if (!label) {
+    if (row) row.hidden = true;
+    el.textContent = '';
+    el.title = '';
+    return;
+  }
+  if (row) row.hidden = false;
+  const when = o.claimed_at || o.ts || o.since || o.updated_at || null;
   el.textContent = '';
-  const summary = document.createElement('summary');
-  summary.textContent = 'Owner: ' + (o.terminal_name || target.terminal_name || label);
-  const detail = document.createElement('div');
-  detail.className = 'owner-chip-path';
-  detail.textContent = label;
-  el.append(summary, detail);
-  el.title = label + (o.owner_session ? '\nSession ' + o.owner_session : '');
+  const dot = document.createElement('span');
+  dot.className = 'owner-chip-dot';
+  el.appendChild(dot);
+  el.appendChild(document.createTextNode(label));
+  const rel = when ? relTime(when) : '';
+  if (rel) {
+    const w = document.createElement('span');
+    w.className = 'owner-chip-when';
+    w.textContent = ' · claimed ' + rel;
+    el.appendChild(w);
+  }
+  el.title = (o.owner_session ? 'Session ' + o.owner_session : 'Owner ' + label)
+    + (o.owner_agent ? ' (' + o.owner_agent + ')' : '')
+    + (when ? '\nclaimed ' + when : '');
 }
 
 // ── Bridge: postMessage with the content iframe ─────────────────────
@@ -2809,18 +3045,29 @@ function frameOffset() {
 
 function wireBridge() {
   window.addEventListener('message', (e) => {
-    const frame = document.getElementById('content-frame');
-    if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frame || e.source !== frame.contentWindow) return;
+    // F1: only our own document frame, on our own origin, is heard.
+    const frameEl = document.getElementById('content-frame');
+    if (!BRIDGE_ORIGIN || e.origin !== BRIDGE_ORIGIN || !frameEl || e.source !== frameEl.contentWindow) return;
     const data = e.data || {};
     if (!data || typeof data !== 'object') return;
-    if (READ_ONLY_REFERENCE && ['annotate:pin-click', 'annotate:pin-open', 'annotate:decision-posted'].includes(data.type)) return;
-    if (data.type === 'annotate:feedback-anchor') {
-      if (READ_ONLY_REFERENCE) window.parent.postMessage({type:'annotate:feedback-anchor',anchorId:data.anchorId}, BRIDGE_ORIGIN);
-      else {
-        const question = flattenAll(false).find(c => c.anchor_id === data.anchorId);
-        if (question) focusSidebarCard(question.id);
-      }
-    } else if (data.type === 'annotate:pin-click') {
+    if (data.type === 'annotate:navigate') {
+      // U-11: a link to another page on this server opens in the whole window.
+      let url;
+      try { url = new URL(String(data.url || ''), location.href); } catch { return; }
+      if (url.origin === BRIDGE_ORIGIN) window.location.assign(url.href);
+      return;
+    }
+    if (data.type === 'annotate:open-version') {
+      // A plan revision's previous/next link opens it in the same tab.
+      if (window.AA && VIEW_DOC && /^v\d{1,10}$/.test(String(data.version))) window.AA.go({ view: VIEW_DOC, v: data.version });
+      return;
+    }
+    // The frame shows VIEW_DOC; a message is only handled while that
+    // document's state is the one loaded (and never from a frame that is
+    // still showing the previous document).
+    if (DOC !== VIEW_DOC) return;
+    if (frameEl.dataset.doc !== DOC) return;
+    if (data.type === 'annotate:pin-click') {
       // Re-pin mode: the click IS the comment's new location.
       if (repinCommentId) {
         completeRepin(data.anchorId, data.anchorLabel, data.target || null);
@@ -2862,10 +3109,8 @@ function wireBridge() {
       // P1: a full-viewport overlay opened/closed inside the content doc
       autoCollapseForFullscreen(!!data.active);
     } else if (data.type === 'annotate:ready') {
-      applyTheme();
       // content doc finished loading + adapter.js initialized
       autoCollapseForFullscreen(false); // version switch discards any overlay
-      mountProjectInDocument(frame);
       sendCommentCountsToFrame();
       markSeen(CURRENT_VERSION);
       loadSeen().then(renderVersionRail);
@@ -2891,6 +3136,18 @@ function wireBridge() {
       // "Back to #N" on an evidence target the rail card sent the reader to.
       const c = data.commentId ? findCommentById(data.commentId) : null;
       if (c) focusSidebarCard(c.id);
+    } else if (data.type === 'annotate:key') {
+      onShellKey({ key: String(data.key || ''), metaKey: !!data.meta, ctrlKey: !!data.ctrl, shiftKey: !!data.shift, altKey: false,
+        target: document.body, preventDefault() {} });
+    } else if (data.type === 'annotate:say-draft') {
+      // A1: the body strip's comment box and the rail card's box are the
+      // same draft, so either one can carry the card's comment to Send.
+      if (!data.commentId) return;
+      const text = typeof data.text === 'string' ? data.text : '';
+      setDraft('say:' + data.commentId, text);
+      const ta = document.querySelector('#comment-list [data-decision-say-ta="' + cssEsc(data.commentId) + '"]');
+      if (ta && ta !== document.activeElement) { ta.value = text; syncSayHint(ta); }
+      updateSendState();
     } else if (data.type === 'annotate:decision-posted') {
       // A body-inline decision strip (adapter.js) just resolved a decision.
       // Refresh immediately so the rail card's decision block and the pins
@@ -2918,14 +3175,15 @@ function wireBridge() {
 
 function sendCommentCountsToFrame() {
   const frame = document.getElementById('content-frame');
-  if (!frame || !frame.contentWindow) return;
+  if (!frame || !frame.contentWindow || DOC !== VIEW_DOC) return;
   const counts = {};
   const pins = {};
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
     // F9: unresolved decision cards get a pin + strip on whichever version
     // is being viewed (adapter.js skips the strip if the anchor no longer
     // exists in this version's document).
-    const list = items.filter(onCurrentVersion);
+    const list = items.map(c => Object.assign({}, c, { anchor_id: aid }))
+      .filter(c => docOf(c) === DOC).filter(onCurrentVersion).filter(c => !isNewerThanViewed(c));
     if (!list.length) continue;
     counts[aid] = list.length;
     pins[aid] = list
@@ -2966,6 +3224,10 @@ function sendCommentCountsToFrame() {
             blocking: c.decision_request.blocking === true,
           } : null,
           decisionVerdict: decisionResolved ? c.decision.verdict : null,
+          // Feedback prototype: the answer as one phrase (C1) and the shared
+          // comment-box draft (A1) for the body strip.
+          answerText: decisionResolved ? answerLabel(c).text : null,
+          sayDraft: DRAFTS['say:' + c.id] || '',
           // v2.19 round mode: verdict recorded but not yet sent.
           roundPending: isRoundPending(c),
         };
@@ -2979,6 +3241,7 @@ function sendCommentCountsToFrame() {
   // must never show a question as open when the rail says it is not.
   const cardStates = {};
   const noteCard = (c, archived) => {
+    if (docOf(c) !== DOC || isNewerThanViewed(c)) return;
     if (!c.decision_request) return;
     const prev = cardStates[c.anchor_id];
     if (prev && !prev.archived) return; // a live card beats an archived copy
@@ -2992,13 +3255,15 @@ function sendCommentCountsToFrame() {
     (Array.isArray(items) ? items : []).forEach(c =>
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
-  if (BRIDGE_ORIGIN) frame.contentWindow.postMessage({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' }, BRIDGE_ORIGIN);
+  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' });
+}
+
+function syncStripSayDraft(commentId) {
+  postToFrame({ type: 'annotate:say-draft-set', commentId, text: DRAFTS['say:' + commentId] || '' });
 }
 
 function scrollToAnchorInFrame(anchorId, target, back) {
-  const frame = document.getElementById('content-frame');
-  if (!frame || !frame.contentWindow) return;
-  if (BRIDGE_ORIGIN) frame.contentWindow.postMessage({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null }, BRIDGE_ORIGIN);
+  postToFrame({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null });
 }
 
 // ── Wire popover buttons ─────────────────────────────────────────────
@@ -3011,69 +3276,317 @@ function wirePopover() {
   // identically and the binding survives drawer re-renders. The reply and
   // decision-comment textareas used to wire their own per-render listeners,
   // which drifted apart and left the general-feedback box with no shortcut.
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closePopover(); closePinPopover(); cancelRepin(); closeRoundConfirm(); }
-    if (!(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return;
-    const t = e.target;
-    if (isRoundConfirmOpen()) {
-      e.preventDefault();
-      submitRound();
-    } else if (document.getElementById('popover').classList.contains('vis')) {
-      savePopover();
-    } else if (t.classList.contains('reply-ta')) {
-      e.preventDefault();
-      const btn = document.querySelector('[data-action="reply"][data-id="' + cssEsc(t.dataset.replyFor) + '"]');
-      if (btn) btn.click();
-    } else if (t.classList.contains('decision-comment-ta')) {
-      e.preventDefault();
-      const btn = document.querySelector('[data-decision-action="comment-submit"][data-id="' + cssEsc(t.dataset.decisionCommentTa) + '"]');
-      if (btn) btn.click();
-    } else if (t.classList.contains('decision-say-ta')) {
-      e.preventDefault();
-      const btn = document.querySelector('[data-decision-action="say-submit"][data-id="' + cssEsc(t.dataset.decisionSayTa) + '"]');
-      if (btn) btn.click();
-    } else if (t.id === 'gf-ta') {
-      e.preventDefault();
-      const save = document.getElementById('gf-save');
-      if (save) save.click();
+  document.addEventListener('keydown', onShellKey);
+}
+// One key handler for keys pressed in the rail and keys the document frame
+// forwards ('annotate:key', see adapter.js) — E3 shortcuts work after a
+// click in the document too.
+function onShellKey(e) {
+  {
+    if (e.key === 'Escape') {
+      closePopover(); closePinPopover(); cancelRepin(); closeRoundConfirm();
+      if (openMenuId) { openMenuId = null; document.querySelectorAll('.citem-menu').forEach(m => { m.hidden = true; }); }
+      const wp = document.getElementById('who-panel'); if (wp) wp.hidden = true;
     }
-  });
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      const t = e.target;
+      if (isRoundConfirmOpen()) {
+        e.preventDefault();
+        submitRound();
+      } else if (document.getElementById('popover').classList.contains('vis')) {
+        savePopover();
+      } else if (t.dataset && t.dataset.submit) {
+        // Library and Findings boxes name their own Save button: ⌘↵ saves
+        // the typed text there, like the reply box, instead of opening Send.
+        e.preventDefault();
+        const btn = document.querySelector(t.dataset.submit);
+        if (btn && !btn.disabled) btn.click();
+      } else if (t.classList && t.classList.contains('reply-ta')) {
+        e.preventDefault();
+        const btn = document.querySelector('[data-action="reply"][data-id="' + cssEsc(t.dataset.replyFor) + '"]');
+        if (btn) btn.click();
+      } else if (!document.getElementById('send-btn').disabled || isMobileLayout()) {
+        // E3: ⌘↵ opens the send summary (and sends from inside it, above).
+        e.preventDefault();
+        openRoundConfirm();
+      }
+      return;
+    }
+    handleShortcut(e);
+  }
+}
+
+// ── E3: keyboard shortcuts ────────────────────────────────────────────
+// A previous / F next card · 1–9 pick an option on the active card ·
+// C comment on the active card · ⌘↵ send. Never while typing.
+function visibleCards() {
+  return Array.from(document.querySelectorAll('#comment-list .citem'));
+}
+function handleShortcut(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // final/: on Library and Findings the same keys move through that view.
+  if (DOC !== VIEW_DOC) { if (window.AA) window.AA.shortcut(e); return; }
+  const t = e.target;
+  if (t && t.closest && (t.isContentEditable || t.closest('textarea, input, select'))) return;
+  if (isRoundConfirmOpen() || document.getElementById('popover').classList.contains('vis')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'a' || k === 'f') {
+    if (activeTab !== 'feedback') setActiveTab('feedback');
+    const cards = visibleCards();
+    if (!cards.length) return;
+    e.preventDefault();
+    let i = cards.findIndex(el => el.dataset.commentId === highlightedCommentId);
+    i = i === -1 ? (k === 'f' ? 0 : cards.length - 1) : Math.max(0, Math.min(cards.length - 1, i + (k === 'f' ? 1 : -1)));
+    const c = findCommentById(cards[i].dataset.commentId);
+    if (!c) return;
+    markRead([c]);
+    highlightedCommentId = c.id;
+    sendCommentCountsToFrame();
+    if (isGeneralAnchor(c.anchor_id)) renderDrawer();
+    else goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id);
+    const el = document.querySelector('#comment-list [data-comment-id="' + cssEsc(c.id) + '"]');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  const card = highlightedCommentId && document.querySelector('#comment-list [data-comment-id="' + cssEsc(highlightedCommentId) + '"]');
+  if (!card) return;
+  if (/^[1-9]$/.test(e.key)) {
+    const btn = card.querySelectorAll('.decision-btn')[Number(e.key) - 1];
+    if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+    return;
+  }
+  if (k === 'c') {
+    const ta = card.querySelector('.decision-say-ta, .reply-ta');
+    if (ta) { e.preventDefault(); ta.focus(); }
+  }
 }
 
 // ── Master render ─────────────────────────────────────────────────
 function renderAll() {
-  renderWorkspaceTabs();
-  const hdrSub = document.getElementById('hdr-sub');
-  if (hdrSub) hdrSub.textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
   renderVersionRail();
+  if (DOC !== VIEW_DOC) return;
+  if (window.AA) window.AA.docTitle(DOC, CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '');
   renderDrawer();
-  updatePushCounter();
-  renderRoundBar();
+  renderGeneralFeedback();
+  updateSendState();
   renderOwnerChip();
   sendCommentCountsToFrame();
 }
 
-// ── Init ─────────────────────────────────────────────────────────
-async function init() {
-  wireWorkspace();
-  const reviewKey = new URLSearchParams(location.hash.slice(1)).get('review');
-  if (reviewKey) {
-    let name = 'Reviewer';
-    try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
-    const response = await fetch('./api/reviewer/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:reviewKey,name})});
-    if (!response.ok) {
-      document.getElementById('delivery-status').hidden = false;
-      document.getElementById('delivery-status').textContent = 'This review link is invalid or expired.';
-      return;
-    }
-    history.replaceState(null, '', location.pathname + location.search);
+// ── Document state ───────────────────────────────────────────────
+// The variables at the top hold the version state of document DOC; the
+// other document's is kept in DOC_STATE. The comment store, read state,
+// numbering and project are page-wide and never swapped.
+const DOC_STATE = {};
+const lastSnap = {};
+let docBusy = 0;
+let frameReady = { doc: null, version: null };
+let frameWaiters = [];
+function freshDocState(doc) {
+  return {
+    META: { current: null, history: [], content_stamps: {} }, SEEN: {}, CURRENT_VERSION: null, EXCERPTS: {}, EXCERPTS_VERSION: null,
+    DRAFTS: loadDrafts(doc), pendingGoto: null, highlightedCommentId: null, openMenuId: null, sumEditing: null, gfOpen: false,
+  };
+}
+function captureDocState() {
+  return { META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen };
+}
+function installDocState(s) {
+  ({ META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen } = s);
+}
+function enterDoc(doc) {
+  DOC_STATE[DOC] = captureDocState();
+  installDocState(DOC_STATE[doc] || freshDocState(doc));
+  DOC = doc;
+}
+// A synchronous read of another document (counts, summary rows).
+function withDoc(doc, fn) {
+  if (doc === DOC) return fn();
+  const prev = DOC;
+  enterDoc(doc);
+  try { return fn(); } finally { enterDoc(prev); }
+}
+// An asynchronous job on one document (loading, sending). Jobs run one at a
+// time; the page shows a modal (the Send summary) or nothing interactive
+// for that document meanwhile.
+let docQueue = Promise.resolve();
+function withDocAsync(doc, fn) {
+  const run = async () => {
+    const prev = DOC;
+    docBusy++;
+    enterDoc(doc);
+    try { return await fn(); } finally { enterDoc(prev); docBusy--; }
+  };
+  const p = docQueue.then(run, run);
+  docQueue = p.catch(() => {});
+  return p;
+}
+function latestVersion() {
+  return META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
+}
+async function loadDocState(doc) {
+  return withDocAsync(doc, async () => {
+    await loadMeta();
+    const want = window.AA ? window.AA.versionFor(doc) : null;
+    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : latestVersion();
+    await loadSeen();
+    lastSnap[doc] = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+  });
+}
+// Re-read the page from the server (after a Send); renders the document on
+// screen and tells every tab.
+async function reloadPage() {
+  await Promise.all([loadStore(), loadReadState(), loadCategories()]);
+  if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
+  document.dispatchEvent(new CustomEvent('annotate:store'));
+  if (window.AA) window.AA.changed();
+}
+function frameIsReady() {
+  return frameReady.doc === VIEW_DOC && frameReady.version === CURRENT_VERSION;
+}
+function whenFrameReady() {
+  if (frameIsReady()) return Promise.resolve();
+  return new Promise(res => { frameWaiters.push(res); setTimeout(res, 8000); });
+}
+// Show a document: its rail, its frame and its History section.
+async function activateDoc(doc, version) {
+  await DOCS_LOADED;
+  await docQueue;
+  if (!DOCS.includes(doc)) doc = 'review';
+  if (DOC !== doc) enterDoc(doc);
+  VIEW_DOC = doc;
+  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
+  const frame = document.getElementById('content-frame');
+  if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
+    frameReady = { doc: null, version: null };
+    frame.dataset.plan = String(PLAN_ID);
+    loadIframe(CURRENT_VERSION);
   }
-  document.getElementById('hdr-title').textContent = document.title || 'annotate';
+  const gf = document.getElementById('gf-ta');
+  if (gf) gf.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  projectSnapshot = '';
+  renderProject();
+  loadDelivery();
+  renderAll();
+  openLinkedCard();
+  return whenFrameReady();
+}
+function parkDoc() {
+  VIEW_DOC = null;
+}
+
+// ── Categories (one page per project) ───────────────────────────────
+// ./api/categories: which tabs exist, the server's counts per tab (so every
+// device agrees), the findings sets, the plans and the linked pages.
+let CATEGORIES = null;
+async function loadCategories() {
+  try {
+    const r = await fetch(apiUrl('./api/categories'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return false;
+    CATEGORIES = await r.json();
+    PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
+    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = PLANS.length ? PLANS[0].id : null;
+    DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
+    if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
+    return true;
+  } catch { return false; }
+}
+// The Plans tab shows one plan; another plan starts from its latest revision.
+async function selectPlan(id) {
+  if (!PLANS.some(p => p.id === id) || id === PLAN_ID) return;
+  await docQueue;
+  if (DOC === 'plans') enterDoc('review');
+  PLAN_ID = id;
+  delete DOC_STATE.plans;
+  await loadDocState('plans');
+  if (window.AA) window.AA.go({ view: 'plans', plan: id });
+}
+
+// ── Init ─────────────────────────────────────────────────────────
+// The address the page was opened with, tidied before anything else runs
+// (this runs when the script loads, before init, any request or the frame):
+// - a private review key (#review=<key>) leaves the address bar at once;
+//   the session exchange below uses this copy (UI-27);
+// - a 2.20.3-era version link (?v=vN, the Review document) moves into the
+//   hash (#view=review&v=vN), where the router reads versions (UI-10).
+const REVIEW_KEY = (() => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const search = new URLSearchParams(location.search);
+  const key = hash.get('review');
+  const v = search.get('v');
+  if (key == null && !v) return null;
+  hash.delete('review');
+  if (v) {
+    search.delete('v');
+    const view = hash.get('view');
+    if (!hash.get('v') && (!view || view === 'review')) { hash.set('view', 'review'); hash.set('v', v); }
+  }
+  const s = search.toString(), h = hash.toString();
+  history.replaceState(null, '', location.pathname + (s ? '?' + s : '') + (h ? '#' + h : ''));
+  return key;
+})();
+// F7: a private review link (#review=<key>) opens a reviewer session first;
+// without it every API call is refused on the public origin.
+async function startReviewerSession() {
+  const reviewKey = REVIEW_KEY;
+  if (!reviewKey) return true;
+  let name = 'Reviewer';
+  try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
+  const response = await fetch(apiUrl('./api/reviewer/session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: reviewKey, name }) }).catch(() => null);
+  if (!response || !response.ok) {
+    showStatus('This review link is invalid or expired.');
+    return false;
+  }
+  return true;
+}
+function showStatus(text) {
+  const status = document.getElementById('delivery-status');
+  status.hidden = false;
+  status.textContent = text;
+}
+// UI-24: a card link (#feedback=<id>, main's form; #c=<id> also) opens that
+// card: the router shows its document (at the card's own version unless the
+// card follows the viewer), then the rail shows the card expanded and
+// highlighted. takeCardLink() runs before the router reads the hash.
+let linkedCard = null;
+function takeCardLink() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const id = p.get('feedback') || p.get('c');
+  const c = id ? findCommentById(id) : null;
+  const doc = c && docOf(c);
+  if (!doc || !DOCS.includes(doc)) return;
+  linkedCard = c.id;
+  const sameView = p.get('view') === doc;
+  if (!sameView) p.set('view', doc);
+  if (!sameView || !p.get('v')) {
+    const own = withDoc(doc, () => followsViewer(c) ? null : c.version);
+    if (own) p.set('v', own); else p.delete('v');
+  }
+  history.replaceState(null, '', location.pathname + location.search + '#' + p.toString());
+}
+function openLinkedCard() {
+  const c = linkedCard && findCommentById(linkedCard);
+  linkedCard = null;
+  if (!c || docOf(c) !== VIEW_DOC) return;
+  cardExpanded[c.id] = true;
+  focusSidebarCard(c.id);
+}
+// True while the reviewer is typing in the rail or the document.
+function isEditing() {
+  const ae = document.activeElement;
+  if (ae && ae.closest('textarea,input,[contenteditable="true"]')) return true;
+  try {
+    const inner = document.getElementById('content-frame').contentDocument.activeElement;
+    return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
+  } catch { return false; }
+}
+let DOCS_LOADED_resolve;
+const DOCS_LOADED = new Promise(res => { DOCS_LOADED_resolve = res; });
+async function init() {
+  if (!await startReviewerSession()) return;
 
   try {
-    showAllVersions = localStorage.getItem('annotate:allVersions') === '1';
-    unreadFirst = localStorage.getItem('annotate:unreadFirst') === '1';
-    DRAFTS = JSON.parse(localStorage.getItem('annotate:drafts:' + location.pathname) || '{}') || {};
+    SECTION_OPEN = JSON.parse(localStorage.getItem('annotate:sections') || '{}') || {};
   } catch {}
 
   // T11: live draft capture — every keystroke lands in the persistent
@@ -3081,75 +3594,85 @@ async function init() {
   document.getElementById('comment-list').addEventListener('input', (e) => {
     if (e.target && e.target.classList && e.target.classList.contains('reply-ta')) {
       setDraft(e.target.dataset.replyFor, e.target.value || '');
-    } else if (e.target && e.target.classList && e.target.classList.contains('decision-note-ta')) {
-      setDraft('note:' + e.target.dataset.decisionNoteTa, e.target.value || '');
     }
   });
+  // UI-23: "Show more" / "Show less" under a long comment.
+  document.getElementById('comment-list').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('[data-action="text-more"]');
+    if (!btn) return;
+    e.stopPropagation();
+    const open = !commentTextOpen[btn.dataset.id];
+    commentTextOpen[btn.dataset.id] = open;
+    const t = document.getElementById(btn.getAttribute('aria-controls'));
+    if (t) t.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Show less' : 'Show more';
+  });
 
-  wireChips();
+  wireHeader();
+  wireTabs();
   wirePopover();
   wirePinPopover();
   wireGeneralFeedback();
-  wireArchivedToggle();
-  wireDrawerControls();
   wireRailCollapse();
-  wirePushSession();
   wireMobileChrome();
   wireRoundBar();
   wireBridge();
+  window.addEventListener('message', (e) => {
+    const frame = document.getElementById('content-frame');
+    if (!frame || e.source !== frame.contentWindow || e.origin !== BRIDGE_ORIGIN) return;
+    if (!e.data || e.data.type !== 'annotate:ready') return;
+    frameReady = { doc: frame.dataset.doc, version: frame.dataset.version };
+    const w = frameWaiters; frameWaiters = [];
+    setTimeout(() => w.forEach(f => f()), 0);
+  });
 
-  loadSessionMonitor().then(updatePushCounter);
-  await Promise.all([loadStore(), loadMeta(), loadCapabilities()]);
-  document.getElementById('copy-link-btn').hidden = !(CAPS && CAPS.private_share_links);
-  await loadProject();
-  loadDelivery();
-  // // v2.19: the ONE probe; 404 → legacy mode for this page load
-
-  const urlV = new URL(window.location.href).searchParams.get('v');
-  CURRENT_VERSION = urlV || META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
+  await Promise.all([loadSessionMonitor(), loadCapabilities()]);
+  document.getElementById('share-row').hidden = !(CAPS && CAPS.private_share_links);
 
   IDENTITY = await resolveIdentity();
   AUTHOR = authorValue(IDENTITY);
   updateAuthorIndicator();
   if (!IDENTITY && location.protocol === 'https:' && !CAPS) {
-    const status = document.getElementById('delivery-status');
-    status.hidden = false;
-    status.textContent = 'Open the private review link to view this page.';
+    showStatus('Open the private review link to view this page.');
     return;
   }
 
-  await loadSeen();
-  await loadReadState();
-
-  document.getElementById('hdr-sub').textContent = CURRENT_VERSION ? ('Version ' + CURRENT_VERSION) : '';
-
-  if (CURRENT_VERSION) loadIframe(CURRENT_VERSION);
-  if (!READ_ONLY_REFERENCE) {
-    activeFilter = 'review';
-    document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('active', chip.dataset.filter === activeFilter));
-  }
-  renderAll();
-  try { workspaceView = localStorage.getItem('annotate:view:' + location.pathname) || workspaceView; } catch {}
-  selectWorkspaceView(workspaceView);
-  const linkedFeedback = new URLSearchParams(location.hash.slice(1)).get('feedback');
-  if (linkedFeedback && findCommentById(linkedFeedback)) focusSidebarCard(linkedFeedback);
-  const gfInit = document.getElementById('gf-ta');
-  if (gfInit && CURRENT_VERSION) gfInit.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  // The page's store and every document are loaded up front, so the page's
+  // counts and the one Send cover all of them before any tab is opened.
+  await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
+  DRAFTS = loadDrafts(DOC);
+  for (const doc of DOCS) await loadDocState(doc);
+  takeCardLink();
+  DOCS_LOADED_resolve();
+  document.dispatchEvent(new CustomEvent('annotate:store'));
+  if (window.AA) window.AA.changed();
+  loadHistory();
 
   // One refresh at a time. Hidden tabs make no requests; foreground resumes now.
-  let lastSnap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
   let refreshing = false;
   let refreshTimer;
   async function refresh() {
     clearTimeout(refreshTimer);
-    if (document.hidden || refreshing) return;
+    if (document.hidden || refreshing || docBusy) {
+      if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
+      return;
+    }
     refreshing = true;
     try {
-      await Promise.all([loadStore(), loadMeta(), loadReadState()]);
-      await loadProject();
-      loadDelivery();
-      const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
-      if (snap !== lastSnap) { lastSnap = snap; renderAll(); } else updatePushCounter();
+      const before = JSON.stringify(STORE) + JSON.stringify(READ);
+      await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
+      if (historyDirty) loadHistory();
+      const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) !== before;
+      if (storeChanged && !isEditing()) document.dispatchEvent(new CustomEvent('annotate:store'));
+      const doc = VIEW_DOC;
+      if (doc && DOC === doc && !docBusy) {
+        await loadMeta();
+        loadDelivery();
+        const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+        if (snap !== lastSnap[doc]) { if (!isEditing()) { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
+      }
+      if (window.AA) window.AA.changed();
     } finally {
       refreshing = false;
       if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
@@ -3162,11 +3685,71 @@ async function init() {
   refreshTimer = setTimeout(refresh, 8000);
 }
 
+// What app/*.js reads and calls. Reads go through withDoc(), so a document
+// that is not on screen answers from its own state.
+window.AnnotateDocs = {
+  docs: DOCS,
+  loaded: DOCS_LOADED,
+  viewDoc: () => VIEW_DOC,
+  activate: activateDoc,
+  park: parkDoc,
+  whenFrameReady,
+  version: (doc) => withDoc(doc, () => CURRENT_VERSION),
+  counts: (doc) => withDoc(doc, docCounts),
+  olderShown: (doc) => withDoc(doc, () => !!CURRENT_VERSION && !!latestVersion() && CURRENT_VERSION !== latestVersion()),
+  roundStats: (doc) => withDoc(doc, roundStats),
+  sendables: (doc) => withDoc(doc, sendables),
+  sentence: (doc) => withDoc(doc, summarySentence),
+  warning: (doc) => withDoc(doc, summaryWarning),
+  items: (doc) => withDoc(doc, sendItems),
+  renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
+  renderHistoryInto: (doc) => withDoc(doc, () => { renderVersionRail(); }),
+  submitPage,
+  discardPage,
+  pageRoundPending,
+  reload: reloadPage,
+  sumEdit: (id) => { sumEditing = id; },
+  setDrawerCollapsed: (c) => setDrawerCollapsed(c, false),
+  setMobileSheetOpen,
+  isMobileLayout,
+  // The page's shared state and helpers for Library and Findings.
+  categories: () => CATEGORIES,
+  plans: () => PLANS,
+  planId: () => PLAN_ID,
+  selectPlan,
+  sentRounds,
+  store: () => STORE,
+  comments: (includeArchived) => flattenStore(includeArchived),
+  findComment: findCommentById,
+  commentCategory,
+  number: (id) => NUM_MAP[id],
+  identity: () => IDENTITY,
+  readStateOf,
+  markRead,
+  markReadItems,
+  readRecord: (id) => READ[id] || null,
+  isRoundPending,
+  isReopenPending,
+  needsPush,
+  decisionAnswer,
+  answerLabel,
+  displayPrompt,
+  decisionOptions,
+  selectVerdictId,
+  ticketsHTML,
+  authorLabel,
+  whoName,
+  createComment: apiCreateComment,
+  decide: apiDecision,
+  refreshStore: reloadPage,
+  ico,
+};
+
 document.addEventListener('DOMContentLoaded', init);
+// A new private review link in the address bar starts a new session.
 window.addEventListener('hashchange', () => {
-  const params = new URLSearchParams(location.hash.slice(1));
-  if (params.has('review')) { location.reload(); return; }
-  const id = params.get('feedback');
-  if (id && findCommentById(id)) focusSidebarCard(id);
+  if (new URLSearchParams(location.hash.slice(1)).has('review')) { location.reload(); return; }
+  takeCardLink(); // runs before the router's own hashchange listener (app.js)
 });
+
 })();

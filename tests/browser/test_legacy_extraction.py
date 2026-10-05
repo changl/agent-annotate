@@ -87,12 +87,21 @@ def _serve(tmp_path):
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(
         [
-            sys.executable, "-m", "agent_annotate.sync_server",
-            "--slug-dir", str(slug_dir),
-            "--slug", "baked",
-            "--bus-dir", str(tmp_path / "bus"),
-            "--port", str(port),
-            "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer",
+            sys.executable,
+            "-m",
+            "agent_annotate.sync_server",
+            "--slug-dir",
+            str(slug_dir),
+            "--slug",
+            "baked",
+            "--bus-dir",
+            str(tmp_path / "bus"),
+            "--port",
+            str(port),
+            "--local-author",
+            "reviewer@example.com",
+            "--local-author-name",
+            "Browser Reviewer",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -190,18 +199,17 @@ def test_baked_slug_is_annotatable_through_the_shell(tmp_path):
             popover.fill("Legacy details note")
             page.locator("#pop-save").click()
             popover.wait_for(state="hidden")
-            page.locator('[data-workspace-tab="feedback"]').click()
-            page.locator('#comment-list .citem').filter(has_text="Legacy details note").wait_for(state="visible")
+            page.evaluate("() => window.AA.rail.reveal()")
+            page.locator("#comment-list .citem").filter(has_text="Legacy details note").wait_for(
+                state="visible"
+            )
             with urllib.request.urlopen(base + "comments.json") as response:
                 store = json.load(response)
-            assert any(comment["text"] == "Legacy details note" for comments in store["anchors"].values() for comment in comments)
-
-            # The same legacy affordance must become inert in project references.
-            page.goto(base + "?embed=reference", wait_until="networkidle")
-            frame = page.frame_locator("#content-frame")
-            frame.locator("#legacy-openpopover").click()
-            assert page.locator("#popover").is_hidden()
-            assert page.locator("#drawer").is_hidden()
+            assert any(
+                comment["text"] == "Legacy details note"
+                for comments in store["anchors"].values()
+                for comment in comments
+            )
 
             browser.close()
     finally:

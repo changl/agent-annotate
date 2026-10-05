@@ -247,3 +247,40 @@ def save_project(slug_dir: Path | str, data: Any) -> dict:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return normalized
+
+
+def linked_pages(primary: dict) -> list[dict]:
+    """Declared workspace tabs and registered exceptions linked to this page."""
+    from .cli import _registry_entries
+    from .urls import page_url
+    from .workspace import workspace_tab_records
+
+    entries = _registry_entries()
+    # Every registration of this page (a stale second one included). The CLI
+    # writes parent_slug as "project/slug"; older records use the bare slug.
+    parents = {(project, slug) for project, slug, record in entries
+               if record.get("slug_dir") == primary.get("slug_dir")}
+    if not parents:
+        return []
+    children = {(p, s): r for p, s, r in workspace_tab_records(primary)}
+    for p, slug, record in entries:
+        exception = record.get("exception")
+        if (p, slug) in parents or not isinstance(exception, dict):
+            continue
+        ref = exception.get("parent_slug")
+        if any(ref == f"{pp}/{ps}" or (ref == ps and p == pp) for pp, ps in parents):
+            children[(p, slug)] = record
+    result = []
+    for (_, slug), record in sorted(children.items()):
+        exception = record.get("exception") or {}
+        url = page_url(record)
+        if url:
+            item = {"slug": slug, "title": record.get("title") or slug, "url": url,
+                    "reason": exception.get("reason") or "Linked page"}
+            # Optional: who declared the exception, to whom, and when.
+            for key in ("declared_by", "declared_at", "told_to"):
+                value = exception.get(key)
+                if isinstance(value, str) and 0 < len(value) <= 500:
+                    item[key] = value
+            result.append(item)
+    return result
