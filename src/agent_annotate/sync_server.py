@@ -163,11 +163,17 @@ def _mime(suffix: str) -> str:
         ".jpg":  "image/jpeg",
         ".jpeg": "image/jpeg",
         ".gif":  "image/gif",
+        ".webp": "image/webp",
+        ".pdf":  "application/pdf",
         ".ico":  "image/x-icon",
         ".woff": "font/woff",
         ".woff2": "font/woff2",
         ".ttf":  "font/ttf",
     }.get(suffix.lower(), "application/octet-stream")
+
+
+# Files under assets/ and attachments/ that may open inline (inert types).
+_INLINE_UPLOADS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -231,8 +237,20 @@ def _locked_store(directory):
         if path in held:
             yield
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a+") as lock:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lock = path.open("a+")
+        except OSError:
+            # A read-only page dir (an archive or snapshot served for viewing)
+            # has no writer to serialize against: reads go ahead unlocked and
+            # any write fails on its own.
+            if os.access(path.parent, os.W_OK):
+                raise
+            lock = None
+        if lock is None:
+            yield
+            return
+        with lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             _STORE_LOCAL.held = held | {path}
             try:
@@ -245,6 +263,18 @@ def _locked_store(directory):
 class ReviewHTTPServer(http.server.ThreadingHTTPServer):
     # Browsers fetch the locally bundled editor and theme assets concurrently.
     request_queue_size = 64
+
+
+_HEAD_OPEN = re.compile(r"<head(?:\s[^>]*)?>", re.IGNORECASE)
+_DOCUMENT_START = re.compile(r"\A(?:\ufeff)?\s*(?:<!doctype[^>]*>\s*)?(?:<html(?:\s[^>]*)?>)?", re.IGNORECASE)
+
+
+def _insert_in_head(html: str, tag: str) -> str:
+    """Put a tag at the start of <head> (attributes allowed), or after the
+    doctype and <html> when there is no head: never before the doctype,
+    which would render the document in quirks mode."""
+    match = _HEAD_OPEN.search(html) or _DOCUMENT_START.match(html)
+    return html[:match.end()] + tag + html[match.end():]
 
 
 def _now_iso() -> str:
@@ -267,7 +297,8 @@ def _comment_needs_push(comment: dict) -> bool:
     than their last push. Keep the write route on the same contract so an
     active session is not repeatedly notified about every older open comment.
     """
-    if comment.get("status") != "open" or comment.get("round_pending") or (comment.get("decision") or {}).get("round_pending"):
+    decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
+    if comment.get("status") != "open" or comment.get("round_pending") or decision.get("round_pending"):
         return False
     flagged_at = _iso_timestamp(comment.get("flagged_at"))
     latest = 0.0
@@ -275,10 +306,9 @@ def _comment_needs_push(comment: dict) -> bool:
         latest = _iso_timestamp(comment.get("created_at"))
     if not str(comment.get("edited_by") or comment.get("author") or "").startswith("agent:"):
         latest = max(latest, _iso_timestamp(comment.get("edited_at")))
-    for reply in comment.get("replies", []):
-        if not str(reply.get("author") or "").startswith("agent:"):
+    for reply in comment.get("replies") if isinstance(comment.get("replies"), list) else []:
+        if isinstance(reply, dict) and not str(reply.get("author") or "").startswith("agent:"):
             latest = max(latest, _iso_timestamp(reply.get("ts")))
-    decision = comment.get("decision") or {}
     if decision and not str(decision.get("by") or "").startswith("agent:"):
         latest = max(latest, _iso_timestamp(decision.get("ts")))
     return bool(latest) and (not comment.get("flagged_for_session") or latest > flagged_at)
@@ -1548,13 +1578,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
-            base_tag = f'<base href="{base}/">'
-            html = html.replace("<head>", "<head>" + base_tag, 1) if "<head>" in html else base_tag + html
+            html = _insert_in_head(html, f'<base href="{base}/">')
         css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "daisyui.css")}/daisyui.css">'
         if '<div class="aa">' in html:
             html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
             css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
-        html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else css + html
+        html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else _insert_in_head(html, css)
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
                                    **({"doc": "plan:" + plan_id, "category": "plans"} if plan_id else {})}).replace("<", "\\u003c")
@@ -1694,7 +1723,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir):
                 meta = self._read_meta()
                 store = self._v2_load()
-                comment = self._new_comment_from_payload(payload, identity, meta)
+                comment = self._new_comment_from_payload(payload, identity, meta, store)
                 store["anchors"].setdefault(anchor_id, []).append(comment)
                 self._v2_save(store)
         except DecisionRequestError as exc:
@@ -1722,7 +1751,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
               + (" [decision card]" if comment.get("decision_request") else ""), flush=True)
         self._respond(201, json.dumps(comment, ensure_ascii=False).encode(), "application/json")
 
-    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict) -> dict:
+    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict, store: dict | None = None) -> dict:
         """Build a fresh v2 comment from a create payload (single or batch).
 
         Caller validates anchor_id/text and holds _STORE_LOCK. Raises
@@ -1738,6 +1767,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if browser and "finding" in payload:
             raise DecisionRequestError("finding authoring requires a local caller", 403)
         category_fields = self._comment_category_fields(payload)
+        if browser:
+            self._check_browser_category(category_fields, str(anchor_id or ""), store or {})
         if "doc" in category_fields:
             from .categories import plan_meta
             try:
@@ -1836,7 +1867,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # items 1-2 half-committed.
                 built = []
                 for it in items:
-                    built.append(self._new_comment_from_payload(it, identity, meta))
+                    built.append(self._new_comment_from_payload(it, identity, meta, store))
                 now = _now_iso()
                 for it, fresh in zip(items, built):
                     aid = fresh["anchor_id"]
@@ -2501,15 +2532,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         })
         answers = []
         for comment in comments:
-            decision = comment.get("decision") or {}
-            human_replies = [reply for reply in comment.get("replies", [])
-                             if not str(reply.get("author", "")).startswith("agent:")]
+            decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
+            replies = comment.get("replies") if isinstance(comment.get("replies"), list) else []
+            human_replies = [reply for reply in replies
+                             if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")]
             reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
             if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
                 decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
             answers.append({"comment_id": comment["id"], "number": comment.get("number"),
                 "category": comment_category(comment),
-                "prompt": (comment.get("decision_request") or {}).get("prompt", ""),
+                "prompt": (comment.get("decision_request") if isinstance(comment.get("decision_request"), dict)
+                           else {}).get("prompt", ""),
                 "verdict": decision.get("verdict", "comment"),
                 "text": decision.get("text") or reply.get("text") or comment.get("text", ""),
                 "by": decision.get("by") or reply.get("author") or comment.get("author")})
@@ -2722,11 +2755,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .categories import comment_category, validate_send
         from .copy_state import load_copy, submit_revisions
         from .review_history import _events
-        payload = self._bounded_json_body()
-        if payload is None:
-            return
-        if (set(payload) - {"note", "version", "send_id", "receipt"}
-                or not isinstance(payload.get("note", ""), (str, type(None)))):
+        # As on main: an empty body is an empty round request, and fields
+        # this server does not know are ignored (older clients and scripts).
+        payload = {}
+        if self.headers.get("Content-Length", "0") not in ("", "0"):
+            payload = self._bounded_json_body()
+            if payload is None:
+                return
+        if not isinstance(payload.get("note", ""), (str, type(None))):
             return self._respond(400, b'{"error":"invalid round fields"}')
         try:
             send = validate_send(payload)
@@ -2745,12 +2781,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                  for r in receipts for a in r.get("answers", []) if a.get("ts")}
             submitted_edits = {e.get("revision_id") for r in receipts for e in r.get("edits", [])
                                if e.get("by") in reviewer_authors}
-            if submitted_edits:
-                submit_revisions(self.artifact_dir, submitted_edits, reviewer_authors)
+            # A copy.json that does not validate holds back only Library
+            # edits; Review, Findings and Plans still go out, and the reply says so.
+            library_skipped = None
+            try:
+                if submitted_edits:
+                    submit_revisions(self.artifact_dir, submitted_edits, reviewer_authors)
+                library_blocks = load_copy(self.artifact_dir)["blocks"]
+            except (OSError, ValueError) as exc:
+                library_skipped = f"Library edits not sent: copy.json is invalid ({exc})"
+                library_blocks = []
+            skipped = {"library_skipped": library_skipped} if library_skipped else {}
             recovered = False
             for items in store.get("anchors", {}).values():
                 for c in items:
-                    d = c.get("decision") or {}
+                    d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
                     if (d.get("round_pending") and d.get("by") in reviewer_authors
                             and (c["id"], d.get("by"), d.get("ts"), d.get("verdict")) in submitted_answers):
                         d.pop("round_pending", None)
@@ -2769,7 +2814,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             edits = [{"category": "library", "block_id": block["id"], "revision_id": revision["id"],
                       "title": block["title"], "delta": revision["delta"], "base_revision": revision.get("base_revision"),
                       "by": revision["author"]["id"], "ts": revision["created_at"]}
-                     for block in load_copy(self.artifact_dir)["blocks"] for revision in block["revisions"]
+                     for block in library_blocks for revision in block["revisions"]
                      if revision.get("round_pending") and revision["author"]["id"] in reviewer_authors]
             cleared_archived = False
             verdict_counts = {v: 0 for v in self._DECISION_VERDICTS}
@@ -2799,7 +2844,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
                                               "edits": [], "edit_count": 0,
-                                              "undecided_ids": undecided_ids}).encode(), "application/json")
+                                              "undecided_ids": undecided_ids, **skipped}).encode(), "application/json")
                 return
             owner = self._read_meta().get("owner") or {}
             version = payload.get("version") or self._read_meta().get("current")
@@ -2819,9 +2864,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
                         "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
                         "by": c["decision"].get("by"), "ts": c["decision"].get("ts")} for c in pending]
+            def unsent_reopen_text(c):
+                # A reopen, an agent re-fix, then another reopen before Send:
+                # every reopen since the last delivered one goes out.
+                texts = []
+                for entry in reversed(c["reopened"]):
+                    if (c["id"], entry.get("by"), entry.get("ts"), "reopen") in submitted_answers:
+                        break
+                    if entry.get("by") in reviewer_authors:
+                        texts.insert(0, entry.get("text", ""))
+                return "\n\n".join(texts)
             answers += [{"comment_id": c["id"], "number": c.get("number"), "category": "findings",
                          "prompt": (c.get("finding") or {}).get("title", c.get("text", "")),
-                         "verdict": "reopen", "text": c["reopened"][-1]["text"],
+                         "verdict": "reopen", "text": unsent_reopen_text(c),
                          "by": c["reopened"][-1]["by"], "ts": c["reopened"][-1]["ts"]} for c in reopens]
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
@@ -2856,7 +2911,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         threading.Thread(target=wake_owner, daemon=True).start()
         self._respond(200, json.dumps({"ok": True, **delivery,
                                       "comment_count": len(comment_ids), **event,
-                                      "undecided_count": len(undecided_ids)},
+                                      "undecided_count": len(undecided_ids), **skipped},
                                      ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_rounds_discard(self, parsed):
@@ -2864,6 +2919,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         pushing. The verdicts themselves stay recorded (reversible via
         "Change verdict"); they simply never go out as a round. Emits
         `round_discarded`, never a session_push."""
+        from .copy_state import discard_revisions
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
         with _locked_store(self.artifact_dir):
@@ -2875,17 +2931,30 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if isinstance(d, dict) and d.get("round_pending") and d.get("by") in reviewer_authors:
                         d.pop("round_pending", None)
                         comment_ids.append(c.get("id"))
+                    # A pending reopen stays recorded on the finding, unsent.
+                    if c.get("round_pending") and (c.get("reopened") or [{}])[-1].get("by") in reviewer_authors:
+                        c.pop("round_pending", None)
+                        comment_ids.append(c.get("id"))
+            comment_ids = list(dict.fromkeys(comment_ids))
             if comment_ids:
                 self._v2_save(store)
+            # Unsent Library edits are drafts: Discard drops them.
+            try:
+                revision_ids = discard_revisions(self.artifact_dir, reviewer_authors)
+            except ValueError:
+                revision_ids = []  # an invalid copy.json has nothing to discard
         _bus_append(self.bus_dir, self.slug, {
             "event": "round_discarded",
             "comment_ids": comment_ids,
+            "revision_ids": revision_ids,
             "by": author,
             **self._session_fields(),
         })
-        print(f"  POST /api/rounds/discard → {len(comment_ids)} pending flag(s) cleared by {author}", flush=True)
+        print(f"  POST /api/rounds/discard → {len(comment_ids)} pending flag(s) cleared, "
+              f"{len(revision_ids)} edit(s) dropped by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True, "comment_count": len(comment_ids), "comment_ids": comment_ids,
+            "edit_count": len(revision_ids), "revision_ids": revision_ids,
         }).encode(), "application/json")
 
     def _read_meta(self) -> dict:
@@ -2927,6 +2996,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if tab.get("url") in links and links[tab["url"]]:
                     tab["url"] = links[tab["url"]]
         return data
+
+    @staticmethod
+    def _check_browser_category(fields: dict, anchor_id: str, store: dict):
+        """A reviewer files a comment into Library only on a copy: anchor and
+        into Plans only on a plan document. Findings are agent-created: a
+        reviewer's comment joins Findings only on an existing finding's anchor."""
+        category = fields.get("category")
+        if category == "library" and not anchor_id.startswith("copy:"):
+            raise DecisionRequestError("Library comments belong on a copy: anchor", 403)
+        if category == "plans" and "doc" not in fields:
+            raise DecisionRequestError("Plans comments need a plan document", 403)
+        if category == "findings" and not any(
+                # `finding` metadata is written only by local (agent) callers.
+                isinstance(c, dict) and c.get("category") == "findings" and c.get("finding")
+                for c in (store.get("anchors") or {}).get(anchor_id, [])):
+            raise DecisionRequestError("findings are agent-created; comment on an existing finding", 403)
 
     @staticmethod
     def _comment_category_fields(payload):
@@ -2973,7 +3058,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 counts = category_counts(self.artifact_dir, author, read_state=read)
                 plans = list_plans(self.artifact_dir)
                 category_data = load_categories(self.artifact_dir)
-                library = load_copy(self.artifact_dir)
+                try:
+                    library = load_copy(self.artifact_dir)
+                except ValueError as exc:
+                    # The other tabs still count; Library reports the problem.
+                    library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
                 store = self._v2_load()
                 present = {comment_category(c) for items in store["anchors"].values() for c in items}
                 available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
@@ -2983,10 +3072,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 links = linked_pages(record) if record else []
             result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
                       "findings_sets": category_data["findings_sets"], "plans": plans,
-                      "library": {"groups": library.get("groups", [])}, "linked_pages": links}
+                      "library": {"groups": library.get("groups", []),
+                                  **({"error": library["error"]} if "error" in library else {})},
+                      "linked_pages": links}
             return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store")
-        except (ValueError, OSError) as exc:
-            return self._respond(400, json.dumps({"error": str(exc)}).encode())
+        except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
+            # Unexpected page data is reported, never a dropped connection.
+            return self._respond(400, json.dumps({"error": f"page data could not be read: {exc}"}).encode())
 
     def _bounded_json_body(self):
         try:
@@ -3264,8 +3356,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._respond(500, b"Read error")
             return
+        # Proof attachments and page assets are often generated or third-party
+        # files: never let one run script in the review origin. Only images
+        # and PDF open inline; everything else (HTML and SVG included) downloads.
+        extra = None
+        resolved_rel = target.relative_to(self.artifact_dir.resolve()).as_posix()
+        if {rel.split("/", 1)[0], resolved_rel.split("/", 1)[0]} & {"assets", "attachments"}:
+            extra = {"Content-Security-Policy": "sandbox"}
+            if target.suffix.lower() not in _INLINE_UPLOADS:
+                filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
+                extra["Content-Disposition"] = f'attachment; filename="{filename}"'
         self._respond(200, data, content_type=mime,
-                      cache_control=_cache_control_for(target.suffix))
+                      cache_control=_cache_control_for(target.suffix), extra_headers=extra)
 
     def _default_file(self):
         return self.artifact_file

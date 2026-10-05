@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from .urls import mounted_url, page_url
 
 OWNER_FIELDS = ("owner_session", "owner_agent", "owner_label", "owner_claimed_at", "owner_target")
+MAX_EXCEPTION_REASON = 200
 
 
 def project_key(path: Path) -> str | None:
@@ -87,9 +88,13 @@ def exception_reason(args) -> str | None:
     """An explicit exception, with the legacy standalone spelling preserved."""
     reason = getattr(args, "exception", None)
     if reason is not None:
-        if not reason.strip():
+        # One line of plain text: it is shown under Linked pages.
+        reason = " ".join("".join(ch for ch in reason if ch.isprintable() or ch.isspace()).split())
+        if not reason:
             raise ValueError('--exception requires a nonempty reason')
-        return reason.strip()
+        if len(reason) > MAX_EXCEPTION_REASON:
+            raise ValueError(f"--exception reason must be at most {MAX_EXCEPTION_REASON} characters")
+        return reason
     return "standalone" if getattr(args, "standalone", False) else None
 
 
@@ -250,6 +255,7 @@ def cmd_workspace(args) -> int:
                             if root:
                                 state["slugs"][s]["workspace_root"] = str(root)
                             state["slugs"][s]["standalone"] = False
+                            state["slugs"][s].pop("exception", None)
                 _save_state_for_project(name, state)
         data = workspace_data(root or Path.cwd(), project)
     else:
