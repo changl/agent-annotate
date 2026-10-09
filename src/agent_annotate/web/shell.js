@@ -880,6 +880,7 @@ function sentRounds() {
 // keeps the result line the Send showed. Rounds recorded before that say
 // "Sent (N)".
 function roundResult(records, n) {
+  if (CAPS && CAPS.automatic_round_delivery) return 'Feedback saved (' + n + ')';
   const how = records.map(r => r.delivery);
   if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
   if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
@@ -1016,6 +1017,7 @@ function switchVersion(v) {
 }
 
 function loadIframe(v) {
+  ANCHOR_ORDER = {};
   const frame = document.getElementById('content-frame');
   frame.dataset.doc = DOC;
   frame.dataset.version = v;
@@ -1275,8 +1277,7 @@ function renderDrawer() {
       if (docOf(item) === DOC && inScope(item)) groups.archived.push(item);
     }
   }
-  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
-  SECTION_ORDER.forEach(k => groups[k].sort(byNum));
+  SECTION_ORDER.forEach(k => groups[k].sort(byContentOrder));
 
   const anything = SECTION_ORDER.some(k => groups[k].length);
   if (!anything) {
@@ -1443,6 +1444,11 @@ const decisionExcerptOpen = {};
 // {anchorId: {text, name, card} | {missing: true}} for EXCERPTS_VERSION.
 let EXCERPTS = {};
 let EXCERPTS_VERSION = null;
+let ANCHOR_ORDER = {};
+function byContentOrder(a, b) {
+  return (ANCHOR_ORDER[a.anchor_id] ?? Infinity) - (ANCHOR_ORDER[b.anchor_id] ?? Infinity) ||
+    (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+}
 // Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
 const decisionSayOpen = {};
@@ -2934,7 +2940,17 @@ async function submitPage(alsoPending, receipt) {
   const order = (it) => lines.indexOf(it);
   sent.sort((a, b) => order(a) - order(b));
   failed.sort((a, b) => order(a) - order(b));
-  return { ok: !failed.length, sent, failed, sentCount, delivered, any: !!last, send_id: sendId };
+  const automatic = !!(CAPS && CAPS.automatic_round_delivery);
+  if (automatic && last) {
+    // Legacy monitor counts do not prove that Orca accepted the prompt.
+    delivered = false;
+    try {
+      const response = await fetch(apiUrl('./api/delivery'), { cache: 'no-store' });
+      const data = await response.json();
+      delivered = data.latest?.id === last.delivery_id && ['accepted', 'started', 'acknowledged'].includes(data.latest.state);
+    } catch {}
+  }
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic, any: !!last, send_id: sendId };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -3131,6 +3147,7 @@ function wireBridge() {
       if (data.version && data.version !== CURRENT_VERSION) return; // a stale document
       EXCERPTS = data.excerpts;
       EXCERPTS_VERSION = data.version || CURRENT_VERSION;
+      ANCHOR_ORDER = data.anchorOrder || {};
       renderDrawer();
     } else if (data.type === 'annotate:back-to-card') {
       // "Back to #N" on an evidence target the rail card sent the reader to.
@@ -3196,6 +3213,7 @@ function sendCommentCountsToFrame() {
           c.status !== 'archived' && c.status !== 'resolved_in_version');
         return {
           id: c.id,
+          section: sectionOf(c),
           n: NUM_MAP[c.id] || 0,
           unread: readStateOf(c) !== 'read',
           // Creation-time granular target. Older comments without one remain
@@ -3384,15 +3402,15 @@ let frameReady = { doc: null, version: null };
 let frameWaiters = [];
 function freshDocState(doc) {
   return {
-    META: { current: null, history: [], content_stamps: {} }, SEEN: {}, CURRENT_VERSION: null, EXCERPTS: {}, EXCERPTS_VERSION: null,
+    META: { current: null, history: [], content_stamps: {} }, SEEN: {}, CURRENT_VERSION: null, EXCERPTS: {}, EXCERPTS_VERSION: null, ANCHOR_ORDER: {},
     DRAFTS: loadDrafts(doc), pendingGoto: null, highlightedCommentId: null, openMenuId: null, sumEditing: null, gfOpen: false,
   };
 }
 function captureDocState() {
-  return { META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen };
+  return { META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, ANCHOR_ORDER, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen };
 }
 function installDocState(s) {
-  ({ META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen } = s);
+  ({ META, SEEN, CURRENT_VERSION, EXCERPTS, EXCERPTS_VERSION, ANCHOR_ORDER, DRAFTS, pendingGoto, highlightedCommentId, openMenuId, sumEditing, gfOpen } = s);
 }
 function enterDoc(doc) {
   DOC_STATE[DOC] = captureDocState();
@@ -3514,9 +3532,11 @@ const REVIEW_KEY = (() => {
   const search = new URLSearchParams(location.search);
   const key = hash.get('review');
   const v = search.get('v');
-  if (key == null && !v) return null;
+  const reload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+  if (reload) { hash.delete('v'); search.delete('v'); }
+  if (key == null && !v && !reload) return null;
   hash.delete('review');
-  if (v) {
+  if (v && !reload) {
     search.delete('v');
     const view = hash.get('view');
     if (!hash.get('v') && (!view || view === 'review')) { hash.set('view', 'review'); hash.set('v', v); }

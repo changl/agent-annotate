@@ -674,7 +674,8 @@
       return;
     }
     const n = sent.length;
-    const result = r.delivered ? '✅ Sent to session (' + n + ')' : '⏳ Queued — no session listening (' + n + ')';
+    const result = r.delivered ? '✅ Sent to session (' + n + ')' :
+      (r.automatic ? 'Feedback saved (' + n + ')' : '⏳ Queued — no session listening (' + n + ')');
     lastSend = { ts: new Date().toISOString(), result, items: sent, fresh: true, send_id: r.send_id };
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
