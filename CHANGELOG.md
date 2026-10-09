@@ -1,5 +1,12 @@
 # agent-annotate — changelog
 
+## 2.24.1
+
+- A posed question renders its full control (options with the recommended badge, Answer in words, note) in the page flow directly after the content it is anchored to, as in the 2.24.0 release. The list that collected every question above the page, with the body cards hidden, is removed.
+- The Feedback panel lists items in page order.
+- Page servers, Orca and `ps` subprocesses start in the home directory, so a disconnected network mount in the launch directory cannot hang them in `getcwd`.
+- Reloading a page drops a `?v=` version link instead of reopening that version.
+
 ## 2.24.0
 
 One page per project (#9), a version guard (#10) and page consolidation (#11).
