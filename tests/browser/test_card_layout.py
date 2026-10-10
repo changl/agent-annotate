@@ -270,6 +270,15 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             page.evaluate("() => window.AnnotateDocs.reload()")
             frame.locator('[data-strip-item="card-1"]').wait_for()
             assert frame.locator("[data-strip-item]").count() == 2
+            # A document tab switch re-places questions: evidence in an inactive
+            # panel sends the question to its own card, and back when it opens.
+            after = "el => el.closest('.annotate-decision-strip').previousElementSibling.dataset.anchorId"
+            sketch = frame.locator('[data-anchor-id="s:migration-sketch"]')
+            frame.locator(".cards").evaluate("el => el.classList.remove('tab-panel')")
+            sketch.evaluate("el => el.classList.add('tab-panel')")
+            _wait(lambda: frame.locator('[data-strip-item="card-2"]').evaluate(after) == "d:q2", page)
+            sketch.evaluate("el => el.classList.add('active')")
+            _wait(lambda: frame.locator('[data-strip-item="card-2"]').evaluate(after) == "s:migration-sketch", page)
             # A normal older-version link still opens that version.
             page.goto(base + "#view=review&v=v1", wait_until="networkidle")
             playwright.expect(page.locator("#content-frame")).to_have_attribute("data-version", "v1")
