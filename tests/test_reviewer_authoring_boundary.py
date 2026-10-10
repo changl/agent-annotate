@@ -118,7 +118,8 @@ def test_public_create_reply_verdict_revision_free_text_and_round_preserve_histo
         "verdict": "comment", "text": "Answer in words after changing the verdict", "defer_push": True, **spoof}, cookie=page.cookie)
     assert status == 200 and answered["decision"]["text"] == "Answer in words after changing the verdict"
     status, _, submitted = page.call("POST", "api/rounds/submit", {"note": "Completed external review"}, cookie=page.cookie)
-    assert status == 200 and submitted["comment_count"] == 1 and submitted["comment_ids"] == ["agent-card"]
+    # The reviewer's new comment goes out with the round: one Send, one wake-up.
+    assert status == 200 and submitted["comment_count"] == 2 and submitted["comment_ids"] == ["agent-card", created["id"]]
     store = json.loads((page.directory / "comments.json").read_text())
     card = store["anchors"]["d:q1"][0]
     assert card["text"] == "Original owner question" and card["decision_request"]["prompt"] == "Original owner question"

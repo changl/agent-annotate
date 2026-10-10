@@ -29,7 +29,7 @@ New feedback uses one `cards` JSON array. Keep positive stable `number` values a
 
 Ordinary progress requires no plan metadata. When a full-plan review is requested, use `full_plan: true`, `other_files_required: none` (or the file list), and one `cards` source section (the shell presents these in Review) with ascending numbers and evidence. Later full-plan versions retain the current plan; unchanged sections fold automatically.
 
-Custom diagrams may supply HTML content with stable `data-anchor-id` attributes. Preserve the template canvas sentinels and use `publish-version` to activate later versions. Never overwrite owner metadata or reviewer state.
+Custom diagrams may supply HTML content with stable `data-anchor-id` attributes. Annotate owns colour, type and width: custom HTML keeps its layout, but its colours, fonts and page-width caps follow the theme and the reader's text size; SVG keeps its colours. Preserve the template canvas sentinels and use `publish-version` to activate later versions. Never overwrite owner metadata or reviewer state.
 
 Publish verifies the rendered page and prints the URL. An Access login means the external check is unverified; it is not a reason to rebuild or repeatedly probe. Diagnose the named failing hop once. Do not infer rendering from HTTP 200.
 

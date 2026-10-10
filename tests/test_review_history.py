@@ -85,6 +85,36 @@ def test_versions_use_saved_files_and_ignore_path_injection(tmp_path):
     assert review_history(tmp_path)["versions"][1]["available"] is False
 
 
+def test_send_with_answers_and_general_feedback_wakes_the_owner_once(server):
+    # Chang, 2026-10-10: general feedback sent with answers arrived as two
+    # prompts (the round, then a push of the new comment).
+    httpd, directory, bus = server
+    _, card = _call(httpd, "POST", "/api/comments", _card(prompt="Ship?"))
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "accept", "defer_push": True}, author="r@example.com")
+    _, general = _call(httpd, "POST", "/api/comments",
+                       {"anchor_id": "general:v1", "text": "Overall: ship it", "version": "v1"}, author="r@example.com")
+    status, submitted = _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")
+    assert status == 200 and set(submitted["comment_ids"]) == {card["id"], general["id"]}
+    pushes = _events(bus, "session_push")
+    assert len(pushes) == 1 and set(pushes[0]["comment_ids"]) == {card["id"], general["id"]}
+    # Nothing is left for a separate push: an older chrome's second call is a no-op.
+    assert _call(httpd, "POST", "/api/push-session", {}, author="r@example.com")[1]["flagged_count"] == 0
+    assert len(_events(bus, "session_push")) == 1
+    answers = _call(httpd, "GET", "/api/history")[1]["rounds"][0]["answers"]
+    assert [a["text"] for a in answers if a["comment_id"] == general["id"]] == ["Overall: ship it"]
+
+
+def test_a_round_with_nothing_else_pending_still_carries_new_comments(server):
+    # The chrome skips its push when it sends a round; if the server finds no
+    # pending answer (sent elsewhere, discarded), the general feedback still goes.
+    httpd, _directory, bus = server
+    _, general = _call(httpd, "POST", "/api/comments",
+                       {"anchor_id": "general:v1", "text": "Overall: ship it", "version": "v1"}, author="r@example.com")
+    status, submitted = _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")
+    assert status == 200 and submitted["comment_ids"] == [general["id"]]
+    assert [p["comment_ids"] for p in _events(bus, "session_push")] == [[general["id"]]]
+
+
 def test_sent_plain_feedback_has_a_stable_historical_snapshot(server):
     httpd, directory, _ = server
     _, comment = _call(httpd, "POST", "/api/comments", {"anchor_id": "s:home", "text": "Tighten the spacing"}, author="r@example.com")

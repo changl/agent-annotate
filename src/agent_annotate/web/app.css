@@ -20,21 +20,21 @@
 /* A declared exception: listed after the tabs, set apart */
 .aa-tabs .tab.aa-linked-tab{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
 .aa-tabs-menu{display:none;position:relative}
-.aa-tabs-menu > summary{list-style:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-field);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;background:var(--color-base-100)}
+.aa-tabs-menu > summary{list-style:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-field);font-size:calc(13px * var(--aa-text, 1));font-weight:600;cursor:pointer;white-space:nowrap;background:var(--color-base-100)}
 .aa-tabs-menu > summary::-webkit-details-marker{display:none}
 .aa-tabs-menu > summary svg.i{width:14px;height:14px;color:var(--muted)}
 .aa-tabs-menu[open] > summary svg.i{transform:rotate(180deg)}
 .aa-tabs-list{position:absolute;left:0;top:calc(100% + 6px);z-index:400;width:min(300px,calc(100vw - 20px));padding:6px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-box);box-shadow:0 12px 32px color-mix(in oklab,var(--color-neutral) 28%,transparent)}
 .aa-tabs-list a{display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 10px;border-radius:var(--radius-field);color:var(--color-base-content);text-decoration:none}
 .aa-tabs-list a:hover,.aa-tabs-list a[aria-current="page"]{background:var(--soft)}
-.aa-tabs-list .aa-tab-name{font-weight:600;font-size:14px;min-width:72px}
-.aa-tabs-list .aa-tab-state{flex:1;font-size:12px;color:var(--muted)}
+.aa-tabs-list .aa-tab-name{font-weight:600;font-size:calc(14px * var(--aa-text, 1));min-width:72px}
+.aa-tabs-list .aa-tab-state{flex:1;font-size:calc(12px * var(--aa-text, 1));color:var(--muted)}
 .aa-tabs-list .aa-tab-state.is-needs{color:var(--err-text);font-weight:600}
 .aa-tabs-list a.aa-linked-tab{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
 
 /* ── Content title: what used to be the header's second line ─────────── */
 .view-hd{flex:none;display:flex;align-items:center;min-height:40px;padding:6px 18px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
-.view-hd-title{margin:0;font-size:12.5px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.view-hd-title{margin:0;font-size:calc(12.5px * var(--aa-text, 1));font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .view-hd-sub{font-weight:400;color:var(--muted)}
 .view-hd-sub:not(:empty)::before{content:" · "}
 .view-hd-plan{margin-left:auto;width:auto;max-width:40%}
@@ -62,10 +62,10 @@
 .sp-link-edit{display:flex;align-items:center;gap:4px}
 .sp-link-edit[hidden]{display:none}
 .sp-editor.ql-container.ql-snow{border:none;font:inherit}
-.sp-editor .ql-editor{font:11px/1.55 "Roboto",sans-serif;color:var(--color-base-content);padding:10px 12px;min-height:96px}
+.sp-editor .ql-editor{font:calc(11px * var(--aa-text, 1))/1.55 "Roboto",sans-serif;color:var(--color-base-content);padding:10px 12px;min-height:96px}
 .sp-editor .ql-editor h1,.sp-editor .ql-editor h2,.sp-editor .ql-editor h3{font-weight:700}
-.sp-editor .ql-editor h2{font-size:20px;margin:18px 0 8px}
-.sp-editor .ql-editor h3{font-size:16px;margin:16px 0 6px}
+.sp-editor .ql-editor h2{font-size:calc(20px * var(--aa-text, 1));margin:18px 0 8px}
+.sp-editor .ql-editor h3{font-size:calc(16px * var(--aa-text, 1));margin:16px 0 6px}
 .sp-editor .ql-editor p{margin:0 0 8px}
 .sp-editor .ql-editor a{color:var(--link)}
 .sp-editor .ql-editor.ql-blank::before{color:var(--faint)}
@@ -80,21 +80,21 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .aa td .unread-dot{display:inline-block;vertical-align:middle}
 /* Chang's type sizes where these views differ from the document frame
    (content.css carries the document sizes). */
-.aa-view .aa .muted{font-size:10.5px}
-.aa-view .aa .plan-scope{font-size:9.5px}
-.aa-view .aa code{font-size:10px}
+.aa-view .aa .muted{font-size:calc(10.5px * var(--aa-text, 1))}
+.aa-view .aa .plan-scope{font-size:calc(9.5px * var(--aa-text, 1))}
+.aa-view .aa code{font-size:calc(10px * var(--aa-text, 1))}
 .aa-view .aa pre code{font-size:inherit}
-.aa-view .aa .lede{font-size:16px}
-.aa-view .aa .reco{font-size:11px}
+.aa-view .aa .lede{font-size:calc(16px * var(--aa-text, 1))}
+.aa-view .aa .reco{font-size:calc(11px * var(--aa-text, 1))}
 
 /* ── A finding marked fixed: the agent's note and its proof ──────────── */
 .fix-block{margin:8px 0 6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100)}
 .fix-block.is-reopened{background:var(--color-base-200)}
-.fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:10.5px;color:var(--faint);margin-bottom:6px}
+.fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:calc(10.5px * var(--aa-text, 1));color:var(--faint);margin-bottom:6px}
 .fix-proof{display:flex;flex-direction:column;gap:8px;margin:6px 0}
 .fix-proof-img{margin:0}
 .fix-proof-img img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
-.fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);margin-top:4px}
+.fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin-top:4px}
 .fix-proof-img figcaption svg.i{width:13px;height:13px}
 .fix-proof-links{margin:0;padding:0}
 .fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
@@ -115,7 +115,7 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .hist-tag{font-weight:700;letter-spacing:0;text-transform:none;vertical-align:1px}
 .hist-sub{margin:0 4px 6px}
 .hist-none{padding:0 4px}
-.hist-item{border-bottom:1px solid var(--line);padding:8px 4px;font-size:10.5px}
+.hist-item{border-bottom:1px solid var(--line);padding:8px 4px;font-size:calc(10.5px * var(--aa-text, 1))}
 .hist-item:last-child{border-bottom:none}
 .hist-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px}
 .hist-text{white-space:pre-wrap;word-break:break-word;line-height:1.5}
@@ -131,10 +131,10 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 #hist-sent{margin-bottom:6px}
 
 /* ── The one Send summary: grouped by tab ────────────────────────────── */
-.sp-sum-cat{font-size:10.5px;font-weight:700;color:var(--color-base-content);padding:10px 6px 0;border-top:1px solid var(--line);margin-top:6px;display:flex;align-items:center;gap:6px}
+.sp-sum-cat{font-size:calc(10.5px * var(--aa-text, 1));font-weight:700;color:var(--color-base-content);padding:10px 6px 0;border-top:1px solid var(--line);margin-top:6px;display:flex;align-items:center;gap:6px}
 .sum-tab:first-child .sp-sum-cat{border-top:none;margin-top:0;padding-top:2px}
-.sp-sum-cat a{font-weight:600;font-size:10.5px;margin-left:auto;color:var(--link)}
-.sp-sum-note{font-size:10.5px;color:var(--muted);padding:2px 6px 0}
+.sp-sum-cat a{font-weight:600;font-size:calc(10.5px * var(--aa-text, 1));margin-left:auto;color:var(--link)}
+.sp-sum-note{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);padding:2px 6px 0}
 .sp-sum-note[hidden]{display:none}
 
 /* ── Compact layout (the shell's breakpoint): tabs become one menu, the
@@ -142,7 +142,7 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 @media (max-width:1160px),(max-height:480px){
   /* Keep the open tab menu inside the phone viewport. */
   .aa-tabs-list{position:fixed;left:10px;right:10px;top:50px;width:auto}
-  .aa-tabs-list .aa-tab-name{font-size:12px}
+  .aa-tabs-list .aa-tab-name{font-size:calc(12px * var(--aa-text, 1))}
   .hdr-left{flex-basis:120px;width:120px}
   .aa-tabs{display:none}
   .aa-tabs-menu{display:block}
@@ -154,6 +154,6 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
   #view-library.is-list .sp-list{display:flex}
   .sp-back{display:inline-flex;margin:8px 0 0}
   .sp-toolbar .btn{min-width:36px;min-height:36px}
-  .sp-editor .ql-editor{font-size:14px}
+  .sp-editor .ql-editor{font-size:calc(14px * var(--aa-text, 1))}
   .aa-scroll,.sp-doc,.sp-list-body{padding-bottom:150px}
 }

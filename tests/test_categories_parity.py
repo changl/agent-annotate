@@ -139,11 +139,13 @@ def test_one_send_keeps_its_summary_lines_for_history(server):
                {"cat": "library", "label": "#9 Footer", "answer": "Edited"}]
     send = {"send_id": "send-0123456789", "receipt": receipt}
     assert _call(httpd, "POST", "/api/rounds/submit", {**send, "version": "v1"}, author="chang@example.com")[0] == 200
+    # The round carries the new comment too, so an old chrome's push finds nothing.
     status, pushed = _call(httpd, "POST", "/api/push-session", send, author="chang@example.com")
-    assert status == 200 and pushed["flagged_count"] == 1
+    assert status == 200 and pushed["flagged_count"] == 0
     rounds = _call(httpd, "GET", "/api/history", author="chang@example.com")[1]["rounds"]
-    # The round (answers, edits) and the push (comments) are one Send.
-    assert len(rounds) == 2, rounds
+    # The answers, edits and comments are one Send and one round.
+    assert len(rounds) == 1, rounds
+    assert {a["text"] for a in rounds[0]["answers"]} == {"Yes", "Typo here"}
     assert all(r.get("send_id") == "send-0123456789" and r.get("receipt") == receipt for r in rounds)
     # A Send without the optional fields still works, with an empty body too.
     assert _call(httpd, "POST", "/api/push-session", author="chang@example.com")[0] == 200

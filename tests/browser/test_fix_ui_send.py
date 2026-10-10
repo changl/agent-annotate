@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, history, section
+from single_page import browser_page, feedback, go, section
 from test_card_layout import CHROME
 from test_single_page_acceptance import workspace  # noqa: F401
 from test_workspace_intent import _page
@@ -73,61 +73,57 @@ def _answer_and_open_send(page):
     playwright.expect(page.locator("#sum-send-n")).to_have_text("2")
 
 
-# ── UI-2: a Send that partly fails ────────────────────────────────────────
-def test_ui2_push_failure_keeps_the_comment_pending_and_receipt_lists_only_the_round(tmp_path, workspace):  # noqa: F811
+# ── UI-2: one Send, one wake-up; a failed Send keeps its items pending ────
+def test_ui2_the_round_carries_the_comment_so_a_send_wakes_the_owner_once(tmp_path, workspace):  # noqa: F811
+    # Chang, 2026-10-10: an answer plus a comment used to arrive as two prompts.
     _review_note(workspace)
     with browser_page(tmp_path, workspace) as (page, _):
         _answer_and_open_send(page)
-        page.route("**/api/push-session*", lambda route: route.abort())
+        page.route("**/api/push-session*", lambda route: route.abort())  # never needed with a round
         page.locator("#round-submit-btn").click()
-        playwright.expect(page.locator("#round-confirm-sub")).to_have_text("Failed to send 1 item — try again.")
-        assert page.locator("#round-confirm-backdrop").is_visible()
-        # The failed comment is still pending and still listed; the verdict went.
-        playwright.expect(page.locator("#send-count")).to_have_text("1")
-        playwright.expect(page.locator("#sum-send-n")).to_have_text("1")
-        assert "Check the build date." in page.locator('[data-sum-tab="review"]').inner_text()
-        assert not _comment(workspace, "note-1").get("flagged_for_session")
+        page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+        playwright.expect(page.locator("#send-count")).to_have_text("0")
+        assert _comment(workspace, "note-1").get("flagged_for_session") is True
         assert not _comment(workspace, "question-11")["decision"].get("round_pending")
+        pushes = _pushes(tmp_path)
+        assert len(pushes) == 1 and sorted(pushes[0]["comment_ids"]) == ["note-1", "question-11"]
         rounds = _rounds(workspace)
         assert len(rounds) == 1
-        assert [line["label"] for line in rounds[0]["receipt"]] == ["#11 · When should we release?"]
-        playwright.expect(page.locator("#send-note")).to_have_text("⏳ Queued — no session listening (1)")
-        receipt = page.evaluate("() => AA.send.receipts()[0]")
-        assert receipt["result"] == "⏳ Queued — no session listening (1)"
-        assert [it["label"] for it in receipt["items"]] == ["#11 · When should we release?"]
-        # Trying again sends the rest, as a second receipt.
+        labels = [line["label"] for line in rounds[0]["receipt"]]
+        assert "#11 · When should we release?" in labels and any("Check the build date." in label for label in labels)
+        playwright.expect(page.locator("#send-note")).to_have_text("Feedback saved (2)")
+
+
+def test_ui2_push_failure_keeps_the_comment_pending_and_a_retry_sends_it(tmp_path, workspace):  # noqa: F811
+    _review_note(workspace)
+    with browser_page(tmp_path, workspace) as (page, _):
+        playwright.expect(page.locator("#send-count")).to_have_text("1")
+        page.locator("#send-btn").click()
+        page.route("**/api/push-session*", lambda route: route.abort())
+        page.locator("#round-submit-btn").click()
+        playwright.expect(page.locator("#round-confirm-sub")).to_have_text("Failed to submit — try again.")
+        playwright.expect(page.locator("#send-count")).to_have_text("1")
+        assert not _comment(workspace, "note-1").get("flagged_for_session")
+        assert _rounds(workspace) == []
         page.unroute("**/api/push-session*")
         page.locator("#round-submit-btn").click()
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
         playwright.expect(page.locator("#send-count")).to_have_text("0")
         assert _comment(workspace, "note-1").get("flagged_for_session") is True
-        rounds = _rounds(workspace)
-        assert len(rounds) == 2
-        assert "Check the build date." in rounds[1]["receipt"][0]["label"]
-        history(page)
-        page.locator("#hist-sent-body .unified-receipt").first.wait_for()
-        texts = page.locator("#hist-sent-body .unified-receipt summary").all_inner_texts()
-        # Two Sends, one line each; both were queued, and the server-side
-        # record keeps that (UI-13).
-        assert [t.split(" · ")[0] for t in texts] == ["⏳ Queued — no session listening (1)"] * 2
+        assert "Check the build date." in _rounds(workspace)[0]["receipt"][0]["label"]
 
 
-def test_ui2_round_failure_keeps_the_verdict_pending_and_receipt_lists_only_the_push(tmp_path, workspace):  # noqa: F811
+def test_ui2_round_failure_keeps_the_verdict_and_the_comment_pending(tmp_path, workspace):  # noqa: F811
     _review_note(workspace)
     with browser_page(tmp_path, workspace) as (page, _):
         _answer_and_open_send(page)
         page.route("**/api/rounds/submit*", lambda route: route.abort())
         page.locator("#round-submit-btn").click()
-        playwright.expect(page.locator("#round-confirm-sub")).to_have_text("Failed to send 1 item — try again.")
-        playwright.expect(page.locator("#send-count")).to_have_text("1")
+        playwright.expect(page.locator("#round-confirm-sub")).to_have_text("Failed to submit — try again.")
+        playwright.expect(page.locator("#send-count")).to_have_text("2")
         assert _comment(workspace, "question-11")["decision"]["round_pending"] is True
-        assert _comment(workspace, "note-1")["flagged_for_session"] is True
-        rounds = _rounds(workspace)
-        assert len(rounds) == 1
-        assert len(rounds[0]["receipt"]) == 1 and "Check the build date." in rounds[0]["receipt"][0]["label"]
-        receipt = page.evaluate("() => AA.send.receipts()[0]")
-        assert receipt["result"] == "⏳ Queued — no session listening (1)"
-        assert len(receipt["items"]) == 1 and "Check the build date." in receipt["items"][0]["label"]
+        assert not _comment(workspace, "note-1").get("flagged_for_session")
+        assert _rounds(workspace) == [] and _pushes(tmp_path) == []
 
 
 def test_ui2_nothing_sent_says_failed_and_records_nothing(tmp_path, workspace):  # noqa: F811
@@ -187,7 +183,7 @@ def test_ui5_finding_answered_outside_a_send_is_listed_counted_and_pushed(tmp_pa
 
 def test_ui5_library_question_answered_outside_a_send_is_listed_and_pushed(tmp_path, workspace):  # noqa: F811
     # The fixture's Library question (#9) was answered but never sent; open, it
-    # goes with Send's push, so the Library tab lists and counts it.
+    # goes with the Send, so the Library tab lists and counts it.
     store = _store(workspace)
     store["anchors"]["copy:hero"][0]["status"] = "open"
     (workspace / "comments.json").write_text(json.dumps(store))
@@ -205,8 +201,8 @@ def test_ui5_library_question_answered_outside_a_send_is_listed_and_pushed(tmp_p
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
         playwright.expect(page.locator("#send-count")).to_have_text("0")
         pushes = _pushes(tmp_path)
-        # One Send: the round's push (the Review verdict) and the comment push.
-        assert [p["comment_ids"] for p in pushes] == [["question-11"], ["library-9"]]
+        # One Send, one wake-up: the round carries the Review verdict and the comment.
+        assert [p["comment_ids"] for p in pushes] == [["question-11", "library-9"]]
         receipt = [line for r in _rounds(workspace) for line in r.get("receipt", [])]
         assert sorted(line["cat"] for line in receipt) == ["library", "review"]
 

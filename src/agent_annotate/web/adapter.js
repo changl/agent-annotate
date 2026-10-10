@@ -21,6 +21,13 @@
 
 const META = window.__ANNOTATE_CONTENT_META__ || {};
 
+// The reviewer's text size (shell's Aa menu, same origin), before the shell
+// re-sends it on load, so the document does not first draw at 100%.
+try {
+  const size = parseFloat(localStorage.getItem('annotate:text-size'));
+  if (size >= 0.9 && size <= 2) document.documentElement.style.setProperty('--aa-text', String(size));
+} catch {}
+
 // Reading the parent proves same-origin access. srcdoc reports a null
 // location origin, so use its inherited security origin only after that read.
 const PARENT_ORIGIN = (() => {
@@ -837,6 +844,7 @@ function ensureStripStyle() {
   const style = document.createElement('style');
   style.id = 'annotate-strip-style';
   style.textContent = `
+    .annotate-questions-moved { display: none !important; }
     .annotate-decision-strip {
       font-family:"Inter", sans-serif !important;
       background: var(--primary-soft) !important;
@@ -860,13 +868,13 @@ function ensureStripStyle() {
       border-top: 1px solid color-mix(in oklab,var(--color-primary) 25%,transparent) !important;
     }
     .annotate-decision-prompt {
-      font-size: 12px !important; font-weight: 600 !important; color: var(--link) !important;
+      font-size: calc(12px * var(--aa-text, 1)) !important; font-weight: 600 !important; color: var(--link) !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
     .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color: var(--link) !important; }
     .annotate-decision-resolved .annotate-decision-prompt { margin-bottom: 5px !important; }
     .annotate-decision-text {
-      font-size: 11.5px !important; color: var(--color-base-content) !important; line-height: 1.5 !important;
+      font-size: calc(11.5px * var(--aa-text, 1)) !important; color: var(--color-base-content) !important; line-height: 1.5 !important;
       margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
     }
     /* Options are rows (radio-tile layout): label, its consequence under it,
@@ -876,7 +884,7 @@ function ensureStripStyle() {
       gap: 6px !important; min-width: 0 !important;
     }
     .annotate-decision-btn {
-      font-size: 11px !important; font-weight: 700 !important; padding: 5px 11px !important;
+      font-size: calc(11px * var(--aa-text, 1)) !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: none !important; cursor: pointer !important;
       color:var(--color-primary-content) !important; font-family:"Inter", sans-serif !important;
       /* An option label longer than the strip used to force the flex line
@@ -901,22 +909,22 @@ function ensureStripStyle() {
     .annotate-decision-form { margin-top: 6px !important; flex-direction: column !important; gap: 5px !important; }
     .annotate-decision-ta {
       width: 100% !important; min-height: 40px !important; padding: 5px 7px !important;
-      border: 1px solid var(--line) !important; border-radius: 5px !important; font-size: 11px !important;
+      border: 1px solid var(--line) !important; border-radius: 5px !important; font-size: calc(11px * var(--aa-text, 1)) !important;
       font-family:"Inter", sans-serif !important; resize: vertical !important; color: var(--color-base-content) !important;
       background: var(--color-base-100) !important; box-sizing: border-box !important; line-height: 1.4 !important;
     }
     .annotate-decision-ta:focus { outline: none !important; border-color: var(--link) !important; }
     .annotate-decision-feedback {
-      margin-top: 5px !important; font-size: 10.5px !important; font-weight: 600 !important;
+      margin-top: 5px !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 600 !important;
       color: var(--link) !important; min-height: 12px !important;
     }
     .annotate-decision-feedback.is-error { color: var(--color-error) !important; }
     .annotate-decision-feedback:empty { min-height: 0 !important; margin-top: 0 !important; }
     .annotate-decision-delivery {
-      font-size: 11px !important; color: var(--muted) !important; margin-left: 8px !important;
+      font-size: calc(11px * var(--aa-text, 1)) !important; color: var(--muted) !important; margin-left: 8px !important;
     }
     .annotate-verdict-chip {
-      display: inline-block !important; font-size: 10.5px !important; font-weight: 700 !important;
+      display: inline-block !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
       padding: 4px 10px !important; border-radius: 10px !important;
     }
     .annotate-verdict-chip.verdict-accept { background: var(--success-soft) !important; color: var(--ok-text) !important; }
@@ -930,24 +938,24 @@ function ensureStripStyle() {
     .annotate-decision-change:hover, .annotate-decision-cancel:hover { filter: none !important; text-decoration: underline !important; }
     .annotate-decision-changing-note {
       display: flex !important; align-items: center !important; justify-content: space-between !important;
-      gap: 8px !important; font-size: 11px !important; font-weight: 600 !important; color: var(--link) !important;
+      gap: 8px !important; font-size: calc(11px * var(--aa-text, 1)) !important; font-weight: 600 !important; color: var(--link) !important;
       background: var(--primary-soft) !important; border-radius: 6px !important; padding: 5px 8px !important;
       margin-bottom: 6px !important;
     }
     .annotate-strip-anchor-label {
-      font-size: 10px !important; font-weight: 700 !important; color: var(--muted) !important;
+      font-size: calc(10px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important;
       margin: 0 0 5px !important; white-space: normal !important;
     }
     /* v2.19 fields. Context is always shown in full: it is what the
        reviewer needs to decide, so it never sits behind a disclosure. */
     .annotate-decision-context {
-      font-size: 11px !important; color: var(--muted) !important; line-height: 1.5 !important;
+      font-size: calc(11px * var(--aa-text, 1)) !important; color: var(--muted) !important; line-height: 1.5 !important;
       margin: -2px 0 6px !important; white-space: pre-wrap !important; word-break: break-word !important;
       font-weight: 400 !important;
     }
     .annotate-decision-reco-line {
-      font-size: 11px !important; color: var(--ok-text) !important; font-weight: 600 !important;
+      font-size: calc(11px * var(--aa-text, 1)) !important; color: var(--ok-text) !important; font-weight: 600 !important;
       line-height: 1.4 !important; margin: 0 0 6px !important;
     }
     .annotate-decision-reco-line b { font-weight: 800 !important; }
@@ -958,12 +966,12 @@ function ensureStripStyle() {
       min-width: 0 !important; max-width: 100% !important; box-sizing: border-box !important;
     }
     .annotate-excerpt-src {
-      font-size: 10.5px !important; font-weight: 700 !important; color: var(--muted) !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--muted) !important;
       text-transform: uppercase !important; letter-spacing: .03em !important; margin: 0 0 2px !important;
     }
     .annotate-excerpt-text {
       margin: 0 !important; padding: 0 !important; border: none !important; quotes: none !important;
-      font-size: 11px !important; font-style: normal !important; font-weight: 400 !important;
+      font-size: calc(11px * var(--aa-text, 1)) !important; font-style: normal !important; font-weight: 400 !important;
       color: var(--color-base-content) !important; line-height: 1.5 !important; white-space: pre-line !important;
       word-break: break-word !important; overflow-wrap: anywhere !important; background: none !important;
       display: -webkit-box !important; -webkit-box-orient: vertical !important; -webkit-line-clamp: 4 !important;
@@ -971,7 +979,7 @@ function ensureStripStyle() {
     }
     .annotate-excerpt.is-open .annotate-excerpt-text { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
     .annotate-excerpt-more {
-      font-size: 10.5px !important; font-weight: 600 !important; color: var(--link) !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 600 !important; color: var(--link) !important;
       background: none !important; border: none !important; padding: 2px 0 !important; margin: 2px 0 0 !important;
       cursor: pointer !important; font-family:"Inter", sans-serif !important;
     }
@@ -979,7 +987,7 @@ function ensureStripStyle() {
     .annotate-card-replaced { display: none !important; }
     .annotate-decision-meta { display: flex !important; gap: 5px !important; flex-wrap: wrap !important; margin: 0 0 6px !important; }
     .annotate-decision-chip {
-      font-size: 9px !important; font-weight: 700 !important; padding: 2px 7px !important; border-radius: 8px !important;
+      font-size: calc(9px * var(--aa-text, 1)) !important; font-weight: 700 !important; padding: 2px 7px !important; border-radius: 8px !important;
       text-transform: uppercase !important; letter-spacing: .04em !important; white-space: nowrap !important;
     }
     .annotate-chip-impact-low { background: var(--color-base-200) !important; color: var(--muted) !important; }
@@ -1007,11 +1015,11 @@ function ensureStripStyle() {
     .annotate-opt-label { font-weight: 700 !important; }
     .annotate-decision-consequence {
       display: block !important; margin-top: 2px !important;
-      font-size: 10.5px !important; font-weight: 400 !important; color: var(--muted) !important; line-height: 1.4 !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 400 !important; color: var(--muted) !important; line-height: 1.4 !important;
       white-space: pre-wrap !important; word-break: break-word !important;
     }
     .annotate-decision-rec {
-      font-size: 9.5px !important; font-weight: 800 !important; letter-spacing: .05em !important;
+      font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 800 !important; letter-spacing: .05em !important;
       text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
       border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
@@ -1020,24 +1028,24 @@ function ensureStripStyle() {
       flex-wrap: wrap !important; margin-top: 8px !important;
     }
     .annotate-decision-say {
-      font-size: 11.5px !important; font-weight: 700 !important; padding: 5px 11px !important;
+      font-size: calc(11.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; padding: 5px 11px !important;
       border-radius: 6px !important; border: 1px solid var(--line) !important; cursor: pointer !important;
       background: var(--color-base-100) !important; color: var(--link) !important; font-family:"Inter", sans-serif !important;
       max-width: 100% !important; text-align: left !important; line-height: 1.35 !important;
       white-space: normal !important; overflow-wrap: anywhere !important;
     }
     .annotate-decision-say:hover { background: var(--primary-soft) !important; filter: none !important; }
-    .annotate-decision-say-hint { font-size: 10.5px !important; color: var(--muted) !important; }
+    .annotate-decision-say-hint { font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; }
     .annotate-decision-commented { margin: 0 0 6px !important; }
-    .annotate-decision-commented-txt { font-size: 10.5px !important; color: var(--muted) !important; margin-left: 6px !important; }
+    .annotate-decision-commented-txt { font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; margin-left: 6px !important; }
     .annotate-decision-custom { background: var(--muted) !important; }
     .annotate-decision-custom.annotate-style-primary { background: var(--color-primary) !important; }
     .annotate-decision-custom.annotate-style-danger { background: var(--color-error) !important; }
     /* Evidence: a collapsed "Evidence (n)" disclosure; each item previews its
        target inside the card, and "Go to" jumps there leaving "Back to #N". */
-    .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: 10.5px !important; color: var(--muted) !important; }
+    .annotate-decision-evidence { display: block !important; margin: 8px 0 0 !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link {
-      font-size: 10.5px !important; font-weight: 700 !important; color: var(--link) !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--link) !important;
       background: none !important; border: none !important; padding: 2px 0 !important;
       cursor: pointer !important; font-family:"Inter", sans-serif !important; display: inline-flex !important;
       align-items: center !important; gap: 4px !important; text-align: left !important;
@@ -1045,7 +1053,7 @@ function ensureStripStyle() {
     .annotate-decision-evidence-link { font-weight: 600 !important; text-decoration: none !important; }
     .annotate-decision-evidence-label { text-decoration: underline dotted !important; }
     .annotate-decision-evidence-toggle::before, .annotate-decision-evidence-link::before {
-      content: '\\25B8'; font-size: 9px; transition: transform .12s; text-decoration: none;
+      content: '\\25B8'; font-size: calc(9px * var(--aa-text, 1)); transition: transform .12s; text-decoration: none;
     }
     .annotate-decision-evidence-toggle[aria-expanded="true"]::before,
     .annotate-decision-evidence-link[aria-expanded="true"]::before { transform: rotate(90deg); }
@@ -1061,7 +1069,7 @@ function ensureStripStyle() {
     .annotate-decision-evidence-preview .annotate-excerpt { margin: 0 0 6px !important; }
     .annotate-decision-evidence-missing { font-style: italic !important; color: var(--muted) !important; margin: 0 0 6px !important; }
     .annotate-decision-evidence-goto {
-      font-size: 10.5px !important; font-weight: 700 !important; color:var(--color-primary-content) !important; background: var(--color-primary) !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; color:var(--color-primary-content) !important; background: var(--color-primary) !important;
       border: none !important; border-radius: 5px !important; padding: 3px 10px !important;
       cursor: pointer !important; font-family:"Inter", sans-serif !important;
     }
@@ -1070,7 +1078,7 @@ function ensureStripStyle() {
     .annotate-back-row { display: block !important; list-style: none !important; margin: 4px 0 !important; padding: 0 !important; text-align: left !important; }
     .annotate-back-tr > td { padding: 3px 0 !important; border: none !important; background: transparent !important; }
     .annotate-back-pill {
-      font: 700 11.5px "Inter", sans-serif !important;
+      font: 700 calc(11.5px * var(--aa-text, 1)) "Inter", sans-serif !important;
       color:var(--color-primary-content) !important; background: var(--color-primary) !important; border: none !important; border-radius: 999px !important;
       padding: 5px 12px !important; cursor: pointer !important; box-shadow: 0 2px 8px color-mix(in oklab,var(--color-primary) 30%,transparent) !important;
       line-height: 1.3 !important; white-space: nowrap !important;
@@ -1078,7 +1086,7 @@ function ensureStripStyle() {
     .annotate-back-pill:hover { background: var(--color-primary) !important; }
     .annotate-back-abs { position: absolute !important; pointer-events: auto !important; z-index: 16 !important; }
     .annotate-decision-note-toggle {
-      font-size: 10.5px !important; color: var(--muted) !important; background: none !important;
+      font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; background: none !important;
       border: none !important; padding: 2px 0 !important; cursor: pointer !important;
       font-family:"Inter", sans-serif !important; margin-top: 6px !important; display: block !important;
     }
@@ -1086,14 +1094,14 @@ function ensureStripStyle() {
     .annotate-decision-note-form { margin-top: 4px !important; }
     .annotate-decision-note-form[hidden] { display: none !important; }
     .annotate-decision-pending {
-      display: inline-block !important; font-size: 9.5px !important; font-weight: 700 !important;
+      display: inline-block !important; font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
       padding: 2px 8px !important; border-radius: 8px !important; background: var(--warning-soft) !important;
       color: var(--warn-text) !important; border: 1px dashed var(--color-warning) !important; text-transform: uppercase !important;
       letter-spacing: .04em !important; margin-left: 8px !important; vertical-align: middle !important;
     }
     .annotate-decision-sendnow {
       background: none !important; color: var(--link) !important; font-weight: 600 !important;
-      padding: 4px 6px !important; margin-left: 4px !important; font-size: 10.5px !important;
+      padding: 4px 6px !important; margin-left: 4px !important; font-size: calc(10.5px * var(--aa-text, 1)) !important;
     }
     .annotate-decision-sendnow:hover { filter: none !important; text-decoration: underline !important; }
     @media (max-width: 768px), (max-height: 480px) {
@@ -1105,10 +1113,10 @@ function ensureStripStyle() {
       /* Thumb-sized buttons, buttons free to wrap to their own row, and a
          16px textarea so iOS doesn't zoom the page in on focus. */
       .annotate-decision-btn, .annotate-decision-say {
-        min-height: 44px !important; padding: 10px 16px !important; font-size: 13px !important;
+        min-height: 44px !important; padding: 10px 16px !important; font-size: calc(13px * var(--aa-text, 1)) !important;
         flex: 1 1 auto !important; touch-action: manipulation !important;
       }
-      .annotate-decision-ta { font-size: 16px !important; min-height: 48px !important; }
+      .annotate-decision-ta { font-size: calc(16px * var(--aa-text, 1)) !important; min-height: 48px !important; }
       .annotate-decision-change, .annotate-decision-cancel { min-height: 44px !important; padding: 10px 12px !important; touch-action: manipulation !important; }
     }
     /* ── Feedback prototype (X1/E4): the strip follows the shell
@@ -1119,10 +1127,10 @@ function ensureStripStyle() {
       box-shadow: 0 1px 2px color-mix(in oklab,var(--color-neutral) 6%,transparent) !important; color: var(--color-base-content) !important;
     }
     .annotate-decision-item + .annotate-decision-item { border-top-color: var(--line) !important; }
-    .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: 11px !important; }
+    .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: calc(11px * var(--aa-text, 1)) !important; }
     .annotate-decision-num {
       color: var(--color-base-content) !important; background: var(--color-base-300) !important; border-radius: 999px !important;
-      padding: 0 6px !important; font-size: 9.5px !important; font-weight: 700 !important;
+      padding: 0 6px !important; font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
     }
     .annotate-decision-btns > .annotate-decision-btn, .annotate-decision-btns > .annotate-decision-btn:hover {
       background: var(--color-base-200) !important; color: var(--color-base-content) !important;
@@ -1137,11 +1145,11 @@ function ensureStripStyle() {
     .annotate-decision-evidence-goto { background: var(--color-base-300) !important; color: var(--color-base-content) !important; border-radius: .25rem !important; }
     .annotate-decision-ta, .annotate-decision-cmt {
       border: 1px solid color-mix(in oklab,var(--color-base-content) 20%,transparent) !important; border-radius: .25rem !important;
-      background: var(--color-base-100) !important; font-size: 11px !important; margin-top: 8px !important;
+      background: var(--color-base-100) !important; font-size: calc(11px * var(--aa-text, 1)) !important; margin-top: 8px !important;
       min-height: 2.25rem !important; padding: 6px 8px !important;
     }
     .annotate-decision-ta:focus { outline: 2px solid color-mix(in oklab,var(--color-base-content) 50%,transparent) !important; outline-offset: 2px !important; }
-    .annotate-decision-cmt-hint { font-size: 11px !important; color: color-mix(in oklab,var(--color-base-content) 75%,transparent) !important; margin-top: 4px !important; }
+    .annotate-decision-cmt-hint { font-size: calc(11px * var(--aa-text, 1)) !important; color: color-mix(in oklab,var(--color-base-content) 75%,transparent) !important; margin-top: 4px !important; }
     /* Secondary text derives from the active stock foreground token. */
     .annotate-decision-consequence, .annotate-excerpt-src { color: color-mix(in oklab,var(--color-base-content) 75%,transparent) !important; }
     .annotate-decision-cmt-hint:empty { display: none !important; }
@@ -1418,7 +1426,7 @@ function evidenceOf(dr) {
 // cells are joined with " | ", and everything this file injected (strips,
 // pins, markers, state chips) is left out.
 const EXCERPT_MAX = 1200;
-const EXCERPT_SKIP_SEL = '[data-annotate-strip], [data-annotate-back], .bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
+const EXCERPT_SKIP_SEL = '[data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
 const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
 
 function excerptText(el) {
@@ -1831,57 +1839,7 @@ function buildStripEl(anchorId, items) {
   return wrap;
 }
 
-// Real-document-flow insertion, per anchor element shape. Returns true on
-// success; false means the caller must use the absolute-overlay fallback.
-// SVG content is routed straight to the fallback: an HTML element appended
-// as a sibling of SVG children has no rendering box (only <foreignObject>
-// children paint), so DOM-flow insertion would silently produce nothing.
-function insertStripInFlow(el, stripEl) {
-  if (el.ownerSVGElement || el.tagName.toLowerCase() === 'svg' || el.closest('svg')) return false;
-  try {
-    if (el.tagName === 'TR') {
-      const tr = document.createElement('tr');
-      tr.className = 'annotate-strip-tr';
-      tr.dataset.annotateStrip = '1';
-      const td = document.createElement('td');
-      td.colSpan = el.children.length || 1;
-      td.appendChild(stripEl);
-      tr.appendChild(td);
-      el.insertAdjacentElement('afterend', tr);
-      return true;
-    }
-    stripEl.classList.add('annotate-strip-block');
-    el.insertAdjacentElement('afterend', stripEl);
-    return true;
-  } catch (e) {
-    console.warn('[adapter] strip DOM-flow injection failed, falling back to overlay', e);
-    return false;
-  }
-}
-
-// Absolute-overlay fallback: positions the strip just below the anchor's own
-// rect, clamped horizontally into the viewport the same way clampPinLeft
-// clamps pins (an unclamped strip could otherwise inflate scrollWidth).
-function placeStripAbsolute(el, stripEl) {
-  const layer = ensureStripLayer();
-  const wrapper = layer.parentElement;
-  if (!wrapper) return;
-  stripEl.classList.add('annotate-strip-abs');
-  layer.appendChild(stripEl); // attach before measuring so offsetWidth is real
-  const wrapperRect = wrapper.getBoundingClientRect();
-  const rect = el.getBoundingClientRect();
-  const w = stripEl.getBoundingClientRect().width || 260;
-  const viewportW = document.documentElement.clientWidth || window.innerWidth;
-  const inset = 8;
-  let left = rect.left - wrapperRect.left;
-  const maxLeft = viewportW - wrapperRect.left - inset - w;
-  if (Number.isFinite(maxLeft) && left > maxLeft) left = Math.max(inset, maxLeft);
-  if (left < inset) left = inset;
-  stripEl.style.left = left + 'px';
-  stripEl.style.top = (rect.bottom - wrapperRect.top + 4) + 'px';
-}
-
-// Rebuilds every inline decision strip from latestPins. Called only from the
+// Rebuilds the feedback queue from latestPins. Called only from the
 // 'annotate:comment-counts' handler (see wireBridge) — i.e. once per actual
 // data change, never on the resize/scroll-driven badge-refresh cadence, so
 // this function's own DOM mutations can't feed the MutationObserver above
@@ -1898,7 +1856,7 @@ function ensureCardStateStyle() {
     .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
     .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
-      font: 700 9.5px "Inter", sans-serif; letter-spacing: .02em; }
+      font: 700 calc(9.5px * var(--aa-text, 1)) "Inter", sans-serif; letter-spacing: .02em; }
     .annotate-card-state.review { background: var(--error-soft); color: var(--color-error); }
     .annotate-card-state.waiting { background: var(--color-base-200); color: var(--muted); }
     .annotate-card-state.done { background: var(--success-soft); color: var(--ok-text); }
@@ -1939,6 +1897,92 @@ function staticCardsFor(anchorId) {
   return out;
 }
 
+// Real-document-flow insertion after `after` (the anchor element, or the
+// previous strip placed at it). Returns true on success; false means the
+// caller must use the absolute-overlay fallback. SVG content is routed
+// straight to the fallback: an HTML element appended as a sibling of SVG
+// children has no rendering box (only <foreignObject> children paint).
+function insertStripInFlow(el, after, stripEl) {
+  if (el.ownerSVGElement || el.tagName.toLowerCase() === 'svg' || el.closest('svg')) return false;
+  try {
+    if (el.tagName === 'TR') {
+      const tr = document.createElement('tr');
+      tr.className = 'annotate-strip-tr';
+      tr.dataset.annotateStrip = '1';
+      const td = document.createElement('td');
+      td.colSpan = el.children.length || 1;
+      td.appendChild(stripEl);
+      tr.appendChild(td);
+      after.insertAdjacentElement('afterend', tr);
+      return tr;
+    }
+    stripEl.classList.add('annotate-strip-block');
+    after.insertAdjacentElement('afterend', stripEl);
+    return stripEl;
+  } catch (e) {
+    console.warn('[adapter] strip DOM-flow injection failed, falling back to overlay', e);
+    return false;
+  }
+}
+
+// Absolute-overlay fallback: positions the strip just below the anchor's own
+// rect, clamped horizontally into the viewport the same way clampPinLeft
+// clamps pins (an unclamped strip could otherwise inflate scrollWidth).
+function placeStripAbsolute(el, stripEl) {
+  const layer = ensureStripLayer();
+  const wrapper = layer.parentElement;
+  if (!wrapper) return;
+  stripEl.classList.add('annotate-strip-abs');
+  layer.appendChild(stripEl); // attach before measuring so offsetWidth is real
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  const w = stripEl.getBoundingClientRect().width || 260;
+  const viewportW = document.documentElement.clientWidth || window.innerWidth;
+  const inset = 8;
+  let left = rect.left - wrapperRect.left;
+  const maxLeft = viewportW - wrapperRect.left - inset - w;
+  if (Number.isFinite(maxLeft) && left > maxLeft) left = Math.max(inset, maxLeft);
+  if (left < inset) left = inset;
+  stripEl.style.left = left + 'px';
+  stripEl.style.top = (rect.bottom - wrapperRect.top + 4) + 'px';
+}
+
+function inActivePanel(el) {
+  const panel = el.closest('.tab-panel');
+  if (panel && !panel.classList.contains('active')) return false;
+  const subPanel = el.closest('.sub-panel');
+  return !(subPanel && !subPanel.classList.contains('active'));
+}
+
+// Where a question renders: right after its evidence, so the reviewer
+// answers beside the images or rows it asks about instead of scrolling
+// between a question list and the content (Chang, 2026-10-10). With several
+// evidence targets it follows the last one in reading order. A question
+// without visible evidence stays at its own card.
+function stripTarget(anchorId, items) {
+  const own = findAnchorEl(anchorId);
+  const targets = [];
+  items.forEach(e => evidenceOf(e.decisionRequest).forEach(x => {
+    const el = findAnchorEl(x.anchor);
+    if (el && el !== own && !isStaticCard(el) && !el.closest('.cards') && inActivePanel(el)) targets.push(el);
+  }));
+  if (!targets.length) return own;
+  // The target that ends last: compare deepest last descendants; a container
+  // ends after (or with) everything inside it.
+  const endOf = el => { let n = el; while (n.lastElementChild) n = n.lastElementChild; return n; };
+  let target = targets.reduce((best, el) => {
+    const a = endOf(best), b = endOf(el);
+    if (a === b) return el.contains(best) ? el : best;
+    return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? el : best;
+  });
+  // Never inside a closed disclosure, and never as a squeezed item of a grid
+  // or flex row: the question goes after the whole block.
+  for (let closed; (closed = target.parentElement && target.parentElement.closest('details:not([open])'));) target = closed;
+  while (target.tagName !== 'TR' && target.parentElement && target.parentElement !== document.body &&
+         /^(inline-)?(grid|flex)$/.test(getComputedStyle(target.parentElement).display)) target = target.parentElement;
+  return target;
+}
+
 function renderDecisionStrips() {
   ensureStripStyle();
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
@@ -1949,31 +1993,61 @@ function renderDecisionStrips() {
     card.classList.remove('annotate-card-replaced');
     delete card.dataset.annotateReplaced;
   });
+  document.querySelectorAll('[data-annotate-moved]').forEach(sec => {
+    sec.classList.remove('annotate-questions-moved');
+    delete sec.dataset.annotateMoved;
+  });
 
+  const placed = [];
   for (const [anchorId, entries] of Object.entries(latestPins)) {
     const items = (entries || []).filter(e => e.decisionRequest || e.decisionVerdict);
     if (!items.length) continue;
-    const el = findAnchorEl(anchorId);
-    if (!el) continue;
-
-    // Same hidden-tab-panel skip as pins: never render a strip on top of, or
-    // inside, an inactive tab panel.
-    const panel = el.closest('.tab-panel');
-    if (panel && !panel.classList.contains('active')) continue;
-    const subPanel = el.closest('.sub-panel');
-    if (subPanel && !subPanel.classList.contains('active')) continue;
-
+    const el = stripTarget(anchorId, items);
+    if (!el || !inActivePanel(el)) continue;
     items.sort((a, b) => (a.n || 0) - (b.n || 0));
+    placed.push({ anchorId, items, el });
+  }
+  // Questions sharing a target keep their numbers' order under it.
+  placed.sort((a, b) => (a.items[0].n || 0) - (b.items[0].n || 0));
+  const lastAt = new Map();
+  placed.forEach(({ anchorId, items, el }) => {
     const stripEl = buildStripEl(anchorId, items);
-    if (!insertStripInFlow(el, stripEl)) placeStripAbsolute(el, stripEl);
+    const node = insertStripInFlow(el, lastAt.get(el) || el, stripEl);
+    if (node) lastAt.set(el, node);
+    else placeStripAbsolute(el, stripEl);
     if (items.some(e => e.decisionRequest)) {
       staticCardsFor(anchorId).forEach(card => {
         card.classList.add('annotate-card-replaced');
         card.dataset.annotateReplaced = '1';
       });
     }
-  }
+  });
+  // A "Questions for Chang" section whose every card moved to its evidence
+  // would be a bare heading; hide it until a card comes back.
+  document.querySelectorAll('.aa .cards').forEach(list => {
+    const sec = list.closest('section[data-anchor-id]');
+    if (!sec || list.querySelector('.card:not(.annotate-card-replaced)') || sec.querySelector('[data-annotate-strip]')) return;
+    const other = [...sec.children].some(c => c !== list && !/^H[1-6]$/.test(c.tagName) &&
+      !c.matches('[data-annotate-strip], .bpin, .bpin-inline, .annotate-unchanged-bar'));
+    if (other) return;
+    sec.classList.add('annotate-questions-moved');
+    sec.dataset.annotateMoved = '1';
+  });
   syncAllExcerptClamps();
+}
+
+// Reading order of anchors, with a question counted where its strip renders,
+// so the rail lists feedback in the order the document shows it.
+function contentAnchorOrder() {
+  const order = {};
+  let index = 0;
+  document.querySelectorAll('[data-anchor-id], [id], .annotate-decision-strip[data-strip-anchor]').forEach(el => {
+    if (el.closest('.annotate-decision-strip') && !el.matches('.annotate-decision-strip')) return;
+    if (el.closest('[data-annotate-replaced]')) return; // a hidden card; its strip counts
+    const aid = el.matches('.annotate-decision-strip') ? el.dataset.stripAnchor : (el.dataset.anchorId || el.id);
+    if (!Object.prototype.hasOwnProperty.call(order, aid)) order[aid] = index++;
+  });
+  return order;
 }
 
 // ── Go-to-location persistent highlight ─────────────────────────────
@@ -2248,16 +2322,16 @@ function ensureUnchangedStyle() {
     .annotate-unchanged-toggle {
       display: flex !important; align-items: baseline !important; gap: 4px 10px !important; flex-wrap: wrap !important;
       width: 100% !important; box-sizing: border-box !important; text-align: left !important;
-      font: 600 13px/1.4 "Inter", sans-serif !important;
+      font: 600 calc(13px * var(--aa-text, 1))/1.4 "Inter", sans-serif !important;
       color: var(--color-base-content) !important; background: var(--color-base-200) !important; border: 1px dashed var(--line) !important;
       border-radius: 8px !important; padding: 8px 12px !important; cursor: pointer !important; margin: 0 !important;
     }
     .annotate-unchanged-toggle:hover { background: var(--color-base-200) !important; border-color: var(--muted) !important; }
     .annotate-unchanged-toggle:focus-visible { outline: 2px solid var(--link) !important; outline-offset: 1px !important; }
-    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: 11px; color: var(--muted); transition: transform .12s; align-self: center; }
+    .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: calc(11px * var(--aa-text, 1)); color: var(--muted); transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-size: 12.5px !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
-    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: 10.5px !important; }
+    .annotate-unchanged-title { font-size: calc(12.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
+    .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
     }
@@ -2369,10 +2443,11 @@ function postExcerpts() {
       evidenceOf(e.decisionRequest).forEach(x => add(x.anchor));
     }
   }
-  const json = JSON.stringify(out);
+  const anchorOrder = contentAnchorOrder();
+  const json = JSON.stringify({ out, anchorOrder });
   if (json === lastExcerptsJson) return;
   lastExcerptsJson = json;
-  postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out });
+  postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out, anchorOrder });
 }
 
 // ── E3 shortcuts while focus is in the document ─────────────────────
@@ -2401,6 +2476,9 @@ function wireBridge() {
     if (!data || typeof data !== 'object') return;
     if (data.type === 'annotate:theme' && ['dark', 'light'].includes(data.theme)) {
       document.documentElement.dataset.theme = data.theme;
+    } else if (data.type === 'annotate:text-size' && typeof data.size === 'number' && data.size >= 0.5 && data.size <= 3) {
+      document.documentElement.style.setProperty('--aa-text', String(data.size));
+      window.dispatchEvent(new Event('resize')); // pins and strips follow the reflow
     } else if (data.type === 'annotate:card-hover') {
       setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
@@ -2776,7 +2854,7 @@ function ensureAffordanceStyle() {
     .unified-table-scroll table{min-width:1000px;width:100%;max-width:none;table-layout:auto!important}
     .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;min-width:120px}
     .unified-table-scroll th:first-child,.unified-table-scroll td:first-child{min-width:48px}
-    .unified-table-hint{font-size:10.5px;margin:4px 0 14px 28px;color:var(--color-base-content)}
+    .unified-table-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:4px 0 14px 28px;color:var(--color-base-content)}
   `;
   document.head.append(style);
 }
@@ -2817,7 +2895,7 @@ function initPlanChanges() {
   const V = 'v' + N, PREV = 'v' + (N - 1);
   const KEY = 'annotate:plan-changes';
   const css = `
-  .sp-rev button,.sp-rev a{font:inherit;font-size:10.5px;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .sp-rev button,.sp-rev a{font:inherit;font-size:calc(10.5px * var(--aa-text, 1));color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
   .sp-chg-tag{display:none}
   body.sp-show-changes .sp-chg-tag{display:inline-block}
   ins.sp-ins{text-decoration:none;background:var(--success-soft);color:inherit}
@@ -2926,7 +3004,7 @@ function initPlanChanges() {
     window.dispatchEvent(new Event('resize'));
   }
   (async () => {
-    const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
+    const style = document.createElement('style'); style.id = 'annotate-plan-changes-style'; style.textContent = css; document.head.appendChild(style);
     const base = (META.publicBasePath || '') + '/';
     let meta = null;
     try { meta = await (await fetch(base + 'api/plans/' + encodeURIComponent(planId), { cache: 'no-cache' })).json(); } catch {}
@@ -2972,8 +3050,151 @@ function initPlanChanges() {
   })();
 }
 
+// ── Annotate owns colour, type and width (Chang, 2026-10-10) ─────────
+// Author CSS keeps its layout, but its colours, fonts and page width caps
+// give way to annotate's theme, text size and widths, so every document reads
+// in light and dark. Neutral text and surfaces take the theme's; tinted ones
+// map by hue to the theme's state colours (red → error, amber → warning,
+// green → success, blue/purple → link); strong accent fills stay. Font sizes
+// keep the author's hierarchy and follow the text size. SVG graphics keep
+// their own colours; embedded pages (iframes) keep their own look and say so.
+const OWNED_BORDER_COLORS = ['border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'];
+const SVG_SELECTOR = /(^|[\s>+~,(])(svg|path|rect|circle|ellipse|line|polyline|polygon|text|tspan|g|marker|use|foreignObject)\b/i;
+const PAGE_SELECTOR = /^\s*(html|body|:root)\b/i;
+const PAGE_CAP_PX = 720;
+const STATE_TEXT = { err: 'var(--err-text)', warn: 'var(--warn-text)', ok: 'var(--ok-text)', link: 'var(--link)' };
+const STATE_SOFT = { err: 'var(--error-soft)', warn: 'var(--warning-soft)', ok: 'var(--success-soft)', link: 'var(--primary-soft)' };
+function isAnnotateSheet(sheet) {
+  const node = sheet.ownerNode;
+  if (!node) return false;
+  if (node.id && (node.id.startsWith('annotate') || node.id === 'goto-highlight-style')) return true;
+  return /\/(daisyui|content)\.css(\?|$)/.test(node.href || '');
+}
+// Any CSS colour as {h, l, c, a} (HSL hue and lightness, chroma c = max − min;
+// 0–1 except h), read back through a 1px canvas so named, hex, rgb, hsl and
+// oklch colours all work. A var() resolves against the page's root custom
+// properties. Annotate's own theme tokens, and values that cannot be resolved,
+// return null and are left as written.
+const THEME_TOKEN = /var\(--(color-|ok-text|warn-text|err-text|info-text|link|muted|faint|line|soft|primary-soft|success-soft|warning-soft|error-soft)/;
+const colorCache = new Map();
+let colorProbe = null;
+function colorOf(value) {
+  if (!value || THEME_TOKEN.test(value) || /currentcolor|inherit|initial|unset|revert/i.test(value)) return null;
+  if (colorCache.has(value)) return colorCache.get(value);
+  let resolved = value;
+  for (let i = 0; i < 4 && /var\(/.test(resolved); i++) {
+    resolved = resolved.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g, (_, name, fallback) =>
+      getComputedStyle(document.documentElement).getPropertyValue(name).trim() || (fallback || '').trim());
+  }
+  let out = null;
+  if (resolved && !/var\(/.test(resolved) && CSS.supports('color', resolved)) {
+    colorProbe = colorProbe || document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    colorProbe.clearRect(0, 0, 1, 1);
+    colorProbe.fillStyle = resolved;
+    colorProbe.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = [...colorProbe.getImageData(0, 0, 1, 1).data].map(v => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d) h = 60 * (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4);
+    out = { h, l: (max + min) / 2, c: d, a };
+  }
+  colorCache.set(value, out);
+  return out;
+}
+// Greys, near-black and dark slates are surfaces and inks, not meaning.
+function isNeutral(c) {
+  return c.c < 0.06 || c.l <= 0.08 || (c.l < 0.3 && c.c < 0.15);
+}
+function stateOf(h) {
+  return h < 20 || h >= 330 ? 'err' : h < 65 ? 'warn' : h < 170 ? 'ok' : 'link';
+}
+function ownColor(style, prop, page) {
+  const value = style.getPropertyValue(prop).trim();
+  if (!value || THEME_TOKEN.test(value)) return;
+  if (page) { style.removeProperty(prop); return; } // the page's own colours are the theme's
+  const c = colorOf(value);
+  if (!c || c.a === 0) return;
+  const priority = style.getPropertyPriority(prop);
+  if (prop === 'background-color') {
+    if (!isNeutral(c) && c.l < 0.97) { // tinted: pastel → soft state colour; accent fill stays
+      if (c.l >= 0.8) style.setProperty(prop, STATE_SOFT[stateOf(c.h)], priority);
+      return;
+    }
+    // A sticky or fixed bar must stay opaque over the content scrolling under it.
+    if (c.l >= 0.85 && /sticky|fixed/.test(style.getPropertyValue('position'))) style.setProperty(prop, 'var(--color-base-100)', priority);
+    else if (c.l >= 0.85) style.removeProperty(prop);
+    else style.setProperty(prop, c.l > 0.4 ? 'var(--color-base-200)' : 'var(--color-neutral)', priority);
+    return;
+  }
+  if (c.l >= 0.85) return; // light text sits on a dark or accent fill, which stays dark
+  // Dark inks (navy, slate) are body text; clearly coloured text keeps its meaning.
+  if (c.c > 0.2) style.setProperty(prop, STATE_TEXT[stateOf(c.h)], priority);
+  else style.removeProperty(prop);
+}
+function scaleSize(style, prop, page) {
+  const m = /^([\d.]+)(px|%)$/.exec(style.getPropertyValue(prop).trim());
+  if (m && (m[2] === 'px' || page)) {
+    style.setProperty(prop, 'calc(' + m[1] + m[2] + ' * var(--aa-text, 1))', style.getPropertyPriority(prop));
+  }
+}
+function ownDeclarations(style, page) {
+  // Light or transparent text was drawn on this rule's own fill (a button,
+  // a hero, gradient-clipped text): the pair stays together.
+  const paired = ['color', '-webkit-text-fill-color'].some(p => {
+    const c = colorOf(style.getPropertyValue(p).trim());
+    return c && (c.a === 0 || c.l >= 0.85);
+  });
+  if (!paired || page) {
+    ownColor(style, 'background-color', page);
+    if (/gradient\(/.test(style.getPropertyValue('background-image'))) style.removeProperty('background-image');
+  }
+  ownColor(style, 'color', page);
+  ownColor(style, '-webkit-text-fill-color', page);
+  OWNED_BORDER_COLORS.forEach(p => {
+    const c = colorOf(style.getPropertyValue(p).trim());
+    if (c && c.a > 0 && isNeutral(c)) style.setProperty(p, 'var(--line)', style.getPropertyPriority(p)); // accents stay
+  });
+  if (!/mono|courier|consolas|menlo/i.test(style.getPropertyValue('font-family'))) style.removeProperty('font-family');
+  scaleSize(style, 'font-size', page);
+  scaleSize(style, 'line-height', false);
+  const cap = /^([\d.]+)(px|rem|em)$/.exec(style.getPropertyValue('max-width').trim());
+  if (cap && parseFloat(cap[1]) * (cap[2] === 'px' ? 1 : 16) >= PAGE_CAP_PX) style.removeProperty('max-width');
+}
+function ownRules(rules) {
+  for (const rule of rules) {
+    if (rule.selectorText !== undefined && rule.style && !SVG_SELECTOR.test(rule.selectorText)) {
+      ownDeclarations(rule.style, PAGE_SELECTOR.test(rule.selectorText));
+    }
+    if (rule.cssRules) ownRules(rule.cssRules); // @media, @supports, @layer, nesting
+  }
+}
+function ownAuthorStyles() {
+  for (const sheet of document.styleSheets) {
+    if (isAnnotateSheet(sheet)) continue;
+    let rules;
+    try { rules = sheet.cssRules; } catch { continue; } // a cross-origin sheet cannot be read
+    ownRules(rules);
+  }
+  document.querySelectorAll('[style]').forEach(el => {
+    if (!el.closest('svg')) ownDeclarations(el.style, el === document.body || el === document.documentElement);
+  });
+  document.querySelectorAll('[bgcolor]').forEach(el => { if (!el.closest('svg')) el.removeAttribute('bgcolor'); });
+  document.querySelectorAll('font').forEach(el => ['color', 'face', 'size'].forEach(a => el.removeAttribute(a)));
+  // A hand-built document gets annotate's face and text colour; its layout
+  // and components stay its own (no .aa rules).
+  if (!document.querySelector('.aa')) document.body.classList.add('aa-owned');
+  document.querySelectorAll('iframe').forEach(frame => {
+    if (frame.previousElementSibling && frame.previousElementSibling.classList.contains('annotate-embed-note')) return;
+    const note = document.createElement('div');
+    note.className = 'annotate-embed-note';
+    note.textContent = 'Embedded page · keeps its own styling';
+    frame.insertAdjacentElement('beforebegin', note);
+  });
+}
+
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
+  try { ownAuthorStyles(); } catch (e) { console.warn('[adapter] could not apply annotate styling', e); }
   initPlanChanges();
   wireClicks();
   wireBridge();

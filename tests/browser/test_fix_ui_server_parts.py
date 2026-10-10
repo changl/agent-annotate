@@ -11,10 +11,10 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 
-QUEUED = "⏳ Queued — no session listening (1)"
+QUEUED = "Feedback saved (1)"
 
 
-def test_ui13_a_queued_send_still_reads_queued_after_a_reload(tmp_path, workspace):  # noqa: F811
+def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path, workspace):  # noqa: F811
     with browser_page(tmp_path, workspace) as (page, base):
         feedback(page)
         page.locator('.citem[data-comment-id="question-11"] .decision-btn').first.click()
@@ -26,10 +26,11 @@ def test_ui13_a_queued_send_still_reads_queued_after_a_reload(tmp_path, workspac
         rounds = [json.loads(line) for line in (workspace / "rounds.ndjson").read_text().splitlines()]
         assert [r["delivery"] for r in rounds] == ["queued"]
         page.goto(base + "#view=review", wait_until="networkidle")
+        page.reload(wait_until="networkidle")
         ready(page)
         history(page)
         page.locator('[data-hist-filter="all"]').click()
         summary = page.locator("#hist-sent-body .unified-receipt summary")
         summary.wait_for()
-        assert summary.inner_text().startswith(QUEUED), summary.inner_text()
-        playwright.expect(page.locator("#send-note")).to_contain_text(QUEUED)
+        assert summary.inner_text().startswith("Feedback saved (1)"), summary.inner_text()
+        playwright.expect(page.locator("#send-note")).to_contain_text("Feedback saved (1)")
