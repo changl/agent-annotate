@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.25.0
 
 - Each question renders in the page right after its last evidence target (its own card when it has none), replacing the question queue above the page; the rail stays the list of what needs you, in page order. Reload opens the latest version.
 - One Send wakes the owner once: the round carries general feedback and other new comments instead of a second push.
