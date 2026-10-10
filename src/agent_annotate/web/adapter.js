@@ -658,6 +658,17 @@ function scheduleBadgeRefresh() {
     detectContentFullscreen();
   }, 80);
 }
+let stripRefresh = 0;
+function scheduleStripRefresh() {
+  if (stripRefresh) return;
+  stripRefresh = requestAnimationFrame(() => {
+    stripRefresh = 0;
+    renderDecisionStrips();
+    renderBadges();
+    postExcerpts();
+  });
+}
+
 function installBadgeMutObs() {
   const target = document.getElementById('canvas-wrapper') || document.body;
   const obs = new MutationObserver(mutations => {
@@ -668,6 +679,9 @@ function installBadgeMutObs() {
       return !(el && el.closest && el.closest('#badge-layer'));
     });
     if (contentChanged) scheduleBadgeRefresh();
+    // A document tab switched: its questions render at their evidence now.
+    if (mutations.some(m => m.type === 'attributes' && m.attributeName === 'class' &&
+        m.target.matches && m.target.matches('.tab-panel, .sub-panel'))) scheduleStripRefresh();
   });
   obs.observe(target, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
   // Granular pins live in a shared overlay so they work for HTML and SVG.
