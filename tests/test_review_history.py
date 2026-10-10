@@ -104,6 +104,17 @@ def test_send_with_answers_and_general_feedback_wakes_the_owner_once(server):
     assert [a["text"] for a in answers if a["comment_id"] == general["id"]] == ["Overall: ship it"]
 
 
+def test_a_round_with_nothing_else_pending_still_carries_new_comments(server):
+    # The chrome skips its push when it sends a round; if the server finds no
+    # pending answer (sent elsewhere, discarded), the general feedback still goes.
+    httpd, _directory, bus = server
+    _, general = _call(httpd, "POST", "/api/comments",
+                       {"anchor_id": "general:v1", "text": "Overall: ship it", "version": "v1"}, author="r@example.com")
+    status, submitted = _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")
+    assert status == 200 and submitted["comment_ids"] == [general["id"]]
+    assert [p["comment_ids"] for p in _events(bus, "session_push")] == [[general["id"]]]
+
+
 def test_sent_plain_feedback_has_a_stable_historical_snapshot(server):
     httpd, directory, _ = server
     _, comment = _call(httpd, "POST", "/api/comments", {"anchor_id": "s:home", "text": "Tighten the spacing"}, author="r@example.com")

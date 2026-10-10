@@ -148,6 +148,7 @@ function stepTextSize(dir) {
   btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(panel.hidden); });
   document.addEventListener('click', (e) => { if (!panel.hidden && !e.target.closest('#text-size')) setOpen(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { setOpen(false); btn.focus(); } });
+  window.addEventListener('blur', () => setOpen(false)); // a click in the document frame
   document.getElementById('text-size-down').addEventListener('click', () => stepTextSize(-1));
   document.getElementById('text-size-up').addEventListener('click', () => stepTextSize(1));
   document.getElementById('text-size-reset').addEventListener('click', () => setTextSize(1));
@@ -2966,7 +2967,7 @@ async function submitPage(alsoPending, receipt) {
   const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
   // The round carries open comments with new activity (general feedback,
   // replies), so a Send wakes the owner once; push only when there is no round.
-  const doPush = !doRound && flattenStore(false).some(needsPush);
+  let doPush = !doRound && flattenStore(false).some(needsPush);
   // A line whose own call is not needed goes with the other call.
   if (!doRound) { pushLines = roundLines.concat(pushLines); roundLines = []; }
   if (!doPush) { roundLines = roundLines.concat(pushLines); pushLines = []; }
@@ -2974,6 +2975,9 @@ async function submitPage(alsoPending, receipt) {
     const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
+    // A page server older than this chrome leaves comments out of the round:
+    // push what is still unsent rather than lose it.
+    doPush = !!j && flattenStore(false).some(needsPush);
   }
   if (doPush) {
     const j = await apiPushAll(receiptPayload(pushLines, sendId));

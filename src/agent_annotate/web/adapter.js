@@ -21,6 +21,13 @@
 
 const META = window.__ANNOTATE_CONTENT_META__ || {};
 
+// The reviewer's text size (shell's Aa menu, same origin), before the shell
+// re-sends it on load, so the document does not first draw at 100%.
+try {
+  const size = parseFloat(localStorage.getItem('annotate:text-size'));
+  if (size >= 0.9 && size <= 2) document.documentElement.style.setProperty('--aa-text', String(size));
+} catch {}
+
 // Reading the parent proves same-origin access. srcdoc reports a null
 // location origin, so use its inherited security origin only after that read.
 const PARENT_ORIGIN = (() => {
@@ -1963,11 +1970,17 @@ function stripTarget(anchorId, items) {
   // The target that ends last: compare deepest last descendants; a container
   // ends after (or with) everything inside it.
   const endOf = el => { let n = el; while (n.lastElementChild) n = n.lastElementChild; return n; };
-  return targets.reduce((best, el) => {
+  let target = targets.reduce((best, el) => {
     const a = endOf(best), b = endOf(el);
     if (a === b) return el.contains(best) ? el : best;
     return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? el : best;
   });
+  // Never inside a closed disclosure, and never as a squeezed item of a grid
+  // or flex row: the question goes after the whole block.
+  for (let closed; (closed = target.parentElement && target.parentElement.closest('details:not([open])'));) target = closed;
+  while (target.tagName !== 'TR' && target.parentElement && target.parentElement !== document.body &&
+         /^(inline-)?(grid|flex)$/.test(getComputedStyle(target.parentElement).display)) target = target.parentElement;
+  return target;
 }
 
 function renderDecisionStrips() {
@@ -2013,7 +2026,7 @@ function renderDecisionStrips() {
   // would be a bare heading; hide it until a card comes back.
   document.querySelectorAll('.aa .cards').forEach(list => {
     const sec = list.closest('section[data-anchor-id]');
-    if (!sec || list.querySelector('.card:not(.annotate-card-replaced), [data-annotate-strip]')) return;
+    if (!sec || list.querySelector('.card:not(.annotate-card-replaced)') || sec.querySelector('[data-annotate-strip]')) return;
     const other = [...sec.children].some(c => c !== list && !/^H[1-6]$/.test(c.tagName) &&
       !c.matches('[data-annotate-strip], .bpin, .bpin-inline, .annotate-unchanged-bar'));
     if (other) return;
@@ -2030,6 +2043,7 @@ function contentAnchorOrder() {
   let index = 0;
   document.querySelectorAll('[data-anchor-id], [id], .annotate-decision-strip[data-strip-anchor]').forEach(el => {
     if (el.closest('.annotate-decision-strip') && !el.matches('.annotate-decision-strip')) return;
+    if (el.closest('[data-annotate-replaced]')) return; // a hidden card; its strip counts
     const aid = el.matches('.annotate-decision-strip') ? el.dataset.stripAnchor : (el.dataset.anchorId || el.id);
     if (!Object.prototype.hasOwnProperty.call(order, aid)) order[aid] = index++;
   });
@@ -3056,61 +3070,93 @@ function isAnnotateSheet(sheet) {
   if (node.id && (node.id.startsWith('annotate') || node.id === 'goto-highlight-style')) return true;
   return /\/(daisyui|content)\.css(\?|$)/.test(node.href || '');
 }
+// Any CSS colour as {h, l, c, a} (HSL hue and lightness, chroma c = max − min;
+// 0–1 except h), read back through a 1px canvas so named, hex, rgb, hsl and
+// oklch colours all work. A var() resolves against the page's root custom
+// properties. Annotate's own theme tokens, and values that cannot be resolved,
+// return null and are left as written.
+const THEME_TOKEN = /var\(--(color-|ok-text|warn-text|err-text|info-text|link|muted|faint|line|soft|primary-soft|success-soft|warning-soft|error-soft)/;
+const colorCache = new Map();
 let colorProbe = null;
-// Any CSS colour as {h, s, l, c, a} (HSL plus chroma c = max − min, 0–1
-// except h), read back through a 1px canvas so named, hex, rgb, hsl and oklch
-// colours all work.
 function colorOf(value) {
-  if (!value || /var\(|currentcolor|inherit|initial|unset|revert/i.test(value) || !CSS.supports('color', value)) return null;
-  colorProbe = colorProbe || document.createElement('canvas').getContext('2d', { willReadFrequently: true });
-  colorProbe.clearRect(0, 0, 1, 1);
-  colorProbe.fillStyle = value;
-  colorProbe.fillRect(0, 0, 1, 1);
-  const [r, g, b, a] = [...colorProbe.getImageData(0, 0, 1, 1).data].map(v => v / 255);
-  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
-  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
-  let h = 0;
-  if (d) h = 60 * (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4);
-  return { h, s, l, c: d, a };
+  if (!value || THEME_TOKEN.test(value) || /currentcolor|inherit|initial|unset|revert/i.test(value)) return null;
+  if (colorCache.has(value)) return colorCache.get(value);
+  let resolved = value;
+  for (let i = 0; i < 4 && /var\(/.test(resolved); i++) {
+    resolved = resolved.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g, (_, name, fallback) =>
+      getComputedStyle(document.documentElement).getPropertyValue(name).trim() || (fallback || '').trim());
+  }
+  let out = null;
+  if (resolved && !/var\(/.test(resolved) && CSS.supports('color', resolved)) {
+    colorProbe = colorProbe || document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    colorProbe.clearRect(0, 0, 1, 1);
+    colorProbe.fillStyle = resolved;
+    colorProbe.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = [...colorProbe.getImageData(0, 0, 1, 1).data].map(v => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d) h = 60 * (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4);
+    out = { h, l: (max + min) / 2, c: d, a };
+  }
+  colorCache.set(value, out);
+  return out;
+}
+// Greys, near-black and dark slates are surfaces and inks, not meaning.
+function isNeutral(c) {
+  return c.c < 0.06 || c.l <= 0.08 || (c.l < 0.3 && c.c < 0.15);
 }
 function stateOf(h) {
   return h < 20 || h >= 330 ? 'err' : h < 65 ? 'warn' : h < 170 ? 'ok' : 'link';
 }
 function ownColor(style, prop, page) {
   const value = style.getPropertyValue(prop).trim();
-  if (!value) return;
+  if (!value || THEME_TOKEN.test(value)) return;
+  if (page) { style.removeProperty(prop); return; } // the page's own colours are the theme's
   const c = colorOf(value);
-  if (c && c.a === 0) return;
-  if (!c || page) { style.removeProperty(prop); return; }
+  if (!c || c.a === 0) return;
+  const priority = style.getPropertyPriority(prop);
   if (prop === 'background-color') {
-    if (c.c >= 0.06 && c.l > 0.08 && c.l < 0.97) { // tinted: pastel → soft state colour; accent fill stays
-      if (c.l >= 0.8) style.setProperty(prop, STATE_SOFT[stateOf(c.h)]);
+    if (!isNeutral(c) && c.l < 0.97) { // tinted: pastel → soft state colour; accent fill stays
+      if (c.l >= 0.8) style.setProperty(prop, STATE_SOFT[stateOf(c.h)], priority);
       return;
     }
     // A sticky or fixed bar must stay opaque over the content scrolling under it.
-    if (c.l >= 0.85 && /sticky|fixed/.test(style.getPropertyValue('position'))) style.setProperty(prop, 'var(--color-base-100)');
+    if (c.l >= 0.85 && /sticky|fixed/.test(style.getPropertyValue('position'))) style.setProperty(prop, 'var(--color-base-100)', priority);
     else if (c.l >= 0.85) style.removeProperty(prop);
-    else style.setProperty(prop, c.l > 0.4 ? 'var(--color-base-200)' : 'var(--color-neutral)');
+    else style.setProperty(prop, c.l > 0.4 ? 'var(--color-base-200)' : 'var(--color-neutral)', priority);
     return;
   }
   if (c.l >= 0.85) return; // light text sits on a dark or accent fill, which stays dark
   // Dark inks (navy, slate) are body text; clearly coloured text keeps its meaning.
-  if (c.c > 0.2) style.setProperty(prop, STATE_TEXT[stateOf(c.h)]);
+  if (c.c > 0.2) style.setProperty(prop, STATE_TEXT[stateOf(c.h)], priority);
   else style.removeProperty(prop);
 }
-function scalePx(style, prop) {
-  const m = /^([\d.]+)px$/.exec(style.getPropertyValue(prop).trim());
-  if (m) style.setProperty(prop, 'calc(' + m[1] + 'px * var(--aa-text, 1))', style.getPropertyPriority(prop));
+function scaleSize(style, prop, page) {
+  const m = /^([\d.]+)(px|%)$/.exec(style.getPropertyValue(prop).trim());
+  if (m && (m[2] === 'px' || page)) {
+    style.setProperty(prop, 'calc(' + m[1] + m[2] + ' * var(--aa-text, 1))', style.getPropertyPriority(prop));
+  }
 }
 function ownDeclarations(style, page) {
+  // Light or transparent text was drawn on this rule's own fill (a button,
+  // a hero, gradient-clipped text): the pair stays together.
+  const paired = ['color', '-webkit-text-fill-color'].some(p => {
+    const c = colorOf(style.getPropertyValue(p).trim());
+    return c && (c.a === 0 || c.l >= 0.85);
+  });
+  if (!paired || page) {
+    ownColor(style, 'background-color', page);
+    if (/gradient\(/.test(style.getPropertyValue('background-image'))) style.removeProperty('background-image');
+  }
   ownColor(style, 'color', page);
   ownColor(style, '-webkit-text-fill-color', page);
-  ownColor(style, 'background-color', page);
-  if (/gradient\(/.test(style.getPropertyValue('background-image'))) style.removeProperty('background-image');
-  OWNED_BORDER_COLORS.forEach(p => { if (style.getPropertyValue(p)) style.setProperty(p, 'var(--line)'); });
-  style.removeProperty('font-family');
-  scalePx(style, 'font-size');
-  scalePx(style, 'line-height');
+  OWNED_BORDER_COLORS.forEach(p => {
+    const c = colorOf(style.getPropertyValue(p).trim());
+    if (c && c.a > 0 && isNeutral(c)) style.setProperty(p, 'var(--line)', style.getPropertyPriority(p)); // accents stay
+  });
+  if (!/mono|courier|consolas|menlo/i.test(style.getPropertyValue('font-family'))) style.removeProperty('font-family');
+  scaleSize(style, 'font-size', page);
+  scaleSize(style, 'line-height', false);
   const cap = /^([\d.]+)(px|rem|em)$/.exec(style.getPropertyValue('max-width').trim());
   if (cap && parseFloat(cap[1]) * (cap[2] === 'px' ? 1 : 16) >= PAGE_CAP_PX) style.removeProperty('max-width');
 }
@@ -3134,8 +3180,9 @@ function ownAuthorStyles() {
   });
   document.querySelectorAll('[bgcolor]').forEach(el => { if (!el.closest('svg')) el.removeAttribute('bgcolor'); });
   document.querySelectorAll('font').forEach(el => ['color', 'face', 'size'].forEach(a => el.removeAttribute(a)));
-  // A hand-built document gets the same typography a generated one has.
-  if (!document.querySelector('.aa')) document.body.classList.add('aa');
+  // A hand-built document gets annotate's face and text colour; its layout
+  // and components stay its own (no .aa rules).
+  if (!document.querySelector('.aa')) document.body.classList.add('aa-owned');
   document.querySelectorAll('iframe').forEach(frame => {
     if (frame.previousElementSibling && frame.previousElementSibling.classList.contains('annotate-embed-note')) return;
     const note = document.createElement('div');
@@ -3147,7 +3194,7 @@ function ownAuthorStyles() {
 
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
-  ownAuthorStyles();
+  try { ownAuthorStyles(); } catch (e) { console.warn('[adapter] could not apply annotate styling', e); }
   initPlanChanges();
   wireClicks();
   wireBridge();

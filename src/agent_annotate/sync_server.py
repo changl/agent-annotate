@@ -2954,12 +2954,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             comment_ids = list(dict.fromkeys(c["id"] for c in pending + reopens))
             # Open comments with new activity (general feedback, replies) go
             # out with the round: one Send is one prompt to the owner, not a
-            # round prompt followed by a push prompt (Chang, 2026-10-10).
-            pushed = []
-            if comment_ids or edits or note:
-                pushed = [c for items in store.get("anchors", {}).values() for c in items
-                          if _comment_needs_push(c) and c["id"] not in comment_ids]
-                comment_ids += [c["id"] for c in pushed]
+            # round prompt followed by a push prompt (Chang, 2026-10-10). The
+            # chrome skips its push when it sends a round, so they go even
+            # when nothing else is pending here.
+            pushed = [c for items in store.get("anchors", {}).values() for c in items
+                      if _comment_needs_push(c) and c["id"] not in comment_ids]
+            comment_ids += [c["id"] for c in pushed]
             if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)

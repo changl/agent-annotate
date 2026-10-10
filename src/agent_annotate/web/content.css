@@ -1,7 +1,10 @@
 /* Document styles for .aa content. Tokens and the Roboto faces come from
    daisyui.css, which the server injects into every document first. */
-/* --aa-text: the reviewer's text size (shell's Aa menu), 1 = 100%. */
-html{font-size:calc(100% * var(--aa-text, 1))}
+/* --aa-text: the reviewer's text size (shell's Aa menu), 1 = 100%. Zero
+   specificity: a page that sizes its own root keeps it (adapter.js scales it). */
+:where(html){font-size:calc(100% * var(--aa-text, 1))}
+/* A hand-built document (no .aa): annotate's face and text colour only. */
+.aa-owned{font-family:"Roboto", sans-serif;color:var(--color-base-content)}
 /* The document fills the pane, so images, comparisons and tables use a wide
    monitor (Chang, 2026-10-10). Text and question cards keep the old 1080px
    reading measure. */
@@ -11,7 +14,7 @@ html{font-size:calc(100% * var(--aa-text, 1))}
 .aa :is(img,video,picture,canvas){max-width:100%;height:auto}
 .aa .annotate-strip-block{max-width:var(--aa-measure) !important}
 .aa h1{font-size:calc(20px * var(--aa-text, 1));margin:18px 0 8px}
-.aa .annotate-embed-note{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin:8px 0 4px}
+.annotate-embed-note{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin:8px 0 4px}
 .aa h2{font-size:calc(12.5px * var(--aa-text, 1));margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
 .aa h3{font-size:calc(16px * var(--aa-text, 1));margin:22px 0 6px}
 .aa p{margin:6px 0 10px}

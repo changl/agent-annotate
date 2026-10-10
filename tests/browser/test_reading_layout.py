@@ -20,14 +20,25 @@ PLAN = "---\ntitle: Rollout\n---\n\nShip in two steps.\n\n## Steps\n\n- Build th
 
 # A hand-built HTML plan with its own light-only palette, as agents publish them.
 CUSTOM = """<!doctype html><html><head><style>
+:root{--accent:#4f46e5}
+html{font-size:62.5%}
 body{background:#f8fafc;color:#161b36;font-family:Georgia}
 .main{max-width:1360px;margin:0 auto}
 .panel{background:#ffffff;color:#111827;border:1px solid #e5e7eb;font-size:16px}
 .bad{color:#dc2626}
 .pill{background:#dcfce7;color:#166534}
 .bar{position:sticky;top:0;background:#fff}
+.btn{background-color:var(--accent);color:#fff}
+.grad{background-image:linear-gradient(90deg,#4f46e5,#db2777);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.tri{width:0;height:0;border:8px solid transparent;border-top-color:#333}
+.cards{display:grid;grid-template-columns:repeat(3,1fr)}
+.rem{font-size:1.6rem}
+.token{color:var(--ok-text)}
 </style></head><body><div class="main"><div class="bar">Toolbar</div>
 <h1>Custom plan</h1><div class="panel"><p>Panel text</p><p class="bad">Blocked</p><span class="pill">Done</span></div>
+<span class="btn">Go</span><span class="grad">Gradient</span><span class="tri"></span>
+<div class="cards"><div class="card">A</div><div class="card">B</div><div class="card">C</div></div>
+<p class="rem">Rem text</p><p class="token">Token</p>
 <svg width="40" height="20"><text x="0" y="15" style="fill:#111">S</text></svg></div></body></html>"""
 
 
@@ -132,18 +143,27 @@ def test_wide_document_text_size_earlier_feedback_and_plan_contrast(tmp_path):
                 page.goto(base + "#view=plans&plan=custom", wait_until="networkidle")
                 custom = page.frame_locator("#content-frame")
                 custom.locator(".panel").wait_for()
-                for selector in (".panel p", "h1", ".bar"):
+                for selector in (".panel p", "h1", ".bar", ".btn"):
                     text, bg = custom.locator(selector).first.evaluate(TEXT_ON_BG)
                     assert _contrast(text, bg) >= 4.5, (theme, selector, text, bg)
                 owned = custom.locator("body").evaluate("""b => {
                   const cs = s => getComputedStyle(document.querySelector(s));
-                  return {aa: b.classList.contains('aa'), font: cs('.panel').fontFamily, main: cs('.main').maxWidth,
-                          bad: cs('.bad').color, err: getComputedStyle(b).getPropertyValue('--err-text').trim(),
-                          svg: getComputedStyle(document.querySelector('svg text')).fill};
+                  const probe = document.createElement('span'); probe.style.color = 'var(--ok-text)'; b.appendChild(probe);
+                  return {marker: b.classList.contains('aa-owned'), aa: b.classList.contains('aa'),
+                          font: cs('.panel').fontFamily, main: cs('.main').maxWidth, bad: cs('.bad').color,
+                          svg: cs('svg text').fill, grad: cs('.grad').backgroundImage, tri: cs('.tri').borderLeftColor,
+                          columns: cs('.cards').gridTemplateColumns.split(' ').length, card: cs('.card').display,
+                          rem: cs('.rem').fontSize, token: cs('.token').color, okText: getComputedStyle(probe).color};
                 }""")
-                assert owned["aa"] and "Georgia" not in owned["font"] and owned["main"] == "none", owned
+                # Annotate's face, theme and widths; the author's layout and components stay.
+                assert owned["marker"] and not owned["aa"] and "Georgia" not in owned["font"], owned
+                assert owned["main"] == "none" and owned["columns"] == 3 and owned["card"] != "none", owned
                 assert owned["svg"] == "rgb(17, 17, 17)", owned  # graphics keep their own colours
                 assert owned["bad"] != "rgb(220, 38, 38)", owned  # a red word takes the theme's error colour
+                assert "gradient" in owned["grad"], owned  # gradient-clipped text keeps its fill
+                assert owned["tri"] == "rgba(0, 0, 0, 0)", owned  # transparent borders stay transparent
+                assert owned["rem"] == "16px", owned  # the page's own root size still holds at 100%
+                assert owned["token"] == owned["okText"], owned  # annotate's own tokens are left alone
             browser.close()
     finally:
         process.terminate()
