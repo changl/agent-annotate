@@ -231,12 +231,14 @@ def _wait(predicate, page, timeout_ms=3000):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_feedback_first_matches_content_order_and_reload_opens_latest(tmp_path):
+def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_latest(tmp_path):
     slug_dir = _page(tmp_path)
     store = json.loads((slug_dir / "comments.json").read_text())
     # Creation/number order disagrees with the published document's question order.
     store["anchors"]["d:q1"][0]["number"] = 20
     store["anchors"]["d:q2"][0]["number"] = 1
+    # Q1's evidence is only the table row: it renders right under that row.
+    store["anchors"]["d:q1"][0]["decision_request"]["evidence"] = [{"label": "the column", "anchor": "tbl:columns:row:status"}]
     (slug_dir / "comments.json").write_text(json.dumps(store))
     process, base = _serve(tmp_path, slug_dir)
     try:
@@ -246,19 +248,28 @@ def test_feedback_first_matches_content_order_and_reload_opens_latest(tmp_path):
             page.set_default_timeout(5000)
             page.goto(base, wait_until="networkidle")
             frame = page.frame_locator("#content-frame")
-            queue = frame.locator("#annotate-feedback-top")
-            queue.wait_for()
-            assert queue.evaluate("el => el === document.querySelector('.aa').firstElementChild")
-            assert _in_view(queue.locator('details[data-section="needs"] > summary'))
-            body_ids = queue.locator("[data-strip-item]").evaluate_all("els => els.map(el => el.dataset.stripItem)")
+            frame.locator('[data-strip-item="card-1"]').wait_for()
+            # Chang, 2026-10-10: no question queue above the page; each question
+            # follows what it asks about.
+            assert frame.locator("#annotate-feedback-top").count() == 0
+            assert frame.locator('[data-strip-item="card-1"]').evaluate(
+                "el => el.closest('tr.annotate-strip-tr').previousElementSibling.dataset.anchorId") == "tbl:columns:row:status"
+            assert frame.locator('[data-strip-item="card-2"]').evaluate(
+                "el => el.closest('.annotate-decision-strip').previousElementSibling.dataset.anchorId") == "s:migration-sketch"
+            # Every card moved out, so the bare "Questions for Chang" heading is hidden.
+            assert frame.locator("section.annotate-questions-moved").count() == 1
+            body_ids = frame.locator("[data-strip-item]").evaluate_all("els => els.map(el => el.dataset.stripItem)")
             _wait(lambda: page.locator(".sec-needs .citem").evaluate_all("els => els.map(el => el.dataset.commentId)") == body_ids, page)
             assert body_ids == ["card-1", "card-2"]
-            # Legacy document tabs must not hide questions from the top queue.
+            # The rail's "Open in document" lands on the question at its evidence.
+            page.locator('.citem[data-comment-id="card-2"] [data-action="goto"]').first.click()
+            page.wait_for_timeout(600)
+            assert _in_view(frame.locator('[data-strip-item="card-2"]'))
+            # Legacy document tabs must not hide questions whose card is in one.
             frame.locator(".cards").evaluate("el => el.classList.add('tab-panel')")
-            queue.evaluate("el => el.remove()")
             page.evaluate("() => window.AnnotateDocs.reload()")
-            queue.wait_for()
-            assert queue.locator("[data-strip-item]").count() == 2
+            frame.locator('[data-strip-item="card-1"]').wait_for()
+            assert frame.locator("[data-strip-item]").count() == 2
             # A normal older-version link still opens that version.
             page.goto(base + "#view=review&v=v1", wait_until="networkidle")
             playwright.expect(page.locator("#content-frame")).to_have_attribute("data-version", "v1")
@@ -268,14 +279,12 @@ def test_feedback_first_matches_content_order_and_reload_opens_latest(tmp_path):
             # Changing an answer moves it into the same section on both surfaces.
             page.evaluate("() => window.AA.rail.reveal()")
             page.locator('.citem[data-comment-id="card-1"] .decision-btn').first.click()
-            ready = frame.locator('#annotate-feedback-top details[data-section="ready"]')
-            ready.wait_for()
-            assert ready.locator('[data-strip-item="card-1"]').count() == 1
-            assert page.locator('.sec-ready .citem[data-comment-id="card-1"]').count() == 1
+            page.locator('.sec-ready .citem[data-comment-id="card-1"]').wait_for()
+            frame.locator('[data-strip-item="card-1"].annotate-decision-resolved').wait_for()
             page.set_viewport_size({"width": 390, "height": 844})
             page.wait_for_timeout(200)
             page.evaluate("() => window.AnnotateDocs.setMobileSheetOpen(false)")
-            page.screenshot(path="/tmp/annotate-feedback-first-mobile.png", full_page=True)
+            page.screenshot(path="/tmp/annotate-questions-in-flow-mobile.png", full_page=True)
             overflow = frame.locator("body").evaluate("el => ({width: el.scrollWidth, viewport: innerWidth, outside: [...document.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => e.className).slice(0, 10)})")
             assert overflow["width"] <= overflow["viewport"], overflow
             browser.close()

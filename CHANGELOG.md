@@ -1,5 +1,15 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Each question renders in the page right after its last evidence target (its own card when it has none), replacing the question queue above the page; the rail stays the list of what needs you, in page order. Reload opens the latest version.
+- One Send wakes the owner once: the round carries general feedback and other new comments instead of a second push.
+- Feedback from earlier versions stays in the rail under a collapsed "Earlier feedback".
+- An **Aa** menu scales all text in the shell and the document (90–200%), saved per browser.
+- The document fills wide monitors; text and question cards keep the 1080px measure, images and tables use the full width. The frozen copy of `content.css` in published pages no longer overrides the current file.
+- Markdown plans are served as content documents, so they follow the light and dark themes.
+- Annotate owns colour, type and width in every document: hand-built HTML keeps its layout, but neutral text and surfaces take the theme's, tinted colours map to the theme's state colours, fonts and page-width caps give way, and font sizes follow the text size. SVG keeps its colours; embedded pages are labelled as keeping their own styling.
+
 ## 2.24.0
 
 One page per project (#9), a version guard (#10) and page consolidation (#11).

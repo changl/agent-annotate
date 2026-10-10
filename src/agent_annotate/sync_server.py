@@ -293,6 +293,28 @@ def _iso_timestamp(value: Any) -> float:
         return 0.0
 
 
+def _push_answers(comments: list[dict]) -> list[dict]:
+    """History answers for pushed comments: the latest human word on each."""
+    from .categories import comment_category
+    answers = []
+    for comment in comments:
+        decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
+        replies = comment.get("replies") if isinstance(comment.get("replies"), list) else []
+        human_replies = [reply for reply in replies
+                         if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")]
+        reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
+        if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
+            decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
+        answers.append({"comment_id": comment["id"], "number": comment.get("number"),
+            "category": comment_category(comment),
+            "prompt": (comment.get("decision_request") if isinstance(comment.get("decision_request"), dict)
+                       else {}).get("prompt", ""),
+            "verdict": decision.get("verdict", "comment"),
+            "text": decision.get("text") or reply.get("text") or comment.get("text", ""),
+            "by": decision.get("by") or reply.get("author") or comment.get("author")})
+    return answers
+
+
 def _comment_needs_push(comment: dict) -> bool:
     """Server-side mirror of shell.js needsPush().
 
@@ -1618,6 +1640,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return
             if plan_id is None:
                 self._ensure_content_stamp(v, html, target)
+            elif has_canvas_sentinels(html):
+                # A Markdown plan is stored in the old page template, whose
+                # light-only canvas colours left dark-theme text unreadable.
+                # Serve its canvas as a content document, like Review.
+                try:
+                    html = build_content_document(html, title=self.slug or "Annotate content")
+                except ExtractionError:
+                    pass
         else:
             if plan_id is not None:
                 return self._respond(404, b'{"error":"plan content not found"}')
@@ -1662,9 +1692,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
             html = _insert_in_head(html, f'<base href="{base}/">')
         css = f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "daisyui.css")}/daisyui.css">'
-        if '<div class="aa">' in html:
-            html = re.sub(r'<style(?: data-annotate-style="managed")?>\s*\.aa\{.*?</style>', '', html, count=1, flags=re.DOTALL)
-            css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
+        # The copy of content.css a page carries for standalone viewing; the
+        # linked current file must win over it. Every document gets
+        # content.css: annotate owns colour, type and width (adapter.js
+        # ownAuthorStyles gives hand-built documents the .aa typography).
+        html = re.sub(r'<style data-annotate-style="managed">.*?</style>|<style>\s*\.aa\{.*?</style>', '', html,
+                      count=1, flags=re.DOTALL)
+        css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
         html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else _insert_in_head(html, css)
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
@@ -2606,7 +2640,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _queue_feedback_delivery(self, delivery, comments, author, send=None, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
-        from .categories import comment_category
         from .consolidate import refuse_if_moved
         refuse_if_moved(self.artifact_dir)  # nothing reaches the bus from a frozen page
         owner = self._read_meta().get("owner") or {}
@@ -2620,26 +2653,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
             "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
         })
-        answers = []
-        for comment in comments:
-            decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
-            replies = comment.get("replies") if isinstance(comment.get("replies"), list) else []
-            human_replies = [reply for reply in replies
-                             if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")]
-            reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
-            if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
-                decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
-            answers.append({"comment_id": comment["id"], "number": comment.get("number"),
-                "category": comment_category(comment),
-                "prompt": (comment.get("decision_request") if isinstance(comment.get("decision_request"), dict)
-                           else {}).get("prompt", ""),
-                "verdict": decision.get("verdict", "comment"),
-                "text": decision.get("text") or reply.get("text") or comment.get("text", ""),
-                "by": decision.get("by") or reply.get("author") or comment.get("author")})
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
-                                      "answers": answers, "edits": [], "snapshot": True,
+                                      "answers": _push_answers(comments), "edits": [], "snapshot": True,
                                       "delivery": delivery["delivery"], **(send or {})})
 
     def _wake_feedback_owner(self):
@@ -2935,6 +2952,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if c.get("round_pending") and c.get("reopened") and c["reopened"][-1].get("by") in reviewer_authors:
                         reopens.append(c)
             comment_ids = list(dict.fromkeys(c["id"] for c in pending + reopens))
+            # Open comments with new activity (general feedback, replies) go
+            # out with the round: one Send is one prompt to the owner, not a
+            # round prompt followed by a push prompt (Chang, 2026-10-10).
+            pushed = []
+            if comment_ids or edits or note:
+                pushed = [c for items in store.get("anchors", {}).values() for c in items
+                          if _comment_needs_push(c) and c["id"] not in comment_ids]
+                comment_ids += [c["id"] for c in pushed]
             if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)
@@ -2951,6 +2976,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._respond(400, b'{"error":"unknown review version"}')
             fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
                            "edits": edits, "reopens": [(c["id"], c["reopened"][-1]) for c in reopens],
+                           "pushed": [{k: v for k, v in c.items() if k not in ("flagged_at", "flagged_by", "flagged_for_session")}
+                                      for c in pushed],
                            "note": note, "owner": owner.get("owner_session"),
                            "version": version}
             delivery = self._compute_delivery()
@@ -2976,6 +3003,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                          "prompt": (c.get("finding") or {}).get("title", c.get("text", "")),
                          "verdict": "reopen", "text": unsent_reopen_text(c),
                          "by": c["reopened"][-1]["by"], "ts": c["reopened"][-1]["ts"]} for c in reopens]
+            answers += _push_answers(pushed)
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
             _bus_append(self.bus_dir, self.slug, {
@@ -2992,6 +3020,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in reopens:
                 c.pop("round_pending", None)
+                c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
+            for c in pushed:
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             if edits:
                 submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)

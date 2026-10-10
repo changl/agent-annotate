@@ -71,7 +71,7 @@ let CAPS = null;
 // replaced by collapsible sections (B2) and the History tab (B3).
 // SECTION_OPEN[key] overrides the default open state of a section.
 let SECTION_OPEN = {};
-const SECTION_DEFAULT_OPEN = { needs: true, ready: true, waiting: true, done: false, archived: false };
+const SECTION_DEFAULT_OPEN = { needs: true, ready: true, waiting: true, done: false, earlier: false, archived: false };
 let activeTab = 'feedback';
 const cardExpanded = {};   // C1: answered cards shown in full instead of one line
 const earlierOpen = {};    // B3: "n earlier replies" expanded
@@ -112,8 +112,47 @@ function applyTheme(t) {
     btn.title = 'Switch to ' + next + ' theme';
   }
 }
-document.getElementById('content-frame').addEventListener('load', () => applyTheme(currentTheme()));
+document.getElementById('content-frame').addEventListener('load', () => { applyTheme(currentTheme()); applyTextSize(TEXT_SIZE); });
 try { const t = localStorage.getItem('annotate:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch {}
+
+// ── Text size (Chang, 2026-10-10): all text in the shell and the document
+// scales with --aa-text (content.css, shell.css); layout and images keep
+// their size. Steps as in Google Docs' zoom menu, saved per browser.
+const TEXT_SIZES = [0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+let TEXT_SIZE = (() => {
+  try { const s = parseFloat(localStorage.getItem('annotate:text-size')); return TEXT_SIZES.includes(s) ? s : 1; } catch { return 1; }
+})();
+function applyTextSize(s) {
+  document.documentElement.style.setProperty('--aa-text', String(s));
+  const content = document.getElementById('content-frame');
+  try { if (content && content.contentDocument) content.contentDocument.documentElement.style.setProperty('--aa-text', String(s)); } catch {}
+  postToFrame({ type: 'annotate:text-size', size: s });
+  document.getElementById('text-size-val').textContent = Math.round(s * 100) + '%';
+  document.getElementById('text-size-down').disabled = s <= TEXT_SIZES[0];
+  document.getElementById('text-size-up').disabled = s >= TEXT_SIZES[TEXT_SIZES.length - 1];
+  document.getElementById('text-size-reset').disabled = s === 1;
+}
+function setTextSize(s) {
+  TEXT_SIZE = s;
+  try { if (s === 1) localStorage.removeItem('annotate:text-size'); else localStorage.setItem('annotate:text-size', String(s)); } catch {}
+  applyTextSize(s);
+}
+function stepTextSize(dir) {
+  const i = TEXT_SIZES.indexOf(TEXT_SIZE);
+  setTextSize(TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, i + dir))]);
+}
+(() => {
+  const btn = document.getElementById('text-size-btn');
+  const panel = document.getElementById('text-size-panel');
+  const setOpen = (open) => { panel.hidden = !open; btn.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(panel.hidden); });
+  document.addEventListener('click', (e) => { if (!panel.hidden && !e.target.closest('#text-size')) setOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { setOpen(false); btn.focus(); } });
+  document.getElementById('text-size-down').addEventListener('click', () => stepTextSize(-1));
+  document.getElementById('text-size-up').addEventListener('click', () => stepTextSize(1));
+  document.getElementById('text-size-reset').addEventListener('click', () => setTextSize(1));
+  applyTextSize(TEXT_SIZE);
+})();
 // T11: unposted drafts survive re-renders, VERSION SWITCHES, and reloads.
 // Keys: comment id for reply boxes, 'gf:<version>' for general feedback.
 // Drafts are kept per page and document, since two documents can share a
@@ -1149,8 +1188,8 @@ function isNewerThanViewed(c) {
 // Four sections replace the chip filters, "Mark all read" and the per-card
 // status pill: Needs you · Ready to send · Waiting on agent · Done (plus
 // Archived at the bottom when there is any).
-const SECTION_ORDER = ['needs', 'ready', 'waiting', 'done', 'archived'];
-const SECTION_LABEL = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', archived: 'Archived' };
+const SECTION_ORDER = ['needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
+const SECTION_LABEL = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
 function sectionOpen(k) {
   return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
 }
@@ -1269,12 +1308,20 @@ function renderDrawer() {
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
 
-  const groups = { needs: [], ready: [], waiting: [], done: [], archived: [] };
-  for (const c of flattenAll(false).filter(inScope)) groups[sectionOf(c)].push(c);
+  const groups = { needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
+  // Feedback given on earlier versions stays listed, collapsed under
+  // "Earlier feedback", instead of vanishing when a version is published.
+  const earlier = (c) => !inScope(c) && !isNewerThanViewed(c);
+  for (const c of flattenAll(false)) {
+    if (inScope(c)) groups[sectionOf(c)].push(c);
+    else if (earlier(c)) groups.earlier.push(c);
+  }
   for (const [aid, items] of Object.entries(STORE.archived || {})) {
     for (const c of items) {
       const item = Object.assign({}, c, { anchor_id: aid });
-      if (docOf(item) === DOC && inScope(item)) groups.archived.push(item);
+      if (docOf(item) !== DOC) continue;
+      if (inScope(item)) groups.archived.push(item);
+      else if (earlier(item)) groups.earlier.push(item);
     }
   }
   SECTION_ORDER.forEach(k => groups[k].sort(byContentOrder));
@@ -2890,8 +2937,9 @@ function pageRoundPending() {
   return flattenStore(false).filter(c => isRoundPending(c) || isReopenPending(c)).length;
 }
 // The page's one Send: every document's drafts, then ONE round (verdicts,
-// reopens and Library revisions across every tab), then ONE push of the open
-// comments with new activity. `alsoPending` says another tab has round-pending
+// reopens, Library revisions across every tab and the open comments with new
+// activity), or, with nothing round-pending, ONE push of those comments.
+// `alsoPending` says another tab has round-pending
 // work the comment store does not show (Library revisions).
 // `receipt`: the Send summary's lines, kept by the server for History.
 // UI-2: each call carries only its own receipt lines (the round's verdicts,
@@ -2916,7 +2964,9 @@ async function submitPage(alsoPending, receipt) {
   let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
   await loadStore();
   const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
-  const doPush = flattenStore(false).some(needsPush);
+  // The round carries open comments with new activity (general feedback,
+  // replies), so a Send wakes the owner once; push only when there is no round.
+  const doPush = !doRound && flattenStore(false).some(needsPush);
   // A line whose own call is not needed goes with the other call.
   if (!doRound) { pushLines = roundLines.concat(pushLines); roundLines = []; }
   if (!doPush) { roundLines = roundLines.concat(pushLines); pushLines = []; }

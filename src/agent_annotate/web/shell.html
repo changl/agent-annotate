@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="content.css">
 <link rel="stylesheet" href="app.css">
 <script>try{var t=localStorage.getItem('annotate:theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<script>try{var s=parseFloat(localStorage.getItem('annotate:text-size'));if(s>=0.9&&s<=2)document.documentElement.style.setProperty('--aa-text',String(s))}catch(e){}</script>
 </head>
 <body>
 <a class="unified-skip" href="#frame-area" data-skip="document">Skip to document</a>
@@ -24,6 +25,15 @@
   <nav class="aa-tabs" id="aa-tabs" aria-label="Tabs"></nav>
   <details class="aa-tabs-menu" id="aa-tabs-menu"><summary>Review</summary></details>
   <div class="hdr-right">
+    <div class="text-size" id="text-size">
+      <button type="button" class="btn btn-ghost btn-sm btn-square text-size-btn" id="text-size-btn" aria-haspopup="true" aria-expanded="false" aria-controls="text-size-panel" aria-label="Text size" title="Text size">Aa</button>
+      <div class="text-size-panel" id="text-size-panel" role="group" aria-label="Text size" hidden>
+        <button type="button" class="btn btn-ghost btn-sm" id="text-size-down" aria-label="Smaller text" title="Smaller text">A&minus;</button>
+        <output class="text-size-val" id="text-size-val" aria-live="polite">100%</output>
+        <button type="button" class="btn btn-ghost btn-sm" id="text-size-up" aria-label="Larger text" title="Larger text">A+</button>
+        <button type="button" class="btn btn-ghost btn-xs" id="text-size-reset">Reset</button>
+      </div>
+    </div>
     <button type="button" class="btn btn-ghost btn-sm btn-square" id="theme-toggle" aria-label="Switch to light theme" title="Switch to light theme"></button>
     <!-- E1: owner + reviewer in one avatar menu -->
     <div class="who" id="who">

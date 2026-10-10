@@ -8,7 +8,7 @@ Create cards only for decisions requiring Chang. Each asks one concise question 
 
 `prompt` is required. Optional fields: `context`, `recommendation` (option ID), `options` (strings or `{id,label,consequence,style?}`), `consequences`, `evidence` (`{label,anchor}`), `impact` (`low|medium|high`), `blocking` (boolean). Request limit: 8192 bytes; invalid/oversize input fails without writing. Optional `style`: `primary|default|danger`.
 
-Options render once; the recommended choice has the recommended badge. Evidence accompanies the question. Nothing is preselected. **Answer in words** and notes remain available when changing a choice; custom choices support notes too. Clicking card text or padding opens a comment without interfering with its controls.
+Options render once; the recommended choice has the recommended badge. The question renders in the page after its last evidence target, so cite the images or rows it asks about. Nothing is preselected. **Answer in words** and notes remain available when changing a choice; custom choices support notes too. Clicking card text or padding opens a comment without interfering with its controls.
 
 | Verdict | State |
 | --- | --- |
