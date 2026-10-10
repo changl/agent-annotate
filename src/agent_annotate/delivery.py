@@ -48,7 +48,10 @@ def _orca(*args: str) -> dict:
     executable = os.environ.get("ORCA_CLI_COMMAND") or shutil.which("orca")
     if not executable:
         raise RuntimeError("Orca CLI unavailable")
-    result = subprocess.run([executable, *args, "--json"], capture_output=True, text=True, timeout=15)
+    # Servers outlive their launch directory. A disconnected network mount
+    # can hang the Orca shell launcher in getcwd, even after timeout/kill.
+    result = subprocess.run([executable, *args, "--json"], capture_output=True, text=True,
+                            timeout=15, cwd=Path.home())
     data = json.loads(result.stdout)
     if result.returncode or not data.get("ok"):
         raise RuntimeError(str(data.get("error") or "Orca command failed"))
@@ -57,7 +60,7 @@ def _orca(*args: str) -> dict:
 
 def _process(pid: int) -> tuple[str, str] | None:
     result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=,comm="],
-                            capture_output=True, text=True, timeout=3)
+                            capture_output=True, text=True, timeout=3, cwd=Path.home())
     line = result.stdout.strip()
     if result.returncode or not line:
         return None

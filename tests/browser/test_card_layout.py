@@ -231,6 +231,60 @@ def _wait(predicate, page, timeout_ms=3000):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_feedback_first_matches_content_order_and_reload_opens_latest(tmp_path):
+    slug_dir = _page(tmp_path)
+    store = json.loads((slug_dir / "comments.json").read_text())
+    # Creation/number order disagrees with the published document's question order.
+    store["anchors"]["d:q1"][0]["number"] = 20
+    store["anchors"]["d:q2"][0]["number"] = 1
+    (slug_dir / "comments.json").write_text(json.dumps(store))
+    process, base = _serve(tmp_path, slug_dir)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
+            page.set_default_timeout(5000)
+            page.goto(base, wait_until="networkidle")
+            frame = page.frame_locator("#content-frame")
+            queue = frame.locator("#annotate-feedback-top")
+            queue.wait_for()
+            assert queue.evaluate("el => el === document.querySelector('.aa').firstElementChild")
+            assert _in_view(queue.locator('details[data-section="needs"] > summary'))
+            body_ids = queue.locator("[data-strip-item]").evaluate_all("els => els.map(el => el.dataset.stripItem)")
+            _wait(lambda: page.locator(".sec-needs .citem").evaluate_all("els => els.map(el => el.dataset.commentId)") == body_ids, page)
+            assert body_ids == ["card-1", "card-2"]
+            # Legacy document tabs must not hide questions from the top queue.
+            frame.locator(".cards").evaluate("el => el.classList.add('tab-panel')")
+            queue.evaluate("el => el.remove()")
+            page.evaluate("() => window.AnnotateDocs.reload()")
+            queue.wait_for()
+            assert queue.locator("[data-strip-item]").count() == 2
+            # A normal older-version link still opens that version.
+            page.goto(base + "#view=review&v=v1", wait_until="networkidle")
+            playwright.expect(page.locator("#content-frame")).to_have_attribute("data-version", "v1")
+            page.reload(wait_until="networkidle")
+            playwright.expect(page.locator("#content-frame")).to_have_attribute("data-version", "v2")
+            assert "v=v1" not in page.url
+            # Changing an answer moves it into the same section on both surfaces.
+            page.evaluate("() => window.AA.rail.reveal()")
+            page.locator('.citem[data-comment-id="card-1"] .decision-btn').first.click()
+            ready = frame.locator('#annotate-feedback-top details[data-section="ready"]')
+            ready.wait_for()
+            assert ready.locator('[data-strip-item="card-1"]').count() == 1
+            assert page.locator('.sec-ready .citem[data-comment-id="card-1"]').count() == 1
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.wait_for_timeout(200)
+            page.evaluate("() => window.AnnotateDocs.setMobileSheetOpen(false)")
+            page.screenshot(path="/tmp/annotate-feedback-first-mobile.png", full_page=True)
+            overflow = frame.locator("body").evaluate("el => ({width: el.scrollWidth, viewport: innerWidth, outside: [...document.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => e.className).slice(0, 10)})")
+            assert overflow["width"] <= overflow["viewport"], overflow
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_card_layout_and_unchanged_sections(tmp_path):
     slug_dir = _page(tmp_path)
     process, base = _serve(tmp_path, slug_dir)

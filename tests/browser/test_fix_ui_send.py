@@ -91,9 +91,9 @@ def test_ui2_push_failure_keeps_the_comment_pending_and_receipt_lists_only_the_r
         rounds = _rounds(workspace)
         assert len(rounds) == 1
         assert [line["label"] for line in rounds[0]["receipt"]] == ["#11 · When should we release?"]
-        playwright.expect(page.locator("#send-note")).to_have_text("⏳ Queued — no session listening (1)")
+        playwright.expect(page.locator("#send-note")).to_have_text("Feedback saved (1)")
         receipt = page.evaluate("() => AA.send.receipts()[0]")
-        assert receipt["result"] == "⏳ Queued — no session listening (1)"
+        assert receipt["result"] == "Feedback saved (1)"
         assert [it["label"] for it in receipt["items"]] == ["#11 · When should we release?"]
         # Trying again sends the rest, as a second receipt.
         page.unroute("**/api/push-session*")
@@ -109,7 +109,7 @@ def test_ui2_push_failure_keeps_the_comment_pending_and_receipt_lists_only_the_r
         texts = page.locator("#hist-sent-body .unified-receipt summary").all_inner_texts()
         # Two Sends, one line each; both were queued, and the server-side
         # record keeps that (UI-13).
-        assert [t.split(" · ")[0] for t in texts] == ["⏳ Queued — no session listening (1)"] * 2
+        assert sorted(t.split(" · ")[0] for t in texts) == sorted(["Feedback saved (1)", "Feedback saved (1)"])
 
 
 def test_ui2_round_failure_keeps_the_verdict_pending_and_receipt_lists_only_the_push(tmp_path, workspace):  # noqa: F811
@@ -126,7 +126,7 @@ def test_ui2_round_failure_keeps_the_verdict_pending_and_receipt_lists_only_the_
         assert len(rounds) == 1
         assert len(rounds[0]["receipt"]) == 1 and "Check the build date." in rounds[0]["receipt"][0]["label"]
         receipt = page.evaluate("() => AA.send.receipts()[0]")
-        assert receipt["result"] == "⏳ Queued — no session listening (1)"
+        assert receipt["result"] == "Feedback saved (1)"
         assert len(receipt["items"]) == 1 and "Check the build date." in receipt["items"][0]["label"]
 
 

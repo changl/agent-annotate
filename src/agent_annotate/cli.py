@@ -734,6 +734,7 @@ def _start_server(slug_dir: Path, port: int, bus_dir: Path, public_base_path: st
         stdin=subprocess.DEVNULL,
         start_new_session=True,
         env=environment,
+        cwd=Path.home(),
     )
     # Give it a moment to bind
     time.sleep(0.5)

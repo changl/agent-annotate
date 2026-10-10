@@ -253,6 +253,7 @@ def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, widt
         page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
         page.locator("#round-submit-btn").click()
         _wait_decision(page, directory, "comment", words)
+        page.locator("#round-confirm-backdrop").wait_for(state="hidden")
         page.reload(wait_until="networkidle")
         ready(page)
         section(page, "waiting")

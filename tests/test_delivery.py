@@ -28,6 +28,22 @@ def _target():
     }
 
 
+def test_orca_delivery_uses_local_home_instead_of_server_launch_directory(monkeypatch):
+    from pathlib import Path
+
+    calls = []
+    monkeypatch.setattr(delivery.shutil, "which", lambda name: "/usr/local/bin/orca")
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, '{"ok":true,"result":{"terminal":{}}}')
+
+    monkeypatch.setattr(delivery.subprocess, "run", run)
+    assert delivery._orca("terminal", "show", "--terminal", "owned") == {"terminal": {}}
+    assert calls[0][1]["cwd"] == Path.home()
+    assert calls[0][1]["timeout"] == 15
+
+
 def _round(**changes):
     event = {
         "event": "session_push",

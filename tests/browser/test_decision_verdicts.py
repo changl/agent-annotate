@@ -236,6 +236,10 @@ def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
             assert page.locator(".decision-btn").count() == 0
             page.reload(wait_until="networkidle")
             ready(page)
+            playwright.expect(page.locator("#content-frame")).to_have_attribute("data-version", "v2")
+            history(page)
+            page.locator('#vrail-body-review .vrow[data-version="v1"]').click()
+            feedback(page)
             section(page, "done")
             assert page.locator(".ans").inner_text() == "Resolved in v2"
             browser.close()
@@ -245,7 +249,7 @@ def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_explicit_item_numbers_control_rail_order(tmp_path):
+def test_content_order_precedes_numbers_and_missing_anchors_follow(tmp_path):
     process, base, slug_dir = _serve(tmp_path)
     try:
         newer_14 = dict(
@@ -282,10 +286,10 @@ def test_explicit_item_numbers_control_rail_order(tmp_path):
             browser, page = _open(runner, base)
             cards = page.locator("#comment-list .citem")
             assert cards.count() == 2
-            assert cards.nth(0).locator(".citem-num").inner_text() == "#14"
-            assert cards.nth(0).locator(".citem-txt").inner_text() == "Fourteen"
-            assert cards.nth(1).locator(".citem-num").inner_text() == "#15"
-            assert cards.nth(1).locator(".citem-txt").inner_text() == "Fifteen"
+            assert cards.nth(0).locator(".citem-num").inner_text() == "#15"
+            assert cards.nth(0).locator(".citem-txt").inner_text() == "Fifteen"
+            assert cards.nth(1).locator(".citem-num").inner_text() == "#14"
+            assert cards.nth(1).locator(".citem-txt").inner_text() == "Fourteen"
             browser.close()
     finally:
         process.terminate()

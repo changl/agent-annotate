@@ -107,7 +107,7 @@ def _spawn(record: dict, argv: list[str]) -> int:
     cli.LOG_DIR.mkdir(parents=True, exist_ok=True)
     with (cli.LOG_DIR / f"{Path(record['slug_dir']).name}.log").open("ab", buffering=0) as log:
         return subprocess.Popen(argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                                start_new_session=True, env=_environment()).pid
+                                start_new_session=True, env=_environment(), cwd=Path.home()).pid
 
 
 def _verify_server(record: dict, pid: int, expected: dict | None) -> dict:

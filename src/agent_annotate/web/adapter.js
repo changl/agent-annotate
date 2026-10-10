@@ -837,6 +837,8 @@ function ensureStripStyle() {
   const style = document.createElement('style');
   style.id = 'annotate-strip-style';
   style.textContent = `
+    #annotate-feedback-top { margin-bottom: 24px; }
+    #annotate-feedback-top > details > summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
     .annotate-decision-strip {
       font-family:"Inter", sans-serif !important;
       background: var(--primary-soft) !important;
@@ -1831,57 +1833,7 @@ function buildStripEl(anchorId, items) {
   return wrap;
 }
 
-// Real-document-flow insertion, per anchor element shape. Returns true on
-// success; false means the caller must use the absolute-overlay fallback.
-// SVG content is routed straight to the fallback: an HTML element appended
-// as a sibling of SVG children has no rendering box (only <foreignObject>
-// children paint), so DOM-flow insertion would silently produce nothing.
-function insertStripInFlow(el, stripEl) {
-  if (el.ownerSVGElement || el.tagName.toLowerCase() === 'svg' || el.closest('svg')) return false;
-  try {
-    if (el.tagName === 'TR') {
-      const tr = document.createElement('tr');
-      tr.className = 'annotate-strip-tr';
-      tr.dataset.annotateStrip = '1';
-      const td = document.createElement('td');
-      td.colSpan = el.children.length || 1;
-      td.appendChild(stripEl);
-      tr.appendChild(td);
-      el.insertAdjacentElement('afterend', tr);
-      return true;
-    }
-    stripEl.classList.add('annotate-strip-block');
-    el.insertAdjacentElement('afterend', stripEl);
-    return true;
-  } catch (e) {
-    console.warn('[adapter] strip DOM-flow injection failed, falling back to overlay', e);
-    return false;
-  }
-}
-
-// Absolute-overlay fallback: positions the strip just below the anchor's own
-// rect, clamped horizontally into the viewport the same way clampPinLeft
-// clamps pins (an unclamped strip could otherwise inflate scrollWidth).
-function placeStripAbsolute(el, stripEl) {
-  const layer = ensureStripLayer();
-  const wrapper = layer.parentElement;
-  if (!wrapper) return;
-  stripEl.classList.add('annotate-strip-abs');
-  layer.appendChild(stripEl); // attach before measuring so offsetWidth is real
-  const wrapperRect = wrapper.getBoundingClientRect();
-  const rect = el.getBoundingClientRect();
-  const w = stripEl.getBoundingClientRect().width || 260;
-  const viewportW = document.documentElement.clientWidth || window.innerWidth;
-  const inset = 8;
-  let left = rect.left - wrapperRect.left;
-  const maxLeft = viewportW - wrapperRect.left - inset - w;
-  if (Number.isFinite(maxLeft) && left > maxLeft) left = Math.max(inset, maxLeft);
-  if (left < inset) left = inset;
-  stripEl.style.left = left + 'px';
-  stripEl.style.top = (rect.bottom - wrapperRect.top + 4) + 'px';
-}
-
-// Rebuilds every inline decision strip from latestPins. Called only from the
+// Rebuilds the feedback queue from latestPins. Called only from the
 // 'annotate:comment-counts' handler (see wireBridge) — i.e. once per actual
 // data change, never on the resize/scroll-driven badge-refresh cadence, so
 // this function's own DOM mutations can't feed the MutationObserver above
@@ -1941,6 +1893,12 @@ function staticCardsFor(anchorId) {
 
 function renderDecisionStrips() {
   ensureStripStyle();
+  const previousQueue = document.getElementById('annotate-feedback-top');
+  const openGroups = {};
+  if (previousQueue) {
+    previousQueue.querySelectorAll('details[data-section]').forEach(group => { openGroups[group.dataset.section] = group.open; });
+    previousQueue.remove();
+  }
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
   // One card per question in the body. A generated card whose question the
   // interactive strip now renders is hidden (it stays in the HTML as the
@@ -1950,22 +1908,18 @@ function renderDecisionStrips() {
     delete card.dataset.annotateReplaced;
   });
 
+  const queue = document.createElement('section');
+  queue.id = 'annotate-feedback-top';
+  queue.setAttribute('aria-label', 'Feedback');
+  const order = contentAnchorOrder();
+  const groups = { needs: [], ready: [], waiting: [], done: [] };
   for (const [anchorId, entries] of Object.entries(latestPins)) {
     const items = (entries || []).filter(e => e.decisionRequest || e.decisionVerdict);
     if (!items.length) continue;
-    const el = findAnchorEl(anchorId);
-    if (!el) continue;
-
-    // Same hidden-tab-panel skip as pins: never render a strip on top of, or
-    // inside, an inactive tab panel.
-    const panel = el.closest('.tab-panel');
-    if (panel && !panel.classList.contains('active')) continue;
-    const subPanel = el.closest('.sub-panel');
-    if (subPanel && !subPanel.classList.contains('active')) continue;
-
-    items.sort((a, b) => (a.n || 0) - (b.n || 0));
-    const stripEl = buildStripEl(anchorId, items);
-    if (!insertStripInFlow(el, stripEl)) placeStripAbsolute(el, stripEl);
+    items.forEach(entry => {
+      const section = entry.section || (entry.roundPending ? 'ready' : entry.decision ? 'needs' : 'waiting');
+      if (groups[section]) groups[section].push({ anchorId, entry });
+    });
     if (items.some(e => e.decisionRequest)) {
       staticCardsFor(anchorId).forEach(card => {
         card.classList.add('annotate-card-replaced');
@@ -1973,7 +1927,39 @@ function renderDecisionStrips() {
       });
     }
   }
+  const labels = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done' };
+  for (const [section, items] of Object.entries(groups)) {
+    if (!items.length) continue;
+    items.sort((a, b) => (order[a.anchorId] ?? Infinity) - (order[b.anchorId] ?? Infinity) || (a.entry.n || 0) - (b.entry.n || 0));
+    const group = document.createElement('details');
+    group.dataset.section = section;
+    group.open = openGroups[section] ?? (section === 'needs' || section === 'ready');
+    const summary = document.createElement('summary');
+    summary.textContent = labels[section] + ' · ' + items.length;
+    group.appendChild(summary);
+    items.forEach(({ anchorId, entry }) => {
+      const strip = buildStripEl(anchorId, [entry]);
+      strip.classList.add('annotate-strip-block');
+      group.appendChild(strip);
+    });
+    queue.appendChild(group);
+  }
+  if (queue.children.length) {
+    const canvas = document.querySelector('.aa') || document.body;
+    canvas.prepend(queue);
+  }
   syncAllExcerptClamps();
+}
+
+function contentAnchorOrder() {
+  const order = {};
+  let index = 0;
+  document.querySelectorAll('[data-anchor-id], [id]').forEach(el => {
+    if (el.closest('#annotate-feedback-top')) return;
+    const aid = el.dataset.anchorId || el.id;
+    if (!Object.prototype.hasOwnProperty.call(order, aid)) order[aid] = index++;
+  });
+  return order;
 }
 
 // ── Go-to-location persistent highlight ─────────────────────────────
@@ -2369,10 +2355,11 @@ function postExcerpts() {
       evidenceOf(e.decisionRequest).forEach(x => add(x.anchor));
     }
   }
-  const json = JSON.stringify(out);
+  const anchorOrder = contentAnchorOrder();
+  const json = JSON.stringify({ out, anchorOrder });
   if (json === lastExcerptsJson) return;
   lastExcerptsJson = json;
-  postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out });
+  postToParent({ type: 'annotate:excerpts', version: META.version || null, excerpts: out, anchorOrder });
 }
 
 // ── E3 shortcuts while focus is in the document ─────────────────────

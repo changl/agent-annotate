@@ -267,6 +267,8 @@ def test_focused_document_option_shows_a_clear_focus_ring(tmp_path, versions):
         page.keyboard.press("Enter")
         page.keyboard.press("Tab")
         frame = page.frame_locator("#content-frame")
+        expect(frame.locator("summary:focus-visible")).to_have_text("Needs you · 1")
+        page.keyboard.press("Tab")
         focused = frame.locator(".annotate-decision-btn:focus-visible")
         expect(focused).to_have_count(1)
         ring = focused.evaluate("e => { const s = getComputedStyle(e); return [s.outlineStyle, s.outlineWidth, s.outlineOffset]; }")
