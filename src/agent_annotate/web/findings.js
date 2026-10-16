@@ -186,11 +186,28 @@
     if (WEB.test(p.url || '')) return `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)} ${UI.ico('external')}</a>`;
     return `<span>${esc(p.label)}</span>`;
   }
+  // The page's current-vs-proposed block (pagegen.compare_html builds the
+  // same markup; content.css styles both): portrait pairs side by side,
+  // landscape pairs stacked, current above proposed.
+  const ROLES = { current: 'Current', proposed: 'Proposed' };
+  function compareHtml(pairs) {
+    const side = pairs.every(pair => pair.every(p => p.w && p.h && p.h > p.w));
+    const cell = (role, p, label = true) => `<figure class="aa-cmp-cell" data-role="${role}"><figcaption title="${esc(p.label)}">${label ? `<span class="aa-cmp-label" data-role="${role}">${ROLES[role]}</span> ` : ''}${esc(p.label)}</figcaption><img src="${esc(proofUrl(p))}" alt="${esc(ROLES[role] + ': ' + p.label)}"${p.w && p.h ? ` width="${p.w}" height="${p.h}"` : ''}></figure>`;
+    let body;
+    if (side && pairs.length > 1) body = Object.keys(ROLES).map((role, k) => `<div class="aa-cmp-row-head"><span class="aa-cmp-label" data-role="${role}">${ROLES[role]}</span></div><div class="aa-cmp-row">${pairs.map(pair => cell(role, pair[k], false)).join('')}</div>`).join('');
+    else if (side) body = `<div class="aa-cmp-row">${cell('current', pairs[0][0])}${cell('proposed', pairs[0][1])}</div>`;
+    else body = pairs.map(([c, p]) => `<div class="aa-cmp-pair">${cell('current', c)}${cell('proposed', p)}</div>`).join('');
+    return `<figure class="aa-compare" data-layout="${side ? 'side' : 'stack'}" data-pairs="${pairs.length}">${body}</figure>`;
+  }
   function proofHtml(fx) {
     const proof = fx.proof || [];
-    const imgs = proof.filter(p => IMG.test(p.attachment || p.url || '') && (p.attachment || WEB.test(p.url || '')));
-    const links = proof.filter(p => !imgs.includes(p));
+    const shown = proof.filter(p => IMG.test(p.attachment || p.url || '') && (p.attachment || WEB.test(p.url || '')));
+    const cur = shown.filter(p => p.role === 'current'), pro = shown.filter(p => p.role === 'proposed');
+    const pairs = cur.slice(0, pro.length).map((c, i) => [c, pro[i]]);
+    const imgs = shown.filter(p => !pairs.some(pair => pair.includes(p)));
+    const links = proof.filter(p => !shown.includes(p));
     return `<div class="fix-proof" data-proof-count="${proof.length}">
+      ${pairs.length ? compareHtml(pairs) : ''}
       ${imgs.map(p => `<figure class="fix-proof-img"><img src="${esc(proofUrl(p))}" alt="${esc(p.label)}" loading="lazy"><figcaption>${UI.ico('image')} ${esc(p.label)}</figcaption></figure>`).join('')}
       ${links.length ? `<ul class="doc-list fix-proof-links">${links.map(p => `<li>${proofLink(p)}${p.detail ? `<span class="project-detail">${esc(p.detail)}</span>` : ''}</li>`).join('')}</ul>` : ''}
     </div>`;

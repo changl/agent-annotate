@@ -3752,8 +3752,17 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
         raise ValueError("this page was consolidated into another page; mark the finding fixed there")
     directory = Path(record["slug_dir"])
     author = author if author.startswith("agent:") else f"agent:{author}"
-    prepared = []
+    from .images import IMAGE_SUFFIXES, image_size
+    prepared, roles = [], []
     for value in proofs:
+        # "current: shot.png | Caption" / "proposed: …": the same line as a
+        # page's ```compare fence; the pair renders as the compare block.
+        role = re.fullmatch(r"\s*(current|proposed)\s*:\s*([^|]*?)\s*(?:\|\s*(.*?)\s*)?", value, re.IGNORECASE | re.DOTALL)
+        if role:
+            value = role[2]
+            if not value.lower().startswith(("http://", "https://")) and Path(value).suffix.lower() not in IMAGE_SUFFIXES:
+                raise ValueError(f"a {role[1].lower()} proof must be a .png, .jpg, .gif or .webp image (got {value[:60]!r})")
+        roles.append({"role": role[1].lower(), **({"label": role[3][:200]} if role[3] else {})} if role else {})
         if value.lower().startswith(("http://", "https://")):
             prepared.append(validate_proof(directory, [{"label": value[:200], "url": value}])[0])
         elif re.match(r"\s|[A-Za-z][A-Za-z0-9+.-]*:", value):
@@ -3797,9 +3806,15 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
         raise ValueError("fixed note must be text of at most 10000 characters")
     proof = []
     try:
-        for item in prepared:
+        for item, extra in zip(prepared, roles):
             proof.append(add_proof_file(directory, item) if isinstance(item, Path) else item)
-        validate_proof(directory, proof)
+            if extra and "attachment" in proof[-1]:
+                size = image_size((directory / "attachments" / proof[-1]["attachment"]).read_bytes())
+                if size is None:
+                    raise ValueError(f"not a readable PNG, JPEG, GIF or WebP image: {item.name}")
+                extra.update(w=size[0], h=size[1])
+            proof[-1] = {**proof[-1], **extra}
+        proof = validate_proof(directory, proof)
         comment = mark_finding_fixed(directory, identifier, by=author, note=note, proof=proof)
     except (OSError, ValueError, KeyError):
         for item in proof:
@@ -3857,7 +3872,9 @@ def cmd_plan(args) -> int:
         content = body.decode("utf-8")
         title = args.title
         if source.suffix.lower() == ".md":
-            content, title = render_plan(content, args.plan_id, title=title)
+            content, title = render_plan(content, args.plan_id, title=title,
+                                         base_dir=source.absolute().parent,
+                                         page_dir=Path(record["slug_dir"]))
         result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
                                        title=title, label=args.label)
         _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
@@ -5146,7 +5163,9 @@ def main():
     sp_finding = sub.add_parser("finding", help="mark a finding fixed with proof")
     sp_finding.add_argument("slug")
     sp_finding.add_argument("--fixed", required=True, metavar="N", help="finding number or exact comment ID")
-    sp_finding.add_argument("--proof", action="append", default=[], metavar="URL|FILE")
+    sp_finding.add_argument("--proof", action="append", default=[], metavar="URL|FILE",
+                            help="repeatable; 'current: a.png | caption' and 'proposed: b.png | caption' "
+                                 "pair as a current-vs-proposed block")
     sp_finding.add_argument("--note", default="")
     sp_finding.add_argument("--author", default=None)
     sp_finding.add_argument("--project", default=None)

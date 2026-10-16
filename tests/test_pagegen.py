@@ -636,6 +636,12 @@ def test_new_example_prints_a_document_that_generate_accepts(tmp_path):
     assert proc.returncode == 0, proc.stderr
     src = tmp_path / "page.md"
     src.write_text(proc.stdout, encoding="utf-8")
+    with pytest.raises(PageGenError, match="image not found: shots/checkout-current.png"):
+        generate(src, tmp_path / "slug")
+    from test_pagegen_images import png
+    (tmp_path / "shots").mkdir()
+    for name in ("checkout-current.png", "checkout-proposed.png"):
+        (tmp_path / "shots" / name).write_bytes(png(390, 844))
     result = generate(src, tmp_path / "slug")
     assert result["anchors"] >= 4 and result["cards"] == 1
 
