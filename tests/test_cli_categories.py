@@ -44,6 +44,50 @@ def args(**kwargs):
     return SimpleNamespace(slug="project/main", project=None, json=True, **kwargs)
 
 
+@pytest.mark.parametrize("category", ("review", "library", "findings", "plans"))
+@pytest.mark.parametrize("verdict", ("accept", "reject", "changes", "comment", "select"))
+def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, verdict):
+    from agent_annotate.hooks import check_comment_bus as hook
+
+    rows = []
+    for number, (status, decision) in enumerate([
+        ("open", {}),
+        ("open", {"verdict": verdict, "round_pending": True}),
+        ("user_confirmed", {"verdict": verdict}),
+        ("addressed_by_agent", {}),
+        ("resolved_in_version", {}),
+        ("archived", {}),
+    ], 9):
+        rows.append({"id": str(number), "number": number, "anchor_id": f"d:q{number}",
+                     "status": status, "category": category, "decision": decision,
+                     "decision_request": {"prompt": f"Question {number}"}})
+    store = {"schema_version": 2, "anchors": {row["anchor_id"]: [row] for row in rows}, "archived": {}}
+    (page.directory / "comments.json").write_text(json.dumps(store))
+    options = dict(slug="project/main", project=None, category=category, json=False)
+    assert cli.cmd_cards(SimpleNamespace(**options)) == 0
+    cards_output = capsys.readouterr().out
+    assert "3 decision card(s)" in cards_output
+    assert f"{verdict} (unsent)" in cards_output
+    assert "undecided: d:q9; unsent: d:q10" in cards_output
+    assert f"1 {verdict}" in cards_output
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    inbox_output = capsys.readouterr().out
+    assert cards_output.splitlines()[-1] == inbox_output.splitlines()[-1]
+    options["json"] = True
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    inbox = json.loads(capsys.readouterr().out)
+    assert inbox["decisions"][verdict] == 1
+    assert sum(inbox["decisions"].values()) == 1
+    assert inbox["card_count"] == 3
+    assert inbox["undecided"] == ["d:q9"] and inbox["unsent"] == ["d:q10"]
+    cards = hook._load_cards(str(page.directory))
+    assert set(cards) == {"9", "10", "11"}
+    notice = hook._slug_line("project", "main", 1,
+                             [{"event": "comment_reply", "comment_id": "10"}], cards, True)
+    assert "undecided: 1 of 3 cards; unsent: 1" in notice
+    assert f"10 {verdict}" not in notice
+
+
 def tool(name):
     return mcp_server.build_server()._tool_manager._tools[name].fn
 

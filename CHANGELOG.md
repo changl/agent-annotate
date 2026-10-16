@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Claiming a workspace carries the previous owner's read position for its page, shared tabs and category inboxes, preserving unread feedback without replaying old rounds.
+- Cards, inbox and prompt notices share live decision-state rules across all categories: withdrawn questions are excluded, and saved answers are labelled unsent and excluded from submitted verdict counts.
 - Eval reads single-page comments, categories and submitted rounds alongside legacy pages, keeps project identities separate, and reports reviewer correction candidates, stale and rail-only backlog, bulk approvals and visual versions without images. Eval and cost export local JSON and merge compatible exports from other Macs with `--merge FILE`; cost includes agent tokens per closed round.
 
 ## 2.25.1

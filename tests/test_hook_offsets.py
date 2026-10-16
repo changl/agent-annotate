@@ -194,7 +194,7 @@ def test_the_shell_wrapper_runs_the_same_hook(tmp_path):
 
 def test_the_bare_script_form_matches_the_module_form(tmp_path):
     bus_root, state, _ = _estate(tmp_path)
-    assert "2 reviewer event(s)" in _run(bus_root, state, "sess-A", as_script=True)
+    assert "2 reviewer event(s)" in _run(bus_root, state, "sess-A", {"PYTHONPATH": ""}, as_script=True)
 
 
 def test_notice_identifies_verdict_without_copying_reviewer_prose(tmp_path):
