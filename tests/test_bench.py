@@ -225,3 +225,27 @@ def test_login_shell_keeps_launcher_and_fake_transport_binaries(tmp_path):
         assert result.returncode == 97 and "benchmark blocks" in result.stderr
     finally:
         bench.teardown(sb, keep=False)
+
+
+def test_claude_temp_allowance_is_exact_and_provider_specific(tmp_path):
+    import subprocess
+    import sys
+    if sys.platform != "darwin":
+        pytest.skip("macOS sandbox-exec boundary")
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    # Stand-ins are both under pytest's directory; the profile must distinguish
+    # the exact tool-output directory from its sibling even though both exist.
+    task_dir = tmp_path / "claude-user" / "sandbox-cwd-slug"
+    task_dir.mkdir(parents=True)
+    sibling = task_dir.with_name("another-session")
+    sibling.mkdir()
+    sb = {"root": root, "claude_tmp": task_dir}
+    def write(provider, path):
+        return subprocess.run(["/usr/bin/sandbox-exec", "-p", bench.sandbox_profile(sb, provider),
+                               sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('fixture')", str(path)],
+                              capture_output=True, text=True)
+    assert write("claude", task_dir / "output").returncode == 0
+    assert write("claude", sibling / "output").returncode != 0
+    assert write("codex", task_dir / "codex-output").returncode != 0
+    assert write("codex", root / "output").returncode == 0

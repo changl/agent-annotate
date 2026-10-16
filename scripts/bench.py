@@ -413,7 +413,16 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str, provi
             shutil.copyfile(auth, codex_home / "auth.json")
             (codex_home / "auth.json").chmod(0o600)
         env["CODEX_HOME"] = str(codex_home)
+    claude_tmp = None
+    if provider == "claude":
+        # Claude's Bash tool ignores TMPDIR for its task output. Allow only
+        # this unique cwd's task directory, never the whole per-user tree.
+        slug = re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
+        temp_root = Path("/private/tmp" if sys.platform == "darwin" else tempfile.gettempdir())
+        claude_tmp = temp_root / f"claude-{os.getuid()}" / slug
+        claude_tmp.mkdir(parents=True, exist_ok=True, mode=0o700)
     return {"root": root, "home": home, "cwd": cwd, "bin": bin_dir, "env": env,
+            "claude_tmp": claude_tmp,
             "settings": settings, "port_base": port_base}
 
 
@@ -479,6 +488,20 @@ def run_setup(sb: dict, scenario: dict, session_id: str) -> str | None:
     return slug_dir.name
 
 
+def sandbox_profile(sb: dict, provider: str) -> str:
+    """Permit fixture writes and one Claude task-output directory, nothing else."""
+    blocked = [shutil.which(name) for name in ("tailscale", "orca", "cloudflared", "annotate")]
+    denies = " ".join(f"(literal {json.dumps(path)})" for p in blocked if p for path in {p, str(Path(p).resolve())})
+    roots = [sb["root"]]
+    if provider == "claude" and sb.get("claude_tmp"):
+        roots.append(sb["claude_tmp"])
+    outside = " ".join(f"(require-not (subpath {json.dumps(str(root))}))" for root in roots)
+    return ("(version 1) (allow default) "
+            f"(deny file-write* (require-all {outside} "
+            '(require-not (literal "/dev/null")) (require-not (literal "/dev/tty")))) '
+            f"(deny process-exec {denies})")
+
+
 def run_model(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None, bool]:
     cmd = [args.claude, "-p", prompt, "--setting-sources", "project", "--no-session-persistence",
            "--strict-mcp-config", "--output-format", "stream-json", "--verbose",
@@ -493,15 +516,7 @@ def run_model(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None,
     if args.max_budget_usd and args.provider == "claude":
         cmd += ["--max-budget-usd", str(args.max_budget_usd)]
     if sys.platform == "darwin":
-        # Enforce isolation outside the model: no writes to user configuration,
-        # and no Orca/Tailscale process may reach the live estate.
-        blocked = [shutil.which(name) for name in ("tailscale", "orca", "cloudflared", "annotate")]
-        denies = " ".join(f"(literal {json.dumps(path)})" for p in blocked if p for path in {p, str(Path(p).resolve())})
-        profile = ("(version 1) (allow default) "
-                   f"(deny file-write* (require-all (require-not (subpath {json.dumps(str(sb['root']))})) "
-                   '(require-not (literal "/dev/null")) (require-not (literal "/dev/tty")))) '
-                   f"(deny process-exec {denies})")
-        cmd = ["/usr/bin/sandbox-exec", "-p", profile, *cmd]
+        cmd = ["/usr/bin/sandbox-exec", "-p", sandbox_profile(sb, args.provider), *cmd]
     deadline = time.monotonic() + args.timeout
     with (sb["root"] / "transcript.ndjson").open("w") as out, (sb["root"] / "claude.stderr").open("w") as err:
         proc = subprocess.Popen(cmd, cwd=sb["cwd"], env=sb["env"], stdin=subprocess.DEVNULL,
@@ -543,6 +558,8 @@ def teardown(sb: dict, keep: bool) -> None:
             if not pids:
                 break
             time.sleep(0.1)
+    if sb.get("claude_tmp"):
+        shutil.rmtree(sb["claude_tmp"], ignore_errors=True)
     if not keep:
         shutil.rmtree(sb["root"], ignore_errors=True)
 
