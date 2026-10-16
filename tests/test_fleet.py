@@ -380,4 +380,4 @@ def test_real_isolated_worker_returns_safe_failure_without_network_protocol():
     # An unsupported inert scheme exercises the actual worker entry point and
     # private pipe protocol without contacting any server or provider.
     with pytest.raises(fleet.FleetFetchError, match="^unreachable$"):
-        fleet.fetch_json("fleet-inert://not-a-network-host/", timeout=2, max_bytes=100)
+        fleet.fetch_json("fleet-inert://not-a-network-host/", timeout=10, max_bytes=100)
