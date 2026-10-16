@@ -634,6 +634,8 @@ def _cli(*argv, cwd=None):
 def test_new_example_prints_a_document_that_generate_accepts(tmp_path):
     proc = _cli("new", "--example")
     assert proc.returncode == 0, proc.stderr
+    # Open questions first: the example's card leads, completed work follows.
+    assert proc.stdout.index("```cards") < proc.stdout.index("## Progress")
     src = tmp_path / "page.md"
     src.write_text(proc.stdout, encoding="utf-8")
     with pytest.raises(PageGenError, match="image not found: shots/checkout-current.png"):

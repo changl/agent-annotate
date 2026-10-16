@@ -91,6 +91,30 @@ def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, 
     assert f"10 {verdict}" not in notice
 
 
+def test_inbox_labels_a_deferred_verdict_unsent_only_until_its_round_is_submitted(page, capsys):
+    store_path = page.directory / "comments.json"
+    store = json.loads(store_path.read_text())
+    card = store["anchors"]["d:q1"][0]
+    card["decision"] = {"verdict": "accept", "by": "reviewer@example.com", "round_pending": True}
+    store_path.write_text(json.dumps(store))
+    with page.bus.open("a") as bus:
+        bus.write(json.dumps({"event": "comment_updated", "comment_id": card["id"], "anchor_id": "d:q1",
+                              "author": "reviewer@example.com", "decision": "accept", "deferred": True}) + "\n")
+    options = dict(slug="project/main", project=None, category=None, json=False, unread=False, all_events=False)
+
+    def updated_line():
+        assert cli.cmd_inbox(SimpleNamespace(**options)) == 0
+        return next(line for line in capsys.readouterr().out.splitlines() if "comment_updated" in line)
+
+    assert "accept (unsent)" in updated_line()
+    card["decision"].pop("round_pending")
+    store_path.write_text(json.dumps(store))
+    with page.bus.open("a") as bus:
+        bus.write(json.dumps({"event": "round_submitted", "by": "reviewer@example.com", "answers": []}) + "\n")
+    line = updated_line()
+    assert "accept" in line and "(unsent)" not in line
+
+
 def tool(name):
     return mcp_server.build_server()._tool_manager._tools[name].fn
 

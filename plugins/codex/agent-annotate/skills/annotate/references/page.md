@@ -49,7 +49,7 @@ Anchors derive from content: heading `## Scope` → `s:scope`, a nested `### Det
 ```
 ````
 
-Use positive, ascending, stable numbers and matching `d:qN` anchors. `prompt` is required; context, recommendation (option ID), options and evidence explain the decision. Options accept strings or `{id,label,consequence,style?}`; style is `primary|default|danger`. Optional `impact`: `low|medium|high`; `blocking`: boolean. Evidence entries use `{label,anchor}` and must exist in this version. Cards render after their last evidence target. At least one evidence anchor is required; every cited anchor must exist in this version, and a card cannot cite its own decision anchor. Explicit bulk approvals are refused before writing.
+Use positive, ascending, stable numbers and matching `d:qN` anchors. `prompt` is required; context, recommendation (option ID), options and evidence explain the decision. Options accept strings or `{id,label,consequence,style?}`; style is `primary|default|danger`. Optional `impact`: `low|medium|high`; `blocking`: boolean. Evidence entries use `{label,anchor}` and must exist in this version. Cards render after their last evidence target, so put the sections that carry open questions first and completed work or supporting detail after. At least one evidence anchor is required; every cited anchor must exist in this version, and a card cannot cite its own decision anchor. Explicit bulk approvals are refused before writing.
 
 The reviewer can choose, answer in words, or attach explanations. Clicks remain pending until Send. Submitted snapshots preserve prompts and answers even if a later version changes a question. Reviewer confirmation belongs to the reviewer.
 

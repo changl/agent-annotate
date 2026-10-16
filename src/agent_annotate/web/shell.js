@@ -2772,12 +2772,20 @@ function needsPush(c) {
   if (!c.flagged_for_session) return true;
   return latest > flaggedAt;
 }
+// "x of n decided" counts the rail's Needs you set (the strip badge's filter)
+// plus what the reviewer has answered there and not sent yet. A card answered
+// in an earlier round and waiting on the agent no longer needs the reviewer,
+// so it is not counted (w6e.16).
+function answersNeed(c) {
+  return sectionOf(c) === 'ready' &&
+    (hasDecisionRequest(c) || (c.replies || []).some(r => isAgentAuthor(r.author)));
+}
 function roundStats() {
   let pending = 0, decided = 0, total = 0, undecided = 0;
   for (const c of flattenAll(false)) {
-    if (!hasDecisionRequest(c) || c.status === 'addressed_by_agent') continue;
-    total++;
-    if (decisionAnswer(c)) decided++; else undecided++;
+    if (!inScope(c)) continue;
+    if (sectionOf(c) === 'needs') { total++; undecided++; }
+    else if (answersNeed(c)) { total++; decided++; }
     if (isRoundPending(c)) pending++;
   }
   return { pending, decided, total, undecided };

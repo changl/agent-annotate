@@ -9,7 +9,7 @@ document and in the rail, open the issue.
 import json
 
 import pytest
-from single_page import browser_page, feedback, go
+from single_page import browser_page, feedback, go, ready, section
 from test_card_jump import page_dir  # noqa: F401  (fixture)
 from test_card_layout import CHROME, _wait
 
@@ -84,3 +84,88 @@ def test_phone_header_menu_lists_the_board(tmp_path, board_page):
         _wait(lambda: "7 ready" in item.inner_text(), page, timeout_ms=10_000)
         assert item.get_attribute("href") == BOARD and item.get_attribute("target") == "_blank"
         page.screenshot(path=str(tmp_path / "board-link-390.png"))
+
+
+# w6e.15: header items never overlap, clip or squeeze, at any width, rail open
+# or closed; the tabs, the board link and its count share one baseline.
+HEADER_GEOMETRY = r"""() => {
+  const shown = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
+  const hdr = document.querySelector('.hdr'), H = hdr.getBoundingClientRect();
+  const items = [document.querySelector('.hdr-title'), ...document.querySelectorAll('#aa-tabs .tab'),
+    document.querySelector('#aa-tabs-menu > summary'), ...document.querySelectorAll('.hdr-right > *')]
+    .filter(el => el && shown(el)).map(el => ({ el, r: el.getBoundingClientRect(),
+      name: el.id || el.dataset.view || el.className }));
+  const problems = [];
+  items.forEach((a, i) => {
+    if (a.r.left < H.left - .5 || a.r.right > H.right + .5 || a.r.top < H.top - .5 || a.r.bottom > H.bottom + .5)
+      problems.push(a.name + ' leaves the header');
+    items.slice(i + 1).forEach(b => {
+      if (a.r.left < b.r.right - .5 && b.r.left < a.r.right - .5 && a.r.top < b.r.bottom - .5 && b.r.top < a.r.bottom - .5)
+        problems.push(a.name + ' overlaps ' + b.name);
+    });
+  });
+  // Roboto's baseline sits 0.927/1.171 down its glyph box.
+  const baseline = el => { const n = [...el.childNodes].find(c => c.nodeType === 3 && c.textContent.trim());
+    const range = document.createRange(); range.selectNodeContents(n); const r = range.getBoundingClientRect();
+    return r.top + r.height * 0.927 / 1.171; };
+  const lines = [...document.querySelectorAll('#aa-tabs .tab')].filter(shown).flatMap(t =>
+    [baseline(t), ...[...t.querySelectorAll('.badge')].map(baseline)]);
+  return { problems, spread: lines.length ? Math.max(...lines) - Math.min(...lines) : 0,
+    tabs: lines.length > 0, wraps: [...document.querySelectorAll('#aa-tabs .tab')].filter(shown)
+      .filter(t => t.getBoundingClientRect().height > 44.5 || t.scrollWidth > t.clientWidth + 1).length };
+}"""
+
+
+def test_header_items_never_overlap_and_share_one_baseline(tmp_path, board_page):
+    with browser_page(tmp_path, board_page) as (page, _):
+        # Three linked pages, as on the agent-annotate page (#23), crowd the row most.
+        def linked(route):
+            response = route.fetch()
+            data = response.json()
+            data["linked_pages"] = [{"slug": f"l{i}", "title": f"Linked {i}", "url": f"https://example.com/{i}",
+                                     "reason": "Linked page"} for i in (1, 2, 3)]
+            route.fulfill(response=response, json=data)
+        page.route("**/api/categories*", linked)
+        page.reload(wait_until="networkidle")
+        ready(page)
+        _wait(lambda: _link(page).locator(".aa-board-count").count() == 1, page, timeout_ms=10_000)
+        assert page.locator("#aa-tabs .aa-linked-tab").count() == 1
+        for collapsed in (False, True):
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.evaluate("id => document.getElementById(id).click()", "drawer-collapse" if collapsed else "drawer-strip")
+            assert page.evaluate("() => document.getElementById('drawer').classList.contains('collapsed')") == collapsed
+            for width in (390, 768, 1100, 1161, 1280, 1440, 1920, 2560):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.wait_for_timeout(150)
+                geometry = page.evaluate(HEADER_GEOMETRY)
+                assert geometry["problems"] == [], (width, collapsed, geometry)
+                assert geometry["wraps"] == 0, (width, collapsed)
+                assert geometry["spread"] < 1, (width, collapsed, geometry["spread"])
+                if width >= 1440:
+                    assert geometry["tabs"], f"tabs fold at {width}px with room to spare"
+                if width in (1100, 1280, 1440, 1920) and not collapsed:
+                    page.screenshot(path=str(tmp_path / f"header-{width}.png"), clip={"x": 0, "y": 0, "width": width, "height": 120})
+
+
+# w6e.16: the header's "x of n decided" counts exactly the rail's Needs you set
+# and what the reviewer has answered there this round; a card answered in an
+# earlier round and waiting on the agent is not counted.
+def test_header_progress_counts_the_needs_you_set(tmp_path, board_page):
+    path = board_page / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["d:q2"][0]["decision"] = {"verdict": "reject", "by": "reviewer@example.com",
+                                               "ts": "2026-10-16T11:00:00Z", "text": "Not yet"}
+    # Submitted in an earlier round: delivered to the agent, which has not replied.
+    store["anchors"]["d:q2"][0].update(flagged_for_session=True, flagged_at="2026-10-16T11:01:00Z")
+    path.write_text(json.dumps(store))
+    with browser_page(tmp_path, board_page) as (page, _):
+        feedback(page)
+        needs = page.locator('#comment-list .sec[data-section="needs"] .citem')
+        progress = page.locator("#hdr-progress-txt")
+        _wait(lambda: needs.count() == 1 and progress.is_visible(), page)
+        assert section(page, "waiting").locator('.citem[data-comment-id="card-2"]').count() == 1
+        assert progress.inner_text() == "0 of 1 decided"
+        page.locator('.citem[data-comment-id="card-1"] .decision-btns > .decision-btn').first.click()
+        _wait(lambda: progress.inner_text() == "1 of 1 decided", page)
+        assert needs.count() == 0

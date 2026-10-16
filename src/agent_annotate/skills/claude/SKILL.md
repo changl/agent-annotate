@@ -11,7 +11,7 @@ The reviewer looks and decides on the page. Chat points to it.
 
 2. **Show first.** Put what must be judged on the page: screenshots, the plan, the copy. Publish changes with `annotate new DIR --from page.md --version vN --publish --ask`. Use a `compare` fence with matching crops: phone/portrait pairs side by side (current left, proposed right), desktop/landscape stacked (current above, proposed below); `layout` overrides the default.
 
-3. **Ask at the evidence.** Put a `cards` fence in that page.md, citing the visible block each question concerns. One decision per card: prompt, context, recommendation, options and their consequences. Ask only what you cannot decide yourself. Never ask the reviewer to accept everything at once or approve what is not shown.
+3. **Ask at the evidence.** Put a `cards` fence in that page.md, citing the visible block each question concerns. One decision per card: prompt, context, recommendation, options and their consequences. Put the sections that carry open questions first, completed work and supporting detail after. Ask only what you cannot decide yourself. Never ask the reviewer to accept everything at once or approve what is not shown.
 
 4. **Keep questions live.** A new version automatically withdraws unanswered agent questions omitted from its cards. Include still-relevant questions with their stable numbers. Withdraw an unanswered question that no longer applies with `annotate withdraw SLUG N --why "Reason"`.
 
