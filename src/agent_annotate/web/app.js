@@ -320,7 +320,26 @@
     const ready = typeof b.ready === 'number' ? b.ready + ' ready' : '';
     const title = `Open the ${b.project} board in a new tab` + (ready ? ' · ' + ready : '');
     if (inMenu) return `<a role="listitem" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" class="aa-board-link"><span class="aa-tab-name">${esc(b.label)} ${ICON_EXT}</span><span class="aa-tab-state">${ready ? esc(ready) + ' · ' : ''}opens the board</span></a>`;
-    return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${esc(b.label)}${ICON_EXT}${ready ? `<span class="badge badge-soft badge-primary badge-sm aa-board-count">${esc(ready)}</span>` : ''}</a>`;
+    return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${esc(b.label)}${ICON_EXT}${ready ? `<span class="badge badge-soft badge-primary badge-xs aa-board-count">${esc(ready)}</span>` : ''}</a>`;
+  }
+
+  // w6e.15: the tabs never squeeze or overlap the tools on the right. The send
+  // note gives way first (ellipsis, down to NOTE_MIN); past that the tabs fold
+  // into the tab menu. Measured unfolded each time, so they return when room does.
+  const hdr = nav.closest('.hdr');
+  const note = document.getElementById('send-note');
+  const NOTE_MIN = 120;
+  function fit() {
+    hdr.classList.remove('tabs-fold');
+    // The durable receipt wraps rather than ellipsizes, so squeezing shows as height.
+    const n = note.getBoundingClientRect(), h = hdr.getBoundingClientRect();
+    const squeezed = (note.scrollWidth > note.clientWidth && note.clientWidth < NOTE_MIN) ||
+      (n.height > 0 && (n.top < h.top || n.bottom > h.bottom));
+    if (hdr.scrollWidth > hdr.clientWidth || squeezed) hdr.classList.add('tabs-fold');
+  }
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(fit);
+    [hdr, nav, ...hdr.querySelector('.hdr-right').children].forEach(el => ro.observe(el));
   }
 
   function render(counts) {
@@ -339,12 +358,13 @@
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
     menu.hidden = AA.TABS.length < 2 && !linked.length && !b; // UI-28: one tab, no menu
-    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
+    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
       }).join('')}${linked.length ? `<a role="listitem" href="${href('linked')}" data-view="linked" class="aa-linked-tab"${cur === 'linked' ? ' aria-current="page"' : ''}><span class="aa-tab-name">Linked pages</span><span class="aa-tab-state">${linked.length} separate page${linked.length === 1 ? '' : 's'} declared for this project</span></a>` : ''}${boardHtml(b, true)}</div>`;
     menu.open = open;
+    fit();
   }
   function openMenu(on) { menu.open = !!on; }
   menu.addEventListener('click', (e) => { if (e.target.closest('a[href]')) menu.open = false; });

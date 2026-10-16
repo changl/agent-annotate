@@ -11,9 +11,20 @@
 .hdr{justify-content:flex-start}
 .hdr-left{flex:0 0 200px;width:200px;min-width:0}
 .hdr-right{margin-left:auto}
-.aa-tabs{display:flex;align-items:flex-end;align-self:stretch;min-width:0;margin:-8px 0}
+/* Header items never overlap or squeeze (w6e.15): tabs keep their width, the
+   send note gives way first, and tabs that still do not fit fold into the
+   phone's tab menu (app.js adds .tabs-fold). */
+.hdr-right{flex-shrink:1;min-width:0}
+.hdr-right > *{flex-shrink:0}
+.hdr-right > .send-note{flex-shrink:1;min-width:0}
+.hdr{height:calc(52px * max(1, var(--aa-text, 1)))} /* grows with Aa, so larger text never spills out */
+.hdr.tabs-fold .aa-tabs{display:none}
+.hdr.tabs-fold .aa-tabs-menu{display:block}
+.aa-tabs{display:flex;align-items:flex-end;align-self:stretch;flex:none;margin:-8px 16px -8px 0}
 .aa-tabs .tabs{height:100%;align-items:flex-end;flex-wrap:nowrap}
-.aa-tabs .tab{font-weight:600;gap:6px;height:44px;padding-inline:14px;color:var(--muted);text-decoration:none;white-space:nowrap}
+/* One baseline for every label and count: centred as a line, aligned inside it */
+.aa-tabs .tab{font-weight:600;gap:6px;height:44px;padding-inline:14px;color:var(--muted);text-decoration:none;white-space:nowrap;flex-shrink:0;flex-wrap:wrap;align-content:center;align-items:baseline}
+.aa-tabs .tab svg.i{align-self:center}
 .aa-tabs .tab:hover{color:var(--color-base-content)}
 .aa-tabs .tab.tab-active{color:var(--color-base-content)}
 .aa-tabs .badge{font-variant-numeric:tabular-nums}
@@ -147,9 +158,15 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
    rail is the bottom sheet on every tab, one Send bar ─────────────────── */
 @media (max-width:1160px),(max-height:480px){
   /* Keep the open tab menu inside the phone viewport. */
-  .aa-tabs-list{position:fixed;left:10px;right:10px;top:50px;width:auto}
+  .aa-tabs-list{position:fixed;left:10px;right:10px;top:calc(50px * max(1, var(--aa-text, 1)));width:auto}
   .aa-tabs-list .aa-tab-name{font-size:calc(12px * var(--aa-text, 1))}
-  .hdr-left{flex-basis:120px;width:120px}
+  .hdr-left{flex:0 1 120px;width:auto}
+  /* Large text on a phone: the title and the menu's label ellipsize before
+     anything leaves the header */
+  .hdr-right{flex-shrink:0}
+  .aa-tabs-menu{flex:0 1 auto;min-width:0}
+  .aa-tabs-menu > summary{max-width:100%}
+  .aa-tabs-menu-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
   .aa-tabs{display:none}
   .aa-tabs-menu{display:block}
   .view-hd{padding:6px 12px}

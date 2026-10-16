@@ -2237,8 +2237,18 @@ def _comment_texts(store: dict) -> dict:
     return out
 
 
-def _inbox_line(ev: dict, texts: dict | None = None) -> str:
-    """ts  event  comment_id  anchor  author  verdict/status  text[:120]"""
+def _round_pending_ids(store: dict) -> set:
+    """Cards whose verdict still waits for the reviewer's Send."""
+    return {c.get("id") for _anchor, c in _iter_comments(store)
+            if isinstance(c.get("decision"), dict) and c["decision"].get("round_pending")}
+
+
+def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None) -> str:
+    """ts  event  comment_id  anchor  author  verdict/status  text[:120]
+
+    A deferred verdict is unsent only while its card is still round-pending;
+    once the round is submitted the same bus line is history, not a draft.
+    """
     verdict = (ev.get("decision") or ev.get("new_status")
                or ev.get("delivery") or "")
     body, note = (texts or {}).get(ev.get("comment_id")) or ("", "")
@@ -2257,7 +2267,8 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
         (ev.get("comment_id") or "")[:10],
         (ev.get("anchor_id") or "")[:18],
         author[:24],
-        str(verdict)[:9] + (" (unsent)" if ev.get("deferred") else ""),
+        str(verdict)[:9] + (" (unsent)" if ev.get("deferred") and (
+            pending is None or ev.get("comment_id") in pending) else ""),
         shown,
     )
 
@@ -2444,8 +2455,9 @@ def cmd_inbox(args) -> int:
     else:
         if not shown:
             print("(no new events)" if args.unread else "(no events)")
+        pending = _round_pending_ids(store)
         for ev in shown:
-            print(_inbox_line(ev, texts))
+            print(_inbox_line(ev, texts, pending))
             for line in _round_lines(ev):
                 print(line)
         if cards:

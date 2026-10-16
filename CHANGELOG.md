@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Render page-owned HTML/HTM assets inline in an opaque script-enabled sandbox, so embedded plans work without access to page cookies, APIs or top navigation. Reviewer sign-in also issues an HttpOnly, Secure, SameSite=None cookie scoped to the page's assets path, accepted only for inert image/video GET/HEAD; anonymous HTTPS assets remain private. Serve WebM/MP4 assets inline with video MIME types and no CORS; the sandbox cannot read JSON, which remains an authenticated download. Proof uploads and other non-inert assets still download; nosniff and content-hash/ETag caching remain intact, with media caches varying by session cookie and fetch mode.
+- Header items never overlap, clip or squeeze from 390 to 2560px, with the rail open or closed and at every text size. Tabs keep their width and share one baseline with their counts (the Beads count is an xs badge like the others); the send note gives way first, then tabs that still do not fit fold into the tab menu. The header grows with Aa, and on a phone the title and the menu label ellipsize before anything leaves the header.
+- The header's "x of n decided" counts exactly the rail's Needs you set plus what the reviewer has answered there and not yet sent. A card answered in an earlier round and waiting on the agent is no longer counted ("1 of 2 decided" with one card in Needs you).
+- `inbox --unread` labels a deferred verdict "(unsent)" only while its card is still waiting for Send; after the round is submitted the same event is shown without the label.
+- Skill step 3 and the page-format reference: put the sections that carry open questions first, completed work and supporting detail after. `new --example` leads with its question.
 
 ## 2.26.0
 

@@ -1214,17 +1214,9 @@ EXAMPLE = '''---
 title: Project workspace
 ---
 
-## Progress
-
-Build passed. Preview is ready for review.
-
-```project
-{"title":"Project","modules":[{"id":"status","title":"Progress","kind":"progress","items":[{"label":"Preview build","status":"done","detail":"Checks passed; preview ready."}]}]}
-```
-
 ## Checkout
 
-Screenshots are local files, copied into the page. Phone shots sit side by side; desktop shots stack.
+The open question comes first; its card renders after the comparison. Screenshots are local files, copied into the page. Phone shots sit side by side; desktop shots stack.
 
 ```compare
 title: Checkout
@@ -1232,10 +1224,16 @@ current: shots/checkout-current.png | Today
 proposed: shots/checkout-proposed.png | One-step pay
 ```
 
-## Feedback
-
 ```cards
-[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Ship the one-step checkout?","context":"Checks passed; the preview matches the proposed screen.","recommendation":"ship","options":[{"id":"ship","label":"Ship","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep the current checkout."}],"evidence":[{"label":"Checkout, current vs proposed","anchor":"cmp:checkout"},{"label":"Build result","anchor":"s:progress:p1"}]}}]
+[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Ship the one-step checkout?","context":"Checks passed; the preview matches the proposed screen.","recommendation":"ship","options":[{"id":"ship","label":"Ship","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep the current checkout."}],"evidence":[{"label":"Checkout, current vs proposed","anchor":"cmp:checkout"}]}}]
+```
+
+## Progress
+
+Build passed. Preview is ready for review.
+
+```project
+{"title":"Project","modules":[{"id":"status","title":"Progress","kind":"progress","items":[{"label":"Preview build","status":"done","detail":"Checks passed; preview ready."}]}]}
 ```
 '''
 
