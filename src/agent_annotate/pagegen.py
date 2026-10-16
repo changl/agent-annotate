@@ -11,8 +11,9 @@ here instead, and the input is a markdown file the agent can write in one pass.
 The parser is deliberately small and deliberately dependency-free. It reads
 line by line, it never backtracks, and the only markdown it knows is the
 markdown a review page actually uses: headings, paragraphs, bullet and numbered
-lists, pipe tables, fenced code, KPI lines, and a fenced ```cards block that
-carries the decision round in the same document as the prose it is about.
+lists, pipe tables, fenced code, KPI lines, images, a ```compare block, and a
+fenced ```cards block that carries the decision round in the same document as
+the prose it is about.
 
 Nothing here talks to a server. `--publish` and `--ask` hand off to the real
 `cmd_publish` / `cmd_ask` so there is exactly one publish code path.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import html
 import json
 import os
@@ -29,6 +31,7 @@ import re
 import sys
 from pathlib import Path
 
+from .images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES, image_size, layout_for
 from .paths import WEB_DIR
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -146,6 +149,8 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _BULLET = re.compile(r"^[-*+]\s+(.*)$")
 _ORDERED = re.compile(r"^\d+[.)]\s+(.*)$")
 _KPI = re.compile(r"^kpi:\s*(.*)$", re.IGNORECASE)
+_IMAGE = re.compile(r"^!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)$")
+_INLINE_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 
 def _is_table_sep(line: str) -> bool:
@@ -159,7 +164,7 @@ def _is_table_sep(line: str) -> bool:
 def _starts_block(s: str) -> bool:
     return bool(
         _FENCE.match(s) or _HEADING.match(s) or _BULLET.match(s)
-        or _ORDERED.match(s) or _KPI.match(s) or s.startswith("|")
+        or _ORDERED.match(s) or _KPI.match(s) or _IMAGE.match(s) or s.startswith("|")
     )
 
 
@@ -190,8 +195,14 @@ def parse_blocks(body: str) -> list[dict]:
                 raise PageGenError(f"fenced block opened with ```{lang} was never closed")
             i += 1
             text = "\n".join(buf)
-            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "details", "project")
+            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "details", "project", "compare")
                           else {"kind": "code", "lang": lang, "text": text})
+            continue
+
+        image = _IMAGE.match(s)
+        if image:
+            blocks.append({"kind": "image", "caption": image.group(1).strip(), "path": image.group(2)})
+            i += 1
             continue
 
         heading = _HEADING.match(s)
@@ -242,6 +253,163 @@ def parse_blocks(body: str) -> list[dict]:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Images and the current-vs-proposed block
+#
+# Decision #16: the reviewer judges pictures inline, without clicking.
+# Portrait (phone) shots sit side by side, sized so a pair or a flow row fits
+# the viewport height; landscape (desktop) shots stack full width, current
+# above proposed. Orientation comes from the file header at build time.
+#
+#     ![Checkout today](shots/checkout.png)
+#
+#     ```compare
+#     title: Checkout flow            (optional)
+#     current: shots/a1.png | Cart
+#     proposed: shots/b1.png | Cart
+#     current: shots/a2.png | Pay     (several pairs make a flow)
+#     proposed: shots/b2.png | Pay
+#     layout: side                    (optional: side or stack)
+#     ```
+# ────────────────────────────────────────────────────────────────────────────
+ROLES = {"current": "Current", "proposed": "Proposed"}
+
+
+def parse_compare(raw: str) -> tuple[str, list[tuple[tuple[str, str], tuple[str, str]]], str | None]:
+    """A ```compare fence → (title, [((path, caption), (path, caption))], layout)."""
+    title, layout, pairs = "", None, []
+    pending: tuple[str, str] | None = None
+    for line in raw.split("\n"):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        key, sep, value = s.partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if not sep or key not in ("title", "layout", "current", "proposed"):
+            raise PageGenError(f"compare line must be `current:`, `proposed:`, `title:` or `layout:`: {s!r}")
+        if key == "title":
+            title = value
+        elif key == "layout":
+            if value.lower() not in ("side", "stack", "auto"):
+                raise PageGenError(f"compare layout must be side, stack or auto (got {value!r})")
+            layout = None if value.lower() == "auto" else value.lower()
+        else:
+            path, _, caption = value.partition("|")
+            item = (path.strip(), caption.strip())
+            if not item[0]:
+                raise PageGenError(f"compare `{key}:` needs an image path: {s!r}")
+            if key == "current":
+                if pending:
+                    raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+                pending = item
+            else:
+                if not pending:
+                    raise PageGenError(f"compare `proposed: {item[0]}` needs a `current:` line before it")
+                pairs.append((pending, item))
+                pending = None
+    if pending:
+        raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+    if not pairs:
+        raise PageGenError("a compare fence needs at least one `current:` / `proposed:` pair")
+    return title, pairs, layout
+
+
+class ImageStore:
+    """Resolves image paths for one build and stages the copies it needs.
+
+    A relative path is read from the markdown's folder first, then (for
+    `assets/…` and `attachments/…`) from the page folder. A file outside the
+    page is staged under `assets/<content hash>-<name>` and written by
+    `copy_into()` only after the page passes lint.
+    """
+
+    def __init__(self, base_dir: Path | None, page_dir: Path | None) -> None:
+        self.base_dir, self.page_dir = base_dir, page_dir
+        self.cache: dict[str, tuple[str, tuple[int, int] | None]] = {}
+        self.staged: dict[str, bytes] = {}
+
+    def resolve(self, ref: str) -> tuple[str, tuple[int, int] | None]:
+        if ref in self.cache:
+            return self.cache[ref]
+        if re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)", ref):
+            raise PageGenError(f"image must be a local file, not a URL: {ref}")
+        if Path(ref).suffix.lower() not in IMAGE_SUFFIXES:
+            raise PageGenError(f"image must be a .png, .jpg, .gif or .webp file: {ref}")
+        path = Path(ref).expanduser()
+        candidates = [path] if path.is_absolute() else []
+        if not path.is_absolute() and self.base_dir:
+            candidates.append(self.base_dir / path)
+        if not path.is_absolute() and self.page_dir and path.parts[0] in ("assets", "attachments"):
+            candidates.append(self.page_dir / path)
+        found = next((c for c in candidates if c.is_file()), None)
+        if found is None:
+            raise PageGenError(f"image not found: {ref}")
+        if found.stat().st_size > MAX_IMAGE_BYTES:
+            raise PageGenError(f"image is over 10 MB: {ref}")
+        data = found.read_bytes()
+        size = image_size(data)
+        if size is None:
+            raise PageGenError(f"not a readable PNG, JPEG, GIF or WebP image: {ref}")
+        src = None
+        if self.page_dir:
+            try:
+                rel = found.resolve().relative_to(self.page_dir.resolve()).as_posix()
+                if rel.split("/", 1)[0] in ("assets", "attachments"):
+                    src = rel
+            except ValueError:
+                pass
+        if src is None:
+            stem = re.sub(r"[^A-Za-z0-9_.-]", "-", found.name).replace("..", "-").strip(".-")[:80] or "image"
+            name = hashlib.sha256(data).hexdigest()[:12] + "-" + stem
+            self.staged[name] = data
+            src = "assets/" + name
+        self.cache[ref] = (src, size)
+        return self.cache[ref]
+
+    def copy_into(self, page_dir: Path) -> None:
+        for name, data in self.staged.items():
+            target = page_dir / "assets" / name
+            if not target.is_file() or target.read_bytes() != data:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_name(target.name + ".tmp")
+                tmp.write_bytes(data)
+                os.replace(tmp, target)
+
+
+def _img(src: str, size: tuple[int, int] | None, alt: str) -> str:
+    dims = f' width="{size[0]}" height="{size[1]}"' if size else ""
+    return f'<img src="{E(src, quote=True)}" alt="{E(alt, quote=True)}"{dims}>'
+
+
+def compare_html(pairs: list, layout: str, title: str = "", attrs: str = "") -> str:
+    """The current-vs-proposed block. findings.js `compareHtml` builds the same markup.
+
+    `pairs` is [((src, size, caption), (src, size, caption))]; `layout` is
+    `side` (portrait) or `stack` (landscape).
+    """
+    def cell(role: str, item: tuple, label: bool = True) -> str:
+        src, size, caption = item
+        # The space keeps "Current Today" apart in a card's evidence excerpt.
+        tag = f'<span class="aa-cmp-label" data-role="{role}">{ROLES[role]}</span> ' if label else ""
+        alt = f"{ROLES[role]}: {caption}" if caption else ROLES[role]
+        return (f'<figure class="aa-cmp-cell" data-role="{role}"><figcaption title="{E(caption, quote=True)}">'
+                f'{tag}{inline(caption)}</figcaption>{_img(src, size, alt)}</figure>')
+
+    head = f'<figcaption class="aa-cmp-title">{inline(title)}</figcaption>' if title else ""
+    if layout == "side" and len(pairs) > 1:
+        body = "".join(
+            f'<div class="aa-cmp-row-head"><span class="aa-cmp-label" data-role="{role}">{ROLES[role]}</span></div>'
+            f'<div class="aa-cmp-row">{"".join(cell(role, pair[k], label=False) for pair in pairs)}</div>'
+            for k, role in enumerate(ROLES))
+    elif layout == "side":
+        body = f'<div class="aa-cmp-row">{cell("current", pairs[0][0])}{cell("proposed", pairs[0][1])}</div>'
+    else:
+        body = "".join(f'<div class="aa-cmp-pair">{cell("current", c)}{cell("proposed", p)}</div>'
+                       for c, p in pairs)
+    return (f'<figure class="aa-compare" data-layout="{layout}" data-pairs="{len(pairs)}"{attrs}>'
+            f"{head}{body}</figure>")
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Rendering
 # ────────────────────────────────────────────────────────────────────────────
 class Renderer:
@@ -258,13 +426,17 @@ class Renderer:
         tbl:<section>:col:<slug>  one column, keyed on its header
         tbl:<section>:row:<slug>  one row, keyed on its first cell
         kpi:<slug>                one KPI tile
+        fig:<slug>                an image, keyed on its caption (else file name)
+        cmp:<slug>                a compare block, keyed on its title (else section)
         d:<n>                     a decision card that owns its own anchor
     """
 
     def __init__(self, title: str, skip_cards: bool = False,
-                 structural: set[str] | None = None) -> None:
+                 structural: set[str] | None = None,
+                 images: ImageStore | None = None) -> None:
         self.title = title
         self.skip_cards = skip_cards
+        self.images = images or ImageStore(None, None)
         # Anchors the prose owns, collected by a first pass. A card may name one
         # (that is how a card is pinned to a table row); it must never mint a
         # second element carrying the same id, and a card that runs before the
@@ -347,6 +519,8 @@ class Renderer:
 
     # ── blocks ─────────────────────────────────────────────────────────────
     def para(self, text: str) -> None:
+        if _INLINE_IMAGE.search(text):
+            raise PageGenError(f"put each image on its own line: {clip(text, 80)!r}")
         self.ensure_section()
         aid = self._unique(f"s:{self.section_slug}:p{self._next('p:' + self.section_slug)}")
         self.reg(aid, text, "para", parent=self.parent)
@@ -370,6 +544,25 @@ class Renderer:
             f"s:{self.section_slug}:code{self._next('code:' + self.section_slug)}")
         self.reg(aid, f"{lang or 'code'} block", "code", parent=self.parent)
         self.parts.append(f'<pre data-anchor-id="{aid}"><code>{E(text)}</code></pre>')
+
+    def figure(self, caption: str, ref: str) -> None:
+        self.ensure_section()
+        src, size = self.images.resolve(ref)
+        aid = self._unique(f"fig:{slugify(caption or Path(ref).stem, 40)}")
+        self.reg(aid, caption or Path(ref).name, "figure", parent=self.parent)
+        orient = "portrait" if size and size[1] > size[0] else "landscape"
+        cap = f"<figcaption>{inline(caption)}</figcaption>" if caption else ""
+        self.parts.append(f'<figure class="aa-figure" data-orient="{orient}" data-anchor-id="{aid}">'
+                          f"{_img(src, size, caption or Path(ref).name)}{cap}</figure>")
+
+    def compare(self, raw: str) -> None:
+        self.ensure_section()
+        title, pairs, layout = parse_compare(raw)
+        resolved = [tuple((*self.images.resolve(path), caption) for path, caption in pair) for pair in pairs]
+        layout = layout or layout_for([item[1] for pair in resolved for item in pair])
+        aid = self._unique(f"cmp:{slugify(title, 40) if title else self.section_slug}")
+        self.reg(aid, title or "Current vs proposed", "compare", parent=self.parent)
+        self.parts.append(compare_html(resolved, layout, title, f' data-anchor-id="{aid}"'))
 
     def details(self, raw: str) -> None:
         self.ensure_section()
@@ -565,13 +758,18 @@ class Renderer:
             self.cards_block(block["raw"])
         elif kind == "details":
             self.details(block["raw"])
+        elif kind == "image":
+            self.figure(block["caption"], block["path"])
+        elif kind == "compare":
+            self.compare(block["raw"])
 
     @property
     def canvas(self) -> str:
         return CSS + "\n" + "\n".join(self.parts)
 
 
-def render(meta: dict, blocks: list[dict]) -> tuple[str, dict, list[dict]]:
+def render(meta: dict, blocks: list[dict],
+           images: ImageStore | None = None) -> tuple[str, dict, list[dict]]:
     """Two passes: one to learn which anchors the prose owns, one to render.
 
     Without the first pass a card that names `tbl:columns:row:tier` before the
@@ -580,9 +778,10 @@ def render(meta: dict, blocks: list[dict]) -> tuple[str, dict, list[dict]]:
     scroll nowhere.
     """
     title = meta.get("title", "")
-    prepass = Renderer(title, skip_cards=True)
+    images = images or ImageStore(None, None)
+    prepass = Renderer(title, skip_cards=True, images=images)
     prepass.run(blocks)
-    renderer = Renderer(title, structural=set(prepass.used))
+    renderer = Renderer(title, structural=set(prepass.used), images=images)
     renderer.run(blocks)
     return renderer.canvas, renderer.registry, renderer.cards
 
@@ -732,6 +931,7 @@ def _full_plan_warnings(slug_dir: Path, version: str, blocks: list[dict]) -> lis
 # No author input: the comparison is on the rendered section, so anything that
 # changes the HTML — a word, a link target, a table cell — counts as a change.
 # ────────────────────────────────────────────────────────────────────────────
+_HAS_IMAGES = re.compile(r"^\s*(?:!\[|(?:```|~~~)\s*compare\s*$)", re.MULTILINE | re.IGNORECASE)
 _SECTION_RE = re.compile(
     r'<section data-anchor-id="([^"]+)"(?: [a-z-]+="[^"]*")*>(.*?)</section>', re.DOTALL)
 
@@ -754,6 +954,8 @@ def section_bodies(canvas: str) -> dict[str, str]:
 def _previous_sections(slug_dir: Path, version: str, title: str) -> tuple[str, dict] | None:
     """The previous version's sections, from its markdown or its rendered page.
 
+    A previous markdown with images is compared through its rendered page: its
+    image paths may now name newer screenshots, which would hide a change.
     None when there is nothing trustworthy to compare with: v1, no previous
     version on disk, or a previous page that was not generated from markdown
     (a hand-built page's sections mean nothing to this comparison).
@@ -763,8 +965,9 @@ def _previous_sections(slug_dir: Path, version: str, title: str) -> tuple[str, d
     prev = f"v{int(version[1:]) - 1}"
     try:
         source = slug_dir / "source" / f"{prev}.md"
-        if source.is_file():
-            prev_meta, prev_body = parse_front_matter(source.read_text(encoding="utf-8"))
+        prev_text = source.read_text(encoding="utf-8") if source.is_file() else None
+        if prev_text is not None and not _HAS_IMAGES.search(prev_text):
+            prev_meta, prev_body = parse_front_matter(prev_text)
             prev_meta.setdefault("title", title)
             canvas, _registry, _cards = render(prev_meta, parse_blocks(prev_body))
             return prev, section_bodies(canvas)
@@ -839,8 +1042,13 @@ def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
     return template.replace("{{CANVAS}}", canvas)
 
 
-def render_plan(text: str, plan_id: str, *, title: str | None = None) -> tuple[str, str]:
-    """Render an independent Markdown plan without writing Review/page metadata."""
+def render_plan(text: str, plan_id: str, *, title: str | None = None,
+                base_dir: Path | None = None, page_dir: Path | None = None) -> tuple[str, str]:
+    """Render an independent Markdown plan without writing Review/page metadata.
+
+    Images resolve from `base_dir` (the plan file's folder) and are copied into
+    `page_dir`/assets, which a plan shares with Review (its <base> is the page).
+    """
     meta, body = parse_front_matter(text)
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
@@ -849,10 +1057,13 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None) -> tuple[s
     meta["slug"] = f"plan:{plan_id}"
     meta.setdefault("date", datetime.date.today().isoformat())
     blocks = parse_blocks(body)
-    canvas, registry, _cards = render(meta, blocks)
+    images = ImageStore(base_dir, page_dir)
+    canvas, registry, _cards = render(meta, blocks, images)
     problems = lint(canvas, registry)
     if problems:
         raise PageGenError("plan rejected by lint: " + "; ".join(problems))
+    if page_dir is not None:
+        images.copy_into(page_dir)
     # The HTTP plan route supplies the actual version; no Review version is embedded.
     return build_html(meta, canvas, registry, ""), meta["title"]
 
@@ -887,7 +1098,8 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
             project_data = validate_project(json.loads(project_blocks[0]["raw"]))
         except ValueError as exc:
             raise PageGenError(f"project fence: {exc}") from exc
-    canvas, registry, cards = render(meta, blocks)
+    images = ImageStore(source.parent, slug_dir)
+    canvas, registry, cards = render(meta, blocks, images)
     problems = lint(canvas, registry)
     problems += _round_contract_problems(meta, blocks, cards, registry, version)
     if problems:
@@ -907,6 +1119,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
     html_out = build_html(meta, canvas, registry, version)
+    images.copy_into(slug_dir)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
     if project_data is not None:
         from .project_state import save_project
@@ -1003,10 +1216,20 @@ Build passed. Preview is ready for review.
 {"title":"Project","modules":[{"id":"status","title":"Progress","kind":"progress","items":[{"label":"Preview build","status":"done","detail":"Checks passed; preview ready."}]}]}
 ```
 
+## Checkout
+
+Screenshots are local files, copied into the page. Phone shots sit side by side; desktop shots stack.
+
+```compare
+title: Checkout
+current: shots/checkout-current.png | Today
+proposed: shots/checkout-proposed.png | One-step pay
+```
+
 ## Feedback
 
 ```cards
-[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Publish the preview?","context":"Checks passed.","recommendation":"publish","options":[{"id":"publish","label":"Publish","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep it private."}],"evidence":[{"label":"Build result","anchor":"s:progress:p1"}]}}]
+[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Ship the one-step checkout?","context":"Checks passed; the preview matches the proposed screen.","recommendation":"ship","options":[{"id":"ship","label":"Ship","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep the current checkout."}],"evidence":[{"label":"Checkout, current vs proposed","anchor":"cmp:checkout"},{"label":"Build result","anchor":"s:progress:p1"}]}}]
 ```
 '''
 
