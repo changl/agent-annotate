@@ -104,6 +104,20 @@ def test_two_pages_use_most_recent_activity_not_registry_order(estate):
     assert workspace.workspace_data(estate.repo)["workspace"]["slug"] == "project/main"
 
 
+def test_publishing_a_plan_counts_as_page_activity(estate):
+    directory = estate.root / "other-page"
+    meta = directory / "plans" / "launch" / "meta.json"
+    meta.parent.mkdir(parents=True)
+    data = json.loads((estate.state / "project.json").read_text())
+    data["slugs"]["other"] = {**estate.record, "slug_dir": str(directory)}
+    (estate.state / "project.json").write_text(json.dumps(data))
+    assert workspace.workspace_data(estate.repo)["workspace"]["slug"] == "project/main"
+    meta.write_text('{"current": "v1"}')
+    timestamp = (estate.page / "comments.json").stat().st_mtime + 10
+    os.utime(meta, (timestamp, timestamp))
+    assert workspace.workspace_data(estate.repo)["workspace"]["slug"] == "project/other"
+
+
 @pytest.mark.parametrize("invocation", ["module", "script", "shell"])
 def test_hook_outputs_one_visible_line_with_full_share_url_and_silence_elsewhere(estate, invocation):
     from agent_annotate.review_access import ensure_key

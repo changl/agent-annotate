@@ -120,9 +120,13 @@ def activity(record: dict) -> float:
         except (TypeError, ValueError, AttributeError):
             pass
     if record.get("slug_dir"):
-        for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson"):
+        directory = Path(record["slug_dir"])
+        files = [directory / name for name in (
+            "comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson")]
+        files.extend((directory / "plans").glob("*/meta.json"))
+        for path in files:
             try:
-                values.append((Path(record["slug_dir"]) / name).stat().st_mtime)
+                values.append(path.stat().st_mtime)
             except OSError:
                 pass
     return max(values)
