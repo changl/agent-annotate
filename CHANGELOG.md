@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Serve validated content-hashed assets and images with immutable caching, revalidate mutable files with strong ETags and 304s, and gzip text responses when accepted. HTTP/1.1 keeps read connections alive with explicit response lengths and bounded idle time; upload sandbox and nosniff headers remain on cached responses.
 - Add reversible `annotate archive PROJECT/SLUG --why TEXT [--dry-run]` and `unarchive PROJECT/SLUG [--dry-run]`. Archives keep their readable URL and all feedback, refuse writes, and leave inboxes, active counts, workspace candidates, prompt notices and version banners.
 - Claiming a workspace carries the previous owner's read position for its page, shared tabs and category inboxes, preserving unread feedback without replaying old rounds.
 - Cards, inbox and prompt notices share live decision-state rules across all categories: withdrawn questions are excluded, and saved answers are labelled unsent and excluded from submitted verdict counts.
