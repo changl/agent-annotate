@@ -1380,4 +1380,5 @@ def add_parser(sub) -> None:
     sp.add_argument("--hostname", default=None)
     sp.add_argument("--public", action="store_true",
                     help="legacy Cloudflare option; Funnel is public by default")
+    sp.add_argument("--json", action="store_true", help="print full generation and publication output")
     sp.set_defaults(func=cmd_new)

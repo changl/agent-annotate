@@ -57,6 +57,14 @@ import json, os, sys, tomllib
 from pathlib import Path
 
 argv = sys.argv[1:]
+# A model may request Funnel because the production skill names it. This
+# launcher is a local fixture boundary regardless of the requested transport.
+for i, arg in enumerate(argv):
+    if arg == "--transport" and i + 1 < len(argv):
+        argv[i + 1] = "local"
+    elif arg.startswith("--transport="):
+        argv[i] = "--transport=local"
+argv = [a for a in argv if a != "--public"]
 if argv[:1] and argv[0] in ("new", "publish", "publish-version"):
     toml = Path("__TOML__")
     names = {Path(a).expanduser().resolve().parent.name for a in argv[1:] if not a.startswith("-")}
@@ -182,6 +190,41 @@ def parse_stream(lines) -> dict:
     return out
 
 
+def parse_codex_stream(lines) -> dict:
+    """Codex exec JSONL uses completed command items and a final usage event."""
+    out = {"tool_calls": 0, "tool_errors": 0, "annotate_calls": 0, "annotate_failures": 0,
+           "skill_used": False, "failures": [], "is_error": True}
+    subs = Counter()
+    for raw in lines:
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        item = ev.get("item") or {}
+        if ev.get("type") == "item.completed" and item.get("type") == "command_execution":
+            out["tool_calls"] += 1
+            cmd, result = item.get("command", ""), item.get("aggregated_output", "")
+            failed = item.get("exit_code", 0) != 0
+            out["tool_errors"] += failed
+            commands = annotate_subcommands(cmd.replace("/bin/zsh -lc ", "").strip("'\""))
+            if commands:
+                out["annotate_calls"] += 1
+                subs.update(commands)
+                if output_failed(result, failed):
+                    out["annotate_failures"] += 1
+                    out["failures"].append({"cmd": _clip(cmd, 240), "out": _clip(result, 400)})
+            if "SKILL.md" in cmd and "annotate" in cmd:
+                out["skill_used"] = True
+        elif ev.get("type") == "turn.completed":
+            usage = ev.get("usage") or {}
+            out.update(input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                       cache_read=usage.get("cached_input_tokens"), thinking_tokens=usage.get("reasoning_output_tokens"), is_error=False)
+        elif ev.get("type") in ("error", "turn.failed"):
+            out["is_error"] = True
+    out["annotate_subcommands"] = dict(subs)
+    return out
+
+
 def card_problems(card: dict, anchors: set) -> list[str]:
     """What a decision card lacks: context, recommendation, a consequence per
     option (free-text answers excepted), evidence anchors that are on the page."""
@@ -297,7 +340,7 @@ def _toml_section(name: str, port_base: int) -> str:
             'local_author = "chang@example.com"\nlocal_author_name = "Benchmark reviewer"\n')
 
 
-def make_sandbox(build: dict, scenario: dict, port_base: int, python: str) -> dict:
+def make_sandbox(build: dict, scenario: dict, port_base: int, python: str, provider="claude") -> dict:
     root = Path(tempfile.mkdtemp(prefix=f"annotate-bench-{scenario['name']}-")).resolve()
     home, bin_dir, cwd = root / "home", root / "bin", root / scenario.get("cwd", "work")
     for d in ("state", "bus", "config", "data", "bus-archive"):
@@ -310,6 +353,11 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str) -> di
     launcher.write_text(LAUNCHER.replace("__PY__", python).replace("__SRC__", str(build["src"]))
                         .replace("__TOML__", str(toml)).replace("__PORT__", str(port_base)))
     launcher.chmod(0o755)
+    for name in ("tailscale", "cloudflared", "orca"):
+        blocked = bin_dir / name
+        blocked.write_text("#!/bin/sh\necho 'ERROR: benchmark blocks live transport/Orca access' >&2\nexit 97\n")
+        blocked.chmod(0o755)
+    (home / "tmp").mkdir()
     for rel, fixture in (scenario.get("files") or {}).items():
         (cwd / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(scenario["dir"] / fixture, cwd / rel)
@@ -330,6 +378,8 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str) -> di
     env = {k: v for k, v in os.environ.items() if not k.startswith(STRIP_ENV)}
     env.update({
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "TMPDIR": str(home / "tmp"),
+        "ANNOTATE_VERSION_GUARD": "0",
         "PYTHONPATH": str(build["src"]),
         "ANNOTATE_STATE_DIR": str(home / "state"),
         "ANNOTATE_BUS_ROOT": str(home / "bus"),
@@ -340,11 +390,28 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str) -> di
         "ANNOTATE_SHIM_PATH": str(launcher),
         "ANNOTATE_TRANSCRIPT_GLOB": str(home / "no-transcripts" / "*.jsonl"),
     })
-    skill = cwd / ".claude" / "skills" / "annotate"
-    done = subprocess.run([str(launcher), "install-skill", "--provider", "claude", "--dest", str(skill)],
-                          env=env, cwd=cwd, capture_output=True, text=True)
-    if done.returncode:     # a build older than install-skill: its text as-is
-        shutil.copytree(build["src"] / "agent_annotate" / "skills" / "claude", skill, dirs_exist_ok=True)
+    # Codex's login shell sources /etc/zprofile, which can replace PATH.
+    # Both zsh startup phases restore the sandbox launcher, never the host CLI.
+    zsh_home = home / "zsh"
+    zsh_home.mkdir()
+    import shlex
+    profile = "export PATH=" + shlex.quote(env["PATH"]) + "\n"
+    for startup in (".zshenv", ".zprofile"):
+        (zsh_home / startup).write_text(profile)
+    env["ZDOTDIR"] = str(zsh_home)
+    skill = cwd / (".claude" if provider == "claude" else ".agents") / "skills" / "annotate"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    text_src = build.get("skill_src", build["src"]) / "agent_annotate" / "skills"
+    shutil.copytree(text_src / provider, skill, dirs_exist_ok=True)
+    shutil.copytree(text_src / "claude" / "references", skill / "references", dirs_exist_ok=True)
+    if provider == "codex":
+        codex_home = home / "codex"
+        codex_home.mkdir(mode=0o700)
+        auth = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json"
+        if auth.is_file():
+            shutil.copyfile(auth, codex_home / "auth.json")
+            (codex_home / "auth.json").chmod(0o600)
+        env["CODEX_HOME"] = str(codex_home)
     return {"root": root, "home": home, "cwd": cwd, "bin": bin_dir, "env": env,
             "settings": settings, "port_base": port_base}
 
@@ -416,8 +483,24 @@ def run_claude(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None
            "--strict-mcp-config", "--output-format", "stream-json", "--verbose",
            "--settings", str(sb["settings"]), "--model", args.model, "--effort", args.effort,
            "--permission-mode", "dontAsk", "--session-id", session_id]
+    if args.provider == "codex":
+        cmd = [args.codex, "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral",
+               "--skip-git-repo-check", "--sandbox", "danger-full-access", "--json",
+               "--model", args.model, "-c", f'model_reasoning_effort="{args.effort}"', prompt]
+        # The explicit skill path is the same prompt prefix for both text versions.
+        cmd[-1] = "Read .agents/skills/annotate/SKILL.md and use it for this task. " + prompt
     if args.max_budget_usd:
         cmd += ["--max-budget-usd", str(args.max_budget_usd)]
+    if sys.platform == "darwin":
+        # Enforce isolation outside the model: no writes to user configuration,
+        # and no Orca/Tailscale process may reach the live estate.
+        blocked = [shutil.which(name) for name in ("tailscale", "orca", "cloudflared", "annotate")]
+        denies = " ".join(f"(literal {json.dumps(path)})" for p in blocked if p for path in {p, str(Path(p).resolve())})
+        profile = ("(version 1) (allow default) "
+                   f"(deny file-write* (require-all (require-not (subpath {json.dumps(str(sb['root']))})) "
+                   '(require-not (literal "/dev/null")) (require-not (literal "/dev/tty")))) '
+                   f"(deny process-exec {denies})")
+        cmd = ["/usr/bin/sandbox-exec", "-p", profile, *cmd]
     deadline = time.monotonic() + args.timeout
     with (sb["root"] / "transcript.ndjson").open("w") as out, (sb["root"] / "claude.stderr").open("w") as err:
         proc = subprocess.Popen(cmd, cwd=sb["cwd"], env=sb["env"], stdin=subprocess.DEVNULL,
@@ -444,6 +527,8 @@ def teardown(sb: dict, keep: bool) -> None:
     """Stop every process whose command line or environment names this
     sandbox — the page servers publish started, and anything else it ran."""
     root = str(sb["root"])
+    # Retained transcripts never retain the temporary provider credential copy.
+    (sb["home"] / "codex" / "auth.json").unlink(missing_ok=True)
     ps = subprocess.run(["ps", "-axeww", "-o", "pid=,command="], capture_output=True, text=True).stdout
     pids = {int(line.split(None, 1)[0]) for line in ps.splitlines() if root in line} - {os.getpid()}
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -573,6 +658,26 @@ CHECKS = {"live": chk_live, "version_html": chk_version_html, "current": chk_cur
           "disposed": chk_disposed, "keywords": chk_keywords}
 
 
+def sandbox_problems(sb: dict, records=None) -> list[str]:
+    problems = []
+    for rec in registry(sb["home"]) if records is None else records:
+        if rec.get("transport") != "local":
+            problems.append(f"non-sandbox transport: {rec.get('transport')}")
+        if not sb["port_base"] <= int(rec.get("port") or 0) < sb["port_base"] + PORT_STRIDE:
+            problems.append("non-sandbox port")
+        if not Path(rec.get("slug_dir") or "/").resolve().is_relative_to(sb["root"]):
+            problems.append("non-sandbox page directory")
+        for field in ("url", "local_url", "public_url"):
+            if rec.get(field) and urllib.parse.urlsplit(rec[field]).hostname not in ("localhost", "127.0.0.1"):
+                problems.append(f"non-sandbox route: {field}")
+        pid = int(rec.get("pid") or 0)
+        if pid and _alive(pid):
+            cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+            if str(sb["root"]) not in cmd:
+                problems.append("non-sandbox process")
+    return problems
+
+
 def run_checks(sb: dict, scenario: dict, slug: str | None) -> dict:
     rec = page_record(sb["home"], slug)
     slug_dir = Path(rec["slug_dir"]) if rec and rec.get("slug_dir") else None
@@ -612,7 +717,7 @@ def run_one(build: dict, scenario: dict, run: int, slots: queue.Queue, args) -> 
            "session_id": session_id, "outcome": False}
     sb = None
     try:
-        sb = make_sandbox(build, scenario, PORT_BASE + PORT_STRIDE * slot, args.python)
+        sb = make_sandbox(build, scenario, args.port_base + PORT_STRIDE * slot, args.python, args.provider)
         row["sandbox"] = str(sb["root"])
         slug = run_setup(sb, scenario, session_id)
         if not args.no_model:
@@ -621,8 +726,12 @@ def run_one(build: dict, scenario: dict, run: int, slots: queue.Queue, args) -> 
             row["exit_code"], row["timed_out"] = run_claude(sb, prompt, session_id, args)
             row["wall_s"] = round(time.monotonic() - started, 1)
             with (sb["root"] / "transcript.ndjson").open() as fh:
-                row.update(parse_stream(fh))
+                row.update((parse_codex_stream if args.provider == "codex" else parse_stream)(fh))
+            if args.provider == "codex":
+                row["duration_s"] = row["wall_s"]
         row["checks"] = run_checks(sb, scenario, slug)
+        unsafe = sandbox_problems(sb)
+        row["checks"]["sandbox"] = {"ok": not unsafe, "detail": "; ".join(unsafe)}
         row["outcome"] = all(c["ok"] for c in row["checks"].values())
         rec = page_record(sb["home"], slug)
         bus = [line for p in (sb["home"] / "bus").rglob("*.ndjson")
@@ -682,10 +791,13 @@ def main(argv=None) -> int:
                     help="git ref or checkout directory; repeat. The first is the baseline.")
     ap.add_argument("--scenario", action="append", help="default: every bench/fixtures/*/scenario.json")
     ap.add_argument("--runs", type=int, default=3, help="runs per ref per scenario (default 3)")
-    ap.add_argument("--model", default="opus")
+    ap.add_argument("--provider", choices=("claude", "codex"), default="claude")
+    ap.add_argument("--skill-ref", action="append", help="skill text ref per --ref; runtime stays at --ref")
+    ap.add_argument("--model", default=None)
     ap.add_argument("--effort", default="medium")
     ap.add_argument("--max-budget-usd", type=float, help="passed to claude -p, per run")
     ap.add_argument("--timeout", type=int, default=1200, help="seconds per claude run (default 1200)")
+    ap.add_argument("--port-base", type=int, default=PORT_BASE, help="sandbox port range start")
     ap.add_argument("--jobs", type=int, default=1, help="concurrent runs (default 1)")
     ap.add_argument("--json", dest="json_out", help="write every raw row here")
     ap.add_argument("--keep", action="store_true", help="keep sandboxes and exported builds")
@@ -694,7 +806,11 @@ def main(argv=None) -> int:
     ap.add_argument("--python", default=sys.executable,
                     help="interpreter that runs each build (needs its deps; default: this one)")
     ap.add_argument("--claude", default=shutil.which("claude") or "claude")
+    ap.add_argument("--codex", default=shutil.which("codex") or "codex")
     args = ap.parse_args(argv)
+    args.model = args.model or ("opus" if args.provider == "claude" else "gpt-6.1-sol")
+    if args.skill_ref and len(args.skill_ref) != len(args.ref):
+        ap.error("pass one --skill-ref for each --ref")
 
     scenarios = load_scenarios(args.scenario)
     export_root = Path(tempfile.mkdtemp(prefix="annotate-bench-builds-")).resolve()
@@ -705,6 +821,10 @@ def main(argv=None) -> int:
         if seen[b["label"]] > 1:      # the same ref twice measures the noise floor
             b["label"] += f"#{seen[b['label']]}"
         builds.append(b)
+    if args.skill_ref:
+        for build, ref in zip(builds, args.skill_ref):
+            text_build = export_ref(ref, export_root)
+            build.update(skill_src=text_build["src"], skill_ref=ref, label=f"text:{ref}")
     # Interleaved, so drift over the session (cache warmth, load) hits every ref alike.
     jobs = [(b, s, run) for run in range(1, args.runs + 1) for s in scenarios for b in builds]
     slots: queue.Queue = queue.Queue()
@@ -739,7 +859,7 @@ def main(argv=None) -> int:
         Path(args.json_out).write_text(json.dumps({
             "meta": {"refs": [{k: str(v) for k, v in b.items()} for b in builds],
                      "scenarios": [s["name"] for s in scenarios], "runs": args.runs,
-                     "model": args.model, "effort": args.effort,
+                     "provider": args.provider, "model": args.model, "effort": args.effort,
                      "date": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
             "rows": rows}, indent=2, default=str))
     return 0 if all(r["outcome"] for r in rows) else 1

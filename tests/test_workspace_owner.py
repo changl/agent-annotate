@@ -123,7 +123,7 @@ def test_tab_round_routes_to_canonical_current_owner_once_without_disclosing_sha
     assert delivery.dispatch_record(child, "tab", "tab")["deliveries"][0]["state"] == "accepted"
     assert len(sends) == 1 and sends[0][3] == "new-terminal"
     prompt = sends[0][sends[0].index("--text") + 1]
-    assert "Page: https://reviews.example/main/" in prompt
+    assert "Round submitted on https://reviews.example/main/" in prompt
     assert "annotate inbox tab/tab --unread" in prompt
     assert "#review=" not in prompt and review_access.read_key(linked.root / "main") not in prompt
     assert page_url(child).startswith("https://reviews.example/tab/#review=")

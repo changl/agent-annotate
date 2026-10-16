@@ -646,12 +646,12 @@ def test_new_example_prints_a_document_that_generate_accepts(tmp_path):
     assert result["anchors"] >= 4 and result["cards"] == 1
 
 
-def test_new_prints_the_anchor_count_and_the_next_commands(tmp_path):
+def test_new_json_preserves_the_anchor_count_and_the_next_commands(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(EXAMPLE, encoding="utf-8")
-    proc = _cli("new", str(tmp_path / "items-model-review"), "--from", str(src))
+    proc = _cli("new", str(tmp_path / "items-model-review"), "--from", str(src), "--json")
     assert proc.returncode == 0, proc.stderr
-    assert "anchors        3" in proc.stdout
+    assert "anchors        3" in json.loads(proc.stdout)["output"]
     assert "publish " in proc.stdout
     assert "ask items-model-review --from" in proc.stdout
     assert "--version v1" in proc.stdout
@@ -670,3 +670,12 @@ def test_new_reports_a_lint_failure_on_stderr_with_a_nonzero_exit(tmp_path):
     assert proc.returncode == 1
     assert "no anchors" in proc.stderr
     assert not (tmp_path / "slug" / "versions").exists()
+
+
+def test_new_default_output_is_one_linked_line(tmp_path):
+    source = tmp_path / "page.md"
+    source.write_text("## Result\n\nChecks passed.\n")
+    result = _cli("new", str(tmp_path / "receipt"), "--from", str(source))
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.splitlines()) == 1
+    assert "/receipt/current.html" in result.stdout
