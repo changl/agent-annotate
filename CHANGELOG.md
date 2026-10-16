@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Eval reads single-page comments, categories and submitted rounds alongside legacy pages, keeps project identities separate, and reports reviewer correction candidates, stale and rail-only backlog, bulk approvals and visual versions without images. Eval and cost export local JSON and merge compatible exports from other Macs with `--merge FILE`; cost includes agent tokens per closed round.
+
 ## 2.25.1
 
 - Switching a document's own tab re-places its questions: they render at their evidence in the tab just opened (before, only after the next data refresh).
