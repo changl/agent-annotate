@@ -19,7 +19,7 @@ Outputs (default <state>/logs/, override with --out-dir)
 -------
   eval-baseline.json   machine-readable, every table as data
   eval-baseline.md     human-readable tables
-  eval-transcript-cache.json   transcript scan cache (--refresh-transcripts)
+  --json emits portable observations to stdout without writing files; --merge FILE combines another Mac.
 
 Sections
 --------
@@ -42,8 +42,8 @@ measurement.
 
 --since is the recency cutoff. Sections 1-5 cover every slug but tag each one
 in/out of window and repeat their aggregates for the in-window subset.
-Sections 6-7 scan transcripts, which is expensive, so they only cover in-window
-slugs.
+Section 6 reports in-window slugs; section 7 reports all observed notices.
+Exports preserve local observations so merging never opens another Mac's paths.
 """
 
 from __future__ import annotations
@@ -57,6 +57,13 @@ import os
 import re
 import statistics
 import sys
+import subprocess
+from pathlib import Path
+
+if not __package__:  # Preserve the documented bare-script entry point.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "agent_annotate"
+from . import measurement
 
 HOME = os.path.expanduser("~")
 try:
@@ -252,7 +259,10 @@ def load_registry():
         for slug, s in (doc.get("slugs") or {}).items():
             if not isinstance(s, dict):
                 continue
-            out[slug] = {
+            out[f"{project}/{slug}"] = {
+                "owner_session": s.get("owner_session"),
+                "superseded_by": s.get("superseded_by"),
+                "slug": slug,
                 "project": project,
                 "slug_dir": s.get("slug_dir"),
                 "url": s.get("url"),
@@ -314,16 +324,17 @@ def collect_slugs():
     """Union of registry slugs and bus slugs, with store + meta loaded where present."""
     reg = load_registry()
     keys = {}
-    for slug, meta in reg.items():
-        keys[slug] = meta.get("project")
+    for key, meta in reg.items():
+        keys[key] = meta.get("project")
     for path in glob.glob(os.path.join(BUS_DIR, "*", "*.ndjson")):
         slug = os.path.basename(path)[:-len(".ndjson")]
         project = os.path.basename(os.path.dirname(path))
-        keys.setdefault(slug, project)
+        keys.setdefault(f"{project}/{slug}", project)
 
     slugs = {}
-    for slug, project in keys.items():
-        info = dict(reg.get(slug) or {})
+    for key, project in keys.items():
+        slug = key.split("/", 1)[1]
+        info = dict(reg.get(key) or {})
         info.setdefault("project", project)
         info["slug"] = slug
         bus_path, events = load_bus(info["project"], slug)
@@ -344,10 +355,24 @@ def collect_slugs():
                     meta = json.load(open(mj, encoding="utf-8"))
                 except Exception:
                     meta = None
-        info["store"] = store
+        info["store"] = {} if store is not None else None
         info["meta"] = meta
         info["comments"] = [c for c, _a in iter_comments(store)] if store else []
-        slugs[slug] = info
+        # The store's map key is authoritative for older cards without anchor_id.
+        if store:
+            for aid, items in (store.get("anchors") or {}).items():
+                for c in items:
+                    if isinstance(c, dict):
+                        c.setdefault("anchor_id", aid)
+        info["categories"] = measurement.read_json(Path(sd) / "categories.json") if sd else None
+        info["rounds"] = []
+        if sd:
+            from .review_history import _events
+            info["rounds"] = list(_events(Path(sd) / "rounds.ndjson"))
+        # Category metadata is optional; comment categories remain authoritative.
+        if meta:
+            info["meta"] = {k: meta[k] for k in ("current", "history", "owner", "superseded_by") if k in meta}
+        slugs[key] = info
     return slugs
 
 
@@ -419,6 +444,7 @@ def verdict_events(info):
         cid = ids[0] if ids else e.get("comment_id")
         if (cid, e.get("ts")) in seen:
             continue
+        seen.add((cid, e.get("ts")))
         out.append({
             "comment_id": cid,
             "anchor_id": e.get("anchor_id"),
@@ -429,6 +455,29 @@ def verdict_events(info):
             "prior_verdict": e.get("prior_verdict"),
             "source": "session_push",
         })
+    for c in info["comments"]:
+        for d in list(c.get("decision_history") or []) + [c.get("decision") or {}]:
+            key = (c.get("id"), d.get("ts"))
+            if not d.get("verdict") or c.get("round_pending") or d.get("round_pending") or d.get("discarded") or key in seen:
+                continue
+            seen.add(key)
+            out.append({"comment_id": c.get("id"), "anchor_id": c.get("anchor_id"),
+                        "verdict": d["verdict"], "author": d.get("by"), "ts": parse_ts(d.get("ts")),
+                        "source": "store"})
+    for rd in info.get("rounds") or []:
+        for answer in rd.get("answers") or []:
+            ts = answer.get("ts") or rd.get("ts")
+            key = (answer.get("comment_id"), ts)
+            if not answer.get("verdict") or key in seen:
+                continue
+            if not answer.get("ts") and any(
+                    v["comment_id"] == answer.get("comment_id") and v["verdict"] == answer["verdict"]
+                    and v["ts"] and parse_ts(ts) and v["ts"] <= parse_ts(ts) for v in out):
+                continue  # The snapshot has only submission time; do not count its saved choice twice.
+            seen.add(key)
+            out.append({"comment_id": answer.get("comment_id"), "anchor_id": None,
+                        "verdict": answer["verdict"], "author": answer.get("by") or rd.get("by"),
+                        "ts": parse_ts(ts), "source": "round"})
     out.sort(key=lambda v: v["ts"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc))
     return out
 
@@ -496,7 +545,12 @@ def section1(slugs, since):
             "slug": slug,
             "project": info.get("project"),
             "created": created.isoformat() if created else None,
-            "in_window": bool(created and since and created >= since),
+            "in_window": any(t and t >= since for t in [created,
+                *[e.get("_ts") for e in evs],
+                *[parse_ts(c.get("created_at")) for c in comments],
+                *[parse_ts((c.get("decision") or {}).get("ts")) for c in comments],
+                *[parse_ts(rd.get("ts")) for rd in info.get("rounds") or []],
+                *[parse_ts(h.get("ts")) for h in meta.get("history", [])]]),
             "comments": len(comments),
             "decision_requests": len(drs),
             "verdicts": {k: vcount.get(k, 0) for k in list(VERDICTS) + ["none", "closed"]},
@@ -524,7 +578,25 @@ def section2(slugs, gap_minutes=10):
     """
     rounds = []
     for slug, info in sorted(slugs.items()):
-        vs = [v for v in verdict_events(info) if v["ts"] and not is_agent(v["author"])]
+        submitted = {r.get("id") or r.get("round_id") or r.get("ts"): r
+                     for r in info["events"] if r.get("event") == "round_submitted"}
+        submitted.update({r.get("id") or r.get("ts"): r for r in info.get("rounds") or []})
+        if submitted:
+            for identifier, rd in sorted(submitted.items(), key=lambda item: str(item[1].get("ts") or "")):
+                answers = rd.get("answers") or []
+                rounds.append({"slug": slug, "round": identifier, "verdicts": len(answers),
+                               "start": rd.get("ts") or "", "duration_min": None,
+                               "first_reaction_min": r1(mins(parse_ts(rd.get("ts")),
+                                   first_after(agent_reaction_times(info), parse_ts(rd.get("ts"))))),
+                               "reacted_mid_round": False, "source": "submitted",
+                               "verdict_mix": dict(collections.Counter(a.get("verdict") for a in answers))})
+        first_submission = min((parse_ts(r.get("ts")) for r in submitted.values()
+                                if parse_ts(r.get("ts"))), default=None)
+        vs = [v for v in verdict_events(info) if v["ts"] and not is_agent(v["author"])
+              and (not first_submission or v["ts"] < first_submission)]
+        if submitted:
+            covered = {a.get("comment_id") for rd in submitted.values() for a in rd.get("answers") or []}
+            vs = [v for v in vs if v["comment_id"] not in covered]
         if not vs:
             continue
         reactions = agent_reaction_times(info)
@@ -842,20 +914,22 @@ def scan_transcripts(ids_of_interest, refresh=False):
 
     if not ids_of_interest:
         return {}, {}, []
-    idpat = re.compile("|".join(sorted(ids_of_interest)))
+    idpat = re.compile(r"(?<![0-9a-f])[0-9a-f]{12}(?![0-9a-f])")
     sightings = collections.defaultdict(list)
     file_ids = collections.defaultdict(set)
     notices = []
     seen_notice = set()
 
+    byte_ids = re.compile(rb"(?<![0-9a-f])[0-9a-f]{12}(?![0-9a-f])")
+    wanted = {i.encode() for i in ids_of_interest}
     for path in files:
         try:
             raw = open(path, "rb").read()
         except OSError:
             continue
         # cheap byte-level gate: skip files that mention neither an id nor a notice
-        has_ids = any(i.encode() in raw for i in ids_of_interest)
-        has_notice = b"New comments since last turn" in raw
+        has_ids = any(m.group() in wanted for m in byte_ids.finditer(raw))
+        has_notice = b"[annotate]" in raw or b"New comments since last turn" in raw
         if not has_ids and not has_notice:
             continue
         del raw
@@ -866,9 +940,9 @@ def scan_transcripts(ids_of_interest, refresh=False):
                 # tool_use lines are parsed even without an id so the tool_use_id
                 # -> (name, input) map is complete when the matching tool_result
                 # arrives; otherwise every sighting looks like bare assistant text.
-                interesting = ("New comments since last turn" in line
-                               or '"tool_use"' in line
-                               or idpat.search(line))
+                line_ids = set(idpat.findall(line)) & ids_of_interest
+                interesting = ("[annotate]" in line or "New comments since last turn" in line
+                               or '"tool_use"' in line or line_ids)
                 if not interesting:
                     continue
                 try:
@@ -885,7 +959,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
                                                   json.dumps(b.get("input"))[:4000])
                 if ("New comments since last turn" not in line
                         and "reviewer event(s) since your last read" not in line
-                        and not idpat.search(line)):
+                        and not line_ids):
                     continue
 
                 # The hook notice arrives as a type:"attachment" line and is also
@@ -912,7 +986,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
                     text = _block_text(b)
                     if not text:
                         continue
-                    found = set(idpat.findall(text))
+                    found = set(idpat.findall(text)) & ids_of_interest
                     if not found:
                         continue
                     btype = b.get("type") if isinstance(b, dict) else None
@@ -930,7 +1004,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
                                                "how": how, "tool": tname})
                 # ids that only appear outside message.content (attachments,
                 # toolUseResult payloads, queue operations)
-                for cid in set(idpat.findall(sline)) - in_blocks:
+                for cid in (set(idpat.findall(sline)) & ids_of_interest) - in_blocks:
                     file_ids[path].add(cid)
                     sightings[cid].append({
                         "ts": ts, "file": path, "tool": None,
@@ -939,16 +1013,6 @@ def scan_transcripts(ids_of_interest, refresh=False):
 
     for cid in sightings:
         sightings[cid].sort(key=lambda s: s["ts"] or "")
-    payload = {
-        "sig": sig, "ids": sorted(ids_of_interest),
-        "sightings": {k: v for k, v in sightings.items()},
-        "file_ids": {k: sorted(v) for k, v in file_ids.items()},
-        "notices": notices,
-    }
-    try:
-        json.dump(payload, open(CACHE_PATH, "w", encoding="utf-8"))
-    except OSError:
-        pass
     return dict(sightings), dict(file_ids), notices
 
 
@@ -996,7 +1060,7 @@ def section6(slugs, window, sightings):
     return {"rows": rows, "detail": detail}
 
 
-def section7(slugs, notices, file_ids):
+def section7(slugs, notices, file_ids, dir_hits=None):
     """
     Owner vs bystander: did the transcript that received the notice belong to
     the session that owns that page?
@@ -1008,27 +1072,16 @@ def section7(slugs, notices, file_ids):
               (catches owners that only ever published and never read a comment)
     A notice counted as a bystander under BOTH signals is a genuine misroute.
     """
-    slug_ids, slug_dirs = {}, {}
+    slug_ids = {}
     for slug, info in slugs.items():
         s = {c.get("id") for c in info["comments"] if c.get("id")}
         s |= {e.get("comment_id") for e in info["events"] if e.get("comment_id")}
         slug_ids[slug] = {i for i in s if i}
-        slug_dirs[slug] = info.get("slug_dir")
 
     # loose signal: only the handful of transcripts that received a notice
     notice_files = sorted({n["file"] for n in notices})
-    dir_hits = {}
-    for path in notice_files:
-        try:
-            raw = open(path, "rb").read()
-        except OSError:
-            continue
-        hit = set()
-        for slug, sd in slug_dirs.items():
-            if sd and sd.encode() in raw:
-                hit.add(slug)
-        dir_hits[path] = hit
-        del raw
+    if dir_hits is None:
+        dir_hits = directory_hits(slugs, notice_files)
 
     per_slug = collections.defaultdict(
         lambda: {"owner": 0, "bystander": 0, "owner_loose": 0,
@@ -1036,7 +1089,7 @@ def section7(slugs, notices, file_ids):
     owner = bystander = unknown = 0
     owner_loose = 0
     for n in notices:
-        slug = n["slug"]
+        slug = n.get("page") or f"{n['project']}/{n['slug']}"
         ids = slug_ids.get(slug)
         if ids is None:
             unknown += 1
@@ -1245,6 +1298,13 @@ def render_md(res):
                  v["owner_transcripts"], v["bystander_transcripts"]]
                 for k, v in s7["per_slug"].items()]))
     A("")
+    A("## Simplification measures")
+    A("")
+    A(md_table(["measure", "value"], [[k, v] for k, v in res["measures"].items() if k != "pages"]))
+    A("")
+    A("Correction, bulk-approval and visual-change counts are heuristic candidates. "
+      "Backlog is a current snapshot; other measures use the cutoff. Owner absence is a local process observation; "
+      "unknown owners and unavailable documents are reported separately.")
     return "\n".join(L)
 
 
@@ -1252,12 +1312,75 @@ def render_md(res):
 # main
 # --------------------------------------------------------------------------- #
 
+def directory_hits(slugs, files):
+    out = {}
+    for filename in files:
+        try:
+            raw = Path(filename).read_bytes()
+        except OSError:
+            continue
+        out[filename] = [key for key, info in slugs.items()
+                         if info.get("slug_dir") and info["slug_dir"].encode() in raw]
+    return out
+
+
+def local_source(slugs, since, refresh, codex_root):
+    ids = {c.get("id") for info in slugs.values() for c in info["comments"]}
+    ids |= {e.get("comment_id") for info in slugs.values() for e in info["events"]}
+    ids = {i for i in ids if i and ID_RE.match(str(i))}
+    sightings, file_ids, notices = scan_transcripts(ids, refresh=refresh)
+    try:
+        snapshot = subprocess.run(["ps", "-ww", "-eo", "command="], capture_output=True,
+                                  text=True, timeout=10, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        snapshot = ""
+    claude_files = glob.glob(TRANSCRIPT_GLOB)
+    codex_files = list(Path(codex_root).expanduser().rglob("*.jsonl")) if codex_root else []
+    return {"host": measurement.host(), "slugs": slugs, "sightings": sightings,
+            "file_ids": {k: sorted(v) for k, v in file_ids.items()}, "notices": notices,
+            "dir_hits": directory_hits(slugs, {n["file"] for n in notices}),
+            "transcripts_scanned": len(claude_files) + len(codex_files),
+            "hook_log": hook_log_stats(parse_ts(since + "T00:00:00Z")),
+            "pages": [measurement.page_metrics(i, since, snapshot) for i in slugs.values() if i.get("slug_dir")],
+            "corrections": measurement.corrections(claude_files, codex_files, since)}
+
+
+def combined_inputs(source_list):
+    slugs, sightings, file_ids, notices, dir_hits = {}, {}, {}, [], {}
+    for source in source_list:
+        prefix = source["host"] + ":"
+        # Copy before adding host scope so repeated merges remain idempotent.
+        pages = json.loads(json.dumps(source["slugs"], default=str))
+        for key, info in pages.items():
+            for c in info["comments"]:
+                if c.get("id"):
+                    c["id"] = prefix + c["id"]
+            for e in info["events"]:
+                e["_ts"] = parse_ts(e.get("ts"))
+                if e.get("comment_id"):
+                    e["comment_id"] = prefix + e["comment_id"]
+                if e.get("comment_ids"):
+                    e["comment_ids"] = [prefix + cid for cid in e["comment_ids"]]
+            for rd in info.get("rounds") or []:
+                for answer in rd.get("answers") or []:
+                    if answer.get("comment_id"):
+                        answer["comment_id"] = prefix + answer["comment_id"]
+            slugs[prefix + key] = info
+        for cid, rows in source["sightings"].items():
+            sightings[prefix + cid] = [{**r, "file": prefix + r["file"]} for r in rows]
+        file_ids.update({prefix + f: {prefix + cid for cid in ids} for f, ids in source["file_ids"].items()})
+        notices.extend({**n, "file": prefix + n["file"], "page": prefix + n["project"] + "/" + n["slug"]}
+                       for n in source["notices"])
+        dir_hits.update({prefix + f: [prefix + key for key in keys] for f, keys in source["dir_hits"].items()})
+    return slugs, sightings, file_ids, notices, dir_hits
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", default="2026-09-01",
-                    help="recency cutoff (YYYY-MM-DD). Sections 6-7 only cover slugs "
-                         "created on or after it. Default 2026-09-01.")
+                    help="recency cutoff (YYYY-MM-DD). Section 6 only covers slugs "
+                         "active on or after it. Default 2026-09-01.")
     ap.add_argument("--round-gap", type=float, default=10.0,
                     help="minutes of silence that start a new reviewer round (default 10)")
     ap.add_argument("--refresh-transcripts", action="store_true",
@@ -1268,13 +1391,26 @@ def main(argv=None):
     ap.add_argument("--bus-dir", default=None, help="bus root (default: paths.BUS_ROOT)")
     ap.add_argument("--transcript-glob", default=None,
                     help="Claude transcripts to scan (default: ~/.claude/projects/*/*.jsonl)")
+    ap.add_argument("--json", action="store_true", help="emit a portable JSON export to stdout; write nothing")
+    ap.add_argument("--merge", action="append", default=[], metavar="FILE", help="combine an export from another Mac (repeatable)")
+    ap.add_argument("--codex", action="store_true", help="include Codex reviewer messages")
+    ap.add_argument("--codex-root", default=str(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"),
+                    help="Codex transcripts for reviewer corrections")
     args = ap.parse_args(argv)
     _rebind_roots(args.state_dir, args.bus_dir, args.transcript_glob)
     if not args.out_dir:
         args.out_dir = LOG_DIR
 
     since = parse_ts(args.since + "T00:00:00Z")
-    slugs = collect_slugs()
+    if since is None:
+        ap.error("--since must be YYYY-MM-DD")
+    settings = {"since": args.since, "round_gap_min": args.round_gap, "codex": args.codex}
+    local = local_source(collect_slugs(), args.since, args.refresh_transcripts, args.codex_root if args.codex else None)
+    try:
+        source_list = measurement.sources("eval", local, args.merge, settings)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        ap.error(str(exc))
+    slugs, sightings, file_ids, notices, dir_hits = combined_inputs(source_list)
 
     now = dt.datetime.now(dt.timezone.utc)
     latest = max([e["_ts"] for i in slugs.values() for e in i["events"] if e["_ts"]] or [now])
@@ -1336,16 +1472,6 @@ def main(argv=None):
     s4 = section4(slugs)
     s5 = section5(slugs)
 
-    ids = set()
-    for slug in window:
-        info = slugs[slug]
-        ids |= {c.get("id") for c in info["comments"] if c.get("id")}
-        ids |= {e.get("comment_id") for e in info["events"] if e.get("comment_id")}
-    ids = {i for i in ids if i and ID_RE.match(str(i))}
-    print(f"[eval] scanning transcripts for {len(ids)} comment ids "
-          f"across {len(window)} in-window slugs...", file=sys.stderr)
-    sightings, file_ids, notices = scan_transcripts(ids, refresh=args.refresh_transcripts)
-
     s6 = section6(slugs, window, sightings)
     lats = [d["seen_min"] for d in s6["detail"] if d["seen_min"] is not None]
     hows = collections.Counter(d["how"] for d in s6["detail"])
@@ -1356,9 +1482,11 @@ def main(argv=None):
         "median_min": r1(med(lats)), "p90_min": r1(pct(lats, 0.9)),
         "how": dict(hows),
     }
-    s7 = section7(slugs, notices, file_ids)
+    s7 = section7(slugs, notices, file_ids, dir_hits)
 
     res = {
+        "measurement": "eval", "schema_version": 1, "settings": settings, "sources": source_list,
+        "measures": measurement.scorecard(source_list),
         "meta": {
             "generated_at": now.isoformat(timespec="seconds"),
             "since": args.since,
@@ -1367,18 +1495,22 @@ def main(argv=None):
             "slugs_total": len(slugs),
             "slugs_in_window": len(window),
             "window_slugs": window,
-            "transcripts_scanned": len(glob.glob(TRANSCRIPT_GLOB)),
+            "transcripts_scanned": sum(s["transcripts_scanned"] for s in source_list),
+            "hosts": [s["host"] for s in source_list],
         },
         "s1": s1, "s1_aggregate": s1_agg,
         "s2": s2, "s2_summary": s2_sum,
         "s3": s3, "s4": s4, "s5": s5,
         "s6": s6, "s6_summary": s6_sum,
         "s7": s7,
-        "hook_log": hook_log_stats(since),
+        "hook_log": {"log_lines": sum(s["hook_log"]["log_lines"] for s in source_list),
+                     "notices": sum(s["hook_log"]["notices"] for s in source_list)},
     }
 
+    if args.json:
+        print(json.dumps(res, default=str))
+        return
     os.makedirs(args.out_dir, exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
     jp = os.path.join(args.out_dir, "eval-baseline.json")
     mp = os.path.join(args.out_dir, "eval-baseline.md")
     json.dump(res, open(jp, "w", encoding="utf-8"), indent=1, default=str)

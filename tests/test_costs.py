@@ -182,7 +182,7 @@ def test_report_json_and_estimate_through_the_cli(root, tmp_path, capsys):
     assert "resolution target anchor not found ×1" in out
 
     assert costs.run(_args(root, json=True)) == 0
-    assert len(json.loads(capsys.readouterr().out)) == 4
+    assert len(json.loads(capsys.readouterr().out)["rows"]) == 4
 
     model = tmp_path / "model.json"
     model.write_text(json.dumps({"anchor not found": "fixed"}))

@@ -30,6 +30,7 @@ using it, and its test runs would swamp the failure rate.
 
 from __future__ import annotations
 
+import ast
 import collections
 import datetime as dt
 import json
@@ -40,12 +41,13 @@ import sys
 from pathlib import Path
 
 from .paths import PACKAGE_DIR, TRANSCRIPT_GLOB
+from . import measurement
 
 # Retired names stay so older transcripts still parse.
 SUBS = ("new publish publish-version unpublish status claim ask cards open-cards inbox monitor "
         "addressed resolve carry close retire revive doctor eval cost watch install-shim "
         "install-skill archive-comment migrate prune-bus sessions connect disconnect send "
-        "hook-check mcp update sync-skills project deliver report").split()
+        "hook-check mcp update sync-skills project deliver report workspace copy library plan finding consolidate").split()
 _SUB = "|".join(sorted(map(re.escape, SUBS), key=len, reverse=True))
 SEG_CLI = re.compile(rf"^(?:\S*/)?annotate\s+({_SUB})(?=\s|$)(.*)$", re.S)
 SEG_PY = re.compile(rf"^\S*python[0-9.]*\s+(?:-u\s+)?(?:-m\s+agent_annotate\.cli|\S*annotate/cli\.py)"
@@ -316,10 +318,10 @@ def _codex_command(p: dict) -> str:
     the exec_command calls inside a JS `exec` cell."""
     if p.get("type") == "custom_tool_call":
         cmds = []
-        for lit in re.findall(r'"cmd"\s*:\s*("(?:[^"\\]|\\.)*")', p.get("input") or ""):
+        for lit in re.findall(r"(?:[\"']?cmd[\"']?)\s*:\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')", p.get("input") or ""):
             try:
-                cmds.append(json.loads(lit))
-            except ValueError:
+                cmds.append(ast.literal_eval(lit))
+            except (ValueError, SyntaxError):
                 pass
         return "\n".join(cmds)
     try:
@@ -398,7 +400,7 @@ def link_retries(rows: list[dict]) -> None:
     by_file = collections.defaultdict(list)
     for r in rows:
         if r["kind"] == "cli":
-            by_file[r["file"]].append(r)
+            by_file[(r.get("host"), r["file"])].append(r)
     for rs in by_file.values():
         for i, r in enumerate(rs):
             if r["failed"]:
@@ -420,9 +422,10 @@ def rounds(rows: list[dict]) -> list[list[dict]]:
     for r in rows:
         if r["kind"] != "cli":
             continue
-        slug = r["slug"] or last.get(r["file"])
-        last[r["file"]] = slug
-        key = (r["file"], slug)
+        file_key = (r.get("host"), r["file"])
+        slug = r["slug"] or last.get(file_key)
+        last[file_key] = slug
+        key = (file_key, slug)
         prev = closed.get(key)
         if key not in open_ and prev and r["sub"] in FOLLOW_THROUGH and _gap(prev[-1], r) < 300:
             prev.append(r)
@@ -521,7 +524,7 @@ def report(rows: list[dict], by: str) -> list[str]:
         per[label(rd[-1]["date"])][1].append(rd)
 
     failed = [r for r in cli if r["failed"]]
-    sessions = {(r["source"], r["session"]) for r in rows}
+    sessions = {(r.get("host"), r["source"], r["session"]) for r in rows}
     out = [f"  {len(cli):,} annotate calls + {len(rows) - len(cli):,} doc reads in {len(sessions)} "
            f"sessions; {len(closed)} closed rounds",
            f"  output {_k(sum(r['out_tokens'] for r in rows))} tok, results "
@@ -638,12 +641,27 @@ def run(args) -> int:
         model = json.loads(Path(args.estimate).expanduser().read_text()) if args.estimate else None
         if model is not None and not isinstance(model, dict):
             raise ValueError("the estimate model must be a JSON object")
-        rows = collect(args)
+        local_rows = [{**r, "host": measurement.host()} for r in collect(args)]
+        settings = {"since": args.since, "codex": args.codex, "include_dev": args.include_dev}
+        source_list = measurement.sources("cost", {"host": measurement.host(), "rows": local_rows},
+                                          getattr(args, "merge", []) or [], settings)
+        rows = [r for source in source_list for r in source["rows"]]
+        closed = rounds(rows)
+        per_round = [{"host": rd[0].get("host"), "file": rd[0]["file"], "slug": rd[-1]["slug"],
+                      "end": rd[-1]["ts"], "out_tokens": sum(r["out_tokens"] for r in rd),
+                      "result_tokens": sum(r["result_tokens"] for r in rd)} for rd in closed]
+        payload = {"measurement": "cost", "schema_version": 1, "settings": settings,
+                   "sources": source_list, "rows": rows,
+                   "measures": {"closed_rounds": len(closed), "agent_tokens_per_round": per_round,
+                       "median_agent_output_tokens_per_round": statistics.median(
+                           [r["out_tokens"] for r in per_round]) if per_round else None,
+                       "median_result_tokens_per_round": statistics.median(
+                           [r["result_tokens"] for r in per_round]) if per_round else None}}
         if args.json:
-            print("[" + ",\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "]")
+            print(json.dumps(payload, ensure_ascii=False))
             return 0
         body = estimate(rows, model) if model is not None else report(rows, args.by)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, KeyError, TypeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     sources = "claude + codex" if args.codex else "claude"
