@@ -32,11 +32,11 @@ These are the coordinator's posted results, not worker-local measurements. The c
 
 | Text | v2.25.1 | Final |
 | --- | ---: | ---: |
-| SKILL.md | 441 | 402 |
+| SKILL.md | 441 | 388 |
 | References | 2731 across 6 files | 499 in 1 file |
-| Total | 3172 | 901 |
+| Total | 3172 | 887 |
 
-Counts use whitespace-separated words including front matter and examples. The three packaged SKILL.md copies are identical; the plugin reference is generated from the one source reference. No installed user skill, settings or runtime is part of this PR.
+Counts use whitespace-separated words including front matter and examples. Archive/unarchive remain operator commands under `help --all`, absent from the agent skill and default help. The three packaged SKILL.md copies are identical; the plugin reference is generated from the one source reference. No installed user skill, settings or runtime is part of this PR.
 
 ### Final validation
 

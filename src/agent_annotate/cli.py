@@ -5192,7 +5192,7 @@ def cmd_mcp(args) -> int:
 # Argparse
 # ────────────────────────────────────────────────────────────────────────────
 AGENT_COMMANDS = ("workspace", "new", "project", "copy", "finding", "plan",
-                  "inbox", "resolve", "withdraw", "claim", "archive", "unarchive")
+                  "inbox", "resolve", "withdraw", "claim")
 
 
 def build_parser(*, all_commands=False):

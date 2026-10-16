@@ -13,7 +13,7 @@ The reviewer looks and decides on the page. Chat points to it.
 
 3. **Ask at the evidence.** Put a `cards` fence in that page.md, citing the visible block each question concerns. One decision per card: prompt, context, recommendation, options and their consequences. Ask only what you cannot decide yourself. Never ask the reviewer to accept everything at once or approve what is not shown.
 
-4. **Keep questions live.** A new version automatically withdraws unanswered agent questions omitted from its cards. Include still-relevant questions with their stable numbers. Withdraw an unanswered question that no longer applies with `annotate withdraw SLUG N --why "Reason"`. Archived pages are read-only: `annotate archive SLUG --why "Reason"`; restore with `annotate unarchive SLUG`.
+4. **Keep questions live.** A new version automatically withdraws unanswered agent questions omitted from its cards. Include still-relevant questions with their stable numbers. Withdraw an unanswered question that no longer applies with `annotate withdraw SLUG N --why "Reason"`.
 
 5. **After Send**, read `annotate inbox SLUG --unread` once, unfiltered: it includes the whole submitted round, prompts, answers and notes. Act on every answer and note, then close each item you acted on with `annotate resolve SLUG N` (optional `--note "Result"`). Show the result on the page, then reply in chat with one line and the URL. For a fixed finding, use `annotate finding SLUG --fixed N --proof shot.png`.
 

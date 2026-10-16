@@ -22,9 +22,10 @@ def test_default_help_lists_only_workflow_commands_and_full_help_keeps_legacy(ca
     assert {a.dest for a in action._choices_actions} == {*cli.AGENT_COMMANDS, "help"}
     assert "monitor" not in text and "doctor" not in text
     assert "resolve" in text
+    assert "archive" not in text and "unarchive" not in text
     cli.cmd_help(SimpleNamespace(all=True, markdown=False, command=None))
     full = capsys.readouterr().out
-    for name in ("monitor", "resolve", "carry", "doctor", "eval", "cost"):
+    for name in ("monitor", "resolve", "carry", "doctor", "eval", "cost", "archive", "unarchive"):
         assert name in full
         assert name in cli.command_parsers(parser)
     assert "monitor" not in cli.command_parsers(parser)["help"].format_help()
