@@ -96,10 +96,12 @@ def page_server():
         server.server_close()
 
 
-def _register(slug, port, manifest=None):
+def _register(slug, port, manifest=None, folder=None):
     state = paths.STATE_DIR / "proj.json"
     data = json.loads(state.read_text()) if state.exists() else {"project": "proj", "slugs": {}}
     data["slugs"][slug] = {"slug": slug, "port": port, "pid": os.getpid(), "local_url": f"http://127.0.0.1:{port}/",
+                           **({"workspace_folders": [str(folder)], "workspace_repos": [],
+                               "slug_dir": str(folder / slug)} if folder else {}),
                            **({"runtime_manifest": manifest} if manifest else {})}
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps(data))
@@ -262,17 +264,18 @@ def test_the_prompt_hook_prints_one_line_once_per_session(estate):
     (estate.root / "bus").mkdir()
     env = {**os.environ, **estate.env}
     env.pop("ANNOTATE_VERSION_GUARD", None)
+    _register("own", 1, runtime_manifest(), folder=estate.root)
 
     def run(session):
         proc = subprocess.run([sys.executable, "-m", "agent_annotate.cli", "hook-check"],
                               input=json.dumps({"session_id": session}), capture_output=True,
-                              text=True, env=env, timeout=30)
+                              text=True, env=env, cwd=estate.root, timeout=30)
         assert proc.returncode == 0, proc.stderr
         return proc.stdout
 
     first = run("sess-a").splitlines()
     assert len(first) == 1
-    assert first[0].startswith("[annotate] ANNOTATE VERSION MISMATCH: 1 of 4 component(s)")
+    assert first[0].startswith("[annotate] ANNOTATE VERSION MISMATCH: 1 of 2 component(s)")
     assert first[0].endswith("Details and fix commands: annotate doctor --versions")
     assert run("sess-a") == ""
     assert run("sess-b").splitlines() == first
@@ -280,24 +283,54 @@ def test_the_prompt_hook_prints_one_line_once_per_session(estate):
 
 def test_the_session_notice_reads_page_runtimes_from_the_registry_only(estate, monkeypatch):
     _install_everything(estate)
-    _register("old", 1, {"package_version": "2.21.0", "build_id": "d" * 40})
+    _register("old", 1, {"package_version": "2.21.0", "build_id": "d" * 40}, folder=estate.root)
+    monkeypatch.chdir(estate.root)
     monkeypatch.setattr(cli, "_api", lambda *args, **kwargs: pytest.fail("the hot path must not call a server"))
     line = version_guard.session_notice("sess")
     assert "page proj/old" in line
     assert version_guard.session_notice("sess") is None
 
 
-def test_a_starting_page_server_logs_and_serves_the_mismatch(estate, capsys):
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_session_banner_only_checks_its_own_page_and_effective_skill(estate, monkeypatch, provider):
+    _install_everything(estate)
+    monkeypatch.chdir(estate.root)
+    if provider == "codex":
+        monkeypatch.setenv("CODEX_THREAD_ID", "codex-session")
+    _register("own", 1, runtime_manifest(), folder=estate.root)
+    _register("other-project", 1, {"package_version": "old", "build_id": "other"})
+    unrelated = estate.claude if provider == "codex" else estate.codex
+    stamp = unrelated / ".annotate-install.json"
+    stamp.write_text(json.dumps({**json.loads(stamp.read_text()), "version": "old"}))
+    assert version_guard.session_notice("quiet") is None
+    assert not version_guard.check(local_only=True)["ok"]  # doctor keeps the full audit
+    own = estate.codex if provider == "codex" else estate.claude
+    stamp = own / ".annotate-install.json"
+    stamp.write_text(json.dumps({**json.loads(stamp.read_text()), "version": "old"}))
+    line = version_guard.session_notice("own-drift")
+    assert str(own) in line
+    assert str(unrelated) not in line and "other-project" not in line
+    monkeypatch.chdir(estate.root.parent)
+    assert version_guard.session_notice("unlisted") is None
+
+
+def test_page_banner_still_reports_its_own_runtime_mismatch(estate, monkeypatch, capsys):
+    monkeypatch.setattr(version_guard, "__version__", "old")
+    result = version_guard.server_status("proj", "own", log=True)
+    assert result["mismatched"] == ["this server"] and not result["ok"]
+    assert "proj/own (this server)" in capsys.readouterr().err
+
+
+def test_a_starting_page_server_ignores_other_sessions_skill_drift(estate, capsys):
     _install_everything(estate)
     stamp = estate.codex / ".annotate-install.json"
     stamp.write_text(json.dumps({**json.loads(stamp.read_text()), "version": "2.21.0"}))
     status = version_guard.server_status("proj", "page", log=True)
-    assert status == {"ok": False, "checked": True,
+    assert status == {"ok": True, "checked": True,
                       "release": {"version": __version__, "build_id": build_identity()[0]},
-                      "mismatched": ["skill:codex"]}
+                      "mismatched": []}
     warning = capsys.readouterr().err
-    assert warning.startswith("WARNING: ANNOTATE VERSION MISMATCH: 1 of 5 component(s)")
-    assert "annotate sync-skills" in warning
+    assert warning == ""
     assert str(estate.root) not in json.dumps(status)  # served publicly: no local paths
 
     # The real server: it starts anyway, logs the line and serves the result.
@@ -324,9 +357,7 @@ def test_a_starting_page_server_logs_and_serves_the_mismatch(estate, capsys):
                 time.sleep(0.1)
         assert caps is not None, log_path.read_text()
         assert caps["version_guard"] == status
-        while "WARNING: ANNOTATE VERSION MISMATCH" not in log_path.read_text() and time.monotonic() < deadline:
-            time.sleep(0.1)  # logged by the start thread
-        assert "WARNING: ANNOTATE VERSION MISMATCH: 1 of 5 component(s)" in log_path.read_text()
+        assert "WARNING: ANNOTATE VERSION MISMATCH" not in log_path.read_text()
     finally:
         proc.terminate()
         proc.wait(timeout=10)

@@ -88,6 +88,7 @@ from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
     BUS_ROOT,
+    CODEX_HOOKS_JSON,
     CONFIG_DIR,
     HOOK_OFFSET_ROOT,
     HOOK_SCRIPT,
@@ -97,6 +98,7 @@ from .paths import (
     MONITOR_ROOT,
     PACKAGE_DIR,
     PROJECTS_TOML,
+    SESSION_START_SCRIPT,
     SETTINGS_JSON,
     SHIM_PATH,
     STATE_DIR,
@@ -635,18 +637,25 @@ def _is_our_hook_command(command: str) -> bool:
     return cmd.endswith(" hook-check") and "annotate" in cmd
 
 
-def _ensure_hook_installed() -> tuple[bool, str]:
-    """Idempotently merge the check-comment-bus.sh hook into settings.json.
+def _is_session_hook_command(command: str) -> bool:
+    cmd = (command or "").strip()
+    return any(cmd.endswith(suffix) or cmd.endswith(suffix + "'") for suffix in (
+        "/session-start.sh", "/session_start.py")) or (
+        cmd.endswith(" hook-session-start") and "annotate" in cmd)
+
+
+def _ensure_hook_installed(*, provider: str = "claude", create: bool = False) -> tuple[bool, str]:
+    """Merge our provider hooks without replacing user hooks or trust settings.
 
     Returns (was_added, message).
     """
-    if not SETTINGS_JSON.exists():
-        return False, f"settings.json not found at {SETTINGS_JSON}"
+    target = CODEX_HOOKS_JSON if provider == "codex" else SETTINGS_JSON
+    if not target.exists() and not create:
+        return False, f"hook settings not found at {target}"
     try:
-        raw = SETTINGS_JSON.read_text(encoding="utf-8")
-        settings = json.loads(raw)
+        settings = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
     except Exception as e:
-        return False, f"could not parse settings.json: {e}"
+        return False, f"could not parse {target}: {e}"
 
     # A wheel does not always preserve the execute bit; the hook is registered
     # as a bare path, so make sure the shell can run it.
@@ -657,40 +666,33 @@ def _ensure_hook_installed() -> tuple[bool, str]:
         pass
 
     settings.setdefault("hooks", {})
-    ups = settings["hooks"].setdefault("UserPromptSubmit", [])
-    # Look for an existing entry matching our command
-    for group in ups:
-        if not isinstance(group, dict):
+    start_command = shlex.join([sys.executable, "-S", str(SESSION_START_SCRIPT.with_name("session_start.py"))])
+    wanted = [("SessionStart", start_command, _is_session_hook_command)]
+    if provider == "claude":
+        wanted.insert(0, ("UserPromptSubmit", HOOK_COMMAND, _is_our_hook_command))
+    added = []
+    for event, command, matches in wanted:
+        groups = settings["hooks"].setdefault(event, [])
+        if any(isinstance(hook, dict) and matches(hook.get("command", ""))
+               for group in groups if isinstance(group, dict) for hook in group.get("hooks", []) or []):
             continue
-        for h in group.get("hooks", []) or []:
-            if isinstance(h, dict) and _is_our_hook_command(h.get("command", "")):
-                return False, "hook already present in settings.json (no change)"
-
-    ups.append({
-        "hooks": [
-            {
-                "command": HOOK_COMMAND,
-                "type": "command",
-                # Claude Code's own default for a UserPromptSubmit command hook.
-                # The previous explicit 5 bought nothing and cost notices: on a
-                # loaded machine the hook was killed mid-scan, discarding that
-                # turn's reminder and stranding the lock for other sessions.
-                "timeout": 30,
-            }
-        ]
-    })
+        groups.append({"hooks": [{"command": command, "type": "command", "timeout": 30}]})
+        added.append(event)
+    if not added:
+        return False, "hooks already present (no change)"
 
     # Preserve private settings permissions and never follow a predictable temp symlink.
-    mode = SETTINGS_JSON.stat().st_mode & 0o777
-    descriptor, temporary = tempfile.mkstemp(prefix=".annotate-settings-", dir=SETTINGS_JSON.parent)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    mode = target.stat().st_mode & 0o777 if target.exists() else 0o600
+    descriptor, temporary = tempfile.mkstemp(prefix=".annotate-settings-", dir=target.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             json.dump(settings, output, indent=2, ensure_ascii=False)
             os.fchmod(output.fileno(), mode)
-        os.replace(temporary, SETTINGS_JSON)
+        os.replace(temporary, target)
     finally:
         Path(temporary).unlink(missing_ok=True)
-    return True, f"added UserPromptSubmit hook → {HOOK_COMMAND}"
+    return True, f"added {', '.join(added)} hooks → {target}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1577,6 +1579,16 @@ def _publish(args) -> int:
                 "runtime_python": sys.executable,
                 "runtime_manifest": runtime_manifest(),
             }
+            from .workspace import add_membership, membership
+            if existing:
+                for field in ("workspace_key", "workspace_root", "workspace_repos", "workspace_folders",
+                              "workspace_selected_at"):
+                    if field in existing:
+                        record[field] = existing[field]
+                repos, folders = membership(existing)
+                record.update(workspace_repos=repos, workspace_folders=folders)
+            else:
+                add_membership(record, Path.cwd())
             state["slugs"][slug] = record
             _save_state_for_project(project, state)
     except _AlreadyRunning as e:
@@ -4201,6 +4213,12 @@ def cmd_install_skill(args) -> int:
 
     for line in install_skill(args.provider, Path(args.dest)):
         print(line)
+    changed, message = _ensure_hook_installed(provider=args.provider, create=True)
+    print(message)
+    if args.provider == "codex":
+        print("Review and trust the SessionStart hook in Codex /hooks before it can run.")
+    if not changed and "already present" not in message:
+        return 1
     return 0
 
 
@@ -4987,6 +5005,9 @@ def cmd_doctor(args) -> int:
         ("hook_script", HOOK_SCRIPT.is_file(),
          str(HOOK_SCRIPT) + ("" if os.access(HOOK_SCRIPT, os.X_OK) else "   (not executable; publish fixes the mode)")),
         ("hook_installed", _hook_registered(), str(SETTINGS_JSON)),
+        ("session_start", _hook_registered("SessionStart"), str(SETTINGS_JSON)),
+        ("codex_start", _hook_registered("SessionStart", provider="codex"),
+         f"{CODEX_HOOKS_JSON}; trust in Codex /hooks"),
         ("node", node is not None, node or "not found; inline JS lint unavailable"),
         ("lsof", lsof is not None, lsof or "not found; port liveness falls back to the bind test"),
         ("codex", codex is not None, codex or "not found; Codex adapter unavailable"),
@@ -5008,14 +5029,16 @@ def cmd_doctor(args) -> int:
     return 1 if failed else 0
 
 
-def _hook_registered() -> bool:
+def _hook_registered(event: str = "UserPromptSubmit", *, provider: str = "claude") -> bool:
     try:
-        settings = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
+        target = CODEX_HOOKS_JSON if provider == "codex" else SETTINGS_JSON
+        settings = json.loads(target.read_text(encoding="utf-8"))
     except Exception:
         return False
-    for group in (settings.get("hooks") or {}).get("UserPromptSubmit") or []:
+    matches = _is_session_hook_command if event == "SessionStart" else _is_our_hook_command
+    for group in (settings.get("hooks") or {}).get(event) or []:
         for h in (group.get("hooks") if isinstance(group, dict) else None) or []:
-            if isinstance(h, dict) and _is_our_hook_command(h.get("command", "")):
+            if isinstance(h, dict) and matches(h.get("command", "")):
                 return True
     return False
 

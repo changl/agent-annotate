@@ -119,15 +119,17 @@ def test_discovery_reuses_canonical_page_from_another_checkout_without_cli_or_wr
     assert result["workspace"]["url"] == record["url"]
     assert result["workspace"]["owner"]["owner_session"] == "session-current"
     assert _snapshot(tmp_path) == before
-    assert calls
+    assert calls == []  # ordinary Git metadata needs no process startup
 
 
-def test_discovery_requires_selection_when_multiple_project_pages_have_no_primary(tmp_path, monkeypatch):
+def test_discovery_uses_recent_activity_when_multiple_pages_list_the_folder(tmp_path, monkeypatch):
     entries = [("project", name, {"slug_dir": str(tmp_path / name),
-                                  "url": f"https://review.example/{name}/"}) for name in ("main", "content")]
+                                  "workspace_folders": [str(tmp_path)], "workspace_repos": [],
+                                  "workspace_selected_at": index,
+                                  "url": f"https://review.example/{name}/"}) for index, name in enumerate(("main", "content"))]
     monkeypatch.setattr(cli, "_registry_entries", lambda: entries)
     result = _tool("find_workspace")(cwd=str(tmp_path), project="project")
-    assert result["workspace"] is None
+    assert result["workspace"]["slug"] == "project/content"
     assert {page["slug"] for page in result["pages"]} == {"project/main", "project/content"}
     assert list(tmp_path.iterdir()) == []
 

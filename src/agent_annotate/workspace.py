@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -19,12 +21,33 @@ def project_key(path: Path) -> str | None:
     while not directory.exists() and directory != directory.parent:
         directory = directory.parent
     try:
-        common = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"],
-                                capture_output=True, text=True, timeout=3)
-        if common.returncode:
+        # Read ordinary Git metadata directly: spawning Git twice dominated the
+        # session hook on busy Macs. Linked worktrees point to their common dir.
+        common = None
+        for parent in (directory, *directory.parents):
+            dotgit = parent / ".git"
+            if dotgit.is_dir():
+                common = dotgit.resolve()
+            elif dotgit.is_file():
+                value = dotgit.read_text(encoding="utf-8").strip()
+                if value.startswith("gitdir: "):
+                    common = (parent / value[8:]).resolve()
+            elif (parent / "HEAD").is_file() and (parent / "objects").is_dir() and (parent / "config").is_file():
+                common = parent.resolve()  # bare repository
+            if common is not None:
+                if (common / "commondir").is_file():
+                    common = (common / (common / "commondir").read_text().strip()).resolve()
+                break
+        if common is None:
             return None
-        origin = subprocess.run(["git", "-C", str(directory), "config", "--get", "remote.origin.url"],
-                                capture_output=True, text=True, timeout=3).stdout.strip()
+        config = configparser.RawConfigParser(strict=False, allow_no_value=True)
+        config.read(common / "config", encoding="utf-8")
+        origin = config.get('remote "origin"', "url", fallback="").strip()
+        if any(section.lower().startswith("include") for section in config.sections()):
+            origin = subprocess.run(["git", "-C", str(directory), "config", "--get", "remote.origin.url"],
+                                    capture_output=True, text=True, timeout=3).stdout.strip()
+        if origin.startswith('"') and origin.endswith('"'):
+            origin = origin[1:-1]
         if origin.startswith(("https://", "ssh://", "http://")):
             parts = urlsplit(origin)
             if parts.hostname:
@@ -32,8 +55,8 @@ def project_key(path: Path) -> str | None:
         elif "@" in origin and ":" in origin:
             host, repo = origin.split("@", 1)[1].split(":", 1)
             return "git:" + host.lower() + "/" + repo.strip("/").removesuffix(".git")
-        return "local:" + str((directory / common.stdout.strip()).resolve())
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return "local:" + str(common)
+    except (OSError, ValueError, configparser.Error, subprocess.TimeoutExpired):
         return None
 
 
@@ -57,22 +80,85 @@ def _record_key(record: dict) -> str | None:
     return None
 
 
-def candidates(path: Path, project: str | None = None, *, caller: Path | None = None) -> list[tuple[str, str, dict]]:
-    from .cli import _registry_entries
+def membership(record: dict) -> tuple[list[str], list[str]]:
+    """Read explicit membership, including the old single-repo/folder fields."""
+    repos = list(record.get("workspace_repos") or [])
+    folders = list(record.get("workspace_folders") or [])
+    key = record.get("workspace_key")
+    if not key and "workspace_repos" not in record:
+        key = _record_key(record)
+    if key and key not in repos:
+        repos.append(key)
+    root = record.get("workspace_root")
+    if root and root not in folders:
+        folders.append(root)
+    # A legacy non-Git page still belongs to its folder, never an unrelated repo.
+    if not repos and not folders and record.get("slug_dir"):
+        folders.append(record["slug_dir"])
+    return repos, folders
+
+
+def add_membership(record: dict, path: Path, root: Path | None = None) -> None:
+    repos, folders = membership(record)
+    key = project_key(path)
+    if key and key not in repos:
+        repos.append(key)
+    folder = root or (path.resolve() if not key else None)
+    if folder and str(folder) not in folders:
+        folders.append(str(folder))
+    record.update(workspace_repos=repos, workspace_folders=folders)
+
+
+def activity(record: dict) -> float:
+    """Selection, publication, ownership and reviewer/author edits are activity."""
+    values = [0.0]
+    for field in ("workspace_selected_at", "started_at", "owner_claimed_at"):
+        value = record.get(field)
+        try:
+            values.append(float(value) if isinstance(value, (int, float)) else
+                          datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+        except (TypeError, ValueError, AttributeError):
+            pass
+    if record.get("slug_dir"):
+        directory = Path(record["slug_dir"])
+        files = [directory / name for name in (
+            "comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson")]
+        files.extend((directory / "plans").glob("*/meta.json"))
+        for path in files:
+            try:
+                values.append(path.stat().st_mtime)
+            except OSError:
+                pass
+    return max(values)
+
+
+def selected_page(entries: list[tuple[str, str, dict]]) -> tuple[str, str, dict] | None:
+    # Root-linked document tabs have no own membership; they never displace
+    # their project page. Explicitly listed pages compete by activity.
+    entries = [item for item in entries if item[2].get("workspace_primary") or any(
+        item[2].get(field) for field in ("workspace_key", "workspace_repos", "workspace_folders"))] or entries
+    return max(entries, key=lambda item: (activity(item[2]), bool(item[2].get("workspace_primary")),
+                                          item[0], item[1]), default=None)
+
+
+def candidates(path: Path, project: str | None = None, *, caller: Path | None = None,
+               entries: list[tuple[str, str, dict]] | None = None) -> list[tuple[str, str, dict]]:
+    if entries is None:
+        from .cli import _registry_entries
+        entries = _registry_entries()
     from .consolidate import inactive
     key = project_key(path) or (project_key(caller) if caller is not None else None)
     # A consolidated page lives on as its target's tab, not as a project page.
-    entries = [(name, slug, record, _record_key(record)) for name, slug, record in _registry_entries()
+    entries = [(name, slug, record, membership(record)) for name, slug, record in entries
                if not record.get("standalone") and not record.get("exception") and not inactive(record)]
-    roots = [r["workspace_root"] for _, _, r, record_key in entries if r.get("workspace_root") and (
-             _within(path, r["workspace_root"]) or (caller is not None and _within(caller, r["workspace_root"]))
-             or (key and key == record_key))]
+    roots = [root for _, _, _, (repos, folders) in entries for root in folders if (
+             _within(path, root) or (caller is not None and _within(caller, root)) or (key and key in repos))]
     found = []
-    for name, slug, record, record_key in entries:
+    for name, slug, record, (repos, folders) in entries:
         # A generic legacy registry label is not a repository identity.
-        label_match = (not roots and project and name == project and not (key and record_key and key != record_key)
-                       and not (key and name == "reviews"))
-        if label_match or (key and key == record_key) or any(_within(record.get("slug_dir"), root) for root in roots):
+        label_match = not key and not roots and project and name == project and not repos
+        if label_match or (key and key in repos) or any(_within(record.get("slug_dir"), root) for root in roots) or any(
+                _within(path, root) or (caller is not None and _within(caller, root)) for root in folders):
             found.append((name, slug, record))
     return found
 
@@ -81,10 +167,8 @@ def duplicate_page(path: Path, project: str | None = None, *, caller: Path | Non
     entries = candidates(path, project, caller=caller if caller is not None else Path.cwd())
     if any(Path(r["slug_dir"]).resolve() == path.resolve() for _, _, r in entries):
         return None
-    for _, _, record in sorted(entries, key=lambda item: not item[2].get("workspace_primary")):
-        if Path(record["slug_dir"]).resolve() != path.resolve():
-            return record
-    return None
+    selected = selected_page(entries)
+    return selected[2] if selected else None
 
 
 def exception_reason(args) -> str | None:
@@ -215,8 +299,7 @@ def owner_data(record: dict) -> dict | None:
 def workspace_data(path: Path, project: str | None = None) -> dict:
     """Discover the canonical page without claiming, publishing, or writing state."""
     entries = candidates(path, project)
-    primary = [item for item in entries if item[2].get("workspace_primary")]
-    selected = primary[0] if len(primary) == 1 else entries[0] if len(entries) == 1 else None
+    selected = selected_page(entries)
 
     def page(item):
         name, slug, record = item
@@ -235,6 +318,7 @@ def cmd_workspace(args) -> int:
         _state_lock_path,
     )
     if args.select:
+        import time
         selected = _resolve_scoped_slug(args.select, args.project)
         if not selected:
             return 2
@@ -255,7 +339,10 @@ def cmd_workspace(args) -> int:
                     if p == name and s in state["slugs"]:
                         state["slugs"][s]["workspace_primary"] = (p, s) == (project, slug)
                         if (p, s) == (project, slug):
-                            state["slugs"][s]["workspace_key"] = project_key(Path.cwd())
+                            add_membership(state["slugs"][s], Path.cwd(), root)
+                            state["slugs"][s]["workspace_selected_at"] = time.time()
+                            # Keep old readers working without replacing the first repo.
+                            state["slugs"][s].setdefault("workspace_key", project_key(Path.cwd()))
                             if root:
                                 state["slugs"][s]["workspace_root"] = str(root)
                             state["slugs"][s]["standalone"] = False

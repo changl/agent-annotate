@@ -106,7 +106,10 @@ def test_hook_installer_recognises_an_existing_equivalent_entry(tmp_path, monkey
                         '"command": "/Users/someone/skills/annotate/hooks/check-comment-bus.sh"}]}]}}')
     monkeypatch.setattr(cli, "SETTINGS_JSON", settings)
     added, msg = cli._ensure_hook_installed()
-    assert not added and "already present" in msg
+    assert added and "SessionStart" in msg
+    import json
+    assert len(json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]) == 1
+    assert not cli._ensure_hook_installed()[0]
 
     settings.write_text('{"hooks": {}}')
     added, msg = cli._ensure_hook_installed()

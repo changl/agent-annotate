@@ -56,6 +56,10 @@ annotate doctor
 
 Use the installed executable if another tool owns `annotate` on PATH. System Python does not inherit uv's tool environment. Skills are user-managed and separate from runtime updates; install or sync only on explicit request. Both provider skills have the same contract. The Codex plugin uses the installed CLI and includes its references.
 
+`annotate workspace --select PROJECT/SLUG` adds the current repository (all clones and worktrees) or non-Git folder (including nested paths) to that page. Select again from each additional repo or folder. If pages overlap, their latest selection, publication, ownership change, or page edit decides which appears. Unlisted repos stay silent.
+
+`install-skill` registers a local-only SessionStart notice for its provider; `doctor` checks registration without changing settings. The notice shows the full share URL and count waiting on the reviewer. Codex 0.162 supports native `~/.codex/hooks.json` hooks, requires review in `/hooks`, and runs SessionStart at the first turn rather than the empty opening prompt. Passive version notices check only this session's page and effective skill; `doctor --versions` audits the whole installation.
+
 Funnel publishes one exact path, preserving other routes. A private share link grants page review access; its fragment key becomes a secure page-scoped cookie. Tailnet users retain Tailscale identity. Keep the full printed URL when sharing. Public route failures stop publication; localhost is never substituted. Cloudflare adapters are retained only for existing deployments.
 
 State defaults remain `~/.claude/annotate-state` and `~/.claude/annotate-bus`; environment overrides support isolated development. Runtime updates preserve owners, routes, ports, and feedback. No scheduled reports, automatic skill updates, or agent-owned monitors are needed for normal project work.

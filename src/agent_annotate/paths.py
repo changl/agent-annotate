@@ -89,7 +89,9 @@ LOCK_DIR = STATE_DIR / "locks"
 LOG_DIR = STATE_DIR / "logs"
 
 HOOK_SCRIPT = HOOKS_DIR / "check-comment-bus.sh"
+SESSION_START_SCRIPT = HOOKS_DIR / "session-start.sh"
 SETTINGS_JSON = _override("ANNOTATE_CLAUDE_SETTINGS", CLAUDE_HOME / "settings.json")
+CODEX_HOOKS_JSON = _override("ANNOTATE_CODEX_HOOKS", Path(os.environ.get("CODEX_HOME") or HOME / ".codex") / "hooks.json")
 SHIM_PATH = _override("ANNOTATE_SHIM_PATH", HOME / ".local" / "bin" / "annotate")
 TRANSCRIPT_GLOB = os.environ.get("ANNOTATE_TRANSCRIPT_GLOB") or str(
     CLAUDE_HOME / "projects" / "*" / "*.jsonl")   # Claude Code transcripts, read by eval
