@@ -105,7 +105,7 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
     with connection(server) as conn:
         first, body = request(conn, f"/review/{directory}/{name}", headers={"Accept-Encoding": "gzip"})
         assert body == data and first.getheader("Content-Encoding") is None
-        assert first.getheader("Vary") is None
+        assert first.getheader("Vary") == ("Cookie, Sec-Fetch-Mode" if directory == "assets" else None)
         assert first.getheader("Content-Security-Policy") == "sandbox"
         assert ("immutable" in first.getheader("Cache-Control")) == bool(hashed)
         cached, body = request(conn, f"/review/{directory}/{name}", headers={"If-None-Match": first.getheader("ETag")})
@@ -204,26 +204,22 @@ def test_html_aliases_across_upload_boundaries_still_download(server, source, de
         assert response.getheader("Content-Security-Policy") == "sandbox"
 
 
-@pytest.mark.parametrize("published", [False, True])
 @pytest.mark.parametrize("suffix,mime", [(".png", "image/png"), (".avif", "image/avif"), (".ico", "image/x-icon"),
-                                       (".webm", "video/webm"), (".mp4", "video/mp4"), (".json", "application/json")])
-def test_inert_page_assets_allow_cookieless_cors_and_keep_cache_headers(server, published, suffix, mime):
-    httpd, root, _ = server
-    httpd.RequestHandlerClass.proxy_urls = ("https://host.ts.net/review/",)
+                                       (".webm", "video/webm"), (".mp4", "video/mp4")])
+def test_inert_page_assets_keep_cache_headers_without_cors(server, suffix, mime):
+    _, root, _ = server
     data = b"inert proof bytes"
     name = hashlib.sha256(data).hexdigest()[:12] + "-proof" + suffix
     (root / "assets/v2").mkdir(parents=True)
     (root / "assets/v2" / name).write_bytes(data)
     headers = {"Origin": "null", "Sec-Fetch-Site": "cross-site"}
-    if published:
-        headers["Host"] = "host.ts.net"
     path = "/review/assets/v2/" + name
     with connection(server) as conn:
         first, body = request(conn, path, headers=headers)
         assert first.status == 200 and body == data
         assert first.getheader("Content-Type") == mime
         assert first.getheader("Content-Security-Policy") == "sandbox"
-        assert first.getheader("Access-Control-Allow-Origin") == "*"
+        assert first.getheader("Access-Control-Allow-Origin") is None
         assert first.getheader("Access-Control-Allow-Credentials") is None
         assert "immutable" in first.getheader("Cache-Control")
         if suffix != ".json":
@@ -231,9 +227,10 @@ def test_inert_page_assets_allow_cookieless_cors_and_keep_cache_headers(server, 
         for method in ("GET", "HEAD"):
             cached, body = request(conn, path, method=method, headers={**headers, "If-None-Match": first.getheader("ETag")})
             assert cached.status == 304 and body == b""
-            assert cached.getheader("Access-Control-Allow-Origin") == "*"
+            assert cached.getheader("Access-Control-Allow-Origin") is None
             assert cached.getheader("Access-Control-Allow-Credentials") is None
             assert cached.getheader("Cache-Control") == first.getheader("Cache-Control")
+            assert cached.getheader("Vary") == first.getheader("Vary")
 
 
 def test_inert_cors_exception_cannot_expose_api_private_active_uploads_or_aliases(server):

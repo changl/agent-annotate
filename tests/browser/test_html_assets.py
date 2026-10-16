@@ -3,11 +3,19 @@
 import base64
 import json
 import os
+import ssl
+import subprocess
+import threading
+from contextlib import contextmanager
+from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
 from test_card_layout import _serve
 from test_pagegen_images import png
+
+from agent_annotate import cli, review_access
+from agent_annotate.sync_server import WEB_DIR, ReviewHTTPServer, make_handler
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -25,8 +33,50 @@ VIDEO = base64.b64decode(
 )
 
 
+@contextmanager
+def _https_funnel(tmp_path, directory):
+    """Real local TLS and browser cookies, with only a sandbox registry record."""
+    tls = tmp_path / "tls"
+    tls.mkdir(exist_ok=True)
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=review.test", "-keyout", str(tls / "key.pem"), "-out", str(tls / "cert.pem")],
+                   check=True, capture_output=True, timeout=15)
+    key = review_access.ensure_key(directory)
+    handler = make_handler(directory, public_base_path="/review", slug="page", v2_mode=True, skill_dir=WEB_DIR)
+    observed = []
+    original_get = handler.do_GET
+
+    def record_get(self):
+        cookies = SimpleCookie()
+        cookies.load(self.headers.get("Cookie") or "")
+        observed.append({"path": self.path, "cookies": list(cookies), "referer": self.headers.get("Referer"),
+                         "mode": self.headers.get("Sec-Fetch-Mode")})
+        return original_get(self)
+
+    handler.do_GET = record_get
+    httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(tls / "cert.pem", tls / "key.pem")
+    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    project = f"tls-html-{httpd.server_port}"
+    handler.bus_dir = cli.BUS_ROOT / project
+    handler.bus_dir.mkdir(parents=True, exist_ok=True)
+    base = f"https://review.test:{httpd.server_port}/review/"
+    cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
+        "slug_dir": str(directory), "port": httpd.server_port, "transport": "funnel", "url": base}}})
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield base, key, observed
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
 @pytest.mark.parametrize("suffix", [".html", ".htm"])
-def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix):
+@pytest.mark.parametrize("https", [False, True])
+def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix, https):
     executable = os.environ.get("ANNOTATE_TEST_BROWSER", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     if not Path(executable).exists():
         pytest.skip("Browser executable is unavailable")
@@ -58,7 +108,7 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
           }
           for (const method of ['GET', 'POST']) {
             try {
-              const response = await fetch('/api/seen?asset-probe=1', {method, credentials: 'include',
+              const response = await fetch(new URL('../../api/seen?asset-probe=1', location.href), {method, credentials: 'include',
                 ...(method === 'POST' ? {headers: {'Content-Type': 'text/plain'},
                   body: JSON.stringify({version: 'asset-attack'})} : {})});
               result[method] = await response.text();
@@ -78,11 +128,16 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
         })();
         </script></body></html>""")
     (directory / "attachments" / ("proof" + suffix)).write_text("<script>top.location.href = '/?escaped=1';</script>")
-    process, base = _serve(tmp_path, directory)
+    if https:
+        server = _https_funnel(tmp_path, directory)
+        base, key, observed = server.__enter__()
+    else:
+        process, base = _serve(tmp_path, directory)
     try:
         with playwright.sync_playwright() as runner:
-            browser = runner.chromium.launch(executable_path=executable, headless=True)
-            page = browser.new_page()
+            browser = runner.chromium.launch(executable_path=executable, headless=True,
+                                            args=["--host-resolver-rules=MAP review.test 127.0.0.1", "--no-proxy-server"])
+            page = browser.new_page(ignore_https_errors=True)
             page.add_init_script("""window.addEventListener('message', event => {
               if (event.data?.type === 'asset-probe') window.assetProbe = {...event.data, messageOrigin: event.origin};
             });""")
@@ -95,7 +150,12 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
             session.on("Network.requestWillBeSent", lambda event: requests.update({event["requestId"]: event["request"]})
                        if event["request"]["url"] == base + "api/seen?asset-probe=1" else None)
             session.on("Network.responseReceivedExtraInfo", lambda event: statuses.update({event["requestId"]: event["statusCode"]}))
-            page.goto(base + "#view=review", wait_until="commit")
+            if https:
+                page.goto(base, wait_until="networkidle")
+                assert page.evaluate("async key => (await fetch('api/reviewer/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})})).status", key) == 200
+                page.reload(wait_until="commit")
+            else:
+                page.goto(base + "#view=review", wait_until="commit")
             page.wait_for_function("window.assetProbe")
             asset = page.frame_locator("#content-frame").frame_locator("#plan")
             assert asset.locator("#rendered").inner_text() == "Plan script rendered"
@@ -103,14 +163,18 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
                 "type": "asset-probe", "origin": "null", "messageOrigin": "null",
                 "cookie": "SecurityError", "parentCookie": "SecurityError", "topNavigation": "SecurityError",
                 "GET": "TypeError", "POST": "TypeError",
-                "omit": {"proof": "loaded"}, "include": "TypeError", "xhr": {"proof": "loaded"},
+                "omit": "TypeError", "include": "TypeError", "xhr": "blocked",
             }
+            if https:
+                media = [request for request in observed if request["path"].endswith(("/proof.png", "/demo.webm"))]
+                assert media and all(review_access.asset_cookie_name(directory) in request["cookies"] for request in media), media
+                assert all(review_access.cookie_name(directory) not in request["cookies"] for request in media), media
             assert asset.locator("#proof").evaluate("async image => { await image.decode(); return [image.naturalWidth, image.naturalHeight]; }") == [32, 16]
             assert asset.locator("#demo").evaluate("async video => { await video.play(); video.pause(); return [video.videoWidth, video.videoHeight]; }") == [32, 16]
             assert page.evaluate("document.cookie") == "page_cookie=private-review-session"
             assert "escaped" not in page.url
             assert {request["method"]: statuses[key] for key, request in requests.items()} == {"GET": 403, "POST": 403}
-            seen = page.evaluate("async () => (await fetch('/api/seen')).json()")
+            seen = page.evaluate("async () => (await fetch('api/seen')).json()")
             assert "asset-attack" not in json.dumps(seen)
 
             page.evaluate("""suffix => {
@@ -124,7 +188,17 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
             assert download.suggested_filename == "proof" + suffix
             assert download.failure() is None
             assert "escaped" not in page.url
+            page.evaluate("""() => {
+              const link = document.createElement('a'); link.id = 'manifest-download';
+              link.href = 'assets/v2/manifest.json'; link.textContent = 'Download manifest'; document.body.append(link);
+            }""")
+            with page.expect_download() as event:
+                page.locator("#manifest-download").click()
+            assert Path(event.value.path()).read_text() == '{"proof":"loaded"}'
             browser.close()
     finally:
-        process.terminate()
-        process.wait(timeout=5)
+        if https:
+            server.__exit__(None, None, None)
+        else:
+            process.terminate()
+            process.wait(timeout=5)

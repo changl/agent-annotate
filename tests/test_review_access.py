@@ -4,6 +4,7 @@ import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from http.cookies import SimpleCookie
 
 import pytest
 
@@ -35,6 +36,11 @@ def test_link_keys_and_cookies_are_private_scoped_and_tamper_resistant(tmp_path,
     other = tmp_path / "other"
     review_access.ensure_key(other)
     assert review_access.identity(other, header) == ("", "")
+    asset_header = review_access.asset_cookie_name(directory) + "=" + cookie
+    assert review_access.identity(directory, asset_header) == ("", "")
+    assert review_access.identity(directory, asset_header, asset=True) == (email, name)
+    assert review_access.identity(other, asset_header, asset=True) == ("", "")
+    assert review_access.identity(directory, asset_header + "tampered", asset=True) == ("", "")
 
 
 def test_simultaneous_sessions_receive_one_complete_private_key(tmp_path, monkeypatch):
@@ -97,6 +103,10 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
     source = tmp_path / "page.md"
     source.write_text("## Progress\n\nPrivate project content.\n")
     generate(source, directory)
+    for relative in ("assets/x.png", "assets/proof.webm", "assets/manifest.json", "assets/plan.html", "attachments/x.png"):
+        target = directory / relative
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(b"private proof")
     if legacy:
         (directory / "versions" / "v1.html").write_text(
             '<html><body><p data-anchor-id="s:progress:p1">Private project content.</p></body></html>')
@@ -109,14 +119,20 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
     cli._save_state_for_project("test-funnel", {"project": "test-funnel", "slugs": {"page": record}})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    def request(route, payload=None, cookie=None, origin="https://host.ts.net"):
-        headers = {"Host": "host.ts.net", "Origin": origin, "Sec-Fetch-Site": "same-origin"}
+    def request(route, payload=None, cookie=None, origin="https://host.ts.net", *, referer=None, method=None, mode=None):
+        headers = {"Host": "host.ts.net", "Sec-Fetch-Site": "cross-site" if origin != "https://host.ts.net" else "same-origin"}
+        if origin is not None:
+            headers["Origin"] = origin
+        if referer is not None:
+            headers["Referer"] = referer
+        if mode is not None:
+            headers["Sec-Fetch-Mode"] = mode
         if cookie:
             headers["Cookie"] = cookie
         raw = json.dumps(payload).encode() if payload is not None else None
         if raw is not None:
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/page/{route}", data=raw, headers=headers)
+        req = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/page/{route}", data=raw, headers=headers, method=method)
         return urllib.request.urlopen(req, timeout=3)
     try:
         with request("") as response:
@@ -127,12 +143,58 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
         with pytest.raises(urllib.error.HTTPError) as error:
             request("content")
         assert error.value.code == 403
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request("assets/x.png", origin="null", referer="https://host.ts.net/page/assets/plan.html")
+        assert error.value.code == 403
         with pytest.raises(urllib.error.HTTPError):
             request("api/reviewer/session", {"key": "wrong"})
         with request("api/reviewer/session", {"key": key, "name": "External reviewer"}) as response:
+            issued = response.headers.get_all("Set-Cookie")
+            assert len(issued) == 2
+            parsed = SimpleCookie()
+            for value in issued:
+                parsed.load(value)
+            review = parsed[review_access.cookie_name(directory)]
+            asset = parsed[review_access.asset_cookie_name(directory)]
+            assert asset.value == review.value
+            assert review["samesite"] == "Strict" and review["path"] == "/page/"
+            assert asset["samesite"] == "None" and asset["path"] == "/page/assets/"
+            assert asset["secure"] and asset["httponly"] and not asset["domain"]
+            asset_cookie = asset.key + "=" + asset.value
             cookie = response.headers["Set-Cookie"]
             assert "HttpOnly; Secure; SameSite=Strict" in cookie
             cookie = cookie.split(";", 1)[0]
+        own_referer = "https://host.ts.net/page/assets/plan.html"
+        for route in ("assets/x.png", "assets/proof.webm"):
+            for method in ("GET", "HEAD"):
+                with request(route, cookie=asset_cookie, origin="null", referer=own_referer, method=method) as response:
+                    assert response.status == 200
+                    assert response.headers.get("Access-Control-Allow-Origin") is None
+                    assert response.headers.get("Access-Control-Allow-Credentials") is None
+            with request(route, cookie=cookie) as response:
+                assert response.status == 200
+        for origin in (None, "null"):
+            with request("assets/x.png", cookie=asset_cookie, origin=origin, referer=own_referer) as response:
+                assert response.status == 200
+            for referer in (None, "https://foreign.test/page"):
+                with pytest.raises(urllib.error.HTTPError) as error:
+                    request("assets/x.png", cookie=asset_cookie, origin=origin, referer=referer, mode="cors")
+                assert error.value.code == 403
+                assert error.value.headers.get("Access-Control-Allow-Origin") is None
+                with request("assets/x.png", cookie=asset_cookie, origin=origin, referer=referer, mode="no-cors") as response:
+                    assert response.status == 200
+                    assert response.headers.get("Access-Control-Allow-Origin") is None
+        for route in ("api/comments", "api/identity", "content", "assets/plan.html", "assets/manifest.json", "attachments/x.png"):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                request(route, cookie=asset_cookie, referer=own_referer)
+            assert error.value.code == 403
+        for method in ("POST", "PUT", "OPTIONS"):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                request("assets/x.png", cookie=asset_cookie, referer=own_referer, method=method)
+            assert error.value.code == 403
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request("assets/x.png", cookie=asset_cookie + "tampered", origin="null", referer=own_referer)
+        assert error.value.code == 403
         with request("content", cookie=cookie) as response:
             assert "Private project content." in response.read().decode()
         with request("api/comments", {"anchor_id": "s:progress:p1", "text": "Useful feedback", "version": "v1"}, cookie) as response:
