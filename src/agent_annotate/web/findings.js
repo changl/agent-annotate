@@ -168,7 +168,7 @@
   // ── Rail: every finding as a card under the rail's sections ─────────────
   function optionsHtml(f, chosenLabel) {
     const rec = f.decision_request.recommendation;
-    return `<div class="decision-btns has-consequences">${(f.decision_request.options || []).filter(o => o && typeof o === 'object').map(o => `<button class="btn decision-btn decision-custom${o.id === rec ? ' is-recommended' : ''}" data-opt="${esc(o.id)}" aria-pressed="${o.label === chosenLabel}"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.label === chosenLabel ? '☑ ' : ''}${esc(o.label)}</span>${o.id === rec ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('')}</div>`;
+    return `<div class="decision-btns has-consequences">${(f.decision_request.options || []).filter(o => o && typeof o === 'object').map(o => `<button class="btn decision-btn decision-custom${o.id === rec ? ' is-recommended' : ''}" data-opt="${esc(o.id)}" aria-pressed="${o.label === chosenLabel}"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.label === chosenLabel ? '☑ ' : ''}${esc(o.label)}</span>${o.id === rec ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('')}<button class="btn decision-btn decision-comment" id="f-words"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">&#128172; Answer in words</span></span></button></div>`;
   }
   function lineCard(f) {
     const a = answerOf(f), fx = statusOf(f) === 'done' && fixOf(f);
@@ -293,6 +293,22 @@
       changing = false;
       await D().refreshStore();
     }));
+    // Answer in words: the comment box's text is the answer.
+    on('f-words', async () => {
+      const box = $('#f-compose'), t = box ? box.value.trim() : '';
+      if (!t) {
+        if (box) { box.placeholder = 'Answer in your own words…'; box.focus(); }
+        const el = $('#f-feedback'); if (el) { el.textContent = 'Write your answer in the box, then pick it again.'; el.classList.remove('is-error'); }
+        return;
+      }
+      busy = true;
+      const r = await D().decide(f.id, 'comment', t);
+      busy = false;
+      if (!r || r.fallback) { fail('Failed to send — try again.'); return; }
+      setDraft('compose', f.id, '');
+      changing = false;
+      await D().refreshStore();
+    });
     on('f-save', async () => {
       const t = $('#f-compose').value.trim(); if (!t) return;
       const c = await D().createComment(f.anchor_id, tag(f) + ' · ' + titleOf(f), t, f.version, null, { category: 'findings' });

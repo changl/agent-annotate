@@ -31,6 +31,9 @@ for _name, _path in _SANDBOX_ENV.items():
     os.environ[_name] = str(_path)
 # `annotate` on PATH is machine estate; the version-guard tests turn this back on.
 os.environ["ANNOTATE_VERSION_GUARD"] = "0"
+# The live board (Bead Me Up Scotty, bd) is machine estate too; board tests use a fake bd.
+os.environ["ANNOTATE_BOARD_API"] = "http://127.0.0.1:9"
+os.environ.pop("ANNOTATE_BD", None)
 (_SANDBOX / "config").mkdir(parents=True)
 (_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\n')
 os.environ.pop("ANNOTATE_STATE_ROOT", None)

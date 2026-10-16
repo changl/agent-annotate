@@ -108,9 +108,12 @@ function findAnchorEl(anchorId) {
 // The element that stands for an anchor on screen. A generated question card
 // the interactive strip replaces is hidden (renderDecisionStrips), so pins,
 // hover and scroll-to land on its strip instead of on a zero-size box.
+// A question's strip is its location: the static card it replaces is hidden,
+// and a page built without a "Questions" section has no element for the
+// card's own d:qN anchor at all, only the strip at its evidence.
 function displayAnchorEl(anchorId) {
   const el = findAnchorEl(anchorId);
-  if (el && el.dataset && el.dataset.annotateReplaced) {
+  if (!el || (el.dataset && el.dataset.annotateReplaced)) {
     const strip = document.querySelector('.annotate-decision-strip[data-strip-anchor="' + cssEsc(anchorId) + '"]');
     if (strip) return strip;
   }
@@ -812,9 +815,9 @@ const stripSayText = {};
 const stripExcerptOpen = {};
 const stripEvidenceOpen = {};
 const stripEvidenceItemOpen = {};
-const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Comment', changes: '↻ Request changes' };
+const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Answer in words', changes: '↻ Request changes' };
 // The same options without their glyphs, for the "Recommended: …" sentence.
-const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Comment', changes: 'Request changes' };
+const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Answer in words', changes: 'Request changes' };
 const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment', changes: 'annotate-decision-changes' };
 const DECISION_IMPACTS = ['low', 'medium', 'high'];
 
@@ -1716,6 +1719,10 @@ function buildDecisionItemEl(entry) {
   }
 
   const opts = stripDecisionOptions(dr);
+  // Every card offers "Answer in words" as its last choice, as the rail does.
+  if (!opts.some(o => o.id === 'comment')) {
+    opts.push({ id: 'comment', label: DECISION_BTN_TEXT.comment, plain: DECISION_PLAIN_LABEL.comment, consequence: '', style: null, custom: false });
+  }
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
   if (rec) {
@@ -1790,7 +1797,7 @@ function buildDecisionItemEl(entry) {
       b.addEventListener('click', () => {
         const n = noteText();
         if (!n) {
-          ta.placeholder = o.id === 'changes' ? 'What needs to change…' : 'Add your comment…';
+          ta.placeholder = o.id === 'changes' ? 'What needs to change…' : 'Answer in your own words…';
           ta.focus();
           feedback.classList.remove('is-error');
           feedback.textContent = o.id === 'changes' ? 'Say what needs to change in the box, then pick it again.' : 'Write your answer in the box, then pick it again.';
@@ -2511,6 +2518,7 @@ function wireBridge() {
       latestChanges = data.changes === true; // absent from an old shell → "Comment"
       latestSelect = data.select === true;   // absent from an old shell → `comment`
       latestCardStates = data.cardStates || {};
+      linkBoardIds(data.board);
       // Strips first: they can insert real sibling rows/elements that shift
       // layout, so pins must be positioned AFTER that shift, not before it.
       renderDecisionStrips();
@@ -2519,6 +2527,45 @@ function wireBridge() {
       renderBadges();
       postExcerpts();
     }
+  });
+}
+
+// ── Issue ids on the project's board link to the issue ──────────────
+// "agent-annotate-w6e.4" in the document's text opens that issue on the
+// project's board (decision #20). Done once per board; the shell sends the
+// board (an already-checked http(s) URL and the id prefix) with the counts.
+let linkedBoard = '';
+function linkBoardIds(board) {
+  const sig = board && board.url && board.prefix ? board.url + '\n' + board.prefix : '';
+  if (!sig || sig === linkedBoard) return;
+  linkedBoard = sig;
+  const prefix = board.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(?<![A-Za-z0-9_.-])' + prefix + '-[a-z0-9]+(?:\\.[0-9]+)*(?![A-Za-z0-9_-])', 'g');
+  const root = document.querySelector('.aa') || document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => n.parentElement && n.parentElement.closest('a, pre, script, style, textarea, button, [data-annotate-strip], #badge-layer')
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const nodes = [];
+  for (let n; (n = walker.nextNode());) { re.lastIndex = 0; if (re.test(n.data)) nodes.push(n); }
+  nodes.forEach(node => {
+    const frag = document.createDocumentFragment();
+    let offset = 0;
+    re.lastIndex = 0;
+    for (const m of node.data.matchAll(re)) {
+      frag.appendChild(document.createTextNode(node.data.slice(offset, m.index)));
+      const a = document.createElement('a');
+      a.className = 'annotate-issue-link';
+      a.href = board.url + (board.url.indexOf('?') === -1 ? '?' : '&') + 'bead=' + encodeURIComponent(m[0]);
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.title = 'Open ' + m[0];
+      a.textContent = m[0];
+      frag.appendChild(a);
+      offset = m.index + m[0].length;
+    }
+    frag.appendChild(document.createTextNode(node.data.slice(offset)));
+    node.replaceWith(frag);
   });
 }
 

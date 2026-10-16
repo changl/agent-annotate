@@ -17,6 +17,9 @@ MAX_ITEMS = 50
 MAX_TEXT_LENGTH = 2000
 MAX_LABEL_LENGTH = 160
 _SAFE_ID = re.compile(r"[a-zA-Z0-9_-]+\Z")
+# An issue id in any tracker: CHA-182, agent-annotate-w6e.4.
+ISSUE_ID = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+(?:\.[0-9]+)*\Z")
+_BOARD_PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
 
 def _timestamp() -> str:
@@ -69,9 +72,30 @@ def _serialize(data: dict) -> bytes:
     return encoded
 
 
+def _board(value: Any) -> dict:
+    """The project's issue board: where it opens, its project id there, and
+    optionally the directory whose ready work it counts (never sent to the page)."""
+    board = _object(value, {"url", "project", "label", "prefix", "dir"}, {"url", "project"}, "project.board")
+    project = _string(board["project"], "board.project", 80)
+    if not _BOARD_PROJECT.fullmatch(project):
+        raise ValueError("board.project must be a board project id such as agent-annotate")
+    result = {"url": _url(board["url"], "board.url"), "project": project,
+              "label": _string(board.get("label", "Board"), "board.label", 24) or "Board"}
+    prefix = board.get("prefix", project)
+    if not isinstance(prefix, str) or not _BOARD_PROJECT.fullmatch(prefix):
+        raise ValueError("board.prefix must be the issue id prefix, such as agent-annotate")
+    result["prefix"] = prefix
+    if "dir" in board:
+        directory = _string(board["dir"], "board.dir", 1024)
+        if not os.path.isabs(directory):
+            raise ValueError("board.dir must be an absolute path")
+        result["dir"] = directory
+    return result
+
+
 def validate_project(data: Any) -> dict:
     """Validate and copy project data; absent timestamps are generated in UTC."""
-    data = _object(data, {"schema_version", "title", "updated_at", "modules", "tabs", "issue_links"}, {"modules"}, "project")
+    data = _object(data, {"schema_version", "title", "updated_at", "modules", "tabs", "issue_links", "board"}, {"modules"}, "project")
     version = data.get("schema_version", 1)
     if type(version) is not int or version != 1:
         raise ValueError("project.schema_version must be 1")
@@ -85,19 +109,14 @@ def validate_project(data: Any) -> dict:
     if "issue_links" in data:
         links = data["issue_links"]
         if not isinstance(links, dict) or len(links) > 250:
-            raise ValueError("project.issue_links must map at most 250 identifiers to Linear URLs")
+            raise ValueError("project.issue_links must map at most 250 issue ids to URLs")
         normalized["issue_links"] = {}
         for identifier, url in links.items():
-            if not isinstance(identifier, str) or not re.fullmatch(r"[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,9}", identifier):
-                raise ValueError("issue_links keys must be Linear issue identifiers")
-            url = _url(url, "Linear issue URL")
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or parsed.hostname != "linear.app" or f"/issue/{identifier}" not in parsed.path:
-                raise ValueError("issue_links values must be the matching HTTPS Linear issue URL")
-            tail = parsed.path.partition(f"/issue/{identifier}")[2]
-            if tail and not tail.startswith("/"):
-                raise ValueError("issue_links URL identifier does not match its key")
-            normalized["issue_links"][identifier] = url
+            if not isinstance(identifier, str) or len(identifier) > 120 or not ISSUE_ID.fullmatch(identifier):
+                raise ValueError("issue_links keys must be issue ids such as CHA-182 or agent-annotate-w6e.4")
+            normalized["issue_links"][identifier] = _url(url, "issue link")
+    if "board" in data:
+        normalized["board"] = _board(data["board"])
     if "updated_at" in data:
         timestamp = _string(data["updated_at"], "project.updated_at")
         try:
@@ -223,8 +242,9 @@ def save_project(slug_dir: Path | str, data: Any) -> dict:
     refuse_if_moved(slug_dir)
     normalized = validate_project(data)
     previous = load_project(slug_dir)
-    if "issue_links" not in data and "issue_links" in previous:
-        normalized["issue_links"] = previous["issue_links"]
+    for key in ("issue_links", "board"):
+        if key not in data and key in previous:
+            normalized[key] = previous[key]
     if {k: v for k, v in previous.items() if k != "updated_at"} == {k: v for k, v in normalized.items() if k != "updated_at"}:
         return previous
     normalized["updated_at"] = _timestamp()

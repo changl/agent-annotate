@@ -79,7 +79,10 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       GET  /api/capabilities                → {"version","batch","rounds","decision_schema",
                                                "verdicts"}
                                               (v2.19; 404 on older servers → legacy chrome)
-      POST /api/comments/batch              → {"items":[...], "idempotency":"anchor"|null}
+      GET  /api/board                       → {"board","ready","checked_at"}: the
+                                              project's board link and its cached
+                                              ready count (board.py; never waits on bd)
+      POST /api/comments/batch             → {"items":[...], "idempotency":"anchor"|null}
                                               creates/updates many decision cards at once
       POST /api/rounds/submit               → close a review round: clears
                                               decision.round_pending on every deferred
@@ -1204,6 +1207,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     return self._respond(200, json.dumps(self._project_payload()).encode(), "application/json", cache_control="no-store")
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            if route_path == "/api/board":
+                from .board import board_status
+                from .project_state import load_project
+                try:
+                    status = board_status(load_project(self.artifact_dir).get("board"))
+                except (OSError, ValueError) as exc:
+                    return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+                return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store")
             if route_path == "/api/copy":
                 from .copy_state import load_copy
                 try:
@@ -3161,6 +3172,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _project_payload(self) -> dict:
         from .project_state import load_project
         data = load_project(self.artifact_dir)
+        if "board" in data:
+            data["board"].pop("dir", None)  # a local path; the page needs only the link
         record = self._registered_record()
         if record and self._identity()["authenticated"]:
             from .urls import page_url, redact_review_key

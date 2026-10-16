@@ -297,9 +297,12 @@ def test_native_copy_is_one_tab_without_an_external_review_url():
             project_state.validate_project(data)
 
 
-def test_issue_links_are_exact_linear_urls_and_survive_noop(tmp_path):
+def test_issue_links_are_tracker_neutral_and_survive_noop(tmp_path):
     data = _project()
-    data["issue_links"] = {"CHA-182": "https://linear.app/leadory/issue/CHA-182/home-speed"}
+    data["issue_links"] = {
+        "CHA-182": "https://linear.app/leadory/issue/CHA-182/home-speed",
+        "agent-annotate-w6e.4": "https://board.example:8473/p/agent-annotate?bead=agent-annotate-w6e.4",
+    }
     saved = project_state.save_project(tmp_path, data)
     assert project_state.load_project(tmp_path)["issue_links"] == data["issue_links"]
     original_mtime = (tmp_path / "project.json").stat().st_mtime_ns
@@ -312,14 +315,66 @@ def test_issue_links_are_exact_linear_urls_and_survive_noop(tmp_path):
 
 
 @pytest.mark.parametrize("links", [
-    [], {"CHA-0": "https://linear.app/a/issue/CHA-0"},
-    {"<script>": "https://linear.app/a/issue/CHA-1"},
-    {"CHA-1": "javascript:alert(1)"}, {"CHA-1": "https://linear.app.evil/a/issue/CHA-1"},
-    {"CHA-1": "http://linear.app/a/issue/CHA-1"},
-    {"CHA-1": "https://user:secret@linear.app/a/issue/CHA-1"},
-    {"CHA-1": "https://linear.app/a/issue/CHA-10"},
-    {"CHA-1": "https://linear.app/a/issue/CHA-1-extra"},
+    [], {"<script>": "https://tracker.example/CHA-1"}, {"CHA": "https://tracker.example/CHA"},
+    {"CHA-1": "javascript:alert(1)"}, {"CHA-1": "https://user:secret@tracker.example/CHA-1"},
+    {"CHA-1": "https://tracker.example/a b"},
 ])
-def test_issue_links_reject_unsafe_or_mismatched_targets(links):
+def test_issue_links_reject_unsafe_targets(links):
     with pytest.raises(ValueError):
         project_state.validate_project({"modules": [], "issue_links": links})
+
+
+def test_board_is_tracker_neutral_and_its_directory_stays_off_the_page(tmp_path):
+    data = _project()
+    data["board"] = {"url": "https://host.example:8473/p/agent-annotate", "project": "agent-annotate",
+                     "label": "Beads", "dir": "/srv/beads/agent-annotate"}
+    saved = project_state.save_project(tmp_path, data)
+    assert saved["board"] == dict(data["board"], prefix="agent-annotate")
+    del data["board"]
+    project_state.save_project(tmp_path, data)
+    assert project_state.load_project(tmp_path)["board"]["project"] == "agent-annotate"
+    for bad in ({"url": "javascript:x", "project": "a"}, {"url": "https://h/p", "project": "../x"},
+                {"url": "https://h/p", "project": "a", "dir": "relative/dir"},
+                {"url": "https://h/p", "project": "a", "tracker": "linear"}):
+        with pytest.raises(ValueError):
+            project_state.validate_project({"modules": [], "board": bad})
+
+
+def test_board_ready_count_is_cached_and_never_waits_for_bd(tmp_path, monkeypatch):
+    import threading
+
+    from agent_annotate import board as board_module
+    release = threading.Event()
+    calls = []
+
+    def slow(board):
+        calls.append(board["project"])
+        release.wait(5)
+        return 7
+
+    monkeypatch.setattr(board_module, "ready_count", slow)
+    monkeypatch.setattr(board_module, "_cache", {})
+    monkeypatch.setattr(board_module, "_refreshing", set())
+    info = {"url": "https://h.example/p/x", "project": "x", "label": "Beads", "prefix": "x", "dir": "/srv/x"}
+    first = board_module.board_status(info)
+    assert first["ready"] is None and "dir" not in first["board"]
+    assert board_module.board_status(info)["ready"] is None and calls == ["x"]
+    release.set()
+    for _ in range(50):
+        if board_module.board_status(info)["ready"] == 7:
+            break
+        threading.Event().wait(0.05)
+    assert board_module.board_status(info)["ready"] == 7 and calls == ["x"]
+    assert board_module.board_status(None) == {"board": None, "ready": None, "checked_at": None}
+
+
+def test_board_ready_count_runs_bd_ready_in_the_board_directory(tmp_path, monkeypatch):
+    from agent_annotate import board as board_module
+    fake = tmp_path / "bd"
+    fake.write_text('#!/bin/sh\necho "$@" > "$(dirname "$0")/args"\necho \'[{"id":"x-1"},{"id":"x-2"}]\'\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("ANNOTATE_BD", str(fake))
+    assert board_module.ready_count({"project": "x", "dir": str(tmp_path)}) == 2
+    assert (tmp_path / "args").read_text().split() == ["-C", str(tmp_path), "ready", "--json", "--brief", "-n", "0", "--exclude-type", "epic", "--readonly"]
+    # No directory and no reachable board API: no count, no error.
+    assert board_module.board_status({"url": "https://h/p", "project": "nowhere", "prefix": "nowhere"})["ready"] is None

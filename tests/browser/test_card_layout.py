@@ -322,7 +322,7 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             assert rail.locator(".decision-reco-line").inner_text().startswith("Recommended:")
             assert rail.locator(".decision-rec-badge").text_content() == "Recommended"
             rows = rail.locator(".decision-btns > .decision-btn")
-            assert rows.count() == 2
+            assert rows.count() == 3 and "Answer in words" in rows.nth(2).inner_text()
             assert "One week of dual writes" in rows.nth(0).inner_text()
             assert rows.nth(1).locator(".decision-rec-badge").count() == 0
             toggle = rail.locator(".decision-evidence-toggle")
