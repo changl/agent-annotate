@@ -4,7 +4,7 @@ PR: https://github.com/changl/agent-annotate/pull/24
 
 ## Accepted revised comparison
 
-After the first pinned experiment exposed evidence and lifecycle gaps, the coordinator expanded this PR to validate every evidence target and add explicit numbered resolution. The branch was rebased onto `origin/main` at `f3a58da` (PR 23). The revised run uses the same immutable runtime `5bdb68a` for old text v2.25.1 and new text `5bdb68a`, Codex `gpt-6.1-sol`/medium, N=3 per fixture and text, interleaved. Fixture checks were not weakened.
+After the first pinned experiment exposed evidence and lifecycle gaps, the coordinator expanded this PR to validate every evidence target and add explicit numbered resolution. The branch was rebased onto `origin/main` at `f3a58da` (PR 23). The revised run uses the same immutable runtime `5bdb68a` for old text v2.25.1 and new text `5bdb68a`, Codex `gpt-6.1-sol`/medium, N=3 per fixture and text, interleaved. Fixture checks were not weakened. The measured text/runtime remain pinned to `5bdb68a`; a later clause correction describes shipped compare behavior (phone/portrait pairs side by side, desktop/landscape stacked, with a layout override) and does not touch either fixture.
 
 | Fixture | Text | Output tokens, median | Seconds, median | Tool failures, runs 1/2/3 | Outcomes passed |
 | --- | --- | ---: | ---: | --- | --- |
@@ -21,9 +21,9 @@ Tool failures count failed shell results containing an annotate call, including 
 
 | Text | v2.25.1 | Final |
 | --- | ---: | ---: |
-| SKILL.md | 441 | 395 |
+| SKILL.md | 441 | 401 |
 | References | 2731 across 6 files | 499 in 1 file |
-| Total | 3172 | 894 |
+| Total | 3172 | 900 |
 
 Counts use whitespace-separated words including front matter and examples. The three packaged SKILL.md copies are identical; the plugin reference is generated from the one source reference. No installed user skill, settings or runtime is part of this PR.
 

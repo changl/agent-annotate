@@ -9,7 +9,7 @@ The reviewer looks and decides on the page. Chat points to it.
 
 1. **Find the page.** Use the session-start page link, or run `annotate workspace --json`. Reuse the project's page across sessions, worktrees and linked repositories. Share its full Funnel URL in updates. If none exists, create it with `annotate new DIR --from page.md --project PROJECT --publish`; use `--ask` only when there are decision cards.
 
-2. **Show first.** Put what must be judged on the page: screenshots, the plan, the copy. Publish changes with `annotate new DIR --from page.md --version vN --publish --ask`. For current vs proposed, use a `compare` fence with matching crops, current left and proposed right; narrow images stack automatically.
+2. **Show first.** Put what must be judged on the page: screenshots, the plan, the copy. Publish changes with `annotate new DIR --from page.md --version vN --publish --ask`. Use a `compare` fence with matching crops: phone/portrait pairs side by side (current left, proposed right), desktop/landscape stacked (current above, proposed below); `layout` overrides the default.
 
 3. **Ask at the evidence.** Put a `cards` fence in that page.md, citing the visible block each question concerns. One decision per card: prompt, context, recommendation, options and their consequences. Ask only what you cannot decide yourself. Never ask the reviewer to accept everything at once or approve what is not shown.
 
