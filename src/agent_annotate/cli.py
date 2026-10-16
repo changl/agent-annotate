@@ -2151,6 +2151,9 @@ def _moved_page(slug_dir) -> bool:
     """A consolidated page is frozen: name the page that holds it now."""
     from .consolidate import marker
     moved = marker(slug_dir) if slug_dir else None
+    if moved and moved.get("archived"):
+        print("ERROR: this page is archived and read-only; use annotate unarchive to restore it.", file=sys.stderr)
+        return True
     if moved:
         target = moved.get("target") or {}
         print(f"ERROR: this page moved to {target.get('project')}/{target.get('slug')} "
@@ -2423,6 +2426,8 @@ def cmd_inbox(args) -> int:
     if not resolved:
         return 2
     project, slug, record = resolved
+    from .consolidate import inactive
+    historical = inactive(record)
     from .workspace import workspace_owner_record
     record = workspace_owner_record(record)
     session_id = _session_id()
@@ -2430,7 +2435,8 @@ def cmd_inbox(args) -> int:
     offset_file = _offset_file(project, slug, session_id)
     if category:
         offset_file = _category_offset_file(offset_file, category)
-    offset_file.parent.mkdir(parents=True, exist_ok=True)
+    if not historical:
+        offset_file.parent.mkdir(parents=True, exist_ok=True)
 
     offset = 0
     if args.unread:
@@ -2451,7 +2457,7 @@ def cmd_inbox(args) -> int:
 
     events: list[dict] = []
     new_offset = offset
-    if bus_file.exists():
+    if not historical and bus_file.exists():
         size = bus_file.stat().st_size
         with bus_file.open("r", encoding="utf-8") as f:
             f.seek(min(offset, size))
@@ -3896,6 +3902,79 @@ def _consolidate_run(consolidate, directory: Path, target: tuple[str, str], sour
         return None
 
 
+def cmd_archive(args) -> int:
+    """Freeze or restore a page without stopping its server or changing its URL."""
+    from .categories import category_counts
+    from .consolidate import ARCHIVE_MARKER, MARKER, _all_comments, comment_counts
+    from .sync_server import _coerce_v2, _locked_store
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    project, slug, record = resolved
+    restore = args.cmd == "unarchive"
+    why = " ".join((getattr(args, "why", None) or "").split())
+    if not restore and not why:
+        print("ERROR: --why requires a nonempty reason", file=sys.stderr)
+        return 2
+    directory = Path(record.get("slug_dir") or "/nonexistent").resolve()
+    try:
+        if restore and (directory / MARKER).exists() and not (directory / ARCHIVE_MARKER).exists():
+            raise ValueError("this page was consolidated; standalone unarchive cannot undo consolidation")
+        store = _coerce_v2(json.loads((directory / "comments.json").read_text(encoding="utf-8")))
+        if not (directory / "current.meta.json").is_file():
+            raise ValueError("not a page directory: current.meta.json is missing")
+        archived = (directory / ARCHIVE_MARKER).exists()
+        stale = []
+        if not restore and not archived:
+            processes = list(_running_servers(strict=not args.dry_run).get(str(directory)) or [])
+            if _is_process_alive(int(record.get("pid") or 0)) and not any(
+                    p["pid"] == record.get("pid") for p in processes):
+                processes.append({"pid": record.get("pid"), "port": record.get("port"),
+                                  "public_base_path": record.get("public_base_path")})
+            for process in processes:
+                port = process.get("port")
+                code, payload = _api({"local_url": f"http://localhost:{port}/", "port": port,
+                                      "public_base_path": process.get("public_base_path")},
+                                     "GET", "/api/capabilities", None, "agent:annotate", timeout=5)
+                if not (code == 200 and isinstance(payload, dict) and payload.get("archive")):
+                    stale.append(f"pid {process.get('pid')}, port {port}")
+            if stale and not args.dry_run:
+                raise ValueError("server does not support archiving; restart on this release first: " + ", ".join(stale))
+        summary = {"page": f"{project}/{slug}", "action": "unarchive" if restore else "archive",
+                   "dry_run": bool(args.dry_run), "already_archived": archived,
+                   "why": why if not restore else None, "url": redact_review_key(page_url(record)),
+                   "counts": comment_counts(c for _, _, c in _all_comments(store)),
+                   "active_counts_before": category_counts(directory), "stale_servers": stale}
+        if not args.dry_run:
+            with _flock(_state_lock_path(project)):
+                with _locked_store(directory):
+                    state = _load_state_for_project(project)
+                    current = state["slugs"][slug]
+                    if Path(current["slug_dir"]).resolve() != directory:
+                        raise ValueError("page registration changed; retry")
+                    if restore:
+                        current.pop("archived", None)
+                        _save_state_for_project(project, state)
+                        (directory / ARCHIVE_MARKER).unlink(missing_ok=True)
+                    else:
+                        if not (directory / ARCHIVE_MARKER).exists():
+                            _save_private_json(directory / ARCHIVE_MARKER,
+                                               {"at": _now_iso(), "why": why, "page": f"{project}/{slug}"})
+                        current["archived"] = json.loads((directory / ARCHIVE_MARKER).read_text())
+                        _save_state_for_project(project, state)
+    except (OSError, ValueError, KeyError, TypeError, TimeoutError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if getattr(args, "json", False):
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        print(f"{'Dry run: ' if args.dry_run else ''}{summary['action']} {project}/{slug}: "
+              f"{summary['counts']['cards']} cards, {summary['counts']['comments']} comments; URL kept: {summary['url']}")
+        if stale:
+            print("WARN: restart on this release before archiving: " + ", ".join(stale))
+    return 0
+
+
 def cmd_consolidate(args) -> int:
     """Merge pages of one project into one new page, one tab per source."""
     from . import consolidate
@@ -4562,6 +4641,9 @@ def _load_store(record: dict) -> dict:
     "archived": {anchor_id: [comment, …]} (or a legacy list)}. Every observed first-attempt parse reached for
     store["comments"], which does not exist and never has.
     """
+    from .consolidate import inactive
+    if inactive(record):
+        return {"anchors": {}, "archived": []}
     slug_dir = record.get("slug_dir")
     if not slug_dir:
         return {"anchors": {}, "archived": []}
@@ -5139,6 +5221,15 @@ def main():
     sp_cons.add_argument("--dry-run", action="store_true", help="print counts per page and per tab; write nothing")
     sp_cons.add_argument("--json", action="store_true")
     sp_cons.set_defaults(func=cmd_consolidate)
+    for command in ("archive", "unarchive"):
+        sp_archive = sub.add_parser(command, help="freeze a page read-only" if command == "archive" else "restore an archived page")
+        sp_archive.add_argument("slug", metavar="PROJECT/SLUG")
+        sp_archive.add_argument("--project", default=None)
+        if command == "archive":
+            sp_archive.add_argument("--why", required=True)
+        sp_archive.add_argument("--dry-run", action="store_true", help="print counts; write nothing")
+        sp_archive.add_argument("--json", action="store_true")
+        sp_archive.set_defaults(func=cmd_archive)
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 

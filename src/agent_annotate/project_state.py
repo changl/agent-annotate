@@ -219,6 +219,8 @@ def load_project(slug_dir: Path | str) -> dict:
 
 def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
+    from .consolidate import refuse_if_moved
+    refuse_if_moved(slug_dir)
     normalized = validate_project(data)
     previous = load_project(slug_dir)
     if "issue_links" not in data and "issue_links" in previous:
@@ -252,10 +254,11 @@ def save_project(slug_dir: Path | str, data: Any) -> dict:
 def linked_pages(primary: dict) -> list[dict]:
     """Declared workspace tabs and registered exceptions linked to this page."""
     from .cli import _registry_entries
+    from .consolidate import inactive
     from .urls import page_url
     from .workspace import workspace_tab_records
 
-    entries = _registry_entries()
+    entries = [item for item in _registry_entries() if not inactive(item[2])]
     # Every registration of this page (a stale second one included). The CLI
     # writes parent_slug as "project/slug"; older records use the bare slug.
     parents = {(project, slug) for project, slug, record in entries

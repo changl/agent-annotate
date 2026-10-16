@@ -1108,7 +1108,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _redirect_moved(self, parsed, route_path: str) -> bool:
         moved = self._moved()
-        if not moved or route_path not in ("/", ""):
+        if not moved or moved.get("archived") or route_path not in ("/", ""):
             return False
         if "archived" in urllib.parse.parse_qs(parsed.query, keep_blank_values=True):
             return False
@@ -1134,7 +1134,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not moved:
             return False
         target = moved.get("target") if isinstance(moved.get("target"), dict) else {}
-        body = {"error": f"this page moved to {target.get('project')}/{target.get('slug')}; it is read-only",
+        body = {"error": ("this page is archived; it is read-only" if moved.get("archived") else
+                          f"this page moved to {target.get('project')}/{target.get('slug')}; it is read-only"),
                 "moved_to": self._moved_to(moved)}
         self._respond(410, json.dumps(body).encode(), "application/json", cache_control="no-store")
         return True
@@ -1345,7 +1346,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({
             "version": __version__,
             "runtime": RUNTIME_MANIFEST,
-            "version_guard": self._version_guard(),
+            "version_guard": None if self._moved() else self._version_guard(),
+            "archive": True,
+            "read_only": self._moved() is not None,
             "automatic_round_delivery": True,
             "private_share_links": self._is_funnel_origin(),
             "copy_blocks": True,

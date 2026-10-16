@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Add reversible `annotate archive PROJECT/SLUG --why TEXT [--dry-run]` and `unarchive PROJECT/SLUG [--dry-run]`. Archives keep their readable URL and all feedback, refuse writes, and leave inboxes, active counts, workspace candidates, prompt notices and version banners.
+
 ## 2.25.1
 
 - Switching a document's own tab re-places its questions: they render at their evidence in the tab just opened (before, only after the next data refresh).

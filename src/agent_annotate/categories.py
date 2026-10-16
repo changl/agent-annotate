@@ -479,8 +479,11 @@ def block_can_be_unread(block: dict) -> bool:
 
 
 def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None) -> dict:
+    from .consolidate import marker
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
+    if marker(page_dir) is not None:
+        return counts
     read = (read_state if read_state is not None else
             _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
     versions = _current_versions(page_dir) if author else {}

@@ -59,10 +59,11 @@ def _record_key(record: dict) -> str | None:
 
 def candidates(path: Path, project: str | None = None, *, caller: Path | None = None) -> list[tuple[str, str, dict]]:
     from .cli import _registry_entries
+    from .consolidate import inactive
     key = project_key(path) or (project_key(caller) if caller is not None else None)
     # A consolidated page lives on as its target's tab, not as a project page.
     entries = [(name, slug, record, _record_key(record)) for name, slug, record in _registry_entries()
-               if not record.get("standalone") and not record.get("exception") and not record.get("consolidated_into")]
+               if not record.get("standalone") and not record.get("exception") and not inactive(record)]
     roots = [r["workspace_root"] for _, _, r, record_key in entries if r.get("workspace_root") and (
              _within(path, r["workspace_root"]) or (caller is not None and _within(caller, r["workspace_root"]))
              or (key and key == record_key))]
@@ -137,6 +138,7 @@ def _shared_scope(primary: dict, child: dict) -> bool:
 def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
     """Exact registered, same-origin tabs inside the declared workspace; no keys or writes."""
     from .cli import _registry_entries
+    from .consolidate import inactive
     from .project_state import load_project
     origin = _url_identity(_record_url(primary))
     if not origin or not primary.get("slug_dir"):
@@ -145,7 +147,7 @@ def workspace_tab_records(primary: dict) -> list[tuple[str, str, dict]]:
         tabs = load_project(primary["slug_dir"]).get("tabs", [])
     except (OSError, ValueError):
         return []
-    entries = _registry_entries()
+    entries = [item for item in _registry_entries() if not inactive(item[2])]
     primary_names = {primary.get("slug")} - {None}
     primary_names.update(name for project, slug, record in entries
                          if record.get("slug_dir") == primary.get("slug_dir")

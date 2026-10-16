@@ -427,3 +427,9 @@ body.has-summary #send-btn{visibility:hidden}
 /* Keep list from main: Linear chips (F18) and a failed-run pill on progress. */
 .ticket-link{color:var(--color-primary);font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .failed-pill{margin-left:6px}
+/* Historical pages keep navigation and feedback readable, with no edit affordances. */
+.page-read-only #send-btn,
+.page-read-only #general-feedback-toggle,
+.page-read-only #general-feedback-box,
+.page-read-only #round-bar,
+.page-read-only .citem-menu-btn { display: none !important; }

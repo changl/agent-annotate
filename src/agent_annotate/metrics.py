@@ -236,6 +236,7 @@ def collect_metrics(since: datetime, until: datetime, state_dir: Path | str = ST
     Acknowledged rows retain explicit accepted_at samples, but a manual inbox
     read never implies prompt acceptance. Acknowledgment uses acknowledged_at.
     """
+    from .consolidate import inactive
     if not isinstance(since, datetime) or not isinstance(until, datetime):
         raise ValueError("since and until must be datetimes")
     since = (since if since.tzinfo else since.replace(tzinfo=UTC)).astimezone(UTC)
@@ -255,7 +256,7 @@ def collect_metrics(since: datetime, until: datetime, state_dir: Path | str = ST
         aggregate = _empty()
         for slug, record in slugs.items():
             if (not isinstance(slug, str) or not _SAFE_NAME.fullmatch(slug) or slug in (".", "..")
-                    or not isinstance(record, dict)):
+                    or not isinstance(record, dict) or inactive(record)):
                 continue
             aggregate["active_pages"] += 1
             round_times = _rounds(bus_root / project / f"{slug}.ndjson", aggregate, since, until)

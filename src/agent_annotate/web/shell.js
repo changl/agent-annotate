@@ -582,8 +582,10 @@ async function loadCapabilities() {
       if (j && typeof j === 'object') CAPS = j;
     }
   } catch {}
+  document.body.classList.toggle('page-read-only', !!(CAPS && CAPS.read_only));
   return CAPS;
 }
+function pageReadOnly() { return !!(CAPS && CAPS.read_only); }
 function roundsEnabled() {
   return !!(CAPS && CAPS.rounds);
 }
@@ -1223,6 +1225,7 @@ function isChangingAnswer(c) {
   return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
 }
 function sectionOf(c) {
+  if (pageReadOnly()) return 'archived';
   if (c.status === 'archived') return 'archived';
   if (isRoundPending(c) || userNeedsSend(c)) return 'ready';
   const cls = classify(c);
@@ -1244,6 +1247,7 @@ function sendPlan() {
   return { round, answers, push };
 }
 function sendables() {
+  if (pageReadOnly()) return { verdicts: 0, answers: 0, comments: 0, gf: false, total: 0 };
   const p = sendPlan();
   const gf = !!gfDraft();
   return { verdicts: p.round.length, answers: p.answers.length, comments: p.push.length, gf,
@@ -1256,6 +1260,7 @@ function gfDraft() {
 // final/: one count model for the whole page. docCounts() is what the
 // header tabs, the phone menu and the rail badges read for a document.
 function docCounts() {
+  if (pageReadOnly()) return { needs: 0, unread: 0, waiting: 0, total: 0, pending: 0 };
   const all = flattenAll(false).filter(inScope);
   let needs = 0, unread = 0, waiting = 0;
   for (const c of all) {
@@ -1705,6 +1710,7 @@ function showKbd(c) {
 function renderDecisionBlock(c) {
   if (!c.decision_request || c.status === 'archived') return '';
   const dr = c.decision_request;
+  if (pageReadOnly()) return `<div class="decision-block decision-resolved"><div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div><span class="badge badge-ghost">Archived · read-only</span></div>`;
   if (c.status === 'resolved_in_version') {
     return `<div class="decision-block decision-resolved">
       <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
@@ -1898,7 +1904,7 @@ function renderCItem(c) {
       <div>${ticketsHTML(c.response_text)}</div>
     </div>` : '';
 
-  const showReply = c.status !== 'archived' && agentResponded(c) && !isUnresolvedDecision(c) && !decisionChanging[c.id];
+  const showReply = !pageReadOnly() && c.status !== 'archived' && agentResponded(c) && !isUnresolvedDecision(c) && !decisionChanging[c.id];
   const replyFormHtml = showReply ? `
     <div class="reply-form">
       <textarea class="textarea textarea-sm reply-ta" data-reply-for="${escAttr(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
@@ -2280,6 +2286,7 @@ let pendingAnchor = null; // {anchorId, anchorLabel, target}
 let editingCommentId = null;
 
 function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
+  if (pageReadOnly()) return;
   if (!IDENTITY) {
     updateAuthorIndicator();
     return;
@@ -3283,7 +3290,7 @@ function sendCommentCountsToFrame() {
           // The card's own text: the body strip shows it under the prompt
           // when it says more, since the strip replaces the generated card.
           text: hasDecisionRequest && typeof c.text === 'string' ? c.text : null,
-          decisionRequest: hasDecisionRequest ? {
+          decisionRequest: hasDecisionRequest && !pageReadOnly() ? {
             prompt: displayPrompt(c),
             options: Array.isArray(c.decision_request.options) ? c.decision_request.options : null,
             // v2.19 fields (absent on a legacy request → undefined → adapter

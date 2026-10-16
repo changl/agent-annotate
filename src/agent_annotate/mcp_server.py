@@ -70,7 +70,10 @@ def build_server():
         """
 
         pages = []
+        from .consolidate import inactive
         for project, slug, record in cli._registry_entries():
+            if inactive(record):
+                continue
             lease_path = MONITOR_ROOT / project / slug / "owner.json"
             lease = None
             if lease_path.exists():
@@ -114,7 +117,8 @@ def build_server():
         record = _record(slug)
         bus = Path(record.get("bus_file") or (cli.BUS_ROOT / record["project"] / f"{record['slug']}.ndjson"))
         events = []
-        if bus.exists():
+        from .consolidate import inactive
+        if not inactive(record) and bus.exists():
             for line in bus.read_text(encoding="utf-8").splitlines():
                 try:
                     event = json.loads(line)
