@@ -382,7 +382,7 @@ def comment_needs_reviewer(comment: dict) -> bool:
     """The needs-you predicate, also used by the read-only session hook."""
     status = comment.get("status", "open")
     decision = _mapping(comment.get("decision"))
-    if status == "archived" or comment.get("round_pending") or (
+    if status == "archived" or comment.get("withdrawn") or comment.get("round_pending") or (
             decision.get("round_pending") and status != "resolved_in_version"):
         return False
     if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):

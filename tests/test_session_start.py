@@ -91,6 +91,27 @@ def test_unlisted_repo_is_silent_even_with_a_matching_project_label(estate):
     assert session_start.notice(other) is None
 
 
+@pytest.mark.parametrize("marker", [False, True])
+def test_archived_page_is_silent_and_does_not_win_recent_activity(estate, marker):
+    data = json.loads((estate.state / "project.json").read_text())
+    if marker:
+        (estate.page / "archived.json").write_text('{"why": "Retired"}')
+    else:
+        data["slugs"]["main"]["archived"] = {"why": "Retired"}
+        (estate.state / "project.json").write_text(json.dumps(data))
+    assert session_start.notice(estate.repo) is None
+    assert workspace.workspace_data(estate.repo)["workspace"] is None
+
+
+def test_withdrawn_cards_do_not_count_as_waiting(estate):
+    path = estate.page / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["d:q1"].append({"status": "open", "decision_request": {"prompt": "Withdrawn?"},
+                                      "withdrawn": {"why": "No longer asked"}})
+    path.write_text(json.dumps(store))
+    assert session_start.notice(estate.repo).endswith(" · 1 waiting on you")
+
+
 def test_two_pages_use_most_recent_activity_not_registry_order(estate):
     other = {**estate.record, "slug_dir": str(estate.root / "other-page"), "workspace_selected_at": 4102444800}
     state_file = estate.state / "project.json"
