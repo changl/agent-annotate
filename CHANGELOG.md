@@ -1,6 +1,8 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.26.1
+
+Fixes from the reviewer's 2.26.0 check (#23 on the agent-annotate page), plus embedded page HTML.
 
 - Render page-owned HTML/HTM assets inline in an opaque script-enabled sandbox, so embedded plans work without access to page cookies, APIs or top navigation. Reviewer sign-in also issues an HttpOnly, Secure, SameSite=None cookie scoped to the page's assets path, accepted only for inert image/video GET/HEAD; anonymous HTTPS assets remain private. Serve WebM/MP4 assets inline with video MIME types and no CORS; the sandbox cannot read JSON, which remains an authenticated download. Proof uploads and other non-inert assets still download; nosniff and content-hash/ETag caching remain intact, with media caches varying by session cookie and fetch mode.
 - Header items never overlap, clip or squeeze from 390 to 2560px, with the rail open or closed and at every text size. Tabs keep their width and share one baseline with their counts (the Beads count is an xs badge like the others); the send note gives way first, then tabs that still do not fit fold into the tab menu. The header grows with Aa, and on a phone the title and the menu label ellipsize before anything leaves the header.
