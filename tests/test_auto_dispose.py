@@ -1,11 +1,4 @@
-"""Earlier items are disposed from the new version itself.
-
-The bench caught agents resolving v1 items before v2 existed (HTTP 400), then
-`new --version v2 --publish` refusing because the items had no disposition:
-two failures and a retry on every round. The new version already says where
-each item went, so publish-version records it: a card with the same number
-carries the item, and the first element naming it as #N resolves it there.
-"""
+"""New versions withdraw only agent questions that were not asked again."""
 
 import http.server
 import json
@@ -18,11 +11,11 @@ from agent_annotate import cli
 from agent_annotate.sync_server import make_handler
 
 
-def _card(cid, number, verdict):
+def _card(cid, number, verdict=None):
     return {"id": cid, "anchor_id": f"d:q{number}", "number": number, "text": f"Q{number}?",
             "status": "open", "version": "v1", "author": "agent:claude",
             "decision_request": {"prompt": f"Q{number}?"},
-            "decision": {"verdict": verdict, "text": "x", "by": "r@x"}}
+            **({"decision": {"verdict": verdict, "text": "x", "by": "r@x"}} if verdict else {})}
 
 
 @pytest.fixture
@@ -41,9 +34,9 @@ def page(tmp_path, monkeypatch):
     (slug_dir / "current.meta.json").write_text(json.dumps(
         {"current": "v1", "history": [{"version": "v1", "ts": "", "label": ""}]}))
     (slug_dir / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {
-        "d:q1": [_card("aaaaaaaaaaaa", 1, "select")],
+        "d:q1": [_card("aaaaaaaaaaaa", 1)],
         "d:q2": [_card("bbbbbbbbbbbb", 2, "comment")],
-        "d:q3": [_card("cccccccccccc", 3, "select")],
+        "d:q3": [_card("cccccccccccc", 3)],
     }, "archived": {}}))
     (slug_dir / "cards.json").write_text(json.dumps(
         [{"number": 3, "anchor_id": "d:q3", "decision_request": {"prompt": "Q3 again?"}}]))
@@ -76,31 +69,88 @@ def _publish(slug_dir):
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None))
 
 
-def test_mentions_pick_the_innermost_anchor_and_skip_non_mentions(page):
-    html = (page / "versions" / "v2.html").read_text()
-    assert cli._mentions_by_anchor(html) == {2: "s:plan:li1"}
+def test_new_version_withdraws_unasked_and_preserves_reviewer_content(page):
+    before = _store(page)
+    store = cli._coerce_store_file(page)
+    store["anchors"]["s:reviewer"] = [{"id": "reviewer", "anchor_id": "s:reviewer",
+        "author": "reviewer@example.com", "version": "v1", "status": "open", "text": "Please keep this."}]
+    replied = _card("replied", 4)
+    replied["replies"] = [{"author": "reviewer@example.com", "text": "My answer"}]
+    pending = _card("pending", 5, "comment")
+    pending["decision"]["round_pending"] = True
+    store["anchors"]["d:q4"] = [replied]
+    store["anchors"]["d:q5"] = [pending]
+    (page / "comments.json").write_text(json.dumps(store))
 
-
-def test_an_unmentioned_item_still_blocks_and_the_error_says_how(page, capsys):
-    assert _publish(page) == 2
-    err = capsys.readouterr().err
-    assert "aaaaaaaaaaaa" in err
-    assert "Name each as #N" in err
-    store = _store(page)
-    # The others were recorded on the way: no retry needed for them.
-    assert store["bbbbbbbbbbbb"]["status"] == "resolved_in_version"
-    assert store["bbbbbbbbbbbb"]["resolution_anchor_id"] == "s:plan:li1"
-    assert store["cccccccccccc"]["version"] == "v2"
-
-
-def test_a_version_that_accounts_for_every_item_publishes_in_one_call(page, capsys):
-    html = (page / "versions" / "v2.html").read_text()
-    (page / "versions" / "v2.html").write_text(html.replace(
-        "Still open", "Still open").replace(
-        '<li data-anchor-id="s:plan:li2">', '<li data-anchor-id="s:plan:li2">#1 done. '))
     assert _publish(page) == 0
-    out = capsys.readouterr().out
-    assert "earlier items: resolved #1, resolved #2, carried #3" in out
+    after = _store(page)
+    assert "decision_request" not in after["aaaaaaaaaaaa"]
+    assert after["aaaaaaaaaaaa"]["withdrawn"]["reason"] == "not asked again in v2"
+    assert after["aaaaaaaaaaaa"]["withdrawn"]["decision_request"] == before["aaaaaaaaaaaa"]["decision_request"]
+    assert after["aaaaaaaaaaaa"]["version"] == "v1"
+    assert after["bbbbbbbbbbbb"] == before["bbbbbbbbbbbb"]
+    assert after["cccccccccccc"] == before["cccccccccccc"]  # asked again in cards.json
+    assert after["reviewer"] == store["anchors"]["s:reviewer"][0]
+    assert after["replied"] == replied
+    assert after["pending"] == pending
+    assert cli._read_meta(page)["current"] == "v2"
+    assert cli._decision_cards(cli._coerce_store_file(page))[0]["id"] != "aaaaaaaaaaaa"
+
+
+def test_withdraw_by_display_number_and_counts(page, capsys):
+    from agent_annotate.categories import category_counts
+    from agent_annotate.hooks.check_comment_bus import _load_cards
+
+    assert cli.cmd_withdraw(SimpleNamespace(slug="reviews/demo", comment_id="1", why="No longer needed",
+                                           project=None, author="agent:test", json=False)) == 0
+    assert "withdrawn aaaaaaaaaaaa #1" in capsys.readouterr().out
+    withdrawn = _store(page)["aaaaaaaaaaaa"]
+    assert withdrawn["withdrawn"]["reason"] == "No longer needed"
+    assert category_counts(page)["review"]["needs_you"] == 1
+    assert "aaaaaaaaaaaa" not in _load_cards(str(page))
+    assert "aaaaaaaaaaaa" not in [c["id"] for c in cli._decision_cards(cli._coerce_store_file(page))]
+
+
+def test_withdraw_refuses_an_answered_card_without_writing(page, capsys):
+    before = (page / "comments.json").read_bytes()
+    assert cli.cmd_withdraw(SimpleNamespace(slug="reviews/demo", comment_id="2", why="Stale",
+                                           project=None, author="agent:test", json=False)) == 2
+    assert "only open, unanswered agent questions" in capsys.readouterr().err
+    assert (page / "comments.json").read_bytes() == before
+
+
+def test_ask_version_withdraws_omitted_questions_and_reposes_open_card(page):
+    assert cli.cmd_ask(SimpleNamespace(slug="reviews/demo", from_file=str(page / "cards.json"),
+                                      version="v2", project=None, author="agent:claude", json=True)) == 0
     store = _store(page)
-    assert store["aaaaaaaaaaaa"]["resolution_anchor_id"] == "s:plan:li2"
-    assert store["cccccccccccc"]["status"] == "open"
+    assert store["aaaaaaaaaaaa"]["withdrawn"]["reason"] == "not asked again in v2"
+    assert store["cccccccccccc"]["version"] == "v2"
+    assert store["bbbbbbbbbbbb"]["decision"]["text"] == "x"
+
+
+def test_new_publish_with_no_cards_does_not_reuse_stale_cards_json(page, monkeypatch):
+    from agent_annotate import pagegen
+    source = page / "next.md"
+    source.write_text("---\ntitle: New review\n---\n\n## Plan\n\nA revised plan.\n")
+    monkeypatch.setattr(pagegen, "_call_publish", lambda *a: 0)
+    assert pagegen.cmd_new(SimpleNamespace(slug_dir=str(page), from_file=str(source), version="v2",
+        label=None, project="reviews", publish=True, ask=False, exception=None)) == 0
+    store = _store(page)
+    assert all(store[cid]["withdrawn"]["reason"] == "not asked again in v2"
+               for cid in ("aaaaaaaaaaaa", "cccccccccccc"))
+    assert json.loads((page / "cards.json").read_text()) == []
+    assert json.loads((page / "versions" / "v2.cards.json").read_text()) == []
+
+
+def test_publishing_a_staged_version_uses_its_own_cards(page):
+    (page / "versions" / "v2.cards.json").write_text("[]")
+    assert _publish(page) == 0
+    assert "withdrawn" in _store(page)["cccccccccccc"]
+
+
+def test_older_version_never_withdraws_a_newer_question(page):
+    store = cli._coerce_store_file(page)
+    store["anchors"]["d:q1"][0]["version"] = "v3"
+    (page / "comments.json").write_text(json.dumps(store))
+    assert _publish(page) == 0
+    assert "withdrawn" not in _store(page)["aaaaaaaaaaaa"]

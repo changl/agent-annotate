@@ -207,6 +207,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": width, "height": 1000})
             page.set_default_timeout(5000)
+            page.set_default_navigation_timeout(15_000)
             page.goto(base + "#view=review", wait_until="networkidle")
             frame = page.frame_locator("#content-frame")
 

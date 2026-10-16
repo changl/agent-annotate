@@ -13,6 +13,8 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -20,6 +22,7 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 from single_page import feedback, ready, section  # noqa: E402
 
+from agent_annotate import cli  # noqa: E402
 from agent_annotate.pagegen import generate  # noqa: E402
 
 EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
@@ -40,6 +43,36 @@ def _card(cid, anchor, number, **extra):
         "decision_request": {"prompt": f"Question {number}?", "requested_at": "2026-09-23T09:00:00Z"},
         **extra,
     }
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_withdrawn_question_leaves_needs_you_and_stays_in_history(tmp_path, monkeypatch):
+    from single_page import browser_page, history
+
+    source = tmp_path / "page.md"
+    source.write_text(EXAMPLE)
+    directory = tmp_path / "items-model"
+    generate(source, directory)
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {
+        "d:q1": [_card("aaaaaaaaaaaa", "d:q1", 1)],
+    }, "archived": {}}))
+    with browser_page(tmp_path, directory) as (page, base):
+        section(page, "needs")
+        assert page.locator('.citem[data-comment-id="aaaaaaaaaaaa"]').is_visible()
+        record = {"slug_dir": str(directory), "port": urlsplit(base).port, "local_url": base}
+        monkeypatch.setattr(cli, "_registry_entries", lambda: [("reviews", "items-model", record)])
+        assert cli.cmd_withdraw(SimpleNamespace(slug="reviews/items-model", comment_id="1",
+            why="not asked again in v2", project=None, author="agent:test", json=False)) == 0
+        page.reload(wait_until="networkidle")
+        ready(page)
+        feedback(page)
+        assert page.locator('.citem[data-comment-id="aaaaaaaaaaaa"]').count() == 0
+        assert page.locator("#tab-feedback-n").is_hidden()
+        history(page)
+        withdrawn = page.locator("#hist-withdrawn")
+        assert withdrawn.is_visible()
+        assert "Question 1?" in withdrawn.inner_text()
+        assert "not asked again in v2" in withdrawn.inner_text()
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
@@ -120,6 +153,7 @@ def test_questions_have_one_current_status_and_no_competing_reference_surface(tm
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.set_default_timeout(5_000)
+            page.set_default_navigation_timeout(15_000)
             page.goto(base, wait_until="networkidle")
             ready(page)
             section(page, "needs")

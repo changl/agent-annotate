@@ -155,15 +155,6 @@ def cmd_report(args) -> int:
                 print(f"ERROR: weekly report revival: {detail}")
                 return 1
             record = cli._load_state_for_project(args.project)["slugs"][directory.name]
-        for blocker in cli._carryover_blockers(directory, result["version"]):
-            if blocker["reason"] != "no resolution or carry-forward":
-                continue
-            code, body = cli._api(record, "PUT", f"/api/comments/{blocker['id']}",
-                {"carry_forward": {"version": result["version"], "anchor_id": "s:feedback-carried-forward"}},
-                "agent:weekly-report")
-            if not 200 <= code < 300:
-                print(f"ERROR: weekly report feedback carry: {body}")
-                return 1
         code = cli.cmd_publish_version(SimpleNamespace(slug_dir=str(directory), version=result["version"],
                                                        label=result["label"], project=args.project))
         if code:

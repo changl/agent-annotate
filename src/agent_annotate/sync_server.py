@@ -357,6 +357,28 @@ class DecisionRequestError(ValueError):
         self.status = status
 
 
+def _can_withdraw(comment: dict) -> bool:
+    """Only an agent's open question with no reviewer content is disposable."""
+    return bool(
+        str(comment.get("author") or "").startswith("agent:")
+        and comment.get("status", "open") == "open"
+        and comment.get("decision_request")
+        and not (comment.get("decision") or {}).get("verdict")
+        and not any(not str(reply.get("author") or "").startswith("agent:")
+                    for reply in comment.get("replies") or [])
+    )
+
+
+def _withdraw_decision(comment: dict, reason: str, author: str) -> None:
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
+        raise DecisionRequestError("withdrawal reason must be nonempty text of at most 2000 characters")
+    if not _can_withdraw(comment):
+        raise DecisionRequestError("only open, unanswered agent questions can be withdrawn", status=409)
+    comment["withdrawn"] = {"reason": reason.strip(), "ts": _now_iso(), "by": author,
+                            "decision_request": comment.pop("decision_request")}
+    comment["status"] = "addressed_by_agent"
+
+
 def _normalize_item_number(value: Any) -> int | None:
     if value is None:
         return None
@@ -1956,9 +1978,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not items:
             self._respond(400, b'{"error":"items must not be empty"}')
             return
-        if len(items) > 200:
-            self._respond(413, b'{"error":"too many items (max 200)"}')
-            return
         idempotency = payload.get("idempotency")
         if idempotency not in (None, "anchor"):
             self._respond(400, b'{"error":"idempotency must be \\"anchor\\" or null"}')
@@ -2003,7 +2022,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             # anchor and number is a different card.
                             if (c.get("status") not in ("archived", "resolved_in_version")
                                     and (c.get("author") == author or shared_decision)
-                                    and c.get("decision_request") and c.get("doc") == fresh.get("doc")):
+                                    and c.get("decision_request") and c.get("doc") == fresh.get("doc")
+                                    and (c.get("version") == fresh.get("version") or _can_withdraw(c))):
                                 existing = c
                                 break
                     if existing is not None:
@@ -2028,6 +2048,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             existing["reposed_at"] = now
                         existing["text"] = fresh["text"]
                         existing["decision_request"] = fresh["decision_request"]
+                        if existing.get("version") != fresh.get("version"):
+                            existing.setdefault("origin_version", existing.get("version"))
+                            existing["version"] = fresh.get("version")
                         for field in ("category", "doc", "finding"):
                             if field in fresh:
                                 existing[field] = fresh[field]
@@ -2197,6 +2220,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     b'{"error":"carry_forward cannot demote user_confirmed"}',
                 )
                 return
+            if "decision_request" in payload and payload["decision_request"] is None:
+                try:
+                    _withdraw_decision(c, payload.get("withdraw_reason", "withdrawn by agent"), author)
+                except DecisionRequestError as exc:
+                    return self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             if new_status:
                 c["status"] = new_status
             if item_number is not None:
@@ -2234,9 +2262,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             decision_posed = False
             if "decision_request" in payload:
                 dr = payload["decision_request"]
-                if dr is None:
-                    c.pop("decision_request", None)
-                else:
+                if dr is not None:
                     try:
                         c["decision_request"] = _normalize_decision_request(dr)
                     except DecisionRequestError as exc:

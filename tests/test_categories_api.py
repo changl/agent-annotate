@@ -125,7 +125,19 @@ def test_new_writes_have_origin_gate_and_body_size_limits(server):
         assert response.status == 403
         response.read()
         connection.close()
-        assert _call(httpd, "POST", route, {"text": "x" * (256 * 1024)}, author="chang@example.com")[0] == 413
+        # The server rejects the declared size before reading the body. Sending
+        # it anyway races that rejection with a TCP reset on busy hosts.
+        connection = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=3)
+        connection.request("POST", route, headers={
+            "Content-Length": str(256 * 1024 + 1),
+            "Host": "review.example.test",
+            "Cf-Access-Authenticated-User-Email": "chang@example.com",
+            "Cf-Access-Jwt-Assertion": "inert-proxy-validated-assertion",
+        })
+        response = connection.getresponse()
+        assert response.status == 413
+        response.read()
+        connection.close()
     assert len(load_copy(directory)["blocks"][0]["revisions"]) == 1
 
 

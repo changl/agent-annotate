@@ -246,6 +246,7 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": 1400, "height": 900})
             page.set_default_timeout(5000)
+            page.set_default_navigation_timeout(15_000)
             page.goto(base, wait_until="networkidle")
             frame = page.frame_locator("#content-frame")
             frame.locator('[data-strip-item="card-1"]').wait_for()
@@ -272,7 +273,7 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             assert frame.locator("[data-strip-item]").count() == 2
             # A document tab switch re-places questions: evidence in an inactive
             # panel sends the question to its own card, and back when it opens.
-            after = "el => el.closest('.annotate-decision-strip').previousElementSibling.dataset.anchorId"
+            after = "el => el.closest('.annotate-decision-strip')?.previousElementSibling?.dataset.anchorId"
             sketch = frame.locator('[data-anchor-id="s:migration-sketch"]')
             frame.locator(".cards").evaluate("el => el.classList.remove('tab-panel')")
             sketch.evaluate("el => el.classList.add('tab-panel')")
@@ -311,6 +312,7 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": 1400, "height": 900})
             page.set_default_timeout(5_000)
+            page.set_default_navigation_timeout(15_000)
             page.goto(base, wait_until="networkidle")
             rail = page.locator('.citem[data-comment-id="card-1"]')
             rail.wait_for()

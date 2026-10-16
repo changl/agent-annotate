@@ -733,7 +733,14 @@ function flattenStore(includeArchived) {
 }
 // The comments of the document whose state is loaded (DOC).
 function flattenAll(includeArchived) {
-  return flattenStore(includeArchived).filter(c => docOf(c) === DOC);
+  return flattenStore(includeArchived).filter(c => docOf(c) === DOC && !c.withdrawn);
+}
+
+function withdrawnQuestions() {
+  return flattenStore(true).filter(c => c.withdrawn).map(c => ({
+    cat: commentCategory(c), number: NUM_MAP[c.id], version: c.version,
+    prompt: c.withdrawn.decision_request.prompt, reason: c.withdrawn.reason,
+  }));
 }
 
 function countsForVersion(version) {
@@ -3803,6 +3810,7 @@ window.AnnotateDocs = {
   planId: () => PLAN_ID,
   selectPlan,
   sentRounds,
+  withdrawnQuestions,
   store: () => STORE,
   comments: (includeArchived) => flattenStore(includeArchived),
   findComment: findCommentById,

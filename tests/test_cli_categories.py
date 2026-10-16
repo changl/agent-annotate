@@ -28,6 +28,9 @@ def page(tmp_path, monkeypatch):
     (directory / "comments.json").write_text(json.dumps(comments))
     (directory / "current.meta.json").write_text(json.dumps({"current": "v5", "history": [{"version": "v5"}]}))
     (directory / "current.html").write_text("<h1>Review remains intact</h1>")
+    (directory / "versions").mkdir()
+    for version in ("v1", "v5"):
+        (directory / "versions" / f"{version}.html").write_text('<p data-anchor-id="s:scope">Scope</p><p data-anchor-id="d:q1">Question</p>')
     bus = tmp_path / "events.ndjson"
     bus.write_text("".join(json.dumps({"event": "comment_created", "comment_id": row[0]["id"],
                                      "anchor_id": anchor}) + "\n" for anchor, row in comments["anchors"].items()))

@@ -1100,6 +1100,12 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
             raise PageGenError(f"project fence: {exc}") from exc
     images = ImageStore(source.parent, slug_dir)
     canvas, registry, cards = render(meta, blocks, images)
+    from .decision_quality import card_refusal, page_anchors
+    anchors = page_anchors(canvas)
+    for card in cards:
+        refusal = card_refusal(card, anchors)
+        if refusal:
+            raise PageGenError(f"card {card['anchor_id']!r}: {refusal}")
     problems = lint(canvas, registry)
     problems += _round_contract_problems(meta, blocks, cards, registry, version)
     if problems:
@@ -1163,9 +1169,9 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
     _atomic_write(slug_dir / "source" / f"{version}.md", source_text)
-    if cards:
-        _atomic_write(slug_dir / "cards.json",
-                      json.dumps(cards, indent=2, ensure_ascii=False) + "\n")
+    cards_text = json.dumps(cards, indent=2, ensure_ascii=False) + "\n"
+    _atomic_write(slug_dir / "cards.json", cards_text)
+    _atomic_write(slug_dir / "versions" / f"{version}.cards.json", cards_text)
 
     if activate:
         current = slug_dir / "current.html"
