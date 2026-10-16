@@ -210,15 +210,18 @@ def test_sandbox_refuses_nonlocal_routes_ports_directories_and_processes(tmp_pat
 
 
 def test_login_shell_keeps_launcher_and_fake_transport_binaries(tmp_path):
+    import shutil
     import subprocess
     import sys
+    if not shutil.which("zsh"):
+        pytest.skip("zsh login-shell regression applies to hosts with zsh")
     build = {"src": bench.REPO / "src"}
     scenario = {"name": "isolation", "cwd": "fixture", "dir": tmp_path}
     sb = bench.make_sandbox(build, scenario, 9600, sys.executable, "codex")
     try:
-        result = subprocess.run(["/bin/zsh", "-lc", "command -v annotate"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
+        result = subprocess.run([shutil.which("zsh"), "-lc", "command -v annotate"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
         assert result.returncode == 0 and result.stdout.strip() == str(sb["bin"] / "annotate")
-        result = subprocess.run(["/bin/zsh", "-lc", "tailscale status"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
+        result = subprocess.run([shutil.which("zsh"), "-lc", "tailscale status"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
         assert result.returncode == 97 and "benchmark blocks" in result.stderr
     finally:
         bench.teardown(sb, keep=False)
