@@ -1,0 +1,597 @@
+{
+  "meta": {
+    "refs": [
+      {
+        "ref": "HEAD",
+        "label": "text:v2.25.1",
+        "sha": "72d7a90",
+        "src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-94lc4uaw/HEAD-72d7a90/src",
+        "skill_src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-94lc4uaw/v2.25.1-2cc0b67/src",
+        "skill_ref": "v2.25.1"
+      },
+      {
+        "ref": "HEAD",
+        "label": "text:HEAD",
+        "sha": "72d7a90",
+        "src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-94lc4uaw/HEAD-72d7a90/src",
+        "skill_src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-94lc4uaw/HEAD-72d7a90/src",
+        "skill_ref": "HEAD"
+      }
+    ],
+    "scenarios": [
+      "round-2",
+      "v1-page"
+    ],
+    "runs": 3,
+    "provider": "codex",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "date": "2026-10-16T14:28:05-0700"
+  },
+  "rows": [
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 1,
+      "output_tokens": 2109,
+      "thinking_tokens": 248,
+      "input_tokens": 283399,
+      "cache_read": 262912,
+      "duration_s": 57.6,
+      "wall_s": 57.6,
+      "annotate_calls": 9,
+      "annotate_failures": 2,
+      "tool_errors": 2,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 1,
+      "output_tokens": 2152,
+      "thinking_tokens": 167,
+      "input_tokens": 154447,
+      "cache_read": 129536,
+      "duration_s": 46.4,
+      "wall_s": 46.4,
+      "annotate_calls": 6,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": false,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": false,
+          "detail": "still open: d:q1, d:q2"
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 1,
+      "output_tokens": 2099,
+      "thinking_tokens": 189,
+      "input_tokens": 185539,
+      "cache_read": 170240,
+      "duration_s": 47.5,
+      "wall_s": 47.5,
+      "annotate_calls": 6,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 1,
+      "output_tokens": 1187,
+      "thinking_tokens": 27,
+      "input_tokens": 120339,
+      "cache_read": 109696,
+      "duration_s": 31.1,
+      "wall_s": 31.1,
+      "annotate_calls": 4,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": false,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": false,
+          "detail": "#1 evidence:s:decision-1-dual-write-window; #2 evidence:s:decision-2-backfill-method; #3 evidence:s:decision-3-when-to-drop-status"
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 2,
+      "output_tokens": 1773,
+      "thinking_tokens": 112,
+      "input_tokens": 221771,
+      "cache_read": 203264,
+      "duration_s": 207.9,
+      "wall_s": 207.9,
+      "annotate_calls": 7,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 2,
+      "output_tokens": 2675,
+      "thinking_tokens": 204,
+      "input_tokens": 230412,
+      "cache_read": 208384,
+      "duration_s": 53.9,
+      "wall_s": 53.9,
+      "annotate_calls": 8,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": false,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": false,
+          "detail": "still open: d:q1, d:q2"
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 2,
+      "output_tokens": 1293,
+      "thinking_tokens": 197,
+      "input_tokens": 241402,
+      "cache_read": 218368,
+      "duration_s": 33.5,
+      "wall_s": 33.5,
+      "annotate_calls": 5,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 2,
+      "output_tokens": 1428,
+      "thinking_tokens": 90,
+      "input_tokens": 143467,
+      "cache_read": 131968,
+      "duration_s": 78.4,
+      "wall_s": 78.4,
+      "annotate_calls": 5,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 3,
+      "output_tokens": 2373,
+      "thinking_tokens": 397,
+      "input_tokens": 279972,
+      "cache_read": 253312,
+      "duration_s": 58.6,
+      "wall_s": 58.6,
+      "annotate_calls": 11,
+      "annotate_failures": 2,
+      "tool_errors": 2,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "3 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "round-2",
+      "run": 3,
+      "output_tokens": 1635,
+      "thinking_tokens": 72,
+      "input_tokens": 179797,
+      "cache_read": 153216,
+      "duration_s": 33.9,
+      "wall_s": 33.9,
+      "annotate_calls": 7,
+      "annotate_failures": 0,
+      "tool_errors": 1,
+      "outcome": false,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": false,
+          "detail": "still open: d:q1, d:q2"
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 3,
+      "output_tokens": 1993,
+      "thinking_tokens": 172,
+      "input_tokens": 206620,
+      "cache_read": 191104,
+      "duration_s": 46.8,
+      "wall_s": 46.8,
+      "annotate_calls": 6,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:HEAD",
+      "sha": "72d7a90",
+      "scenario": "v1-page",
+      "run": 3,
+      "output_tokens": 1044,
+      "thinking_tokens": 28,
+      "input_tokens": 77906,
+      "cache_read": 67968,
+      "duration_s": 25.7,
+      "wall_s": 25.7,
+      "annotate_calls": 2,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": false,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": false,
+          "detail": "#1 evidence:s:dual-write-window; #2 evidence:s:backfill-method; #3 evidence:s:when-to-drop-status"
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    }
+  ]
+}

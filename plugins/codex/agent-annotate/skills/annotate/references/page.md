@@ -39,7 +39,7 @@ proposed: shots/checkout-proposed.png | One-step payment
 
 KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Image paths are relative to page.md; supported local PNG/JPEG/GIF/WebP assets are copied into the page. URLs and SVG images are refused. Captions come from alt text. Compare accepts repeated current/proposed pairs for a flow, optional `title`, and optional `layout: side|stack|auto`.
 
-Anchors derive from content: heading `## Scope` → `s:scope`, its first paragraph → `s:scope:p1`, table row → `tbl:scope:row:receipt`, image → `fig:current-receipt`, compare title → `cmp:checkout`. Inspect the generated HTML anchor registry if unsure; keep anchors stable across versions.
+Anchors derive from content: heading `## Scope` → `s:scope`, a nested `### Detail` → `s:scope:detail`, its first paragraph → `s:scope:p1`, table row → `tbl:scope:row:receipt`, image → `fig:current-receipt`, compare title → `cmp:checkout`. Inspect the generated HTML anchor registry if unsure; keep anchors stable across versions.
 
 ## Cards
 
@@ -49,7 +49,7 @@ Anchors derive from content: heading `## Scope` → `s:scope`, its first paragra
 ```
 ````
 
-Use positive, ascending, stable numbers and matching `d:qN` anchors. `prompt` is required; context, recommendation (option ID), options and evidence explain the decision. Options accept strings or `{id,label,consequence,style?}`; style is `primary|default|danger`. Optional `impact`: `low|medium|high`; `blocking`: boolean. Evidence entries use `{label,anchor}` and must exist in this version. Cards render after their last evidence target; invalid evidence and bulk approval requests are refused before writing.
+Use positive, ascending, stable numbers and matching `d:qN` anchors. `prompt` is required; context, recommendation (option ID), options and evidence explain the decision. Options accept strings or `{id,label,consequence,style?}`; style is `primary|default|danger`. Optional `impact`: `low|medium|high`; `blocking`: boolean. Evidence entries use `{label,anchor}` and must exist in this version. Cards render after their last evidence target. Requests with no on-page anchor and explicit bulk approvals are refused before writing.
 
 The reviewer can choose, answer in words, or attach explanations. Clicks remain pending until Send. Submitted snapshots preserve prompts and answers even if a later version changes a question. Reviewer confirmation belongs to the reviewer.
 
