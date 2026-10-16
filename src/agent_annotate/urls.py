@@ -65,7 +65,7 @@ def page_url(record: dict) -> str | None:
     return url
 
 
-def deep_link(record: dict, *, view="review", comment=None, version=None) -> str | None:
+def deep_link(record: dict, *, view="review", comment=None, version=None, plan=None) -> str | None:
     """Route a write receipt while preserving the private share key."""
     from urllib.parse import parse_qsl, urlencode
     url = page_url(record)
@@ -74,8 +74,10 @@ def deep_link(record: dict, *, view="review", comment=None, version=None) -> str
     parts = urlsplit(url)
     fragment = dict(parse_qsl(parts.fragment))
     fragment["view"] = view
+    if plan:
+        fragment["plan"] = str(plan)
     if comment:
-        fragment["feedback"] = str(comment)
+        fragment["f" if view == "findings" else "feedback"] = str(comment)
     if version:
         fragment["v"] = str(version)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, urlencode(fragment)))

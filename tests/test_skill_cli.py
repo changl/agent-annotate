@@ -89,7 +89,7 @@ def test_failed_write_keeps_diagnostics(monkeypatch, capsys):
     assert capsys.readouterr().out == "verification failed\npage remains running\n"
 
 
-@pytest.mark.parametrize("view,comment,version", [("library", None, None), ("review", "id 1", "v2"), ("plan:rollout", None, None)])
+@pytest.mark.parametrize("view,comment,version", [("library", None, None), ("review", "id 1", "v2"), ("plans", None, None)])
 def test_deep_link_preserves_share_key(view, comment, version):
     from urllib.parse import parse_qs, urlsplit
     link = deep_link({"url": "https://example.test/page/#review=secret"}, view=view, comment=comment, version=version)
@@ -106,3 +106,22 @@ def test_round_answers_include_the_complete_prompt_and_note():
     note = "The full explanation matters. " * 20
     lines = cli._round_lines({"event": "round_submitted", "answers": [{"number": 1, "prompt": prompt, "text": note, "verdict": "select"}]})
     assert prompt in lines[0] and note in lines[0]
+
+
+def test_plan_receipt_routes_to_the_published_plan(monkeypatch, capsys):
+    from urllib.parse import parse_qs, urlsplit
+    record = {"url": "https://example.test/project/"}
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("p", "main", record)])
+    args = SimpleNamespace(cmd="plan", slug="p/main", plan_id="rollout", func=lambda args: 0)
+    assert cli.run_command(args) == 0
+    url = capsys.readouterr().out.strip().split(" — ")[-1]
+    assert parse_qs(urlsplit(url).fragment) == {"view": ["plans"], "plan": ["rollout"]}
+
+
+def test_fixed_finding_receipt_opens_that_finding(monkeypatch, capsys):
+    record = {"url": "https://example.test/project/"}
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("p", "main", record)])
+    monkeypatch.setattr(cli, "_load_store", lambda record: {"schema_version": 2, "anchors": {"d:q1": [{"id": "finding-1", "number": 1}]}, "archived": {}})
+    args = SimpleNamespace(cmd="finding", slug="p/main", fixed="1", func=lambda args: 0)
+    assert cli.run_command(args) == 0
+    assert "#view=findings&f=finding-1" in capsys.readouterr().out

@@ -5626,9 +5626,15 @@ def run_command(args):
     record = next((r for p, s, r in _registry_entries()
                    if (directory and Path(r.get("slug_dir", "")).resolve() == Path(directory).expanduser().resolve())
                    or (raw and raw in (s, f"{p}/{s}"))), None)
-    view = {"copy": "library", "library": "library", "finding": "findings", "plan": f"plan:{getattr(args, 'plan_id', '')}"}.get(args.cmd, "review")
-    url = deep_link(record, view=view, comment=getattr(args, "comment_id", None),
-                    version=getattr(args, "version", None)) if record else None
+    view = {"copy": "library", "library": "library", "finding": "findings", "plan": "plans"}.get(args.cmd, "review")
+    comment = getattr(args, "comment_id", None)
+    if record and args.cmd == "finding":
+        store = _load_store(record)
+        numbers = _item_numbers(store)
+        comment = next((c.get("id") for _, c in _iter_comments(store)
+                        if str(args.fixed) in (c.get("id"), str(numbers.get(c.get("id"))))), None)
+    url = deep_link(record, view=view, comment=comment,
+                    version=getattr(args, "version", None), plan=getattr(args, "plan_id", None)) if record else None
     if not url and directory:
         url = (Path(directory).expanduser().resolve() / "current.html").as_uri()
     if getattr(args, "json", False):
