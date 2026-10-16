@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Claiming a workspace carries the previous owner's read position for its page, shared tabs and category inboxes, preserving unread feedback without replaying old rounds.
+- Cards, inbox and prompt notices share live decision-state rules across all categories: withdrawn questions are excluded, and saved answers are labelled unsent and excluded from submitted verdict counts.
+
 ## 2.25.1
 
 - Switching a document's own tab re-places its questions: they render at their evidence in the tab just opened (before, only after the next data refresh).

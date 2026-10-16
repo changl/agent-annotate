@@ -391,3 +391,8 @@ def test_resolving_into_an_ungenerated_version_says_so(served, capsys):
 def test_submitted_round_note_is_printed_whole():
     note = "Keep every reviewer instruction. " * 20
     assert note.strip() in cli._inbox_line({"event":"round_submitted","note":note,"by":"reviewer@example.com"})
+
+
+def test_deferred_verdict_is_labelled_unsent_in_inbox():
+    assert "accept (unsent)" in cli._inbox_line({"event": "comment_updated", "decision": "accept",
+                                                "deferred": True, "author": "reviewer@example.com"})
