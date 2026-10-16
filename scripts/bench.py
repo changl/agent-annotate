@@ -395,7 +395,9 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str, provi
     zsh_home = home / "zsh"
     zsh_home.mkdir()
     import shlex
-    profile = "export PATH=" + shlex.quote(env["PATH"]) + "\n"
+    profile = ("export PATH=" + shlex.quote(env["PATH"]) + "\n"
+               + "export TMPDIR=" + shlex.quote(str(home / "tmp")) + "\n"
+               + "export TMPPREFIX=" + shlex.quote(str(home / "tmp" / "zsh")) + "\n")
     for startup in (".zshenv", ".zprofile"):
         (zsh_home / startup).write_text(profile)
     env["ZDOTDIR"] = str(zsh_home)
@@ -478,7 +480,7 @@ def run_setup(sb: dict, scenario: dict, session_id: str) -> str | None:
     return slug_dir.name
 
 
-def run_claude(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None, bool]:
+def run_model(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None, bool]:
     cmd = [args.claude, "-p", prompt, "--setting-sources", "project", "--no-session-persistence",
            "--strict-mcp-config", "--output-format", "stream-json", "--verbose",
            "--settings", str(sb["settings"]), "--model", args.model, "--effort", args.effort,
@@ -723,7 +725,7 @@ def run_one(build: dict, scenario: dict, run: int, slots: queue.Queue, args) -> 
         if not args.no_model:
             prompt = scenario["prompt"].replace("{slug}", slug or "")
             started = time.monotonic()
-            row["exit_code"], row["timed_out"] = run_claude(sb, prompt, session_id, args)
+            row["exit_code"], row["timed_out"] = run_model(sb, prompt, session_id, args)
             row["wall_s"] = round(time.monotonic() - started, 1)
             with (sb["root"] / "transcript.ndjson").open() as fh:
                 row.update((parse_codex_stream if args.provider == "codex" else parse_stream)(fh))

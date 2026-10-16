@@ -679,3 +679,11 @@ def test_new_default_output_is_one_linked_line(tmp_path):
     assert result.returncode == 0, result.stderr
     assert len(result.stdout.splitlines()) == 1
     assert "/receipt/current.html" in result.stdout
+
+
+def test_full_plan_accepts_reviewer_heading_without_a_persons_name(tmp_path):
+    text = "---\nfull_plan: true\nother_files_required: none\n---\n\n## Scope\n\nA concrete plan.\n\n## Questions for reviewer\n\n```cards\n" + json.dumps([{"number": 1, "anchor_id": "d:q1", "decision_request": {"prompt": "Use the shared runtime?", "context": "Two clients.", "recommendation": "accept", "options": ["accept", "reject"], "evidence": [{"label": "Scope", "anchor": "s:scope"}]}}]) + "\n```\n"
+    source = tmp_path / "plan.md"
+    source.write_text(text)
+    result = generate(source, tmp_path / "page", version="v2")
+    assert result["cards"] == 1

@@ -4,7 +4,7 @@ Author page.md with built-in Markdown; `annotate new --example` prints a complet
 
 ## Document
 
-Front matter accepts `title`, `version` and `label`. A requested full-plan review also uses `full_plan: true` and `other_files_required: none` (or the file list); retain the complete plan in later versions.
+Front matter accepts `title`, `version` and `label`. A requested full-plan review also uses `full_plan: true` and `other_files_required: none` (or the file list); retain the complete plan in later versions, with cards in a final `## Questions for reviewer` section.
 
 ````markdown
 ---
