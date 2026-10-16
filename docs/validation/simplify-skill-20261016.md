@@ -4,7 +4,7 @@ PR: https://github.com/changl/agent-annotate/pull/24
 
 ## Accepted revised comparison
 
-After the first pinned experiment exposed evidence and lifecycle gaps, the coordinator expanded this PR to validate every evidence target and add explicit numbered resolution. The branch was rebased onto `origin/main` at `f3a58da` (PR 23). The revised run uses the same immutable runtime `5bdb68a` for old text v2.25.1 and new text `5bdb68a`, Codex `gpt-6.1-sol`/medium, N=3 per fixture and text, interleaved. Fixture checks were not weakened. The measured text/runtime remain pinned to `5bdb68a`; a later clause correction describes shipped compare behavior (phone/portrait pairs side by side, desktop/landscape stacked, with a layout override) and does not touch either fixture.
+After the first pinned experiment exposed evidence and lifecycle gaps, the coordinator expanded this PR to validate every evidence target and add explicit numbered resolution. The branch was rebased onto `origin/main` at `4611190` after PR 23 and the caching PR 25. The revised run uses the same immutable runtime `5bdb68a` for old text v2.25.1 and new text `5bdb68a`, Codex `gpt-6.1-sol`/medium, N=3 per fixture and text, interleaved. Fixture checks were not weakened. The measured text/runtime remain pinned to `5bdb68a`; a later clause correction describes shipped compare behavior (phone/portrait pairs side by side, desktop/landscape stacked, with a layout override) and clarifies the exact first-page publication command; neither follow-up changes either fixture.
 
 | Fixture | Text | Output tokens, median | Seconds, median | Tool failures, runs 1/2/3 | Outcomes passed |
 | --- | --- | ---: | ---: | --- | --- |
@@ -17,20 +17,31 @@ Aggregate output: **10,720 → 8,728 tokens (-18.6%)**. Every fixture retained 3
 
 Tool failures count failed shell results containing an annotate call, including mixed commands whose other part failed. They are shown separately from the independent artifact/outcome checks.
 
+### Coordinator-run Claude comparison
+
+[Published Claude table](https://github.com/changl/agent-annotate/pull/24#issuecomment-6225358620), Opus 5.5/medium, N=3 per fixture/text, runtime `5bdb68a`:
+
+| Fixture | Outcomes old → new | Median output tokens old → new | Median cost old → new | Median time old → new |
+| --- | --- | ---: | ---: | ---: |
+| round-2 | 3/3 → 3/3 | 3,497 → 2,684 (-23%) | $0.22 → $0.18 (-20%) | 48s → 32s (-34%) |
+| v1-page | 3/3 → 3/3 | 4,105 → 3,988 (-3%) | $0.23 → $0.22 (-6%) | 50s → 47s (-5%) |
+
+These are the coordinator's posted results, not worker-local measurements. The coordinator reports that shell-failure counts mostly reflect Claude tracking-file writes blocked after successful annotate commands; the artifact/outcome checks pass. The exact first-page command was clarified after this run. The worker's initial expired-login attempts remain excluded.
+
 ### Final word counts
 
 | Text | v2.25.1 | Final |
 | --- | ---: | ---: |
-| SKILL.md | 441 | 401 |
+| SKILL.md | 441 | 402 |
 | References | 2731 across 6 files | 499 in 1 file |
-| Total | 3172 | 900 |
+| Total | 3172 | 901 |
 
 Counts use whitespace-separated words including front matter and examples. The three packaged SKILL.md copies are identical; the plugin reference is generated from the one source reference. No installed user skill, settings or runtime is part of this PR.
 
 ### Final validation
 
-- Rebased full non-browser suite: **1,400 passed, 2 skipped**.
-- Expanded local CI gate: **698 passed, 2 skipped**, Ruff and JavaScript syntax checks passed.
+- Rebased full non-browser suite: **1,427 passed, 2 skipped**.
+- Expanded local CI gate: **725 passed, 2 skipped**, Ruff and JavaScript syntax checks passed.
 - HTTP regressions prove short resolution preserves the reviewer’s answer and refuses ambiguous numbers or an ungenerated current version. Long-form target validation and local-authoring boundaries remain in force.
 - Evidence checks require at least one target, reject every nonexistent cited target, and reject a card’s own decision anchor as evidence. Refusals give nearby valid anchors before any write.
 - Resolution happens only through an explicit command. Publishing mentions does not resolve reviewer answers.
@@ -67,7 +78,7 @@ env PYTHONPATH=/Users/changlee/orca/workspaces/codex/simplify-skill/src /Users/c
 - Old Claude skill directory: `/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-ikcj2wbm/v2.25.1-2cc0b67/src/agent_annotate/skills/claude`.
 - New Claude skill directory: `/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-ikcj2wbm/5bdb68a-5bdb68a/src/agent_annotate/skills/claude`.
 - Codex text is in each sibling `skills/codex/SKILL.md`; both providers use the references under `skills/claude/references`.
-- Claude authentication was unavailable in this worker. The coordinator explicitly took the Claude half; it is not claimed complete by this report.
+- Claude authentication was unavailable in this worker. The coordinator completed the Claude half and published the linked table above.
 
 ## Earlier failed experiment retained
 

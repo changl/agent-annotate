@@ -7,7 +7,7 @@ description: The reviewer's project page. Use when the reviewer needs to look, c
 
 The reviewer looks and decides on the page. Chat points to it.
 
-1. **Find the page.** Use the session-start page link, or run `annotate workspace --json`. Reuse the project's page across sessions, worktrees and linked repositories. Share its full Funnel URL in updates. If none exists, create it with `annotate new DIR --from page.md --project PROJECT --publish`; use `--ask` only when there are decision cards.
+1. **Find the page.** Use the session-start page link, or run `annotate workspace --json`. Reuse the project's page across sessions, worktrees and linked repositories. Share its full Funnel URL in updates. If none exists, create it with `annotate new DIR --from page.md --project NAME --publish --ask` when the page carries cards; omit `--ask` otherwise.
 
 2. **Show first.** Put what must be judged on the page: screenshots, the plan, the copy. Publish changes with `annotate new DIR --from page.md --version vN --publish --ask`. Use a `compare` fence with matching crops: phone/portrait pairs side by side (current left, proposed right), desktop/landscape stacked (current above, proposed below); `layout` overrides the default.
 
