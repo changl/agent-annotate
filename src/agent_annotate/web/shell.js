@@ -867,6 +867,26 @@ async function loadProject() {
     if (snapshot !== projectSnapshot) { PROJECT = data; projectSnapshot = snapshot; renderProject(); }
   } catch {}
 }
+// The board's ready count (./api/board) for the header link. The server answers
+// from its cache, so this never holds up the page; it is not awaited.
+let BOARD_READY = null;
+let boardFirstTries = 0;
+async function loadBoard() {
+  if (!PROJECT.board) { BOARD_READY = null; return; }
+  try {
+    const response = await fetch(apiUrl('./api/board'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) return;
+    const data = await response.json();
+    // The server's first count is still running: ask again soon, a few times.
+    if (!data.checked_at && boardFirstTries < 8) { boardFirstTries++; setTimeout(loadBoard, 1500); }
+    const ready = typeof data.ready === 'number' ? data.ready : null;
+    if (ready !== BOARD_READY) { BOARD_READY = ready; if (window.AA) window.AA.changed(); }
+  } catch {}
+}
+function boardLink() {
+  const b = PROJECT.board, url = b && safeHttpUrl(b.url);
+  return url ? { url, label: b.label || 'Board', project: b.project, ready: BOARD_READY } : null;
+}
 // F17 + U-07: History lists the rounds the server recorded, newest first,
 // each with its answers; the header keeps the latest one beside Send.
 let HISTORY_DATA = null;
@@ -1092,24 +1112,30 @@ function safeHttpUrl(value) {
     return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
   } catch { return ''; }
 }
-// Escaped text with known Linear issue ids (PROJECT.issue_links) as links.
+// Escaped text with issue ids as links: ids the agent listed in
+// PROJECT.issue_links (any tracker), and ids on the project's board
+// (PROJECT.board, e.g. agent-annotate-w6e.4), which open that issue there.
+const ISSUE_ID_RE = /(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+(?:\.[0-9]+)*(?![A-Za-z0-9_-])/g;
+function boardIssueUrl(id) {
+  const b = PROJECT.board;
+  if (!b || !b.prefix || id.indexOf(b.prefix + '-') !== 0 || !/^[a-z0-9]+(?:\.[0-9]+)*$/.test(id.slice(b.prefix.length + 1))) return '';
+  const url = safeHttpUrl(b.url);
+  return url ? url + (url.indexOf('?') === -1 ? '?' : '&') + 'bead=' + encodeURIComponent(id) : '';
+}
+function issueUrl(id) {
+  const links = PROJECT.issue_links || {};
+  const raw = Object.prototype.hasOwnProperty.call(links, id) ? links[id] : null;
+  return (typeof raw === 'string' && !/[\\\u0000- \u007f]/.test(raw) && safeHttpUrl(raw)) || boardIssueUrl(id);
+}
 function ticketsHTML(value) {
   const text = String(value == null ? '' : value);
-  const links = PROJECT.issue_links || {};
-  const ids = /(?<![A-Za-z0-9_-])[A-Z][A-Z0-9]{0,20}-[1-9][0-9]{0,9}(?![A-Za-z0-9_-])/g;
   let html = '', offset = 0;
-  for (const match of text.matchAll(ids)) {
-    html += esc(text.slice(offset, match.index));
+  for (const match of text.matchAll(ISSUE_ID_RE)) {
     const id = match[0];
-    let url;
-    try {
-      const raw = Object.prototype.hasOwnProperty.call(links, id) ? links[id] : null;
-      if (typeof raw === 'string' && !/[\\\u0000-\u0020\u007f]/.test(raw)) {
-        const parsed = new URL(raw);
-        if (parsed.protocol === 'https:' && parsed.hostname === 'linear.app' && !parsed.username && !parsed.password && !parsed.port) url = parsed.href;
-      }
-    } catch {}
-    html += url ? `<a class="ticket-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" title="Open ${escAttr(id)} in Linear">${esc(id)}</a>` : esc(id);
+    const url = issueUrl(id);
+    if (!url) continue;
+    html += esc(text.slice(offset, match.index)) +
+      `<a class="ticket-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" title="Open ${escAttr(id)}">${esc(id)}</a>`;
     offset = match.index + id.length;
   }
   return html + esc(text.slice(offset));
@@ -1556,6 +1582,14 @@ function decisionOptions(dr) {
   return out;
 }
 
+// Every card offers "Answer in words" as its last choice (the skill promises
+// it); the comment box holds the words. Skipped when the card already poses it.
+function withAnswerInWords(opts) {
+  if (opts.some(o => o.id === 'comment')) return opts;
+  return opts.concat({ id: 'comment', labelHtml: DECISION_BTN_LABEL.comment, labelText: 'comment',
+    plainLabel: DECISION_PLAIN_LABEL.comment, consequence: '', style: null, custom: false });
+}
+
 // Context is what the reviewer needs in order to decide, so it is always
 // shown in full (NN/g: never hide what the decision depends on).
 function renderDecisionContext(dr) {
@@ -1741,7 +1775,7 @@ function renderDecisionBlock(c) {
       </div>
     </div>`;
   }
-  const opts = decisionOptions(dr);
+  const opts = withAnswerInWords(decisionOptions(dr));
   const wantsChanges = opts.some(o => o.id === 'changes');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
@@ -2187,7 +2221,7 @@ function pickOption(root, btn) {
       // draws the same hint again instead of wiping it.
       decisionHint[id] = action === 'changes'
         ? { ph: 'What needs to change…', msg: 'Say what needs to change in the box, then pick it again.' }
-        : { ph: 'Add your comment…', msg: 'Write your answer in the box, then pick it again.' };
+        : { ph: 'Answer in your own words…', msg: 'Write your answer in the box, then pick it again.' };
       const ta = root.querySelector('[data-decision-say-ta="' + cssEsc(id) + '"]');
       if (ta) {
         ta.placeholder = decisionHint[id].ph;
@@ -3341,7 +3375,9 @@ function sendCommentCountsToFrame() {
     (Array.isArray(items) ? items : []).forEach(c =>
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
-  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select' });
+  const board = boardLink();
+  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select',
+    board: board ? { url: board.url, prefix: PROJECT.board.prefix } : null });
 }
 
 function syncStripSayDraft(commentId) {
@@ -3733,6 +3769,7 @@ async function init() {
   // The page's store and every document are loaded up front, so the page's
   // counts and the one Send cover all of them before any tab is opened.
   await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
+  loadBoard();
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);
   takeCardLink();
@@ -3755,6 +3792,7 @@ async function init() {
       const before = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
       await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
       if (historyDirty) loadHistory();
+      loadBoard();
       const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly() !== before;
       if (storeChanged && !isEditing()) document.dispatchEvent(new CustomEvent('annotate:store'));
       const doc = VIEW_DOC;
@@ -3806,6 +3844,7 @@ window.AnnotateDocs = {
   isMobileLayout,
   // The page's shared state and helpers for Library and Findings.
   categories: () => CATEGORIES,
+  board: boardLink,
   plans: () => PLANS,
   planId: () => PLAN_ID,
   selectPlan,

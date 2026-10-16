@@ -424,7 +424,7 @@ body.has-summary #send-btn{visibility:hidden}
 #unified-sheet-close,#unified-sheet-backdrop{display:none}
 @media(max-width:768px),(max-height:480px){#unified-sheet-close{display:flex;min-width:44px;min-height:44px}.drawer-hdr .rail-collapse{display:none}body.is-mobile-sheet-open #unified-sheet-backdrop{display:block;position:fixed;inset:0;background:var(--color-base-content);opacity:.15;z-index:190}.unified-skip[data-skip=feedback]{left:160px}.unified-version-banner{font-size:calc(12px * var(--aa-text, 1));padding:6px 10px}.send-note.unified-durable-receipt{display:none}}
 
-/* Keep list from main: Linear chips (F18) and a failed-run pill on progress. */
+/* Issue id links (F18) and a failed-run pill on progress. */
 .ticket-link{color:var(--color-primary);font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .failed-pill{margin-left:6px}
 /* Historical pages keep navigation and feedback readable, with no edit affordances. */

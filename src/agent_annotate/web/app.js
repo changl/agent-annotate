@@ -290,7 +290,9 @@
 // The project name sits in a fixed-width block (Chang: tabs must start at
 // the same place on every tab), then the tabs, each with its red "needs
 // you" count, then the project's linked pages (an exception the owner
-// declared). On a phone the tabs become one menu with a sentence per tab.
+// declared), then the project's board with its ready count (decision #20),
+// which opens in a new tab. On a phone the tabs become one menu with a
+// sentence per tab.
 (function () {
   'use strict';
   const AA = window.AA, esc = AA.esc;
@@ -310,27 +312,38 @@
     return { text: parts.join(' · '), needs };
   }
   const href = (id) => '#view=' + id;
+  const DOCS = () => window.AnnotateDocs;
+  const board = () => (DOCS() && DOCS().board) ? DOCS().board() : null;
+  const ICON_EXT = '<svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>';
+  function boardHtml(b, inMenu) {
+    if (!b) return '';
+    const ready = typeof b.ready === 'number' ? b.ready + ' ready' : '';
+    const title = `Open the ${b.project} board in a new tab` + (ready ? ' · ' + ready : '');
+    if (inMenu) return `<a role="listitem" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" class="aa-board-link"><span class="aa-tab-name">${esc(b.label)} ${ICON_EXT}</span><span class="aa-tab-state">${ready ? esc(ready) + ' · ' : ''}opens the board</span></a>`;
+    return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${esc(b.label)}${ICON_EXT}${ready ? `<span class="badge badge-soft badge-primary badge-sm aa-board-count">${esc(ready)}</span>` : ''}</a>`;
+  }
 
   function render(counts) {
     const cur = AA.view;
     const linked = AA.linkedPages;
+    const b = board();
     nav.innerHTML = '<div class="tabs tabs-border">' + AA.TABS.map(t => {
       const k = counts[t.id], s = sentence(k);
       const badge = k.needs ? ` <span class="badge badge-error badge-xs" aria-hidden="true">${k.needs}</span>` : '';
       return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + ', ' + s.text)}">${esc(t.label)}${badge}</a>`;
-    }).join('') + (linked.length ? `<a class="tab aa-linked-tab${cur === 'linked' ? ' tab-active' : ''}" href="${href('linked')}" data-view="linked"${cur === 'linked' ? ' aria-current="page"' : ''} title="Separate pages the owner declared for this project">Linked pages <span class="badge badge-ghost badge-xs" aria-hidden="true">${linked.length}</span></a>` : '') + '</div>';
+    }).join('') + (linked.length ? `<a class="tab aa-linked-tab${cur === 'linked' ? ' tab-active' : ''}" href="${href('linked')}" data-view="linked"${cur === 'linked' ? ' aria-current="page"' : ''} title="Separate pages the owner declared for this project">Linked pages <span class="badge badge-ghost badge-xs" aria-hidden="true">${linked.length}</span></a>` : '') + boardHtml(b, false) + '</div>';
 
     const curTab = AA.tab(cur);
     const curLabel = curTab ? curTab.label : 'Linked pages';
     const curNeeds = curTab ? counts[cur].needs : 0;
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
-    menu.hidden = AA.TABS.length < 2 && !linked.length; // UI-28: one tab, no menu
+    menu.hidden = AA.TABS.length < 2 && !linked.length && !b; // UI-28: one tab, no menu
     menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}">${esc(curLabel)}${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
-      }).join('')}${linked.length ? `<a role="listitem" href="${href('linked')}" data-view="linked" class="aa-linked-tab"${cur === 'linked' ? ' aria-current="page"' : ''}><span class="aa-tab-name">Linked pages</span><span class="aa-tab-state">${linked.length} separate page${linked.length === 1 ? '' : 's'} declared for this project</span></a>` : ''}</div>`;
+      }).join('')}${linked.length ? `<a role="listitem" href="${href('linked')}" data-view="linked" class="aa-linked-tab"${cur === 'linked' ? ' aria-current="page"' : ''}><span class="aa-tab-name">Linked pages</span><span class="aa-tab-state">${linked.length} separate page${linked.length === 1 ? '' : 's'} declared for this project</span></a>` : ''}${boardHtml(b, true)}</div>`;
     menu.open = open;
   }
   function openMenu(on) { menu.open = !!on; }

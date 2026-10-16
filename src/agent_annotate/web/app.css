@@ -19,6 +19,12 @@
 .aa-tabs .badge{font-variant-numeric:tabular-nums}
 /* A declared exception: listed after the tabs, set apart */
 .aa-tabs .tab.aa-linked-tab{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
+/* The project's board: an outside link after the tabs, set apart the same way */
+.aa-tabs .tab.aa-board-link{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
+.aa-tabs .aa-board-link svg.i,.aa-tabs-list .aa-board-link svg.i{width:14px;height:14px}
+.aa-tabs-list a.aa-board-link{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
+.aa-tabs-list a.aa-linked-tab + a.aa-board-link{margin-top:0}
+.aa-tabs-list .aa-board-link .aa-tab-name{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .aa-tabs-menu{display:none;position:relative}
 .aa-tabs-menu > summary{list-style:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-field);font-size:calc(13px * var(--aa-text, 1));font-weight:600;cursor:pointer;white-space:nowrap;background:var(--color-base-100)}
 .aa-tabs-menu > summary::-webkit-details-marker{display:none}

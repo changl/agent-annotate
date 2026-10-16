@@ -13,6 +13,9 @@
 - A project page lists its repositories and folders. Selecting it from another repo or folder adds membership without losing earlier entries; clones, worktrees and nested folders share the page, with the most recently active listed page winning overlaps.
 - Claude Code and Codex native SessionStart hooks show one local-only line with the project's full share URL and waiting-review count, and stay silent outside listed projects. `install-skill` registers them; `doctor` checks their registration. Codex requires the normal `/hooks` trust review.
 - Passive version notices cover only the session's page and effective provider skill; page banners cover their own runtime. Other projects and installations remain in `doctor --versions`.
+- Clicking a question card, its **Open in document** or its evidence goes to it in Review, Plans and Findings. A page without a "Questions" section has no element for a card's own anchor; the jump now lands on the question in the page flow instead of reporting "Location unavailable in this version".
+- Every decision card offers **Answer in words** as its last choice again, in the page flow, the rail and Findings; the comment box holds the words.
+- `project.board` (url, project id, optional label, prefix, dir) puts the project's board in the header, after the tabs, with its ready count from `GET /api/board` (`bd ready --json`, cached and computed off the request path). Issue ids with the board's prefix link to the issue in the document and the rail. `project.issue_links` accepts any tracker's ids and URLs; the Linear-only checks are gone.
 
 ## 2.25.1
 

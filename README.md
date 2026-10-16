@@ -25,7 +25,7 @@ Use `--ask` only when the Markdown contains actual decision cards. A changed rev
 
 ## Review interface
 
-Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents holds supporting resources, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. Supplied `project.issue_links` make Linear IDs clickable.
+Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents holds supporting resources, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. `project.issue_links` maps issue ids from any tracker to URLs and makes them clickable. `project.board` (`url`, `project`, optional `label`, `prefix` and `dir`) adds a header link to the project's board with its ready count (`bd ready --json` in `dir`, or in the directory Bead Me Up Scotty lists for `project`; cached, never delaying the page), and ids with the board's prefix, such as `agent-annotate-w6e.4`, open that issue on the board.
 
 Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Send** submits one durable round across categories, including proposed Library revisions and reopened findings. Drafts, decisions, numbering, and history survive refreshes and handoffs.
 
