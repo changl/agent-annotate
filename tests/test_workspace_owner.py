@@ -127,3 +127,70 @@ def test_tab_round_routes_to_canonical_current_owner_once_without_disclosing_sha
     assert "annotate inbox tab/tab --unread" in prompt
     assert "#review=" not in prompt and review_access.read_key(linked.root / "main") not in prompt
     assert page_url(child).startswith("https://reviews.example/tab/#review=")
+
+
+@pytest.mark.parametrize("claim", ["main/main", "tab/tab"])
+def test_claim_inherits_effective_owner_reads_for_page_and_shared_tab(linked, monkeypatch, capsys, claim):
+    from agent_annotate.hooks import check_comment_bus as hook
+
+    monkeypatch.setattr(cli, "BUS_OFFSET_ROOT", linked.state / "bus-offsets")
+    monkeypatch.setattr(cli, "HOOK_OFFSET_ROOT", linked.state / "hook-offsets")
+    monkeypatch.setattr(cli, "BUS_ROOT", linked.state.parent / "bus")
+    monkeypatch.setattr(hook, "STATE", str(linked.state))
+    monkeypatch.setattr(hook, "BUS_ROOT", str(cli.BUS_ROOT))
+    monkeypatch.setattr(hook, "INBOX_OFFSET_ROOT", str(cli.BUS_OFFSET_ROOT))
+    monkeypatch.setattr(hook, "HOOK_OFFSET_ROOT", str(cli.HOOK_OFFSET_ROOT))
+    monkeypatch.setattr(hook, "DRY_RUN", True)
+    monkeypatch.setattr(cli, "_session_id", lambda: "new-session")
+    positions = {}
+    for name in ("main", "tab"):
+        bus = Path(linked.records[name]["bus_file"])
+        bus.parent.mkdir(parents=True)
+        old = json.dumps({"event": "round_submitted", "by": "reviewer", "round_id": "old"}) + "\n"
+        new = json.dumps({"event": "round_submitted", "by": "reviewer", "round_id": "new"}) + "\n"
+        bus.write_text(old + new)
+        offset = cli._offset_file(name, name, "old-main")
+        offset.parent.mkdir(parents=True)
+        offset.write_text(str(len(old)))
+        cli._category_offset_file(offset, "plans").write_text("0")
+        notified = cli.HOOK_OFFSET_ROOT / "old-main" / name / f"{name}.offset"
+        notified.parent.mkdir(parents=True)
+        notified.write_text(str(len(old + new)))
+        # A pre-existing bystander cursor must not suppress the owner's unread round.
+        destination = cli._offset_file(name, name, "new-session")
+        destination.parent.mkdir(parents=True)
+        destination.write_text(str(len(old + new)))
+        positions[name] = len(old)
+
+    assert cli.cmd_claim(SimpleNamespace(slug=claim, project=None)) == 0
+    capsys.readouterr()
+    notices = hook._scan("new-session")
+    assert len(notices) == 2
+    assert all("1 reviewer event(s)" in line and "ROUND SUBMITTED" in line for line in notices)
+    for name in ("main", "tab"):
+        offset = cli._offset_file(name, name, "new-session")
+        assert int(offset.read_text()) == positions[name]
+        assert cli._category_offset_file(offset, "plans").read_text() == "0"
+        assert int(cli._category_offset_file(offset, "review").read_text()) == positions[name]
+        assert cli.cmd_inbox(SimpleNamespace(slug=f"{name}/{name}", project=None, unread=True,
+                                             json=True, all_events=False)) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert [event["round_id"] for event in result["events"] if event["event"] == "round_submitted"] == ["new"]
+    assert hook._scan("new-session") == []
+    # Claiming again as the same owner must not rewind the just-read inbox.
+    before = cli._offset_file("main", "main", "new-session").read_text()
+    assert cli.cmd_claim(SimpleNamespace(slug=claim, project=None)) == 0
+    assert cli._offset_file("main", "main", "new-session").read_text() == before
+
+
+def test_claim_without_previous_session_cursor_uses_legacy_read_position(linked, monkeypatch):
+    monkeypatch.setattr(cli, "BUS_OFFSET_ROOT", linked.state / "bus-offsets")
+    monkeypatch.setattr(cli, "HOOK_OFFSET_ROOT", linked.state / "hook-offsets")
+    legacy = cli.BUS_OFFSET_ROOT / "main" / "main.offset"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("123")
+    assert cli.cmd_claim(SimpleNamespace(slug="main/main", project=None)) == 0
+    assert cli._offset_file("main", "main", "new-session").read_text() == "123"
+    assert (cli.HOOK_OFFSET_ROOT / "new-session" / "main" / "main.offset").read_text() == "123"
+    # No prior read of the tab: its unread backlog remains intact.
+    assert cli._offset_file("tab", "tab", "new-session").read_text() == "0"

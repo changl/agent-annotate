@@ -44,6 +44,50 @@ def args(**kwargs):
     return SimpleNamespace(slug="project/main", project=None, json=True, **kwargs)
 
 
+@pytest.mark.parametrize("category", ("review", "library", "findings", "plans"))
+@pytest.mark.parametrize("verdict", ("accept", "reject", "changes", "comment", "select"))
+def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, verdict):
+    from agent_annotate.hooks import check_comment_bus as hook
+
+    rows = []
+    for number, (status, decision) in enumerate([
+        ("open", {}),
+        ("open", {"verdict": verdict, "round_pending": True}),
+        ("user_confirmed", {"verdict": verdict}),
+        ("addressed_by_agent", {}),
+        ("resolved_in_version", {}),
+        ("archived", {}),
+    ], 9):
+        rows.append({"id": str(number), "number": number, "anchor_id": f"d:q{number}",
+                     "status": status, "category": category, "decision": decision,
+                     "decision_request": {"prompt": f"Question {number}"}})
+    store = {"schema_version": 2, "anchors": {row["anchor_id"]: [row] for row in rows}, "archived": {}}
+    (page.directory / "comments.json").write_text(json.dumps(store))
+    options = dict(slug="project/main", project=None, category=category, json=False)
+    assert cli.cmd_cards(SimpleNamespace(**options)) == 0
+    cards_output = capsys.readouterr().out
+    assert "3 decision card(s)" in cards_output
+    assert f"{verdict} (unsent)" in cards_output
+    assert "undecided: d:q9; unsent: d:q10" in cards_output
+    assert f"1 {verdict}" in cards_output
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    inbox_output = capsys.readouterr().out
+    assert cards_output.splitlines()[-1] == inbox_output.splitlines()[-1]
+    options["json"] = True
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    inbox = json.loads(capsys.readouterr().out)
+    assert inbox["decisions"][verdict] == 1
+    assert sum(inbox["decisions"].values()) == 1
+    assert inbox["card_count"] == 3
+    assert inbox["undecided"] == ["d:q9"] and inbox["unsent"] == ["d:q10"]
+    cards = hook._load_cards(str(page.directory))
+    assert set(cards) == {"9", "10", "11"}
+    notice = hook._slug_line("project", "main", 1,
+                             [{"event": "comment_reply", "comment_id": "10"}], cards, True)
+    assert "undecided: 1 of 3 cards; unsent: 1" in notice
+    assert f"10 {verdict}" not in notice
+
+
 def tool(name):
     return mcp_server.build_server()._tool_manager._tools[name].fn
 
@@ -304,3 +348,49 @@ def test_real_cli_processes_publish_plan_fix_finding_and_read_categories(page):
     assert run("inbox", "project/main", "--category", "findings", "--json")["event_count"] == 2
     assert run("library", "project/main", "--json")["blocks"] == []
     assert run("copy", "project/main", "--json")["blocks"] == []
+
+
+def test_finding_current_and_proposed_proof_store_role_caption_and_size(page, capsys):
+    from test_pagegen_images import png
+    (page.root / "a.png").write_bytes(png(390, 844))
+    (page.root / "b.png").write_bytes(png(390, 844))
+    assert cli.cmd_finding(args(fixed="2", proof=["current: a.png | Border today", "proposed: b.png",
+                                                  "https://example.test/proof"], note="", author=None)) == 0
+    proof = json.loads(capsys.readouterr().out)["fixed"]["proof"]
+    assert {k: proof[0][k] for k in ("label", "role", "w", "h")} == {
+        "label": "Border today", "role": "current", "w": 390, "h": 844}
+    assert proof[1]["role"] == "proposed" and proof[1]["label"] == "b.png" and proof[1]["attachment"].endswith("-b.png")
+    assert "role" not in proof[2]
+
+
+@pytest.mark.parametrize("value, message", [("current: notes.txt", "must be a .png"),
+                                            ("proposed: fake.png", "not a readable PNG")])
+def test_finding_role_proof_must_be_an_image(page, capsys, value, message):
+    (page.root / "notes.txt").write_text("text")
+    (page.root / "fake.png").write_text("<html>")
+    before = (page.directory / "comments.json").read_bytes()
+    assert cli.cmd_finding(args(fixed="2", proof=[value], note="", author=None)) == 2
+    assert message in capsys.readouterr().err
+    assert (page.directory / "comments.json").read_bytes() == before
+    assert not list((page.directory / "attachments").glob("*")) if (page.directory / "attachments").exists() else True
+
+
+def test_validate_proof_refuses_a_bad_role_or_size(page):
+    with pytest.raises(ValueError, match="role"):
+        categories.validate_proof(page.directory, [{"label": "x", "url": "https://e.test/a.png", "role": "after"}])
+    with pytest.raises(ValueError, match="width and height"):
+        categories.validate_proof(page.directory, [{"label": "x", "url": "https://e.test/a.png", "w": True}])
+
+
+def test_plan_markdown_images_are_copied_into_the_page_assets(page, capsys):
+    from test_pagegen_images import png
+    (page.root / "shots").mkdir()
+    (page.root / "shots" / "board.png").write_bytes(png(1440, 900))
+    source = page.root / "plan.md"
+    source.write_text("## Look\n\n![Board](shots/board.png)\n")
+    assert cli.cmd_plan(args(plan_id="look", from_file=str(source), title=None, label="Shots")) == 0
+    name = next((page.directory / "assets").iterdir()).name
+    assert f'src="assets/{name}"' in (page.directory / "plans/look/versions/v1.html").read_text()
+    source.write_text("## Look\n\n![Board](shots/missing.png)\n")
+    assert cli.cmd_plan(args(plan_id="look", from_file=str(source), title=None, label="Shots")) == 2
+    assert "image not found: shots/missing.png" in capsys.readouterr().err

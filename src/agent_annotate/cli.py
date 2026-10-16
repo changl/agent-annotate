@@ -82,11 +82,14 @@ from pathlib import Path
 from . import __version__
 from .categories import CATEGORIES as CATEGORY_IDS
 from .categories import comment_category as _comment_category
+from .hooks.decision_state import VERDICT_COLUMNS, is_live_card
+from .hooks.decision_state import is_undecided as _is_undecided
 from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
     BUS_ROOT,
     CONFIG_DIR,
+    HOOK_OFFSET_ROOT,
     HOOK_SCRIPT,
     LOCK_DIR,
     LOG_DIR,
@@ -2321,7 +2324,7 @@ def _inbox_line(ev: dict, texts: dict | None = None) -> str:
         (ev.get("comment_id") or "")[:10],
         (ev.get("anchor_id") or "")[:18],
         author[:24],
-        str(verdict)[:9],
+        str(verdict)[:9] + (" (unsent)" if ev.get("deferred") else ""),
         shown,
     )
 
@@ -2501,6 +2504,7 @@ def cmd_inbox(args) -> int:
             "decisions": counts,
             "card_count": len(cards),
             "undecided": undecided,
+            "unsent": [c["anchor_id"] or c["id"] for c in cards if c["pending"]],
             "category_counts": _category_counts(record),
             **({"category": category} if category else {}),
         }, ensure_ascii=False, indent=2))
@@ -2564,6 +2568,8 @@ def cmd_cards(args) -> int:
         "item", "id", "anchor", "ver", "verdict", "prompt"))
     for c in cards:
         verdict = c["verdict"] or ("pending" if c["pending"] else "—")
+        if c["pending"]:
+            verdict += " (unsent)"
         item_number = f"#{c['number']}" if isinstance(c.get("number"), int) else "—"
         line = "  %-6s %-12s %-20s %-6s %-9s %s" % (
             item_number, c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
@@ -2937,6 +2943,8 @@ def cmd_claim(args) -> int:
                 if not current or current.get("slug_dir") != selected.get("slug_dir"):
                     raise ValueError("workspace registration changed before claim; no ownership written")
             for p, s, selected in entries:
+                if prior and prior != fields["owner_session"]:
+                    _inherit_read_position(p, s, prior, fields["owner_session"])
                 states[p]["slugs"][s].update(fields)
                 if selected.get("slug_dir"):
                     meta_err = _write_owner_meta(Path(selected["slug_dir"]), fields)
@@ -2962,6 +2970,33 @@ def cmd_claim(args) -> int:
         "previous_owner": prior,
     })
     return 0
+
+
+def _inherit_read_position(project: str, slug: str, previous: str, owner: str) -> None:
+    """A handoff keeps unread feedback, including independent category reads.
+
+    Seed the hook from the inbox, not the previous hook's notice position:
+    announcing a round does not mean the previous owner read its contents.
+    """
+    source = _offset_file(project, slug, previous)
+    destination = _offset_file(project, slug, owner)
+    try:
+        offset = max(0, int(source.read_text(encoding="utf-8").strip()))
+    except (OSError, ValueError):
+        offset = _legacy_offset(project, slug)
+    positions = [(destination, offset),
+                 (HOOK_OFFSET_ROOT / _safe_component(owner) / project / f"{slug}.offset", offset)]
+    for category in CATEGORY_IDS:
+        try:
+            value = max(0, int(_category_offset_file(source, category).read_text(encoding="utf-8").strip()))
+        except (OSError, ValueError):
+            value = offset
+        positions.append((_category_offset_file(destination, category), value))
+    for path, value in positions:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(str(value), encoding="utf-8")
+        os.replace(temporary, path)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -3723,8 +3758,17 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
         raise ValueError("this page was consolidated into another page; mark the finding fixed there")
     directory = Path(record["slug_dir"])
     author = author if author.startswith("agent:") else f"agent:{author}"
-    prepared = []
+    from .images import IMAGE_SUFFIXES, image_size
+    prepared, roles = [], []
     for value in proofs:
+        # "current: shot.png | Caption" / "proposed: …": the same line as a
+        # page's ```compare fence; the pair renders as the compare block.
+        role = re.fullmatch(r"\s*(current|proposed)\s*:\s*([^|]*?)\s*(?:\|\s*(.*?)\s*)?", value, re.IGNORECASE | re.DOTALL)
+        if role:
+            value = role[2]
+            if not value.lower().startswith(("http://", "https://")) and Path(value).suffix.lower() not in IMAGE_SUFFIXES:
+                raise ValueError(f"a {role[1].lower()} proof must be a .png, .jpg, .gif or .webp image (got {value[:60]!r})")
+        roles.append({"role": role[1].lower(), **({"label": role[3][:200]} if role[3] else {})} if role else {})
         if value.lower().startswith(("http://", "https://")):
             prepared.append(validate_proof(directory, [{"label": value[:200], "url": value}])[0])
         elif re.match(r"\s|[A-Za-z][A-Za-z0-9+.-]*:", value):
@@ -3768,9 +3812,15 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
         raise ValueError("fixed note must be text of at most 10000 characters")
     proof = []
     try:
-        for item in prepared:
+        for item, extra in zip(prepared, roles):
             proof.append(add_proof_file(directory, item) if isinstance(item, Path) else item)
-        validate_proof(directory, proof)
+            if extra and "attachment" in proof[-1]:
+                size = image_size((directory / "attachments" / proof[-1]["attachment"]).read_bytes())
+                if size is None:
+                    raise ValueError(f"not a readable PNG, JPEG, GIF or WebP image: {item.name}")
+                extra.update(w=size[0], h=size[1])
+            proof[-1] = {**proof[-1], **extra}
+        proof = validate_proof(directory, proof)
         comment = mark_finding_fixed(directory, identifier, by=author, note=note, proof=proof)
     except (OSError, ValueError, KeyError):
         for item in proof:
@@ -3828,7 +3878,9 @@ def cmd_plan(args) -> int:
         content = body.decode("utf-8")
         title = args.title
         if source.suffix.lower() == ".md":
-            content, title = render_plan(content, args.plan_id, title=title)
+            content, title = render_plan(content, args.plan_id, title=title,
+                                         base_dir=source.absolute().parent,
+                                         page_dir=Path(record["slug_dir"]))
         result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
                                        title=title, label=args.label)
         _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
@@ -4731,9 +4783,7 @@ def _decision_cards(store: dict) -> list[dict]:
     cards = []
     for anchor_id, c in comments:
         dr = c.get("decision_request")
-        if not isinstance(dr, dict) or c.get("status") in (
-            "archived", "resolved_in_version",
-        ):
+        if not is_live_card(c):
             continue
         d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
         cards.append({
@@ -4758,12 +4808,6 @@ def _decision_cards(store: dict) -> list[dict]:
     ))
 
 
-# Every verdict answers a card, including `comment` (Answer in words, or a
-# reviewer's reply on an unanswered card, which the server records as one).
-VERDICT_COLUMNS = ("accept", "reject", "changes", "comment", "select")
-ANSWER_VERDICTS = ("accept", "reject", "changes", "comment", "select")
-
-
 def _verdict_column(verdict) -> str | None:
     """The counting column for a stored verdict, or None if it has no verdict."""
     if not verdict:
@@ -4771,29 +4815,24 @@ def _verdict_column(verdict) -> str | None:
     return verdict if verdict in VERDICT_COLUMNS else None
 
 
-def _is_undecided(card: dict) -> bool:
-    """True when nothing has answered this card and the agent has not
-    addressed or withdrawn it."""
-    return (card.get("verdict") not in ANSWER_VERDICTS
-            and card.get("status") != "addressed_by_agent")
-
-
 def _decision_line(cards: list[dict]) -> str:
     """The one-line decision summary `cards` and `inbox` both print."""
     counts = _verdict_counts(cards)
     undecided = [c["anchor_id"] or c["id"] for c in cards if _is_undecided(c)]
+    unsent = [c["anchor_id"] or c["id"] for c in cards if c["pending"]]
     return ("  decisions: %d accept, %d reject, %d changes, %d select, "
             "%d comment; undecided: %s"
             % (counts["accept"], counts["reject"], counts["changes"],
                counts["select"], counts["comment"],
-               ", ".join(undecided) if undecided else "none"))
+               ", ".join(undecided) if undecided else "none")
+            + ("; unsent: " + ", ".join(unsent) if unsent else ""))
 
 
 def _verdict_counts(cards: list[dict]) -> dict:
     counts = {k: 0 for k in VERDICT_COLUMNS}
     for c in cards:
         col = _verdict_column(c["verdict"])
-        if col:
+        if col and not c.get("pending"):
             counts[col] += 1
     return counts
 
@@ -5206,7 +5245,9 @@ def main():
     sp_finding = sub.add_parser("finding", help="mark a finding fixed with proof")
     sp_finding.add_argument("slug")
     sp_finding.add_argument("--fixed", required=True, metavar="N", help="finding number or exact comment ID")
-    sp_finding.add_argument("--proof", action="append", default=[], metavar="URL|FILE")
+    sp_finding.add_argument("--proof", action="append", default=[], metavar="URL|FILE",
+                            help="repeatable; 'current: a.png | caption' and 'proposed: b.png | caption' "
+                                 "pair as a current-vs-proposed block")
     sp_finding.add_argument("--note", default="")
     sp_finding.add_argument("--author", default=None)
     sp_finding.add_argument("--project", default=None)

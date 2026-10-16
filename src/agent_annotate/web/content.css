@@ -53,6 +53,25 @@
 .aa .aa-details{border:1px solid var(--line);border-radius:8px;padding:8px 16px;margin:12px 0}
 .aa .aa-details summary{cursor:pointer;font-weight:600;padding:4px 0}
 .aa .aa-details summary:focus-visible{outline:2px solid var(--link);outline-offset:4px}
+/* Images and the current-vs-proposed block (decision #16: judged inline, no
+   click). Portrait (phone) shots sit side by side, sized so a pair or a flow
+   row fits the viewport height; landscape (desktop) shots stack full width,
+   current above proposed. Unscoped: Findings proof in the shell uses it too. */
+.aa-figure,.aa-compare{margin:12px 0 16px;max-width:100%}
+.aa-figure img,.aa-cmp-cell img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
+.aa-figure[data-orient="portrait"] img,.aa-compare[data-layout="side"] img{width:auto;max-height:calc(100vh - 96px)}
+.aa-figure figcaption,.aa-cmp-cell figcaption,.aa-cmp-title{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin:4px 0;line-height:1.45}
+.aa-cmp-title{font-weight:600;color:var(--color-base-content);margin:0 0 6px}
+.aa-cmp-cell{margin:0;min-width:0}
+.aa-cmp-cell figcaption{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aa-cmp-label{display:inline-block;font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid var(--line);margin-right:2px;background:var(--color-base-200);color:var(--color-base-content)}
+.aa-cmp-label[data-role="proposed"]{background:var(--primary-soft);color:var(--link)}
+.aa-compare[data-layout="side"] .aa-cmp-row{display:flex;gap:12px;align-items:flex-start}
+.aa-compare[data-layout="side"] .aa-cmp-cell{flex:0 1 auto}
+.aa-cmp-row-head{margin:10px 0 2px}
+.aa-cmp-row-head:first-of-type{margin-top:0}
+.aa-compare[data-layout="stack"] .aa-cmp-cell img{width:100%}
+.aa-compare[data-layout="stack"] .aa-cmp-cell+.aa-cmp-cell,.aa-cmp-pair+.aa-cmp-pair{margin-top:12px}
 @media (max-width:760px){.aa{padding:8px 12px 60px}.aa pre{white-space:pre-wrap;word-break:break-word}.aa table{font-size:calc(12.5px * var(--aa-text, 1))}.aa .kpis{grid-template-columns:1fr 1fr}}
 /* U-01 + final: the page's title lives in the shell (project name and the
    content title), so the title the server adds to extracted documents is not

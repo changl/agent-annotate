@@ -18,6 +18,11 @@ import signal
 import sys
 import time
 
+try:
+    from agent_annotate.hooks.decision_state import is_live_card, is_undecided
+except ImportError:  # bare script without the package on PYTHONPATH
+    from decision_state import is_live_card, is_undecided
+
 HOME = os.path.expanduser("~")
 
 try:
@@ -251,25 +256,22 @@ def _load_cards(slug_dir: str) -> dict:
             store = json.load(fh)
     except (OSError, ValueError):
         return cards
-    anchors = store.get("anchors") if isinstance(store, dict) else None
+    anchors = store.get("anchors", store) if isinstance(store, dict) else None
     if not isinstance(anchors, dict):
         return cards
     for items in anchors.values():
         if not isinstance(items, list):
             continue
         for c in items:
-            if not isinstance(c, dict) or not c.get("decision_request"):
-                continue
-            if c.get("status") in ("archived", "resolved_in_version"):
+            if not isinstance(c, dict) or not is_live_card(c):
                 continue
             decision = c.get("decision") if isinstance(c.get("decision"), dict) else None
-            if not decision and c.get("status") == "addressed_by_agent":
-                continue  # addressed or withdrawn by the agent: not a live question
             cards[c.get("id")] = {
                 "anchor_id": c.get("anchor_id"),
                 "verdict": (decision or {}).get("verdict"),
                 "text": (decision or {}).get("text") or "",
                 "pending": bool((decision or {}).get("round_pending")),
+                "fixed": c.get("fixed"),
             }
     return cards
 
@@ -319,13 +321,15 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
             if not isinstance(cid, str) or cid in seen:
                 continue
             verdict = ev.get("decision") or (cards.get(cid) or {}).get("verdict")
+            if not ev.get("decision") and (cards.get(cid) or {}).get("pending"):
+                continue  # A saved draft is not a submitted verdict.
             if not verdict:
                 continue
             seen.add(cid)
             verdict_bits.append("%s %s" % (cid, verdict))
 
     total_cards = len(cards)
-    undecided_ids = [cid for cid, c in cards.items() if not c.get("verdict")]
+    undecided_ids = [cid for cid, c in cards.items() if is_undecided(c)]
     undecided = len(undecided_ids)
 
     parts = ["[annotate] %s/%s: %d reviewer event(s) since your last read"
@@ -337,6 +341,9 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
                      + (f", +{more} more" if more > 0 else ""))
     if total_cards:
         parts.append("; undecided: %d of %d cards" % (undecided, total_cards))
+        unsent = sum(bool(c.get("pending")) for c in cards.values())
+        if unsent:
+            parts.append("; unsent: %d" % unsent)
     parts.append(". Read: %s inbox %s/%s --unread" % (_invocation(), project, slug))
     line = "".join(parts)
     if round_submitted:

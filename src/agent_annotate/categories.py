@@ -171,17 +171,28 @@ def validate_proof(page_dir: Path | str, proof: list[dict]) -> list[dict]:
         raise ValueError("proof must be an array of at most 30 entries")
     result = []
     for item in proof:
-        keys = set(item) - {"detail"} if isinstance(item, dict) else None
+        keys = set(item) - {"detail", "role", "w", "h"} if isinstance(item, dict) else None
         if keys not in ({"label", "url"}, {"label", "attachment"}):
-            raise ValueError("proof needs label and either url or attachment (optional: detail)")
+            raise ValueError("proof needs label and either url or attachment (optional: detail, role, w, h)")
         label = _text(item["label"], "proof label")
         # An optional line under a link, e.g. "An agent links the merged change here."
-        detail = {"detail": _text(item["detail"], "proof detail", 500)} if "detail" in item else {}
+        extra = {"detail": _text(item["detail"], "proof detail", 500)} if "detail" in item else {}
+        # A current/proposed image pair renders as the page's compare block;
+        # w and h (read from the file header) pick side by side or stacked.
+        if "role" in item:
+            if item["role"] not in ("current", "proposed"):
+                raise ValueError("proof role must be current or proposed")
+            extra["role"] = item["role"]
+        for key in ("w", "h"):
+            if key in item:
+                if isinstance(item[key], bool) or not isinstance(item[key], int) or not 0 < item[key] < 100000:
+                    raise ValueError("proof image width and height must be positive integers")
+                extra[key] = item[key]
         if "url" in item:
             url = _link(item["url"])
             if not url.lower().startswith(("http://", "https://")):
                 raise ValueError("proof URLs must use HTTP or HTTPS")
-            result.append({"label": label, "url": url, **detail})
+            result.append({"label": label, "url": url, **extra})
         else:
             name = item["attachment"]
             if not isinstance(name, str) or not _ATTACHMENT.fullmatch(name) or ".." in name:
@@ -189,7 +200,7 @@ def validate_proof(page_dir: Path | str, proof: list[dict]) -> list[dict]:
             path = safe_path(page_dir, "attachments/" + name)
             if not path.is_file() or path.stat().st_size > MAX_PROOF_BYTES:
                 raise ValueError("proof attachment missing or oversized")
-            result.append({"label": label, "attachment": name, **detail})
+            result.append({"label": label, "attachment": name, **extra})
     return result
 
 
