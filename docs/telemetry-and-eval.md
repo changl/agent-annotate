@@ -3,8 +3,8 @@
 Telemetry is read-only operator evidence, not a project deliverable or recurring agent task. Run it only when investigating a problem or when requested.
 
 - `metrics`, reports, and fleet observations use local records without consuming reviewer inbox cursors.
-- `eval` summarizes feedback/decision handling. Its thresholds are diagnostic, not approval gates.
-- `cost` estimates annotate effort from available transcripts. Incomplete transcripts do not prove unused functionality or productivity gains.
+- `eval` summarizes feedback/decision handling; `--merge FILE` combines portable JSON exports. Its thresholds are diagnostic, not approval gates.
+- `cost` estimates annotate effort from available transcripts; `--merge FILE` combines exports from multiple machines. Incomplete transcripts do not prove unused functionality or productivity gains.
 - Delivery journals distinguish pending, accepted, started, acknowledged, and uncertain sends. None proves implementation completion.
 - Public fleet results omit reviewer text; runtime and real client paths need separate verification.
 

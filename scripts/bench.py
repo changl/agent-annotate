@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Before/after benchmark: real `claude -p` runs against agent-annotate builds.
+"""Before/after benchmark: isolated Claude Code or Codex runs against agent-annotate builds.
 
     python scripts/bench.py --ref main --ref HEAD [--scenario v1-page] [--runs 3]
 
 Each --ref (a git ref, or a checkout directory used as-is) is exported once.
 Every run then gets a fresh sandbox under $TMPDIR: its own state, bus and
 config roots, a bin/annotate launcher for that build, the build's skill at
-<cwd>/.claude/skills/annotate, and a `claude -p` that loads project settings
-only. Setup and outcome checks never call a model. Every process the sandbox
+<cwd>/.claude/skills/annotate, and a provider process using only the sandbox skill/settings. Setup and outcome checks never call a model. Every process the sandbox
 started is stopped afterwards. Nothing reads or writes ~/.claude/annotate-*,
 ~/.claude/settings.json, ~/.local/bin/annotate or a live page server.
 
@@ -491,7 +490,7 @@ def run_model(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None,
                "--model", args.model, "-c", f'model_reasoning_effort="{args.effort}"', prompt]
         # The explicit skill path is the same prompt prefix for both text versions.
         cmd[-1] = "Read .agents/skills/annotate/SKILL.md and use it for this task. " + prompt
-    if args.max_budget_usd:
+    if args.max_budget_usd and args.provider == "claude":
         cmd += ["--max-budget-usd", str(args.max_budget_usd)]
     if sys.platform == "darwin":
         # Enforce isolation outside the model: no writes to user configuration,
