@@ -2,7 +2,8 @@
 import json
 from types import SimpleNamespace
 
-from agent_annotate import costs, eval as evaluation, measurement
+from agent_annotate import costs, measurement
+from agent_annotate import eval as evaluation
 
 
 def write(path, data):

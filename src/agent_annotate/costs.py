@@ -40,8 +40,8 @@ import statistics
 import sys
 from pathlib import Path
 
-from .paths import PACKAGE_DIR, TRANSCRIPT_GLOB
 from . import measurement
+from .paths import PACKAGE_DIR, TRANSCRIPT_GLOB
 
 # Retired names stay so older transcripts still parse.
 SUBS = ("new publish publish-version unpublish status claim ask cards open-cards inbox monitor "

@@ -56,8 +56,8 @@ import json
 import os
 import re
 import statistics
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 if not __package__:  # Preserve the documented bare-script entry point.
