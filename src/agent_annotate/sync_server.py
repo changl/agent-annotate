@@ -104,6 +104,7 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
 import argparse
 import difflib
 import fcntl
+import gzip
 import hashlib
 import http.server
 import ipaddress
@@ -182,23 +183,10 @@ def _mime(suffix: str) -> str:
 _INLINE_UPLOADS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# Edge-cache discipline
-#
-# Cloudflare edge-caches .js/.css by default when the origin sends no cache
-# headers (the pre-2026-07-13 server sent none), and the shell referenced
-# its assets with bare unversioned URLs — so users behind the tunnel kept
-# receiving stale shell.js/shell.css even after hard refresh. Two layers of
-# defense, both required:
-#   1. Asset URLs are stamped with the source file's mtime (?v=<int>) at
-#      serve time — a changed file mints a NEW edge cache key instantly,
-#      no purge needed.
-#   2. .js/.css responses carry Cache-Control: no-store so the edge never
-#      caches them again.
-# ────────────────────────────────────────────────────────────────────────────
+_IMMUTABLE = "public, max-age=31536000, immutable"
 _NO_STORE = "no-store, max-age=0, must-revalidate"
 
-# /assets/<digits>/<known asset name> — the digits are a cache-key stamp only.
+# /assets/<digits>/<known asset name> — the stamp must match the served bytes.
 _WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", "adapter.js", "diagram-plot.js",
                          "quill.js", "quill.snow.css",
                          "RobotoVariable.ttf", "RobotoVariable-Italic.ttf",
@@ -206,10 +194,21 @@ _WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", 
 _ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
 
 
-def _cache_control_for(suffix: str) -> str:
-    if suffix.lower() in (".js", ".css"):
-        return _NO_STORE
-    return "no-cache"
+def _accepts_gzip(value: str) -> bool:
+    qualities = {}
+    for item in value.lower().split(","):
+        encoding, *params = item.strip().split(";")
+        encoding = encoding.strip()
+        quality = 1.0
+        for param in params:
+            key, _, number = param.strip().partition("=")
+            if key == "q":
+                try:
+                    quality = float(number)
+                except ValueError:
+                    quality = 0
+        qualities[encoding] = quality
+    return 0 < qualities.get("gzip", qualities.get("*", 0)) <= 1
 
 
 def _mtime_stamp(path) -> str:
@@ -220,10 +219,21 @@ def _mtime_stamp(path) -> str:
     byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
         try:
-            return str(int(hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16], 16))
+            return str(int(hashlib.sha256(_asset_bytes(Path(path))).hexdigest()[:16], 16))
         except OSError:
             pass
     return "0"
+
+
+def _asset_bytes(path: Path) -> bytes:
+    data = path.read_bytes()
+    if path.suffix == ".css":
+        # CSS and its fonts need independent immutable keys. Include the font
+        # hashes in the served CSS bytes so changing a font also changes its key.
+        for name in ("RobotoVariable.ttf", "RobotoVariable-Italic.ttf"):
+            data = data.replace(f"url({name})".encode(),
+                                f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
+    return data
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -837,6 +847,13 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 # Handler
 # ────────────────────────────────────────────────────────────────────────────
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
     # Set per-instance via make_handler():
     artifact_dir: Path
     artifact_file: str = "current.html"
@@ -1144,11 +1161,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(503, f"This page moved to {target.get('project')}/{target.get('slug')}, "
                           "which is not published yet.".encode(), "text/plain; charset=utf-8", cache_control="no-store")
             return True
-        self.send_response(302)
-        self.send_header("Location", url + "#" + tab_fragment(moved, parsed.query))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        self._respond(302, b"", cache_control="no-store",
+                      extra_headers={"Location": url + "#" + tab_fragment(moved, parsed.query)})
         return True
 
     def _refuse_moved_write(self, route_path: str) -> bool:
@@ -1175,10 +1189,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             location = self.public_base_path + "/"
             if parsed.query:
                 location += "?" + parsed.query
-            self.send_response(308)
-            self.send_header("Location", location)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+            self._respond(308, b"", extra_headers={"Location": location})
             return
         route_path = self._strip_base(parsed.path)
         if self._redirect_moved(parsed, route_path):
@@ -1252,14 +1263,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_meta()
             if route_path.lstrip("/") in _WEB_ASSETS:
                 return self._serve_skill_asset(route_path.lstrip("/"))
-            # PATH-versioned assets: /assets/<stamp>/<name>. The stamp segment
-            # exists purely as an edge cache key — some CDN configurations
-            # strip query strings from cache keys, which made ?v= busting a
-            # no-op; a distinct PATH always misses stale cache entries. The
-            # stamp is ignored for file resolution.
+            # A distinct path survives CDN configurations that strip query strings.
             m = _ASSET_PATH_RE.match(route_path)
             if m:
-                return self._serve_versioned_asset(m.group(2))
+                return self._serve_versioned_asset(m.group(2), m.group(1))
             if route_path == "/content":
                 return self._v2_serve_content(parsed)
             if route_path == "/" or route_path == "":
@@ -1343,9 +1350,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         if not self._allow_request():
             return
-        self.send_response(204)
-        self.send_header("Allow", "GET, POST, PUT, OPTIONS")
-        self.end_headers()
+        self._respond(204, b"", extra_headers={"Allow": "GET, HEAD, POST, PUT, OPTIONS"})
+
+    def do_HEAD(self):
+        self.do_GET()
 
     # ── v2.19: agent session attribution ─────────────────────────────
     def _session_fields(self) -> dict:
@@ -1720,8 +1728,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Inject adapter.js (served from /adapter.js, which _strip_base +
         # do_GET route to the skill dir) plus a small bootstrap so the
         # adapter knows which version/base-path it's running under.
-        # Both injected refs carry mtime stamps (edge-cache bypass, see
-        # _cache_control_for).
+        # Both injected refs carry content hashes for immutable caching.
         base = self.public_base_path or ""
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
@@ -1795,13 +1802,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._respond(500, b"Read error")
             return
-        self._respond(200, data, _mime(target.suffix),
-                      cache_control=_cache_control_for(target.suffix))
+        self._respond(200, data, _mime(target.suffix))
 
-    def _serve_versioned_asset(self, name: str):
+    def _serve_versioned_asset(self, name: str, stamp: str):
         """Serve a whitelisted asset from a /assets/<stamp>/<name> URL.
 
-        The stamp segment is a cache key only, never used for resolution.
+        Reject stale or invented stamps rather than caching different bytes forever.
         diagram-plot.js prefers the slug-local copy (that fork is what the
         live content renders with today; _serve_static serves it for the
         legacy bare path), falling back to the skill-dir copy. The other
@@ -1823,11 +1829,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         for target in candidates:
             if target.exists() and target.is_file():
                 try:
-                    data = target.read_bytes()
+                    data = _asset_bytes(target)
                 except OSError:
                     continue
-                self._respond(200, data, _mime(target.suffix),
-                              cache_control=_cache_control_for(target.suffix))
+                if stamp != str(int(hashlib.sha256(data).hexdigest()[:16], 16)):
+                    return self._respond(404, b"Asset hash mismatch", cache_control="no-store")
+                self._respond(200, data, _mime(target.suffix), cache_control=_IMMUTABLE)
                 return
         self._respond(404, b"Not found")
 
@@ -3558,8 +3565,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if target.suffix.lower() not in _INLINE_UPLOADS:
                 filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
                 extra["Content-Disposition"] = f'attachment; filename="{filename}"'
+        # pagegen stages images as <sha256[:12]>-<name>; verify the prefix
+        # against the bytes before granting immutable caching to an upload.
+        digest = hashlib.sha256(data).hexdigest()
+        hashed_name = re.search(r"(?:^|[-_.])([0-9a-f]{12,64})(?=[-_.]|$)", target.name, re.IGNORECASE)
+        immutable = extra and hashed_name and digest.startswith(hashed_name[1].lower())
         self._respond(200, data, content_type=mime,
-                      cache_control=_cache_control_for(target.suffix), extra_headers=extra)
+                      cache_control=_IMMUTABLE if immutable else "no-cache", extra_headers=extra)
 
     def _default_file(self):
         return self.artifact_file
@@ -3567,24 +3579,40 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
                  cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None):
-        etag = '"' + hashlib.sha256(body).hexdigest() + '"' if conditional else None
-        if code == 200 and self.command == "GET" and etag and self.headers.get("If-None-Match") == etag:
-            self.send_response(304)
-            self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "private, no-cache")
-            self.end_headers()
-            return
+        compressible = content_type.split(";", 1)[0] in {
+            "text/javascript", "application/javascript", "text/css", "text/html",
+            "application/json", "image/svg+xml",
+        }
+        compressed = False
+        if compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
+            packed = gzip.compress(body, compresslevel=6, mtime=0)
+            if len(packed) < len(body):
+                body, compressed = packed, True
+        etag = ('"' + hashlib.sha256(body).hexdigest() + '"'
+                if code == 200 and (conditional or "no-store" not in cache_control) else None)
+        validators = [value.strip().removeprefix("W/") for value in self.headers.get("If-None-Match", "").split(",")]
+        if self.command in ("GET", "HEAD") and etag and (etag in validators or "*" in validators):
+            code = 304
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
         if etag:
             self.send_header("ETag", etag)
-        self.send_header("X-Content-Type-Options", "nosniff")
+        if compressible:
+            self.send_header("Vary", "Accept-Encoding")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+        # Mutations may reject before consuming their request body. Closing
+        # prevents those unread bytes becoming the next keep-alive request.
+        if self.command not in ("GET", "HEAD") or self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
+            self.close_connection = True
+            self.send_header("Connection", "close")
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD" and code not in (204, 304):
+            self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         # Suppress default access log for static files to reduce noise
@@ -3767,7 +3795,7 @@ def main():
             local_author=local_author,
             local_author_name=local_author_name,
         )
-        server = http.server.HTTPServer(("localhost", port), handler)
+        server = ReviewHTTPServer(("localhost", port), handler)
         if public_base_path:
             url = f"http://localhost:{port}{public_base_path}/{artifact_file}"
         else:

@@ -1,0 +1,198 @@
+{
+  "before": [
+    {
+      "mode": "desktop",
+      "sample": 0,
+      "load": "cold",
+      "bytes": 3035540,
+      "first_card_ms": 202.3,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 0,
+      "load": "warm",
+      "bytes": 3035845,
+      "first_card_ms": 112.3,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 1,
+      "load": "cold",
+      "bytes": 3035845,
+      "first_card_ms": 142.8,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 1,
+      "load": "warm",
+      "bytes": 3035845,
+      "first_card_ms": 100.3,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 2,
+      "load": "cold",
+      "bytes": 3035845,
+      "first_card_ms": 141,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 2,
+      "load": "warm",
+      "bytes": 3035845,
+      "first_card_ms": 115.4,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 0,
+      "load": "cold",
+      "bytes": 3097264,
+      "first_card_ms": 6037.4,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 0,
+      "load": "warm",
+      "bytes": 3097264,
+      "first_card_ms": 6005.5,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 1,
+      "load": "cold",
+      "bytes": 3097264,
+      "first_card_ms": 6054.6,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 1,
+      "load": "warm",
+      "bytes": 3097264,
+      "first_card_ms": 6016.6,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 2,
+      "load": "cold",
+      "bytes": 3097264,
+      "first_card_ms": 6044.1,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 2,
+      "load": "warm",
+      "bytes": 3097264,
+      "first_card_ms": 6013.3,
+      "images": 2
+    }
+  ],
+  "after": [
+    {
+      "mode": "desktop",
+      "sample": 0,
+      "load": "cold",
+      "bytes": 1764512,
+      "first_card_ms": 163.5,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 0,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 120,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 1,
+      "load": "cold",
+      "bytes": 1764990,
+      "first_card_ms": 152,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 1,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 115.4,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 2,
+      "load": "cold",
+      "bytes": 1764990,
+      "first_card_ms": 242.7,
+      "images": 2
+    },
+    {
+      "mode": "desktop",
+      "sample": 2,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 118,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 0,
+      "load": "cold",
+      "bytes": 1764990,
+      "first_card_ms": 3071.9,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 0,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 1571.2,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 1,
+      "load": "cold",
+      "bytes": 1764990,
+      "first_card_ms": 3066.4,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 1,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 1570.9,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 2,
+      "load": "cold",
+      "bytes": 1764990,
+      "first_card_ms": 3059.9,
+      "images": 2
+    },
+    {
+      "mode": "slow4g",
+      "sample": 2,
+      "load": "warm",
+      "bytes": 16089,
+      "first_card_ms": 1558.2,
+      "images": 2
+    }
+  ]
+}
