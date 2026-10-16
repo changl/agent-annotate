@@ -426,6 +426,9 @@
       } else if (p && p.history) p.history(sec.querySelector('.hist-cat-body'));
     });
     renderSent(shown);
+    const withdrawn = window.AnnotateDocs ? window.AnnotateDocs.withdrawnQuestions().filter(c => shown.includes(c.cat)) : [];
+    $('#hist-withdrawn').hidden = !withdrawn.length;
+    $('#hist-withdrawn-body').innerHTML = withdrawn.map(c => `<p>${esc(c.number ? '#' + c.number + ' · ' : '')}${esc(c.prompt)} (${esc(c.version)})<br>Withdrawn: ${esc(c.reason)}</p>`).join('');
   }
   const unclipped = new Set();
   function clip(list, on) {

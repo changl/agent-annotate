@@ -350,7 +350,7 @@ def _versioned_slug(tmp_path, status="addressed_by_agent"):
     return slug_dir
 
 
-def test_publish_version_refuses_prior_round_comment_in_limbo(tmp_path, monkeypatch, capsys):
+def test_publish_version_preserves_prior_reviewer_content_without_a_gate(tmp_path, monkeypatch, capsys):
     slug_dir = _versioned_slug(tmp_path)
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
 
@@ -358,14 +358,11 @@ def test_publish_version_refuses_prior_round_comment_in_limbo(tmp_path, monkeypa
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None,
     ))
 
-    assert result == 2
-    assert (slug_dir / "current.html").readlink() == Path("versions/v1.html")
-    assert json.loads((slug_dir / "current.meta.json").read_text())["current"] == "v1"
-    error = capsys.readouterr().err
-    assert "prior-round comment" in error
-    assert "aaaaaaaaaaaa" in error
-    assert "annotate resolve" in error
-    assert "annotate carry" in error
+    assert result == 0
+    assert (slug_dir / "current.html").readlink() == Path("versions/v2.html")
+    assert json.loads((slug_dir / "current.meta.json").read_text())["current"] == "v2"
+    assert "prior-round comment" not in capsys.readouterr().err
+    assert json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:old"][0]["status"] == "addressed_by_agent"
 
 
 def test_publish_version_allows_explicit_resolution(tmp_path, monkeypatch):
@@ -421,7 +418,7 @@ def test_publish_version_accepts_resolution_into_a_version_with_no_cards_left(tm
     assert json.loads((slug_dir / "current.meta.json").read_text())["current"] == "v3"
 
 
-def test_publish_version_still_refuses_resolution_into_a_later_version(tmp_path, monkeypatch, capsys):
+def test_publish_version_does_not_gate_on_prior_resolution_metadata(tmp_path, monkeypatch, capsys):
     slug_dir = _versioned_slug(tmp_path, status="resolved_in_version")
     (slug_dir / "versions" / "v3.html").write_text(
         "<html><body><section data-anchor-id='s:later'>Later</section></body></html>",
@@ -438,5 +435,5 @@ def test_publish_version_still_refuses_resolution_into_a_later_version(tmp_path,
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None,
     ))
 
-    assert result == 2
-    assert "points past the version being published" in capsys.readouterr().err
+    assert result == 0
+    assert "points past" not in capsys.readouterr().err

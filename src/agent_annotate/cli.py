@@ -2051,97 +2051,39 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     return blockers
 
 
-def _mentions_by_anchor(html: str) -> dict[int, str]:
-    """{item number: the innermost anchor whose own text first says #N}.
+def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None = None) -> list[str]:
+    """A Review version keeps only the unanswered agent questions it poses again."""
+    from .sync_server import _atomic_write_json, _can_withdraw, _locked_store, _withdraw_decision
 
-    Deepest anchor wins so a mention inside a list item resolves to that item,
-    not to the whole section around it.
-    """
-    from html.parser import HTMLParser
-
-    found: dict[int, str] = {}
-
-    class _Walk(HTMLParser):
-        def __init__(self):
-            super().__init__(convert_charrefs=True)
-            self.stack: list[tuple[str, str | None]] = []
-
-        def handle_starttag(self, tag, attrs):
-            if tag in ("br", "img", "hr", "input", "meta", "link", "col", "wbr"):
-                return
-            self.stack.append((tag, dict(attrs).get("data-anchor-id")))
-
-        def handle_endtag(self, tag):
-            for i in range(len(self.stack) - 1, -1, -1):
-                if self.stack[i][0] == tag:
-                    del self.stack[i:]
-                    return
-
-        def handle_data(self, data):
-            if any(t in ("script", "style") for t, _ in self.stack):
-                return
-            anchor = next((a for _, a in reversed(self.stack) if a), None)
-            if not anchor:
-                return
-            for m in re.finditer(r"(?<![\w#&])#(\d{1,4})\b", data):
-                found.setdefault(int(m.group(1)), anchor)
-
-    _Walk().feed(html)
-    return found
-
-
-def _auto_dispose(slug_dir: Path, new_version: str, project_hint: str | None) -> list[str]:
-    """Record where each earlier item went, from the new version itself.
-
-    Resolving and carrying by hand cost a call per item per round, and had to
-    happen in a narrow window: after the version was generated, before it was
-    published. Agents in the bench resolved too early and hit the publish gate.
-    The version already says where each item went: a card with the same
-    number keeps it open (carry), and the first element that names it as #N
-    answers it (resolve). Items it does not mention stay blockers.
-    """
-    blockers = [b for b in _carryover_blockers(slug_dir, new_version)
-                if b["reason"] == "no resolution or carry-forward"]
-    if not blockers:
+    if not (slug_dir / "comments.json").exists():
         return []
-    try:
-        html = (slug_dir / "versions" / f"{new_version}.html").read_text(encoding="utf-8")
-        store = _coerce_store_file(slug_dir)
-    except OSError:
-        return []
-    numbers = {c.get("id"): c.get("number") for _a, c in _iter_comments(store)}
-    cards = {}
-    try:
-        for card in json.loads((slug_dir / "cards.json").read_text(encoding="utf-8")):
-            if isinstance(card, dict) and card.get("number") and card.get("anchor_id"):
-                cards[int(card["number"])] = card["anchor_id"]
-    except (OSError, ValueError, TypeError):
-        pass
-    mentions = _mentions_by_anchor(html)
-    resolved = _resolve_scoped_slug(slug_dir.name, project_hint)
-    if not resolved:
-        return []
-    record = resolved[2]
+    if cards is None:
+        path = slug_dir / "versions" / f"{new_version}.cards.json"
+        if not path.exists():
+            path = slug_dir / "cards.json"
+        try:
+            cards = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cards = []
+    # A stale cards.json from an earlier generation must not keep questions alive.
+    from .sync_server import _version_has_anchor
+    cards = [card for card in cards if isinstance(card, dict)
+             and _comment_category(card) == "review" and card.get("decision_request")
+             and _version_has_anchor(slug_dir, new_version, card.get("anchor_id") or "")]
+    anchors = {card["anchor_id"] for card in cards}
+    numbers = {card["number"] for card in cards if card.get("number")}
     done = []
-    for b in blockers:
-        number = numbers.get(b["id"])
-        if not number:
-            continue
-        number = int(number)
-        if number in cards and f'data-anchor-id="{cards[number]}"' in html:
-            body = {"carry_forward": {"version": new_version, "anchor_id": cards[number]}}
-            verb = "carried"
-        elif number in mentions:
-            body = {"status": "resolved_in_version", "resolved_in_version": new_version,
-                    "resolution_anchor_id": mentions[number],
-                    "response_text": f"Answered in {new_version}."}
-            verb = "resolved"
-        else:
-            continue
-        code, _payload = _api(record, "PUT", f"/api/comments/{b['id']}", body,
-                              _resolve_author(None))
-        if 200 <= code < 300:
-            done.append(f"{verb} #{number}")
+    with _locked_store(slug_dir):
+        store = _coerce_store_file(slug_dir)
+        for anchor, comment in _iter_comments(store):
+            if (_comment_category({"anchor_id": anchor, **comment}) != "review"
+                    or comment.get("version") == new_version or not _can_withdraw(comment)
+                    or anchor in anchors or comment.get("number") in numbers):
+                continue
+            _withdraw_decision(comment, f"not asked again in {new_version}", _resolve_author(None))
+            done.append(comment["id"])
+        if done:
+            _atomic_write_json(slug_dir / "comments.json", store)
     return done
 
 
@@ -2177,34 +2119,9 @@ def cmd_publish_version(args) -> int:
     if not target.exists():
         print(f"ERROR: versions/{new_version}.html not found — drop it in first", file=sys.stderr)
         return 2
-    auto = _auto_dispose(slug_dir, new_version, getattr(args, "project", None))
-    if auto:
-        print(f"  earlier items: {', '.join(auto)}")
-    blockers = _carryover_blockers(slug_dir, new_version)
-    if blockers:
-        print(
-            f"ERROR: cannot publish {new_version}: {len(blockers)} prior-round comment(s) "
-            f"lack an explicit disposition. Name each as #N where {new_version} answers "
-            "it, or give it a card with the same number to keep it open.",
-            file=sys.stderr,
-        )
-        for blocker in blockers:
-            print(
-                f"  {blocker['id']}  {blocker['version']}  {blocker['status']}  "
-                f"{blocker['anchor_id']}  ({blocker['reason']})",
-                file=sys.stderr,
-            )
-        print(
-            f"  Resolve: {_inv()} resolve {slug_dir.name} <id> --in-version {new_version} "
-            "--anchor <vN-anchor> --response \"where it was applied\"",
-            file=sys.stderr,
-        )
-        print(
-            f"  Carry:   {_inv()} carry {slug_dir.name} <id> --to-version {new_version} "
-            "--anchor <vN-anchor>",
-            file=sys.stderr,
-        )
-        return 2
+    withdrawn = _withdraw_unasked(slug_dir, new_version)
+    if withdrawn:
+        print(f"  withdrawn: {', '.join(withdrawn)} (not asked again in {new_version})")
     current_symlink = slug_dir / "current.html"
     if current_symlink.exists() or current_symlink.is_symlink():
         current_symlink.unlink()
@@ -2793,6 +2710,9 @@ def cmd_ask(args) -> int:
         ids = payload.get("ids") or []
         created = int(payload.get("created") or 0)
         updated = int(payload.get("updated") or 0)
+
+    if version and record.get("slug_dir") and any(_comment_category(item) == "review" for item in items):
+        _withdraw_unasked(Path(record["slug_dir"]), version, items)
 
     if finding_sets:
         from .categories import load_categories, save_findings_sets
@@ -4591,6 +4511,22 @@ def cmd_carry(args) -> int:
                          done="carried", target=f" → {args.to_version} {args.anchor}")
 
 
+def cmd_withdraw(args) -> int:
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    store = _read_store_file(_store_file(resolved[2]))
+    numbers = _item_numbers(store)
+    matches = [c for _anchor, c in _iter_comments(store)
+               if c.get("id") == args.comment_id or str(numbers.get(c.get("id"))) == args.comment_id]
+    if len(matches) != 1:
+        print("ERROR: question not found or number is ambiguous; use its comment id", file=sys.stderr)
+        return 2
+    args.comment_id = matches[0]["id"]
+    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}",
+                         {"decision_request": None, "withdraw_reason": args.why}, done="withdrawn")
+
+
 def cmd_addressed(args) -> int:
     body = {"status": "addressed_by_agent"}
     if args.response:
@@ -5526,6 +5462,15 @@ def main():
                          help="author identity (overrides $ANNOTATE_AUTHOR, $CLAUDE_AGENT_ID; default agent:claude)")
     sp_addr.add_argument("--json", action="store_true", help="print the updated comment")
     sp_addr.set_defaults(func=cmd_addressed)
+
+    sp_withdraw = sub.add_parser("withdraw", help="withdraw an unanswered agent question")
+    sp_withdraw.add_argument("slug")
+    sp_withdraw.add_argument("comment_id", help="question number or comment id")
+    sp_withdraw.add_argument("--why", required=True)
+    sp_withdraw.add_argument("--project", default=None)
+    sp_withdraw.add_argument("--author", default=None)
+    sp_withdraw.add_argument("--json", action="store_true")
+    sp_withdraw.set_defaults(func=cmd_withdraw)
 
     sp_resolve = sub.add_parser(
         "resolve",

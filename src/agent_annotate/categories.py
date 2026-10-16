@@ -381,7 +381,7 @@ def _replies(comment: dict) -> list[dict]:
 def comment_section(comment: dict) -> str | None:
     """Accepted shell sectionOf; Findings keeps agreed work waiting until fixed."""
     status = comment.get("status", "open")
-    if status == "archived":
+    if status == "archived" or comment.get("withdrawn"):
         return None
     decision = _mapping(comment.get("decision"))
     if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):

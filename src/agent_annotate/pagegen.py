@@ -1163,9 +1163,9 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
     _atomic_write(slug_dir / "source" / f"{version}.md", source_text)
-    if cards:
-        _atomic_write(slug_dir / "cards.json",
-                      json.dumps(cards, indent=2, ensure_ascii=False) + "\n")
+    cards_text = json.dumps(cards, indent=2, ensure_ascii=False) + "\n"
+    _atomic_write(slug_dir / "cards.json", cards_text)
+    _atomic_write(slug_dir / "versions" / f"{version}.cards.json", cards_text)
 
     if activate:
         current = slug_dir / "current.html"
