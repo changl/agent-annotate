@@ -12,6 +12,8 @@ TESTS = (
     "tests/test_skillgen.py",
     "tests/test_skill_cli.py",
     "tests/test_decision_quality.py",
+    "tests/test_cli_reads.py",
+    "tests/test_pagegen.py",
     "tests/test_bench.py",
     "tests/test_mcp_server_build.py",
     "tests/test_review_access.py",
