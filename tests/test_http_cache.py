@@ -93,11 +93,12 @@ def test_css_fonts_have_independent_validated_hashes(server):
 
 
 @pytest.mark.parametrize("directory", ["assets", "attachments"])
-@pytest.mark.parametrize("hashed", [False, True])
+@pytest.mark.parametrize("hashed", [False, "prefix", "suffix"])
 def test_page_images_cache_without_losing_security_headers(server, directory, hashed):
     _, root, _ = server
     data = b"\x89PNG\r\n" + b"compressible but never gzip an image" * 300
-    name = (hashlib.sha256(data).hexdigest()[:12] + "-" if hashed else "") + "picture.png"
+    digest = hashlib.sha256(data).hexdigest()[:12]
+    name = f"{digest}-picture.png" if hashed == "prefix" else f"picture.{digest}.png" if hashed else "picture.png"
     target = root / directory / name
     target.parent.mkdir()
     target.write_bytes(data)
@@ -106,7 +107,7 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
         assert body == data and first.getheader("Content-Encoding") is None
         assert first.getheader("Vary") is None
         assert first.getheader("Content-Security-Policy") == "sandbox"
-        assert ("immutable" in first.getheader("Cache-Control")) == hashed
+        assert ("immutable" in first.getheader("Cache-Control")) == bool(hashed)
         cached, body = request(conn, f"/review/{directory}/{name}", headers={"If-None-Match": first.getheader("ETag")})
         assert cached.status == 304 and body == b""
         assert cached.getheader("Content-Security-Policy") == "sandbox"
@@ -119,7 +120,7 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
 @pytest.mark.parametrize("accept,compressed", [
     (None, False), ("identity", False), ("br", False), ("gzip", True), ("br, gzip;q=0.5", True),
     ("gzip;q=0, *;q=1", False), ("*;q=1", True), ("GZip; q=1", True),
-    ("gzip;q=garbage", False), ("gzip;q=0.0", False),
+    ("gzip;q=garbage", False), ("gzip;q=0.0", False), ("gzip ; q=1", True),
 ])
 def test_gzip_negotiation_and_representation_etags(server, accept, compressed):
     _, _, web = server

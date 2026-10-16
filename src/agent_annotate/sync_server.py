@@ -198,6 +198,7 @@ def _accepts_gzip(value: str) -> bool:
     qualities = {}
     for item in value.lower().split(","):
         encoding, *params = item.strip().split(";")
+        encoding = encoding.strip()
         quality = 1.0
         for param in params:
             key, _, number = param.strip().partition("=")
@@ -3567,7 +3568,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # pagegen stages images as <sha256[:12]>-<name>; verify the prefix
         # against the bytes before granting immutable caching to an upload.
         digest = hashlib.sha256(data).hexdigest()
-        hashed_name = re.match(r"^([0-9a-f]{12,64})[-.]", target.name, re.IGNORECASE)
+        hashed_name = re.search(r"(?:^|[-_.])([0-9a-f]{12,64})(?=[-_.]|$)", target.name, re.IGNORECASE)
         immutable = extra and hashed_name and digest.startswith(hashed_name[1].lower())
         self._respond(200, data, content_type=mime,
                       cache_control=_IMMUTABLE if immutable else "no-cache", extra_headers=extra)
