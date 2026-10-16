@@ -80,6 +80,22 @@ def test_backlog_unknowns_anchors_and_moved(tmp_path):
     assert measurement.page_metrics(info, "2026-10-01", "")["cards"][0]["rail_only"] is None
 
 
+def test_archived_pages_leave_measurement_counts_even_with_retained_buses(tmp_path, monkeypatch, capsys):
+    state = estate(tmp_path)
+    (tmp_path / "alpha" / "archived.json").write_text('{"why":"Superseded"}')
+    path = state / "beta.json"
+    record = json.loads(path.read_text())
+    record["slugs"]["workspace"]["archived"] = {"why": "Superseded"}
+    path.write_text(json.dumps(record))
+    for project in ("alpha", "beta"):
+        write(tmp_path / "no-bus" / project / "workspace.ndjson", {"event": "round_submitted"})
+    monkeypatch.setattr(evaluation.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="other process"))
+    result = run_eval(tmp_path, state, capsys)
+    assert result["meta"]["slugs_total"] == 0
+    assert result["measures"]["open_cards"] == 0
+    assert result["measures"]["pages"] == []
+
+
 def test_corrections_only_user_messages_by_monday_week(tmp_path):
     path = tmp_path / "claude.jsonl"
     rows = [{"type": "user", "timestamp": "2026-10-08T00:00:00Z", "message": {"content": "Why are annotate cards still open?"}},

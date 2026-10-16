@@ -35,6 +35,7 @@ from pathlib import Path
 
 TABS = ("review", "library", "findings", "plans")
 MARKER = "consolidated.json"      # in each source page directory
+ARCHIVE_MARKER = "archived.json"  # standalone archive, reversible without moving data
 MANIFEST = "consolidation.json"   # in the target page directory
 _SOURCE = re.compile(r"(?P<ref>[^:\s]+):(?P<tab>[a-z]+)(?:=(?P<id>[a-z0-9][a-z0-9-]{0,63}))?\Z")
 # The files a server or the CLI writes while a page is live. They are hashed
@@ -62,24 +63,35 @@ def parse_source(value: str) -> tuple[str, str, str | None]:
 
 
 def marker(page_dir: Path | str) -> dict | None:
-    """The page's consolidation marker, or None. A damaged marker still
-    freezes the page: it reads as moved with no known target."""
-    path = Path(page_dir) / MARKER
+    """The page's archive/consolidation marker, or None. A damaged marker
+    still freezes the page; standalone archives take precedence over redirects."""
+    directory = Path(page_dir)
+    path = directory / MARKER
+    archived = (directory / ARCHIVE_MARKER).exists()
+    if archived:
+        path = directory / ARCHIVE_MARKER
     if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {"error": "invalid marker"}
+        data = data if isinstance(data, dict) else {"error": "invalid marker"}
+        return {**data, "archived": True} if archived else data
     except (OSError, ValueError):
-        return {"error": "invalid marker"}
+        return {"error": "invalid marker", **({"archived": True} if archived else {})}
+
+
+def inactive(record: dict) -> bool:
+    """Historical pages remain addressable, but contribute no active work."""
+    return bool(record.get("archived") or record.get("consolidated_into")
+                or (record.get("slug_dir") and marker(record["slug_dir"]) is not None))
 
 
 def refuse_if_moved(directory: Path | str) -> None:
     """Every page-data writer calls this inside its write, so a request that
     passed the server's marker check just before the page was frozen still
     cannot write after it."""
-    if (Path(directory) / MARKER).exists():
-        raise PermissionError("this page was consolidated into another page; it is read-only")
+    if marker(directory) is not None:
+        raise PermissionError("this page was archived or consolidated; it is read-only")
 
 
 def tab_fragment(moved: dict, query: str = "") -> str:

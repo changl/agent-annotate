@@ -337,6 +337,7 @@ def _unregistered_servers(records: list[dict]) -> list[dict]:
 
 
 def _page_rows(release: dict, local_only: bool) -> list[dict]:
+    from .consolidate import inactive
     rows = []
     entries = _registry()
     if not local_only:
@@ -349,6 +350,8 @@ def _page_rows(release: dict, local_only: bool) -> list[dict]:
             entries.append((None, f"{server['slug_dir']} (unregistered, pid {server['pid']})", record, fix))
     for entry in entries:
         project, slug, record = entry[:3]
+        if inactive(record):
+            continue
         name = f"{project}/{slug}" if project else slug
         fix = entry[3] if len(entry) > 3 else _restart_fix(release, project, slug)
         if local_only:

@@ -394,6 +394,11 @@ def _scan(session_id: str) -> list:
                 # announced to every session that has never read it.
                 continue
             record = record or {}
+            directory = record.get("slug_dir") or ""
+            if (record.get("archived") or record.get("consolidated_into") or
+                    (directory and any(os.path.exists(os.path.join(directory, marker))
+                                       for marker in ("archived.json", "consolidated.json")))):
+                continue  # Historical pages never announce, even in diagnostic hook-all mode.
             owner = record.get("owner_session")
             if owner and owner != session_id and not hook_all:
                 # Another session published this page. Staying silent here is
