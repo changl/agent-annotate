@@ -3563,6 +3563,10 @@ async function loadCategories() {
     const r = await fetch(apiUrl('./api/categories'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return false;
     CATEGORIES = await r.json();
+    if (typeof CATEGORIES.read_only === 'boolean') {
+      CAPS = Object.assign({}, CAPS, { read_only: CATEGORIES.read_only });
+      document.body.classList.toggle('page-read-only', pageReadOnly());
+    }
     PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
     if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = PLANS.length ? PLANS[0].id : null;
     DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
@@ -3741,16 +3745,16 @@ async function init() {
     }
     refreshing = true;
     try {
-      const before = JSON.stringify(STORE) + JSON.stringify(READ);
+      const before = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
       await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
       if (historyDirty) loadHistory();
-      const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) !== before;
+      const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly() !== before;
       if (storeChanged && !isEditing()) document.dispatchEvent(new CustomEvent('annotate:store'));
       const doc = VIEW_DOC;
       if (doc && DOC === doc && !docBusy) {
         await loadMeta();
         loadDelivery();
-        const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
+        const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ) + pageReadOnly();
         if (snap !== lastSnap[doc]) { if (!isEditing()) { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
       }
       if (window.AA) window.AA.changed();

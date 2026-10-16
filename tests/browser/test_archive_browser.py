@@ -45,6 +45,13 @@ def test_archived_page_has_no_active_counts_or_answer_controls(tmp_path):
             assert archived.locator(".decision-prompt").count() > 0
             assert archived.locator("textarea").count() == 0
             assert page.locator("#general-feedback-toggle").is_hidden()
+            (directory / "archived.json").unlink()
+            page.evaluate("() => window.AnnotateDocs.reload()")
+            assert page.evaluate("window.AnnotateDocs.counts('review').needs") == 1
+            assert not page.locator("body").evaluate("el => el.classList.contains('page-read-only')")
+            (directory / "archived.json").write_text('{"why":"Superseded"}')
+            page.evaluate("() => window.AnnotateDocs.reload()")
+            assert page.evaluate("window.AnnotateDocs.counts('review').needs") == 0
             assert not errors
             browser.close()
     finally:

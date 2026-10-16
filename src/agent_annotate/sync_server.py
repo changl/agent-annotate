@@ -3223,7 +3223,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       "findings_sets": category_data["findings_sets"], "plans": plans,
                       "library": {"groups": library.get("groups", []),
                                   **({"error": library["error"]} if "error" in library else {})},
-                      "linked_pages": links}
+                      "linked_pages": links, "read_only": self._moved() is not None}
             return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store")
         except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
             # Unexpected page data is reported, never a dropped connection.
