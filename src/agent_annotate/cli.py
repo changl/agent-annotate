@@ -2861,6 +2861,15 @@ def cmd_eval(args) -> int:
     argv = [sys.executable, "-m", "agent_annotate.eval", "--out-dir", str(out_dir)]
     if args.since:
         argv += ["--since", args.since]
+    for filename in getattr(args, "merge", []) or []:
+        argv += ["--merge", filename]
+    if getattr(args, "json", False):
+        argv.append("--json")
+    if getattr(args, "codex", False):
+        argv.append("--codex")
+    for name in ("state_dir", "bus_dir", "transcript_glob", "codex_root"):
+        if getattr(args, name, None):
+            argv += ["--" + name.replace("_", "-"), getattr(args, name)]
     if getattr(args, "refresh_transcripts", False):
         argv.append("--refresh-transcripts")
     try:
@@ -2868,7 +2877,7 @@ def cmd_eval(args) -> int:
     except OSError as e:
         print(f"ERROR: could not run {script}: {e}", file=sys.stderr)
         return 2
-    if proc.returncode != 0:
+    if proc.returncode != 0 or getattr(args, "json", False):
         return proc.returncode
 
     md = out_dir / "eval-baseline.md"
@@ -5373,6 +5382,13 @@ def main():
                               "(default: <state>/logs)")
     sp_eval.add_argument("--refresh-transcripts", dest="refresh_transcripts",
                          action="store_true", help="ignore the transcript scan cache")
+    sp_eval.add_argument("--json", action="store_true", help="emit a portable JSON export; write nothing")
+    sp_eval.add_argument("--merge", action="append", default=[], metavar="FILE", help="merge another Mac's JSON export")
+    sp_eval.add_argument("--codex", action="store_true", help="include Codex reviewer messages")
+    sp_eval.add_argument("--state-dir", default=None)
+    sp_eval.add_argument("--bus-dir", default=None)
+    sp_eval.add_argument("--transcript-glob", default=None)
+    sp_eval.add_argument("--codex-root", default=None)
     sp_eval.set_defaults(func=cmd_eval)
 
     sp_cost = sub.add_parser("cost", help="read-only token and speed cost of annotate, from transcripts")
@@ -5384,7 +5400,8 @@ def main():
     sp_cost.add_argument("--root", default=None, help="Claude transcript root (default ~/.claude/projects)")
     sp_cost.add_argument("--codex-root", dest="codex_root", default=None,
                          help="Codex session root (default $CODEX_HOME/sessions)")
-    sp_cost.add_argument("--json", action="store_true", help="print the per-call rows")
+    sp_cost.add_argument("--json", action="store_true", help="emit portable JSON with per-call rows and tokens per round")
+    sp_cost.add_argument("--merge", action="append", default=[], metavar="FILE", help="merge another Mac's JSON export")
     sp_cost.add_argument("--estimate", default=None, metavar="model.json",
                          help='price a change: {"<sub>": {"result_tokens": N}, "<error regex>": "fixed"}')
     sp_cost.set_defaults(func=cmd_cost)
