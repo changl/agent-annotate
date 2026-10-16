@@ -20,6 +20,7 @@ _SANDBOX_ENV = {
     "ANNOTATE_CONFIG_DIR": _SANDBOX / "config",
     "ANNOTATE_DATA_DIR": _SANDBOX / "data",
     "ANNOTATE_CLAUDE_SETTINGS": _SANDBOX / "claude" / "settings.json",
+    "ANNOTATE_CODEX_HOOKS": _SANDBOX / "codex" / "hooks.json",
     "ANNOTATE_SHIM_PATH": _SANDBOX / "bin" / "annotate",
     "ANNOTATE_BUS_ARCHIVE_ROOT": _SANDBOX / "bus-archive",
     "ANNOTATE_TRANSCRIPT_GLOB": _SANDBOX / "no-transcripts" / "*.jsonl",

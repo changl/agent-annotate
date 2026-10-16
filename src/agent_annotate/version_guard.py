@@ -187,7 +187,7 @@ def _read_json(path: Path):
         return None
 
 
-def _skill_rows(release: dict, inv: str) -> list[dict]:
+def _skill_rows(release: dict, inv: str, provider: str | None = None) -> list[dict]:
     registered = _read_json(paths.CONFIG_DIR / "skill-installs.json")
     registered = registered if isinstance(registered, dict) else {}
     dirs: dict[str, tuple[Path, bool]] = {}
@@ -197,24 +197,37 @@ def _skill_rows(release: dict, inv: str) -> list[dict]:
         if (path / "SKILL.md").is_file() or (path / ".annotate-install.json").is_file():
             dirs.setdefault(os.path.realpath(path), (path, False))
     rows = []
+    active_dirs = {os.path.realpath(path) for path in paths.SKILL_DIRS}
+    if provider:
+        relative = ".agents/skills/annotate" if provider == "codex" else ".claude/skills/annotate"
+        for parent in (Path.cwd(), *Path.cwd().parents):
+            local = parent / relative
+            if (local / "SKILL.md").is_file():
+                active_dirs = {os.path.realpath(local)}
+                dirs.setdefault(os.path.realpath(local), (local, False))
+                break
     for real, (path, is_registered) in sorted(dirs.items()):
+        if provider and real not in active_dirs:
+            continue
         if not path.is_dir():
             rows.append(_row("skill", str(path), SKIP, detail="registered skill directory is gone"))
             continue
         manifest = _read_json(path / ".annotate-install.json")
         manifest = manifest if isinstance(manifest, dict) else None
-        provider = ((manifest or {}).get("provider") or registered.get(str(path)) or registered.get(real)
+        skill_provider = ((manifest or {}).get("provider") or registered.get(str(path)) or registered.get(real)
                     or ("codex" if ".agents" in path.parts else "claude"))
+        if provider and skill_provider != provider:
+            continue
         fix = (f"{inv} sync-skills" if is_registered
-               else f"{inv} install-skill --provider {provider} --dest {shlex.quote(str(path))}")
-        label = f"skill:{provider}"
+               else f"{inv} install-skill --provider {skill_provider} --dest {shlex.quote(str(path))}")
+        label = f"skill:{skill_provider}"
         if manifest is None:
             rows.append(_row("skill", str(path), MISMATCH, detail="no install stamp (.annotate-install.json)",
                              fix=fix, label=label))
             continue
         edited = _edited_files(path, manifest)
         if edited:  # sync-skills preserves local edits, so only install-skill replaces them
-            fix = (f"{inv} install-skill --provider {provider} --dest {shlex.quote(str(path))}"
+            fix = (f"{inv} install-skill --provider {skill_provider} --dest {shlex.quote(str(path))}"
                    f"  # overwrites local edits to {', '.join(edited)}")
         rows.append(_compare("skill", str(path), manifest.get("version"), manifest.get("build_id"),
                              release, fix, label))
@@ -336,10 +349,12 @@ def _unregistered_servers(records: list[dict]) -> list[dict]:
     return servers
 
 
-def _page_rows(release: dict, local_only: bool) -> list[dict]:
+def _page_rows(release: dict, local_only: bool, scope: tuple[str, str] | None = None) -> list[dict]:
     from .consolidate import inactive
     rows = []
     entries = _registry()
+    if scope is not None:
+        entries = [entry for entry in entries if entry[:2] == scope]
     if not local_only:
         for server in _unregistered_servers([record for _p, _s, record in entries]):
             log = paths.LOG_DIR / f"{server['slug']}.log"
@@ -376,7 +391,8 @@ def _page_rows(release: dict, local_only: bool) -> list[dict]:
     return rows
 
 
-def check(*, local_only: bool = False, pages: bool = True, server: tuple[str, str] | None = None) -> dict:
+def check(*, local_only: bool = False, pages: bool = True, server: tuple[str, str] | None = None,
+          scope: tuple[str, str] | None = None, provider: str | None = None) -> dict:
     """Compare every installed piece with the installed release.
 
     `server` adds a row for the calling page server (project, slug)."""
@@ -390,13 +406,15 @@ def check(*, local_only: bool = False, pages: bool = True, server: tuple[str, st
     else:
         rows.append(_row("release", release["source"], OK, release["version"], release["build_id"],
                          f"{_label(release['version'], release['build_id'])} via {release['python']}"))
-        rows.append(_launcher_row(release))
-        if rows[-1]["status"] != OK:
-            inv = f"{shlex.quote(release['python'])} -I -m agent_annotate.cli"
-        rows += _skill_rows(release, inv)
-        rows += _plugin_rows(release)
+        if scope is None and server is None:
+            rows.append(_launcher_row(release))
+            if rows[-1]["status"] != OK:
+                inv = f"{shlex.quote(release['python'])} -I -m agent_annotate.cli"
+            rows += _plugin_rows(release)
+        if server is None:
+            rows += _skill_rows(release, inv, provider)
         if pages:
-            rows += _page_rows(release, local_only)
+            rows += _page_rows(release, local_only, scope)
         if server is not None:
             rows.append(_compare("page", f"{server[0]}/{server[1]} (this server)", __version__,
                                  runtime_manifest()["build_id"], release,
@@ -443,11 +461,18 @@ def session_notice(session_id: str, *, dry_run: bool = False) -> str | None:
     session. Local files only; silent without an installed release. Never raises."""
     if not passive_enabled():
         return None
-    marker = paths.HOOK_OFFSET_ROOT / _safe_component(session_id) / "version-guard"
-    if marker.exists():
-        return None
     try:
-        result = check(local_only=True)
+        from .workspace import candidates, selected_page
+        selected = selected_page(candidates(Path.cwd(), entries=_registry()))
+        if not selected:
+            return None
+        project, slug, _record = selected
+        provider = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
+        marker = paths.HOOK_OFFSET_ROOT / _safe_component(session_id) / (
+            "version-guard-" + _safe_component(f"{provider}-{project}-{slug}"))
+        if marker.exists():
+            return None
+        result = check(local_only=True, scope=(project, slug), provider=provider)
     except Exception:
         return None
     line = None

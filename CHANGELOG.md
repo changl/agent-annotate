@@ -10,6 +10,9 @@
 - `annotate finding --proof "current: a.png | caption" --proof "proposed: b.png"` stores the role, caption and size, and Findings shows the pair as the same block. `new --example` includes a compare and a card citing it.
 - New Review versions withdraw unanswered agent questions they do not ask again; `annotate withdraw SLUG N --why TEXT` withdraws one directly. History keeps the question and reason, reviewer content stays intact, and publishing no longer requires carry or resolve.
 - `new` and `ask` refuse bulk approval questions and cards with no anchor or evidence in the target version before writing anything; there is no card-count cap.
+- A project page lists its repositories and folders. Selecting it from another repo or folder adds membership without losing earlier entries; clones, worktrees and nested folders share the page, with the most recently active listed page winning overlaps.
+- Claude Code and Codex native SessionStart hooks show one local-only line with the project's full share URL and waiting-review count, and stay silent outside listed projects. `install-skill` registers them; `doctor` checks their registration. Codex requires the normal `/hooks` trust review.
+- Passive version notices cover only the session's page and effective provider skill; page banners cover their own runtime. Other projects and installations remain in `doctor --versions`.
 
 ## 2.25.1
 

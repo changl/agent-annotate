@@ -25,10 +25,11 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
-from .paths import CONFIG_DIR, HOOK_SCRIPT, PACKAGE_DIR
+from .paths import CONFIG_DIR, HOOK_SCRIPT, PACKAGE_DIR, SESSION_START_SCRIPT
 
 SKILLS_DIR = PACKAGE_DIR / "skills"
 PROVIDERS = ("claude", "codex")
@@ -113,6 +114,9 @@ def planned_files(provider: str, python: str | None = None) -> dict[str, tuple[s
     for extra in sorted((src / "agents").glob("*.yaml")) if (src / "agents").is_dir() else []:
         files[f"agents/{extra.name}"] = (extra.read_text(encoding="utf-8"), 0o644)
     files["hooks/check-comment-bus.sh"] = (hook_shim(python), 0o755)
+    files["hooks/session-start.sh"] = (
+        f"#!/usr/bin/env bash\n# {GENERATED_MARK}; do not edit.\n"
+        f"exec {shlex.quote(python or sys.executable)} -S {shlex.quote(str(SESSION_START_SCRIPT.with_name('session_start.py')))} \"$@\"\n", 0o755)
     return files
 
 

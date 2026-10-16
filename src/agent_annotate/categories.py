@@ -378,6 +378,22 @@ def _replies(comment: dict) -> list[dict]:
     return [reply for reply in replies if isinstance(reply, dict)] if isinstance(replies, list) else []
 
 
+def comment_needs_reviewer(comment: dict) -> bool:
+    """The needs-you predicate, also used by the read-only session hook."""
+    status = comment.get("status", "open")
+    decision = _mapping(comment.get("decision"))
+    if status == "archived" or comment.get("round_pending") or (
+            decision.get("round_pending") and status != "resolved_in_version"):
+        return False
+    if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):
+        return not (comment.get("fixed") or decision.get("verdict") or
+                    comment.get("reopened") or comment.get("response_text"))
+    if comment.get("decision_request") and not decision.get("verdict") and status not in {"addressed_by_agent", "resolved_in_version"}:
+        return True
+    replies = _replies(comment)
+    return status == "open" and bool(replies) and str(replies[-1].get("author", "")).startswith("agent:")
+
+
 def comment_section(comment: dict) -> str | None:
     """Accepted shell sectionOf; Findings keeps agreed work waiting until fixed."""
     status = comment.get("status", "open")
@@ -386,14 +402,14 @@ def comment_section(comment: dict) -> str | None:
     decision = _mapping(comment.get("decision"))
     if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
         return "ready"
+    if comment_needs_reviewer(comment):
+        return "needs_you"
     # A finding (not a reviewer's comment on one) keeps agreed work waiting.
     if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):
         if comment.get("fixed"):
             return "done"
         if not decision.get("verdict"):
-            if comment.get("reopened") or comment.get("response_text"):
-                return "waiting"
-            return "needs_you"
+            return "waiting"
         choice = decision.get("option_id") or decision.get("option")
         if choice is None and decision.get("verdict") == "select":
             choice = decision.get("text")
@@ -402,13 +418,8 @@ def comment_section(comment: dict) -> str | None:
             if isinstance(option, dict) and option.get("label") == choice:
                 choice = option.get("id")
         return "done" if choice in {"keep", "no"} or decision.get("verdict") == "reject" else "waiting"
-    if comment.get("decision_request") and not decision.get("verdict") and status not in {"addressed_by_agent", "resolved_in_version"}:
-        return "needs_you"
     if status != "open":
         return "done"
-    replies = _replies(comment)
-    if replies and str(replies[-1].get("author", "")).startswith("agent:"):
-        return "needs_you"
     from .sync_server import _comment_needs_push
     return "ready" if _comment_needs_push(comment) else "waiting"
 
