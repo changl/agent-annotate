@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Render page-owned HTML/HTM assets inline in an opaque script-enabled sandbox, so embedded plans work without access to page cookies, APIs or top navigation. Proof uploads and other non-inert assets still download; nosniff and content-hash/ETag caching remain intact.
+- Render page-owned HTML/HTM assets inline in an opaque script-enabled sandbox, so embedded plans work without access to page cookies, APIs or top navigation. Allow the sandbox to load page-owned raster images, video and JSON with credential-free wildcard CORS; serve WebM/MP4 assets inline with their video MIME types. Proof uploads and other non-inert assets still download; nosniff and content-hash/ETag caching remain intact.
 
 ## 2.26.0
 

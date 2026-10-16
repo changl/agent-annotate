@@ -171,6 +171,9 @@ def _mime(suffix: str) -> str:
         ".jpeg": "image/jpeg",
         ".gif":  "image/gif",
         ".webp": "image/webp",
+        ".avif": "image/avif",
+        ".webm": "video/webm",
+        ".mp4":  "video/mp4",
         ".pdf":  "application/pdf",
         ".ico":  "image/x-icon",
         ".woff": "font/woff",
@@ -181,6 +184,9 @@ def _mime(suffix: str) -> str:
 
 # Files under assets/ and attachments/ that may open inline (inert types).
 _INLINE_UPLOADS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
+# Public, inert page resources can be read by the opaque HTML asset sandbox.
+_INLINE_PAGE_ASSETS = (_INLINE_UPLOADS - {".pdf"}) | {".avif", ".ico", ".webm", ".mp4"}
+_CORS_PAGE_ASSETS = _INLINE_PAGE_ASSETS | {".json"}
 
 
 _IMMUTABLE = "public, max-age=31536000, immutable"
@@ -946,7 +952,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
         origin = self._request_origin()
         supplied = self.headers.get("Origin")
-        if (origin is None or (supplied is not None and (self._origin(supplied) != origin
+        public_asset = self.command in ("GET", "HEAD") and self._is_public_inert_asset(self._strip_base(path))
+        if (origin is None or (not public_asset and supplied is not None and (self._origin(supplied) != origin
                 or urllib.parse.urlsplit(supplied).path not in ("", "/")))):
             self._respond(403, b'{"error":"untrusted host or origin"}')
             return False
@@ -958,10 +965,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         site = self.headers.get("Sec-Fetch-Site")
         navigation = (self.command == "GET" and self.headers.get("Sec-Fetch-Mode") == "navigate"
                       and self.headers.get("Sec-Fetch-Dest") == "document")
-        if site not in (None, "none", "same-origin") and not navigation:
+        if site not in (None, "none", "same-origin") and not navigation and not public_asset:
             self._respond(403, b'{"error":"cross-origin request refused"}')
             return False
-        if origin[0] == "https" and not self._identity()["authenticated"]:
+        if origin[0] == "https" and not public_asset and not self._identity()["authenticated"]:
             route = self._strip_base(path)
             bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "quill.js", "quill.snow.css",
                                 "RobotoVariable.ttf", "RobotoVariable-Italic.ttf", "app.js", "app.css", "library.js", "findings.js"}
@@ -3500,6 +3507,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
+    def _is_public_inert_asset(self, url_path: str) -> bool:
+        """Only explicitly published inert assets may cross the origin boundary."""
+        try:
+            relative = urllib.parse.unquote(url_path, errors="strict").lstrip("/")
+            if (not relative.startswith("assets/") or not self._is_public_static(relative)
+                    or "\\" in relative or any(ord(char) < 32 for char in relative)):
+                return False
+            target = _contained_path(self.artifact_dir, relative)
+            resolved = target.relative_to(self.artifact_dir.resolve()).as_posix()
+            return (resolved.startswith("assets/") and self._is_public_static(resolved)
+                    and target.suffix.lower() in _CORS_PAGE_ASSETS and target.is_file())
+        except (UnicodeError, PermissionError, OSError):
+            return False
+
     def _is_public_static(self, relative: str) -> bool:
         parts = relative.split("/")
         if any(not part or part in (".", "..") or part.startswith(".") for part in parts):
@@ -3570,10 +3591,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         resolved_rel = target.relative_to(self.artifact_dir.resolve()).as_posix()
         if {rel.split("/", 1)[0], resolved_rel.split("/", 1)[0]} & {"assets", "attachments"}:
             extra = {"Content-Security-Policy": "sandbox"}
+            public_asset = self._is_public_inert_asset(url_path)
+            if public_asset:
+                extra["Access-Control-Allow-Origin"] = "*"
             if (rel.split("/", 1)[0] == resolved_rel.split("/", 1)[0] == "assets"
                     and target.suffix.lower() in {".html", ".htm"}):
                 extra["Content-Security-Policy"] = "sandbox allow-scripts"
-            elif target.suffix.lower() not in _INLINE_UPLOADS:
+            elif (target.suffix.lower() not in _INLINE_UPLOADS
+                  and not (public_asset and target.suffix.lower() in _INLINE_PAGE_ASSETS)):
                 filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
                 extra["Content-Disposition"] = f'attachment; filename="{filename}"'
         # pagegen stages images as <sha256[:12]>-<name>; verify the prefix

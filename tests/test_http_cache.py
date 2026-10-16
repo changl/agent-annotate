@@ -204,6 +204,83 @@ def test_html_aliases_across_upload_boundaries_still_download(server, source, de
         assert response.getheader("Content-Security-Policy") == "sandbox"
 
 
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("suffix,mime", [(".png", "image/png"), (".avif", "image/avif"), (".ico", "image/x-icon"),
+                                       (".webm", "video/webm"), (".mp4", "video/mp4"), (".json", "application/json")])
+def test_inert_page_assets_allow_cookieless_cors_and_keep_cache_headers(server, published, suffix, mime):
+    httpd, root, _ = server
+    httpd.RequestHandlerClass.proxy_urls = ("https://host.ts.net/review/",)
+    data = b"inert proof bytes"
+    name = hashlib.sha256(data).hexdigest()[:12] + "-proof" + suffix
+    (root / "assets/v2").mkdir(parents=True)
+    (root / "assets/v2" / name).write_bytes(data)
+    headers = {"Origin": "null", "Sec-Fetch-Site": "cross-site"}
+    if published:
+        headers["Host"] = "host.ts.net"
+    path = "/review/assets/v2/" + name
+    with connection(server) as conn:
+        first, body = request(conn, path, headers=headers)
+        assert first.status == 200 and body == data
+        assert first.getheader("Content-Type") == mime
+        assert first.getheader("Content-Security-Policy") == "sandbox"
+        assert first.getheader("Access-Control-Allow-Origin") == "*"
+        assert first.getheader("Access-Control-Allow-Credentials") is None
+        assert "immutable" in first.getheader("Cache-Control")
+        if suffix != ".json":
+            assert first.getheader("Content-Disposition") is None
+        for method in ("GET", "HEAD"):
+            cached, body = request(conn, path, method=method, headers={**headers, "If-None-Match": first.getheader("ETag")})
+            assert cached.status == 304 and body == b""
+            assert cached.getheader("Access-Control-Allow-Origin") == "*"
+            assert cached.getheader("Access-Control-Allow-Credentials") is None
+            assert cached.getheader("Cache-Control") == first.getheader("Cache-Control")
+
+
+def test_inert_cors_exception_cannot_expose_api_private_active_uploads_or_aliases(server):
+    root = server[1]
+    for relative in ("assets/script.js", "assets/plan.html", "assets/plot.svg", "assets/proof.png",
+                     "assets/project.json", "attachments/proof.json", "project.json"):
+        target = root / relative
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("private or active marker")
+    (root / "assets/upload.json").symlink_to(root / "attachments/proof.json")
+    (root / "assets/private.json").symlink_to(root / "project.json")
+    (root / "assets/active.json").symlink_to(root / "assets/plan.html")
+    (root / "attachments/alias.png").symlink_to(root / "assets/proof.png")
+    cross = {"Origin": "null", "Sec-Fetch-Site": "cross-site"}
+    with connection(server) as conn:
+        for path in ("api/seen", "api/comments", "assets/script.js", "assets/plan.html", "assets/plot.svg",
+                     "assets/project.json", "assets/upload.json", "assets/private.json", "assets/active.json",
+                     "attachments/proof.json", "attachments/alias.png", "assets/missing.png",
+                     "assets/../project.json", "assets/%2e%2e/project.json", "assets/%5cproof.png"):
+            response, _ = request(conn, "/review/" + path, headers=cross)
+            assert response.status == 403, path
+            assert response.getheader("Access-Control-Allow-Origin") is None
+            assert response.getheader("Access-Control-Allow-Credentials") is None
+        for method in ("POST", "PUT", "OPTIONS"):
+            response, _ = request(conn, "/review/assets/proof.png", method=method, headers=cross)
+            assert response.status == 403
+            assert response.getheader("Access-Control-Allow-Origin") is None
+        response, _ = request(conn, "/review/assets/proof.png", headers={**cross, "Host": "untrusted.example"})
+        assert response.status == 403 and response.getheader("Access-Control-Allow-Origin") is None
+        response, _ = request(conn, "/review/api/seen")
+        assert response.status == 200 and response.getheader("Access-Control-Allow-Origin") is None
+
+
+@pytest.mark.parametrize("suffix", [".mp4", ".webm", ".json"])
+def test_inert_proof_uploads_keep_download_policy_without_cors(server, suffix):
+    root = server[1]
+    (root / "attachments").mkdir()
+    (root / "attachments" / ("proof" + suffix)).write_bytes(b"proof")
+    with connection(server) as conn:
+        response, _ = request(conn, "/review/attachments/proof" + suffix)
+        assert response.status == 200
+        assert response.getheader("Content-Disposition").startswith("attachment;")
+        assert response.getheader("Content-Security-Policy") == "sandbox"
+        assert response.getheader("Access-Control-Allow-Origin") is None
+        assert response.getheader("Access-Control-Allow-Credentials") is None
+
+
 def test_http11_framing_redirect_head_errors_and_polling(server):
     with connection(server) as conn:
         assert request(conn, "/review")[0].status == 308

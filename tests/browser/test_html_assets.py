@@ -1,13 +1,28 @@
 """Page HTML can render scripts without gaining the review page's authority."""
 
+import base64
 import json
 import os
 from pathlib import Path
 
 import pytest
 from test_card_layout import _serve
+from test_pagegen_images import png
 
 playwright = pytest.importorskip("playwright.sync_api")
+
+# Two blue 32x16 VP8 frames in WebM; no runtime encoder dependency.
+VIDEO = base64.b64decode(
+    "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIZEU2bdLpNu4tTq4QVSalmU6yBoU27i1Or"
+    "hBZUrmtTrIHYTbuMU6uEElTDZ1OsggElTbuMU6uEHFO7a1OsggID7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirX"
+    "sYMPQkBNgI1MYXZmNjIuMTIuMTAxV0GNTGF2ZjYyLjEyLjEwMUSJiECPQAAAAAAAFlSua8iuAQAAAAAAAD/XgQFzxYjw5cqI"
+    "g9xE/JyBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhB3NZQDgkLCBILqBEJqBAlWwhFW5gQESVMNn/HNzoGPAgGfImkWjh0VO"
+    "Q09ERVJEh41MYXZmNjIuMTIuMTAxc3PWY8CLY8WI8OXKiIPcRPxnyKFFo4dFTkNPREVSRIeUTGF2YzYyLjI4LjEwMSBsaWJ2"
+    "cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAxLjAwMDAwMDAwMAAfQ7Z12OeBAKO8gQAAgLACAJ0BKiAAEAAARwiFhYiFhIgC"
+    "AgJ1qgP4AgnCFQD+/00S//xYV/FhX8WFf/FhX/z8zu3F/OYAo5WBAfQAsQEABRCsABgAGFgv9AAIQAAcU7trkbuPs4EAt4r3"
+    "gQHxggGm8IED"
+)
 
 
 @pytest.mark.parametrize("suffix", [".html", ".htm"])
@@ -24,8 +39,13 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
     (directory / "content/v1.html").write_text(html)
     (directory / "current.meta.json").write_text('{"current":"v1","history":[{"version":"v1"}]}')
     (directory / "comments.json").write_text('{"schema_version":2,"anchors":{},"archived":{}}')
+    (directory / "assets/v2/proof.png").write_bytes(png(32, 16, (40, 80, 200)))
+    (directory / "assets/v2/demo.webm").write_bytes(VIDEO)
+    (directory / "assets/v2/manifest.json").write_text('{"proof":"loaded"}')
     (directory / "assets/v2" / ("plan" + suffix)).write_text("""<html><body>
-        <h1 id="rendered">Waiting for script</h1><script>
+        <h1 id="rendered">Waiting for script</h1>
+        <img id="proof" src="proof.png"><video id="demo" src="demo.webm" preload="auto" muted></video>
+        <script>
         (async () => {
           const result = {type: 'asset-probe', origin: self.origin};
           document.querySelector('#rendered').textContent = 'Plan script rendered';
@@ -44,6 +64,16 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
               result[method] = await response.text();
             } catch (error) { result[method] = error.name; }
           }
+          for (const credentials of ['omit', 'include']) {
+            try {
+              result[credentials] = await (await fetch('manifest.json', {credentials})).json();
+            } catch (error) { result[credentials] = error.name; }
+          }
+          result.xhr = await new Promise(resolve => {
+            const xhr = new XMLHttpRequest(); xhr.open('GET', 'manifest.json');
+            xhr.onload = () => resolve(JSON.parse(xhr.responseText)); xhr.onerror = () => resolve('blocked');
+            xhr.send();
+          });
           top.postMessage(result, '*');
         })();
         </script></body></html>""")
@@ -73,7 +103,10 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
                 "type": "asset-probe", "origin": "null", "messageOrigin": "null",
                 "cookie": "SecurityError", "parentCookie": "SecurityError", "topNavigation": "SecurityError",
                 "GET": "TypeError", "POST": "TypeError",
+                "omit": {"proof": "loaded"}, "include": "TypeError", "xhr": {"proof": "loaded"},
             }
+            assert asset.locator("#proof").evaluate("async image => { await image.decode(); return [image.naturalWidth, image.naturalHeight]; }") == [32, 16]
+            assert asset.locator("#demo").evaluate("async video => { await video.play(); video.pause(); return [video.videoWidth, video.videoHeight]; }") == [32, 16]
             assert page.evaluate("document.cookie") == "page_cookie=private-review-session"
             assert "escaped" not in page.url
             assert {request["method"]: statuses[key] for key, request in requests.items()} == {"GET": 403, "POST": 403}
