@@ -1,4 +1,4 @@
-"""Prior-round comments must be dispositioned before a new version publishes.
+"""Legacy carry/resolve preserve provenance without gating a new version.
 
 Regression coverage for the v1 -> v2 failure reported on 2026-09-22:
 ``addressed`` demoted accepted cards, while old open/addressed cards followed

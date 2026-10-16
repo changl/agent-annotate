@@ -296,6 +296,9 @@ def test_real_legacy_fallback_preserves_agent_attribution_and_same_card_on_secon
     cards = tmp_path / "cards.json"
     cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?"}}]))
     with _legacy_server() as (record, rows, counts):
+        (tmp_path / "versions").mkdir()
+        (tmp_path / "versions" / "v1.html").write_text('<p data-anchor-id="s:coverage">Coverage</p>')
+        record["slug_dir"] = str(tmp_path)
         monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("proj", "demo", record))
         args = SimpleNamespace(slug="demo", project="proj", from_file=str(cards), version="v1", author=author, json=True)
         assert cli.cmd_ask(args) == 0
@@ -312,6 +315,9 @@ def test_legacy_fallback_unusable_history_stops_before_any_card_write(tmp_path, 
     cards = tmp_path / "cards.json"
     cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?"}}]))
     with _legacy_server(oversized_history=True) as (record, rows, counts):
+        (tmp_path / "versions").mkdir()
+        (tmp_path / "versions" / "v1.html").write_text('<p data-anchor-id="s:coverage">Coverage</p>')
+        record["slug_dir"] = str(tmp_path)
         before = json.dumps(rows)
         monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("proj", "demo", record))
         args = SimpleNamespace(slug="demo", project="proj", from_file=str(cards), version="v1", author="agent:test", json=True)

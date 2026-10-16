@@ -1978,9 +1978,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not items:
             self._respond(400, b'{"error":"items must not be empty"}')
             return
-        if len(items) > 200:
-            self._respond(413, b'{"error":"too many items (max 200)"}')
-            return
         idempotency = payload.get("idempotency")
         if idempotency not in (None, "anchor"):
             self._respond(400, b'{"error":"idempotency must be \\"anchor\\" or null"}')

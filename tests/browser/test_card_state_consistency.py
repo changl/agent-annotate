@@ -22,8 +22,8 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 from single_page import feedback, ready, section  # noqa: E402
 
-from agent_annotate.pagegen import generate  # noqa: E402
 from agent_annotate import cli  # noqa: E402
+from agent_annotate.pagegen import generate  # noqa: E402
 
 EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
 

@@ -269,6 +269,8 @@ def served(tmp_path, monkeypatch):
     slug_dir.mkdir(parents=True)
     (slug_dir / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {}, "archived": {}}))
     (slug_dir / "current.meta.json").write_text(json.dumps({"current": "v2", "history": []}))
+    (slug_dir / "versions").mkdir()
+    (slug_dir / "versions" / "v2.html").write_text('<p data-anchor-id="s:a">A</p><p data-anchor-id="s:b">B</p>')
     bus_dir = tmp_path / "bus" / "proj"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="live",
                            bus_dir=bus_dir, v2_mode=True)
@@ -364,7 +366,7 @@ def test_addressing_a_confirmed_item_is_a_noop_not_an_error(served, capsys):
 
 
 def test_resolving_into_a_missing_anchor_names_the_closest_ones(served, capsys):
-    (served.slug_dir / "versions").mkdir()
+    (served.slug_dir / "versions").mkdir(exist_ok=True)
     (served.slug_dir / "versions" / "v2.html").write_text(
         '<p data-anchor-id="s:scope:p1"></p><p data-anchor-id="s:scope:p2"></p>')
     cid = _posted(served)

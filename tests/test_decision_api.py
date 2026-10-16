@@ -42,8 +42,8 @@ def server(tmp_path):
         thread.join(timeout=2)
 
 
-def _call(httpd, method, path, body=None, author="agent:test", session=None):
-    conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=3)
+def _call(httpd, method, path, body=None, author="agent:test", session=None, timeout=3):
+    conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=timeout)
     headers = {"X-Annotate-Agent": author} if author.startswith("agent:") else {
         "Host": "review.example.test", "Cf-Access-Authenticated-User-Email": author,
         "Cf-Access-Jwt-Assertion": "inert-proxy-validated-assertion",
@@ -115,6 +115,15 @@ def test_create_accepts_decision_request_in_one_call(server):
     requested = _events(bus, "decision_requested")
     assert requested and requested[0]["comment_id"] == comment["id"]
     assert requested[0]["has_context"] is True and requested[0]["options_n"] == 2
+
+
+def test_batch_has_no_card_count_cap(server):
+    httpd, slug_dir, _ = server
+    items = [_card(anchor=f"s:question-{number}") for number in range(201)]
+    status, result = _call(httpd, "POST", "/api/comments/batch", {"items": items}, timeout=15)
+    assert status == 200
+    assert result["created"] == 201
+    assert len(_store(slug_dir)["anchors"]) == 201
 
 
 def test_create_preserves_explicit_item_number(server):

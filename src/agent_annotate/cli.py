@@ -2076,6 +2076,10 @@ def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None
     with _locked_store(slug_dir):
         store = _coerce_store_file(slug_dir)
         for anchor, comment in _iter_comments(store):
+            version = comment.get("version") or ""
+            if (re.fullmatch(r"v[0-9]+", version) and re.fullmatch(r"v[0-9]+", new_version)
+                    and int(version[1:]) > int(new_version[1:])):
+                continue
             if (_comment_category({"anchor_id": anchor, **comment}) != "review"
                     or comment.get("version") == new_version or not _can_withdraw(comment)
                     or anchor in anchors or comment.get("number") in numbers):
@@ -2579,6 +2583,7 @@ def cmd_ask(args) -> int:
         version = _read_meta(Path(record["slug_dir"])).get("current")
 
     items = []
+    warnings = []
     numbered_round = bool(
         isinstance(version, str)
         and re.fullmatch(r"v\d+", version)
@@ -2671,8 +2676,32 @@ def cmd_ask(args) -> int:
             item["decision_request"] = dr
             from .decision_quality import decision_warnings
             for warning in decision_warnings(dr):
-                print(f"WARN: {item['anchor_id']}: {warning}", file=sys.stderr)
+                warnings.append(f"WARN: {item['anchor_id']}: {warning}")
         items.append(item)
+
+    from .decision_quality import card_refusal, page_anchors
+    from .sync_server import _version_file
+    target_anchors = {}
+    for item in items:
+        doc = item.get("doc")
+        if doc is not None and not isinstance(doc, str):
+            print("ERROR: card doc must be a document ID", file=sys.stderr)
+            return 2
+        if doc not in target_anchors:
+            try:
+                directory = Path(record["slug_dir"])
+                if doc and doc.startswith("plan:"):
+                    from .categories import validate_plan_id
+                    validate_plan_id(doc[5:])
+                    directory = directory / "plans" / doc[5:]
+                target = _version_file(directory, version) if version else directory / "current.html"
+                target_anchors[doc] = page_anchors(target.read_text(encoding="utf-8"))
+            except (KeyError, OSError, ValueError):
+                target_anchors[doc] = set()
+        refusal = card_refusal(item, target_anchors[doc])
+        if refusal:
+            print(f"ERROR: card {item['anchor_id']!r}: {refusal}", file=sys.stderr)
+            return 2
 
     finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
     if finding_sets:
@@ -2686,6 +2715,8 @@ def cmd_ask(args) -> int:
             return 2
 
     author = _resolve_author(getattr(args, "author", None))
+    for warning in warnings:
+        print(warning, file=sys.stderr)
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)

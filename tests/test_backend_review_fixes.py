@@ -917,6 +917,9 @@ def _finding_page(tmp_path, monkeypatch, comments=None):
         store["anchors"].setdefault(row["anchor_id"], []).append(row)
     (directory / "comments.json").write_text(json.dumps(store))
     (directory / "current.meta.json").write_text(json.dumps({"current": "v1", "history": [{"version": "v1"}]}))
+    (directory / "versions").mkdir()
+    (directory / "versions" / "v1.html").write_text(''.join(
+        f'<p data-anchor-id="d:q{number}">Question {number}</p>' for number in range(1, 10)))
     bus = tmp_path / "events.ndjson"
     bus.write_text("")
     record = {"project": "project", "slug": "main", "slug_dir": str(directory), "bus_file": str(bus),

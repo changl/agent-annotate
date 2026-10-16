@@ -146,3 +146,11 @@ def test_publishing_a_staged_version_uses_its_own_cards(page):
     (page / "versions" / "v2.cards.json").write_text("[]")
     assert _publish(page) == 0
     assert "withdrawn" in _store(page)["cccccccccccc"]
+
+
+def test_older_version_never_withdraws_a_newer_question(page):
+    store = cli._coerce_store_file(page)
+    store["anchors"]["d:q1"][0]["version"] = "v3"
+    (page / "comments.json").write_text(json.dumps(store))
+    assert _publish(page) == 0
+    assert "withdrawn" not in _store(page)["aaaaaaaaaaaa"]
