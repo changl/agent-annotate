@@ -253,14 +253,14 @@ CARDS_DOC = """## Columns
      "recommendation": "accept",
      "options": [{"id": "accept", "label": "Rename", "consequence": "A dual-write week."},
                  {"id": "reject", "label": "Keep it"}],
-     "impact": "medium", "blocking": true}},
+     "impact": "medium", "blocking": true, "evidence": [{"anchor": "tbl:columns:row:status"}]}},
   {"anchor_id": "tbl:columns:row:tier",
    "text": "Catalog owns tier.",
    "decision_request": {"prompt": "Catalog owns tier?", "recommendation": "reject",
      "options": ["accept", "reject"],
-     "consequences": {"accept": "Billing reads the API."}}},
+     "consequences": {"accept": "Billing reads the API."}, "evidence": [{"anchor": "tbl:columns:row:tier"}]}},
   {"text": "Drop the shadow column.",
-   "decision_request": {"prompt": "Drop it?"}}
+   "decision_request": {"prompt": "Drop it?", "evidence": [{"anchor": "s:columns"}]}}
 ]
 ```
 """

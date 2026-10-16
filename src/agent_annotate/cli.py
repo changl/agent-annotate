@@ -4547,13 +4547,30 @@ def cmd_archive_comment(args) -> int:
 
 
 def cmd_resolve(args) -> int:
-    body = {
-        "status": "resolved_in_version",
-        "resolved_in_version": args.in_version,
-        "resolution_anchor_id": args.anchor,
-    }
-    if args.response:
-        body["response_text"] = args.response
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    record = resolved[2]
+    store = _load_store(record)
+    numbers = _item_numbers(store)
+    matches = [c for _, c in _iter_comments(store)
+               if c.get("id") == str(args.comment_id)
+               or str(numbers.get(c.get("id"))) == str(args.comment_id)]
+    if len(matches) != 1:
+        print("ERROR: item not found or number is ambiguous; use its comment id", file=sys.stderr)
+        return 2
+    comment = matches[0]
+    args.comment_id = comment["id"]
+    args.in_version = getattr(args, "in_version", None) or _read_meta(Path(record["slug_dir"])).get("current")
+    own_anchor = not getattr(args, "anchor", None)
+    args.anchor = getattr(args, "anchor", None) or comment.get("anchor_id")
+    body = {"status": "resolved_in_version", "resolved_in_version": args.in_version,
+            "resolution_anchor_id": args.anchor}
+    if own_anchor:
+        body["resolve_own_anchor"] = True
+    note = getattr(args, "note", None) or getattr(args, "response", None)
+    if note:
+        body["response_text"] = note
     return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
                          done="resolved", target=f" → {args.in_version} {args.anchor}")
 
@@ -5175,7 +5192,7 @@ def cmd_mcp(args) -> int:
 # Argparse
 # ────────────────────────────────────────────────────────────────────────────
 AGENT_COMMANDS = ("workspace", "new", "project", "copy", "finding", "plan",
-                  "inbox", "withdraw", "claim", "archive", "unarchive")
+                  "inbox", "resolve", "withdraw", "claim", "archive", "unarchive")
 
 
 def build_parser(*, all_commands=False):
@@ -5545,10 +5562,11 @@ def build_parser(*, all_commands=False):
         help="resolve a prior-round comment in a named version and anchor",
     )
     sp_resolve.add_argument("slug", help="<slug> or <project>/<slug>")
-    sp_resolve.add_argument("comment_id")
-    sp_resolve.add_argument("--in-version", required=True)
-    sp_resolve.add_argument("--anchor", required=True)
+    sp_resolve.add_argument("comment_id", help="item number or comment id")
+    sp_resolve.add_argument("--in-version", default=None, help="default: current version")
+    sp_resolve.add_argument("--anchor", default=None, help="default: the item's own anchor")
     sp_resolve.add_argument("--response", default=None)
+    sp_resolve.add_argument("--note", default=None, help="optional action note")
     sp_resolve.add_argument("--project", default=None)
     sp_resolve.add_argument("--author", default=None)
     sp_resolve.add_argument("--json", action="store_true", help="print the updated comment")
@@ -5634,7 +5652,8 @@ def run_command(args):
         comment = next((c.get("id") for _, c in _iter_comments(store)
                         if str(args.fixed) in (c.get("id"), str(numbers.get(c.get("id"))))), None)
     url = deep_link(record, view=view, comment=comment,
-                    version=getattr(args, "version", None), plan=getattr(args, "plan_id", None)) if record else None
+                    version=getattr(args, "version", None) or getattr(args, "in_version", None),
+                    plan=getattr(args, "plan_id", None)) if record else None
     if not url and directory:
         url = (Path(directory).expanduser().resolve() / "current.html").as_uri()
     if getattr(args, "json", False):

@@ -145,6 +145,30 @@ options:
   --category {review,library,findings,plans}
 ```
 
+## resolve
+
+```text
+usage: annotate resolve [-h] [--in-version IN_VERSION] [--anchor ANCHOR]
+                        [--response RESPONSE] [--note NOTE]
+                        [--project PROJECT] [--author AUTHOR] [--json]
+                        slug comment_id
+
+positional arguments:
+  slug                  <slug> or <project>/<slug>
+  comment_id            item number or comment id
+
+options:
+  -h, --help            show this help message and exit
+  --in-version IN_VERSION
+                        default: current version
+  --anchor ANCHOR       default: the item's own anchor
+  --response RESPONSE
+  --note NOTE           optional action note
+  --project PROJECT
+  --author AUTHOR
+  --json                print the updated comment
+```
+
 ## withdraw
 
 ```text

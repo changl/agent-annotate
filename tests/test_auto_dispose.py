@@ -39,7 +39,7 @@ def page(tmp_path, monkeypatch):
         "d:q3": [_card("cccccccccccc", 3)],
     }, "archived": {}}))
     (slug_dir / "cards.json").write_text(json.dumps(
-        [{"number": 3, "anchor_id": "d:q3", "decision_request": {"prompt": "Q3 again?"}}]))
+        [{"number": 3, "anchor_id": "d:q3", "decision_request": {"prompt": "Q3 again?", "evidence": [{"anchor": "s:plan"}]}}]))
     bus_dir = tmp_path / "bus" / "reviews"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="demo",
                            bus_dir=bus_dir, v2_mode=True)

@@ -15,7 +15,7 @@ The reviewer looks and decides on the page. Chat points to it.
 
 4. **Keep questions live.** A new version automatically withdraws unanswered agent questions omitted from its cards. Include still-relevant questions with their stable numbers. Withdraw an unanswered question that no longer applies with `annotate withdraw SLUG N --why "Reason"`. Archived pages are read-only: `annotate archive SLUG --why "Reason"`; restore with `annotate unarchive SLUG`.
 
-5. **After Send**, read `annotate inbox SLUG --unread` once, unfiltered: it includes the whole submitted round, prompts, answers and notes. Act on every answer and note, show the result on the page, then reply in chat with one line and the URL. For a fixed finding, use `annotate finding SLUG --fixed N --proof shot.png`.
+5. **After Send**, read `annotate inbox SLUG --unread` once, unfiltered: it includes the whole submitted round, prompts, answers and notes. Act on every answer and note, then close each item you acted on with `annotate resolve SLUG N` (optional `--note "Result"`). Show the result on the page, then reply in chat with one line and the URL. For a fixed finding, use `annotate finding SLUG --fixed N --proof shot.png`.
 
 6. **Hand-off.** Put the page URL first. The successor runs `annotate claim SLUG`; this inherits the previous owner's read position and pending feedback.
 

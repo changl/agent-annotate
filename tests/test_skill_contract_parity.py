@@ -19,6 +19,6 @@ def test_skill_has_one_format_reference_and_no_retired_instructions():
     source = root / "src/agent_annotate/skills/claude"
     assert {p.name for p in (source / "references").glob("*.md")} == {"page.md"}
     text = (source / "SKILL.md").read_text() + (source / "references/page.md").read_text()
-    for retired in ("Chang", "Linear", "Cloudflare", "monitor", "annotate carry", "annotate resolve", "under 30 words"):
+    for retired in ("Chang", "Linear", "Cloudflare", "monitor", "annotate carry", "under 30 words"):
         assert retired not in text
     assert "one line and the URL" in text

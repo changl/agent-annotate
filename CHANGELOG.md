@@ -4,6 +4,7 @@
 
 - Serve validated content-hashed assets and images with immutable caching, revalidate mutable files with strong ETags and 304s, and gzip text responses when accepted. HTTP/1.1 keeps read connections alive with explicit response lengths and bounded idle time; upload sandbox and nosniff headers remain on cached responses.
 - Replace agent instructions with a shared seven-step skill and one page-format reference; generate command documentation from the parser. Default help shows page workflow verbs, while `help --all` retains operator and compatibility commands.
+- Require valid evidence anchors for every card; add `resolve SLUG N [--note TEXT]` to explicitly close acted-on feedback with current-version defaults.
 - Page writes return one linked receipt (`--json` preserves full output); round delivery asks the owner to act from the complete inbox, show results, and withdraw stale questions.
 - Extend the isolated benchmark to compare Claude and Codex using different skill texts on the same runtime.
 

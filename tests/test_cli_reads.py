@@ -294,8 +294,8 @@ def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
     cards = tmp_path / "cards.json"
     cards.write_text(json.dumps([
         {"number": 14, "anchor_id": "s:a",
-         "decision_request": {"prompt": "A?", "recommendation": "accept"}},
-        {"anchor_id": "s:b", "text": "B please", "decision_request": {"prompt": "B?"}},
+         "decision_request": {"prompt": "A?", "recommendation": "accept", "evidence": [{"anchor": "s:a"}]}},
+        {"anchor_id": "s:b", "text": "B please", "decision_request": {"prompt": "B?", "evidence": [{"anchor": "s:b"}]}},
     ]))
     args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
                            author="agent:test", json=True)
@@ -398,3 +398,45 @@ def test_submitted_round_note_is_printed_whole():
 def test_deferred_verdict_is_labelled_unsent_in_inbox():
     assert "accept (unsent)" in cli._inbox_line({"event": "comment_updated", "decision": "accept",
                                                 "deferred": True, "author": "reviewer@example.com"})
+
+
+def test_short_resolve_uses_item_number_current_version_and_own_anchor(served, capsys):
+    cid = _posted(served, anchor="d:q1")
+    store_path = served.slug_dir / "comments.json"
+    store = json.loads(store_path.read_text())
+    card = store["anchors"]["d:q1"][0]
+    card.update(number=7, decision_request={"prompt": "Which rollout?"},
+                decision={"verdict": "select", "text": "Two weeks", "by": "reviewer@example.com"})
+    store_path.write_text(json.dumps(store))
+    # The result version deliberately omits the old question. Resolution is
+    # explicit; the logical item anchor remains in its audited comment record.
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v3"}))
+    (served.slug_dir / "versions/v3.html").write_text('<p data-anchor-id="s:result">Two weeks</p>')
+    args = cli.build_parser().parse_args(["resolve", "proj/live", "7", "--note", "Applied two weeks"])
+    assert cli.cmd_resolve(args) == 0
+    updated = json.loads(store_path.read_text())["anchors"]["d:q1"][0]
+    assert updated["status"] == "resolved_in_version"
+    assert updated["resolved_in_version"] == "v3" and updated["resolution_anchor_id"] == "d:q1"
+    assert updated["response_text"] == "Applied two weeks"
+    assert updated["decision"]["text"] == "Two weeks"
+    assert cid in capsys.readouterr().out
+
+
+def test_short_resolve_refuses_ambiguous_numbers_and_missing_current_page(served, capsys):
+    first = _posted(served, anchor="s:a")
+    second = _posted(served, anchor="s:b")
+    path = served.slug_dir / "comments.json"
+    store = json.loads(path.read_text())
+    for items in store["anchors"].values():
+        for item in items:
+            item["number"] = 1
+    path.write_text(json.dumps(store))
+    before = path.read_bytes()
+    args = cli.build_parser().parse_args(["resolve", "proj/live", "1"])
+    assert cli.cmd_resolve(args) == 2 and "ambiguous" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v9"}))
+    args = cli.build_parser().parse_args(["resolve", "proj/live", first])
+    assert cli.cmd_resolve(args) == 2 and "has no page" in capsys.readouterr().err
+    assert path.read_bytes() == before
+    assert second != first
