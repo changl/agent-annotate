@@ -60,6 +60,8 @@ def reviewer_page(tmp_path, monkeypatch):
         connection.request(method, "/page/" + route, body=body, headers=values)
         response = connection.getresponse()
         status, response_headers, raw = response.status, dict(response.getheaders()), response.read()
+        if response.headers.get_all("Set-Cookie"):
+            response_headers["Set-Cookie"] = response.headers.get_all("Set-Cookie")[0]
         connection.close()
         try:
             result = json.loads(raw)

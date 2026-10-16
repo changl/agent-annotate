@@ -171,6 +171,9 @@ def _mime(suffix: str) -> str:
         ".jpeg": "image/jpeg",
         ".gif":  "image/gif",
         ".webp": "image/webp",
+        ".avif": "image/avif",
+        ".webm": "video/webm",
+        ".mp4":  "video/mp4",
         ".pdf":  "application/pdf",
         ".ico":  "image/x-icon",
         ".woff": "font/woff",
@@ -181,6 +184,8 @@ def _mime(suffix: str) -> str:
 
 # Files under assets/ and attachments/ that may open inline (inert types).
 _INLINE_UPLOADS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
+# Opaque frames may display these inert page-owned images and videos.
+_INLINE_PAGE_ASSETS = (_INLINE_UPLOADS - {".pdf"}) | {".avif", ".ico", ".webm", ".mp4"}
 
 
 _IMMUTABLE = "public, max-age=31536000, immutable"
@@ -946,7 +951,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
         origin = self._request_origin()
         supplied = self.headers.get("Origin")
-        if (origin is None or (supplied is not None and (self._origin(supplied) != origin
+        public_asset = self.command in ("GET", "HEAD") and self._is_public_inert_asset(self._strip_base(path))
+        if (origin is None or (not public_asset and supplied is not None and (self._origin(supplied) != origin
                 or urllib.parse.urlsplit(supplied).path not in ("", "/")))):
             self._respond(403, b'{"error":"untrusted host or origin"}')
             return False
@@ -958,7 +964,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         site = self.headers.get("Sec-Fetch-Site")
         navigation = (self.command == "GET" and self.headers.get("Sec-Fetch-Mode") == "navigate"
                       and self.headers.get("Sec-Fetch-Dest") == "document")
-        if site not in (None, "none", "same-origin") and not navigation:
+        if site not in (None, "none", "same-origin") and not navigation and not public_asset:
             self._respond(403, b'{"error":"cross-origin request refused"}')
             return False
         if origin[0] == "https" and not self._identity()["authenticated"]:
@@ -968,7 +974,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             bootstrap = (self.command == "GET" and ((route == "/" and self.v2_mode) or route.lstrip("/") in bootstrap_assets
                          or ((match := _ASSET_PATH_RE.fullmatch(route)) and match[2] in bootstrap_assets)))
             session = self.command == "POST" and route == "/api/reviewer/session"
-            if self._is_funnel_origin() and (bootstrap or session):
+            if self._asset_session_authenticated() or (self._is_funnel_origin() and (bootstrap or session)):
                 return True
             self._respond(403, b'{"error":"authenticated proxy boundary required"}')
             return False
@@ -1107,7 +1113,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
 
     def _reviewer_session(self):
-        from .review_access import cookie_name, issue_cookie
+        from .review_access import asset_cookie_name, cookie_name, issue_cookie
         try:
             length = int(self.headers.get("Content-Length") or "0")
             if not 0 < length <= 4096 or not self._is_funnel_origin():
@@ -1118,7 +1124,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return self._respond(403, b'{"error":"invalid review link"}')
         path = (self.public_base_path or "") + "/"
         self._respond(200, b'{"ok":true}', cache_control="no-store", extra_headers={
-            "Set-Cookie": f"{cookie_name(self.artifact_dir)}={cookie}; Path={path}; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict"})
+            "Set-Cookie": [
+                f"{cookie_name(self.artifact_dir)}={cookie}; Path={path}; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict",
+                f"{asset_cookie_name(self.artifact_dir)}={cookie}; Path={path}assets/; Max-Age=2592000; HttpOnly; Secure; SameSite=None",
+            ]})
+
+    def _asset_session_authenticated(self) -> bool:
+        """The scoped cookie permits only opaque image/video loads, never CORS."""
+        from .review_access import identity
+        path = self._strip_base(urllib.parse.urlsplit(self.path).path)
+        if (self.command not in ("GET", "HEAD") or not self._is_public_inert_asset(path)
+                or self.headers.get("Sec-Fetch-Mode") not in (None, "no-cors") or not self._is_funnel_origin()):
+            return False
+        return bool(identity(self.artifact_dir, self.headers.get("Cookie") or "", asset=True)[0])
 
     # ── Consolidated pages ───────────────────────────────────────────
     # `annotate consolidate` leaves consolidated.json in a page it merged
@@ -3500,6 +3518,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
+    def _is_public_inert_asset(self, url_path: str) -> bool:
+        """Only explicitly published inert assets may cross the origin boundary."""
+        try:
+            relative = urllib.parse.unquote(url_path, errors="strict").lstrip("/")
+            if (not relative.startswith("assets/") or not self._is_public_static(relative)
+                    or "\\" in relative or any(ord(char) < 32 for char in relative)):
+                return False
+            target = _contained_path(self.artifact_dir, relative)
+            resolved = target.relative_to(self.artifact_dir.resolve()).as_posix()
+            return (resolved.startswith("assets/") and self._is_public_static(resolved)
+                    and target.suffix.lower() in _INLINE_PAGE_ASSETS and target.is_file())
+        except (UnicodeError, PermissionError, OSError):
+            return False
+
     def _is_public_static(self, relative: str) -> bool:
         parts = relative.split("/")
         if any(not part or part in (".", "..") or part.startswith(".") for part in parts):
@@ -3563,14 +3595,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._respond(500, b"Read error")
             return
-        # Proof attachments and page assets are often generated or third-party
-        # files: never let one run script in the review origin. Only images
-        # and PDF open inline; everything else (HTML and SVG included) downloads.
+        # Page-owned HTML may run scripts, but only in an opaque sandbox:
+        # never grant the review origin's cookies, API access or top navigation.
+        # Proof uploads (including aliases) retain the stricter download policy.
         extra = None
         resolved_rel = target.relative_to(self.artifact_dir.resolve()).as_posix()
         if {rel.split("/", 1)[0], resolved_rel.split("/", 1)[0]} & {"assets", "attachments"}:
             extra = {"Content-Security-Policy": "sandbox"}
-            if target.suffix.lower() not in _INLINE_UPLOADS:
+            public_asset = self._is_public_inert_asset(url_path)
+            if public_asset:
+                # Never reuse private media across sessions or expose it via CORS.
+                extra["Vary"] = "Cookie, Sec-Fetch-Mode"
+            if (rel.split("/", 1)[0] == resolved_rel.split("/", 1)[0] == "assets"
+                    and target.suffix.lower() in {".html", ".htm"}):
+                extra["Content-Security-Policy"] = "sandbox allow-scripts"
+            elif (target.suffix.lower() not in _INLINE_UPLOADS
+                  and not (public_asset and target.suffix.lower() in _INLINE_PAGE_ASSETS)):
                 filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
                 extra["Content-Disposition"] = f'attachment; filename="{filename}"'
         # pagegen stages images as <sha256[:12]>-<name>; verify the prefix
@@ -3607,8 +3647,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache_control)
         if etag:
             self.send_header("ETag", etag)
-        if compressible:
-            self.send_header("Vary", "Accept-Encoding")
+        vary = ["Accept-Encoding"] if compressible else []
+        if extra_headers and "Vary" in extra_headers:
+            vary.append(extra_headers["Vary"])
+        if vary:
+            self.send_header("Vary", ", ".join(vary))
         if compressed:
             self.send_header("Content-Encoding", "gzip")
         # Mutations may reject before consuming their request body. Closing
@@ -3617,7 +3660,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self.send_header("Connection", "close")
         for name, value in (extra_headers or {}).items():
-            self.send_header(name, value)
+            if name != "Vary":
+                for item in value if isinstance(value, (list, tuple)) else (value,):
+                    self.send_header(name, item)
         self.end_headers()
         if self.command != "HEAD" and code not in (204, 304):
             self.wfile.write(body)

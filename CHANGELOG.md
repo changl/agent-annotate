@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Render page-owned HTML/HTM assets inline in an opaque script-enabled sandbox, so embedded plans work without access to page cookies, APIs or top navigation. Reviewer sign-in also issues an HttpOnly, Secure, SameSite=None cookie scoped to the page's assets path, accepted only for inert image/video GET/HEAD; anonymous HTTPS assets remain private. Serve WebM/MP4 assets inline with video MIME types and no CORS; the sandbox cannot read JSON, which remains an authenticated download. Proof uploads and other non-inert assets still download; nosniff and content-hash/ETag caching remain intact, with media caches varying by session cookie and fetch mode.
+
 ## 2.26.0
 
 Simplification (decisions #14-#22 on the agent-annotate page): show first, ask at the evidence, keep only live questions.

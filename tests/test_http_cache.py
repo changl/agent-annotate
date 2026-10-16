@@ -105,7 +105,7 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
     with connection(server) as conn:
         first, body = request(conn, f"/review/{directory}/{name}", headers={"Accept-Encoding": "gzip"})
         assert body == data and first.getheader("Content-Encoding") is None
-        assert first.getheader("Vary") is None
+        assert first.getheader("Vary") == ("Cookie, Sec-Fetch-Mode" if directory == "assets" else None)
         assert first.getheader("Content-Security-Policy") == "sandbox"
         assert ("immutable" in first.getheader("Cache-Control")) == bool(hashed)
         cached, body = request(conn, f"/review/{directory}/{name}", headers={"If-None-Match": first.getheader("ETag")})
@@ -140,21 +140,142 @@ def test_gzip_negotiation_and_representation_etags(server, accept, compressed):
             assert identity.getheader("ETag") != response.getheader("ETag")
 
 
-@pytest.mark.parametrize("suffix", [".html", ".css", ".js", ".json", ".svg"])
-def test_text_uploads_compress_and_304_keeps_sandbox_and_download(server, suffix):
+@pytest.mark.parametrize("directory,suffix", [
+    (directory, suffix) for directory in ("assets", "attachments")
+    for suffix in (".html", ".htm", ".css", ".js", ".json", ".svg")
+    if directory == "attachments" or suffix not in (".html", ".htm")
+])
+def test_text_uploads_compress_and_304_keeps_sandbox_and_download(server, directory, suffix):
     root = server[1]
-    (root / "attachments").mkdir()
-    (root / "attachments" / ("text" + suffix)).write_bytes(b"text content " * 300)
+    (root / directory).mkdir()
+    (root / directory / ("text" + suffix)).write_bytes(b"text content " * 300)
+    path = f"/review/{directory}/text{suffix}"
     with connection(server) as conn:
-        response, body = request(conn, "/review/attachments/text" + suffix, headers={"Accept-Encoding": "gzip"})
+        response, body = request(conn, path, headers={"Accept-Encoding": "gzip"})
         assert gzip.decompress(body) == b"text content " * 300
         assert response.getheader("Content-Security-Policy") == "sandbox"
         assert response.getheader("Content-Disposition").startswith("attachment;")
-        cached, _ = request(conn, "/review/attachments/text" + suffix,
+        cached, _ = request(conn, path,
                             headers={"Accept-Encoding": "gzip", "If-None-Match": response.getheader("ETag")})
         assert cached.status == 304
         assert cached.getheader("Content-Disposition") == response.getheader("Content-Disposition")
         assert cached.getheader("Content-Security-Policy") == "sandbox"
+
+
+@pytest.mark.parametrize("suffix", [".html", ".htm", ".HTML"])
+@pytest.mark.parametrize("hashed", [False, True])
+def test_page_html_runs_in_opaque_sandbox_and_keeps_cache_headers(server, suffix, hashed):
+    root = server[1]
+    data = b"<html><body><script>document.title = 'Rendered';</script></body></html>" * 30
+    name = (hashlib.sha256(data).hexdigest()[:12] + "-" if hashed else "") + "plan" + suffix
+    target = root / "assets/v2" / name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(data)
+    path = f"/review/assets/v2/{name}"
+    with connection(server) as conn:
+        response, body = request(conn, path, headers={"Accept-Encoding": "gzip"})
+        assert response.status == 200 and gzip.decompress(body) == data
+        assert response.getheader("Content-Type") == "text/html; charset=utf-8"
+        assert response.getheader("Content-Disposition") is None
+        assert response.getheader("Content-Security-Policy") == "sandbox allow-scripts"
+        assert ("immutable" in response.getheader("Cache-Control")) == hashed
+        for method in ("GET", "HEAD"):
+            cached, body = request(conn, path, method=method,
+                                   headers={"Accept-Encoding": "gzip", "If-None-Match": response.getheader("ETag")})
+            assert cached.status == 304 and body == b""
+            for header in ("Content-Security-Policy", "Content-Disposition", "ETag", "Cache-Control"):
+                assert cached.getheader(header) == response.getheader(header)
+        target.write_bytes(data + b"changed")
+        changed, _ = request(conn, path, headers={"If-None-Match": response.getheader("ETag")})
+        assert changed.status == 200 and changed.getheader("Cache-Control") == "no-cache"
+
+
+@pytest.mark.parametrize("source,destination", [("assets", "attachments"), ("attachments", "assets")])
+def test_html_aliases_across_upload_boundaries_still_download(server, source, destination):
+    root = server[1]
+    (root / source).mkdir()
+    (root / destination).mkdir()
+    (root / destination / "plan.html").write_text("<script>document.title = 'Upload';</script>")
+    (root / source / "alias.html").symlink_to(root / destination / "plan.html")
+    with connection(server) as conn:
+        response, _ = request(conn, f"/review/{source}/alias.html")
+        assert response.status == 200
+        assert response.getheader("Content-Disposition").startswith("attachment;")
+        assert response.getheader("Content-Security-Policy") == "sandbox"
+
+
+@pytest.mark.parametrize("suffix,mime", [(".png", "image/png"), (".avif", "image/avif"), (".ico", "image/x-icon"),
+                                       (".webm", "video/webm"), (".mp4", "video/mp4")])
+def test_inert_page_assets_keep_cache_headers_without_cors(server, suffix, mime):
+    _, root, _ = server
+    data = b"inert proof bytes"
+    name = hashlib.sha256(data).hexdigest()[:12] + "-proof" + suffix
+    (root / "assets/v2").mkdir(parents=True)
+    (root / "assets/v2" / name).write_bytes(data)
+    headers = {"Origin": "null", "Sec-Fetch-Site": "cross-site"}
+    path = "/review/assets/v2/" + name
+    with connection(server) as conn:
+        first, body = request(conn, path, headers=headers)
+        assert first.status == 200 and body == data
+        assert first.getheader("Content-Type") == mime
+        assert first.getheader("Content-Security-Policy") == "sandbox"
+        assert first.getheader("Access-Control-Allow-Origin") is None
+        assert first.getheader("Access-Control-Allow-Credentials") is None
+        assert "immutable" in first.getheader("Cache-Control")
+        if suffix != ".json":
+            assert first.getheader("Content-Disposition") is None
+        for method in ("GET", "HEAD"):
+            cached, body = request(conn, path, method=method, headers={**headers, "If-None-Match": first.getheader("ETag")})
+            assert cached.status == 304 and body == b""
+            assert cached.getheader("Access-Control-Allow-Origin") is None
+            assert cached.getheader("Access-Control-Allow-Credentials") is None
+            assert cached.getheader("Cache-Control") == first.getheader("Cache-Control")
+            assert cached.getheader("Vary") == first.getheader("Vary")
+
+
+def test_inert_cors_exception_cannot_expose_api_private_active_uploads_or_aliases(server):
+    root = server[1]
+    for relative in ("assets/script.js", "assets/plan.html", "assets/plot.svg", "assets/proof.png",
+                     "assets/project.json", "attachments/proof.json", "project.json"):
+        target = root / relative
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("private or active marker")
+    (root / "assets/upload.json").symlink_to(root / "attachments/proof.json")
+    (root / "assets/private.json").symlink_to(root / "project.json")
+    (root / "assets/active.json").symlink_to(root / "assets/plan.html")
+    (root / "attachments/alias.png").symlink_to(root / "assets/proof.png")
+    cross = {"Origin": "null", "Sec-Fetch-Site": "cross-site"}
+    with connection(server) as conn:
+        for path in ("api/seen", "api/comments", "assets/script.js", "assets/plan.html", "assets/plot.svg",
+                     "assets/project.json", "assets/upload.json", "assets/private.json", "assets/active.json",
+                     "attachments/proof.json", "attachments/alias.png", "assets/missing.png",
+                     "assets/../project.json", "assets/%2e%2e/project.json", "assets/%5cproof.png"):
+            response, _ = request(conn, "/review/" + path, headers=cross)
+            assert response.status == 403, path
+            assert response.getheader("Access-Control-Allow-Origin") is None
+            assert response.getheader("Access-Control-Allow-Credentials") is None
+        for method in ("POST", "PUT", "OPTIONS"):
+            response, _ = request(conn, "/review/assets/proof.png", method=method, headers=cross)
+            assert response.status == 403
+            assert response.getheader("Access-Control-Allow-Origin") is None
+        response, _ = request(conn, "/review/assets/proof.png", headers={**cross, "Host": "untrusted.example"})
+        assert response.status == 403 and response.getheader("Access-Control-Allow-Origin") is None
+        response, _ = request(conn, "/review/api/seen")
+        assert response.status == 200 and response.getheader("Access-Control-Allow-Origin") is None
+
+
+@pytest.mark.parametrize("suffix", [".mp4", ".webm", ".json"])
+def test_inert_proof_uploads_keep_download_policy_without_cors(server, suffix):
+    root = server[1]
+    (root / "attachments").mkdir()
+    (root / "attachments" / ("proof" + suffix)).write_bytes(b"proof")
+    with connection(server) as conn:
+        response, _ = request(conn, "/review/attachments/proof" + suffix)
+        assert response.status == 200
+        assert response.getheader("Content-Disposition").startswith("attachment;")
+        assert response.getheader("Content-Security-Policy") == "sandbox"
+        assert response.getheader("Access-Control-Allow-Origin") is None
+        assert response.getheader("Access-Control-Allow-Credentials") is None
 
 
 def test_http11_framing_redirect_head_errors_and_polling(server):

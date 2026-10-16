@@ -53,6 +53,10 @@ def cookie_name(directory: Path) -> str:
     return "annotate_review_" + hashlib.sha256(str(directory.resolve()).encode()).hexdigest()[:12]
 
 
+def asset_cookie_name(directory: Path) -> str:
+    return cookie_name(directory) + "_assets"
+
+
 def _valid_name(name) -> bool:
     return (isinstance(name, str) and bool(name.strip()) and len(name) <= 80
             and not any(ord(c) < 32 or ord(c) == 127 for c in name))
@@ -71,11 +75,11 @@ def issue_cookie(directory: Path, key: str, name: str = "Reviewer", existing_coo
     return body + "." + hmac.new(key.encode(), body.encode(), hashlib.sha256).hexdigest()
 
 
-def identity(directory: Path, header: str) -> tuple[str, str]:
+def identity(directory: Path, header: str, *, asset: bool = False) -> tuple[str, str]:
     try:
         cookies = SimpleCookie()
         cookies.load(header)
-        value = cookies[cookie_name(directory)].value
+        value = cookies[asset_cookie_name(directory) if asset else cookie_name(directory)].value
         if len(value) > 2048:
             return "", ""
         body, signature = value.split(".", 1)
