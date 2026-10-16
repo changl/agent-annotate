@@ -47,7 +47,7 @@ def _plant(directory, folder, name, body):
 # ── BE-1: proof attachments never run script in the review origin ──────────
 
 @pytest.mark.parametrize("folder", ["attachments", "assets"])
-def test_be1_active_files_are_downloads_with_sandbox_csp(server, folder):
+def test_be1_active_files_keep_sandbox_and_download_boundary(server, folder):
     httpd, directory, _ = server
     for name, body in (("0a-report.html", MARKER_HTML), ("0b-shot.svg", MARKER_SVG),
                        ("0c-notes.txt", "plain"), ("0d-run.js", "alert(1)")):
@@ -55,8 +55,12 @@ def test_be1_active_files_are_downloads_with_sandbox_csp(server, folder):
         status, headers, _ = _raw(httpd, f"/{folder}/{name}")
         assert status == 200
         assert headers["x-content-type-options"] == "nosniff"
-        assert headers["content-security-policy"] == "sandbox"
-        assert headers["content-disposition"].startswith("attachment")
+        if folder == "assets" and name.endswith(".html"):
+            assert headers["content-security-policy"] == "sandbox allow-scripts"
+            assert "content-disposition" not in headers
+        else:
+            assert headers["content-security-policy"] == "sandbox"
+            assert headers["content-disposition"].startswith("attachment")
 
 
 @pytest.mark.parametrize("folder", ["attachments", "assets"])

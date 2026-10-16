@@ -3563,14 +3563,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._respond(500, b"Read error")
             return
-        # Proof attachments and page assets are often generated or third-party
-        # files: never let one run script in the review origin. Only images
-        # and PDF open inline; everything else (HTML and SVG included) downloads.
+        # Page-owned HTML may run scripts, but only in an opaque sandbox:
+        # never grant the review origin's cookies, API access or top navigation.
+        # Proof uploads (including aliases) retain the stricter download policy.
         extra = None
         resolved_rel = target.relative_to(self.artifact_dir.resolve()).as_posix()
         if {rel.split("/", 1)[0], resolved_rel.split("/", 1)[0]} & {"assets", "attachments"}:
             extra = {"Content-Security-Policy": "sandbox"}
-            if target.suffix.lower() not in _INLINE_UPLOADS:
+            if (rel.split("/", 1)[0] == resolved_rel.split("/", 1)[0] == "assets"
+                    and target.suffix.lower() in {".html", ".htm"}):
+                extra["Content-Security-Policy"] = "sandbox allow-scripts"
+            elif target.suffix.lower() not in _INLINE_UPLOADS:
                 filename = re.sub(r'[^A-Za-z0-9_.-]', "_", target.name)[:180] or "download"
                 extra["Content-Disposition"] = f'attachment; filename="{filename}"'
         # pagegen stages images as <sha256[:12]>-<name>; verify the prefix
