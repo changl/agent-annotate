@@ -39,14 +39,15 @@ def test_explicit_bulk_approval_is_refused(fields):
     {"prompt": "Confirm changing the minimum to 3 items?"},
 ])
 def test_single_decisions_and_comparisons_are_not_bulk_approval(fields):
-    assert card_refusal(_card(**fields), {"d:question"}) is None
+    assert card_refusal(_card(evidence=[{"anchor": "s:scope"}], **fields), {"s:scope", "d:question"}) is None
 
 
-def test_a_card_needs_one_real_anchor_not_every_evidence_anchor():
+def test_every_evidence_target_must_exist_and_card_cannot_be_its_own_evidence():
     card = _card(evidence=[{"anchor": "s:gone"}, {"anchor": "s:scope"}])
-    assert card_refusal(card, {"s:scope"}) is None
-    assert card_refusal(card, {"d:question"}) is None
-    assert "absent" in card_refusal(card, {"s:unrelated"})
+    assert "s:gone" in card_refusal(card, {"s:scope", "d:question"})
+    assert card_refusal(card, {"s:gone", "s:scope"}) is None
+    assert "at least one" in card_refusal(_card(), {"d:question"})
+    assert "visible content" in card_refusal(_card(evidence=[{"anchor": "d:question"}]), {"d:question"})
 
 
 def _snapshot(directory):

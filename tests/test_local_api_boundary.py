@@ -294,7 +294,7 @@ def _legacy_server(oversized_history=False):
 @pytest.mark.parametrize("author", ["agent:test", "test"])
 def test_real_legacy_fallback_preserves_agent_attribution_and_same_card_on_second_round(tmp_path, monkeypatch, capsys, author):
     cards = tmp_path / "cards.json"
-    cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?"}}]))
+    cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?", "evidence": [{"anchor": "s:coverage"}]}}]))
     with _legacy_server() as (record, rows, counts):
         (tmp_path / "versions").mkdir()
         (tmp_path / "versions" / "v1.html").write_text('<p data-anchor-id="s:coverage">Coverage</p>')
@@ -313,7 +313,7 @@ def test_real_legacy_fallback_preserves_agent_attribution_and_same_card_on_secon
 def test_legacy_fallback_unusable_history_stops_before_any_card_write(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_LOCAL_API_MAX_RESPONSE_BYTES", 32)
     cards = tmp_path / "cards.json"
-    cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?"}}]))
+    cards.write_text(json.dumps([{"anchor_id": "s:coverage", "text": "Review coverage", "decision_request": {"prompt": "Continue?", "evidence": [{"anchor": "s:coverage"}]}}]))
     with _legacy_server(oversized_history=True) as (record, rows, counts):
         (tmp_path / "versions").mkdir()
         (tmp_path / "versions" / "v1.html").write_text('<p data-anchor-id="s:coverage">Coverage</p>')

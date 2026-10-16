@@ -1,6 +1,6 @@
 # Contributing
 
-Preserve the [interaction contract](src/agent_annotate/skills/claude/references/interaction-contract.md)
+Preserve the [interaction contract](docs/interaction-contract.md)
 and existing feedback. Keep changes small; use synthetic fixtures.
 
 Run `ruff check src tests` and relevant tests. Broad workflow/UI changes need

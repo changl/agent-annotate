@@ -1,0 +1,597 @@
+{
+  "meta": {
+    "refs": [
+      {
+        "ref": "5bdb68a",
+        "label": "text:v2.25.1",
+        "sha": "5bdb68a",
+        "src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-f9t7ahwv/5bdb68a-5bdb68a/src",
+        "skill_src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-f9t7ahwv/v2.25.1-2cc0b67/src",
+        "skill_ref": "v2.25.1"
+      },
+      {
+        "ref": "5bdb68a",
+        "label": "text:5bdb68a",
+        "sha": "5bdb68a",
+        "src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-f9t7ahwv/5bdb68a-5bdb68a/src",
+        "skill_src": "/private/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-bench-builds-f9t7ahwv/5bdb68a-5bdb68a/src",
+        "skill_ref": "5bdb68a"
+      }
+    ],
+    "scenarios": [
+      "round-2",
+      "v1-page"
+    ],
+    "runs": 3,
+    "provider": "codex",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "date": "2026-10-16T14:41:09-0700"
+  },
+  "rows": [
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 1,
+      "output_tokens": 2388,
+      "thinking_tokens": 254,
+      "input_tokens": 202520,
+      "cache_read": 182656,
+      "duration_s": 52.1,
+      "wall_s": 52.1,
+      "annotate_calls": 6,
+      "annotate_failures": 1,
+      "tool_errors": 3,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 1,
+      "output_tokens": 1728,
+      "thinking_tokens": 33,
+      "input_tokens": 130264,
+      "cache_read": 111360,
+      "duration_s": 35.8,
+      "wall_s": 35.8,
+      "annotate_calls": 8,
+      "annotate_failures": 0,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 1,
+      "output_tokens": 1386,
+      "thinking_tokens": 92,
+      "input_tokens": 228726,
+      "cache_read": 214016,
+      "duration_s": 42.9,
+      "wall_s": 42.9,
+      "annotate_calls": 6,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 1,
+      "output_tokens": 1342,
+      "thinking_tokens": 48,
+      "input_tokens": 121553,
+      "cache_read": 110080,
+      "duration_s": 32.4,
+      "wall_s": 32.4,
+      "annotate_calls": 5,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 2,
+      "output_tokens": 2378,
+      "thinking_tokens": 349,
+      "input_tokens": 387961,
+      "cache_read": 355968,
+      "duration_s": 55.4,
+      "wall_s": 55.4,
+      "annotate_calls": 10,
+      "annotate_failures": 3,
+      "tool_errors": 3,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "3 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 2,
+      "output_tokens": 1607,
+      "thinking_tokens": 33,
+      "input_tokens": 156020,
+      "cache_read": 139392,
+      "duration_s": 35.5,
+      "wall_s": 35.5,
+      "annotate_calls": 8,
+      "annotate_failures": 0,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 2,
+      "output_tokens": 1519,
+      "thinking_tokens": 226,
+      "input_tokens": 254039,
+      "cache_read": 238976,
+      "duration_s": 43.6,
+      "wall_s": 43.6,
+      "annotate_calls": 6,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 2,
+      "output_tokens": 1298,
+      "thinking_tokens": 85,
+      "input_tokens": 100827,
+      "cache_read": 83968,
+      "duration_s": 32.1,
+      "wall_s": 32.1,
+      "annotate_calls": 3,
+      "annotate_failures": 1,
+      "tool_errors": 1,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 3,
+      "output_tokens": 1898,
+      "thinking_tokens": 79,
+      "input_tokens": 266112,
+      "cache_read": 242688,
+      "duration_s": 42.7,
+      "wall_s": 42.7,
+      "annotate_calls": 7,
+      "annotate_failures": 1,
+      "tool_errors": 3,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "3 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "round-2",
+      "run": 3,
+      "output_tokens": 1538,
+      "thinking_tokens": 69,
+      "input_tokens": 173158,
+      "cache_read": 150272,
+      "duration_s": 37.1,
+      "wall_s": 37.1,
+      "annotate_calls": 8,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "current:v2": {
+          "ok": true,
+          "detail": "current=v2, current.html\u2192v2.html"
+        },
+        "disposed:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "source_cards:v2": {
+          "ok": true,
+          "detail": "0 card(s)"
+        },
+        "keywords:v2": {
+          "ok": true,
+          "detail": "v2.md: has 'reconcile'"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": true,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:v2.25.1",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 3,
+      "output_tokens": 1151,
+      "thinking_tokens": 124,
+      "input_tokens": 180394,
+      "cache_read": 166144,
+      "duration_s": 31.0,
+      "wall_s": 31.0,
+      "annotate_calls": 5,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    },
+    {
+      "ref": "text:5bdb68a",
+      "sha": "5bdb68a",
+      "scenario": "v1-page",
+      "run": 3,
+      "output_tokens": 1215,
+      "thinking_tokens": 68,
+      "input_tokens": 78854,
+      "cache_read": 68224,
+      "duration_s": 27.8,
+      "wall_s": 27.8,
+      "annotate_calls": 3,
+      "annotate_failures": 0,
+      "tool_errors": 0,
+      "outcome": true,
+      "checks": {
+        "live": {
+          "ok": true,
+          "detail": "HTTP 200"
+        },
+        "version_html:v1": {
+          "ok": true,
+          "detail": ""
+        },
+        "cards_json": {
+          "ok": true,
+          "detail": ""
+        },
+        "posed:v1": {
+          "ok": true,
+          "detail": "3 posed"
+        },
+        "sandbox": {
+          "ok": true,
+          "detail": ""
+        }
+      },
+      "diag": {
+        "owner_is_session": false,
+        "hook_notices": 0,
+        "port_leak": []
+      },
+      "exit_code": 0,
+      "timed_out": false
+    }
+  ]
+}

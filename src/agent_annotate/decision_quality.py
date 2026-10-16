@@ -1,6 +1,7 @@
 """Pre-write card refusals and actionable authoring warnings."""
 
 import re
+from difflib import get_close_matches
 from html.parser import HTMLParser
 
 
@@ -18,7 +19,7 @@ def page_anchors(markup: str) -> set[str]:
 
 
 def card_refusal(card: dict, anchors: set[str]) -> str | None:
-    """Reject only explicit bulk approvals and questions with no location."""
+    """Reject bulk approvals and missing or nonexistent evidence targets."""
     request = card.get("decision_request")
     if not isinstance(request, dict):
         return None
@@ -39,10 +40,18 @@ def card_refusal(card: dict, anchors: set[str]) -> str | None:
             or (re.search(action, texts[0], re.I) and any(
                 re.fullmatch(r"\s*(?:all\s+)?" + counted + r"[.?!]?\s*", text, re.I) for text in texts[1:]))):
         return "ask for one decision instead of approving several items at once"
-    targets = [card.get("anchor_id")]
-    targets += [item.get("anchor") for item in request.get("evidence") or [] if isinstance(item, dict)]
-    if not any(isinstance(target, str) and target in anchors for target in targets):
-        return "anchor_id and every evidence anchor are absent from the target version"
+    evidence = request.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return "cite at least one evidence anchor from the target version"
+    for item in evidence:
+        anchor = item.get("anchor") if isinstance(item, dict) else None
+        if (not isinstance(anchor, str) or anchor not in anchors
+                or (anchor == card.get("anchor_id") and anchor.startswith("d:"))):
+            candidates = sorted(a for a in anchors if not a.startswith("d:"))
+            closest = get_close_matches(str(anchor or ""), candidates, n=3, cutoff=0.2)
+            hint = "; closest: " + ", ".join(closest) if closest else ""
+            return f"evidence anchor {anchor!r} must identify visible content in the target version{hint}"
+
     return None
 
 

@@ -18,25 +18,23 @@ def test_skill_text_ships_as_package_data():
     for provider in skillgen.PROVIDERS:
         assert (skillgen.skill_source(provider) / "SKILL.md").is_file()
     refs = skillgen.SKILLS_DIR / "claude" / "references"
-    assert (refs / "cli-reference.md").is_file()
+    assert (refs / "page.md").is_file()
     assert (skillgen.SKILLS_DIR / "codex" / "agents" / "openai.yaml").is_file()
 
 
 @pytest.mark.parametrize("provider", skillgen.PROVIDERS)
-def test_invocation_section_names_the_entry_point_and_the_module_fallback(provider):
+def test_deployment_preserves_the_shared_text(provider):
     text = (skillgen.skill_source(provider) / "SKILL.md").read_text()
     out = skillgen.render_skill_md(provider, text)
     assert out.startswith("---\n"), "frontmatter must stay first for the skill loader"
-    assert skillgen.GENERATED_MARK in out
-    assert "annotate <cmd>" in out
-    assert "python3 -m agent_annotate.cli <cmd>" in out
-    assert "/cli.py" not in out.split("## 2.")[0], "no file path in the invocation section"
-    assert out.count("## 1. Invocation") == 1
+    assert out == text
+    assert "annotate workspace --json" in out
+    assert "/cli.py" not in out
 
 
-def test_render_refuses_text_without_an_invocation_block():
+def test_render_refuses_text_without_front_matter():
     with pytest.raises(ValueError):
-        skillgen.render_skill_md("claude", "---\nname: x\n---\n# no invocation\n")
+        skillgen.render_skill_md("claude", "# no front matter\n")
 
 
 def test_install_writes_skill_references_and_hook_shim(tmp_path):
@@ -44,9 +42,9 @@ def test_install_writes_skill_references_and_hook_shim(tmp_path):
     lines = skillgen.install_skill("claude", dest)
     assert all(line.startswith("wrote") for line in lines), lines
     assert (dest / "SKILL.md").is_file()
-    assert (dest / "references" / "cli-reference.md").read_text() == (
-        skillgen.SKILLS_DIR / "claude" / "references" / "cli-reference.md").read_text()
-    assert (dest / "references" / "interaction-contract.md").is_file()
+    assert (dest / "references" / "page.md").read_text() == (
+        skillgen.SKILLS_DIR / "claude" / "references" / "page.md").read_text()
+    assert {p.name for p in (dest / "references").glob("*.md")} == {"page.md"}
     shim = dest / "hooks" / "check-comment-bus.sh"
     assert os.access(shim, os.X_OK)
     assert str(HOOK_SCRIPT) in shim.read_text()
@@ -72,7 +70,7 @@ def test_install_is_idempotent_and_repairs_a_drifted_file(tmp_path):
     third = skillgen.install_skill("claude", dest)
     assert "updated    SKILL.md" in third
     assert "mode       hooks/check-comment-bus.sh" in third
-    assert skillgen.GENERATED_MARK in (dest / "SKILL.md").read_text()
+    assert (dest / "SKILL.md").read_bytes() == (skillgen.skill_source("claude") / "SKILL.md").read_bytes()
 
 
 def test_install_never_deletes_what_it_did_not_write(tmp_path):
@@ -150,3 +148,21 @@ def test_sync_preserves_custom_edits_and_new_path_collisions(tmp_path, monkeypat
     (dest / "SKILL.md").write_text("owner customized skill")
     assert skillgen.sync_skills()[0].startswith("conflict")
     assert (dest / "SKILL.md").read_text() == "owner customized skill"
+
+
+def test_sync_removes_only_unchanged_obsolete_manifest_files(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setattr(skillgen, "CONFIG_DIR", tmp_path / "config")
+    dest = tmp_path / "deployed"
+    skillgen.install_skill("claude", dest)
+    manifest_path = dest / ".annotate-install.json"
+    manifest = json.loads(manifest_path.read_text())
+    for name in ("old.md", "custom.md"):
+        (dest / name).write_text("old generated text")
+        manifest["files"][name] = hashlib.sha256(b"old generated text").hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    (dest / "custom.md").write_text("user edit")
+    # Explicit installation removes matching generated files, preserving custom data.
+    skillgen.install_skill("claude", dest)
+    assert not (dest / "old.md").exists()
+    assert (dest / "custom.md").read_text() == "user edit"

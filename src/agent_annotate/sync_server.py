@@ -2162,10 +2162,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return
             resolution_version = resolution_version.strip()
             resolution_anchor = resolution_anchor.strip()
-            if not _version_has_anchor(self.artifact_dir, resolution_version, resolution_anchor):
-                self._respond(400, _anchor_miss(self.artifact_dir, resolution_version,
-                                                resolution_anchor, "resolution"))
-                return
+
 
         carry_forward = payload.get("carry_forward")
         carry_version = carry_anchor = None
@@ -2221,6 +2218,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     or ("text" in payload and c.get("author") != author)):
                 self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
                 return
+            if new_status == "resolved_in_version":
+                own_resolution = False
+                if payload.get("resolve_own_anchor") is True and resolution_anchor == c.get("anchor_id"):
+                    try:
+                        own_resolution = _version_file(self.artifact_dir, resolution_version).is_file()
+                    except (OSError, ValueError):
+                        pass
+                if not own_resolution and not _version_has_anchor(self.artifact_dir, resolution_version, resolution_anchor):
+                    self._respond(400, _anchor_miss(self.artifact_dir, resolution_version,
+                                                    resolution_anchor, "resolution"))
+                    return
             try:
                 c.update(self._comment_category_fields(payload))
             except DecisionRequestError as exc:

@@ -687,10 +687,9 @@ def test_be7_review_unread_is_the_rails_scope(server):
 def test_be10_docs_say_the_unfiltered_unread_read_acknowledges(tmp_path, monkeypatch, capsys):
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
-    for doc in (root / "src/agent_annotate/skills/claude/references/cli-reference.md",
-                root / "plugins/codex/agent-annotate/skills/annotate/references/cli-reference.md"):
-        row = next(line for line in doc.read_text().splitlines() if line.startswith("| Read submitted feedback"))
-        assert "`inbox PROJECT/SLUG --unread` once, unfiltered" in row and "never acknowledges" in row
+    for doc in (root / "src/agent_annotate/skills/claude/SKILL.md",
+                root / "plugins/codex/agent-annotate/skills/annotate/SKILL.md"):
+        assert "inbox SLUG --unread` once, unfiltered" in doc.read_text()
     # ...and the code does what they say.
     page = _finding_page(tmp_path, monkeypatch)
     calls = []
@@ -718,7 +717,7 @@ def test_be18_ask_set_long_card_text_gets_a_clipped_title(tmp_path, monkeypatch,
     _api_ok(monkeypatch, sent)
     long_q = "Should we fix the contrast of " + "the secondary navigation labels " * 8 + "?"
     (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q7", "text": long_q,
-                                                        "decision_request": {"prompt": long_q, "options": ["fix", "keep"]}}]))
+                                                        "decision_request": {"prompt": long_q, "options": ["fix", "keep"], "evidence": [{"anchor": "s:scope"}]}}]))
     assert cli.cmd_ask(_args(from_file="cards.json", category="findings", set="design", version="v1")) == 0
     title = sent[0]["items"][0]["finding"]["title"]
     assert len(title) <= 200 and long_q.startswith(title.rstrip("…"))
@@ -729,7 +728,7 @@ def test_be18_card_set_alone_files_into_findings(tmp_path, monkeypatch, capsys):
     sent = []
     _api_ok(monkeypatch, sent)
     (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q8", "text": "Fix?", "set": "design",
-                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"]}}]))
+                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"], "evidence": [{"anchor": "s:scope"}]}}]))
     assert cli.cmd_ask(_args(from_file="cards.json", category=None, set=None, version="v1")) == 0
     assert sent[0]["items"][0]["category"] == "findings"
 
@@ -740,7 +739,7 @@ def test_be18_ask_refuses_before_posting_when_categories_json_is_broken(tmp_path
     _api_ok(monkeypatch, sent)
     (page.directory / "categories.json").write_text("{not json")
     (page.work / "cards.json").write_text(json.dumps([{"anchor_id": "d:q9", "text": "Fix?",
-                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"]}}]))
+                                                        "decision_request": {"prompt": "Fix?", "options": ["fix", "keep"], "evidence": [{"anchor": "s:scope"}]}}]))
     assert cli.cmd_ask(_args(from_file="cards.json", category="findings", set="design", version="v1")) == 2
     assert sent == [] and "categories.json" in capsys.readouterr().err
 
@@ -918,7 +917,7 @@ def _finding_page(tmp_path, monkeypatch, comments=None):
     (directory / "comments.json").write_text(json.dumps(store))
     (directory / "current.meta.json").write_text(json.dumps({"current": "v1", "history": [{"version": "v1"}]}))
     (directory / "versions").mkdir()
-    (directory / "versions" / "v1.html").write_text(''.join(
+    (directory / "versions" / "v1.html").write_text('<p data-anchor-id="s:scope">Evidence</p>' + ''.join(
         f'<p data-anchor-id="d:q{number}">Question {number}</p>' for number in range(1, 10)))
     bus = tmp_path / "events.ndjson"
     bus.write_text("")

@@ -272,15 +272,11 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
         # metadata here, then treats inbox content as reviewer data.
         from .urls import page_url, redact_review_key
         url = redact_review_key((record.get("workspace_owner") or {}).get("url") or page_url(record))
-        page = f"Page: {url}. " if url else ""
-        prompt = (f"[annotate] ROUND SUBMITTED: {project}/{slug}; "
-                  f"{row['comment_count']} answer(s), delivery {row['id']}. "
-                  f"{page}"
-                  f"Read annotate inbox {project}/{slug} --unread and annotate cards {project}/{slug}. "
-                  "Handle this completed feedback round, preserve prior decisions and history, "
-                  "and continue authorized project work. Update the existing workspace only for a meaningful result or needed decision. "
-                  "Report concisely with the full share URL from your workspace lookup; if missing, run annotate workspace --json once. "
-                  "Do not create another page or wait for a monitor.")
+        prompt = (f"[annotate] Round submitted on {url or f'{project}/{slug}'}. "
+                  f"Read annotate inbox {project}/{slug} --unread. "
+                  "Act on every answer and note; show results on the page; "
+                  "withdraw questions that no longer apply; "
+                  "reply in chat with one line and the URL.")
         row.update(state="attempting", attempted_at=_now())
         _atomic(journal, state)
         try:

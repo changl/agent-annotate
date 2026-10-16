@@ -846,9 +846,9 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
                 block for block in reversed(blocks[:card_blocks[0]])
                 if block.get("kind") == "heading" and block.get("level") <= 2
             ), None)
-            if not prior_h2 or slugify(prior_h2.get("text", "")) != "questions-for-chang":
+            if not prior_h2 or slugify(prior_h2.get("text", "")) not in {"questions-for-reviewer", "questions-for-chang"}:
                 problems.append(
-                    "the ```cards block must be in one final `## Questions for Chang` section")
+                    "the ```cards block must be in one final `## Questions for reviewer` section")
 
         seen: set[int] = set()
         previous = 0
@@ -901,13 +901,13 @@ def _full_plan_warnings(slug_dir: Path, version: str, blocks: list[dict]) -> lis
         slugify(block["text"])
         for block in parse_blocks(prior_body)
         if block.get("kind") == "heading" and block.get("level") == 2
-        and slugify(block["text"]) != "questions-for-chang"
+        and slugify(block["text"]) not in {"questions-for-reviewer", "questions-for-chang"}
     }
     current_sections = {
         slugify(block["text"])
         for block in blocks
         if block.get("kind") == "heading" and block.get("level") == 2
-        and slugify(block["text"]) != "questions-for-chang"
+        and slugify(block["text"]) not in {"questions-for-reviewer", "questions-for-chang"}
     }
     if not prior_sections:
         return []
@@ -1380,4 +1380,5 @@ def add_parser(sub) -> None:
     sp.add_argument("--hostname", default=None)
     sp.add_argument("--public", action="store_true",
                     help="legacy Cloudflare option; Funnel is public by default")
+    sp.add_argument("--json", action="store_true", help="print full generation and publication output")
     sp.set_defaults(func=cmd_new)

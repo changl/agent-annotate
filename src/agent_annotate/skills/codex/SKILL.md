@@ -1,37 +1,24 @@
 ---
 name: annotate
-description: Use for multi-step project work, progress, feedback, and decisions in Claude Code or Codex. Reuse one project page and always share its URL. Skip trivial tasks.
+description: The reviewer's project page. Use when the reviewer needs to look, choose or approve; when orchestrating, handing off or finishing multi-step work; and for decisions otherwise asked in chat. Reuse the project's page and share its URL.
 ---
 
 # annotate
 
-## 1. Invocation
+The reviewer looks and decides on the page. Chat points to it.
 
-```bash
-annotate <cmd>
-python3 -m agent_annotate.cli <cmd>
-```
-Use the installed executable. The module fallback needs its Python environment.
+1. **Find the page.** Use the session-start page link, or run `annotate workspace --json`. Reuse the project's page across sessions, worktrees and linked repositories. Share its full Funnel URL in updates. If none exists, create it with `annotate new DIR --from page.md --project NAME --publish --ask` when the page carries cards; omit `--ask` otherwise.
 
-## 2. Work first
+2. **Show first.** Put what must be judged on the page: screenshots, the plan, the copy. Publish changes with `annotate new DIR --from page.md --version vN --publish --ask`. Use a `compare` fence with matching crops: phone/portrait pairs side by side (current left, proposed right), desktop/landscape stacked (current above, proposed below); `layout` overrides the default.
 
-- Run `workspace --json` once. Use one page per project across sessions/worktrees. Select the main page with `workspace --select PROJECT/SLUG` if needed. Post into a category: Review, Library, Findings, Plans. A second page needs `--exception "REASON"`; the orchestrator must explicitly request the exception.
-- Share the full **Tailscale Funnel URL** in the first project response and every update/feedback request. Never substitute localhost or create a Cloudflare route.
-- Review holds document feedback. Library holds formatted copy and revisions. Findings holds fix/keep decisions; mark findings fixed only with proof. Plans holds independently versioned plans. History preserves submitted rounds.
-- Update only for a meaningful result, changed blocker, or required decision. Batch changes; one sentence per item, ideally under 30 words. Provide verified Linear URLs in `project.issue_links`; use linked `#11 [CHA-182]`, `failed 3x`, and recommended choices. Put supporting detail behind a disclosure; do not repeat facts.
-- Continue authorized project work. Annotate adds no approval gates for routine checks or retry counts; honor real project approvals. No annotate polling, monitors, reports, upgrade checks, or repeated verification.
-- If annotate fails, report once and continue independent work. Use concise chat for a required decision. Tool repair requires an explicit task.
+3. **Ask at the evidence.** Put a `cards` fence in that page.md, citing the visible block each question concerns. One decision per card: prompt, context, recommendation, options and their consequences. Ask only what you cannot decide yourself. Never ask the reviewer to accept everything at once or approve what is not shown.
 
-## 3. Commands
+4. **Keep questions live.** A new version automatically withdraws unanswered agent questions omitted from its cards. Include still-relevant questions with their stable numbers. Withdraw an unanswered question that no longer applies with `annotate withdraw SLUG N --why "Reason"`.
 
-First page: `new DIR --from page.md --project NAME --publish`. Add `--ask` only for actual decision cards.
+5. **After Send**, read `annotate inbox SLUG --unread` once, unfiltered: it includes the whole submitted round, prompts, answers and notes. Act on every answer and note, then close each item you acted on with `annotate resolve SLUG N` (optional `--note "Result"`). Show the result on the page, then reply in chat with one line and the URL. For a fixed finding, use `annotate finding SLUG --fixed N --proof shot.png`.
 
-Progress: `project PROJECT/SLUG --from project.json`. Formatted copy: `copy PROJECT/SLUG --from copy.json`. No new version/round; identical content is a no-op.
+6. **Hand-off.** Put the page URL first. The successor runs `annotate claim SLUG`; this inherits the previous owner's read position and pending feedback.
 
-Changed review: `new DIR --from page.md --version vN --publish --ask`. Preserve feedback/decisions. Publish requested plans with `plan PROJECT/SLUG PLAN_ID --from plan.md`. Apply prior open items at real resolution anchors or carry them; never confirm for Chang.
+7. **Failures.** Report the error once and keep working on authorized work.
 
-After **Send / ROUND SUBMITTED**, read `inbox PROJECT/SLUG --unread` and `cards PROJECT/SLUG` once, including every explanation. Read Library proposals with `library PROJECT/SLUG --block ID`. Record fixes with `finding PROJECT/SLUG --fixed N --proof URL|FILE`. Act, then report concisely with the URL. The responsible successor claims the same page once and reads pending submitted feedback; contributors keep the current owner. The server owns Orca delivery.
-
-Reviewers can choose, **Answer in words**, add a note to any choice, or click a card to comment, including while changing a decision. Never ask for option letters.
-
-Read only the needed reference: [format](references/building-pages.md), [cards](references/decision-cards.md), [commands](references/cli-reference.md). Skills and runtime are separate; modify installed skills only on explicit request.
+Read [page format](references/page.md) when authoring. `annotate help COMMAND` shows command flags; `annotate help --all` includes operator commands. Use the installed `annotate` executable in Claude Code and Codex. Skills are user-managed.

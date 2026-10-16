@@ -66,7 +66,7 @@ State defaults remain `~/.claude/annotate-state` and `~/.claude/annotate-bus`; e
 
 ## Reference and validation
 
-[Page format](src/agent_annotate/skills/claude/references/building-pages.md), [decision cards](src/agent_annotate/skills/claude/references/decision-cards.md), [commands](src/agent_annotate/skills/claude/references/cli-reference.md), [interaction contract](src/agent_annotate/skills/claude/references/interaction-contract.md), [architecture](src/agent_annotate/skills/claude/references/architecture.md).
+[Page format](src/agent_annotate/skills/claude/references/page.md), [commands](docs/skill-commands.md), [interaction contract](docs/interaction-contract.md), [architecture](docs/architecture.md), [telemetry and evaluation](docs/telemetry-and-eval.md).
 
 Development: install `.[dev,browser,mcp]` into a venv, then run `pytest` and `ruff check src tests`. Tests isolate machine state; browser checks use Chrome or Playwright Chromium. Public pages require a separate real Funnel/reviewer check.
 

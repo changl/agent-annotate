@@ -186,3 +186,66 @@ def test_benchmark_review_declares_identity_and_uses_real_origin(monkeypatch):
     assert not any(key.lower().startswith("cf-") for key in requests[0].headers)
     assert 'local_author = "chang@example.com"' in bench._toml_section("reviews", 9400)
     assert 'local_author = "chang@example.com"' in bench.LAUNCHER
+
+
+def test_codex_stream_records_usage_failures_and_skill_read():
+    rows = _stream(
+        {"type":"item.completed", "item":{"type":"command_execution", "command":"cat .agents/skills/annotate/SKILL.md", "aggregated_output":"skill", "exit_code":0}},
+        {"type":"item.completed", "item":{"type":"command_execution", "command":"annotate new reviews/x --from x.md", "aggregated_output":"ERROR: invalid evidence", "exit_code":2}},
+        {"type":"turn.completed", "usage":{"input_tokens":100, "cached_input_tokens":50, "output_tokens":200}})
+    result = bench.parse_codex_stream(rows)
+    assert result["skill_used"] and not result["is_error"]
+    assert result["annotate_calls"] == result["annotate_failures"] == 1
+    assert result["output_tokens"] == 200 and result["cache_read"] == 50
+
+
+def test_sandbox_refuses_nonlocal_routes_ports_directories_and_processes(tmp_path, monkeypatch):
+    sb = {"root": tmp_path, "home": tmp_path / "home", "port_base": 9600}
+    record = {"transport": "funnel", "port": 8800, "slug_dir": "/outside", "url": "https://example.test", "pid": 123}
+    monkeypatch.setattr(bench, "_alive", lambda pid: True)
+    monkeypatch.setattr(bench.subprocess, "run", lambda *a, **k: type("Result", (), {"stdout": "python real-server"})())
+    problems = bench.sandbox_problems(sb, [record])
+    assert len(problems) == 5
+    assert any("route" in item for item in problems) and any("process" in item for item in problems)
+
+
+def test_login_shell_keeps_launcher_and_fake_transport_binaries(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    if not shutil.which("zsh"):
+        pytest.skip("zsh login-shell regression applies to hosts with zsh")
+    build = {"src": bench.REPO / "src"}
+    scenario = {"name": "isolation", "cwd": "fixture", "dir": tmp_path}
+    sb = bench.make_sandbox(build, scenario, 9600, sys.executable, "codex")
+    try:
+        result = subprocess.run([shutil.which("zsh"), "-lc", "command -v annotate"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
+        assert result.returncode == 0 and result.stdout.strip() == str(sb["bin"] / "annotate")
+        result = subprocess.run([shutil.which("zsh"), "-lc", "tailscale status"], cwd=sb["cwd"], env=sb["env"], capture_output=True, text=True)
+        assert result.returncode == 97 and "benchmark blocks" in result.stderr
+    finally:
+        bench.teardown(sb, keep=False)
+
+
+def test_claude_temp_allowance_is_exact_and_provider_specific(tmp_path):
+    import subprocess
+    import sys
+    if sys.platform != "darwin":
+        pytest.skip("macOS sandbox-exec boundary")
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    # Stand-ins are both under pytest's directory; the profile must distinguish
+    # the exact tool-output directory from its sibling even though both exist.
+    task_dir = tmp_path / "claude-user" / "sandbox-cwd-slug"
+    task_dir.mkdir(parents=True)
+    sibling = task_dir.with_name("another-session")
+    sibling.mkdir()
+    sb = {"root": root, "claude_tmp": task_dir}
+    def write(provider, path):
+        return subprocess.run(["/usr/bin/sandbox-exec", "-p", bench.sandbox_profile(sb, provider),
+                               sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('fixture')", str(path)],
+                              capture_output=True, text=True)
+    assert write("claude", task_dir / "output").returncode == 0
+    assert write("claude", sibling / "output").returncode != 0
+    assert write("codex", task_dir / "codex-output").returncode != 0
+    assert write("codex", root / "output").returncode == 0

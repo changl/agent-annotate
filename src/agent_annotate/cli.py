@@ -2283,7 +2283,7 @@ def _round_lines(ev: dict) -> list[str]:
         if not isinstance(answer, dict):
             continue
         number = answer.get("number")
-        prompt = _clip(str(answer.get("prompt") or ""), 60)
+        prompt = str(answer.get("prompt") or "")
         words = str(answer.get("text") or "")
         lines.append(row % ("", "  answer", str(answer.get("comment_id") or "")[:10],
                             f"#{number}" if isinstance(number, int) else "", str(answer.get("by") or "")[:24],
@@ -4223,7 +4223,11 @@ def cmd_install_skill(args) -> int:
 
 
 def cmd_sync_skills(args) -> int:
-    from .skillgen import sync_skills
+    from .skillgen import sync_packaged_skills, sync_skills
+    if getattr(args, "packaged", None):
+        sync_packaged_skills(Path(args.packaged).expanduser().resolve())
+        print("Regenerated packaged skills and command reference")
+        return 0
     results = sync_skills()
     for line in results:
         print(line)
@@ -4543,13 +4547,30 @@ def cmd_archive_comment(args) -> int:
 
 
 def cmd_resolve(args) -> int:
-    body = {
-        "status": "resolved_in_version",
-        "resolved_in_version": args.in_version,
-        "resolution_anchor_id": args.anchor,
-    }
-    if args.response:
-        body["response_text"] = args.response
+    resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
+    if not resolved:
+        return 2
+    record = resolved[2]
+    store = _load_store(record)
+    numbers = _item_numbers(store)
+    matches = [c for _, c in _iter_comments(store)
+               if c.get("id") == str(args.comment_id)
+               or str(numbers.get(c.get("id"))) == str(args.comment_id)]
+    if len(matches) != 1:
+        print("ERROR: item not found or number is ambiguous; use its comment id", file=sys.stderr)
+        return 2
+    comment = matches[0]
+    args.comment_id = comment["id"]
+    args.in_version = getattr(args, "in_version", None) or _read_meta(Path(record["slug_dir"])).get("current")
+    own_anchor = not getattr(args, "anchor", None)
+    args.anchor = getattr(args, "anchor", None) or comment.get("anchor_id")
+    body = {"status": "resolved_in_version", "resolved_in_version": args.in_version,
+            "resolution_anchor_id": args.anchor}
+    if own_anchor:
+        body["resolve_own_anchor"] = True
+    note = getattr(args, "note", None) or getattr(args, "response", None)
+    if note:
+        body["response_text"] = note
     return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
                          done="resolved", target=f" → {args.in_version} {args.anchor}")
 
@@ -5170,7 +5191,11 @@ def cmd_mcp(args) -> int:
 # ────────────────────────────────────────────────────────────────────────────
 # Argparse
 # ────────────────────────────────────────────────────────────────────────────
-def main():
+AGENT_COMMANDS = ("workspace", "new", "project", "copy", "finding", "plan",
+                  "inbox", "resolve", "withdraw", "claim")
+
+
+def build_parser(*, all_commands=False):
     p = argparse.ArgumentParser(prog="annotate", description="Agent Annotate CLI")
     p.add_argument("--version", action="version", version=f"agent-annotate {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -5203,7 +5228,9 @@ def main():
     sp_report.add_argument("--install", action="store_true", help="schedule weekly on macOS")
     sp_report.add_argument("--uninstall", action="store_true", help="remove the weekly job; preserve report history")
     sp_report.set_defaults(func=cmd_report)
-    sub.add_parser("sync-skills", help="refresh registered generated skills; preserve custom edits").set_defaults(func=cmd_sync_skills)
+    sp_sync = sub.add_parser("sync-skills", help="refresh generated skills; preserve custom edits")
+    sp_sync.add_argument("--packaged", metavar="REPO", help="regenerate only repository skill/plugin copies and command docs")
+    sp_sync.set_defaults(func=cmd_sync_skills)
 
     sp_delivery = sub.add_parser("deliver", help="inspect/retry pending completed-round delivery to the page owner")
     sp_delivery.add_argument("slug")
@@ -5221,6 +5248,7 @@ def main():
     sp_project.add_argument("slug")
     sp_project.add_argument("--project", default=None)
     sp_project.add_argument("--from", dest="from_file", default=None)
+    sp_project.add_argument("--json", action="store_true")
     sp_project.set_defaults(func=cmd_project)
     sp_copy = sub.add_parser("copy", aliases=["library"], help="read/import formatted copy blocks and immutable revision history")
     # `library --help` names the verb that was typed.
@@ -5308,6 +5336,7 @@ def main():
         default=45.0,
         help="seconds to wait for each verification stage (default 45)",
     )
+    sp_pub.add_argument("--json", action="store_true")
     sp_pub.set_defaults(func=cmd_publish)
 
     sp_unpub = sub.add_parser("unpublish", help="tear down route + stop server")
@@ -5334,6 +5363,7 @@ def main():
     sp_pv.add_argument("version")
     sp_pv.add_argument("--label", default=None)
     sp_pv.add_argument("--project", default=None)
+    sp_pv.add_argument("--json", action="store_true")
     sp_pv.set_defaults(func=cmd_publish_version)
 
     sp_in = sub.add_parser("inbox", help="read this session's unseen bus events")
@@ -5372,6 +5402,7 @@ def main():
     sp_claim = sub.add_parser("claim", help="take ownership of a page for this session")
     sp_claim.add_argument("slug", help="<slug> or <project>/<slug>")
     sp_claim.add_argument("--project", default=None)
+    sp_claim.add_argument("--json", action="store_true")
     sp_claim.set_defaults(func=cmd_claim)
 
     sp_close = sub.add_parser("close", help="archive decision cards nobody answered")
@@ -5531,10 +5562,11 @@ def main():
         help="resolve a prior-round comment in a named version and anchor",
     )
     sp_resolve.add_argument("slug", help="<slug> or <project>/<slug>")
-    sp_resolve.add_argument("comment_id")
-    sp_resolve.add_argument("--in-version", required=True)
-    sp_resolve.add_argument("--anchor", required=True)
+    sp_resolve.add_argument("comment_id", help="item number or comment id")
+    sp_resolve.add_argument("--in-version", default=None, help="default: current version")
+    sp_resolve.add_argument("--anchor", default=None, help="default: the item's own anchor")
     sp_resolve.add_argument("--response", default=None)
+    sp_resolve.add_argument("--note", default=None, help="optional action note")
     sp_resolve.add_argument("--project", default=None)
     sp_resolve.add_argument("--author", default=None)
     sp_resolve.add_argument("--json", action="store_true", help="print the updated comment")
@@ -5553,8 +5585,95 @@ def main():
     sp_carry.add_argument("--json", action="store_true", help="print the updated comment")
     sp_carry.set_defaults(func=cmd_carry)
 
-    args = p.parse_args()
-    sys.exit(args.func(args))
+    sp_help = sub.add_parser("help", help="show commands or help for one command")
+    sp_help.add_argument("command", nargs="?", metavar="COMMAND", choices=list(sub.choices))
+    sp_help.add_argument("--all", action="store_true", help="include operator and compatibility commands")
+    sp_help.add_argument("--markdown", action="store_true", help="generate the skill command reference from this parser")
+    sp_help.set_defaults(func=cmd_help)
+    if not all_commands:
+        visible = (*AGENT_COMMANDS, "help")
+        sub._choices_actions[:] = [a for a in sub._choices_actions if a.dest in visible]
+        sub.metavar = "{" + ",".join(visible) + "}"
+        p.epilog = "All commands remain available. Use annotate help --all to list them."
+    return p
+
+
+def command_parsers(parser):
+    return next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
+
+
+def command_reference():
+    """Generated from the same parser used for execution, never a hand-kept flag list."""
+    commands = command_parsers(build_parser())
+    lines = ["# Skill commands", "", "Generated by `annotate help --markdown`; do not edit.", ""]
+    for name in AGENT_COMMANDS:
+        lines.extend([f"## {name}", "", "```text", commands[name].format_help().rstrip(), "```", ""])
+    return "\n".join(lines)
+
+
+def cmd_help(args):
+    parser = build_parser(all_commands=args.all)
+    if args.markdown:
+        print(command_reference(), end="")
+    elif args.command:
+        command_parsers(parser)[args.command].print_help()
+    else:
+        parser.print_help()
+    return 0
+
+
+def run_command(args):
+    """Keep successful page writes to a linked receipt; JSON preserves the full output."""
+    import io
+
+    from .urls import deep_link
+    writes = {"new", "publish", "publish-version", "claim", "ask", "finding", "plan",
+              "withdraw", "archive", "unarchive", "addressed", "resolve", "carry", "archive-comment"}
+    writing = args.cmd in writes or (args.cmd in {"project", "copy", "library"} and args.from_file)
+    if not writing or getattr(args, "example", False):
+        return args.func(args)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        rc = args.func(args)
+    detail = output.getvalue()
+    if rc:
+        print(detail, end="")
+        return rc
+    raw = getattr(args, "slug", None)
+    directory = getattr(args, "slug_dir", None)
+    record = next((r for p, s, r in _registry_entries()
+                   if (directory and Path(r.get("slug_dir", "")).resolve() == Path(directory).expanduser().resolve())
+                   or (raw and raw in (s, f"{p}/{s}"))), None)
+    view = {"copy": "library", "library": "library", "finding": "findings", "plan": "plans"}.get(args.cmd, "review")
+    comment = getattr(args, "comment_id", None)
+    if record and args.cmd == "finding":
+        store = _load_store(record)
+        numbers = _item_numbers(store)
+        comment = next((c.get("id") for _, c in _iter_comments(store)
+                        if str(args.fixed) in (c.get("id"), str(numbers.get(c.get("id"))))), None)
+    url = deep_link(record, view=view, comment=comment,
+                    version=getattr(args, "version", None) or getattr(args, "in_version", None),
+                    plan=getattr(args, "plan_id", None)) if record else None
+    if not url and directory:
+        url = (Path(directory).expanduser().resolve() / "current.html").as_uri()
+    if getattr(args, "json", False):
+        try:
+            json.loads(detail)
+        except ValueError:
+            print(json.dumps({"command": args.cmd, "url": url, "output": detail}, ensure_ascii=False))
+        else:
+            print(detail, end="")
+    else:
+        for line in detail.splitlines():
+            if "WARN" in line or "UNVERIFIED" in line:
+                print(line.strip(), file=sys.stderr)
+        print(f"{args.cmd} {raw or directory or ''} — {url or 'no page URL available'}")
+    return rc
+
+
+def main():
+    args = build_parser().parse_args()
+    sys.exit(run_command(args))
 
 
 if __name__ == "__main__":
