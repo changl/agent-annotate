@@ -260,6 +260,7 @@ def load_registry():
             if not isinstance(s, dict):
                 continue
             out[f"{project}/{slug}"] = {
+                "archived": s.get("archived"),
                 "owner_session": s.get("owner_session"),
                 "superseded_by": s.get("superseded_by"),
                 "slug": slug,
@@ -322,6 +323,7 @@ def iter_comments(store):
 
 def collect_slugs():
     """Union of registry slugs and bus slugs, with store + meta loaded where present."""
+    from .consolidate import ARCHIVE_MARKER
     reg = load_registry()
     keys = {}
     for key, meta in reg.items():
@@ -335,6 +337,8 @@ def collect_slugs():
     for key, project in keys.items():
         slug = key.split("/", 1)[1]
         info = dict(reg.get(key) or {})
+        if info.get("archived") or (info.get("slug_dir") and (Path(info["slug_dir"]) / ARCHIVE_MARKER).exists()):
+            continue  # Do not resurrect archived work through its retained bus/history.
         info.setdefault("project", project)
         info["slug"] = slug
         bus_path, events = load_bus(info["project"], slug)
