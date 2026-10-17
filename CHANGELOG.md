@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- History rail: each tab's own history (Review versions, Plans revisions, the Library item, the finding) comes first, and each section collapses with the same disclosure as a sent round, open by default.
+
 ## 2.26.2
 
 Decision #25 on the agent-annotate page: find page servers without lsof.
