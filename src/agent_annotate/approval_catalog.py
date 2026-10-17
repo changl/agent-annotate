@@ -18,8 +18,8 @@ _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 _VIEWS = OrderedDict()
 _VIEW_LOCK = threading.RLock()
-# ponytail: bounded process-local views; an expired/restarted view degrades
-# to card-only evidence. No filesystem cache or maintenance job is needed.
+# ponytail: bounded process-local views until a vote; accept/select POSTs
+# persist their evidence so Send never depends on this cache.
 _MAX_VIEWS = 16
 _MAX_VIEW_BYTES = 128 * 1024 * 1024
 
@@ -86,7 +86,7 @@ class _Anchors(HTMLParser):
 
 
 def _pin_images(page_dir, html, base):
-    assets, incomplete, blobs, rewrites = {}, [], {}, {}
+    assets, incomplete, sources = {}, [], {}
 
     def pin(match):
         tag = match.group(0)
@@ -121,8 +121,7 @@ def _pin_images(page_dir, html, base):
                 digest = hashlib.sha256(body).hexdigest()
                 name = "attachments/approval-" + digest + path.suffix.lower()
                 assets[name] = digest
-                blobs[name] = body
-                rewrites[url] = name
+                sources[name] = relative
                 return attribute[1] + attribute[2] + "./" + name + attribute[2]
             except (OSError, ValueError):
                 incomplete.append("Image not sealed: " + url[:200])
@@ -135,7 +134,7 @@ def _pin_images(page_dir, html, base):
         incomplete.append("Dynamic or CSS media not sealed")
     if re.search(r'<link\b[^>]*\brel=[\"\']stylesheet[\"\']', html, re.I):
         incomplete.append("Linked stylesheet not sealed")
-    return html, assets, incomplete, blobs, rewrites
+    return html, assets, incomplete, sources
 
 
 def _save_bundle(page_dir, bundle):
@@ -201,45 +200,34 @@ def _bundle(comment, version, html="", assets=None, incomplete=None, document_pa
 
 
 def seal_review(page_dir, html, version, store, base=""):
-    """Read-only view capture. Only a reviewer commit persists these bytes."""
+    """Capture server-owned HTML and image hashes without altering Review."""
     cards = [comment for items in store.get("anchors", {}).values() for comment in items
              if comment.get("decision_request") and comment.get("version") == version
              and comment.get("doc", "review") == "review" and not comment.get("withdrawn")]
     if not cards:
         return html, {}
     document_parts = _document_parts(html)
-    tokens, snapshots, images, rewrites = {}, {}, {}, {}
+    tokens, snapshots = {}, {}
     view = uuid.uuid4().hex
     for comment in cards:
         try:
             bundle = _bundle(comment, version, html, document_parts=document_parts)
-            fragment, assets, incomplete, blobs, replaced = _pin_images(page_dir, bundle["html"], base)
-            bundle.update(html=fragment, assets=assets, incomplete=bundle["incomplete"] + incomplete)
+            fragment, assets, incomplete, sources = _pin_images(page_dir, bundle["html"], base)
+            bundle.update(html=fragment, assets=assets, image_sources=sources, incomplete=bundle["incomplete"] + incomplete)
             snapshots[comment["id"]] = bundle
-            images.update(blobs)
-            rewrites.update(replaced)
             tokens[comment["id"]] = {"view": view, "revision": _digest(bundle),
                 "predecessor": _current(page_dir, store, item_id(comment))}
         except (OSError, ValueError, TypeError, KeyError):
             continue
     key = (str(page_dir), view)
-    size = len(html.encode()) + sum(map(len, images.values()))
+    size = len(html.encode())
     with _VIEW_LOCK:
-        _VIEWS[key] = {"cards": snapshots, "images": images, "size": size,
+        _VIEWS[key] = {"cards": snapshots, "size": size,
                        "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
         while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:
-            return html, {}  # Oversized views retain their original working image URLs.
-    # Only cited images get a process-local immutable URL. Unrelated images
-    # keep their original URLs and never get copied into approval storage.
-    def pin_view(match):
-        url = unescape(match[3])
-        if url not in rewrites:
-            return match[0]
-        target = base.rstrip("/") + "/api/review-evidence/" + view + "/" + rewrites[url].split("/")[-1]
-        return match[1] + match[2] + escape(target, quote=True) + match[2]
-    html = re.sub(r'((?:\bsrc|\bhref|\bxlink:href)\s*=\s*)([\"\'])(.*?)(?:\2)', pin_view, html, flags=re.I)
+            return html, {}
     return html, tokens
 
 
@@ -250,31 +238,38 @@ def bind_evidence(page_dir, store, comment, token, shown_request=None):
             view = _VIEWS.get((str(page_dir), token["view"]), {})
             cached = view.get("cards", {}).get(comment["id"])
         if cached and cached["item_id"] == item_id(comment) and _digest(cached) == token.get("revision"):
-            return {"view": token["view"], "revision": token["revision"], "request": cached["request"],
+            return {"view": token["view"], "revision": token["revision"], "view_revision": token["revision"], "request": cached["request"],
                     "version": cached["version"], "predecessor": view.get("predecessors", {}).get(comment["id"])}
     bundle = _bundle(comment, comment.get("version"), incomplete=["Displayed evidence token unavailable"])
     return {"request": bundle["request"], "version": bundle["version"],
             "predecessor": _current(page_dir, store, item_id(comment))}
 
 
-def view_image(page_dir, view, name):
-    with _VIEW_LOCK:
-        return _VIEWS.get((str(page_dir), view), {}).get("images", {}).get("attachments/" + name)
-
-
-def _commit_evidence(page_dir, comment, evidence):
+def persist_evidence(page_dir, comment, evidence):
+    """Accept/select POST verifies and pins cited images before saving the vote."""
     if evidence.get("committed"):
         return read_bundle(page_dir, evidence["revision"])
     with _VIEW_LOCK:
         cached = _VIEWS.get((str(page_dir), evidence.get("view")), {})
-        bundle = cached.get("cards", {}).get(comment["id"])
-        images = cached.get("images", {})
+        bundle = deepcopy(cached.get("cards", {}).get(comment["id"]))
     if not bundle or _digest(bundle) != evidence.get("revision"):
         frozen = {**comment, "decision_request": evidence.get("request") or comment.get("decision_request")}
         bundle = _bundle(frozen, evidence.get("version") or comment.get("version"), incomplete=["Displayed evidence unavailable"])
     for name in bundle["assets"]:
-        if not safe_path(page_dir, name).exists():
-            _atomic_bytes(safe_path(page_dir, name), images[name])
+        try:
+            source = safe_path(page_dir, bundle["image_sources"][name])
+            if source.stat().st_size > 10 * 1024 * 1024:
+                raise ValueError("image oversized at vote")
+            body = source.read_bytes()
+            if hashlib.sha256(body).hexdigest() != bundle["assets"][name]:
+                raise ValueError("image changed since view")
+            target = safe_path(page_dir, name)
+            if not target.exists():
+                _atomic_bytes(target, body)
+        except (OSError, ValueError, KeyError):
+            bundle["incomplete"].append("Image unavailable or changed since view: " + name)
+            bundle["html"] = re.sub(r'(?:src|href|xlink:href)\s*=\s*([\"\'])\./' + re.escape(name) + r'\1',
+                                    'data-evidence-image-unavailable=""', bundle["html"], flags=re.I)
     evidence.update(revision=_save_bundle(page_dir, bundle), committed=True)
     return read_bundle(page_dir, evidence["revision"])
 
@@ -302,7 +297,7 @@ def promote(page_dir, store, comment):
         return
     evidence = decision.get("evidence") or bind_evidence(page_dir, store, comment, None)
     try:
-        bundle = _commit_evidence(page_dir, comment, evidence)
+        bundle = read_bundle(page_dir, evidence["revision"])
     except (OSError, ValueError, TypeError, KeyError):
         frozen = {**comment, "decision_request": evidence.get("request") or comment.get("decision_request")}
         bundle = _bundle(frozen, evidence.get("version"), incomplete=["Evidence could not be sealed"])

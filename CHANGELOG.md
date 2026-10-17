@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Reviewer Send now and review rounds file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe decision identities. Review GETs remain read-only; only cited images and shared styles persist at commit, and incomplete evidence never blocks a vote. Later corrections become current, agent and legacy votes are excluded, and Plans shows the chosen option with a local decided time.
+- Reviewer Send now and review rounds file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe decision identities. Accept/select POSTs persist their evidence and verified cited images before Send, so restarts and view eviction preserve drafts; Review keeps original image URLs and its existing on-disk fingerprint cache. Later corrections become current, duplicate immediate accepts are idempotent, carried/re-asked cards retain lineage, and incomplete evidence never blocks a vote. Agent and legacy votes are excluded, and Plans shows the chosen option with a local decided time.
 
 ## 2.26.3
 

@@ -1303,14 +1303,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._serve_versioned_asset(m.group(2), m.group(1))
             if route_path == "/content":
                 return self._v2_serve_content(parsed)
-            if route_path.startswith("/api/review-evidence/"):
-                from .approval_catalog import view_image
-                match = re.fullmatch(r"/api/review-evidence/([a-f0-9]{32})/(approval-[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|svg|avif))", route_path)
-                body = view_image(self.artifact_dir, match[1], match[2]) if match else None
-                if body is None:
-                    return self._respond(404, b"Evidence image unavailable")
-                return self._respond(200, body, _mime("." + match[3]),
-                                     extra_headers={"Content-Security-Policy": "sandbox"})
             if route_path == "/" or route_path == "":
                 return self._v2_serve_root(parsed)
             return self._serve_static(route_path)
@@ -1657,18 +1649,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, data, "text/html; charset=utf-8")
 
     def _ensure_content_stamp(self, version: str, html: str, content_path: Path) -> None:
-        """GET caches stamps in memory; viewing a page never rewrites it."""
-        meta = self._read_meta()
-        existing = (meta.get("content_stamps") or {}).get(version)
-        mtime = content_path.stat().st_mtime
-        if existing and existing.get("_mtime") == mtime:
-            return
-        computed = compute_content_stamps(html)
-        computed["_mtime"] = mtime
-        cache_owner = getattr(self, "server", self)
-        if not hasattr(cache_owner, "_content_stamps"):
-            cache_owner._content_stamps = {}
-        cache_owner._content_stamps[version] = computed
+        """Compute-and-cache content_stamps[version] into current.meta.json
+        the first time this version is served (or whenever the content
+        file's mtime moves past what's recorded). Cheap enough to check on
+        every request; the hash recompute itself only runs on a stale/
+        missing stamp, not on every GET.
+        """
+        with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
+            meta = self._read_meta()
+            existing = (meta.get("content_stamps") or {}).get(version)
+            mtime = content_path.stat().st_mtime
+            if existing and existing.get("_mtime") == mtime:
+                return  # up to date
+            computed = compute_content_stamps(html)
+            computed["_mtime"] = mtime
+            try:
+                self._merge_content_stamp(version, computed)
+            except OSError:
+                pass
 
     def _merge_content_stamp(self, version: str, computed: dict) -> None:
         """Persist one content stamp without clobbering a concurrent writer.
@@ -1694,9 +1692,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 _atomic_write_json(path, fresh)
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-    def _v2_save_meta(self, meta: dict) -> None:
-        _atomic_write_json(self._meta_path(), meta)
 
     def _v2_serve_content(self, parsed, *, plan_id=None, plan_version=None):
         """GET /content?v=vN — serve the chrome-free extracted content doc
@@ -2110,6 +2105,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 existing = c
                                 break
                     if existing is not None:
+                        existing.setdefault("origin_id", existing["id"])
                         # A card carried into a newer version and then asked
                         # a different question is a new question: its old
                         # verdict answered the old one. Keep that verdict in
@@ -2149,6 +2145,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         ids.append(existing["id"])
                         created_events.append(("comment_updated", existing))
                     else:
+                        if idempotency == "anchor" and fresh.get("decision_request"):
+                            lineage = [c for c in store["anchors"].get(aid, [])
+                                       if c.get("decision_request") and c.get("author") == author
+                                       and c.get("doc") == fresh.get("doc")
+                                       and c.get("number") == fresh.get("number")]
+                            roots = {c.get("origin_id") or c["id"] for c in lineage}
+                            if len(roots) == 1:
+                                prior = lineage[-1]
+                                fresh["origin_id"] = prior.get("origin_id") or prior["id"]
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
                         ids.append(fresh["id"])
@@ -2363,6 +2368,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             carried_now = carry_forward is not None
             if carried_now:
                 carried_at = _now_iso()
+                c.setdefault("origin_id", c["id"])
                 c.setdefault("origin_version", c.get("version"))
                 c.setdefault("origin_anchor_id", anchor_id)
                 c.setdefault("carry_history", []).append({
@@ -2901,15 +2907,32 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if (isinstance(prior_decision, dict) and prior_decision.get("round_pending")
                     and prior_decision.get("by") not in self._reviewer_authors(author)):
                 return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
+            from .approval_catalog import bind_evidence, persist_evidence, promote
+            evidence = bind_evidence(self.artifact_dir, store, c, payload.get("evidence"))
+            prior_evidence = (prior_decision or {}).get("evidence") or {}
+            incoming_revision = evidence.get("view_revision") or (
+                payload.get("evidence", {}).get("revision") if isinstance(payload.get("evidence"), dict) else None)
+            if (not defer_push and verdict in {"accept", "select"} and prior_decision
+                    and not prior_decision.get("round_pending") and prior_decision.get("by") == author
+                    and prior_decision.get("verdict") == verdict and prior_decision.get("text") == text
+                    and prior_decision.get("option_id") == payload.get("option_id")
+                    and prior_evidence.get("view_revision") == incoming_revision
+                    and prior_evidence.get("request") == evidence.get("request")
+                    and prior_evidence.get("version") == evidence.get("version")):
+                return self._respond(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
+                    "monitor_count": 0, "monitor_owner": None}).encode(), "application/json")
             is_revision = prior_decision is not None
             if is_revision:
                 c.setdefault("decision_history", []).append(prior_decision)
 
             latency_s = _decision_latency_s(c, now)
             c["decision"] = {"id": uuid.uuid4().hex, "verdict": verdict, "text": text, "ts": now, "by": author}
-            from .approval_catalog import bind_evidence, promote
             c["decision"]["catalog_eligible"] = identity["authenticated"]
-            c["decision"]["evidence"] = bind_evidence(self.artifact_dir, store, c, payload.get("evidence"))
+            c["decision"]["evidence"] = evidence
+            if (identity["authenticated"] and verdict in {"accept", "select"}
+                    and (c.get("decision_request") or {}).get("catalog") is not False
+                    and c.get("category", "review") == "review"):
+                persist_evidence(self.artifact_dir, c, evidence)
             if isinstance(payload.get("option_id"), str):
                 c["decision"]["option_id"] = payload["option_id"]
             if latency_s is not None:
@@ -3252,10 +3275,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     from .workspace import owner_data
                     if owner := owner_data(record):
                         meta["owner"] = owner
-                cache_owner = getattr(self, "server", self)
-                cached = getattr(cache_owner, "_content_stamps", {})
-                if cached:
-                    meta["content_stamps"] = {**meta.get("content_stamps", {}), **cached}
                 return meta
             except Exception:
                 return {}

@@ -8,11 +8,11 @@ from agent_annotate.approval_catalog import (
     bind_evidence,
     catalog_meta,
     item_id,
+    persist_evidence,
     promote,
     read_bundle,
     render_plan,
     seal_review,
-    view_image,
 )
 from agent_annotate.categories import publish_plan_revision
 
@@ -29,6 +29,8 @@ def decide(directory, store, comment, token, verdict="accept", text=None, ts=Non
     comment["decision"] = {"verdict": verdict, "text": text, "ts": ts, "by": "chang@example.com",
                            "catalog_eligible": True,
                            "evidence": bind_evidence(directory, store, comment, token)}
+    if verdict in {"accept", "select"} and comment["decision_request"].get("catalog") is not False:
+        persist_evidence(directory, comment, comment["decision"]["evidence"])
     promote(directory, store, comment)
     return store.get("approved_plans", {}).get(item_id(comment))
 
@@ -65,8 +67,8 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
     bundle = read_bundle(tmp_path, plan["history"][0]["evidence_revision"])
     pinned = next(iter(bundle["assets"]))
     assert (tmp_path / pinned).read_bytes() == b"first-image"
-    assert '/api/review-evidence/' in shown
-    assert view_image(tmp_path, tokens[comment["id"]]["view"], pinned.split("/")[-1]) == b"first-image"
+    assert shown == html
+    assert 'src="assets/screen.png"' in shown
     assert './' + pinned in render_plan(tmp_path, plan, "v1")
 
 
@@ -198,16 +200,36 @@ def test_row_evidence_remains_a_valid_standalone_table(tmp_path):
     assert '<table><tbody><tr data-anchor-id="row:one"><td>Exact row</td></tr></tbody></table>' in render_plan(tmp_path, plan, "v1")
 
 
-def test_expired_view_before_send_files_incomplete_card_instead(tmp_path):
+def test_persisted_vote_survives_expired_view_before_send(tmp_path):
     from agent_annotate.approval_catalog import _VIEWS
     comment = card()
     store = {"anchors": {"d:q1": [comment]}}
     token = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
     comment["decision"] = {"verdict": "accept", "ts": "2026-10-16T10:00:00Z", "by": "reviewer", "catalog_eligible": True,
                            "evidence": bind_evidence(tmp_path, store, comment, token)}
+    persist_evidence(tmp_path, comment, comment["decision"]["evidence"])
     _VIEWS.clear()
     promote(tmp_path, store, comment)
-    assert store["approved_plans"][item_id(comment)]["history"][0]["evidence_incomplete"]
+    plan = store["approved_plans"][item_id(comment)]
+    assert not plan["history"][0]["evidence_incomplete"]
+    assert "Design one" in render_plan(tmp_path, plan, "v1")
+
+
+def test_changed_image_at_vote_is_flagged_and_never_pinned_as_reviewed(tmp_path):
+    (tmp_path / "assets").mkdir()
+    original = tmp_path / "assets/screen.png"
+    original.write_bytes(b"shown-image")
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", 'Full details<img src="assets/screen.png">')
+    shown, tokens = seal_review(tmp_path, html, "v1", store)
+    original.write_bytes(b"changed-before-vote")
+    plan = decide(tmp_path, store, comment, tokens[comment["id"]])
+    assert shown == html
+    assert plan["history"][0]["evidence_incomplete"]
+    assert "changed since view" in render_plan(tmp_path, plan, "v1")
+    assert "data-evidence-image-unavailable" in render_plan(tmp_path, plan, "v1")
+    assert not (tmp_path / "attachments").exists()
 
 
 def test_same_card_new_decisions_always_supersede_even_with_one_view(tmp_path):

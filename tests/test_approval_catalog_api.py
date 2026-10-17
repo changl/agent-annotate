@@ -166,7 +166,7 @@ def test_same_card_accept_select_accept_creates_three_committed_decisions(server
     assert len(_events(bus, "round_submitted")) == 3
 
 
-def test_review_gets_are_read_only_including_image_capture_and_stamps(server):
+def test_evidence_gets_add_no_writes_beyond_the_existing_fingerprint_cache(server):
     httpd, directory, _ = server
     comment = seed(server)
     (directory / "assets").mkdir()
@@ -174,6 +174,7 @@ def test_review_gets_are_read_only_including_image_capture_and_stamps(server):
     content = directory / "content/v1.html"
     content.write_text(content.read_text().replace("Complete evidence", '<img src="assets/cited.png">'))
     (directory / ".comments.json.lock").unlink()
+    token(httpd, comment)  # origin/main's existing fingerprint-cache write.
     def snapshot():
         return {str(path.relative_to(directory)): (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns)
                 for path in directory.rglob("*") if path.is_file()}
@@ -186,9 +187,10 @@ def test_review_gets_are_read_only_including_image_capture_and_stamps(server):
     assert snapshot() == before
     assert not (directory / "approval-evidence").exists()
     assert not (directory / "attachments").exists()
-    # Drafts are writes to feedback, but still do not persist evidence bundles.
+    # The accept POST persists evidence before Send, while Plans remains empty.
     vote(httpd, comment, evidence, defer_push=True)
-    assert not (directory / "approval-evidence").exists()
+    assert (directory / "approval-evidence").is_dir()
+    assert plans(httpd) == []
     _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")
     assert (directory / "approval-evidence").is_dir()
 
@@ -265,3 +267,113 @@ def test_manual_publish_checks_managed_identity_under_the_store_lock(server, mon
     assert not thread.is_alive() and errors
     assert "reviewer decisions" in errors[0]
     assert not (directory / "plans/managed/versions").exists()
+
+
+@pytest.mark.parametrize("loss", ["restart", "eviction"])
+@pytest.mark.parametrize("verdict", ["accept", "select"])
+def test_vote_evidence_survives_restart_or_eviction_before_send(server, loss, verdict):
+    from agent_annotate.approval_catalog import _VIEWS, read_bundle
+    httpd, directory, _ = server
+    comment = seed(server)
+    (directory / "assets").mkdir()
+    original = directory / "assets/cited.png"
+    original.write_bytes(b"reviewed-image")
+    source = directory / "content/v1.html"
+    source.write_text(source.read_text().replace("Complete evidence", '<img src="assets/cited.png">'))
+    evidence = token(httpd, comment)
+    posted = vote(httpd, comment, evidence, verdict, text="Yes" if verdict == "select" else None, defer_push=True)
+    saved = posted["decision"]["evidence"]
+    assert saved["committed"] and plans(httpd) == []
+    bundle = read_bundle(directory, saved["revision"])
+    pinned = next(iter(bundle["assets"]))
+    assert (directory / pinned).read_bytes() == b"reviewed-image"
+    original.write_bytes(b"changed-after-vote")
+    if loss == "eviction":
+        for _ in range(17):
+            token(httpd, comment)
+    else:
+        _VIEWS.clear()
+    assert (str(directory), evidence["view"]) not in _VIEWS
+    receiver = httpd
+    if loss == "restart":
+        receiver = type(httpd)(("127.0.0.1", 0), httpd.RequestHandlerClass)
+        thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+        thread.start()
+    try:
+        assert _call(receiver, "POST", "/api/rounds/submit", {}, author="chang@example.com")[0] == 200
+        plan = plans(receiver)[0]
+        assert len(plan["history"]) == 1 and not plan["history"][0]["evidence_incomplete"]
+        assert plan["history"][0]["evidence_revision"] == saved["revision"]
+        assert (directory / pinned).read_bytes() == b"reviewed-image"
+        assert b"First design" in _call(receiver, "GET", f"/plans/{plan['id']}/v1.html")[1]
+    finally:
+        if receiver is not httpd:
+            receiver.shutdown()
+            receiver.server_close()
+            thread.join(timeout=2)
+
+
+def test_review_keeps_image_and_link_urls_working_after_cache_eviction(server):
+    from agent_annotate.approval_catalog import _VIEWS
+    httpd, directory, _ = server
+    comment = seed(server)
+    (directory / "assets").mkdir()
+    (directory / "assets/cited.png").write_bytes(b"image")
+    source = directory / "content/v1.html"
+    source.write_text(source.read_text().replace("Complete evidence", '<img src="assets/cited.png">')
+                      .replace("</body>", '<img src="assets/cited.png"><a href="assets/cited.png">Original</a></body>'))
+    status, html = _call(httpd, "GET", "/content?v=v1")
+    assert status == 200 and html.count(b'src="assets/cited.png"') == 2
+    assert b'href="assets/cited.png"' in html and b"/api/review-evidence/" not in html
+    for _ in range(17):
+        token(httpd, comment)
+    _VIEWS.clear()
+    assert _call(httpd, "GET", "/assets/cited.png") == (200, b"image")
+
+
+@pytest.mark.parametrize("with_token", [False, True])
+def test_repeated_immediate_accept_is_idempotent_even_after_cache_loss(server, with_token):
+    from agent_annotate.approval_catalog import _VIEWS
+    httpd, _, bus = server
+    comment = seed(server)
+    evidence = token(httpd, comment) if with_token else None
+    first = vote(httpd, comment, evidence)
+    _VIEWS.clear()
+    for _ in range(2):
+        repeated = vote(httpd, comment, evidence)
+        assert repeated["delivery"] == "noop"
+        assert repeated["decision"]["id"] == first["decision"]["id"]
+    assert len(plans(httpd)[0]["history"]) == 1
+    assert len(_events(bus, "session_push")) == 1
+
+
+def test_unnumbered_carry_and_new_comment_reask_preserve_lineage(server):
+    httpd, directory, _ = server
+    (directory / "versions").mkdir()
+    (directory / "versions/v2.html").write_text('<p data-anchor-id="s:new">Moved evidence</p>')
+    status, first = _call(httpd, "POST", "/api/comments", _card("s:old"))
+    assert status == 201
+    status, carried = _call(httpd, "PUT", f"/api/comments/{first['id']}", {"carry_forward": {"version": "v2", "anchor_id": "s:new"}})
+    assert status == 200 and carried["origin_id"] == first["id"]
+    assert item_id(carried) == item_id(first)
+    _call(httpd, "POST", f"/api/comments/{first['id']}/decision", {"verdict": "accept"}, author="chang@example.com")
+    status, result = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
+        {**_card("s:new", prompt="Revised proposal?"), "version": "v3"}]})
+    assert status == 200 and result["created"] == 1
+    reasked = _store(directory)["anchors"]["s:new"][-1]
+    assert reasked["id"] != first["id"] and reasked["origin_id"] == first["id"]
+    assert item_id(reasked) == item_id(first)
+
+
+def test_unnumbered_reask_does_not_merge_ambiguous_shared_anchor_cards(server):
+    httpd, _, _ = server
+    first = _call(httpd, "POST", "/api/comments", _card("s:shared", prompt="First?"))[1]
+    second = _call(httpd, "POST", "/api/comments", _card("s:shared", prompt="Second?"))[1]
+    for comment in (first, second):
+        _call(httpd, "POST", f"/api/comments/{comment['id']}/decision", {"verdict": "accept"}, author="chang@example.com")
+    status, _ = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
+        {**_card("s:shared", prompt="Another?"), "version": "v2"}]})
+    assert status == 200
+    comments = _call(httpd, "GET", "/api/comments")[1]
+    third = next(c for c in comments if c["text"] == "Another?")
+    assert item_id(third) not in {item_id(first), item_id(second)}

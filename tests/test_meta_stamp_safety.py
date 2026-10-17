@@ -80,3 +80,15 @@ def test_up_to_date_stamp_does_not_rewrite_meta(tmp_path):
 
     assert (tmp_path / "current.meta.json").stat().st_mtime_ns == before
     assert _meta(tmp_path)["content_stamps"]["v1"]["whole"] == "cached"
+
+
+def test_new_fingerprint_is_persisted_and_available_to_a_fresh_handler(tmp_path):
+    (tmp_path / "content").mkdir()
+    doc = tmp_path / "content/v1.html"
+    doc.write_text('<section data-anchor-id="s:one">Published content</section>')
+    _write_meta(tmp_path, {"current": "v1", "history": [{"version": "v1"}]})
+    _Handler(tmp_path)._ensure_content_stamp("v1", doc.read_text(), doc)
+    restarted = _Handler(tmp_path)
+    stamp = restarted._read_meta()["content_stamps"]["v1"]
+    assert stamp["whole"] == sync_server.compute_content_stamps(doc.read_text())["whole"]
+    assert stamp["_mtime"] == doc.stat().st_mtime
