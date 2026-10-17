@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Reviewer Send now and review rounds file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe decision identities. Accept/select POSTs persist their evidence and verified cited images before Send, so restarts and view eviction preserve drafts; Review keeps original image URLs and its existing on-disk fingerprint cache. Later corrections become current, duplicate immediate accepts are idempotent, carried/re-asked cards retain lineage, and incomplete evidence never blocks a vote. Agent and legacy votes are excluded, and Plans shows the chosen option with a local decided time.
+- History rail: the whole Sent rounds section folds and unfolds as one unit, folded by default, with the number of rounds in its summary; each round keeps its own disclosure.
 
 ## 2.26.3
 

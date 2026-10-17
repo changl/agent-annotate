@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, history, ready, section
+from single_page import browser_page, feedback, history, ready, section, sent
 from test_card_layout import CHROME
 from test_single_page_acceptance import workspace  # noqa: F401
 
@@ -30,6 +30,7 @@ def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path,
         ready(page)
         history(page)
         page.locator('[data-hist-filter="all"]').click()
+        sent(page)
         summary = page.locator("#hist-sent-body .unified-receipt summary")
         summary.wait_for()
         assert summary.inner_text().startswith("Feedback saved (1)"), summary.inner_text()

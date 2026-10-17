@@ -38,6 +38,14 @@ def history(page):
     page.locator("#history-body").wait_for(state="visible")
 
 
+def sent(page):
+    # Sent rounds folds as one unit, folded by default; open it in History.
+    fold = page.locator("#hist-sent > details")
+    fold.wait_for(state="visible")
+    if fold.get_attribute("open") is None:
+        fold.locator("> summary").click()
+
+
 def section(page, key, root="#comment-list"):
     feedback(page)
     head = page.locator(f'{root} [data-section-toggle="{key}"], {root} [data-sec-toggle="{key}"]')

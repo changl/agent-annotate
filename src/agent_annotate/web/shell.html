@@ -169,9 +169,12 @@
           <div class="vrail-body" id="vrail-body-plans" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
         </details>
       </section>
-      <section class="hist-section" id="hist-sent" aria-labelledby="hist-sent-lbl">
-        <h3 class="hist-lbl" id="hist-sent-lbl">Sent rounds</h3>
-        <div id="hist-sent-body"></div>
+      <!-- Folded by default, as one unit; each round keeps its own fold -->
+      <section class="hist-section" id="hist-sent" aria-label="Sent rounds">
+        <details class="hist-collapse">
+          <summary class="hist-lbl" id="hist-sent-lbl">Sent rounds <span class="badge badge-xs badge-ghost" id="hist-sent-count">0</span></summary>
+          <div id="hist-sent-body"></div>
+        </details>
       </section>
       <section class="hist-section" id="hist-withdrawn" aria-labelledby="hist-withdrawn-lbl" hidden>
         <h3 class="hist-lbl" id="hist-withdrawn-lbl">Withdrawn questions</h3>

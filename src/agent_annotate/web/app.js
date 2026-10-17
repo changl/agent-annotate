@@ -495,6 +495,7 @@
     const list = rs.map(r => Object.assign({}, r, { items: r.items.filter(it => shown.includes(it.cat)) })).filter(r => r.items.length);
     el.innerHTML = list.length ? list.map(r => `<details class="unified-receipt"><summary>${esc(r.result)} · ${esc(UI.fmtTs(r.ts))}</summary><ul>${r.items.map(it => `<li>${tagHtml(it.cat)} ${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul></details>`).join('')
       : '';
+    $('#hist-sent-count').textContent = list.length;
     // As in the accepted History: the section shows once something was sent.
     $('#hist-sent').hidden = !list.length;
   }
