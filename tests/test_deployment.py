@@ -50,7 +50,7 @@ def estate(tmp_path, monkeypatch):
         cli._save_state_for_project("reviews", {"project": "reviews", "slugs": records})
         return record
 
-    def running():
+    def running(**kwargs):
         result = {}
         for process in processes.values():
             result.setdefault(process["directory"], []).append({"pid": process["pid"], "port": process["port"]})
@@ -77,10 +77,15 @@ def estate(tmp_path, monkeypatch):
         return SimpleNamespace(pid=pid)
 
     monkeypatch.setattr(cli, "_running_servers", running)
-    monkeypatch.setattr(cli, "_port_listen_pid", lambda port: next((p["pid"] for p in processes.values() if p["port"] == port), None))
+    def capabilities(port, base_path="", **kwargs):
+        process = next((p for p in processes.values() if p["port"] == port), None)
+        return ({"pid": process["pid"], "slug_dir": process["directory"], "port": port,
+                 "public_base_path": base_path} if process else None)
+    monkeypatch.setattr(cli, "_server_capabilities", capabilities)
+    monkeypatch.setattr(cli, "_port_is_free", lambda port: not any(p["port"] == port for p in processes.values()))
     monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid in processes)
     monkeypatch.setattr(cli, "_stop_server", stop)
-    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid: pid in processes)
+    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, **kwargs: pid in processes)
     monkeypatch.setattr(deployment.subprocess, "run", run)
     monkeypatch.setattr(deployment.subprocess, "Popen", spawn)
     monkeypatch.setattr(deployment, "_target_manifest", lambda python: copy.deepcopy(MANIFEST))
@@ -125,7 +130,7 @@ def test_duplicate_live_servers_refuse_before_any_stop(estate):
 
 
 def test_foreign_listener_refuses_before_any_stop(estate, monkeypatch):
-    monkeypatch.setattr(cli, "_port_listen_pid", lambda port: 444)
+    monkeypatch.setattr(cli, "_server_capabilities", lambda *a, **kw: {"pid": 444, "slug_dir": "/foreign"})
     with pytest.raises(deployment.DeploymentError, match="listener"):
         deployment.activate_runtime(estate.new)
     assert estate.stops == []
@@ -142,7 +147,7 @@ def test_process_command_must_match_resolved_directory(estate):
 def test_identity_rechecked_immediately_before_stop(estate, monkeypatch):
     original = cli._running_servers
     reads = [0]
-    def running():
+    def running(**kwargs):
         reads[0] += 1
         if reads[0] == 2:
             estate.processes[20] = {**estate.processes.pop(10), "pid": 20}

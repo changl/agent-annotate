@@ -504,25 +504,49 @@ def _transport_opts(cfg: dict) -> dict:
     return {k: v for k, v in (cfg or {}).items() if k not in _PROJECT_CORE_KEYS}
 
 
-def _port_listen_pid(port: int) -> int | None:
-    """Return the PID of the first process LISTENing on TCP `port`, or None.
+def _port_is_free(port: int) -> bool:
+    """Bind the sync server's exact address, allowing reuse of TIME_WAIT only."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("localhost", port))
+        except OSError:
+            return False
+    return True
 
-    Raises on lsof failure/absence — callers must catch and fall back rather
-    than trusting an unchecked port as free.
+
+def _server_capabilities(port: int, base_path: str = "", *, timeout: float = 1.0) -> dict | None:
+    """Read localhost identity; only connection refusal AND a bind prove free.
+
+    Reported identity is untrusted until deployment._identity corroborates ps.
+    Never follow redirects or proxies to identify a local port.
     """
-    result = subprocess.run(
-        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    for line in result.stdout.splitlines():
-        if line.startswith("p"):
-            try:
-                return int(line[1:])
-            except ValueError:
-                continue
-    return None
+    import errno
+    import urllib.error
+    import urllib.request
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        url = f"http://127.0.0.1:{port}{base_path}/api/capabilities"
+        request = urllib.request.Request(url, headers={"X-Annotate-Identity": "1"})
+        with opener.open(request, timeout=timeout) as response:
+            payload = json.loads(response.read(1024 * 1024 + 1))
+        if (not isinstance(payload, dict) or type(payload.get("pid")) is not int or payload["pid"] <= 0
+                or not isinstance(payload.get("slug_dir"), str) or not Path(payload["slug_dir"]).is_absolute()
+                or payload.get("port") != port or payload.get("public_base_path") != base_path):
+            raise ValueError("capabilities lack matching page server identity")
+        return payload
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, OSError) and exc.reason.errno == errno.ECONNREFUSED and _port_is_free(port):
+            return None
+        raise RuntimeError(f"unknown occupant on port {port}: capabilities unavailable ({exc.reason})") from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"unknown occupant on port {port}: invalid capabilities ({exc})") from exc
 
 
 def _find_free_port_after(start: int, registered_pid: int | None = None) -> int:
@@ -548,46 +572,13 @@ def _find_free_port_after(start: int, registered_pid: int | None = None) -> int:
 
     Binding the same address the server does makes SO_REUSEADDR safe: it
     reuses TIME_WAIT but is still refused by an active LISTEN on that exact
-    address. The lsof cross-check below stays as the second opinion.
+    address.
     """
-    import socket
     p = start
-    lsof_ok = True
-    conflicting_pids: set[int] = set()
     while p < start + 50:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(("localhost", p))
-            except OSError:
-                p += 1
-                continue
-        if lsof_ok:
-            try:
-                listen_pid = _port_listen_pid(p)
-            except (OSError, subprocess.SubprocessError) as e:
-                print(
-                    f"WARN: port-liveness check unavailable ({e}); trusting OS bind test only",
-                    file=sys.stderr,
-                )
-                lsof_ok = False
-                listen_pid = None
-            if (
-                listen_pid is not None
-                and listen_pid != registered_pid
-                and registered_pid is not None
-                and not _is_process_alive(registered_pid)
-                and _is_process_alive(listen_pid)
-            ):
-                conflicting_pids.add(listen_pid)
-                p += 1
-                continue
-        return p
-    if conflicting_pids:
-        raise RuntimeError(
-            f"No free port found in [{start}, {start+50}) — "
-            f"held by other process(es): {', '.join(str(pid) for pid in sorted(conflicting_pids))}"
-        )
+        if _port_is_free(p):
+            return p
+        p += 1
     raise RuntimeError(f"No free port found in [{start}, {start+50})")
 
 
@@ -3371,17 +3362,18 @@ REVIVE_LABEL = "com.agent-annotate.revive"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
-def _wait_listening(port: int, pid: int, seconds: float = 8.0) -> bool:
-    """True once `pid` is alive and something LISTENs on `port`."""
+def _wait_listening(port: int, pid: int, seconds: float = 8.0, *, base_path: str = "") -> bool:
+    """Wait for this live process to report its identity on the page mount."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if not _is_process_alive(pid):
             return False
         try:
-            if _port_listen_pid(port) is not None:
+            capabilities = _server_capabilities(port, base_path, timeout=min(1.0, max(0.01, deadline - time.monotonic())))
+            if capabilities is not None and capabilities["pid"] == pid:
                 return True
-        except (OSError, subprocess.SubprocessError):
-            return _is_process_alive(pid)
+        except RuntimeError:
+            pass  # A starting server may have bound before it can answer.
         time.sleep(0.25)
     return False
 
@@ -3531,7 +3523,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         bus_dir = BUS_ROOT / project
         bus_dir.mkdir(parents=True, exist_ok=True)
         pid = _start_server(slug_dir, port, bus_dir, pbp)
-        if not _wait_listening(port, pid):
+        if not _wait_listening(port, pid, base_path=pbp or ""):
             return "failed", f"server exited; see {LOG_DIR / (slug_dir.name + '.log')}"
         from .updates import runtime_manifest
         record.update({
@@ -4605,6 +4597,17 @@ def cmd_withdraw(args) -> int:
         print("ERROR: question not found or number is ambiguous; use its comment id", file=sys.stderr)
         return 2
     args.comment_id = matches[0]["id"]
+    if getattr(args, "dry_run", False):
+        from .sync_server import DecisionRequestError, _withdraw_decision
+        try:
+            _withdraw_decision(dict(matches[0]), args.why, _resolve_author(getattr(args, "author", None)))
+        except DecisionRequestError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        summary = {"dry_run": True, "action": "withdraw", "id": args.comment_id, "why": args.why}
+        print(json.dumps(summary) if getattr(args, "json", False)
+              else f"dry run: would withdraw question {args.comment_id}: {args.why}")
+        return 0
     return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}",
                          {"decision_request": None, "withdraw_reason": args.why}, done="withdrawn")
 
@@ -5021,7 +5024,6 @@ def cmd_doctor(args) -> int:
             ours = False
     node = shutil.which("node")
     codex = shutil.which("codex")
-    lsof = shutil.which("lsof")
     checks = [
         ("version", True, __version__),
         ("invocation", True, _inv()),
@@ -5042,7 +5044,6 @@ def cmd_doctor(args) -> int:
         ("codex_start", _hook_registered("SessionStart", provider="codex"),
          f"{CODEX_HOOKS_JSON}; trust in Codex /hooks"),
         ("node", node is not None, node or "not found; inline JS lint unavailable"),
-        ("lsof", lsof is not None, lsof or "not found; port liveness falls back to the bind test"),
         ("codex", codex is not None, codex or "not found; Codex adapter unavailable"),
         ("session", _session_id() != "unknown", _session_id()),
     ]
@@ -5567,6 +5568,7 @@ def build_parser(*, all_commands=False):
     sp_withdraw.add_argument("--project", default=None)
     sp_withdraw.add_argument("--author", default=None)
     sp_withdraw.add_argument("--json", action="store_true")
+    sp_withdraw.add_argument("--dry-run", action="store_true", help="report the question to withdraw; write nothing")
     sp_withdraw.set_defaults(func=cmd_withdraw)
 
     sp_resolve = sub.add_parser(
@@ -5642,7 +5644,15 @@ def run_command(args):
     writes = {"new", "publish", "publish-version", "claim", "ask", "finding", "plan",
               "withdraw", "archive", "unarchive", "addressed", "resolve", "carry", "archive-comment"}
     writing = args.cmd in writes or (args.cmd in {"project", "copy", "library"} and args.from_file)
+    dry_run = getattr(args, "dry_run", False) or (args.cmd == "prune-bus" and not args.apply)
     if not writing or getattr(args, "example", False):
+        if dry_run and not getattr(args, "json", False):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                rc = args.func(args)
+            detail = output.getvalue()
+            print((f"dry run: would {args.cmd}\n" if not rc else "") + detail.lstrip(), end="")
+            return rc
         return args.func(args)
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -5679,7 +5689,8 @@ def run_command(args):
         for line in detail.splitlines():
             if "WARN" in line or "UNVERIFIED" in line:
                 print(line.strip(), file=sys.stderr)
-        print(f"{args.cmd} {raw or directory or ''} — {url or 'no page URL available'}")
+        prefix = "dry run: would " if dry_run else ""
+        print(f"{prefix}{args.cmd} {raw or directory or ''} — {url or 'no page URL available'}")
     return rc
 
 

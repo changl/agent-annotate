@@ -41,7 +41,7 @@ def estate(tmp_path, monkeypatch):
                               "argv": deployment._arguments(record, Path(sys.executable))}
         return record
 
-    def running():
+    def running(**kwargs):
         result = {}
         for p in processes.values():
             result.setdefault(p["directory"], []).append({"pid": p["pid"], "port": p["port"]})
@@ -64,7 +64,12 @@ def estate(tmp_path, monkeypatch):
         return copy.deepcopy(behavior["result"])
 
     monkeypatch.setattr(cli, "_running_servers", running)
-    monkeypatch.setattr(cli, "_port_listen_pid", lambda port: next((p["pid"] for p in processes.values() if p["port"] == port), None))
+    def capabilities(port, base_path="", **kwargs):
+        process = next((p for p in processes.values() if p["port"] == port), None)
+        return ({"pid": process["pid"], "slug_dir": process["directory"], "port": port,
+                 "public_base_path": base_path} if process else None)
+    monkeypatch.setattr(cli, "_server_capabilities", capabilities)
+    monkeypatch.setattr(cli, "_port_is_free", lambda port: not any(p["port"] == port for p in processes.values()))
     monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid in processes or pid in foreign)
     monkeypatch.setattr(cli, "_project_config", lambda project: {})
     monkeypatch.setattr(cli, "_session_id", lambda: "mine")
@@ -114,9 +119,10 @@ def test_recycled_record_pid_is_never_signaled(estate):
     estate.add()
     estate.processes.pop(10)
     estate.foreign.add(10)
-    assert cleanup() == 1
-    assert estate.signals == estate.routes == []
-    assert "shared" in cli._load_state_for_project("alpha")["slugs"]
+    assert cleanup() == 0  # Refused connection plus a bind proves the page port is free.
+    assert estate.signals == []
+    assert "shared" not in cli._load_state_for_project("alpha")["slugs"]
+    assert 10 in estate.foreign
 
 
 def test_restarted_owned_server_uses_current_pid_not_stale_record(estate):
@@ -133,7 +139,7 @@ def test_restarted_owned_server_uses_current_pid_not_stale_record(estate):
 def test_owned_process_proof_precedes_transport_removal(estate, monkeypatch, fault):
     estate.add()
     if fault == "listener":
-        monkeypatch.setattr(cli, "_port_listen_pid", lambda port: 999)
+        monkeypatch.setattr(cli, "_server_capabilities", lambda *a, **kw: {"pid": 999, "slug_dir": "/foreign"})
     elif fault == "argv":
         estate.processes[10]["argv"][-1] = "/different"
     else:
@@ -180,7 +186,7 @@ def test_process_identity_change_after_route_removal_sends_no_signal(estate, mon
     estate.add()
     original = cli._running_servers
     calls = [0]
-    def changed():
+    def changed(**kwargs):
         calls[0] += 1
         if calls[0] == 2:
             estate.processes[20] = {**estate.processes.pop(10), "pid": 20}

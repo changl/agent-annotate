@@ -978,6 +978,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return True
             self._respond(403, b'{"error":"authenticated proxy boundary required"}')
             return False
+        if (self.command == "GET" and self._strip_base(path) == "/api/capabilities"
+                and self._is_identity_probe()):
+            return True  # Process health must not depend on page-store I/O.
         try:
             for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
                 _contained_path(self.artifact_dir, name)
@@ -1210,6 +1213,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(308, b"", extra_headers={"Location": location})
             return
         route_path = self._strip_base(parsed.path)
+        if self.v2_mode and route_path == "/api/capabilities":
+            return self._v2_get_capabilities(parsed)
         if self._redirect_moved(parsed, route_path):
             return
 
@@ -1226,8 +1231,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._v2_get_share_link()
             if route_path == "/api/session-monitor":
                 return self._v2_get_session_monitor(parsed)
-            if route_path == "/api/capabilities":
-                return self._v2_get_capabilities(parsed)
             if route_path == "/api/delivery":
                 from .delivery import delivery_status
                 return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
@@ -1400,11 +1403,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .version_guard import cached_server_status
         return cached_server_status(*VERSION_GUARD_PAGE)
 
+    def _is_identity_probe(self):
+        return (self.headers.get("X-Annotate-Identity") == "1" and self._is_direct_loopback_request()
+                and not self.headers.get("Origin") and not self.headers.get("Sec-Fetch-Site"))
+
     def _v2_get_capabilities(self, parsed):
         from . import __version__
-        self._respond(200, json.dumps({
+        identity = {
             "version": __version__,
+            "pid": os.getpid(),
+            "slug_dir": str(self.artifact_dir),
+            "port": self.server.server_address[1],
+            "public_base_path": self.public_base_path,
             "runtime": RUNTIME_MANIFEST,
+        }
+        if self._is_identity_probe():
+            return self._respond(200, json.dumps(identity).encode(), "application/json", cache_control="no-store")
+        self._respond(200, json.dumps({
+            **identity,
             "version_guard": None if self._moved() else self._version_guard(),
             "archive": True,
             "read_only": self._moved() is not None,
@@ -3690,7 +3706,7 @@ def make_handler(
 ) -> type:
     class BoundHandler(AnnotateHandler):
         pass
-    BoundHandler.artifact_dir = artifact_dir
+    BoundHandler.artifact_dir = artifact_dir.resolve()
     BoundHandler.artifact_file = artifact_file
     BoundHandler.public_base_path = public_base_path
     BoundHandler.slug = slug
