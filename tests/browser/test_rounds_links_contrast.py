@@ -311,6 +311,40 @@ def test_sent_rounds_fold_as_one_unit_with_the_count_showing(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_each_sent_round_starts_with_the_page_version_it_was_sent_on(tmp_path):
+    directory, process, base = _fixture(tmp_path)
+    try:
+        # A later round with no recorded version keeps today's line.
+        rounds = directory / "rounds.ndjson"
+        first = json.loads(rounds.read_text().splitlines()[0])
+        assert first["version"] == "v1"
+        bare = dict(first, id="bare", send_id="bare", ts="2026-10-03T09:00:00Z")
+        bare.pop("version")
+        with rounds.open("a") as out:
+            out.write(json.dumps(bare) + "\n")
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            for width, height in ((390, 844), (1440, 900)):
+                page = browser.new_page(viewport={"width": width, "height": height})
+                page.set_default_timeout(5000)
+                page.goto(base + "#view=review", wait_until="networkidle")
+                ready(page)
+                history(page)
+                sent(page)
+                lines = page.locator("#hist-sent-body .unified-receipt > summary")
+                playwright.expect(lines).to_have_count(2)
+                labelled, plain = sorted(lines.all_inner_texts(), key=lambda t: not t.startswith("v1 · "))
+                assert labelled.startswith("v1 · "), labelled
+                assert plain.startswith(("Feedback saved (", "Sent (", "⏳", "✅")), plain
+                assert labelled.split(" · ")[1] == plain.split(" · ")[0], (labelled, plain)
+                page.close()
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_open_waiting_history_counts_match_cards_with_pending_drafts(tmp_path):
     directory, process, base = _fixture(tmp_path)
     try:

@@ -33,5 +33,6 @@ def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path,
         sent(page)
         summary = page.locator("#hist-sent-body .unified-receipt summary")
         summary.wait_for()
-        assert summary.inner_text().startswith("Feedback saved (1)"), summary.inner_text()
+        # The line starts with the page version the round was sent on.
+        assert summary.inner_text().startswith(rounds[0]["version"] + " · Feedback saved (1)"), summary.inner_text()
         playwright.expect(page.locator("#send-note")).to_contain_text("Feedback saved (1)")
