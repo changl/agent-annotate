@@ -338,6 +338,33 @@ def test_version_hint_shows_only_for_the_document_on_screen(tmp_path, workspace)
         expect(page.locator('.hist-cat[data-cat="review"] .unified-history-hint')).to_be_hidden()
 
 
+def test_review_versions_come_first_and_collapse_like_a_sent_round(tmp_path, versions):
+    with opened(tmp_path, versions) as (page, _, _b):
+        history(page)
+        sections = page.locator("#history-body > .hist-section")
+        expect(sections.first).to_have_attribute("data-cat", "review")
+        fold = page.locator('.hist-cat[data-cat="review"] > details.hist-collapse')
+        summary = fold.locator("> summary")
+        # Open by default: the versions need no click.
+        expect(fold).to_have_attribute("open", "")
+        expect(page.locator("#vrail-body-review")).to_be_visible()
+        summary.click()
+        expect(fold).not_to_have_attribute("open", "")
+        expect(page.locator("#vrail-body-review")).to_be_hidden()
+        # The same native keyboard as a sent round's summary.
+        summary.focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#vrail-body-review")).to_be_visible()
+        page.keyboard.press("Space")
+        expect(page.locator("#vrail-body-review")).to_be_hidden()
+        # Nothing is remembered: a reload opens it again.
+        page.reload(wait_until="networkidle")
+        ready(page)
+        history(page)
+        expect(fold).to_have_attribute("open", "")
+        expect(page.locator("#vrail-body-review")).to_be_visible()
+
+
 def test_one_tab_page_has_no_filter_no_menu_and_a_clean_address(tmp_path, versions):
     with opened(tmp_path, versions, "#view=library") as (page, _, _b):
         assert page.evaluate("document.body.dataset.view") == "review"

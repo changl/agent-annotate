@@ -140,6 +140,15 @@
     <!-- History: one for the project; each part tagged with its tab -->
     <div class="drawer-body tab-pane" id="history-body" role="tabpanel" aria-labelledby="tab-history" hidden>
       <div class="hist-filter" id="hist-filter" role="group" aria-label="Show the history of"></div>
+      <!-- Review versions first; it collapses like a sent round, open by default -->
+      <section class="hist-section hist-cat" data-cat="review" aria-label="Review history">
+        <details class="hist-collapse" open>
+          <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Review</span> Versions</summary>
+          <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
+          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+          <div class="vrail-body" id="vrail-body-review" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
+        </details>
+      </section>
       <section class="hist-section" id="hist-sent" aria-labelledby="hist-sent-lbl">
         <h3 class="hist-lbl" id="hist-sent-lbl">Sent rounds</h3>
         <div id="hist-sent-body"></div>
@@ -147,12 +156,6 @@
       <section class="hist-section" id="hist-withdrawn" aria-labelledby="hist-withdrawn-lbl" hidden>
         <h3 class="hist-lbl" id="hist-withdrawn-lbl">Withdrawn questions</h3>
         <div id="hist-withdrawn-body"></div>
-      </section>
-      <section class="hist-section hist-cat" data-cat="review" aria-label="Review history">
-        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Review</span> Versions</h3>
-        <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
-        <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
-        <div class="vrail-body" id="vrail-body-review" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
       </section>
       <section class="hist-section hist-cat" data-cat="library" aria-label="Library history" hidden>
         <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Library</span> <span id="hist-library-title">This item</span></h3>

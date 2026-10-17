@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- History rail: Review versions come first and the whole section collapses with the same disclosure as a sent round, open by default.
+
 ## 2.26.2
 
 Decision #25 on the agent-annotate page: find page servers without lsof.
