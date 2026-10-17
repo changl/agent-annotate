@@ -1210,13 +1210,15 @@ function ensureStripLayer() {
 // The server resolves author identity from trusted OAuth/proxy headers, not
 // from the request body (see sync_server.py _identity()) — so unlike the
 // rail card's shell.js equivalents, these never need to pass author fields.
-async function stripApiDecision(id, verdict, text) {
+async function stripApiDecision(id, verdict, text, optionId) {
   try {
     const r = await fetch('./api/comments/' + encodeURIComponent(id) + '/decision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // v2.19 round mode: park the verdict instead of pushing per click.
-      body: JSON.stringify({ verdict, text: text || undefined, ...(latestRounds ? { defer_push: true } : {}) }),
+      body: JSON.stringify({ verdict, text: text || undefined, option_id: optionId,
+        shown_request: Object.values(latestPins).flat().find(e => e.id === id)?.decisionRequest,
+        evidence: (META.evidence || {})[id], ...(latestRounds ? { defer_push: true } : {}) }),
     });
     if (r.status === 404 || r.status === 405) return { fallback: true };
     if (r.ok) return await r.json();
@@ -1320,13 +1322,13 @@ function swapStripItemToResolved(itemEl, verdict, deliveryMsg, pendingId) {
   }
 }
 
-async function submitStripDecision(id, verdict, text, itemEl) {
+async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   pendingDecisionIds.add(id);
   setStripItemDisabled(itemEl, true);
   const feedback = itemEl.querySelector('.annotate-decision-feedback');
   if (feedback) { feedback.classList.remove('is-error'); feedback.textContent = 'Sending…'; }
 
-  let result = await stripApiDecision(id, verdict, text);
+  let result = await stripApiDecision(id, verdict, text, optionId);
   if (!result || result.fallback) result = await stripApiDecisionFallback(id, verdict, text);
   pendingDecisionIds.delete(id);
 
@@ -1816,7 +1818,7 @@ function buildDecisionItemEl(entry) {
         const v = latestSelect ? 'select' : 'comment';
         const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
         clearDraft();
-        submitStripDecision(id, v, text, item);
+        submitStripDecision(id, v, text, item, o.id);
       });
       btnRow.appendChild(b);
     }

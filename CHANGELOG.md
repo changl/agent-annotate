@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Send now and review rounds automatically file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe cataloging; incomplete evidence never blocks a vote.
+
 ## 2.26.3
 
 - History rail: each tab's own history (Review versions, Plans revisions, the Library item, the finding) comes first, and each section collapses with the same disclosure as a sent round, open by default.

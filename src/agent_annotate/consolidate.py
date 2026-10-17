@@ -208,6 +208,8 @@ def _check_source(source: Source, target_dir: Path) -> list[str]:
     if moved and (moved.get("target") or {}).get("slug_dir") != str(Path(target_dir).resolve()):
         problems.append(f"{source.name}: already consolidated ({MARKER} exists)")
     if source.tab != "review":
+        if _read_json(directory / "comments.json", {}).get("approved_plans"):
+            problems.append(f"{source.name}: has cataloged Plans; make it the Review source")
         if (directory / "plans").is_dir() and any((directory / "plans").iterdir()):
             problems.append(f"{source.name}: has its own plans; make it the Review source or move its plans first")
         if source.tab != "library" and (directory / "copy.json").is_file():
@@ -309,6 +311,8 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
         hashes[source.name] = _hashes(source.dir)
         raw = _read_json(source.dir / "comments.json", {})
         source_store = _coerce_v2(raw)
+        if source.tab == "review" and source_store.get("approved_plans"):
+            store["approved_plans"] = source_store["approved_plans"]
         meta = _read_json(source.dir / "current.meta.json", {})
         title = _title(source.dir, meta, source.slug)
         numbers = _item_numbers(source_store)

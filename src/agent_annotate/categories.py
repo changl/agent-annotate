@@ -293,6 +293,10 @@ def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str)
 
 def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
     validate_plan_id(plan_id)
+    from .approval_catalog import catalog_meta
+    managed = _comments(page_dir).get("approved_plans", {}).get(plan_id)
+    if managed:
+        return catalog_meta(managed)
     path = safe_path(page_dir, f"plans/{plan_id}/meta.json")
     if not path.is_file():
         raise KeyError(plan_id)
@@ -300,17 +304,24 @@ def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
 
 
 def list_plans(page_dir: Path | str) -> list[dict]:
+    from .approval_catalog import catalog_meta
+    managed = [{"id": identifier, **catalog_meta(plan)} for identifier, plan in
+               _comments(page_dir).get("approved_plans", {}).items()]
+    managed.sort(key=lambda plan: plan.get("updated_at", ""), reverse=True)
     directory = safe_path(page_dir, "plans")
     if not directory.exists():
-        return []
+        return managed
     # A folder without meta.json (notes, a half-copied plan) is not a plan.
-    return [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
-            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()]
+    return managed + [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
+            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()
+            and p.name not in {plan["id"] for plan in managed}]
 
 
 def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, title: str | None = None,
                           label: str | None = None) -> dict:
     validate_plan_id(plan_id)
+    if plan_id in _comments(page_dir).get("approved_plans", {}):
+        raise ValueError("this item is filed by reviewer decisions; publish its next revision in Review")
     if not isinstance(html, str) or not html.strip() or len(html.encode()) > MAX_PLAN_BYTES:
         raise ValueError("plan HTML must be nonempty and at most 4 MB")
     if title is not None:

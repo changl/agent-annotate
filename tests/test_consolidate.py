@@ -131,6 +131,24 @@ def test_dry_run_counts_every_page_and_tab_and_writes_nothing(estate, capsys):
     assert "consolidated_into" not in (estate["state"] / "reviews.json").read_text()
 
 
+def test_consolidate_preserves_review_catalog_and_evidence(estate, capsys):
+    from agent_annotate.approval_catalog import bind_evidence, promote
+    from agent_annotate.categories import list_plans
+    directory = estate["pages"]["shop-decisions"]
+    store = json.loads((directory / "comments.json").read_text())
+    comment = store["anchors"]["s:scope"][0]
+    comment["decision"]["evidence"] = bind_evidence(directory, store, comment, None)
+    promote(directory, store, comment)
+    (directory / "comments.json").write_text(json.dumps(store))
+    assert _run(estate) == 0
+    capsys.readouterr()
+    target = estate["target"]
+    assert json.loads((target / "comments.json").read_text())["approved_plans"] == store["approved_plans"]
+    revision = comment["decision"]["evidence"]["revision"]
+    assert (target / "approval-evidence" / revision / "bundle.json").is_file()
+    assert any(plan.get("managed") for plan in list_plans(target))
+
+
 def test_consolidate_keeps_every_record_and_freezes_the_sources(estate, capsys):
     originals = {name: json.loads((path / "comments.json").read_text()) for name, path in estate["pages"].items()}
     before = {name: _tree(path) for name, path in estate["pages"].items()}

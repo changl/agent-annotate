@@ -453,6 +453,14 @@ def _normalize_decision_request(dr: Any) -> dict:
         raise DecisionRequestError("decision_request.impact must be low|medium|high")
     if "blocking" in out and out["blocking"] is not None and not isinstance(out["blocking"], bool):
         raise DecisionRequestError("decision_request.blocking must be a boolean")
+    if "catalog" in out and not isinstance(out["catalog"], bool):
+        raise DecisionRequestError("decision_request.catalog must be a boolean")
+    if "item_id" in out:
+        from .categories import validate_plan_id
+        try:
+            validate_plan_id(out["item_id"])
+        except ValueError as exc:
+            raise DecisionRequestError(str(exc)) from exc
     out["requested_at"] = _now_iso()
     try:
         size = len(json.dumps(out, ensure_ascii=False).encode("utf-8"))
@@ -1496,6 +1504,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return _load_v2_store(self._store_path())
 
     def _v2_save(self, store: dict) -> None:
+        if store.get("approved_plans"):
+            from .categories import _atomic_bytes
+            _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False).encode())
+            return
         _atomic_write_json(self._store_path(), store)
 
     def _v2_get_store(self):
@@ -1699,7 +1711,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 meta = plan_meta(self.artifact_dir, plan_id)
                 if v not in {item.get("version") for item in meta.get("history", [])}:
                     return self._respond(404, b'{"error":"plan version not found"}')
-                target = safe_path(self.artifact_dir, f"plans/{plan_id}/versions/{v}.html")
+                entry = next(item for item in meta.get("history", []) if item.get("version") == v)
+                if meta.get("managed") and not entry.get("legacy"):
+                    from .approval_catalog import render_plan
+                    html = render_plan(self.artifact_dir, meta, v)
+                    target = None
+                else:
+                    target = safe_path(self.artifact_dir, f"plans/{plan_id}/versions/{v}.html")
             else:
                 target = _version_file(self.artifact_dir, v, "content")
         except ValueError:
@@ -1708,7 +1726,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return self._respond(404, b'{"error":"plan not found"}')
         except PermissionError:
             return self._respond(403, b'{"error":"forbidden content path"}')
-        if target.exists() and target.is_file():
+        if target is None:
+            pass  # Approval-managed Plans render immutable evidence, not manual files.
+        elif target.exists() and target.is_file():
             try:
                 html = target.read_text(encoding="utf-8")
             except OSError:
@@ -1762,6 +1782,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # adapter knows which version/base-path it's running under.
         # Both injected refs carry content hashes for immutable caching.
         base = self.public_base_path or ""
+        evidence_tokens = {}
+        if plan_id is None and not self._moved():
+            from .approval_catalog import seal_review
+            with _locked_store(self.artifact_dir):
+                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(), base)
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
@@ -1777,6 +1802,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else _insert_in_head(html, css)
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
+                                   "evidence": evidence_tokens,
                                    **({"doc": "plan:" + plan_id, "category": "plans"} if plan_id else {})}).replace("<", "\\u003c")
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='
@@ -2699,6 +2725,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     if c.get("id") == comment_id:
+                        decision = c.get("decision") or {}
+                        if decision.get("round_pending") and decision.get("by") not in self._reviewer_authors(author):
+                            return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
                         c["flagged_for_session"] = True
                         c["flagged_at"] = _now_iso()
                         c["flagged_by"] = author
@@ -2713,6 +2742,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not found:
                 self._respond(404, b'{"error":"not found"}')
                 return
+            from .approval_catalog import promote
+            promote(self.artifact_dir, store, found[1])
             delivery = self._compute_delivery()
             self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             self._v2_save(store)
@@ -2867,10 +2898,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
             latency_s = _decision_latency_s(c, now)
             c["decision"] = {"verdict": verdict, "text": text, "ts": now, "by": author}
+            from .approval_catalog import bind_evidence, promote
+            shown_request = None
+            if isinstance(payload.get("shown_request"), dict):
+                try:
+                    shown_request = _normalize_decision_request(payload["shown_request"])
+                except DecisionRequestError:
+                    pass
+            c["decision"]["evidence"] = bind_evidence(self.artifact_dir, store, c, payload.get("evidence"), shown_request)
+            if isinstance(payload.get("option_id"), str):
+                c["decision"]["option_id"] = payload["option_id"]
             if latency_s is not None:
                 c["decision"]["latency_s"] = latency_s
             if defer_push:
                 c["decision"]["round_pending"] = True
+            else:
+                promote(self.artifact_dir, store, c)
 
             if verdict == "changes":
                 reply_text = self._DECISION_CHANGES_PREFIX + text
@@ -2952,6 +2995,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         The fsynced bus is the durable outbox. A retry mints the same delivery
         ID until the pending flags are saved, preventing repeated input.
         """
+        from .approval_catalog import promote
         from .categories import comment_category, validate_send
         from .copy_state import load_copy, submit_revisions
         from .review_history import _events
@@ -3001,6 +3045,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if (d.get("round_pending") and d.get("by") in reviewer_authors
                             and (c["id"], d.get("by"), d.get("ts"), d.get("verdict")) in submitted_answers):
                         d.pop("round_pending", None)
+                        promote(self.artifact_dir, store, c)
                         c.update(flagged_for_session=True, flagged_at=submitted_answers[(c["id"], d.get("by"), d.get("ts"), d.get("verdict"))], flagged_by=author)
                         recovered = True
                     reopen = (c.get("reopened") or [{}])[-1]
@@ -3075,7 +3120,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         "category": comment_category(c),
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
                         "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
-                        "by": c["decision"].get("by"), "ts": c["decision"].get("ts")} for c in pending]
+                        "by": c["decision"].get("by"), "ts": c["decision"].get("ts"),
+                        "evidence": c["decision"].get("evidence")} for c in pending]
             def unsent_reopen_text(c):
                 # A reopen, an agent re-fix, then another reopen before Send:
                 # every reopen since the last delivered one goes out.
@@ -3104,6 +3150,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                           "delivery": delivery["delivery"], **send})
             for c in pending:
                 c["decision"].pop("round_pending", None)
+                promote(self.artifact_dir, store, c)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in reopens:
                 c.pop("round_pending", None)
