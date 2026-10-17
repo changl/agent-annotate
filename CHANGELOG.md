@@ -1,6 +1,8 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.26.4
+
+Decision #26 on the agent-annotate page: answering a card files it into Plans.
 
 - Reviewer Send now and review rounds file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe decision identities. Accept/select POSTs persist their evidence and verified cited images before Send, so restarts and view eviction preserve drafts; Review keeps original image URLs and its existing on-disk fingerprint cache. Later corrections become current, duplicate immediate accepts are idempotent, carried/re-asked cards retain lineage, and incomplete evidence never blocks a vote. Agent and legacy votes are excluded, and Plans shows the chosen option with a local decided time.
 
