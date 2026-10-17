@@ -365,6 +365,21 @@ def test_review_versions_come_first_and_collapse_like_a_sent_round(tmp_path, ver
         expect(page.locator("#vrail-body-review")).to_be_visible()
 
 
+def test_plans_revisions_come_first_and_collapse_like_review(tmp_path, workspace):  # noqa: F811
+    with opened(tmp_path, workspace) as (page, _, _b):
+        go(page, "plans")
+        history(page)
+        first = page.locator("#history-body > .hist-section:visible").first
+        expect(first).to_have_attribute("data-cat", "plans")
+        fold = page.locator('.hist-cat[data-cat="plans"] > details.hist-collapse')
+        expect(fold).to_have_attribute("open", "")
+        expect(page.locator("#vrail-body-plans")).to_be_visible()
+        fold.locator("> summary").click()
+        expect(page.locator("#vrail-body-plans")).to_be_hidden()
+        fold.locator("> summary").press("Enter")
+        expect(page.locator("#vrail-body-plans")).to_be_visible()
+
+
 def test_one_tab_page_has_no_filter_no_menu_and_a_clean_address(tmp_path, versions):
     with opened(tmp_path, versions, "#view=library") as (page, _, _b):
         assert page.evaluate("document.body.dataset.view") == "review"

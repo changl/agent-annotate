@@ -381,8 +381,8 @@
 // and Plans, the selected item's feedback in Library, the findings in
 // Findings. History is one list for the project; each part carries its
 // tab's tag, and it shows the tab on screen unless "All tabs" is chosen.
-// Review versions sit at the top (collapsible, open by default), then Sent
-// rounds (recorded by the server), each line tagged.
+// Each tab's own history sits at the top (collapsible, open by default),
+// then Sent rounds (recorded by the server), each line tagged.
 (function () {
   'use strict';
   const AA = window.AA, UI = window.AAUI, esc = UI.esc;

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- History rail: Review versions come first and the whole section collapses with the same disclosure as a sent round, open by default.
+- History rail: each tab's own history (Review versions, Plans revisions, the Library item, the finding) comes first, and each section collapses with the same disclosure as a sent round, open by default.
 
 ## 2.26.2
 

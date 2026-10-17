@@ -140,13 +140,33 @@
     <!-- History: one for the project; each part tagged with its tab -->
     <div class="drawer-body tab-pane" id="history-body" role="tabpanel" aria-labelledby="tab-history" hidden>
       <div class="hist-filter" id="hist-filter" role="group" aria-label="Show the history of"></div>
-      <!-- Review versions first; it collapses like a sent round, open by default -->
+      <!-- Each tab's own history first; it collapses like a sent round, open by default -->
       <section class="hist-section hist-cat" data-cat="review" aria-label="Review history">
         <details class="hist-collapse" open>
           <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Review</span> Versions</summary>
           <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
           <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
           <div class="vrail-body" id="vrail-body-review" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
+        </details>
+      </section>
+      <section class="hist-section hist-cat" data-cat="library" aria-label="Library history" hidden>
+        <details class="hist-collapse" open>
+          <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Library</span> <span id="hist-library-title">This item</span></summary>
+          <div class="hist-cat-body" id="hist-library"></div>
+        </details>
+      </section>
+      <section class="hist-section hist-cat" data-cat="findings" aria-label="Findings history" hidden>
+        <details class="hist-collapse" open>
+          <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Findings</span> This finding</summary>
+          <div class="hist-cat-body" id="hist-findings"></div>
+        </details>
+      </section>
+      <section class="hist-section hist-cat" data-cat="plans" aria-label="Plans history" hidden>
+        <details class="hist-collapse" open>
+          <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Plans</span> Revisions</summary>
+          <section class="project-panel" id="project-panel-plans" aria-label="Plan information" hidden></section>
+          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+          <div class="vrail-body" id="vrail-body-plans" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
         </details>
       </section>
       <section class="hist-section" id="hist-sent" aria-labelledby="hist-sent-lbl">
@@ -156,20 +176,6 @@
       <section class="hist-section" id="hist-withdrawn" aria-labelledby="hist-withdrawn-lbl" hidden>
         <h3 class="hist-lbl" id="hist-withdrawn-lbl">Withdrawn questions</h3>
         <div id="hist-withdrawn-body"></div>
-      </section>
-      <section class="hist-section hist-cat" data-cat="library" aria-label="Library history" hidden>
-        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Library</span> <span id="hist-library-title">This item</span></h3>
-        <div class="hist-cat-body" id="hist-library"></div>
-      </section>
-      <section class="hist-section hist-cat" data-cat="findings" aria-label="Findings history" hidden>
-        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Findings</span> This finding</h3>
-        <div class="hist-cat-body" id="hist-findings"></div>
-      </section>
-      <section class="hist-section hist-cat" data-cat="plans" aria-label="Plans history" hidden>
-        <h3 class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Plans</span> Revisions</h3>
-        <section class="project-panel" id="project-panel-plans" aria-label="Plan information" hidden></section>
-        <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
-        <div class="vrail-body" id="vrail-body-plans" role="listbox" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
       </section>
     </div>
   </aside>
