@@ -1,6 +1,6 @@
 {
   "name": "agent-annotate",
-  "version": "2.26.1",
+  "version": "2.26.2",
   "description": "Interactive annotation pages and feedback delivery for Codex sessions",
   "author": {
     "name": "Chang Lee",

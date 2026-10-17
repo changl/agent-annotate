@@ -1,6 +1,8 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.26.2
+
+Decision #25 on the agent-annotate page: find page servers without lsof.
 
 - Identify page servers through an explicit localhost capabilities probe and corroborate their PID, page directory, port and mount with `ps` before stopping them; process identity stays out of browser capabilities. A one-release bridge accepts legacy capabilities only with a single exact process match, allowing existing pages to restart onto this release. Allocate free ports by binding the server's address and poll capabilities on restart; routine commands no longer invoke or require `lsof`, so unrelated hung SMB mounts cannot delay page operations. Unknown occupants fail closed, and stale registry PIDs are never signalled.
 - Start human-readable dry-run receipts with `dry run:` and describe the planned change, including archive, unarchive and question withdrawal. `withdraw --dry-run` previews without writing; JSON output keeps its structured dry-run flag.
