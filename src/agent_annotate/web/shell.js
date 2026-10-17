@@ -559,7 +559,6 @@ async function apiDecision(id, verdict, text, optionId) {
         text: text || undefined,
         option_id: optionId,
         evidence: document.getElementById('content-frame')?.contentWindow?.__ANNOTATE_CONTENT_META__?.evidence?.[id],
-        shown_request: findCommentById(id)?.decision_request,
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
@@ -3592,6 +3591,10 @@ async function activateDoc(doc, version) {
   if (!DOCS.includes(doc)) doc = 'review';
   if (DOC !== doc) enterDoc(doc);
   VIEW_DOC = doc;
+  if (!CURRENT_VERSION) {
+    await loadMeta();
+    CURRENT_VERSION = latestVersion();
+  }
   if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
   const frame = document.getElementById('content-frame');
   if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {

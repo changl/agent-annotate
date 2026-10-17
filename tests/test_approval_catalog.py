@@ -1,5 +1,6 @@
 import copy
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -11,6 +12,7 @@ from agent_annotate.approval_catalog import (
     read_bundle,
     render_plan,
     seal_review,
+    view_image,
 )
 from agent_annotate.categories import publish_plan_revision
 
@@ -22,8 +24,10 @@ def card():
                                  "options": [{"id": "blue", "label": "Blue", "consequence": "Use blue"}]}}
 
 
-def decide(directory, store, comment, token, verdict="accept", text=None, ts="2026-10-16T10:00:00Z"):
+def decide(directory, store, comment, token, verdict="accept", text=None, ts=None):
+    ts = ts or datetime.now(timezone.utc).isoformat()
     comment["decision"] = {"verdict": verdict, "text": text, "ts": ts, "by": "chang@example.com",
+                           "catalog_eligible": True,
                            "evidence": bind_evidence(directory, store, comment, token)}
     promote(directory, store, comment)
     return store.get("approved_plans", {}).get(item_id(comment))
@@ -36,14 +40,16 @@ def test_capture_preserves_full_section_deduplicates_and_hashes(tmp_path):
     comment = card()
     store = {"anchors": {"d:q1": [comment]}}
     _, tokens = seal_review(tmp_path, HTML, "v1", store)
-    revision = tokens[comment["id"]]["revision"]
+    assert not (tmp_path / "approval-evidence").exists()
+    plan = decide(tmp_path, store, comment, tokens[comment["id"]])
+    revision = plan["history"][0]["evidence_revision"]
     bundle = read_bundle(tmp_path, revision)
     assert bundle["html"].count("Full details") == 1
     assert "Unrelated" not in bundle["html"]
     assert '<path d="M0 0 L1 1"/>' in bundle["html"]
     assert bundle["incomplete"] == []
-    assert seal_review(tmp_path, HTML, "v1", store)[1] == tokens
-    assert seal_review(tmp_path, HTML.replace("one", "two"), "v1", store)[1] != tokens
+    assert seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]["revision"] == tokens[comment["id"]]["revision"]
+    assert seal_review(tmp_path, HTML.replace("one", "two"), "v1", store)[1][comment["id"]]["revision"] != tokens[comment["id"]]["revision"]
 
 
 def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
@@ -59,7 +65,8 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
     bundle = read_bundle(tmp_path, plan["history"][0]["evidence_revision"])
     pinned = next(iter(bundle["assets"]))
     assert (tmp_path / pinned).read_bytes() == b"first-image"
-    assert './' + pinned in shown
+    assert '/api/review-evidence/' in shown
+    assert view_image(tmp_path, tokens[comment["id"]]["view"], pinned.split("/")[-1]) == b"first-image"
     assert './' + pinned in render_plan(tmp_path, plan, "v1")
 
 
@@ -79,7 +86,8 @@ def test_supersession_changes_rejection_and_duplicate_retries(tmp_path):
     token = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
     plan = decide(tmp_path, store, comment, token)
     for _ in range(3):
-        assert decide(tmp_path, store, comment, token) == plan
+        promote(tmp_path, store, comment)
+        assert len(plan["history"]) == 1
     comment["version"] = "v2"
     token2 = seal_review(tmp_path, HTML.replace("one", "two"), "v2", store)[1][comment["id"]]
     for verdict in ("changes", "reject", "comment"):
@@ -134,8 +142,10 @@ def test_competing_approval_cannot_replace_newer_current(tmp_path):
     comment = card()
     store = {"anchors": {"d:q1": [comment]}}
     old = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
-    new = seal_review(tmp_path, HTML.replace("one", "two"), "v1", store)[1][comment["id"]]
-    plan = decide(tmp_path, store, comment, new)
+    other = {**comment, "id": "another-card", "number": 2, "decision_request": {**comment["decision_request"], "item_id": item_id(comment)}}
+    store["anchors"]["d:q1"].append(other)
+    new = seal_review(tmp_path, HTML.replace("one", "two"), "v1", store)[1][other["id"]]
+    plan = decide(tmp_path, store, other, new)
     current = copy.deepcopy(plan)
     decide(tmp_path, store, comment, old)
     assert comment["decision"]["catalog_conflict"] is True
@@ -161,15 +171,14 @@ def test_explicit_legacy_plan_identity_preserves_its_history(tmp_path):
     assert plan["history"][1]["predecessor"] == "v1"
 
 
-def test_reposed_card_words_and_frozen_iframe_stay_together(tmp_path):
+def test_client_card_words_cannot_replace_the_server_snapshot(tmp_path):
     comment = card()
     store = {"anchors": {"d:q1": [comment]}}
     token = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
     shown_request = {**comment["decision_request"], "prompt": "Approve this revised wording?"}
     bound = bind_evidence(tmp_path, store, comment, token, shown_request)
-    bundle = read_bundle(tmp_path, bound["revision"])
-    assert bundle["request"]["prompt"] == shown_request["prompt"]
-    assert "Design one" in bundle["html"] and bound["revision"] != token["revision"]
+    assert bound["request"]["prompt"] == comment["decision_request"]["prompt"]
+    assert bound["revision"] == token["revision"]
 
 
 def test_adapter_null_optional_fields_can_be_filed(tmp_path):
@@ -189,11 +198,75 @@ def test_row_evidence_remains_a_valid_standalone_table(tmp_path):
     assert '<table><tbody><tr data-anchor-id="row:one"><td>Exact row</td></tr></tbody></table>' in render_plan(tmp_path, plan, "v1")
 
 
-def test_lost_bundle_before_send_files_incomplete_card_instead(tmp_path):
+def test_expired_view_before_send_files_incomplete_card_instead(tmp_path):
+    from agent_annotate.approval_catalog import _VIEWS
     comment = card()
     store = {"anchors": {"d:q1": [comment]}}
     token = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
-    comment["decision"] = {"verdict": "accept", "ts": "2026-10-16T10:00:00Z", "by": "reviewer", "evidence": token}
-    (tmp_path / "approval-evidence" / token["revision"] / "bundle.json").unlink()
+    comment["decision"] = {"verdict": "accept", "ts": "2026-10-16T10:00:00Z", "by": "reviewer", "catalog_eligible": True,
+                           "evidence": bind_evidence(tmp_path, store, comment, token)}
+    _VIEWS.clear()
     promote(tmp_path, store, comment)
     assert store["approved_plans"][item_id(comment)]["history"][0]["evidence_incomplete"]
+
+
+def test_same_card_new_decisions_always_supersede_even_with_one_view(tmp_path):
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    token = seal_review(tmp_path, HTML, "v1", store)[1][comment["id"]]
+    for verdict, choice in [("accept", None), ("select", "Blue"), ("accept", None)]:
+        plan = decide(tmp_path, store, comment, token, verdict, choice)
+        assert not comment["decision"].get("catalog_conflict")
+    assert plan["current"] == "v3" and len(plan["history"]) == 3
+    assert plan["history"][-1]["kind"] == "Approved"
+
+
+def test_identity_distinguishes_shared_anchors_and_survives_anchor_moves():
+    one = card()
+    assert item_id(one) != item_id({**one, "id": "two", "number": 2})
+    assert item_id(one) == item_id({**one, "anchor_id": "new:location"})
+    del one["number"]
+    assert item_id(one) != item_id({**one, "id": "two"})
+    assert item_id(one) == item_id({**one, "anchor_id": "new:location"})
+
+
+def test_only_cited_images_persist_and_styles_are_shared_once(tmp_path):
+    (tmp_path / "assets").mkdir()
+    for name in ("cited", "unrelated"):
+        (tmp_path / f"assets/{name}.png").write_bytes(name.encode())
+    one = card()
+    two = {**one, "id": "card-two", "number": 2}
+    store = {"anchors": {"d:q1": [one, two]}}
+    html = HTML.replace("Full details", 'Full details<img src="assets/cited.png">').replace("Unrelated", '<img src="assets/unrelated.png">')
+    _, tokens = seal_review(tmp_path, html, "v1", store)
+    assert not (tmp_path / "attachments").exists()
+    for comment in (one, two):
+        decide(tmp_path, store, comment, tokens[comment["id"]])
+    assert len(list((tmp_path / "attachments").iterdir())) == 1
+    assert len(list((tmp_path / "approval-evidence/styles").iterdir())) == 1
+    for path in (tmp_path / "approval-evidence").glob("*/bundle.json"):
+        bundle = json.loads(path.read_text())
+        assert "styles" not in bundle and bundle["styles_revision"]
+
+
+def test_malformed_evidence_anchor_degrades_to_incomplete_card(tmp_path):
+    comment = card()
+    comment["decision_request"]["evidence"] = [{"anchor": []}]
+    store = {"anchors": {"d:q1": [comment]}}
+    _, tokens = seal_review(tmp_path, HTML, "v1", store)
+    plan = decide(tmp_path, store, comment, tokens[comment["id"]])
+    assert plan["history"][0]["evidence_incomplete"]
+    assert "Invalid evidence anchor" in render_plan(tmp_path, plan, "v1")
+
+
+def test_missing_bundle_renders_incomplete_and_approved_names_the_choice(tmp_path):
+    comment = card()
+    comment["decision_request"]["options"] = [{"id": "accept", "label": "Ship blue"}, {"id": "reject", "label": "Keep red"}]
+    store = {}
+    plan = decide(tmp_path, store, comment, None)
+    html = render_plan(tmp_path, plan, "v1")
+    assert "Chosen: <strong>Ship blue</strong>" in html and "Keep red" not in html
+    assert '<time data-decided-time datetime="' in html
+    path = tmp_path / "approval-evidence" / plan["history"][0]["evidence_revision"] / "bundle.json"
+    path.unlink()
+    assert "Evidence incomplete" in render_plan(tmp_path, plan, "v1")

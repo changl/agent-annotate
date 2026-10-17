@@ -4,6 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+import uuid
+from collections import OrderedDict
+from copy import deepcopy
 from html import escape, unescape
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
@@ -12,6 +16,12 @@ from .categories import MAX_PLAN_BYTES, _atomic_bytes, _json, safe_path, validat
 
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
+_VIEWS = OrderedDict()
+_VIEW_LOCK = threading.RLock()
+# ponytail: bounded process-local views; an expired/restarted view degrades
+# to card-only evidence. No filesystem cache or maintenance job is needed.
+_MAX_VIEWS = 16
+_MAX_VIEW_BYTES = 128 * 1024 * 1024
 
 
 def _digest(value) -> str:
@@ -19,9 +29,16 @@ def _digest(value) -> str:
 
 
 def item_id(comment: dict) -> str:
-    explicit = (comment.get("decision_request") or {}).get("item_id")
-    return validate_plan_id(explicit) if explicit else "decision-" + _digest(
-        [comment.get("doc", "review"), comment["anchor_id"]])[:24]
+    request = comment.get("decision_request")
+    explicit = request.get("item_id") if isinstance(request, dict) else None
+    number = comment.get("number")
+    identity = f"d:q{number}" if type(number) is int and number > 0 else comment.get("origin_id") or comment["id"]
+    if explicit:
+        try:
+            return validate_plan_id(explicit)
+        except ValueError:
+            pass
+    return "decision-" + _digest([comment.get("doc", "review"), identity])[:24]
 
 
 def _current(page_dir, store, identifier):
@@ -69,7 +86,7 @@ class _Anchors(HTMLParser):
 
 
 def _pin_images(page_dir, html, base):
-    assets, incomplete = {}, []
+    assets, incomplete, blobs, rewrites = {}, [], {}, {}
 
     def pin(match):
         tag = match.group(0)
@@ -103,9 +120,9 @@ def _pin_images(page_dir, html, base):
                 body = path.read_bytes()
                 digest = hashlib.sha256(body).hexdigest()
                 name = "attachments/approval-" + digest + path.suffix.lower()
-                if not safe_path(page_dir, name).exists():
-                    _atomic_bytes(safe_path(page_dir, name), body)
                 assets[name] = digest
+                blobs[name] = body
+                rewrites[url] = name
                 return attribute[1] + attribute[2] + "./" + name + attribute[2]
             except (OSError, ValueError):
                 incomplete.append("Image not sealed: " + url[:200])
@@ -118,10 +135,18 @@ def _pin_images(page_dir, html, base):
         incomplete.append("Dynamic or CSS media not sealed")
     if re.search(r'<link\b[^>]*\brel=[\"\']stylesheet[\"\']', html, re.I):
         incomplete.append("Linked stylesheet not sealed")
-    return html, assets, incomplete
+    return html, assets, incomplete, blobs, rewrites
 
 
 def _save_bundle(page_dir, bundle):
+    bundle = dict(bundle)
+    styles = bundle.pop("styles", "")
+    if styles:
+        stamp = hashlib.sha256(styles.encode()).hexdigest()
+        style_path = safe_path(page_dir, f"approval-evidence/styles/{stamp}.css")
+        if not style_path.exists():
+            _atomic_bytes(style_path, styles.encode())
+        bundle["styles_revision"] = stamp
     digest = _digest(bundle)
     path = safe_path(page_dir, f"approval-evidence/{digest}/bundle.json")
     if not path.exists():
@@ -136,11 +161,15 @@ def _document_parts(html):
 
 
 def _bundle(comment, version, html="", assets=None, incomplete=None, document_parts=None):
-    request = dict(comment.get("decision_request") or {})
+    request = deepcopy(comment.get("decision_request") or {})
+    if not isinstance(request, dict):
+        request = {"prompt": comment.get("text", "Decision")}
     request.pop("requested_at", None)
-    anchors = [e.get("anchor") for e in (request.get("evidence") or []) if isinstance(e, dict) and e.get("anchor")]
+    raw = request.get("evidence") or []
+    anchors = [e["anchor"] for e in raw if isinstance(e, dict) and isinstance(e.get("anchor"), str) and e["anchor"]] if isinstance(raw, list) else []
+    invalid = not isinstance(raw, list) or any(not isinstance(e, dict) or not isinstance(e.get("anchor"), str) for e in raw)
     spans, styles, registry = document_parts if document_parts is not None else _document_parts(html)
-    ranges, missing = [], []
+    ranges, missing = [], ["Invalid evidence anchor"] if invalid else []
     for anchor in anchors:
         if anchor in spans:
             ranges.append(spans[anchor])
@@ -172,51 +201,82 @@ def _bundle(comment, version, html="", assets=None, incomplete=None, document_pa
 
 
 def seal_review(page_dir, html, version, store, base=""):
-    """The response and its evidence bundle share the very same pinned media."""
+    """Read-only view capture. Only a reviewer commit persists these bytes."""
     cards = [comment for items in store.get("anchors", {}).values() for comment in items
              if comment.get("decision_request") and comment.get("version") == version
              and comment.get("doc", "review") == "review" and not comment.get("withdrawn")]
     if not cards:
         return html, {}
-    html, assets, incomplete = _pin_images(page_dir, html, base)
     document_parts = _document_parts(html)
-    tokens = {}
+    tokens, snapshots, images, rewrites = {}, {}, {}, {}
+    view = uuid.uuid4().hex
     for comment in cards:
         try:
-            bundle = _bundle(comment, version, html, assets, incomplete, document_parts)
-            tokens[comment["id"]] = {"revision": _save_bundle(page_dir, bundle),
+            bundle = _bundle(comment, version, html, document_parts=document_parts)
+            fragment, assets, incomplete, blobs, replaced = _pin_images(page_dir, bundle["html"], base)
+            bundle.update(html=fragment, assets=assets, incomplete=bundle["incomplete"] + incomplete)
+            snapshots[comment["id"]] = bundle
+            images.update(blobs)
+            rewrites.update(replaced)
+            tokens[comment["id"]] = {"view": view, "revision": _digest(bundle),
                 "predecessor": _current(page_dir, store, item_id(comment))}
-        except (OSError, ValueError):
-            # Read-only pages remain readable; a later vote can still
-            # use the incomplete-card fallback when storage recovers.
+        except (OSError, ValueError, TypeError, KeyError):
             continue
+    key = (str(page_dir), view)
+    size = len(html.encode()) + sum(map(len, images.values()))
+    with _VIEW_LOCK:
+        _VIEWS[key] = {"cards": snapshots, "images": images, "size": size,
+                       "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
+        while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
+            _VIEWS.popitem(last=False)
+        if key not in _VIEWS:
+            return html, {}  # Oversized views retain their original working image URLs.
+    # Only cited images get a process-local immutable URL. Unrelated images
+    # keep their original URLs and never get copied into approval storage.
+    def pin_view(match):
+        url = unescape(match[3])
+        if url not in rewrites:
+            return match[0]
+        target = base.rstrip("/") + "/api/review-evidence/" + view + "/" + rewrites[url].split("/")[-1]
+        return match[1] + match[2] + escape(target, quote=True) + match[2]
+    html = re.sub(r'((?:\bsrc|\bhref|\bxlink:href)\s*=\s*)([\"\'])(.*?)(?:\2)', pin_view, html, flags=re.I)
     return html, tokens
 
 
 def bind_evidence(page_dir, store, comment, token, shown_request=None):
-    """A vote always succeeds; older clients get an explicitly incomplete card."""
-    if isinstance(token, dict) and isinstance(token.get("revision"), str) and _DIGEST.fullmatch(token["revision"]):
-        try:
-            bundle = read_bundle(page_dir, token["revision"])
-            if bundle["item_id"] == item_id(comment) and bundle["anchor_id"] == comment["anchor_id"]:
-                revision = token["revision"]
-                if shown_request:
-                    shown_request = dict(shown_request)
-                    shown_request.pop("requested_at", None)
-                    if shown_request != bundle["request"]:
-                        # The rail can receive a reposed question while its
-                        # iframe stays open. Keep its displayed words together
-                        # with the frozen iframe evidence, not latest files.
-                        fresh = _bundle({**comment, "decision_request": shown_request}, bundle["version"],
-                                        bundle["html"], bundle["assets"], bundle["incomplete"])
-                        fresh.update(styles=bundle["styles"], registry=bundle["registry"], item_id=bundle["item_id"])
-                        revision = _save_bundle(page_dir, fresh)
-                return {"revision": revision, "predecessor": token.get("predecessor")}
-        except (OSError, ValueError, KeyError):
-            pass
+    """Bind server-owned words; the browser can select a view, never rewrite it."""
+    if isinstance(token, dict) and isinstance(token.get("view"), str):
+        with _VIEW_LOCK:
+            view = _VIEWS.get((str(page_dir), token["view"]), {})
+            cached = view.get("cards", {}).get(comment["id"])
+        if cached and cached["item_id"] == item_id(comment) and _digest(cached) == token.get("revision"):
+            return {"view": token["view"], "revision": token["revision"], "request": cached["request"],
+                    "version": cached["version"], "predecessor": view.get("predecessors", {}).get(comment["id"])}
     bundle = _bundle(comment, comment.get("version"), incomplete=["Displayed evidence token unavailable"])
-    return {"revision": _save_bundle(page_dir, bundle),
+    return {"request": bundle["request"], "version": bundle["version"],
             "predecessor": _current(page_dir, store, item_id(comment))}
+
+
+def view_image(page_dir, view, name):
+    with _VIEW_LOCK:
+        return _VIEWS.get((str(page_dir), view), {}).get("images", {}).get("attachments/" + name)
+
+
+def _commit_evidence(page_dir, comment, evidence):
+    if evidence.get("committed"):
+        return read_bundle(page_dir, evidence["revision"])
+    with _VIEW_LOCK:
+        cached = _VIEWS.get((str(page_dir), evidence.get("view")), {})
+        bundle = cached.get("cards", {}).get(comment["id"])
+        images = cached.get("images", {})
+    if not bundle or _digest(bundle) != evidence.get("revision"):
+        frozen = {**comment, "decision_request": evidence.get("request") or comment.get("decision_request")}
+        bundle = _bundle(frozen, evidence.get("version") or comment.get("version"), incomplete=["Displayed evidence unavailable"])
+    for name in bundle["assets"]:
+        if not safe_path(page_dir, name).exists():
+            _atomic_bytes(safe_path(page_dir, name), images[name])
+    evidence.update(revision=_save_bundle(page_dir, bundle), committed=True)
+    return read_bundle(page_dir, evidence["revision"])
 
 
 def read_bundle(page_dir, digest):
@@ -235,16 +295,18 @@ def promote(page_dir, store, comment):
     """Mutate only the caller's locked store: verdict and index commit together."""
     decision = comment.get("decision") or {}
     if (decision.get("verdict") not in {"accept", "select"} or decision.get("round_pending")
+            or not decision.get("catalog_eligible") or str(decision.get("by", "")).startswith("agent:")
             or not comment.get("decision_request")
             or (comment.get("decision_request") or {}).get("catalog") is False
             or comment.get("category", "review") != "review"):
         return
     evidence = decision.get("evidence") or bind_evidence(page_dir, store, comment, None)
     try:
-        bundle = read_bundle(page_dir, evidence["revision"])
-    except (OSError, ValueError):
-        evidence = bind_evidence(page_dir, store, comment, None)
-        bundle = read_bundle(page_dir, evidence["revision"])
+        bundle = _commit_evidence(page_dir, comment, evidence)
+    except (OSError, ValueError, TypeError, KeyError):
+        frozen = {**comment, "decision_request": evidence.get("request") or comment.get("decision_request")}
+        bundle = _bundle(frozen, evidence.get("version"), incomplete=["Evidence could not be sealed"])
+        evidence.update(revision=_save_bundle(page_dir, bundle), committed=True)
     decision["evidence"] = evidence
     request = bundle["request"]
     if request.get("catalog") is False:
@@ -258,23 +320,25 @@ def promote(page_dir, store, comment):
                 "current": manual.get("current"), "history": [
                     {**entry, "key": "legacy:" + entry["version"], "legacy": True,
                      "label": entry.get("label", "Legacy / unlinked")} for entry in manual.get("history", [])]}
-    choice = str(decision.get("option_id") or decision.get("text") or "").split("\n", 1)[0]
+    choice = str(decision.get("option_id") or ("accept" if decision["verdict"] == "accept" else decision.get("text")) or "").split("\n", 1)[0]
     option = next((o for o in (request.get("options") or []) if isinstance(o, dict)
                    and choice in (o.get("id"), o.get("label"))), {})
     label = str(option.get("label") or choice)
     kind = "Approved" if decision["verdict"] == "accept" else "Decided"
-    key = _digest([evidence["revision"], kind, label if kind == "Decided" else ""])
+    key = _digest([comment["id"], decision.get("id") or [decision["by"], decision["ts"]]])
     prior = next((entry for entry in plan["history"] if entry["key"] == key), None)
     if prior:
         comment["catalog_plan"] = identifier
         return
-    if evidence.get("predecessor") != plan["current"]:
+    current = next((entry for entry in plan["history"] if entry["version"] == plan["current"]), {})
+    if evidence.get("predecessor") != plan["current"] and current.get("source_card") != comment["id"]:
         decision["catalog_conflict"] = True  # Record the vote without replacing a newer approval.
         return
     next_number = max((int(entry["version"][1:]) for entry in plan["history"]), default=0) + 1
     entry = {"version": f"v{next_number}", "ts": decision["ts"], "by": decision["by"],
              "key": key, "evidence_revision": evidence["revision"], "kind": kind,
              "label": kind if kind == "Approved" else "Decided: " + label,
+             "chosen_option": label or "Accepted",
              "consequence": option.get("consequence") or (request.get("consequences") or {}).get(option.get("id", choice), ""),
              "source_version": bundle["version"], "source_card": comment["id"],
              "evidence_incomplete": bool(bundle["incomplete"]), "predecessor": plan["current"]}
@@ -282,6 +346,7 @@ def promote(page_dir, store, comment):
     plan.update(current=entry["version"], kind=kind, updated_at=entry["ts"], managed=True)
     plans[identifier] = plan
     comment["catalog_plan"] = identifier
+    decision.pop("catalog_conflict", None)
 
 
 def catalog_meta(plan):
@@ -291,17 +356,28 @@ def catalog_meta(plan):
 
 def render_plan(page_dir, plan, version):
     entry = next(entry for entry in plan["history"] if entry["version"] == version)
-    bundle = read_bundle(page_dir, entry["evidence_revision"])
+    try:
+        bundle = read_bundle(page_dir, entry["evidence_revision"])
+    except (OSError, ValueError, KeyError):
+        bundle = {"request": {"prompt": plan["title"]}, "version": entry.get("source_version"),
+                  "styles": "", "registry": "", "html": "", "incomplete": ["Sealed evidence unavailable"]}
+    styles = bundle.get("styles", "")
+    if bundle.get("styles_revision"):
+        try:
+            stamp = bundle["styles_revision"]
+            if not _DIGEST.fullmatch(stamp):
+                raise ValueError("invalid stylesheet")
+            styles = safe_path(page_dir, f"approval-evidence/styles/{stamp}.css").read_text()
+        except (OSError, ValueError):
+            bundle["incomplete"].append("Sealed stylesheet unavailable")
     request = bundle["request"]
     status = "Current" if version == plan["current"] else "Superseded"
     incomplete = "<p><strong>Evidence incomplete</strong>: " + escape("; ".join(bundle["incomplete"])) + "</p>" if bundle["incomplete"] else ""
     source = escape(str(bundle["version"]), quote=True)
     card = escape(entry["source_card"], quote=True)
-    options = "".join("<li>" + escape(str(o.get("label", o.get("id", "")) if isinstance(o, dict) else o))
-                      + (" — " + escape(str(o["consequence"])) if isinstance(o, dict) and o.get("consequence") else "") + "</li>"
-                      for o in (request.get("options") or []))
-    return (f'<!doctype html><html><head><meta charset="utf-8">{bundle["styles"]}{bundle["registry"]}</head>'
+    chosen = entry.get("chosen_option") or ("Accepted" if entry.get("kind") == "Approved" else entry.get("decision_label", entry["label"]))
+    return (f'<!doctype html><html><head><meta charset="utf-8">{styles}{bundle["registry"]}</head>'
             f'<body><main class="aa"><header><h1>{escape(request.get("prompt") or plan["title"])}</h1><p><strong>{escape(entry.get("decision_label", entry["label"]))} · {status}</strong></p>'
-            f'<p>{escape(entry["by"])} · {escape(entry["ts"])} · <a href="./?v={source}#card={card}" target="_top">Review {source}</a></p>'
+            f'<p>{escape(entry["by"])} · <time data-decided-time datetime="{escape(entry["ts"], quote=True)}">Decided</time> · <a href="./?v={source}#card={card}" target="_top">Review {source}</a></p>'
             f'{incomplete}<p>{escape(str(entry["consequence"]))}</p></header><section><h2>Decision</h2>'
-            f'<p>{escape(str(request.get("context") or ""))}</p><ul>{options}</ul></section>{bundle["html"]}</main></body></html>')
+            f'<p>{escape(str(request.get("context") or ""))}</p><p>Chosen: <strong>{escape(chosen)}</strong></p></section>{bundle["html"]}</main></body></html>')

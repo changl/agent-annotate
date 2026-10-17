@@ -20,6 +20,9 @@
 'use strict';
 
 const META = window.__ANNOTATE_CONTENT_META__ || {};
+document.querySelectorAll('time[data-decided-time]').forEach(el => {
+  el.textContent = new Date(el.dateTime).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+});
 
 // The reviewer's text size (shell's Aa menu, same origin), before the shell
 // re-sends it on load, so the document does not first draw at 100%.
@@ -1217,7 +1220,6 @@ async function stripApiDecision(id, verdict, text, optionId) {
       headers: { 'Content-Type': 'application/json' },
       // v2.19 round mode: park the verdict instead of pushing per click.
       body: JSON.stringify({ verdict, text: text || undefined, option_id: optionId,
-        shown_request: Object.values(latestPins).flat().find(e => e.id === id)?.decisionRequest,
         evidence: (META.evidence || {})[id], ...(latestRounds ? { defer_push: true } : {}) }),
     });
     if (r.status === 404 || r.status === 405) return { fallback: true };

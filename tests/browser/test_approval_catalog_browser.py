@@ -97,6 +97,9 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             go(page, "plans", plan=identifier)
             playwright.expect(frame.locator("h2", has_text="One-step routing")).to_be_visible()
             playwright.expect(page.locator("#unified-version-banner")).to_be_hidden()
+            playwright.expect(frame.locator("main")).to_contain_text("Chosen: Approve design")
+            assert frame.locator("time[data-decided-time]").inner_text() != "Decided"
+            assert "T" not in frame.locator("time[data-decided-time]").inner_text()
             page.screenshot(path=str(output / "plans-after.png"), full_page=True)
             current = page.request.get(base + "api/plans/" + identifier).json()
             assert current["current"] == "v2" and len(current["history"]) == 2
@@ -154,3 +157,46 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
         if process.stderr:
             errors = process.stderr.read()
             (output / "sandbox-server.log").write_text(errors)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+@pytest.mark.parametrize("reload", [False, True])
+def test_same_card_can_be_accepted_selected_and_accepted_again(tmp_path, reload):
+    process, base, directory = _serve(tmp_path, card=_card("v0"), anchor="d:q1")
+    try:
+        _publish(directory, "v1", "Routing correction")
+        path = directory / "comments.json"
+        store = json.loads(path.read_text())
+        comment = store["anchors"]["d:q1"][-1]
+        comment["decision_request"]["options"].insert(1, {"id": "keep-current", "label": "No", "consequence": "Keep current routing"})
+        path.write_text(json.dumps(store))
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(8000)
+            page.goto(base, wait_until="networkidle")
+            ready(page)
+            for index, selector in enumerate([".decision-accept", '[data-option-id="keep-current"]', ".decision-accept"], 1):
+                if index > 1 and reload:
+                    page.reload(wait_until="networkidle")
+                    ready(page)
+                feedback(page)
+                if index > 1:
+                    section(page, "done" if index == 2 else "waiting")
+                    page.locator('.citem[data-comment-id="design-v1"] .change-btn').click()
+                page.locator('.citem[data-comment-id="design-v1"] ' + selector).click()
+                _send(page)
+                plan = page.request.get(base + "api/categories").json()["plans"][0]
+                assert len(plan["history"]) == index and plan["current"] == f"v{index}"
+                assert plan["kind"] == ("Decided" if index == 2 else "Approved")
+            go(page, "plans", plan=plan["id"])
+            frame = page.frame_locator("#content-frame")
+            playwright.expect(frame.locator("main")).to_contain_text("Chosen: Approve design")
+            playwright.expect(frame.locator("header")).to_contain_text("Approved · Current")
+            if "ANNOTATE_APPROVAL_SCREENSHOTS" in os.environ:
+                output = Path(os.environ["ANNOTATE_APPROVAL_SCREENSHOTS"])
+                page.screenshot(path=str(output / ("plans-corrected-reload.png" if reload else "plans-corrected-same-tab.png")), full_page=True)
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)

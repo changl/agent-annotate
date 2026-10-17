@@ -1,6 +1,7 @@
 import http.client
 import json
 import re
+import threading
 
 import pytest
 from test_decision_api import _call, _card, _events, _store
@@ -17,7 +18,7 @@ def seed(server, text="First design", version="v1", **extra):
         '<p>Complete evidence</p></section></body></html>')
     (directory / "current.meta.json").write_text(json.dumps({"current": version, "history": [{"version": version}]}))
     status, comment = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
-        {**_card("d:q1", evidence=[{"anchor": "s:design"}], **extra), "version": version, "number": 1}]})
+        {**_card("d:q1", **{"evidence": [{"anchor": "s:design"}], **extra}), "version": version, "number": 1}]})
     assert status == 200
     return _store(directory)["anchors"]["d:q1"][-1]
 
@@ -55,7 +56,7 @@ def test_all_commit_paths_file_once_and_keep_exact_displayed_version(server, pat
         for _ in range(2):
             assert _call(httpd, "POST", route, {}, author="chang@example.com")[0] == 200
     else:
-        vote(httpd, comment, evidence)
+        _call(httpd, "POST", f"/api/comments/{comment['id']}/push", {}, author="chang@example.com")
     plan = plans(httpd)[0]
     assert len(plan["history"]) == 1 and plan["current"] == "v1"
     assert plan["history"][0]["evidence_incomplete"] is False
@@ -139,3 +140,128 @@ def test_token_cannot_file_another_items_evidence(server):
     plan = _store(directory)["approved_plans"][item_id(other)]
     assert plan["history"][0]["evidence_incomplete"]
     assert _call(httpd, "GET", "/approval-evidence/" + evidence["revision"] + "/bundle.json")[0] == 404
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_same_card_accept_select_accept_creates_three_committed_decisions(server, reload, monkeypatch):
+    import agent_annotate.sync_server as sync_server
+    # Even rapid corrections in the same clock second are distinct decisions.
+    monkeypatch.setattr(sync_server, "_now_iso", lambda: "2026-10-17T10:00:00Z")
+    httpd, directory, bus = server
+    comment = seed(server)
+    evidence = token(httpd, comment)
+    ids = []
+    for index, (verdict, text) in enumerate([("accept", None), ("select", "No"), ("accept", None)], 1):
+        if reload:
+            evidence = token(httpd, comment)
+        result = vote(httpd, comment, evidence, verdict, text=text, defer_push=True)
+        ids.append(result["decision"]["id"])
+        assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[0] == 200
+        assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["delivery"] == "noop"
+        plan = plans(httpd)[0]
+        assert len(plan["history"]) == index and plan["current"] == f"v{index}"
+        assert not _store(directory)["anchors"]["d:q1"][0]["decision"].get("catalog_conflict")
+    assert len(set(ids)) == 3
+    assert plans(httpd)[0]["kind"] == "Approved"
+    assert len(_events(bus, "round_submitted")) == 3
+
+
+def test_review_gets_are_read_only_including_image_capture_and_stamps(server):
+    httpd, directory, _ = server
+    comment = seed(server)
+    (directory / "assets").mkdir()
+    (directory / "assets/cited.png").write_bytes(b"image")
+    content = directory / "content/v1.html"
+    content.write_text(content.read_text().replace("Complete evidence", '<img src="assets/cited.png">'))
+    (directory / ".comments.json.lock").unlink()
+    def snapshot():
+        return {str(path.relative_to(directory)): (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns)
+                for path in directory.rglob("*") if path.is_file()}
+    before = snapshot()
+    for _ in range(2):
+        evidence = token(httpd, comment)
+        for route in ("/comments.json", "/api/comments", "/api/categories", "/api/history", "/current.meta.json"):
+            assert _call(httpd, "GET", route)[0] == 200
+        assert "view" in evidence
+    assert snapshot() == before
+    assert not (directory / "approval-evidence").exists()
+    assert not (directory / "attachments").exists()
+    # Drafts are writes to feedback, but still do not persist evidence bundles.
+    vote(httpd, comment, evidence, defer_push=True)
+    assert not (directory / "approval-evidence").exists()
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")
+    assert (directory / "approval-evidence").is_dir()
+
+
+def test_bad_anchor_and_missing_bundle_never_break_review_vote_or_plans(server):
+    httpd, directory, _ = server
+    comment = seed(server, evidence=[{"anchor": []}])
+    evidence = token(httpd, comment)
+    vote(httpd, comment, evidence)
+    plan = plans(httpd)[0]
+    assert plan["history"][0]["evidence_incomplete"]
+    revision = plan["history"][0]["evidence_revision"]
+    (directory / "approval-evidence" / revision / "bundle.json").unlink()
+    status, body = _call(httpd, "GET", f"/plans/{plan['id']}/v1.html")
+    assert status == 200 and b"Evidence incomplete" in body
+
+
+@pytest.mark.parametrize("route", ["single", "round"])
+def test_agents_and_legacy_votes_are_not_cataloged_on_push(server, route):
+    httpd, directory, _ = server
+    comment = seed(server)
+    evidence = token(httpd, comment)
+    assert _call(httpd, "POST", f"/api/comments/{comment['id']}/decision", {"verdict": "accept", "evidence": evidence})[0] == 200
+    assert plans(httpd) == []
+    store = _store(directory)
+    store["anchors"]["d:q1"][0]["decision"] = {"verdict": "accept", "by": "chang@example.com", "ts": "2025-01-01T00:00:00Z", "round_pending": True}
+    (directory / "comments.json").write_text(json.dumps(store))
+    path = f"/api/comments/{comment['id']}/push" if route == "single" else "/api/rounds/submit"
+    assert _call(httpd, "POST", path, {}, author="chang@example.com")[0] == 200
+    assert plans(httpd) == [] and not (directory / "approval-evidence").exists()
+
+
+def test_browser_card_text_is_ignored_and_store_mode_format_preserved(server):
+    httpd, directory, _ = server
+    comment = seed(server)
+    evidence = token(httpd, comment)
+    path = directory / "comments.json"
+    path.chmod(0o644)
+    vote(httpd, comment, evidence, shown_request={"prompt": "Invented browser prompt", "context": "Invented"})
+    assert path.stat().st_mode & 0o777 == 0o644
+    assert path.read_text().startswith('{\n  "schema_version": 2,\n  "anchors": {')
+    plan = plans(httpd)[0]
+    status, body = _call(httpd, "GET", f"/plans/{plan['id']}/v1.html")
+    assert status == 200 and b"Invented" not in body and b"Rename?" in body
+    assert b"Chosen: <strong>Yes</strong>" in body and b"<li>No" not in body
+
+
+def test_manual_publish_checks_managed_identity_under_the_store_lock(server, monkeypatch):
+    import agent_annotate.categories as categories
+    from agent_annotate.sync_server import _locked_store
+    _, directory, _ = server
+    observed, started = threading.Event(), threading.Event()
+    original = categories._comments
+    errors = []
+    def inspect(page):
+        observed.set()
+        return original(page)
+    def publish():
+        started.set()
+        try:
+            categories.publish_plan_revision(directory, "managed", "<p>Unapproved</p>")
+        except ValueError as exc:
+            errors.append(str(exc))
+    monkeypatch.setattr(categories, "_comments", inspect)
+    with _locked_store(directory):
+        thread = threading.Thread(target=publish)
+        thread.start()
+        assert started.wait(1)
+        assert not observed.wait(0.1), "manual guard read outside the page lock"
+        store = _store(directory)
+        store["approved_plans"] = {"managed": {"current": "v1", "history": []}}
+        (directory / "comments.json").write_text(json.dumps(store))
+    thread.join(timeout=2)
+    assert not thread.is_alive() and errors
+    assert "reviewer decisions" in errors[0]
+    assert not (directory / "plans/managed/versions").exists()

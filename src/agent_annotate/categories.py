@@ -71,11 +71,13 @@ def _atomic_bytes(path: Path, body: bytes) -> None:
     for page in list(path.parents)[:4]:  # page/, attachments/, plans/<id>/versions/
         refuse_if_moved(page)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
             temporary = Path(out.name)
             out.write(body)
+            os.fchmod(out.fileno(), mode)
             out.flush()
             os.fsync(out.fileno())
         os.replace(temporary, path)
@@ -152,7 +154,7 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 def _comments(page_dir):
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"))
+    return _load_v2_store(safe_path(page_dir, "comments.json"), migrate=False)
 
 
 def _finding(store: dict, identifier) -> dict:
@@ -320,15 +322,16 @@ def list_plans(page_dir: Path | str) -> list[dict]:
 def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, title: str | None = None,
                           label: str | None = None) -> dict:
     validate_plan_id(plan_id)
-    if plan_id in _comments(page_dir).get("approved_plans", {}):
-        raise ValueError("this item is filed by reviewer decisions; publish its next revision in Review")
     if not isinstance(html, str) or not html.strip() or len(html.encode()) > MAX_PLAN_BYTES:
         raise ValueError("plan HTML must be nonempty and at most 4 MB")
     if title is not None:
         _text(title, "plan title", 200)
     if label is not None:
         _text(label, "plan label", 200)
-    with _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
+    from .sync_server import _locked_store
+    with _locked_store(page_dir), _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
+        if plan_id in _comments(page_dir).get("approved_plans", {}):
+            raise ValueError("this item is filed by reviewer decisions; publish its next revision in Review")
         path = safe_path(page_dir, f"plans/{plan_id}/meta.json")
         meta = _json(path, {"title": title or plan_id, "current": None, "history": []})
         directory = safe_path(page_dir, f"plans/{plan_id}/versions")

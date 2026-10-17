@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Send now and review rounds automatically file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe cataloging; incomplete evidence never blocks a vote.
+- Reviewer Send now and review rounds file accepted cards and selected options into Plans with frozen evidence, current/superseded history, and retry-safe decision identities. Review GETs remain read-only; only cited images and shared styles persist at commit, and incomplete evidence never blocks a vote. Later corrections become current, agent and legacy votes are excluded, and Plans shows the chosen option with a local decided time.
 
 ## 2.26.3
 

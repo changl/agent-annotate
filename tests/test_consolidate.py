@@ -137,6 +137,7 @@ def test_consolidate_preserves_review_catalog_and_evidence(estate, capsys):
     directory = estate["pages"]["shop-decisions"]
     store = json.loads((directory / "comments.json").read_text())
     comment = store["anchors"]["s:scope"][0]
+    comment["decision"]["catalog_eligible"] = True
     comment["decision"]["evidence"] = bind_evidence(directory, store, comment, None)
     promote(directory, store, comment)
     (directory / "comments.json").write_text(json.dumps(store))
