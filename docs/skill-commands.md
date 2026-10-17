@@ -173,7 +173,7 @@ options:
 
 ```text
 usage: annotate withdraw [-h] --why WHY [--project PROJECT] [--author AUTHOR]
-                         [--json]
+                         [--json] [--dry-run]
                          slug comment_id
 
 positional arguments:
@@ -186,6 +186,7 @@ options:
   --project PROJECT
   --author AUTHOR
   --json
+  --dry-run          report the question to withdraw; write nothing
 ```
 
 ## claim

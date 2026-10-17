@@ -41,7 +41,7 @@ def estate(tmp_path, monkeypatch):
         return 4242
 
     monkeypatch.setattr(cli, "_start_server", _start)
-    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0: True)
+    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0, **kw: True)
     monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None: p)
     monkeypatch.setattr(cli, "_running_servers", lambda: {})
     monkeypatch.setattr(cli, "_live_tailnet_host", lambda: None)
@@ -177,7 +177,7 @@ def test_a_non_local_page_reroutes_before_it_starts(estate, monkeypatch):
 
 
 def test_a_server_that_dies_on_start_is_reported(estate, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0: False)
+    monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0, **kw: False)
     assert cli.cmd_revive(_args()) == 1
     assert _record()["pid"] == 999999
     assert "failed" in capsys.readouterr().out

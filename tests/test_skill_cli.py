@@ -91,6 +91,17 @@ def test_failed_write_keeps_diagnostics(monkeypatch, capsys):
     assert capsys.readouterr().out == "verification failed\npage remains running\n"
 
 
+@pytest.mark.parametrize("command", ["archive", "unarchive", "withdraw", "close", "retire", "revive", "deliver", "consolidate", "prune-bus"])
+def test_dry_run_receipt_names_the_planned_change(command, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("p", "demo", {"url": "https://example.test/demo/"})])
+    def preview(args):
+        print("preview details; nothing was written")
+        return 0
+    args = SimpleNamespace(cmd=command, slug="p/demo", dry_run=True, apply=False, json=False, func=preview)
+    assert cli.run_command(args) == 0
+    assert capsys.readouterr().out.startswith(f"dry run: would {command}")
+
+
 @pytest.mark.parametrize("view,comment,version", [("library", None, None), ("review", "id 1", "v2"), ("plans", None, None)])
 def test_deep_link_preserves_share_key(view, comment, version):
     from urllib.parse import parse_qs, urlsplit

@@ -39,8 +39,8 @@ def test_publish_and_unpublish_hand_the_section_to_the_transport(tmp_path, monke
     monkeypatch.setattr(cli, "_start_server", lambda *a, **k: 4242)
     monkeypatch.setattr(cli, "_stop_server", lambda pid: True)
     # This fixture never starts a server; keep teardown identity checks off the host.
-    monkeypatch.setattr(cli, "_running_servers", lambda: {})
-    monkeypatch.setattr(cli, "_port_listen_pid", lambda port: None)
+    monkeypatch.setattr(cli, "_running_servers", lambda **kw: {})
+    monkeypatch.setattr(cli, "_server_capabilities", lambda *a, **kw: None)
     monkeypatch.setattr(cli, "_is_process_alive", lambda pid: False)
     monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_ensure_hook_installed", lambda: (False, "stub"))

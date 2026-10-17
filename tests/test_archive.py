@@ -74,6 +74,24 @@ def test_archive_and_unarchive_restore_everything(page, capsys):
     sync_server._atomic_write_json(directory / "read-state.json", {})
 
 
+@pytest.mark.parametrize("command", ["archive", "unarchive", "withdraw"])
+def test_cli_dry_run_receipt_and_files_are_unchanged(page, capsys, monkeypatch, command):
+    directory, state, _ = page
+    if command == "unarchive":
+        assert run() == 0
+        capsys.readouterr()
+    monkeypatch.setattr(cli, "_api", lambda *a, **kw: pytest.fail("dry run must not write through HTTP"))
+    before = _tree(directory.parent.parent)
+    arguments = [command, "shop/old", "--dry-run"]
+    if command == "withdraw":
+        arguments += ["1", "--why", "Superseded"]
+    elif command == "archive":
+        arguments += ["--why", "Superseded"]
+    assert cli.run_command(cli.build_parser().parse_args(arguments)) == 0
+    assert capsys.readouterr().out.startswith(f"dry run: would {command} shop/old")
+    assert _tree(directory.parent.parent) == before
+
+
 def test_archive_leaves_inboxes_counts_hook_workspace_and_version_checks(page, capsys, monkeypatch):
     directory, state, record = page
     assert workspace.candidates(directory, "shop")
