@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, history, section
+from single_page import browser_page, feedback, go, history, section, sent
 from test_card_layout import CHROME
 from test_workspace_intent import _page
 
@@ -247,6 +247,7 @@ def test_one_send_covers_every_pending_tab_and_records_one_round(tmp_path, works
         assert not load_copy(workspace)["blocks"][0]["revisions"][-1]["round_pending"]
         history(page)
         page.locator('[data-hist-filter="all"]').click()
+        sent(page)
         page.locator("#hist-sent-body .unified-receipt").wait_for()
         assert page.locator("#hist-sent-body .unified-receipt").count() == 1
         receipt = page.locator("#hist-sent-body .unified-receipt")

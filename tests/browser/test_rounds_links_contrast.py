@@ -4,7 +4,7 @@ import json
 import urllib.request
 
 import pytest
-from single_page import feedback, go, history, ready, section
+from single_page import feedback, go, history, ready, section, sent
 from test_card_layout import CHROME, _serve
 from test_workspace_intent import _contrast, _page
 
@@ -195,6 +195,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             assert _contrast(card.locator(".decision-prompt")) >= 4.5
             saved = (directory / "comments.json").read_bytes()
             history(page)
+            sent(page)
             page.locator("#hist-sent-body .unified-receipt").wait_for()
             assert len(requests) == 1
             receipt = page.locator("#hist-sent-body .unified-receipt").first
@@ -238,6 +239,7 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
             page.goto(base + "#view=review", wait_until="networkidle")
             ready(page)
             history(page)
+            sent(page)
             receipt = page.locator("#hist-sent-body .unified-receipt").first
             receipt.wait_for()
             receipt.locator("summary").click()
@@ -249,8 +251,93 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
             page.reload(wait_until="networkidle")
             ready(page)
             history(page)
+            sent(page)
             receipt.locator("summary").click()
             assert "Keep the original wording for CHA-160." in receipt.inner_text()
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_sent_rounds_fold_as_one_unit_with_the_count_showing(tmp_path):
+    directory, process, base = _fixture(tmp_path)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            for width, height in ((390, 844), (1440, 900)):
+                page = browser.new_page(viewport={"width": width, "height": height})
+                page.set_default_timeout(5000)
+                page.goto(base + "#view=review", wait_until="networkidle")
+                ready(page)
+                history(page)
+                fold = page.locator("#hist-sent > details.hist-collapse")
+                summary = fold.locator("> summary")
+                receipts = page.locator("#hist-sent-body .unified-receipt")
+                # Folded by default, with the number of rounds in view.
+                playwright.expect(summary).to_be_visible()
+                playwright.expect(fold).not_to_have_attribute("open", "")
+                playwright.expect(receipts.first).to_be_hidden()
+                rounds = receipts.count()
+                assert rounds >= 1
+                playwright.expect(summary).to_have_text(f"Sent rounds {rounds}")
+                # Review versions are untouched: still open.
+                playwright.expect(page.locator('.hist-cat[data-cat="review"] > details.hist-collapse')).to_have_attribute("open", "")
+                summary.click()
+                playwright.expect(receipts.first).to_be_visible()
+                # Each round keeps its own disclosure, closed until opened.
+                playwright.expect(receipts.first).not_to_have_attribute("open", "")
+                receipts.first.locator("summary").click()
+                playwright.expect(receipts.first).to_have_attribute("open", "")
+                # The same native keyboard as Review versions.
+                summary.focus()
+                page.keyboard.press("Enter")
+                playwright.expect(receipts.first).to_be_hidden()
+                page.keyboard.press("Space")
+                playwright.expect(receipts.first).to_be_visible()
+                # Nothing is remembered: a reload folds it again.
+                page.reload(wait_until="networkidle")
+                ready(page)
+                history(page)
+                playwright.expect(summary).to_have_text(f"Sent rounds {rounds}")
+                playwright.expect(fold).not_to_have_attribute("open", "")
+                playwright.expect(receipts.first).to_be_hidden()
+                page.close()
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_each_sent_round_starts_with_the_page_version_it_was_sent_on(tmp_path):
+    directory, process, base = _fixture(tmp_path)
+    try:
+        # A later round with no recorded version keeps today's line.
+        rounds = directory / "rounds.ndjson"
+        first = json.loads(rounds.read_text().splitlines()[0])
+        assert first["version"] == "v1"
+        bare = dict(first, id="bare", send_id="bare", ts="2026-10-03T09:00:00Z")
+        bare.pop("version")
+        with rounds.open("a") as out:
+            out.write(json.dumps(bare) + "\n")
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            for width, height in ((390, 844), (1440, 900)):
+                page = browser.new_page(viewport={"width": width, "height": height})
+                page.set_default_timeout(5000)
+                page.goto(base + "#view=review", wait_until="networkidle")
+                ready(page)
+                history(page)
+                sent(page)
+                lines = page.locator("#hist-sent-body .unified-receipt > summary")
+                playwright.expect(lines).to_have_count(2)
+                labelled, plain = sorted(lines.all_inner_texts(), key=lambda t: not t.startswith("v1 · "))
+                assert labelled.startswith("v1 · "), labelled
+                assert plain.startswith(("Feedback saved (", "Sent (", "⏳", "✅")), plain
+                assert labelled.split(" · ")[1] == plain.split(" · ")[0], (labelled, plain)
+                page.close()
             browser.close()
     finally:
         process.terminate()
@@ -330,6 +417,7 @@ def test_a_new_review_refreshes_history_only_when_opened_and_records_viewed_vers
             page.goto(base, wait_until="networkidle")
             ready(page)
             history(page)
+            sent(page)
             page.locator("#hist-sent-body .unified-receipt").wait_for()
             assert len(requests) == 1
             go(page, "review", v="v1")

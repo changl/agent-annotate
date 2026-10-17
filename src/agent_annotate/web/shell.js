@@ -938,13 +938,15 @@ function sentRounds() {
     const withReceipt = g.filter(r => Array.isArray(r.receipt) && r.receipt.length)
       .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     const ts = g.map(r => r.ts).sort()[0];
+    // The page version the Send was made on (pushes may not record one).
+    const version = (g.find(r => typeof r.version === 'string' && r.version) || {}).version || '';
     if (withReceipt.length) {
       const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
-      return { ts, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
+      return { ts, version, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
     }
     const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
-    return Object.assign(legacy, { result: roundResult(g, legacy.n) });
+    return Object.assign(legacy, { version, result: roundResult(g, legacy.n) });
   }).filter(r => r.items.length);
 }
 // UI-13: the delivery the server recorded on the round at Send, so a reload
