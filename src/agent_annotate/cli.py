@@ -535,7 +535,15 @@ def _server_capabilities(port: int, base_path: str = "", *, timeout: float = 1.0
         url = f"http://127.0.0.1:{port}{base_path}/api/capabilities"
         request = urllib.request.Request(url, headers={"X-Annotate-Identity": "1"})
         with opener.open(request, timeout=timeout) as response:
+            if response.status != 200:
+                raise ValueError(f"capabilities returned HTTP {response.status}")
             payload = json.loads(response.read(1024 * 1024 + 1))
+        # One-release upgrade bridge: old servers ignore the identity header.
+        # Deployment still requires exactly one candidate and a fresh exact ps match.
+        identity_fields = {"pid", "slug_dir", "port", "public_base_path"}
+        if (isinstance(payload, dict) and not identity_fields.intersection(payload)
+                and isinstance(payload.get("version"), str) and isinstance(payload.get("runtime"), dict)):
+            return payload
         if (not isinstance(payload, dict) or type(payload.get("pid")) is not int or payload["pid"] <= 0
                 or not isinstance(payload.get("slug_dir"), str) or not Path(payload["slug_dir"]).is_absolute()
                 or payload.get("port") != port or payload.get("public_base_path") != base_path):
@@ -3362,7 +3370,8 @@ REVIVE_LABEL = "com.agent-annotate.revive"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
-def _wait_listening(port: int, pid: int, seconds: float = 8.0, *, base_path: str = "") -> bool:
+def _wait_listening(port: int, pid: int, seconds: float = 8.0, *, base_path: str = "",
+                    record: dict | None = None) -> bool:
     """Wait for this live process to report its identity on the page mount."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -3370,8 +3379,13 @@ def _wait_listening(port: int, pid: int, seconds: float = 8.0, *, base_path: str
             return False
         try:
             capabilities = _server_capabilities(port, base_path, timeout=min(1.0, max(0.01, deadline - time.monotonic())))
-            if capabilities is not None and capabilities["pid"] == pid:
-                return True
+            if capabilities is not None:
+                if capabilities.get("pid") == pid:
+                    return True
+                if "pid" not in capabilities and record is not None:
+                    from .deployment import _identity
+                    if _identity(record)["pid"] == pid:
+                        return True
         except RuntimeError:
             pass  # A starting server may have bound before it can answer.
         time.sleep(0.25)

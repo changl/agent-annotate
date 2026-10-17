@@ -66,18 +66,21 @@ def _identity(record: dict, *, listening: bool = True) -> dict:
         capabilities = cli._server_capabilities(port, record.get("public_base_path") or "")
     except RuntimeError as exc:
         raise DeploymentError(str(exc)) from exc
-    listener = capabilities["pid"] if capabilities is not None else None
     if len(processes) > 1:
         raise DeploymentError(f"ambiguous servers for {directory}")
     if not processes:
-        if listener is not None:
+        if capabilities is not None:
             raise DeploymentError(f"foreign or unreconciled process for port {port}")
         python = Path(record.get("runtime_python") or sys.executable)
         return {"pid": None, "python": str(python), "argv": _arguments(record, python)}
     process = processes[0]
     pid = process["pid"]
+    legacy = capabilities is not None and "pid" not in capabilities
+    listener = capabilities.get("pid") if capabilities is not None else None
+    if legacy:
+        listener = pid  # The complete command identity is checked immediately below.
     if (process.get("port") != port or (listener != pid if listening else listener not in (None, pid))
-            or (capabilities is not None and capabilities["slug_dir"] != str(directory))):
+            or (capabilities is not None and not legacy and capabilities["slug_dir"] != str(directory))):
         raise DeploymentError(f"foreign or unreconciled listener for port {port}")
     result = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
                             check=True, capture_output=True, text=True, timeout=5)
@@ -116,7 +119,7 @@ def _spawn(record: dict, argv: list[str]) -> int:
 
 
 def _verify_server(record: dict, pid: int, expected: dict | None) -> dict:
-    if (not cli._wait_listening(int(record["port"]), pid, base_path=record.get("public_base_path") or "")
+    if (not cli._wait_listening(int(record["port"]), pid, base_path=record.get("public_base_path") or "", record=record)
             or _identity(record)["pid"] != pid):
         raise DeploymentError("replacement failed exact process/listener verification")
     origin = f"http://127.0.0.1:{record['port']}{record.get('public_base_path') or ''}/"

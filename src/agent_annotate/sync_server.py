@@ -1411,13 +1411,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from . import __version__
         identity = {
             "version": __version__,
-            "pid": os.getpid(),
-            "slug_dir": str(self.artifact_dir),
-            "port": self.server.server_address[1],
-            "public_base_path": self.public_base_path,
             "runtime": RUNTIME_MANIFEST,
         }
         if self._is_identity_probe():
+            identity.update(pid=os.getpid(), slug_dir=str(self.artifact_dir), port=self.server.server_address[1],
+                            public_base_path=self.public_base_path)
             return self._respond(200, json.dumps(identity).encode(), "application/json", cache_control="no-store")
         self._respond(200, json.dumps({
             **identity,

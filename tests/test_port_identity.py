@@ -9,9 +9,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import venv
 from contextlib import contextmanager
 from pathlib import Path
 
+import platformdirs
 import pytest
 
 from agent_annotate import cli, deployment, pagegen, sync_server
@@ -71,14 +74,19 @@ def test_capabilities_are_fast_without_registry_or_version_checks(tmp_path, monk
         assert result["port"] == port and result["public_base_path"] == "/review"
 
 
-def test_forged_http_pid_is_refused_by_process_command(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("candidate", [False, True])
+def test_forged_http_pid_is_refused_by_process_command(tmp_path, monkeypatch, legacy, candidate):
     page = tmp_path / "page"
     page.mkdir()
     (page / "current.html").write_text("review")
     class Fake(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            body = json.dumps({"pid": os.getpid(), "slug_dir": str(page.resolve()),
-                               "port": self.server.server_port, "public_base_path": ""}).encode()
+            payload = {"version": "2.26.1", "runtime": {"package_version": "2.26.1"}}
+            if not legacy:
+                payload.update(pid=os.getpid(), slug_dir=str(page.resolve()),
+                               port=self.server.server_port, public_base_path="")
+            body = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -90,9 +98,21 @@ def test_forged_http_pid_is_refused_by_process_command(tmp_path, monkeypatch):
     with listener(Fake) as port:
         # Even a candidate from the process scan must pass the fresh, real ps -p read.
         monkeypatch.setattr(cli, "_running_servers", lambda **kw: {
-            str(page.resolve()): [{"pid": os.getpid(), "port": port}]})
-        with pytest.raises(deployment.DeploymentError, match="command identity"):
+            str(page.resolve()): [{"pid": os.getpid(), "port": port}]} if candidate else {})
+        with pytest.raises(deployment.DeploymentError, match="command identity" if candidate else "foreign"):
             deployment._identity({"slug_dir": str(page), "port": port, "project": "fake"})
+
+
+def test_browser_capabilities_do_not_expose_process_identity(tmp_path):
+    handler = sync_server.make_handler(tmp_path, v2_mode=True)
+    with listener(handler) as port:
+        origin = f"http://127.0.0.1:{port}"
+        for headers in ({}, {"X-Annotate-Identity": "1", "Origin": origin, "Sec-Fetch-Site": "same-origin"}):
+            request = urllib.request.Request(origin + "/api/capabilities", headers=headers)
+            with urllib.request.urlopen(request, timeout=1) as response:
+                payload = json.load(response)
+            assert payload["version"] and payload["runtime"]
+            assert not {"pid", "slug_dir", "port", "public_base_path"}.intersection(payload)
 
 
 @pytest.fixture
@@ -179,3 +199,67 @@ def test_real_page_lifecycle_finishes_in_seconds_without_lsof(runtime, tmp_path,
     command(["unpublish", "sandbox/sandbox"])
     assert not cli._load_state_for_project("sandbox")["slugs"]
     assert not marker.exists()
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_legacy_server_restarts_onto_new_identity_and_can_roll_back(runtime, tmp_path, monkeypatch, rollback):
+    """An old server ignores the identity header and serves the 2.26.1 payload."""
+    package = Path(cli.__file__).parent
+    overlay = tmp_path / "legacy-source"
+    legacy = overlay / "agent_annotate"
+    legacy.mkdir(parents=True)
+    (legacy / "__init__.py").write_text(f"__version__ = '2.26.1'\n__path__.append({str(package)!r})\n")
+    (legacy / "sync_server.py").write_text(
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('agent_annotate._legacy_server', {str(package / 'sync_server.py')!r})\n"
+        "server = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = server\n"
+        "spec.loader.exec_module(server)\n"
+        "server.AnnotateHandler._is_identity_probe = lambda self: False\nserver.main()\n")
+    # A sandbox interpreter keeps its source path on rollback even when deployment
+    # intentionally strips PYTHONPATH. No installed runtime or environment is edited.
+    legacy_env = tmp_path / "legacy-env"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(legacy_env)
+    site = next((legacy_env / "lib").glob("python*/site-packages"))
+    (site / "sandbox-source.pth").write_text(f"{overlay}\n{package.parent}\n{Path(platformdirs.__file__).parents[1]}\n")
+    legacy_python = legacy_env / "bin" / "python"
+    markdown = tmp_path / "legacy.md"
+    markdown.write_text("---\ntitle: Legacy sandbox\n---\n\n## Scope\n\nUpgrade this sandbox.\n")
+    page = tmp_path / "legacy-page"
+    pagegen.generate(markdown, page, version="v1")
+    with socket.socket() as sock:
+        sock.bind(("localhost", 0))
+        port = sock.getsockname()[1]
+    bus = cli.BUS_ROOT / "legacy"
+    bus.mkdir(parents=True)
+    record = {"slug_dir": str(page), "project": "legacy", "port": port, "public_base_path": "/legacy",
+              "bus_file": str(bus / "legacy-page.ndjson")}
+    process = subprocess.Popen(deployment._arguments(record, legacy_python), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    record["pid"] = process.pid
+    cli._save_state_for_project("legacy", {"project": "legacy", "slugs": {"legacy-page": record}})
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        payload = cli._server_capabilities(port, "/legacy")
+        if payload:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("legacy server did not start")
+    assert payload["version"] == "2.26.1" and "pid" not in payload
+    assert deployment._identity(record)["pid"] == process.pid
+    if rollback:
+        verify = deployment._verify_server
+        def reject_new(record, pid, expected):
+            if expected is not None:
+                verify(record, pid, expected)
+                raise deployment.DeploymentError("reject new runtime")
+            return verify(record, pid, expected)
+        monkeypatch.setattr(deployment, "_verify_server", reject_new)
+        with pytest.raises(deployment.DeploymentError) as error:
+            deployment.restart_record("legacy", "legacy-page", runtime)
+        assert error.value.result["rolled_back"], str(error.value)
+        assert "pid" not in cli._server_capabilities(port, "/legacy")
+    else:
+        result = deployment.restart_record("legacy", "legacy-page", runtime)
+        assert result["ok"] and result["pid"] != process.pid
+        assert cli._server_capabilities(port, "/legacy")["pid"] == result["pid"]
+    assert not cli._is_process_alive(process.pid)
