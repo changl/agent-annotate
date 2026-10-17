@@ -199,7 +199,10 @@
     pick.hidden = view !== 'plans' || plans.length < 2;
     if (pick.hidden) return;
     const cur = DOCS().planId();
-    pick.innerHTML = plans.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('');
+    pick.innerHTML = ['Approved', 'Decided', 'Plans'].map(group => {
+      const items = plans.filter(p => (p.kind || 'Plans') === group);
+      return items.length ? `<optgroup label="${group}">` + items.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('') + '</optgroup>' : '';
+    }).join('');
   }
   function setTitle(title) {
     projectTitle = title || projectTitle;

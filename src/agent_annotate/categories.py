@@ -71,11 +71,13 @@ def _atomic_bytes(path: Path, body: bytes) -> None:
     for page in list(path.parents)[:4]:  # page/, attachments/, plans/<id>/versions/
         refuse_if_moved(page)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
             temporary = Path(out.name)
             out.write(body)
+            os.fchmod(out.fileno(), mode)
             out.flush()
             os.fsync(out.fileno())
         os.replace(temporary, path)
@@ -152,7 +154,7 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 def _comments(page_dir):
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"))
+    return _load_v2_store(safe_path(page_dir, "comments.json"), migrate=False)
 
 
 def _finding(store: dict, identifier) -> dict:
@@ -293,6 +295,10 @@ def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str)
 
 def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
     validate_plan_id(plan_id)
+    from .approval_catalog import catalog_meta
+    managed = _comments(page_dir).get("approved_plans", {}).get(plan_id)
+    if managed:
+        return catalog_meta(managed)
     path = safe_path(page_dir, f"plans/{plan_id}/meta.json")
     if not path.is_file():
         raise KeyError(plan_id)
@@ -300,12 +306,17 @@ def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
 
 
 def list_plans(page_dir: Path | str) -> list[dict]:
+    from .approval_catalog import catalog_meta
+    managed = [{"id": identifier, **catalog_meta(plan)} for identifier, plan in
+               _comments(page_dir).get("approved_plans", {}).items()]
+    managed.sort(key=lambda plan: plan.get("updated_at", ""), reverse=True)
     directory = safe_path(page_dir, "plans")
     if not directory.exists():
-        return []
+        return managed
     # A folder without meta.json (notes, a half-copied plan) is not a plan.
-    return [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
-            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()]
+    return managed + [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
+            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()
+            and p.name not in {plan["id"] for plan in managed}]
 
 
 def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, title: str | None = None,
@@ -317,7 +328,10 @@ def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, titl
         _text(title, "plan title", 200)
     if label is not None:
         _text(label, "plan label", 200)
-    with _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
+    from .sync_server import _locked_store
+    with _locked_store(page_dir), _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
+        if plan_id in _comments(page_dir).get("approved_plans", {}):
+            raise ValueError("this item is filed by reviewer decisions; publish its next revision in Review")
         path = safe_path(page_dir, f"plans/{plan_id}/meta.json")
         meta = _json(path, {"title": title or plan_id, "current": None, "history": []})
         directory = safe_path(page_dir, f"plans/{plan_id}/versions")

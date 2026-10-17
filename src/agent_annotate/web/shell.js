@@ -549,7 +549,7 @@ async function apiPushSingle(id) {
 // v2.19: in round mode the verdict is posted with defer_push so the server
 // parks it (decision.round_pending) instead of emitting a session_push per
 // click; POST /api/rounds/submit later sends the whole round at once.
-async function apiDecision(id, verdict, text) {
+async function apiDecision(id, verdict, text, optionId) {
   try {
     const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/decision' + authorQuery()), {
       method: 'POST',
@@ -557,6 +557,8 @@ async function apiDecision(id, verdict, text) {
       body: JSON.stringify({
         verdict,
         text: text || undefined,
+        option_id: optionId,
+        evidence: document.getElementById('content-frame')?.contentWindow?.__ANNOTATE_CONTENT_META__?.evidence?.[id],
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
@@ -1773,6 +1775,8 @@ function renderDecisionBlock(c) {
         <div class="decision-answer-text">${esc(a.text)}</div>
         ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
       </div>
+      ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
+      ${c.decision?.catalog_conflict ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
     </div>`;
   }
   const opts = withAnswerInWords(decisionOptions(dr));
@@ -1909,6 +1913,8 @@ function renderCItem(c) {
         ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
         ${cardMenuHtml(c, cls)}
       </div>
+      ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
+      ${c.decision?.catalog_conflict ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
       ${cardMenuPanel(c, cls)}${newerLocationHtml(c)}
     </div>`;
   }
@@ -2165,10 +2171,10 @@ function decisionCommentText(root, id) {
   return t || null;
 }
 
-async function submitDecision(root, id, verdict, text) {
+async function submitDecision(root, id, verdict, text, optionId) {
   setDecisionButtonsDisabled(root, id, true);
   setDecisionFeedback(root, id, 'Sending…', false);
-  let result = await apiDecision(id, verdict, text);
+  let result = await apiDecision(id, verdict, text, optionId);
   if (!result || result.fallback) result = await apiDecisionFallback(id, verdict, text);
   if (!result) {
     setDecisionFeedback(root, id, 'Failed to send — try again.', true);
@@ -2236,7 +2242,7 @@ function pickOption(root, btn) {
   const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
   const v = selectVerdictId();
   const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
-  return submitDecision(root, id, v, text);
+  return submitDecision(root, id, v, text, btn.dataset.optionId);
 }
 
 function wireDecisionActions(root) {
@@ -3585,6 +3591,10 @@ async function activateDoc(doc, version) {
   if (!DOCS.includes(doc)) doc = 'review';
   if (DOC !== doc) enterDoc(doc);
   VIEW_DOC = doc;
+  if (!CURRENT_VERSION) {
+    await loadMeta();
+    CURRENT_VERSION = latestVersion();
+  }
   if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
   const frame = document.getElementById('content-frame');
   if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
@@ -3618,7 +3628,21 @@ async function loadCategories() {
       CAPS = Object.assign({}, CAPS, { read_only: CATEGORIES.read_only });
       document.body.classList.toggle('page-read-only', pageReadOnly());
     }
+    const previousPlan = PLANS.find(p => p.id === PLAN_ID);
     PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
+    const nextPlan = PLANS.find(p => p.id === PLAN_ID);
+    if (previousPlan && nextPlan && previousPlan.current !== nextPlan.current) {
+      const saved = DOC_STATE.plans;
+      if (saved) {
+        if (saved.CURRENT_VERSION === previousPlan.current) saved.CURRENT_VERSION = nextPlan.current;
+        saved.META = { ...saved.META, current: nextPlan.current, history: nextPlan.history };
+      }
+      if (DOC === 'plans' && CURRENT_VERSION === previousPlan.current) {
+        CURRENT_VERSION = nextPlan.current;
+        loadIframe(CURRENT_VERSION);
+      }
+      if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
+    }
     if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = PLANS.length ? PLANS[0].id : null;
     DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
     if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
