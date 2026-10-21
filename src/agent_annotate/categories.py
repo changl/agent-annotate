@@ -357,7 +357,7 @@ MAX_RECEIPT_ITEMS = 200
 def validate_send(payload: dict) -> dict:
     """The optional `send_id` and `receipt` one Send passes to rounds/submit
     and push-session: the lines the reviewer saw in the Send summary, tagged
-    by tab, kept for History · Sent rounds. Display only; never delivered."""
+    by tab, kept for History (under the version it was sent on). Display only; never delivered."""
     result = {}
     if payload.get("send_id") is not None:
         if not isinstance(payload["send_id"], str) or not _SEND_ID.fullmatch(payload["send_id"]):

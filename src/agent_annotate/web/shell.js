@@ -919,7 +919,7 @@ function roundItemText(answer) {
   return (n ? '#' + n + ' · ' : '') + prompt + (ans && !same ? ' → ' + firstLine(ans) : '');
 }
 // The rounds the server recorded, newest first, each line tagged with its
-// tab (app/rail.js renders them under History · Sent rounds).
+// tab (History nests each under the version it was sent on).
 // One Send leaves a round record and/or a push record, tied by send_id; its
 // receipt is the Send summary's lines (every tab). Older records without a
 // receipt are listed from their answers and edits.
@@ -1001,11 +1001,69 @@ async function loadDelivery() {
 // final/: each document's versions sit in its own History section
 // (#vrail-body-<doc>); a version of a document that is not on screen opens
 // that document's tab at that version.
-function renderVersionRail() {
+// yvj: one list. Each version's chevron opens what was sent on it and what
+// the agent did in response; the separate Sent rounds list is gone.
+let HISTORY_SHOWN = null; // the tabs History shows (app/rail.js); null = every tab
+function versionAt(ts) {
+  const t = Date.parse(ts) || 0;
+  let at = null;
+  for (const h of (META.history || [])) if ((Date.parse(h.ts) || 0) <= t) at = h.version;
+  return at || ((META.history || [])[0] || {}).version || null;
+}
+// The rounds sent on each version of this document, oldest first. Review
+// rounds name their version; others (and older records) go under the
+// version on screen at their time. Review also carries Library and Findings
+// lines, which have no versions of their own.
+function roundsByVersion(shown) {
+  const known = new Set((META.history || []).map(h => h.version));
+  const rounds = window.AA && window.AA.send ? window.AA.send.receipts() : sentRounds();
+  const out = {};
+  for (const r of rounds) {
+    const items = r.items.filter(it => (!shown || shown.includes(it.cat)) &&
+      (it.cat === DOC || (DOC === 'review' && !(window.AA && window.AA.isDoc(it.cat)))));
+    if (!items.length) continue;
+    const v = DOC === 'review' && known.has(r.version) ? r.version : versionAt(r.ts);
+    if (v) (out[v] = out[v] || []).unshift(Object.assign({}, r, { items }));
+  }
+  return out;
+}
+// What the agent did on a version's comments: resolved or addressed them.
+function agentDoneOn(version) {
+  return flattenAll(true).filter(c => c.version === version &&
+    (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent'));
+}
+function versionFolds(value) {
+  const key = 'annotate:vfold:' + location.pathname + DOC;
+  try {
+    if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
+    return JSON.parse(localStorage.getItem(key) || '{}') || {};
+  } catch { return {}; }
+}
+function versionActivityHtml(h, next, rounds, done) {
+  const tag = (cat) => cat !== DOC && window.AA && window.AA.rail ? window.AA.rail.tagHtml(cat) + ' ' : '';
+  const sent = rounds.map(r => `<div class="vact-block">
+      <div class="vact-head">Sent · ${esc(r.result)} · ${esc(fmtTs(r.ts))}</div>
+      <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul>
+    </div>`).join('');
+  const lines = done.map(c => {
+    const n = NUM_MAP[c.id];
+    const what = c.status === 'resolved_in_version' ? 'Resolved in ' + (c.resolved_in_version || 'a later version') : 'Addressed';
+    return `<li>${n ? '#' + n + ' · ' : ''}${esc(displayPrompt(c) || firstLine(c.text))} — ${esc(what)}</li>`;
+  }).join('');
+  const agent = next || lines ? `<div class="vact-block vact-agent">
+      <div class="vact-head">Agent${next ? ' · Published ' + esc(next.version) + (next.label ? ' · ' + esc(next.label) : '') + ' · ' + esc(fmtTs(next.ts)) : ''}</div>
+      ${lines ? `<ul>${lines}</ul>` : ''}
+    </div>` : '';
+  return sent + agent;
+}
+function renderVersionRail(shown) {
   const body = document.getElementById('vrail-body-' + DOC);
   if (!body) return;
+  if (shown !== undefined) HISTORY_SHOWN = shown;
   const doc = DOC;
-  const focusedVersion = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vrow') ? document.activeElement.closest('.vrow').dataset.version : null;
+  const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vitem');
+  const focusedVersion = focused ? focused.dataset.version : null;
+  const focusedToggle = focused && document.activeElement.classList.contains('vrow-toggle');
   // The keyboard hint belongs to the document on screen only, as in final/.
   const hint = body.parentNode.querySelector('.unified-history-hint');
   if (hint) hint.hidden = doc !== VIEW_DOC;
@@ -1014,7 +1072,16 @@ function renderVersionRail() {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
     return;
   }
+  const byVersion = roundsByVersion(HISTORY_SHOWN);
+  const folds = versionFolds();
+  const order = META.history || [];
   body.innerHTML = history.map(h => {
+    const rounds = byVersion[h.version] || [];
+    const done = agentDoneOn(h.version);
+    const activity = rounds.length || done.length;
+    const next = activity ? order[order.findIndex(x => x.version === h.version) + 1] : null;
+    const open = !!activity && (h.version in folds ? folds[h.version] : h.version === CURRENT_VERSION);
+    const pid = 'vact-' + doc + '-' + h.version;
     const counts = countsForVersion(h.version);
     const isCur = h.version === CURRENT_VERSION;
     const isNew = !neverVisited(h.version) && hasNewContent(h.version);
@@ -1024,12 +1091,21 @@ function renderVersionRail() {
       ? `<span class="badge badge-error badge-xs vrow-badge">${counts.review}</span>`
       : '';
     const newHtml = isNew ? '<span class="vrow-new" title="Content updated since your last visit">↑NEW</span>' : '';
-    return `<button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
-      ${dotHtml}
-      <span class="vrow-label">${esc(h.version)}${h.label ? ' &middot; ' + esc(h.label) : ''}</span>
-      ${newHtml}
-      ${badgeHtml}
-    </button>`;
+    const toggleHtml = activity
+      ? `<button type="button" class="btn btn-ghost btn-xs btn-square vrow-toggle" aria-expanded="${open}" aria-controls="${escAttr(pid)}" aria-label="What was sent and done on ${escAttr(h.version)}" title="What was sent and done on ${escAttr(h.version)}">${ico('chevRight')}</button>`
+      : '';
+    return `<div class="vitem" role="listitem" data-version="${escAttr(h.version)}">
+      <div class="vitem-row">
+        <button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
+          ${dotHtml}
+          <span class="vrow-label">${esc(h.version)}${h.label ? ' &middot; ' + esc(h.label) : ''}</span>
+          ${newHtml}
+          ${badgeHtml}
+        </button>
+        ${toggleHtml}
+      </div>
+      ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done)}</div>` : ''}
+    </div>`;
   }).join('');
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
     row.addEventListener('click', () => {
@@ -1039,11 +1115,17 @@ function renderVersionRail() {
       if (isMobileLayout()) setMobileSheetOpen(false);
     });
   });
-  // U-14: the version list is a keyboard listbox.
+  Array.from(body.querySelectorAll('.vrow-toggle')).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') !== 'true';
+      btn.setAttribute('aria-expanded', String(open));
+      document.getElementById(btn.getAttribute('aria-controls')).hidden = !open;
+      withDoc(doc, () => versionFolds(Object.assign(versionFolds(), { [btn.closest('.vitem').dataset.version]: open })));
+    });
+  });
+  // U-14: Up/Down/Home/End move between the versions.
   const rows = [...body.querySelectorAll('.vrow')];
   rows.forEach(r => {
-    r.setAttribute('role', 'option');
-    r.setAttribute('aria-selected', String(r.dataset.version === CURRENT_VERSION));
     r.tabIndex = r.dataset.version === CURRENT_VERSION ? 0 : -1;
     r.addEventListener('keydown', e => {
       let n = rows.indexOf(r);
@@ -1059,7 +1141,11 @@ function renderVersionRail() {
     });
   });
   const restore = focusedVersion && !document.getElementById('history-body').hidden && (!isMobileLayout() || isMobileSheetOpen()) && rows.find(r => r.dataset.version === focusedVersion);
-  if (restore) { rows.forEach(r => { r.tabIndex = r === restore ? 0 : -1; }); restore.focus(); }
+  if (restore) {
+    rows.forEach(r => { r.tabIndex = r === restore ? 0 : -1; });
+    const toggle = focusedToggle && restore.parentNode.querySelector('.vrow-toggle');
+    (toggle || restore).focus();
+  }
   if (doc === VIEW_DOC) renderVersionBanner();
 }
 // U-10: an older version on screen says so, with the way back.
@@ -3247,7 +3333,7 @@ function wireBridge() {
       autoCollapseForFullscreen(false); // version switch discards any overlay
       sendCommentCountsToFrame();
       markSeen(CURRENT_VERSION);
-      loadSeen().then(renderVersionRail);
+      loadSeen().then(() => renderVersionRail());
       // If a goto-location click triggered a version switch to get here,
       // the scroll-to couldn't be sent until now (the previous iframe
       // document, and its anchor registry, didn't exist yet).
@@ -3867,7 +3953,7 @@ window.AnnotateDocs = {
   warning: (doc) => withDoc(doc, summaryWarning),
   items: (doc) => withDoc(doc, sendItems),
   renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
-  renderHistoryInto: (doc) => withDoc(doc, () => { renderVersionRail(); }),
+  renderHistoryInto: (doc, shown) => withDoc(doc, () => { renderVersionRail(shown); }),
   submitPage,
   discardPage,
   pageRoundPending,

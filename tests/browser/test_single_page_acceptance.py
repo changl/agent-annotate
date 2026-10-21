@@ -248,18 +248,15 @@ def test_one_send_covers_every_pending_tab_and_records_one_round(tmp_path, works
         history(page)
         page.locator('[data-hist-filter="all"]').click()
         sent(page)
-        page.locator("#hist-sent-body .unified-receipt").wait_for()
-        assert page.locator("#hist-sent-body .unified-receipt").count() == 1
-        receipt = page.locator("#hist-sent-body .unified-receipt")
-        assert receipt.get_attribute("open") is None
-        receipt.locator("summary").click()
-        assert all(page.locator("#hist-sent-body .hist-tag").nth(i).is_visible() for i in range(4))
-        assert set(page.locator("#hist-sent-body .hist-tag").all_inner_texts()) == {
-            "Review",
-            "Library",
-            "Findings",
-            "Plans",
-        }
+        # The one Send sits under the Review version it was sent on, with the
+        # Library and Findings lines tagged; the Plans line under the plan's version.
+        review = page.locator('.hist-cat[data-cat="review"] .vact-block:not(.vact-agent)')
+        playwright.expect(review).to_have_count(1)
+        assert set(review.locator(".hist-tag").all_inner_texts()) == {"Library", "Findings"}
+        assert review.locator("li").count() == 3
+        plans = page.locator('.hist-cat[data-cat="plans"] .vact-block:not(.vact-agent)')
+        playwright.expect(plans).to_have_count(1)
+        assert plans.locator("li").count() == 1
         # A second submit has no pending work and cannot create a second round.
         result = page.evaluate(
             "async () => (await fetch('./api/rounds/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()"

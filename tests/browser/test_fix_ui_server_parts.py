@@ -31,8 +31,8 @@ def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path,
         history(page)
         page.locator('[data-hist-filter="all"]').click()
         sent(page)
-        summary = page.locator("#hist-sent-body .unified-receipt summary")
+        # The round sits under the page version it was sent on.
+        summary = page.locator(f'#vrail-body-review .vitem[data-version="{rounds[0]["version"]}"] .vact-head').first
         summary.wait_for()
-        # The line starts with the page version the round was sent on.
-        assert summary.inner_text().startswith(rounds[0]["version"] + " · Feedback saved (1)"), summary.inner_text()
+        assert summary.inner_text().startswith("Sent · Feedback saved (1)"), summary.inner_text()
         playwright.expect(page.locator("#send-note")).to_contain_text("Feedback saved (1)")

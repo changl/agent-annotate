@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- History rail: versions and sent rounds are one list, newest first. Each version's chevron opens what was sent on it (each round's result and its lines) and what the agent did in response (the next version it published, the comments it resolved or addressed); the version on screen starts open and each version's open state is remembered for the page. A round with no recorded version sits under the version current at its time. The separate Sent rounds section is gone; the header's last-send line stays.
+
 ## 2.26.5
 
 Decision #33 on the agent-annotate page.

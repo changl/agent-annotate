@@ -4,7 +4,7 @@ import json
 import urllib.request
 
 import pytest
-from single_page import feedback, go, history, ready, section, sent
+from single_page import ROUNDS, feedback, go, history, ready, section, sent
 from test_card_layout import CHROME, _serve
 from test_workspace_intent import _contrast, _page
 
@@ -196,10 +196,9 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             saved = (directory / "comments.json").read_bytes()
             history(page)
             sent(page)
-            page.locator("#hist-sent-body .unified-receipt").wait_for()
+            page.locator(ROUNDS).wait_for()
             assert len(requests) == 1
-            receipt = page.locator("#hist-sent-body .unified-receipt").first
-            receipt.locator("summary").click()
+            receipt = page.locator(ROUNDS).first
             assert "Keep the original wording for CHA-160." in receipt.inner_text()
             assert receipt.locator(".decision-btn,textarea").count() == 0
             assert (directory / "comments.json").read_bytes() == saved
@@ -240,9 +239,8 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
             ready(page)
             history(page)
             sent(page)
-            receipt = page.locator("#hist-sent-body .unified-receipt").first
+            receipt = page.locator(ROUNDS).first
             receipt.wait_for()
-            receipt.locator("summary").click()
             assert "Keep the original wording for CHA-160." in receipt.inner_text()
             assert "When should we release?" in receipt.inner_text()
             assert "Ship CHA-160?" not in receipt.inner_text()
@@ -251,8 +249,7 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
             page.reload(wait_until="networkidle")
             ready(page)
             history(page)
-            sent(page)
-            receipt.locator("summary").click()
+            receipt.wait_for()
             assert "Keep the original wording for CHA-160." in receipt.inner_text()
             browser.close()
     finally:
@@ -261,7 +258,7 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_sent_rounds_fold_as_one_unit_with_the_count_showing(tmp_path):
+def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_path):
     directory, process, base = _fixture(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
@@ -272,37 +269,48 @@ def test_sent_rounds_fold_as_one_unit_with_the_count_showing(tmp_path):
                 page.goto(base + "#view=review", wait_until="networkidle")
                 ready(page)
                 history(page)
-                fold = page.locator("#hist-sent > details.hist-collapse")
-                summary = fold.locator("> summary")
-                receipts = page.locator("#hist-sent-body .unified-receipt")
-                # Folded by default, with the number of rounds in view.
-                playwright.expect(summary).to_be_visible()
-                playwright.expect(fold).not_to_have_attribute("open", "")
-                playwright.expect(receipts.first).to_be_hidden()
-                rounds = receipts.count()
-                assert rounds >= 1
-                playwright.expect(summary).to_have_text(f"Sent rounds {rounds}")
-                # Review versions are untouched: still open.
-                playwright.expect(page.locator('.hist-cat[data-cat="review"] > details.hist-collapse')).to_have_attribute("open", "")
-                summary.click()
-                playwright.expect(receipts.first).to_be_visible()
-                # Each round keeps its own disclosure, closed until opened.
-                playwright.expect(receipts.first).not_to_have_attribute("open", "")
-                receipts.first.locator("summary").click()
-                playwright.expect(receipts.first).to_have_attribute("open", "")
-                # The same native keyboard as Review versions.
-                summary.focus()
-                page.keyboard.press("Enter")
-                playwright.expect(receipts.first).to_be_hidden()
-                page.keyboard.press("Space")
-                playwright.expect(receipts.first).to_be_visible()
-                # Nothing is remembered: a reload folds it again.
+                body = page.locator("#history-body")
+                # One list: no separate Sent rounds section or heading.
+                assert page.locator("#hist-sent").count() == 0
+                playwright.expect(body).not_to_contain_text("Sent rounds")
+                rows = page.locator("#vrail-body-review .vitem")
+                playwright.expect(rows).to_have_count(2)
+                assert [r.get_attribute("data-version") for r in rows.all()] == ["v2", "v1"]
+                assert page.locator("#vrail-body-review").get_attribute("role") == "list"
+                # v1 had a round sent on it; v2 has no activity, so no chevron.
+                v1, v2 = rows.nth(1), rows.nth(0)
+                assert v2.locator(".vrow-toggle").count() == 0
+                toggle = v1.locator(".vrow-toggle")
+                panel = page.locator("#" + toggle.get_attribute("aria-controls"))
+                # Collapsed by default: v1 is not the version on screen.
+                playwright.expect(toggle).to_have_attribute("aria-expanded", "false")
+                playwright.expect(panel).to_be_hidden()
+                toggle.click()
+                playwright.expect(toggle).to_have_attribute("aria-expanded", "true")
+                playwright.expect(panel).to_be_visible()
+                round_ = panel.locator(".vact-block:not(.vact-agent)")
+                playwright.expect(round_).to_have_count(1)
+                assert round_.locator(".vact-head").inner_text().startswith("Sent · Feedback saved (1) · ")
+                assert "Keep the original wording for CHA-160." in round_.inner_text()
+                # Then what the agent did: it published v2.
+                playwright.expect(panel.locator(".vact-agent .vact-head")).to_contain_text("Agent · Published v2 · Current layout")
+                # Open or closed is remembered for the page.
                 page.reload(wait_until="networkidle")
                 ready(page)
                 history(page)
-                playwright.expect(summary).to_have_text(f"Sent rounds {rounds}")
-                playwright.expect(fold).not_to_have_attribute("open", "")
-                playwright.expect(receipts.first).to_be_hidden()
+                playwright.expect(toggle).to_have_attribute("aria-expanded", "true")
+                toggle.click()
+                playwright.expect(panel).to_be_hidden()
+                # Arrow keys move between the versions; the row opens the version.
+                v2.locator(".vrow").focus()
+                page.keyboard.press("ArrowDown")
+                playwright.expect(v1.locator(".vrow")).to_be_focused()
+                if width > 800:
+                    v1.locator(".vrow").click()
+                    page.wait_for_function("() => document.querySelector('#content-frame').src.includes('v=v1')")
+                    playwright.expect(v1.locator(".vrow")).to_have_attribute("aria-current", "page")
+                    playwright.expect(toggle).to_have_attribute("aria-expanded", "false")
+                page.evaluate("() => localStorage.clear()")
                 page.close()
             browser.close()
     finally:
@@ -311,10 +319,11 @@ def test_sent_rounds_fold_as_one_unit_with_the_count_showing(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_each_sent_round_starts_with_the_page_version_it_was_sent_on(tmp_path):
+def test_each_sent_round_sits_under_the_version_it_was_sent_on(tmp_path):
     directory, process, base = _fixture(tmp_path)
     try:
-        # A later round with no recorded version keeps today's line.
+        # A later round with no recorded version goes under the version that
+        # was current at its time (v2, published 2026-10-02).
         rounds = directory / "rounds.ndjson"
         first = json.loads(rounds.read_text().splitlines()[0])
         assert first["version"] == "v1"
@@ -330,13 +339,16 @@ def test_each_sent_round_starts_with_the_page_version_it_was_sent_on(tmp_path):
                 page.goto(base + "#view=review", wait_until="networkidle")
                 ready(page)
                 history(page)
+                # v2 is on screen, so its activity is open by default.
+                v2 = page.locator('#vrail-body-review .vitem[data-version="v2"]')
+                playwright.expect(v2.locator(".vrow-toggle")).to_have_attribute("aria-expanded", "true")
                 sent(page)
-                lines = page.locator("#hist-sent-body .unified-receipt > summary")
-                playwright.expect(lines).to_have_count(2)
-                labelled, plain = sorted(lines.all_inner_texts(), key=lambda t: not t.startswith("v1 · "))
-                assert labelled.startswith("v1 · "), labelled
-                assert plain.startswith(("Feedback saved (", "Sent (", "⏳", "✅")), plain
-                assert labelled.split(" · ")[1] == plain.split(" · ")[0], (labelled, plain)
+                playwright.expect(page.locator(ROUNDS)).to_have_count(2)
+                for version in ("v1", "v2"):
+                    item = page.locator(f'#vrail-body-review .vitem[data-version="{version}"]')
+                    playwright.expect(item.locator(".vact-block:not(.vact-agent)")).to_have_count(1)
+                    assert item.locator(".vact-head").first.inner_text().startswith(("Sent · Feedback saved (", "Sent · Sent ("))
+                page.evaluate("() => localStorage.clear()")
                 page.close()
             browser.close()
     finally:
@@ -418,7 +430,7 @@ def test_a_new_review_refreshes_history_only_when_opened_and_records_viewed_vers
             ready(page)
             history(page)
             sent(page)
-            page.locator("#hist-sent-body .unified-receipt").wait_for()
+            page.locator(ROUNDS).wait_for()
             assert len(requests) == 1
             go(page, "review", v="v1")
             page.wait_for_function("() => document.querySelector('#content-frame').src.includes('v=v1')")
@@ -429,7 +441,7 @@ def test_a_new_review_refreshes_history_only_when_opened_and_records_viewed_vers
             page.locator("#round-submit-btn").click()
             page.locator("#round-confirm-backdrop").wait_for(state="hidden")
             history(page)
-            playwright.expect(page.locator("#hist-sent-body .unified-receipt")).to_have_count(2)
+            playwright.expect(page.locator(ROUNDS)).to_have_count(2)
             recorded = [json.loads(line) for line in (directory / "rounds.ndjson").read_text().splitlines()]
             assert recorded[-1]["version"] == "v1"
             assert recorded[-1]["answers"][0]["prompt"] == "Ship CHA-160?"

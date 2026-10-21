@@ -38,12 +38,15 @@ def history(page):
     page.locator("#history-body").wait_for(state="visible")
 
 
+# A round sent, nested under the version it was sent on (yvj).
+ROUNDS = "#history-body .vact-block:not(.vact-agent)"
+
+
 def sent(page):
-    # Sent rounds folds as one unit, folded by default; open it in History.
-    fold = page.locator("#hist-sent > details")
-    fold.wait_for(state="visible")
-    if fold.get_attribute("open") is None:
-        fold.locator("> summary").click()
+    # Each version opens to what was sent and done on it; open every one shown.
+    page.locator("#history-body .vrow-toggle:visible").first.wait_for()
+    for toggle in page.locator('#history-body .vrow-toggle[aria-expanded="false"]:visible').all():
+        toggle.click()
 
 
 def section(page, key, root="#comment-list"):
