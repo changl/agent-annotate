@@ -17,6 +17,12 @@ import shutil
 import signal
 import sys
 import time
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from agent_annotate.page_names import page_name
 
 try:
     from agent_annotate.hooks.decision_state import is_live_card, is_undecided
@@ -309,7 +315,7 @@ def _bus_append(bus_path: str, slug: str, event: dict) -> None:
 
 
 def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
-               round_submitted: bool) -> str:
+               round_submitted: bool, name: str = "Untitled page") -> str:
     """One notice line: what happened, what is still open, how to read it."""
     verdict_bits = []
     seen = set()
@@ -332,8 +338,8 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
     undecided_ids = [cid for cid, c in cards.items() if is_undecided(c)]
     undecided = len(undecided_ids)
 
-    parts = ["[annotate] %s/%s: %d reviewer event(s) since your last read"
-             % (project, slug, count)]
+    parts = ["[annotate] %s: %d reviewer event(s) since your last read"
+             % (name, count)]
     if verdict_bits:
         head = verdict_bits[:MAX_VERDICTS]
         more = len(verdict_bits) - len(head)
@@ -463,7 +469,7 @@ def _scan(session_id: str) -> list:
             if events:
                 cards = _load_cards(record.get("slug_dir") or "")
                 lines.append(_slug_line(project, slug, len(events), events,
-                                        cards, round_submitted))
+                                        cards, round_submitted, page_name(record)))
                 _bus_append(bus_path, slug, {
                     "event": "notice_emitted",
                     "session_id": session_id,

@@ -134,7 +134,7 @@ def test_everything_matching_the_installed_release_exits_zero(estate, page_serve
     assert err == ""
     rows = {line.split()[1] for line in out.splitlines() if line.startswith("OK ")}
     assert rows == {"release", "launcher", "skill", "plugin", "page"}
-    assert "SKIP      page      proj/stopped  not running" in out
+    assert "SKIP      page      Untitled page  not running" in out
     assert "MISMATCH" not in out
     assert out.splitlines()[-1].startswith("annotate versions OK: 5 component(s) match installed release")
 
@@ -170,10 +170,10 @@ def test_a_live_page_on_an_older_runtime_is_reported(estate, page_server, capsys
     _register("old", page_server({"package_version": "2.21.0", "build_id": "assets:" + "a" * 64, "assets": {}}))
     code, out, err = _doctor(capsys)
     assert code == 1
-    line = next(line for line in out.splitlines() if "proj/old" in line)
-    assert line.startswith("MISMATCH  page      proj/old  2.21.0 (assets:aaaaaaaaaaaa) != release")
+    line = next(line for line in out.splitlines() if line.startswith("MISMATCH  page"))
+    assert line.startswith("MISMATCH  page      Untitled page  2.21.0 (assets:aaaaaaaaaaaa) != release")
     assert 'restart_record("proj", "old")' in line and sys.executable in line
-    assert "page proj/old" in err
+    assert "page Untitled page" in err
 
 
 def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server, monkeypatch, capsys):
@@ -201,7 +201,7 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
     code, out, _err = _doctor(capsys)
     assert code == 1
     line = next(line for line in out.splitlines() if "prem-fin" in line)
-    assert line.startswith(f"MISMATCH  page      {page} (unregistered, pid 4242)  runtime unknown "
+    assert line.startswith("MISMATCH  page      Untitled page (unregistered, pid 4242)  runtime unknown "
                            "(/api/capabilities HTTP 404; legacy server)")
     assert (f"fix: kill 4242 && nohup {sys.executable} -I -m agent_annotate.sync_server --slug-dir {page} "
             f"--slug prem-fin --bus-dir {bus} --port {port} --public-base-path /prem-fin >> ") in line
@@ -287,8 +287,18 @@ def test_the_session_notice_reads_page_runtimes_from_the_registry_only(estate, m
     monkeypatch.chdir(estate.root)
     monkeypatch.setattr(cli, "_api", lambda *args, **kwargs: pytest.fail("the hot path must not call a server"))
     line = version_guard.session_notice("sess")
-    assert "page proj/old" in line
+    assert "page Untitled page" in line
     assert version_guard.session_notice("sess") is None
+
+
+def test_runtime_diagnostics_use_canonical_names_and_keep_slug_in_fix_commands(estate):
+    directory = estate.root / "opaque-slug"
+    directory.mkdir()
+    (directory / "current.meta.json").write_text('{"name":"Assessment"}')
+    _register("opaque-slug", 1, {"package_version": "old", "build_id": "d" * 40}, folder=estate.root)
+    rows = version_guard._page_rows({"version": __version__, "build_id": "e" * 40, "python": sys.executable}, True)
+    assert rows[0]["name"] == "Assessment"
+    assert 'restart_record("proj", "opaque-slug")' in rows[0]["fix"]
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
@@ -318,7 +328,7 @@ def test_page_banner_still_reports_its_own_runtime_mismatch(estate, monkeypatch,
     monkeypatch.setattr(version_guard, "__version__", "old")
     result = version_guard.server_status("proj", "own", log=True)
     assert result["mismatched"] == ["this server"] and not result["ok"]
-    assert "proj/own (this server)" in capsys.readouterr().err
+    assert "Untitled page (this server)" in capsys.readouterr().err
 
 
 def test_a_starting_page_server_ignores_other_sessions_skill_drift(estate, capsys):

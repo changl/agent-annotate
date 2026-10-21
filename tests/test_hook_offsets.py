@@ -25,6 +25,7 @@ def _estate(tmp_path, owner=None, legacy_offset=None):
     state = tmp_path / "state"
     slug_dir = tmp_path / "pages" / "demo"
     slug_dir.mkdir(parents=True)
+    (slug_dir / "current.meta.json").write_text('{"name":"Demo workspace"}')
     (bus_root / "proj").mkdir(parents=True)
     state.mkdir()
     record = {"slug": "demo", "slug_dir": str(slug_dir), "project": "proj",
@@ -84,7 +85,7 @@ def test_two_sessions_do_not_consume_each_other(tmp_path):
     bus_root, state, bus = _estate(tmp_path)
 
     out_a = _run(bus_root, state, "sess-A")
-    assert "[annotate] proj/demo: 2 reviewer event(s)" in out_a, out_a
+    assert "[annotate] Demo workspace: 2 reviewer event(s)" in out_a, out_a
     assert "aaaaaaaaaaaa accept" in out_a
     assert "undecided: 1 of 2 cards" in out_a
     assert "inbox proj/demo --unread" in out_a
@@ -175,7 +176,7 @@ def test_round_submitted_is_announced(tmp_path):
                              "verdict_counts": {"accept": 1, "reject": 0, "comment": 0},
                              "undecided_ids": ["bbbbbbbbbbbb"]}) + "\n")
     out = _run(bus_root, state, "sess-A")
-    assert out.startswith("ROUND SUBMITTED: [annotate] proj/demo:")
+    assert out.startswith("ROUND SUBMITTED: [annotate] Demo workspace:")
 
 
 def test_the_shell_wrapper_runs_the_same_hook(tmp_path):
@@ -280,7 +281,7 @@ def test_deferred_decisions_are_silent_until_finish_review(tmp_path, age_seconds
                                  "author": "r@x", "comment_count": 1,
                                  "comment_ids": ["aaaaaaaaaaaa"]}) + "\n")
     out = _run(bus_root, state, "sess-owner")
-    assert out.startswith("ROUND SUBMITTED: [annotate] proj/demo: 1 reviewer event(s)")
+    assert out.startswith("ROUND SUBMITTED: [annotate] Demo workspace: 1 reviewer event(s)")
     assert "Private explanation" not in out
     assert _run(bus_root, state, "sess-other").strip() == ""
     assert _run(bus_root, state, "sess-owner").strip() == ""

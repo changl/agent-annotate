@@ -141,6 +141,7 @@ def test_publishing_a_plan_counts_as_page_activity(estate):
 
 @pytest.mark.parametrize("invocation", ["module", "script", "shell"])
 def test_hook_outputs_one_visible_line_with_full_share_url_and_silence_elsewhere(estate, invocation):
+    (estate.page / "current.meta.json").write_text('{"name":"Project workspace"}')
     from agent_annotate.review_access import ensure_key
     data = json.loads((estate.state / "project.json").read_text())
     data["slugs"]["main"].update(transport="funnel", public_base_path="/project/")
@@ -159,7 +160,7 @@ def test_hook_outputs_one_visible_line_with_full_share_url_and_silence_elsewhere
     assert len(output.splitlines()) == 1
     result = json.loads(output)
     line = result["systemMessage"]
-    assert line == f"annotate: this project's page https://reviews.example/project/#review={key} · 1 waiting on you"
+    assert line == f"annotate: this project's page Project workspace https://reviews.example/project/#review={key} · 1 waiting on you"
     assert result["hookSpecificOutput"] == {"hookEventName": "SessionStart", "additionalContext": line}
     assert run(estate.root / "unlisted") == ""
     assert run(estate.root, "malformed") == ""

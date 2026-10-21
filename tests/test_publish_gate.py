@@ -68,6 +68,17 @@ def _report(*stages):
                          for n, s, d in stages])
 
 
+def test_publish_title_is_stable_until_explicitly_renamed(published, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(("origin", PASS, "ok")))
+    assert cli.cmd_publish(_args(published.slug_dir, title="Assessment")) == 0
+    assert "annotate publish — Assessment" in capsys.readouterr().out
+    assert cli.cmd_publish(_args(published.slug_dir)) == 0
+    assert cli._read_meta(published.slug_dir)["name"] == "Assessment"
+    assert cli.cmd_publish(_args(published.slug_dir, title="Assessment and evidence")) == 0
+    assert cli._read_meta(published.slug_dir)["name"] == "Assessment and evidence"
+    assert published.saved["demo"]["url"] == PUBLIC_URL
+
+
 def test_a_failing_stage_suppresses_the_url_and_exits_nonzero(published, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(
         ("origin", FAIL, "connection refused"),

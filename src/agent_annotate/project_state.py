@@ -136,7 +136,7 @@ def validate_project(data: Any) -> dict:
         normalized["tabs"] = []
         ids = {"progress", "feedback", "rounds"}
         for tab in tabs:
-            tab = _object(tab, {"id", "label", "url", "kind"}, {"id", "label"}, "project.tabs")
+            tab = _object(tab, {"id", "label", "url", "kind"}, {"id"}, "project.tabs")
             tab_id = _string(tab["id"], "tab.id", 80)
             if not _SAFE_ID.fullmatch(tab_id) or tab_id in ids:
                 raise ValueError("tab ids must be unique; progress, feedback, and rounds are reserved")
@@ -144,8 +144,12 @@ def validate_project(data: Any) -> dict:
             kind = tab.get("kind", "reference")
             if kind not in ("reference", "copy", "document"):
                 raise ValueError("tab.kind must be reference, copy, or document")
-            normalized_tab = {"id": tab_id, "label": _string(tab["label"], "tab.label", 24)}
+            normalized_tab = {"id": tab_id}
+            if "label" in tab:
+                normalized_tab["label"] = _string(tab["label"], "tab.label", 24)
             if kind in ("copy", "document"):
+                if "label" not in tab:
+                    raise ValueError("native tabs require a label")
                 if tab_id != ("copy" if kind == "copy" else "details") or "url" in tab:
                     raise ValueError("native tabs use id copy or details and no URL")
                 normalized_tab["kind"] = kind
@@ -238,6 +242,17 @@ def load_project(slug_dir: Path | str) -> dict:
 
 def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
+    from .cli import _flock
+    from .consolidate import refuse_if_moved
+    refuse_if_moved(slug_dir)
+    validate_project(data)
+    directory = Path(slug_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    with _flock(directory / "project.json.lock"):
+        return _save_project(directory, data)
+
+
+def _save_project(slug_dir: Path | str, data: Any) -> dict:
     from .consolidate import refuse_if_moved
     refuse_if_moved(slug_dir)
     normalized = validate_project(data)
@@ -275,6 +290,7 @@ def linked_pages(primary: dict) -> list[dict]:
     """Declared workspace tabs and registered exceptions linked to this page."""
     from .cli import _registry_entries
     from .consolidate import inactive
+    from .page_names import page_name
     from .urls import page_url
     from .workspace import workspace_tab_records
 
@@ -298,7 +314,8 @@ def linked_pages(primary: dict) -> list[dict]:
         exception = record.get("exception") or {}
         url = page_url(record)
         if url:
-            item = {"slug": slug, "title": record.get("title") or slug, "url": url,
+            name = page_name(record)
+            item = {"slug": slug, "name": name, "title": name, "url": url,
                     "reason": exception.get("reason") or "Linked page"}
             # Optional: who declared the exception, to whom, and when.
             for key in ("declared_by", "declared_at", "told_to"):

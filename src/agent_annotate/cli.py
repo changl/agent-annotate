@@ -84,6 +84,7 @@ from .categories import CATEGORIES as CATEGORY_IDS
 from .categories import comment_category as _comment_category
 from .hooks.decision_state import VERDICT_COLUMNS, is_live_card
 from .hooks.decision_state import is_undecided as _is_undecided
+from .page_names import page_name, set_page_name, validate_name
 from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
@@ -1173,7 +1174,7 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         return 1
 
     print()
-    print(f"  annotate publish — {project}/{slug}")
+    print(f"  annotate publish — {page_name(record)}")
     print("  ─────────────────────────────────────────────")
 
     # The tailnet URL is the page's URL. A broken Cloudflare route only
@@ -1363,6 +1364,8 @@ def cmd_publish(args) -> int:
     from .workspace import exception_reason, project_key
     try:
         exception_reason(args)
+        if getattr(args, "title", None) is not None:
+            args.title = validate_name(args.title)
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -1423,6 +1426,7 @@ def _publish(args) -> int:
             print(f"  {n}", file=sys.stderr)
         return 2
     notes += _ensure_meta_history(slug_dir, current_version)
+    set_page_name(slug_dir, getattr(args, "title", None))
     for n in notes:
         print(f"  Repaired:      {n}")
 
@@ -1808,10 +1812,10 @@ def cmd_status(args) -> int:
         if not retired:
             print("(no retired entries)")
             return 0
-        print(f"  {'PROJECT':<15} {'SLUG':<24} {'RETIRED':<21} URL")
+        print(f"  {'PROJECT':<15} {'PAGE':<24} {'RETIRED':<21} URL")
         print(f"  {'-' * 15} {'-' * 24} {'-' * 21} {'-' * 40}")
         for project, slug, record in retired:
-            print(f"  {project[:15]:<15} {slug[:24]:<24} "
+            print(f"  {project[:15]:<15} {page_name(record)[:24]:<24} "
                   f"{str(record.get('retired_at'))[:21]:<21} {page_url(record)}")
         return 0
     rows = []
@@ -1848,16 +1852,16 @@ def cmd_status(args) -> int:
             moved = rec.get("consolidated_into")
             if isinstance(moved, dict):
                 owner = f"moved to {moved.get('project')}/{moved.get('slug')}"
-            rows.append((project, slug, pid, port, page_url(rec), state, owner))
+            rows.append((project, slug, pid, port, page_url(rec), state, owner, page_name(rec)))
     if not rows:
         print("(no active slugs)")
         _print_retired_count()
         return 0
-    print(f"  {'PROJECT':<12} {'SLUG':<22} {'PID':<8} {'PORT':<6} {'STATE':<7} "
+    print(f"  {'PROJECT':<12} {'PAGE':<22} {'PID':<8} {'PORT':<6} {'STATE':<7} "
           f"{'OWNER':<{OWNER_COL}} URL")
     print(f"  {'-'*12} {'-'*22} {'-'*8} {'-'*6} {'-'*7} {'-'*OWNER_COL} {'-'*40}")
-    for project, slug, pid, port, url, state, owner in rows:
-        print(f"  {project[:12]:<12} {slug[:22]:<22} {pid!s:<8} {port!s:<6} {state:<7} "
+    for project, slug, pid, port, url, state, owner, name in rows:
+        print(f"  {project[:12]:<12} {name[:22]:<22} {pid!s:<8} {port!s:<6} {state:<7} "
               f"{owner:<{OWNER_COL}} {url}")
     if any("(gone)" in r[6] for r in rows):
         print("\n  (gone) = the page is serving but the session that claimed it is no "
@@ -2439,6 +2443,7 @@ def cmd_inbox(args) -> int:
         print(json.dumps({
             "project": project,
             "slug": slug,
+            "name": page_name(record),
             "session_id": session_id,
             "offset_from": offset,
             "offset_to": new_offset,
@@ -2504,10 +2509,10 @@ def cmd_cards(args) -> int:
         print(json.dumps(cards, ensure_ascii=False, indent=2))
         return 0
     if not cards:
-        print(f"  {project}/{slug}: no decision cards "
+        print(f"  {page_name(record)}: no decision cards "
               f"(create some with `{_inv()} ask {slug} --from cards.json`)")
         return 0
-    print(f"  {project}/{slug} — {len(cards)} decision card(s)")
+    print(f"  {page_name(record)} — {len(cards)} decision card(s)")
     print("  %-6s %-12s %-20s %-6s %-9s %s" % (
         "item", "id", "anchor", "ver", "verdict", "prompt"))
     for c in cards:
@@ -2781,11 +2786,11 @@ def cmd_ask(args) -> int:
             return 2
 
     if getattr(args, "json", False):
-        print(json.dumps({"slug": slug, "route": route, "ids": ids,
+        print(json.dumps({"slug": slug, "name": page_name(record), "route": route, "ids": ids,
                           "created": created, "updated": updated,
                           "version": version}, ensure_ascii=False))
         return 0
-    print(f"  {project}/{slug}: {created} created, {updated} updated "
+    print(f"  {page_name(record)}: {created} created, {updated} updated "
           f"({route} route, version {version or 'default'})")
     for cid, item in zip(ids, items):
         print(f"    {cid}  {item['anchor_id']}  {_clip(item['text'], 70)}")
@@ -2930,10 +2935,10 @@ def cmd_claim(args) -> int:
         print(f"ERROR: could not claim {project}/{slug}: {exc}", file=sys.stderr)
         return 2
     print(f"  URL: {page_url(record)}")
-    print(f"  {project}/{slug} claimed by {fields['owner_label']} "
+    print(f"  {page_name(record)} claimed by {fields['owner_label']} "
           f"(session {fields['owner_session']})")
     if tabs:
-        print("  Shared tabs: " + ", ".join(f"{p}/{s}" for p, s, _ in tabs))
+        print("  Shared tabs: " + ", ".join(page_name(r) for _, _, r in tabs))
     if prior and prior != fields["owner_session"]:
         print(f"  previous owner: {prior}")
     _bus_emit(record.get("bus_file"), {
@@ -3166,7 +3171,7 @@ def cmd_close(args) -> int:
     stale.sort(key=lambda r: -r["age_s"])
 
     label = "would archive" if args.dry_run else "archiving"
-    print(f"  {project}/{slug} — {len(stale)} unanswered card(s) older than "
+    print(f"  {page_name(record)} — {len(stale)} unanswered card(s) older than "
           f"{args.older_than}, {young} younger")
     if stale:
         print("  %-12s %-22s %-6s %s" % ("ID", "ANCHOR", "AGE", "PROMPT"))
@@ -3326,10 +3331,10 @@ def cmd_retire(args) -> int:
         print("  (nothing to retire — every registered page still has a live server)")
         return 0
 
-    print(f"  {'PROJECT':<15} {'SLUG':<24} {'PID':<8} {'PORT':<6} URL")
+    print(f"  {'PROJECT':<15} {'PAGE':<24} {'PID':<8} {'PORT':<6} URL")
     print(f"  {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 6} {'-' * 40}")
     for project, slug, record in targets:
-        print(f"  {project[:15]:<15} {slug[:24]:<24} {str(record.get('pid')):<8} "
+        print(f"  {project[:15]:<15} {page_name(record)[:24]:<24} {str(record.get('pid')):<8} "
               f"{str(record.get('port')):<6} {page_url(record)}")
     if args.dry_run:
         print(f"  (dry run) would retire {len(targets)} entr(ies); nothing was written.")
@@ -3638,7 +3643,7 @@ def cmd_revive(args) -> int:
         if outcome == "alive" or (args.quiet and outcome in ("gone",)):
             continue
         stamp = f"{_now_iso()} " if args.quiet else "  "
-        print(f"{stamp}{outcome:<12} {project}/{slug}" + (f"  {detail}" if detail else ""))
+        print(f"{stamp}{outcome:<12} {page_name(_record)}" + (f"  {detail}" if detail else ""))
     return 1 if failed else 0
 
 
@@ -3700,7 +3705,7 @@ def cmd_deliver(args) -> int:
 
 
 def cmd_project(args) -> int:
-    from .project_state import load_project, save_project
+    from .project_state import save_project
     resolver = _resolve_scoped_slug if args.from_file else _resolve_slug
     resolved = resolver(args.slug, getattr(args, "project", None))
     if not resolved:
@@ -3716,7 +3721,8 @@ def cmd_project(args) -> int:
             saved = save_project(directory, data)
             print(f"  project saved: {len(saved['modules'])} persistent modules")
         else:
-            print(json.dumps(load_project(directory), ensure_ascii=False, indent=2))
+            from .page_names import project_payload
+            print(json.dumps(project_payload(directory), ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError) as exc:
         print(f"ERROR: project: {exc}", file=sys.stderr)
@@ -3826,7 +3832,7 @@ def cmd_finding(args) -> int:
         if getattr(args, "json", False):
             print(json.dumps(comment, ensure_ascii=False, indent=2))
         else:
-            print(f"  {project}/{slug}: finding #{comment.get('number', args.fixed)} fixed with proof\n  URL: {page_url(record)}")
+            print(f"  {page_name(record)}: finding #{comment.get('number', args.fixed)} fixed with proof\n  URL: {page_url(record)}")
         return 0
     except (OSError, ValueError, LookupError) as exc:
         # KeyError's str() quotes its message; print the words.
@@ -3870,7 +3876,7 @@ def cmd_plan(args) -> int:
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            print(f"  {project}/{slug}: plan {args.plan_id} published as {result['version']}\n  URL: {page_url(record)}")
+            print(f"  {page_name(record)}: plan {args.plan_id} published as {result['version']}\n  URL: {page_url(record)}")
         return 0
     except (OSError, ValueError, KeyError, PageGenError) as exc:
         print(f"ERROR: plan: {exc}", file=sys.stderr)
@@ -3982,7 +3988,7 @@ def cmd_archive(args) -> int:
                     stale.append(f"pid {process.get('pid')}, port {port}")
             if stale and not args.dry_run:
                 raise ValueError("server does not support archiving; restart on this release first: " + ", ".join(stale))
-        summary = {"page": f"{project}/{slug}", "action": "unarchive" if restore else "archive",
+        summary = {"page": f"{project}/{slug}", "name": page_name(record), "action": "unarchive" if restore else "archive",
                    "dry_run": bool(args.dry_run), "already_archived": archived,
                    "why": why if not restore else None, "url": redact_review_key(page_url(record)),
                    "counts": comment_counts(c for _, _, c in _all_comments(store)),
@@ -4010,7 +4016,7 @@ def cmd_archive(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
-        print(f"{'Dry run: ' if args.dry_run else ''}{summary['action']} {project}/{slug}: "
+        print(f"{'Dry run: ' if args.dry_run else ''}{summary['action']} {page_name(record)}: "
               f"{summary['counts']['cards']} cards, {summary['counts']['comments']} comments; URL kept: {summary['url']}")
         if stale:
             print("WARN: restart on this release before archiving: " + ", ".join(stale))
@@ -4659,7 +4665,7 @@ def _registered_listing() -> str:
             live = "live" if _is_process_alive(int(record.get("pid") or 0)) else "stopped"
         except (TypeError, ValueError):
             live = "stopped"
-        lines.append(f"    {project}/{slug}  ({live})")
+        lines.append(f"    {page_name(record)}  (ID: {project}/{slug}; {live})")
     return "\n".join(lines)
 
 
@@ -4996,7 +5002,7 @@ def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev:
              if counts else "")
     message = (
         f"[Agent Annotate] The reviewer pushed {count} feedback item(s) from "
-        f"{project}/{slug} to this session. Page: {url}. "
+        f"{page_name(record)} to this session. Page: {url}. "
         f"Comment IDs: {comment_ids}.{tally} Run `{_inv()} inbox {project}/{slug} --unread`, "
         "review the exact comments and anchors, then reply through the annotation API."
     )
@@ -5158,7 +5164,7 @@ def cmd_connect(args) -> int:
             print(f"ERROR: monitor stopped; inspect {log_path}", file=sys.stderr)
             return 2
         if lease.exists():
-            print(f"Connected {project}/{slug} to Codex thread {args.thread}")
+            print(f"Connected {page_name(_record)} to Codex thread {args.thread}")
             print(f"Monitor PID: {proc.pid}")
             print(f"Log: {log_path}")
             return 0
@@ -5176,12 +5182,12 @@ def cmd_disconnect(args) -> int:
     lease_dir = MONITOR_ROOT / project / slug
     leases = _live_monitor_leases(lease_dir, Path(rec["bus_file"])) if lease_dir.is_dir() else []
     if not leases:
-        print(f"No live monitor owns {project}/{slug}")
+        print(f"No live monitor owns {page_name(rec)}")
         return 0
     if not _stop_monitor_leases(leases):
         print(f"ERROR: could not stop monitor for {project}/{slug}", file=sys.stderr)
         return 2
-    print(f"Disconnected monitor for {project}/{slug}; server remains running")
+    print(f"Disconnected monitor for {page_name(rec)}; server remains running")
     return 0
 
 
@@ -5239,6 +5245,14 @@ def build_parser(*, all_commands=False):
     sp_workspace.add_argument("--root", default=None, help="project folder containing existing review pages")
     sp_workspace.add_argument("--json", action="store_true")
     sp_workspace.set_defaults(func=cmd_workspace)
+    from .page_names import cmd_names
+    sp_names = sub.add_parser("names", help="migrate canonical page names with backups (operator only)")
+    sp_names.add_argument("--from", dest="from_file", required=True, metavar="names.json")
+    names_mode = sp_names.add_mutually_exclusive_group(required=True)
+    names_mode.add_argument("--dry-run", action="store_true", help="report changes without any writes")
+    names_mode.add_argument("--apply", action="store_true", help="apply the explicit map with exact-byte backups")
+    sp_names.add_argument("--json", action="store_true")
+    sp_names.set_defaults(func=cmd_names)
     sp_doc.set_defaults(func=cmd_doctor)
     sp_update = sub.add_parser("update", help="check/apply tested stable releases; opt into daily checks")
     update_mode = sp_update.add_mutually_exclusive_group()
@@ -5344,6 +5358,7 @@ def build_parser(*, all_commands=False):
 
     sp_pub = sub.add_parser("publish", help="start server + register transport route")
     sp_pub.add_argument("slug_dir")
+    sp_pub.add_argument("--title", default=None, help="stable page name, independent of revision title")
     sp_pub.add_argument("--exception", metavar="REASON", help="explicit reason for a second project page")
     sp_pub.add_argument("--standalone", action="store_true", help="alias for --exception standalone")
     sp_pub.add_argument("--project", default=None)
@@ -5710,7 +5725,8 @@ def run_command(args):
         try:
             json.loads(detail)
         except ValueError:
-            print(json.dumps({"command": args.cmd, "url": url, "output": detail}, ensure_ascii=False))
+            print(json.dumps({"command": args.cmd, "name": page_name(record or directory or {}),
+                              "url": url, "output": detail}, ensure_ascii=False))
         else:
             print(detail, end="")
     else:
@@ -5718,7 +5734,7 @@ def run_command(args):
             if "WARN" in line or "UNVERIFIED" in line:
                 print(line.strip(), file=sys.stderr)
         prefix = "dry run: would " if dry_run else ""
-        print(f"{prefix}{args.cmd} {raw or directory or ''} — {url or 'no page URL available'}")
+        print(f"{prefix}{args.cmd} {page_name(record or directory or {})} — {url or 'no page URL available'}")
     return rc
 
 

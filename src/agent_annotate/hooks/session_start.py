@@ -13,6 +13,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from agent_annotate import paths
+from agent_annotate.page_names import page_name
 from agent_annotate.urls import page_url
 from agent_annotate.workspace import candidates, selected_page
 
@@ -34,7 +35,7 @@ def notice(cwd: Path) -> str | None:
     if not url:
         return None
     waiting = waiting_count(Path(record["slug_dir"]))
-    return f"annotate: this project's page {url} · {waiting} waiting on you"
+    return f"annotate: this project's page {page_name(record)} {url} · {waiting} waiting on you"
 
 
 def waiting_count(directory: Path) -> int:
