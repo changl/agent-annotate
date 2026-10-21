@@ -2590,11 +2590,12 @@ function wirePinPopover() {
 // Scroll the drawer to a card and mark it active. If the current chip filter
 // hides the card, fall back to the All filter so the focus is never a no-op.
 function focusSidebarCard(commentId) {
+  highlightedCommentId = commentId;
+  // The card must be visible: Feedback tab (before the overlay opens, so
+  // focus lands on it), and its section open.
+  if (activeTab !== 'feedback') setActiveTab('feedback');
   if (isMobileLayout()) setMobileSheetOpen(true); // pin/card focus needs the overlay open, not just scrolled-to
   else if (isDrawerCollapsed()) setDrawerCollapsed(false); // inline: rail must be expanded
-  highlightedCommentId = commentId;
-  // The card must be visible: Feedback tab, and its section open.
-  if (activeTab !== 'feedback') setActiveTab('feedback');
   const fc = findCommentById(commentId);
   if (fc && !sectionOpen(sectionOf(fc))) SECTION_OPEN[sectionOf(fc)] = true; // for this visit only
   renderDrawer();
@@ -2742,9 +2743,20 @@ function wireMobileChrome() {
     if (touchX !== null && e.changedTouches[0].clientX - touchX > 65) setMobileSheetOpen(false);
     touchX = null;
   }, { passive: true });
-  // Leaving the compact layout with the overlay open: the rail is inline again.
+  // Crossing the breakpoint (a resize, a tablet turned): the open overlay
+  // stays open as the inline rail, even if it was collapsed there before;
+  // the inline rail becomes the closed overlay, and focus inside it moves to
+  // the edge strip rather than being lost.
   window.matchMedia('(max-width: 1023px), (max-height: 480px)').addEventListener('change', () => {
-    if (!isMobileLayout()) document.body.classList.remove('is-mobile-sheet-open');
+    if (!isMobileLayout() && isMobileSheetOpen()) {
+      document.body.classList.remove('is-mobile-sheet-open');
+      railOpener = null;
+      if (isDrawerCollapsed()) setDrawerCollapsed(false);
+      // The collapsed rail's style change already dropped focus from the dialog.
+      if (document.activeElement === document.body) focusRailTab();
+    } else if (isMobileLayout() && document.getElementById('drawer').contains(document.activeElement)) {
+      document.getElementById('drawer-strip').focus({ preventScroll: true });
+    }
     syncRailDialog();
   });
   // APG modal: Tab and Shift+Tab stay inside the open overlay (and the Send

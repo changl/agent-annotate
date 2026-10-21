@@ -164,3 +164,37 @@ def test_open_overlay_is_a_modal_dialog(tmp_path, rail_page):
         _set_width(page, 1440)
         assert _open(page) and drawer.get_attribute("role") == "complementary"
         assert page.evaluate("() => document.body.classList.contains('is-mobile-sheet-open')") is False
+
+
+def test_crossing_the_breakpoint_keeps_the_open_rail_and_focus(tmp_path, rail_page):
+    with browser_page(tmp_path, rail_page) as (page, _):
+        drawer = page.locator("#drawer")
+        page.locator("#drawer-collapse").click()
+        # Opened as the overlay, then widened: the rail stays open, inline,
+        # even though it was collapsed there before, and keeps focus.
+        _set_width(page, 768)
+        _strip(page, "feedback").click()
+        page.wait_for_timeout(350)
+        _set_width(page, 1440)
+        assert _open(page) and drawer.get_attribute("role") == "complementary"
+        assert page.locator("#drawer-collapse").get_attribute("aria-expanded") == "true"
+        assert page.evaluate("() => document.activeElement.id") == "tab-feedback"
+        # Inline with focus inside, then narrowed: the rail closes to the
+        # strip and focus goes to the strip, not lost to the page.
+        page.locator("#tab-history").focus()
+        _set_width(page, 768)
+        assert not _open(page)
+        assert page.evaluate("() => document.activeElement.id") == "drawer-strip"
+
+
+def test_a_pin_opens_the_overlay_with_focus_on_the_feedback_tab(tmp_path, rail_page):
+    with browser_page(tmp_path, rail_page, width=768, height=900) as (page, _):
+        _strip(page, "history").click()
+        page.wait_for_timeout(350)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(350)
+        frame = page.locator("#content-frame").element_handle().content_frame()
+        frame.evaluate("() => parent.postMessage({type: 'annotate:pin-open', anchorId: 'd:q1', commentIds: ['card-1']}, '*')")
+        _wait(lambda: _open(page), page)
+        assert page.locator("#tab-feedback").get_attribute("aria-selected") == "true"
+        assert page.evaluate("() => document.activeElement.id") == "tab-feedback"
