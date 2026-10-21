@@ -14,6 +14,7 @@ from pathlib import Path
 from .approval_catalog import _bundle, _digest, _pin_images, item_id, promote, read_bundle
 from .categories import _atomic_bytes, safe_path
 from .consolidate import inactive, refuse_if_moved
+from .review_history import _events, _time
 from .sync_server import _locked_store
 
 
@@ -72,12 +73,54 @@ def _rounds(directory):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
 
 
-def _sent(rounds, comment, decision):
-    return [r for r in rounds if r.get("snapshot") is True and r.get("id") and r.get("by") == decision.get("by")
-            and any(a.get("comment_id") == comment["id"]
-                    and all(a.get(k) == decision.get(k) for k in ("by", "ts", "verdict", "text"))
-                    and (not decision.get("id") or a.get("decision_id") == decision["id"])
-                    for a in r.get("answers", []))]
+def _answer_matches(answer, comment, decision):
+    return (answer.get("comment_id") == comment["id"]
+            and all(answer.get(k) == decision.get(k) for k in ("by", "ts", "verdict", "text"))
+            and (not decision.get("id") or answer.get("decision_id") == decision["id"]))
+
+
+def _bus_rounds(directory, bus, archive):
+    paths = [bus] if bus else []
+    if bus and archive:
+        paths += sorted(archive.glob("*/" + bus.parent.name + "/" + bus.name))
+    meta = directory / "current.meta.json"
+    versions = json.loads(meta.read_text()).get("history", []) if meta.exists() else []
+    rounds = []
+    for path in paths:
+        for event in _events(path):
+            if event.get("event") != "round_submitted":
+                continue
+            if not event.get("version"):
+                preceding = [v for v in versions if 0 < _time(v.get("ts")) <= _time(event.get("ts"))]
+                event["version"] = max(preceding, key=lambda v: _time(v["ts"])).get("version") if preceding else None
+            rounds.append({**event, "id": event.get("round_id") or f"bus:{event.get('ts')}:{event.get('by')}"})
+    return sorted(rounds, key=lambda r: _time(r.get("ts")))
+
+
+def _sent(rounds, bus_rounds, comment, decision):
+    snapshots = [r for r in rounds if r.get("snapshot") is True and r.get("id")
+                 and r.get("by") == decision.get("by")
+                 and any(_answer_matches(a, comment, decision) for a in r.get("answers", []))]
+    if snapshots:
+        return snapshots, "snapshot", False
+    voted = _time(decision.get("ts"))
+    decisions = [*(comment.get("decision_history") or []), comment.get("decision") or {}]
+    for event in bus_rounds:
+        submitted = _time(event.get("ts"))
+        if (not voted or submitted <= voted or event.get("by") != decision.get("by")
+                or comment["id"] not in event.get("comment_ids", [])):
+            continue
+        # History order breaks timestamp ties: it is also the server's vote
+        # replacement order, including changes/rejections by another actor.
+        preceding = [(i, d) for i, d in enumerate(decisions) if 0 < _time(d.get("ts")) <= submitted]
+        latest = max(preceding, key=lambda pair: (_time(pair[1]["ts"]), pair[0]))[1]
+        if latest != decision:
+            return [], None, True
+        if isinstance(event.get("answers"), list) and not any(
+                _answer_matches(a, comment, decision) for a in event["answers"]):
+            continue
+        return [event], "bus", False
+    return [], None, False
 
 
 def _evidence(directory, comment, decision, rounds):
@@ -126,12 +169,13 @@ def _evidence(directory, comment, decision, rounds):
     return bundle, {"version": version, "request": bundle["request"], "committed": True}
 
 
-def inspect_page(directory, store):
+def inspect_page(directory, store, *, bus=None, archive=None):
     """Return a JSON report and safe operations, without preparing any files."""
     from .cli import _item_numbers
     numbers = _item_numbers(store)
     rounds = _rounds(directory)
-    rows, groups, branches = [], defaultdict(list), Counter()
+    bus_rounds = _bus_rounds(directory, bus, archive)
+    rows, groups, branches, sources = [], defaultdict(list), Counter(), Counter()
     for comment in _cards(store):
         decisions = [*(comment.get("decision_history") or []), comment.get("decision") or {}]
         seen = set()
@@ -145,11 +189,17 @@ def inspect_page(directory, store):
             if _excluded(comment, decision):
                 branches["excluded_agent_legacy_opt_out"] += 1
                 continue
-            browser, sent = _browser(comment, decision), _sent(rounds, comment, decision)
+            browser = _browser(comment, decision)
+            sent, source, superseded = _sent(rounds, bus_rounds, comment, decision)
+            if browser and superseded:
+                branches["superseded_before_send"] += 1
+                continue
+            if source:
+                sources[source] += 1
             branch = "browser_and_sent" if browser and sent else "browser_only" if browser else "sent_only" if sent else "neither"
             branches[branch] += 1
             row = {"card": numbers.get(comment["id"]), "comment_id": comment["id"], "item_id": item_id(comment),
-                   "branch": branch, "status": "conflict", "candidates": [
+                   "branch": branch, "sent_source": source, "status": "conflict", "candidates": [
                        _candidate(decision),
                        {"sent_rounds": [r["id"] for r in sent], "browser_identity": browser}]}
             rows.append(row)
@@ -172,7 +222,7 @@ def inspect_page(directory, store):
                 if prior and comment.get("catalog_plan") == identifier:
                     row.update(status="already_linked", plan=identifier)
                     continue
-                if len(group) > 1:
+                if sum(bool(g[3]) and g[0]["branch"] == "browser_and_sent" for g in group) > 1:
                     row["candidates"][1] = {"other_approvals": [r[0]["candidates"][0] for r in group if r[0] is not row]}
                     raise ValueError("multiple approvals for one item")
                 # A recorded catalog revision is itself frozen evidence for an
@@ -206,10 +256,10 @@ def inspect_page(directory, store):
                 row["reason"] = str(exc)
     counts = Counter(row["status"] for row in rows)
     return {"counts": {k: counts[k] for k in ("already_linked", "would_link", "would_file", "conflict")},
-            "branches": dict(branches), "items": rows}, operations
+            "branches": dict(branches), "sent_sources": dict(sources), "items": rows}, operations
 
 
-def backfill_page(directory, *, apply=False):
+def backfill_page(directory, *, apply=False, bus=None, archive=None):
     directory = Path(directory).resolve()
     # Read mode never creates the server's lock file. Apply needs its existing
     # lock so a separate inode cannot race a running server.
@@ -220,7 +270,7 @@ def backfill_page(directory, *, apply=False):
         path = safe_path(directory, "comments.json")
         before = path.read_bytes()
         store = json.loads(before)
-        report, operations = inspect_page(directory, store)
+        report, operations = inspect_page(directory, store, bus=bus, archive=archive)
         if not apply or not operations:
             return report
         updated = deepcopy(store)
@@ -299,6 +349,7 @@ def restore_page(directory, backup):
 
 def cmd_plans(args):
     from .cli import _is_process_alive, _registry_entries, _resolve_scoped_slug
+    from .paths import BUS_ARCHIVE_ROOT, BUS_ROOT
     if args.plans_action == "restore":
         entry = _resolve_scoped_slug(args.slug)
         if not entry:
@@ -331,7 +382,8 @@ def cmd_plans(args):
             continue
         seen.add(directory)
         try:
-            result = backfill_page(directory, apply=args.apply)
+            bus = Path(record.get("bus_file") or (BUS_ROOT / project / f"{slug}.ndjson"))
+            result = backfill_page(directory, apply=args.apply, bus=bus, archive=BUS_ARCHIVE_ROOT)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             result = {"error": str(exc)}
         pages.append({"page": name, "directory": str(directory), **result})

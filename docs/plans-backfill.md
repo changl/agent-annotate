@@ -13,9 +13,19 @@ Historical eligibility requires both:
   generated verdict reply whose `author` and `author_email` match it. The reply
   starts with `✓ Accepted` or `☑ Selected:` (including revised-verdict prefixes).
   New decisions may instead use the authenticated `catalog_eligible: true` marker.
-- A `rounds.ndjson` snapshot from the same reviewer containing an exact match on
-  comment ID, reviewer, decision timestamp, verdict and answer text. When present,
-  decision IDs must match too. Pending decisions never qualify.
+- A sent receipt, using either an exact `rounds.ndjson` snapshot answer match on
+  comment ID, reviewer, decision timestamp, verdict and answer text (including
+  decision ID when present), or a `round_submitted` comment-bus event by that
+  reviewer after the vote that includes the card's ID. For the bus branch, the
+  vote must be the latest decision on that card when Send happened; an earlier
+  vote replaced before Send is excluded as `superseded_before_send`. Explicit bus
+  answers must match too. Pending decisions never qualify.
+
+Bus receipts are read from the registry's configured `bus_file` (otherwise the
+local project's default bus), including its retained bus archives. The first
+qualifying Send is used. When a legacy event has no version, the published page
+history determines the version active at Send; a missing version remains an
+evidence conflict. JSON reports separately count `snapshot` and `bus` receipts.
 
 Agents, explicitly ineligible/legacy decisions, non-review cards and opted-out
 cards are excluded. Missing provenance or sent-round receipts are conflicts,

@@ -244,3 +244,109 @@ def test_cli_local_live_registry_scope_and_json(tmp_path, monkeypatch, capsys):
     assert len(report["skipped_inactive"]) == 2
     assert snapshot(tmp_path) == before
     assert "plans" not in build_parser().format_help().split("positional arguments:")[-1]
+
+
+def bus_send(directory, comment, **overrides):
+    path = directory / "bus.ndjson"
+    event = {"event": "round_submitted", "by": comment["decision"]["by"],
+             "comment_ids": [comment["id"]], "ts": "2026-10-01T12:10:00Z", "version": "v1", **overrides}
+    path.write_text(json.dumps(event) + "\n")
+    return path
+
+
+@pytest.mark.parametrize("source", ["snapshot", "bus"])
+def test_both_sent_receipt_branches_qualify_without_writes(tmp_path, source):
+    _, comment = page(tmp_path)
+    bus = bus_send(tmp_path, comment)
+    if source == "bus":
+        (tmp_path / "rounds.ndjson").unlink()
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["counts"]["would_file"] == 1
+    assert report["items"][0]["sent_source"] == source
+    assert report["sent_sources"] == {source: 1}
+    assert snapshot(tmp_path) == before
+
+
+def test_vote_changed_before_bus_send_only_later_vote_is_candidate(tmp_path):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    comment["decision_history"] = [copy.deepcopy(comment["decision"])]
+    comment["decision"] = {**comment["decision"], "verdict": "select", "text": "Blue",
+                           "ts": "2026-10-01T12:02:00Z"}
+    comment["replies"].append({"author": comment["decision"]["by"], "author_email": comment["decision"]["by"],
+                               "ts": comment["decision"]["ts"], "text": "☑ Selected: Blue"})
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment, version=None)
+    (tmp_path / "current.meta.json").write_text(json.dumps({"history": [
+        {"version": "v1", "ts": "2026-10-01T09:00:00Z"},
+        {"version": "v2", "ts": "2026-10-01T13:00:00Z"}]}))
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["branches"] == {"superseded_before_send": 1, "browser_and_sent": 1}
+    assert report["counts"]["would_file"] == 1 and report["counts"]["conflict"] == 0
+    assert len(report["items"]) == 1
+    assert report["items"][0]["candidates"][0]["verdict"] == "select"
+    backfill_page(tmp_path, bus=bus, apply=True)
+    updated = json.loads((tmp_path / "comments.json").read_text())
+    plan = updated["approved_plans"][item_id(comment)]
+    assert plan["kind"] == "Decided" and plan["history"][0]["chosen_option"] == "Blue"
+
+
+def test_vote_sent_then_changed_remains_a_conflict(tmp_path):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    comment["decision_history"] = [copy.deepcopy(comment["decision"])]
+    comment["decision"] = {**comment["decision"], "text": "later approval", "ts": "2026-10-01T12:02:00Z"}
+    comment["replies"].append({"author": comment["decision"]["by"], "author_email": comment["decision"]["by"],
+                               "ts": comment["decision"]["ts"], "text": "✓ Accepted"})
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment, ts="2026-10-01T12:01:00Z")
+    with bus.open("a") as out:
+        out.write(json.dumps({"event": "round_submitted", "by": comment["decision"]["by"],
+                              "comment_ids": [comment["id"]], "ts": "2026-10-01T12:10:00Z", "version": "v1"}) + "\n")
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["counts"]["conflict"] == 2
+    assert report["branches"] == {"browser_and_sent": 2}
+
+
+@pytest.mark.parametrize("override", [
+    {"by": "other@example.com"}, {"comment_ids": ["another-card"]}, {"ts": "2026-10-01T11:00:00Z"},
+    {"answers": [{"comment_id": "card-one", "verdict": "reject"}]},
+])
+def test_bus_requires_reviewer_card_time_and_no_conflicting_answer(tmp_path, override):
+    _, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    bus = bus_send(tmp_path, comment, **override)
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["branches"] == {"browser_only": 1}
+    assert report["counts"]["conflict"] == 1
+
+
+@pytest.mark.parametrize("problem", ["browser", "snapshot"])
+def test_bus_does_not_relax_browser_or_evidence_requirements(tmp_path, problem):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    if problem == "browser":
+        comment["replies"] = []
+    else:
+        (tmp_path / "versions/v1.cards.json").unlink()
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, bus=bus, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert report["branches"] == {"sent_only" if problem == "browser" else "browser_and_sent": 1}
+    assert snapshot(tmp_path) == before
+
+
+def test_archived_bus_receipt_is_read_without_recreating_live_bus(tmp_path):
+    _, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    bus = tmp_path / "bus/project/page.ndjson"
+    archive = tmp_path / "archive"
+    archived = archive / "20261001/project/page.ndjson"
+    archived.parent.mkdir(parents=True)
+    archived.write_bytes(bus_send(tmp_path, comment).read_bytes())
+    before = snapshot(tmp_path)
+    assert backfill_page(tmp_path, bus=bus, archive=archive)["counts"]["would_file"] == 1
+    assert snapshot(tmp_path) == before
