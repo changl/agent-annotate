@@ -11,7 +11,6 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
-from test_card_layout import _serve
 from test_pagegen_images import png
 
 from agent_annotate import cli, review_access
@@ -34,36 +33,40 @@ VIDEO = base64.b64decode(
 
 
 @contextmanager
-def _https_funnel(tmp_path, directory):
-    """Real local TLS and browser cookies, with only a sandbox registry record."""
-    tls = tmp_path / "tls"
-    tls.mkdir(exist_ok=True)
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=review.test", "-keyout", str(tls / "key.pem"), "-out", str(tls / "cert.pem")],
-                   check=True, capture_output=True, timeout=15)
-    key = review_access.ensure_key(directory)
-    handler = make_handler(directory, public_base_path="/review", slug="page", v2_mode=True, skill_dir=WEB_DIR)
+def _asset_server(tmp_path, directory, https):
+    """Record real server responses for local HTTP or sandboxed Funnel-style TLS."""
+    key = review_access.ensure_key(directory) if https else None
+    handler = make_handler(directory, public_base_path="/review" if https else "", slug="page",
+                           v2_mode=True, skill_dir=WEB_DIR,
+                           local_author=None if https else "reviewer@example.com",
+                           local_author_name=None if https else "Browser Reviewer")
     observed = []
-    original_get = handler.do_GET
 
-    def record_get(self):
+    def record_response(self, code, size="-"):
         cookies = SimpleCookie()
         cookies.load(self.headers.get("Cookie") or "")
         observed.append({"path": self.path, "cookies": list(cookies), "referer": self.headers.get("Referer"),
-                         "mode": self.headers.get("Sec-Fetch-Mode")})
-        return original_get(self)
+                         "mode": self.headers.get("Sec-Fetch-Mode"), "method": self.command,
+                         "status": code, "origin": self.headers.get("Origin")})
 
-    handler.do_GET = record_get
+    handler.log_request = record_response
     httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(tls / "cert.pem", tls / "key.pem")
-    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    if https:
+        tls = tmp_path / "tls"
+        tls.mkdir(exist_ok=True)
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-subj", "/CN=review.test", "-keyout", str(tls / "key.pem"), "-out", str(tls / "cert.pem")],
+                       check=True, capture_output=True, timeout=15)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(tls / "cert.pem", tls / "key.pem")
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     project = f"tls-html-{httpd.server_port}"
     handler.bus_dir = cli.BUS_ROOT / project
     handler.bus_dir.mkdir(parents=True, exist_ok=True)
-    base = f"https://review.test:{httpd.server_port}/review/"
-    cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
-        "slug_dir": str(directory), "port": httpd.server_port, "transport": "funnel", "url": base}}})
+    base = f"https://review.test:{httpd.server_port}/review/" if https else f"http://127.0.0.1:{httpd.server_port}/"
+    if https:
+        cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
+            "slug_dir": str(directory), "port": httpd.server_port, "transport": "funnel", "url": base}}})
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -128,11 +131,8 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
         })();
         </script></body></html>""")
     (directory / "attachments" / ("proof" + suffix)).write_text("<script>top.location.href = '/?escaped=1';</script>")
-    if https:
-        server = _https_funnel(tmp_path, directory)
-        base, key, observed = server.__enter__()
-    else:
-        process, base = _serve(tmp_path, directory)
+    server = _asset_server(tmp_path, directory, https)
+    base, key, observed = server.__enter__()
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=executable, headless=True,
@@ -142,14 +142,6 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
               if (event.data?.type === 'asset-probe') window.assetProbe = {...event.data, messageOrigin: event.origin};
             });""")
             page.context.add_cookies([{"name": "page_cookie", "value": "private-review-session", "url": base}])
-            # CORS failures hide response events from page JS and Playwright;
-            # CDP's extra-info events still expose the server's actual verdict.
-            session = page.context.new_cdp_session(page)
-            session.send("Network.enable")
-            requests, statuses = {}, {}
-            session.on("Network.requestWillBeSent", lambda event: requests.update({event["requestId"]: event["request"]})
-                       if event["request"]["url"] == base + "api/seen?asset-probe=1" else None)
-            session.on("Network.responseReceivedExtraInfo", lambda event: statuses.update({event["requestId"]: event["statusCode"]}))
             if https:
                 page.goto(base, wait_until="networkidle")
                 assert page.evaluate("async key => (await fetch('api/reviewer/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})})).status", key) == 200
@@ -173,7 +165,11 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
             assert asset.locator("#demo").evaluate("async video => { await video.play(); video.pause(); return [video.videoWidth, video.videoHeight]; }") == [32, 16]
             assert page.evaluate("document.cookie") == "page_cookie=private-review-session"
             assert "escaped" not in page.url
-            assert {request["method"]: statuses[key] for key, request in requests.items()} == {"GET": 403, "POST": 403}
+            # CORS hides responses from JS; an out-of-process sandboxed iframe's
+            # requests also bypass page-level CDP sessions. Observe the server.
+            probes = [request for request in observed if request["path"].endswith("/api/seen?asset-probe=1")]
+            assert {request["method"]: request["status"] for request in probes} == {"GET": 403, "POST": 403}, probes
+            assert all(request["status"] == 403 and request["origin"] == "null" for request in probes), probes
             seen = page.evaluate("async () => (await fetch('api/seen')).json()")
             assert "asset-attack" not in json.dumps(seen)
 
@@ -197,8 +193,4 @@ def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix
             assert Path(event.value.path()).read_text() == '{"proof":"loaded"}'
             browser.close()
     finally:
-        if https:
-            server.__exit__(None, None, None)
-        else:
-            process.terminate()
-            process.wait(timeout=5)
+        server.__exit__(None, None, None)
