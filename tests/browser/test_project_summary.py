@@ -7,6 +7,7 @@ from single_page import browser_page, feedback, go, history
 from test_card_layout import CHROME
 from test_workspace_intent import _page
 
+from agent_annotate.page_names import set_page_name
 from agent_annotate.pagegen import generate
 from agent_annotate.project_state import save_project
 
@@ -63,6 +64,7 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
             assert progress.get_attribute("open") is not None
             assert panel.count() == 1
             assert page.locator("#hdr-title").inner_text() == "Review workspace"
+            assert page.title() == "Review workspace · Review"
         page.reload(wait_until="networkidle")
         history(page)
         assert progress.get_attribute("open") is not None
@@ -77,3 +79,20 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
         assert panel.is_hidden()
         assert page.locator('.citem[data-comment-id="question-11"]').is_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+@pytest.mark.parametrize("branding", [None, "Project branding"])
+def test_header_and_browser_title_use_branding_then_stable_page_name(tmp_path, branding):
+    directory = _page(tmp_path)
+    set_page_name(directory, "Canonical workspace")
+    source = tmp_path / "v2.md"
+    source.write_text("---\ntitle: Changing revision title\nversion: v2\n---\n## Checks\nSecond document.\n")
+    generate(source, directory)
+    save_project(directory, {"modules": [], **({"title": branding} if branding else {})})
+    expected = branding or "Canonical workspace"
+    with browser_page(tmp_path, directory) as (page, _):
+        for version in ("v1", "v2"):
+            go(page, "review", v=version)
+            assert page.locator("#hdr-title").inner_text() == expected
+            assert page.title() == f"{expected} · Review"

@@ -801,11 +801,9 @@ function projectLinkItems(module) {
 function referenceTabs() {
   return (PROJECT.tabs || []).filter(t => t && t.url && (!t.kind || t.kind === 'reference'));
 }
-// U-01 + F2: the header names the project only — PROJECT.title, else the
-// document's own title.
-let documentTitle = '';
+// U-01 + F2: project branding wins, then the page's stable name.
 function updateProjectTitle() {
-  const title = PROJECT.name || PROJECT.title || documentTitle || 'annotate';
+  const title = PROJECT.title || PROJECT.name || 'annotate';
   const header = document.getElementById('hdr-title');
   header.textContent = title;
   header.title = title;
@@ -1097,7 +1095,6 @@ function loadIframe(v) {
   const doc = DOC;
   frame.onload = () => {
     if (doc !== 'review') return;
-    try { documentTitle = frame.contentDocument.title || ''; } catch { /* foreign content keeps the last title */ }
     if (DOC === 'review') updateProjectTitle();
   };
   frame.src = doc === 'plans'

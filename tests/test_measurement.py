@@ -205,6 +205,22 @@ def test_two_pages_with_the_same_long_name_are_distinct_hook_notices(tmp_path, m
     assert [(n["project"], n["slug"]) for n in notices] == [("alpha", "one"), ("alpha", "two")]
 
 
+def test_evaluation_report_labels_pages_by_name_and_keeps_json_identities(tmp_path, monkeypatch, capsys):
+    state = estate(tmp_path)
+    for project, name in (("alpha", "Assessment & notes"), ("beta", "Operations | Q1 [approved]")):
+        path = tmp_path / project / "current.meta.json"
+        write(path, {**json.loads(path.read_text()), "name": name})
+    monkeypatch.setattr(measurement, "host", lambda: "M1")
+    monkeypatch.setattr(evaluation.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="other process"))
+    result = run_eval(tmp_path, state, capsys)
+    assert {r["name"] for r in result["s1"]} == {"Assessment & notes", "Operations | Q1 [approved]"}
+    assert {r["slug"] for r in result["s1"]} == {"M1:alpha/workspace", "M1:beta/workspace"}
+    report = evaluation.render_md(result)
+    assert "M1:alpha/workspace" not in report and "M1:beta/workspace" not in report
+    assert "Assessment &#38; notes" in report
+    assert "Operations &#124; Q1 &#91;approved&#93;" in report
+
+
 def test_cli_eval_json_routes_fixture_roots_without_reports(tmp_path):
     import os
     import subprocess

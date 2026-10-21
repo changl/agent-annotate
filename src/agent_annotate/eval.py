@@ -64,6 +64,7 @@ if not __package__:  # Preserve the documented bare-script entry point.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "agent_annotate"
 from . import measurement
+from .page_names import page_name, validate_name
 
 HOME = os.path.expanduser("~")
 try:
@@ -276,6 +277,7 @@ def load_registry():
             if not isinstance(s, dict):
                 continue
             out[f"{project}/{slug}"] = {
+                "name": page_name(s),
                 "archived": s.get("archived"),
                 "owner_session": s.get("owner_session"),
                 "superseded_by": s.get("superseded_by"),
@@ -563,6 +565,7 @@ def section1(slugs, since):
 
         rows.append({
             "slug": slug,
+            "name": info.get("name") or "Untitled page",
             "project": info.get("project"),
             "created": created.isoformat() if created else None,
             "in_window": any(t and t >= since for t in [created,
@@ -1173,6 +1176,15 @@ def md_table(headers, rows):
 
 def render_md(res):
     since = res["meta"]["since"]
+    names = {row["slug"]: row.get("name") for row in res["s1"]}
+    escapes = str.maketrans({c: f"&#{ord(c)};" for c in "&<>|[]*_`\\"})
+
+    def page_label(slug):
+        try:
+            return validate_name(names.get(slug)).translate(escapes)
+        except ValueError:
+            return "Untitled page"
+
     L = []
     A = L.append
     A("# Agent-annotate review loop — quantitative baseline")
@@ -1184,13 +1196,13 @@ def render_md(res):
       "No annotate command was run.")
     A("")
 
-    A("## 1. Per-slug shape")
+    A("## 1. Per-page shape")
     A("")
     rows = []
     for r in res["s1"]:
         v = r["verdicts"]
         rows.append([
-            ("**" if r["in_window"] else "") + r["slug"] + ("**" if r["in_window"] else ""),
+            ("**" if r["in_window"] else "") + page_label(r["slug"]) + ("**" if r["in_window"] else ""),
             (r["created"] or "")[:10], r["comments"], r["decision_requests"],
             f"{v['accept']}/{v['reject']}/{v['changes']}/{v['none']}/{v['closed']}",
             fmt_min(r["time_to_verdict_min"]["median"]),
@@ -1200,7 +1212,7 @@ def render_md(res):
             ",".join(f"{k}:{n}" for k, n in sorted(r["delivery"].items())) or "-",
             r["versions"],
         ])
-    A(md_table(["slug (bold = in window)", "created", "cmts", "DRs",
+    A(md_table(["page (bold = in window)", "created", "cmts", "DRs",
                 "acc/rej/chg/none/closed", "t→verdict med", "p90", "agent/rev evts",
                 "burst 15m", "pushes", "delivery", "vers"], rows))
     A("")
@@ -1215,12 +1227,12 @@ def render_md(res):
 
     A("## 2. Reviewer round shape (gap > 10 min = new round)")
     A("")
-    rows = [[r["slug"], r["round"], r["verdicts"], r["start"][:16].replace("T", " "),
+    rows = [[page_label(r["slug"]), r["round"], r["verdicts"], r["start"][:16].replace("T", " "),
              fmt_min(r["duration_min"]), fmt_min(r["first_reaction_min"]),
              "yes" if r["reacted_mid_round"] else "no",
              ",".join(f"{k}:{n}" for k, n in sorted(r["verdict_mix"].items()))]
             for r in res["s2"]]
-    A(md_table(["slug", "#", "verdicts", "start (UTC)", "round dur",
+    A(md_table(["page", "#", "verdicts", "start (UTC)", "round dur",
                 "1st verdict→agent", "mid-round?", "mix"], rows))
     A("")
     b = res["s2_summary"]
@@ -1253,8 +1265,8 @@ def render_md(res):
     if res["s3"]["unanswered"][:15]:
         A("Oldest unanswered (top 15):")
         A("")
-        A(md_table(["slug", "id", "age d", "status", "prompt"],
-                   [[u["slug"], u["comment_id"], u["age_days"], u["status"], u["prompt"]]
+        A(md_table(["page", "id", "age d", "status", "prompt"],
+                   [[page_label(u["slug"]), u["comment_id"], u["age_days"], u["status"], u["prompt"]]
                     for u in res["s3"]["unanswered"][:15]]))
         A("")
 
@@ -1266,8 +1278,8 @@ def render_md(res):
     A("")
     A("Every classified item, text truncated to 160 chars:")
     A("")
-    A(md_table(["class", "slug", "id", "kind", "author", "prompt", "reviewer text"],
-               [[i["label"], i["slug"], i["comment_id"], i["kind"], i.get("author"),
+    A(md_table(["class", "page", "id", "kind", "author", "prompt", "reviewer text"],
+               [[i["label"], page_label(i["slug"]), i["comment_id"], i["kind"], i.get("author"),
                  i["prompt"].replace("|", "\\|"), i["text"].replace("|", "\\|")]
                 for i in res["s4"]["items"]]))
     A("")
@@ -1281,9 +1293,9 @@ def render_md(res):
 
     A("## 6. Trace join — when did a session actually see the verdict?")
     A("")
-    A(md_table(["slug", "ids", "ids never in any transcript", "transcripts",
+    A(md_table(["page", "ids", "ids never in any transcript", "transcripts",
                 "verdicts", "seen med", "seen p90", "how first seen"],
-               [[r["slug"], r["comment_ids"], r["ids_never_in_any_transcript"],
+               [[page_label(r["slug"]), r["comment_ids"], r["ids_never_in_any_transcript"],
                  r["transcripts"], r["verdicts"], fmt_min(r["seen_median_min"]),
                  fmt_min(r["seen_p90_min"]),
                  ", ".join(f"{k}:{n}" for k, n in sorted(r["how"].items()))]
@@ -1309,9 +1321,9 @@ def render_md(res):
         ["notices the hook logged (since cutoff)", res["hook_log"]["notices"]],
     ]))
     A("")
-    A(md_table(["slug", "owner (strict)", "owner (loose)", "bystander (strict)",
+    A(md_table(["page", "owner (strict)", "owner (loose)", "bystander (strict)",
                 "owner transcripts", "bystander transcripts"],
-               [[k, v["owner"], v["owner_loose"], v["bystander"],
+               [[page_label(k), v["owner"], v["owner_loose"], v["bystander"],
                  v["owner_transcripts"], v["bystander_transcripts"]]
                 for k, v in s7["per_slug"].items()]))
     A("")
