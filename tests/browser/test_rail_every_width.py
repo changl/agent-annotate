@@ -5,13 +5,21 @@ right-side overlay, full width under 600px. Closed, at every width, it leaves
 an edge strip with one button per rail tab and the tabs' counts. Open as the
 overlay it is a modal dialog (APG): focus moves in, Tab stays inside, Escape
 closes and focus returns to the button that opened it.
+
+Closed, the document is exactly the viewport minus the strip: nothing in it
+runs under the strip. A wide table scrolls in its own box, and the side with
+more columns fades so it reads as that box, not the page (Chang on #35).
 """
+
+import struct
+import zlib
 
 import pytest
 from single_page import browser_page
 from test_card_jump import page_dir  # noqa: F401  (fixture)
 from test_card_layout import CHROME, _wait
 
+from agent_annotate.pagegen import generate
 from agent_annotate.project_state import save_project
 
 playwright = pytest.importorskip("playwright.sync_api")
@@ -198,3 +206,85 @@ def test_a_pin_opens_the_overlay_with_focus_on_the_feedback_tab(tmp_path, rail_p
         _wait(lambda: _open(page), page)
         assert page.locator("#tab-feedback").get_attribute("aria-selected") == "true"
         assert page.evaluate("() => document.activeElement.id") == "tab-feedback"
+
+
+def _png(width, height):
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress((b"\x00" + b"\x80" * 3 * width) * height)) + chunk(b"IEND", b""))
+
+
+WIDE = """---
+title: Wide review
+version: v1
+full_plan: true
+other_files_required: none
+---
+
+## Coverage
+
+| Configuration | Recommendation | Implementation | Verification | Performance | Ownership | Dependencies |
+|---|---|---|---|---|---|---|
+| Consistent configuration | Existing components | Small implementation | Independent verification | Predictable performance | Established ownership | Existing dependencies |
+
+## Shots
+
+![The whole page](shots/wide.png)
+
+```compare
+title: Header
+current: shots/wide.png | Today
+proposed: shots/wide.png | Proposed
+```
+"""
+
+# Inside the document: no sideways scroll, and every image, compare block and
+# table box ends inside the visible width.
+DOCUMENT_FITS = """() => {
+  const de = document.documentElement, w = de.clientWidth;
+  const over = [...document.querySelectorAll('img, figure, .unified-table-frame')]
+    .filter(el => el.getBoundingClientRect().right > w + 0.5).map(el => el.tagName + '.' + el.className);
+  return {scrolls: de.scrollWidth > w, over};
+}"""
+
+
+@pytest.fixture
+def wide_page(tmp_path):
+    source = tmp_path / "wide.md"
+    source.write_text(WIDE)
+    (tmp_path / "shots").mkdir()
+    (tmp_path / "shots" / "wide.png").write_bytes(_png(1600, 900))
+    directory = tmp_path / "items-model"
+    generate(source, directory)
+    return directory
+
+
+@pytest.mark.parametrize("size", [(1440, 900), (1160, 800), (1024, 768), (1023, 768), (768, 1024),
+                                  (600, 900), (599, 900), (390, 844), (844, 390)])
+def test_closed_rail_leaves_the_document_the_viewport_minus_the_strip(tmp_path, wide_page, size):
+    width, height = size
+    with browser_page(tmp_path, wide_page, width=width, height=height) as (page, _):
+        if page.locator("#drawer-collapse").is_visible():
+            page.locator("#drawer-collapse").click()
+        assert not _open(page)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), size
+        frame_box = page.locator("#content-frame").bounding_box()
+        strip = page.locator("#rail-strip").bounding_box()
+        assert strip["x"] + strip["width"] == width
+        assert frame_box["x"] + frame_box["width"] <= strip["x"], "the document runs under the strip"
+        frame = page.frame_locator("#content-frame")
+        frame.locator(".unified-table-frame").wait_for()
+        frame.locator("img").first.wait_for()
+        doc = page.locator("#content-frame").element_handle().content_frame()
+        _wait(lambda: doc.evaluate("() => [...document.images].every(i => i.complete)"), page)
+        assert doc.evaluate(DOCUMENT_FITS) == {"scrolls": False, "over": []}, size
+        # The table's own box: the side with more columns fades, and follows the scroll.
+        table = frame.locator(".unified-table-frame")
+        wide = doc.evaluate("() => { const s = document.querySelector('.unified-table-scroll');"
+                            " return s.scrollWidth > s.clientWidth; }")
+        classes = lambda: table.get_attribute("class").split()  # noqa: E731
+        assert ("is-more-right" in classes()) == wide and "is-more-left" not in classes(), size
+        if wide:
+            doc.evaluate("() => { const s = document.querySelector('.unified-table-scroll'); s.scrollLeft = s.scrollWidth; }")
+            _wait(lambda: "is-more-left" in classes() and "is-more-right" not in classes(), page)
