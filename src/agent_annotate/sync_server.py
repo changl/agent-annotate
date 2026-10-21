@@ -2720,7 +2720,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         flagged_ids.append(c.get("id"))
             delivery = self._compute_delivery()
             if flagged_ids:
-                # History · Sent rounds merges this record with the Send's
+                # History merges this record with the Send's
                 # round by send_id and lists the Send summary's lines.
                 self._queue_feedback_delivery(delivery, feedback, author, send=send)
                 self._v2_save(store)

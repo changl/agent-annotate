@@ -357,7 +357,7 @@ MAX_RECEIPT_ITEMS = 200
 def validate_send(payload: dict) -> dict:
     """The optional `send_id` and `receipt` one Send passes to rounds/submit
     and push-session: the lines the reviewer saw in the Send summary, tagged
-    by tab, kept for History · Sent rounds. Display only; never delivered."""
+    by tab, kept for History (under the version it was sent on). Display only; never delivered."""
     result = {}
     if payload.get("send_id") is not None:
         if not isinstance(payload["send_id"], str) or not _SEND_ID.fullmatch(payload["send_id"]):
@@ -369,13 +369,19 @@ def validate_send(payload: dict) -> dict:
             raise ValueError(f"receipt must be an array of at most {MAX_RECEIPT_ITEMS} lines")
         lines = []
         for item in receipt:
-            if not isinstance(item, dict) or not {"cat", "label"} <= set(item) <= {"cat", "label", "answer"}:
-                raise ValueError("a receipt line needs cat and label (optional: answer)")
+            if not isinstance(item, dict) or not {"cat", "label"} <= set(item) <= {"cat", "label", "answer", "doc"}:
+                raise ValueError("a receipt line needs cat and label (optional: answer, doc)")
             if item["cat"] not in CATEGORIES:
                 raise ValueError("receipt cat must be a category")
             line = {"cat": item["cat"], "label": _text(item["label"], "receipt label", 300)}
             if item.get("answer"):
                 line["answer"] = _text(item["answer"], "receipt answer", 600)
+            # A Plans line names its plan, so History lists it under that plan only.
+            if item.get("doc") is not None:
+                doc = item["doc"]
+                if not (isinstance(doc, str) and doc.startswith("plan:") and _PLAN_ID.fullmatch(doc[5:])):
+                    raise ValueError("receipt doc must be plan:<plan id>")
+                line["doc"] = doc
             lines.append(line)
         result["receipt"] = lines
     return result

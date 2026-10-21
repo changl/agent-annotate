@@ -238,6 +238,18 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .vrow-dot-hollow{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--color-primary);flex-shrink:0}
 .vrow-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vrow-new{font-size:calc(9px * var(--aa-text, 1));font-weight:800;color:var(--warn-text);letter-spacing:.02em;flex-shrink:0}
+/* yvj: a version's chevron opens what was sent and done on it, nested under it */
+.vitem-row{display:flex;align-items:center;gap:2px}
+.vitem-row .vrow{flex:1;min-width:0}
+.vrow-toggle svg.i{width:14px;height:14px;transition:transform .15s}
+.vrow-toggle[aria-expanded="true"] svg.i{transform:rotate(90deg)}
+.vact{margin:2px 0 6px 18px;padding-left:10px;border-left:1px solid var(--line);font-size:calc(10.5px * var(--aa-text, 1))}
+.vact-block{padding:6px 0}
+.vact-block + .vact-block{border-top:1px solid var(--line)}
+.vact-head{font-weight:700;color:var(--muted)}
+.vact ul{padding-left:16px;margin-top:4px;list-style:disc}
+.vact li{margin:3px 0;word-break:break-word}
+.vact .hist-tag{margin-right:2px}
 .project-panel{margin-bottom:10px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:calc(11px * var(--aa-text, 1))}
 .project-panel[hidden]{display:none}
 .project-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px;padding:0 0 0 0}

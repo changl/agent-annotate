@@ -385,8 +385,8 @@
 // and Plans, the selected item's feedback in Library, the findings in
 // Findings. History is one list for the project; each part carries its
 // tab's tag, and it shows the tab on screen unless "All tabs" is chosen.
-// Each tab's own history sits at the top (collapsible, open by default),
-// then Sent rounds (recorded by the server), each line tagged.
+// Each tab's own history sits at the top (collapsible, open by default);
+// a document's versions each open to what was sent and done on them.
 (function () {
   'use strict';
   const AA = window.AA, UI = window.AAUI, esc = UI.esc;
@@ -396,6 +396,7 @@
   let railTab = 'feedback';
   let view = 'review';
   let filter = null; // null = the tab on screen; 'all' = every tab
+  let sentSig = ''; // the rounds History last drew
 
   function setTab(t) {
     if (!['feedback', 'documents', 'history'].includes(t)) t = 'feedback';
@@ -449,17 +450,21 @@
     const shown = cur ? shownTabs() : AA.TABS.map(t => t.id);
     const docs = window.AnnotateDocs ? window.AnnotateDocs.docs : [];
     body.querySelectorAll('.hist-cat').forEach(sec => {
-      const on = shown.includes(sec.dataset.cat) && (!AA.isDoc(sec.dataset.cat) || docs.includes(sec.dataset.cat));
+      // Library and Findings lines go out with the page: shown alone, they
+      // sit under the Review version they were sent on.
+      const sentOnly = sec.dataset.cat === 'review' && !shown.includes('review') && shown.some(t => !AA.isDoc(t));
+      const on = (shown.includes(sec.dataset.cat) || sentOnly) && (!AA.isDoc(sec.dataset.cat) || docs.includes(sec.dataset.cat));
       sec.hidden = !on;
       if (!on) return;
       const p = AA.providers[sec.dataset.cat];
       if (AA.isDoc(sec.dataset.cat)) {
-        window.AnnotateDocs.renderHistoryInto(sec.dataset.cat);
+        const rows = window.AnnotateDocs.renderHistoryInto(sec.dataset.cat, shown);
+        if (sentOnly && !rows) { sec.hidden = true; return; }
         // "All tabs": another document's versions show its latest five.
         clip(sec.querySelector('.vrail-body'), sec.dataset.cat !== view);
       } else if (p && p.history) p.history(sec.querySelector('.hist-cat-body'));
     });
-    renderSent(shown);
+    sentSig = JSON.stringify(AA.send ? AA.send.receipts() : []);
     const withdrawn = window.AnnotateDocs ? window.AnnotateDocs.withdrawnQuestions().filter(c => shown.includes(c.cat)) : [];
     $('#hist-withdrawn').hidden = !withdrawn.length;
     $('#hist-withdrawn-body').innerHTML = withdrawn.map(c => `<p>${esc(c.number ? '#' + c.number + ' · ' : '')}${esc(c.prompt)} (${esc(c.version)})<br>Withdrawn: ${esc(c.reason)}</p>`).join('');
@@ -486,16 +491,6 @@
     const t = AA.ALL_TABS.find(x => x.id === cat);
     return `<span class="badge badge-xs badge-ghost hist-tag">${esc(t ? t.label : cat)}</span>`;
   }
-  function renderSent(shown) {
-    const el = $('#hist-sent-body');
-    const rs = AA.send ? AA.send.receipts() : [];
-    const list = rs.map(r => Object.assign({}, r, { items: r.items.filter(it => shown.includes(it.cat)) })).filter(r => r.items.length);
-    el.innerHTML = list.length ? list.map(r => `<details class="unified-receipt"><summary>${r.version ? esc(r.version) + ' · ' : ''}${esc(r.result)} · ${esc(UI.fmtTs(r.ts))}</summary><ul>${r.items.map(it => `<li>${tagHtml(it.cat)} ${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul></details>`).join('')
-      : '';
-    $('#hist-sent-count').textContent = list.length;
-    // As in the accepted History: the section shows once something was sent.
-    $('#hist-sent').hidden = !list.length;
-  }
 
   // Rail tab clicks and arrow keys (E2 order: Feedback first, History last).
   document.querySelectorAll('#drawer-tabs [role="tab"]').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
@@ -507,7 +502,8 @@
     setTab(next.dataset.tab);
     next.focus();
   });
-  AA.onChange((k) => { badges(k); if (railTab === 'history') renderSent(AA.tab(view) ? shownTabs() : AA.TABS.map(t => t.id)); });
+  // A new or recorded Send redraws History (its rounds sit under versions).
+  AA.onChange((k) => { badges(k); if (railTab === 'history' && JSON.stringify(AA.send ? AA.send.receipts() : []) !== sentSig) renderHistory(); });
 
   AA.rail = {
     setTab, setView, setFilter, renderHistory, tagHtml,
@@ -537,7 +533,7 @@
   let noteTimer = null;
   let lastSend = null; // this visit's last Send: {ts, result, items}
 
-  // Sent rounds as the server recorded them (each Send's summary lines, by
+  // The rounds the server recorded (each Send's summary lines, by
   // send_id). This visit's last Send keeps its exact result line.
   function receipts() {
     const server = window.AnnotateDocs ? window.AnnotateDocs.sentRounds() : [];
@@ -695,7 +691,7 @@
       if (!t.n) return;
       const lines = AA.isDoc(t.id) ? docs.items(t.id) : (AA.providers[t.id] && AA.providers[t.id].pending ? AA.providers[t.id].pending() : []);
       // `kind` and `id` (UI-2) tell the shell which call carries a line.
-      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id }));
+      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id, doc: it.doc }));
     });
     const libraryPending = !!(AA.providers.library && AA.providers.library.roundPending && AA.providers.library.roundPending());
     let r = null;
@@ -703,7 +699,7 @@
     submitBtn.innerHTML = submitHtml;
     sending = false;
     // UI-2: the receipt lists only what was sent; what failed stays pending.
-    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' })) : [];
+    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc })) : [];
     const failed = r ? (r.failed || []).length : items.length;
     if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
@@ -714,7 +710,9 @@
     const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' :
       (r.automatic ? 'Feedback saved (' + n + ')' : '⏳ Queued — no session listening (' + n + ')');
-    lastSend = { ts: new Date().toISOString(), result, items: sent, fresh: true, send_id: r.send_id };
+    // The Review version on screen, as the round records it, so History
+    // places this Send right before the server's record arrives.
+    lastSend = { ts: new Date().toISOString(), version: docs.version('review') || '', result, items: sent, fresh: true, send_id: r.send_id };
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
       setNote(result, r.delivered ? 'is-success' : 'is-queued');

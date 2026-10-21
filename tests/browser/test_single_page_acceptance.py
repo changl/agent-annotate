@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, history, section, sent
+from single_page import browser_page, feedback, go, history, ready, section, sent
 from test_card_layout import CHROME
 from test_workspace_intent import _page
 
@@ -269,18 +269,30 @@ def test_one_send_covers_every_pending_tab_and_records_one_round(tmp_path, works
         history(page)
         page.locator('[data-hist-filter="all"]').click()
         sent(page)
-        page.locator("#hist-sent-body .unified-receipt").wait_for()
-        assert page.locator("#hist-sent-body .unified-receipt").count() == 1
-        receipt = page.locator("#hist-sent-body .unified-receipt")
-        assert receipt.get_attribute("open") is None
-        receipt.locator("summary").click()
-        assert all(page.locator("#hist-sent-body .hist-tag").nth(i).is_visible() for i in range(4))
-        assert set(page.locator("#hist-sent-body .hist-tag").all_inner_texts()) == {
-            "Review",
-            "Library",
-            "Findings",
-            "Plans",
-        }
+        # The one Send sits under the Review version it was sent on, with the
+        # Library and Findings lines tagged; the Plans line under the plan's version.
+        review = page.locator('.hist-cat[data-cat="review"] .vact-block:not(.vact-agent)')
+        playwright.expect(review).to_have_count(1)
+        assert set(review.locator(".hist-tag").all_inner_texts()) == {"Library", "Findings"}
+        assert review.locator("li").count() == 3
+        plans = page.locator('.hist-cat[data-cat="plans"] .vact-block:not(.vact-agent)')
+        playwright.expect(plans).to_have_count(1)
+        assert plans.locator("li").count() == 1
+        # Library or Findings alone: that tab's line under the Review version
+        # it was sent on; the version opens Review there.
+        for view, tag in (("library", "Library"), ("findings", "Findings")):
+            go(page, view)
+            history(page)
+            versions = page.locator('.hist-cat[data-cat="review"]')
+            playwright.expect(versions).to_be_visible()
+            block = versions.locator(".vact-block:not(.vact-agent)")
+            playwright.expect(block).to_have_count(1)
+            playwright.expect(block.locator("li")).to_have_count(1)
+            assert block.locator(".hist-tag").all_inner_texts() == [tag]
+        page.evaluate("() => { document.body.dataset.ready = '0'; }")
+        versions.locator(".vrow").first.click()
+        ready(page)
+        playwright.expect(page.locator("body")).to_have_attribute("data-view", "review")
         # A second submit has no pending work and cannot create a second round.
         result = page.evaluate(
             "async () => (await fetch('./api/rounds/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()"
@@ -292,6 +304,40 @@ def test_one_send_covers_every_pending_tab_and_records_one_round(tmp_path, works
         ]
         assert len([e for e in events if e.get("event") == "round_submitted"]) == 1
         assert len([e for e in events if e.get("event") == "session_push"]) == 1
+
+
+def test_a_plans_line_stays_with_its_plan(tmp_path, workspace):
+    publish_plan_revision(
+        workspace,
+        "beta",
+        '<!doctype html><html><head><title>Beta plan</title></head><body><div class="aa"><section data-anchor-id="s:beta"><h2>Beta</h2><p>Second plan.</p></section></div></body></html>',
+        title="Beta plan",
+    )
+    with browser_page(tmp_path, workspace) as (page, _):
+        go(page, "plans", plan="launch")
+        feedback(page)
+        page.locator('.citem[data-comment-id="plan-31"] .decision-accept').click()
+        section(page, "ready")
+        page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
+        page.locator("#round-submit-btn").click()
+        page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+        history(page)
+        plans = page.locator('.hist-cat[data-cat="plans"]')
+        # The launch plan's version on screen starts open with the line sent on it.
+        playwright.expect(plans.locator(".vact-block:not(.vact-agent)")).to_have_count(1)
+        plans.locator(".vrow-toggle").click()
+        playwright.expect(plans.locator(".vrow-toggle")).to_have_attribute("aria-expanded", "false")
+        assert page.evaluate(
+            "() => Object.keys(localStorage).some(k => k.startsWith('annotate:vfold:') && k.endsWith(':plan:launch'))"
+        )
+        # The beta plan's v1 had nothing sent on it.
+        go(page, "plans", plan="beta")
+        history(page)
+        playwright.expect(plans.locator(".vitem")).to_have_count(1)
+        assert plans.locator(".vrow-toggle").count() == 0
+        go(page, "plans", plan="launch")
+        history(page)
+        playwright.expect(plans.locator(".vrow-toggle")).to_have_attribute("aria-expanded", "false")
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])

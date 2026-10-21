@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- History rail: versions and sent rounds are one list, newest first. Each version's chevron opens what was sent on it (each round's result and its lines) and what the agent did in response (the next version it published, the comments it resolved or addressed); the version on screen starts open and each version's open state is remembered for the page. A round with no recorded version sits under the version current at its time. The separate Sent rounds section is gone; the header's last-send line stays.
+- History review fixes: "what the agent did" is the first version published after the round (not just the next one in the list), and republished versions are placed by publish time; Library or Findings alone shows that tab's sent lines under the Review version they were sent on; a Send's receipt line for Plans names its plan (`doc: plan:<id>`), so it lists under that plan only, and open state is kept per plan; only the focused version's chevron is in the Tab order.
+
 ## 2.26.5
 
 Decision #33 on the agent-annotate page.
