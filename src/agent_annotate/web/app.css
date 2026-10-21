@@ -113,7 +113,7 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .fix-proof-links a{display:inline-flex;align-items:center;gap:4px}
 .fix-proof-links svg.i{width:12px;height:12px}
 /* Findings on the phone: the comment Save, Reopen and Cancel are ≥44px targets. */
-@media (max-width:1160px),(max-height:480px){
+@media (max-width:1023px),(max-height:480px){
   #rail-findings .gf-ft .btn,#rail-findings .fix-actions .btn{min-width:44px;min-height:44px}
   .vrow,.vrow-toggle{min-height:44px}.vrow-toggle{min-width:44px}
 }
@@ -148,8 +148,8 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .sp-sum-note[hidden]{display:none}
 
 /* ── Compact layout (the shell's breakpoint): tabs become one menu, the
-   rail is the bottom sheet on every tab, one Send bar ─────────────────── */
-@media (max-width:1160px),(max-height:480px){
+   rail is the right-side overlay on every tab, one Send bar ─────────────────── */
+@media (max-width:1023px),(max-height:480px){
   /* Keep the open tab menu inside the phone viewport. */
   .aa-tabs-list{position:fixed;left:10px;right:10px;top:calc(50px * max(1, var(--aa-text, 1)));width:auto}
   .aa-tabs-list .aa-tab-name{font-size:calc(12px * var(--aa-text, 1))}
