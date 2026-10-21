@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.27.1
+
+#38 and #39 on the agent-annotate page.
+
+- The rail stays at every width. It sits beside the document from 1024px (was 1160px); narrower, it opens over the document only while open, as a right-side modal dialog (focus moves in, Tab stays inside, Escape closes and returns focus), full width under 600px, with a 44px Close button. Closed, an edge strip at every width keeps the expand toggle and Feedback/Documents/History buttons with the tabs' counts. The bottom sheet and the floating chat icon are gone.
 - Standing rule (#38 on the agent-annotate page): with the rail closed, nothing scrolls sideways at any width; tables wrap with whole words; a table scrolls inside itself only when a single word or image cannot fit. Tables lose their 1000px and per-cell minimum widths; the edge fade and the "Scroll sideways" hint appear only on a table that actually overflows.
 
 ## 2.27.0
