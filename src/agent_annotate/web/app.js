@@ -236,7 +236,7 @@
     if (prev && prev !== next && providers[prev] && providers[prev].hide) providers[prev].hide();
     // A new tab starts without the previous tab's Send summary open.
     if (prev && prev !== next && p.get('send') !== '1' && AA.send.isOpen()) AA.send.close();
-    // Phone: a new tab starts with its content, not with the rail's sheet.
+    // Compact: a new tab starts with its content, not with the rail's overlay.
     if (prev && prev !== next && DOCS().isMobileLayout()) DOCS().setMobileSheetOpen(false);
     showPane(next);
     AA.rail.setView(next);
@@ -422,17 +422,13 @@
   }
   function setFilter(f) { filter = f === 'all' ? 'all' : null; renderHistory(); }
 
-  // Feedback tab badge, collapsed-rail strip and phone button for the tab on
-  // screen (the shell keeps them for Review and Plans as it always did).
+  // Feedback tab badge for the tab on screen (the shell keeps it for Review
+  // and Plans as it always did); the rail's edge strip mirrors it.
   function badges(counts) {
     if (AA.isDoc(view)) return;
     const k = counts[view] || { needs: 0, unread: 0 };
     const tb = $('#tab-feedback-n');
     tb.textContent = String(k.needs); tb.hidden = !k.needs;
-    const strip = $('#drawer-strip-unread');
-    strip.textContent = String(k.needs); strip.style.display = k.needs ? '' : 'none';
-    const fab = $('#mobile-fab');
-    if (fab) fab.title = (k.needs ? k.needs + ' need you' : 'Nothing needs you') + (k.unread ? ', ' + k.unread + ' unread' : '') + ' — open feedback';
   }
 
   // ── History ────────────────────────────────────────────────────────────
@@ -515,7 +511,7 @@
   AA.rail = {
     setTab, setView, setFilter, renderHistory, tagHtml,
     get tab() { return railTab; },
-    // Open the rail on the Feedback tab (phone: the bottom sheet).
+    // Open the rail on the Feedback tab (compact: the overlay).
     reveal() {
       setTab('feedback');
       window.AnnotateDocs.setDrawerCollapsed(false);
