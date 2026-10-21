@@ -784,7 +784,7 @@
     document.getElementById('linked-list').innerHTML = `<div class="plan-scope"><strong>Linked pages</strong> · separate pages the owner declared for this project</div>
       <p>Each project has one annotate page. A separate page exists only when the owner spells out the exception to the orchestrator; it is still listed here, so everything about the project starts from this page.</p>
       <div class="cards">${pages.map(p => `<div class="card" data-linked="${esc(p.slug)}">
-        <h4><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title || p.slug)} ${UI.ico('external')}</a></h4>
+        <h4><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name || p.title || 'Untitled page')} ${UI.ico('external')}</a></h4>
         ${p.reason ? `<p class="ctx">${esc(p.reason)}</p>` : ''}
         ${p.declared_by ? `<p class="muted">Declared by ${esc(p.declared_by)} to ${esc(p.told_to || 'the orchestrator')}${p.declared_at ? ' · ' + esc(UI.fmtTs(p.declared_at)) : ''}</p>` : ''}
       </div>`).join('')}</div>`;

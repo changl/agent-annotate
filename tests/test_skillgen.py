@@ -116,7 +116,7 @@ def test_the_generated_hook_shim_runs_the_packaged_hook(tmp_path):
                           input=json.dumps({"session_id": "sess-skill", "cwd": "/tmp"}),
                           capture_output=True, text=True, env=env, timeout=20)
     assert proc.returncode == 0, proc.stderr
-    assert "[annotate] proj/demo: 1 reviewer event(s)" in proc.stdout, proc.stdout
+    assert "[annotate] Untitled page: 1 reviewer event(s)" in proc.stdout, proc.stdout
 
 
 def test_cli_subcommand_prints_the_report(tmp_path, capsys):

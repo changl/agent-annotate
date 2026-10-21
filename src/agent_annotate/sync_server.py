@@ -124,6 +124,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
+from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
 from .updates import runtime_manifest
 
@@ -1525,6 +1526,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if p.exists():
             try:
                 meta = self._read_meta()
+                meta["name"] = page_name(self.artifact_dir)
                 if isinstance(meta.get("owner"), dict):
                     target = meta["owner"].get("target") or {}
                     if isinstance(target.get("terminal_name"), str):
@@ -1534,13 +1536,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     meta["project_info"] = self._project_payload()
                 except (OSError, ValueError):
-                    meta["project_info"] = {"modules": []}
+                    meta["project_info"] = {"name": meta["name"], "modules": []}
                 meta["delivery_status"] = delivery_status(_monitor_project(self.bus_dir), self.slug)
                 data = json.dumps(meta).encode()
             except (OSError, ValueError):
                 data = b"{}"
         else:
-            data = json.dumps({"current": "v1", "history": []}).encode()
+            meta = {"current": "v1", "history": [], "name": page_name(self.artifact_dir)}
+            try:
+                meta["project_info"] = self._project_payload()
+            except (OSError, ValueError):
+                meta["project_info"] = {"name": meta["name"], "modules": []}
+            data = json.dumps(meta).encode()
         self._respond(200, data, "application/json", cache_control="no-store" if self._is_funnel_origin() else "no-cache",
                       conditional=not self._is_funnel_origin())
 
@@ -1743,7 +1750,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # light-only canvas colours left dark-theme text unreadable.
                 # Serve its canvas as a content document, like Review.
                 try:
-                    html = build_content_document(html, title=self.slug or "Annotate content")
+                    html = build_content_document(html, title=page_name(self.artifact_dir))
                 except ExtractionError:
                     pass
         else:
@@ -1769,7 +1776,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(500, b"Read error")
                 return
             try:
-                html = build_content_document(raw, title=self.slug or "Annotate content") if has_canvas_sentinels(raw) else raw
+                html = build_content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
                 self._respond(
                     500,
@@ -3292,8 +3299,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return None
 
     def _project_payload(self) -> dict:
-        from .project_state import load_project
-        data = load_project(self.artifact_dir)
+        from .page_names import project_payload
+        data = project_payload(self.artifact_dir)
         if "board" in data:
             data["board"].pop("dir", None)  # a local path; the page needs only the link
         record = self._registered_record()

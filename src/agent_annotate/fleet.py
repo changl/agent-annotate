@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
+from .page_names import validate_name
+
 MAX_TARGETS = 64
 MAX_RESPONSE_BYTES = 64 * 1024
 _NAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
@@ -261,8 +263,13 @@ def _collect_target(target: dict, fetch: Fetch, timeout: float, maximum: int) ->
     health = "healthy" if all(status == "ok" for status in statuses.values()) else "degraded"
     if all(status in ("unreachable", "timeout", "tls_error") for status in statuses.values()):
         health = "unreachable"
+    try:
+        name = validate_name(meta.get("name") if meta else None)
+    except ValueError:
+        name = "Untitled page"
     return {
         **target,
+        "name": name,
         "current_version": _safe_value(meta.get("current"), re.compile(r"v[0-9]{1,10}\Z")) if meta else None,
         "package_version": package,
         "build_id": _safe_value(runtime.get("build_id"), _BUILD),

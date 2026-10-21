@@ -805,7 +805,7 @@ function referenceTabs() {
 // document's own title.
 let documentTitle = '';
 function updateProjectTitle() {
-  const title = PROJECT.title || documentTitle || 'annotate';
+  const title = PROJECT.name || PROJECT.title || documentTitle || 'annotate';
   const header = document.getElementById('hdr-title');
   header.textContent = title;
   header.title = title;

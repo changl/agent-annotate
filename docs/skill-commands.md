@@ -20,8 +20,9 @@ options:
 
 ```text
 usage: annotate new [-h] [--from page.md] [--version VERSION] [--label LABEL]
-                    [--publish] [--ask] [--example] [--project PROJECT]
-                    [--exception REASON] [--standalone] [--port PORT]
+                    [--title TITLE] [--publish] [--ask] [--example]
+                    [--project PROJECT] [--exception REASON] [--standalone]
+                    [--port PORT]
                     [--transport {funnel,local,tailscale,cloudflare,cloudflare_tailscale}]
                     [--hostname HOSTNAME] [--public] [--json]
                     [slug_dir]
@@ -35,6 +36,7 @@ options:
                         ```cards)
   --version VERSION     vN (default: front matter, else v1)
   --label LABEL         version label for the rail
+  --title TITLE         stable page name; version titles stay in Markdown
   --publish             run `publish` on the result
   --ask                 pose the ```cards round after publishing
   --example             print a complete example document and exit

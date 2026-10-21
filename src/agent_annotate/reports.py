@@ -30,7 +30,7 @@ def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str, fl
     current = metrics["global"]
     prior = previous["global"]
     counts = ["submitted_rounds", "reviewer_decisions", "publish_successes", "publish_failures"]
-    lines = ["---", "title: Agent-annotate weekly progress", f"date: {date}",
+    lines = ["---", "title: Agent Annotate weekly progress", f"date: {date}",
              "full_plan: true", "other_files_required: none", "---", "",
              "## Review loop", "",
              "This page combines local review events with agent usage. Delivery acceptance and owner receipt are separate from completed work.", "",
@@ -66,7 +66,7 @@ def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str, fl
                       "|---|---|---|---|---|---|"]
             for row in fleet["targets"]:
                 owner = "present" if row["owner_present"] is True else "absent" if row["owner_present"] is False else "unknown"
-                lines.append(f"| {row['machine']} | [{row['project']}/{row['slug']}]({_markdown_url(row['url'])}) | "
+                lines.append(f"| {row['machine']} | [{row.get('name', 'Untitled page')}]({_markdown_url(row['url'])}) | "
                              f"{row['package_version'] or 'unknown'} | {owner} | {row['latest_delivery_state']} | {row['health']} |")
             lines += ["", "```details", "Fleet measurement limits", *[f"- {limit}" for limit in fleet["limitations"]], "```"]
     return "\n".join(lines)

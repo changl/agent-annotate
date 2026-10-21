@@ -88,7 +88,7 @@ def test_cli_dry_run_receipt_and_files_are_unchanged(page, capsys, monkeypatch, 
     elif command == "archive":
         arguments += ["--why", "Superseded"]
     assert cli.run_command(cli.build_parser().parse_args(arguments)) == 0
-    assert capsys.readouterr().out.startswith(f"dry run: would {command} shop/old")
+    assert capsys.readouterr().out.startswith(f"dry run: would {command} old page")
     assert _tree(directory.parent.parent) == before
 
 

@@ -26,7 +26,7 @@ def _config(*targets):
 
 def _responses(**changes):
     responses = {
-        "current.meta.json": {"current": "v2", "owner": {"owner_session": "private-owner"}},
+        "current.meta.json": {"current": "v2", "name": "Operations", "owner": {"owner_session": "private-owner"}},
         "api/capabilities": {"version": "2.21.0", "runtime": {"package_version": "2.21.0", "build_id": "a" * 40},
                              "automatic_round_delivery": True, "rounds": True, "batch": True, "decision_schema": 2},
         "api/delivery": {"latest": {"state": "uncertain", "detail": "private transport error"}},
@@ -54,6 +54,7 @@ def test_collection_whitelists_runtime_owner_delivery_and_aggregates():
     result = fleet.collect_fleet(_config(), fetch=_fetch(_responses(), calls))
     row = result["targets"][0]
     assert row["current_version"] == "v2"
+    assert row["name"] == "Operations"
     assert row["package_version"] == "2.21.0" and row["build_id"] == "a" * 40
     assert row["owner_present"] is True
     assert row["latest_delivery_state"] == "uncertain"

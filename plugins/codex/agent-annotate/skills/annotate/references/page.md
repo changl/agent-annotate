@@ -4,6 +4,12 @@ Author page.md with built-in Markdown; `annotate new --example` prints a complet
 
 ## Document
 
+Names: one stable `current.meta.json.name` per page; set/rename with `new --title` or `publish --title`, initially seeded from the document title if omitted.
+Use sentence case and proper nouns: **Agent Annotate** for the project; `agent-annotate` for package/repository IDs.
+Use lowercase ASCII kebab-case directory slugs from the initial name; `-YYYYMMDD` only for separate dated reports/events; preserve existing URLs.
+Parent page references derive the target's name; omit duplicate labels. Slugs are route/CLI identities, never display names.
+Markdown `title`, version labels and Plan titles describe their documents/revisions; they never implicitly rename an existing page. Keep `page.md`, `source/vN.md`, `versions/vN.html`.
+
 Front matter accepts `title`, `version` and `label`. A requested full-plan review also uses `full_plan: true` and `other_files_required: none` (or the file list); retain the complete plan in later versions, with cards in a final `## Questions for reviewer` section.
 
 ````markdown
