@@ -4,9 +4,8 @@
 
 ## 2.27.0
 
-The reviewer's 2026-10-20 rail feedback (#34-#37 on the agent-annotate page).
+The reviewer's 2026-10-20 rail feedback (#34, #36, #37 on the agent-annotate page; the rail-at-every-width change, #35, is held for a revision).
 
-- The rail stays at every width. It sits beside the document from 1024px (was 1160px); narrower, it opens as a right-side overlay (a modal dialog: focus moves in, Tab stays inside, Escape closes and returns focus), full width under 600px, with a 44px Close button. Closed, an edge strip at every width keeps the expand toggle and Feedback/Documents/History buttons with the tabs' counts. The bottom sheet and the floating chat icon are gone.
 - One name per page. Each page stores its name in `current.meta.json` (`name`), set on first publish from the document title or `new/publish --title`, and never renamed by a later version's title. The header, rail, `workspace`, session-start line, notices, MCP, fleet and reports use it; slugs appear only in URLs, paths and JSON identities. The header still names the project (`project.json` title) when set. Operator `annotate names --from FILE [--dry-run|--apply]` migrates existing pages with backups. Convention: `docs/page-names.md`.
 - One list of the project's other pages: the rail's Documents tab lists each page once by name, declared exceptions with their reason, then links modules. The header's Linked pages tab and view are gone; `#view=linked` opens Review with the rail on Documents. Signed-out viewers never receive other pages' review keys.
 - Operator `annotate plans backfill [--dry-run|--apply]` and `plans restore` link or file reviewer approvals made before 2.26.4 into Plans: only browser votes sent in a round (round snapshot or the bus's `round_submitted`) whose exact card is recoverable; everything else is listed as a conflict. Dry run writes nothing; apply keeps byte-exact backups and is idempotent. `docs/plans-backfill.md`.
