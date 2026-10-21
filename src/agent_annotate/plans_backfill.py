@@ -129,13 +129,20 @@ def _evidence(directory, comment, decision, rounds):
         bundle = read_bundle(directory, evidence["revision"])
         if bundle["item_id"] != item_id(comment) or bundle.get("incomplete"):
             raise ValueError("sealed evidence incomplete or belongs to another item")
+        if bundle["request"].get("catalog") is False:
+            raise ValueError("historical card opted out of Plans")
         for name, digest in bundle.get("assets", {}).items():
             if _hash(safe_path(directory, name).read_bytes()) != digest:
                 raise ValueError("sealed image changed")
+        styles = bundle.get("styles", "")
         if bundle.get("styles_revision"):
             stamp = bundle["styles_revision"]
-            if _hash(safe_path(directory, f"approval-evidence/styles/{stamp}.css").read_bytes()) != stamp:
+            body = safe_path(directory, f"approval-evidence/styles/{stamp}.css").read_bytes()
+            if _hash(body) != stamp:
                 raise ValueError("sealed stylesheet changed")
+            styles = body.decode()
+        if re.search(r"url\s*\(|@import\b", styles, re.I):
+            raise ValueError("historical media has no vote-time hash")
         return bundle, evidence
     versions = {r.get("version") for r in rounds}
     if len(versions) != 1:
@@ -153,8 +160,10 @@ def _evidence(directory, comment, decision, rounds):
                   and c.get("anchor_id") == comment.get("anchor_id")]
     if len(candidates) != 1:
         raise ValueError("exact versioned card missing or ambiguous")
+    request = candidates[0].get("decision_request")
+    if not isinstance(request, dict) or not request:
+        raise ValueError("historical decision request missing")
     frozen = {**comment, **candidates[0], "id": comment["id"]}
-    request = frozen.get("decision_request") or {}
     if request.get("catalog") is False:
         raise ValueError("historical card opted out of Plans")
     if any(a.get("prompt") != request.get("prompt") for r in rounds for a in r.get("answers", [])
@@ -162,7 +171,7 @@ def _evidence(directory, comment, decision, rounds):
         raise ValueError("sent prompt differs from versioned card")
     bundle = _bundle(frozen, version, html_path.read_text())
     _, assets, incomplete, _ = _pin_images(directory, bundle["html"], "")
-    if bundle["incomplete"] or assets or incomplete:
+    if bundle["incomplete"] or assets or incomplete or re.search(r"url\s*\(|@import\b", bundle["styles"], re.I):
         raise ValueError("evidence missing or historical media has no vote-time hash")
     if bundle["item_id"] != item_id(comment):
         raise ValueError("historical and current item identities differ")
@@ -290,7 +299,7 @@ def backfill_page(directory, *, apply=False, bus=None, archive=None):
             target["catalog_plan"] = item_id(comment)
             # Keep historical votes intact; provenance is on the new Plan entry.
             prepared_cards.append(frozen)
-        backup = directory / ".plans-backfill-backups" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-") + uuid.uuid4().hex[:8])
+        backup = safe_path(directory, ".plans-backfill-backups/" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-") + uuid.uuid4().hex[:8])
         backup.mkdir(parents=True, mode=0o700)
         touched = {"comments.json": None, **writes}
         manifest = {"page": str(directory), "files": {}}

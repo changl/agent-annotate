@@ -35,7 +35,10 @@ unsent votes are never treated as committed just because they lack a pending fla
 Evidence must be an intact, complete sealed bundle, or a unique versioned card
 plus HTML from the sent round's version. Both snapshot files must predate the
 vote, and the prompt must match the sent receipt. Missing anchors, later edits,
-ambiguous versions, and historical media without vote-time hashes are conflicts.
+ambiguous versions, absent historical decision requests, and historical media
+without vote-time hashes are conflicts. CSS URLs and imports are rejected even
+when the stylesheet itself was sealed; its dependencies have no vote-time hashes.
+The frozen request's Plans opt-out also applies to sealed evidence.
 Selections use the existing catalog's **Decided** semantics; they do not imply an
 affirmative interpretation of labels such as "not now".
 
@@ -49,7 +52,8 @@ command with `--apply`. Apply takes the existing server comment-store lock,
 rechecks the page, and backs up every file it will touch under
 `PAGE/.plans-backfill-backups/TIMESTAMP-ID/`. The command prints that full path.
 If the server lock does not exist, apply refuses rather than creating an inode
-that might race another writer. Re-applying creates no additional entries or backups.
+that might race another writer. Symlinked backup paths are refused just like
+other page storage paths. Re-applying creates no additional entries or backups.
 
 Restore with:
 

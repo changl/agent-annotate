@@ -1,7 +1,12 @@
 import copy
+import fcntl
 import hashlib
 import json
 import os
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -350,3 +355,169 @@ def test_archived_bus_receipt_is_read_without_recreating_live_bus(tmp_path):
     before = snapshot(tmp_path)
     assert backfill_page(tmp_path, bus=bus, archive=archive)["counts"]["would_file"] == 1
     assert snapshot(tmp_path) == before
+
+
+def test_apply_refuses_symlinked_backup_root(tmp_path):
+    directory, outside = tmp_path / "page", tmp_path / "outside"
+    page(directory)
+    outside.mkdir()
+    (directory / ".plans-backfill-backups").symlink_to(outside, target_is_directory=True)
+    before = snapshot(tmp_path)
+    with pytest.raises(ValueError, match="symlink"):
+        backfill_page(directory, apply=True)
+    assert snapshot(tmp_path) == before
+    assert list(outside.iterdir()) == []
+
+
+def test_missing_historical_request_cannot_inherit_current_request(tmp_path):
+    page(tmp_path)
+    cards = tmp_path / "versions/v1.cards.json"
+    cards.write_text(json.dumps([{"number": 1, "anchor_id": "d:q1"}]))
+    os.utime(cards, (1, 1))
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "historical decision request" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("style", [".design { background: url(screen.png) }", '@import "theme.css";'])
+@pytest.mark.parametrize("sealed", [False, True])
+def test_historical_styles_cannot_depend_on_unsealed_media(tmp_path, style, sealed):
+    from agent_annotate.plans_backfill import _bundle, _prepared_bundle
+    store, comment = page(tmp_path)
+    html = tmp_path / "versions/v1.html"
+    html.write_text(f'<style>{style}</style><section id="design">The design</section>')
+    os.utime(html, (1, 1))
+    if sealed:
+        revision, writes = _prepared_bundle(_bundle(comment, "v1", html.read_text()))
+        for name, body in writes.items():
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        comment["decision"]["evidence"] = {"committed": True, "revision": revision}
+        save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "historical media" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+def test_sealed_opt_out_cannot_be_overridden_by_current_request_or_stale_link(tmp_path):
+    from agent_annotate.plans_backfill import _bundle, _prepared_bundle
+    store, comment = page(tmp_path)
+    frozen = copy.deepcopy(comment)
+    frozen["decision_request"]["catalog"] = False
+    revision, writes = _prepared_bundle(_bundle(frozen, "v1", (tmp_path / "versions/v1.html").read_text()))
+    for name, body in writes.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    comment["decision"]["evidence"] = {"committed": True, "revision": revision}
+    comment["catalog_plan"] = item_id(comment)
+    save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "opted out" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("stage", ["style", "bundle", "comments"])
+@pytest.mark.parametrize("existing_bundle", [False, True])
+def test_restore_after_interrupted_apply_is_byte_exact(tmp_path, monkeypatch, stage, existing_bundle):
+    from agent_annotate import plans_backfill
+    page(tmp_path)
+    html = tmp_path / "versions/v1.html"
+    html.write_text('<style>.design { color: blue }</style><section id="design">Original</section>')
+    os.utime(html, (1, 1))
+    # Also exercise overwriting a pre-existing, differently serialized bundle.
+    if existing_bundle:
+        store = json.loads((tmp_path / "comments.json").read_text())
+        _, operations = plans_backfill.inspect_page(tmp_path, store)
+        _, writes = plans_backfill._prepared_bundle(operations[0][3])
+        for name, body in writes.items():
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(json.dumps(json.loads(body), indent=4).encode() if name.endswith(".json") else body)
+    before = snapshot(tmp_path)
+    atomic = plans_backfill._atomic_bytes
+
+    class Crash(BaseException):
+        pass
+
+    def interrupt(path, body):
+        atomic(path, body)
+        if ".plans-backfill-backups" in path.parts:
+            return
+        if ((stage == "style" and path.suffix == ".css")
+                or (stage == "bundle" and path.name == "bundle.json")
+                or (stage == "comments" and path.name == "comments.json")):
+            raise Crash()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(plans_backfill, "_atomic_bytes", interrupt)
+        with pytest.raises(Crash):
+            backfill_page(tmp_path, apply=True)
+    backup = next((tmp_path / ".plans-backfill-backups").iterdir())
+    restore_page(tmp_path, backup)
+    restored = {name: digest for name, digest in snapshot(tmp_path).items()
+                if not name.startswith(".plans-backfill-backups/")}
+    assert restored == before
+
+
+@pytest.mark.parametrize("action", ["apply", "restore"])
+def test_apply_and_restore_wait_for_server_lock_then_recheck(tmp_path, monkeypatch, action):
+    page(tmp_path)
+    backup = backfill_page(tmp_path, apply=True)["backup"] if action == "restore" else None
+    # A separate process models the server, using the same existing lock inode.
+    script = '''
+import fcntl, json, sys
+from pathlib import Path
+page = Path(sys.argv[1])
+with (page / ".comments.json.lock").open("r") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    print("locked", flush=True)
+    sys.stdin.readline()
+    path = page / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["d:q1"][0]["decision"]["verdict"] = "reject"
+    path.write_text(json.dumps(store))
+'''
+    child = subprocess.Popen([sys.executable, "-c", script, str(tmp_path)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    attempted = threading.Event()
+    flock = fcntl.flock
+
+    def observed_flock(file, operation):
+        attempted.set()
+        return flock(file, operation)
+
+    monkeypatch.setattr(fcntl, "flock", observed_flock)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            assert child.stdout.readline().strip() == "locked"
+            pending = pool.submit(restore_page, tmp_path, backup) if backup else pool.submit(backfill_page, tmp_path, apply=True)
+            assert attempted.wait(5)
+            assert not pending.done()
+        finally:
+            _, stderr = child.communicate(input="\n", timeout=5)
+        assert child.returncode == 0, stderr
+        if backup:
+            with pytest.raises(ValueError, match="changed since"):
+                pending.result(timeout=5)
+        else:
+            assert pending.result(timeout=5)["items"] == []
+            assert not (tmp_path / ".plans-backfill-backups").exists()
+
+
+def test_dry_run_preserves_directory_entries_and_mtimes(tmp_path):
+    _, comment = page(tmp_path)
+    bus = bus_send(tmp_path, comment)
+    def metadata():
+        return {str(p.relative_to(tmp_path)): (p.stat().st_mtime_ns, p.stat().st_mode)
+                for p in [tmp_path, *tmp_path.rglob("*")]}
+    before = metadata()
+    assert backfill_page(tmp_path, bus=bus)["counts"]["would_file"] == 1
+    assert metadata() == before
