@@ -261,6 +261,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .doc-list{list-style:none;display:flex;flex-direction:column;gap:2px}
 .doc-list li{padding:7px 8px;border-radius:var(--radius-field)}
 .doc-list li:hover{background:var(--soft)}
+#documents-body .doc-list svg.i{display:inline-block;width:12px;height:12px;margin-left:5px;vertical-align:-1px}
 
 /* ── Send summary (D1) ──────────────────────────────── */
 #round-confirm-backdrop{position:fixed;inset:0;background:color-mix(in oklab,var(--color-neutral) 50%,transparent);z-index:2100;display:none;align-items:center;justify-content:center}

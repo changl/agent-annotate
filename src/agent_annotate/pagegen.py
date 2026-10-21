@@ -103,7 +103,7 @@ def inline(text: str) -> str:
             out.append(f"<code>{E(code)}</code>")
         elif label is not None:
             href = "#" if _UNSAFE_URL.match(url) else url
-            out.append(f'<a href="{E(href, quote=True)}">{E(label)}</a>')
+            out.append(f'<a href="{E(href, quote=True)}">{E(html.unescape(label))}</a>')
         elif bold is not None or bold2 is not None:
             out.append(f"<strong>{E(bold if bold is not None else bold2)}</strong>")
         else:
@@ -1069,7 +1069,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
 
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
-             label: str | None = None) -> dict:
+             label: str | None = None, *, title: str | None = None) -> dict:
     """Parse, render, lint and write every file a publishable page needs."""
     text = source.read_text(encoding="utf-8")
     meta, body = parse_front_matter(text)
@@ -1082,6 +1082,12 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     meta.setdefault("slug", slug_dir.name)
     meta.setdefault("date", datetime.date.today().isoformat())
     meta.setdefault("subtitle", "")
+    from .page_names import validate_name
+    if title is not None:
+        try:
+            title = validate_name(title)
+        except ValueError as exc:
+            raise PageGenError(str(exc)) from exc
     version = version or meta.get("version") or "v1"
     if not re.fullmatch(r"v\d+", version):
         raise PageGenError(f"version must look like v1, v2, v3 (got {version!r})")
@@ -1125,8 +1131,12 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
     html_out = build_html(meta, canvas, registry, version)
+    from .page_names import page_name, set_page_name
+    # Resolve legacy titles before an in-place regeneration replaces their HTML.
+    initial_name = page_name(slug_dir, fallback=meta["title"])
     images.copy_into(slug_dir)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
+    name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
         save_project(slug_dir, project_data)
@@ -1135,6 +1145,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "slug": slug_dir.name,
         "doc_id": meta["slug"],
         "title": meta["title"],
+        "name": name,
         "version": version,
         "label": label,
         "anchors": len(registry),
@@ -1269,7 +1280,7 @@ def cmd_new(args) -> int:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
     try:
-        result = generate(source, slug_dir, args.version, args.label)
+        result = generate(source, slug_dir, args.version, args.label, title=getattr(args, "title", None))
     except PageGenError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -1364,6 +1375,7 @@ def add_parser(sub) -> None:
                     help="the markdown document (front matter + prose + ```cards)")
     sp.add_argument("--version", default=None, help="vN (default: front matter, else v1)")
     sp.add_argument("--label", default=None, help="version label for the rail")
+    sp.add_argument("--title", default=None, help="stable page name; version titles stay in Markdown")
     sp.add_argument("--publish", action="store_true", help="run `publish` on the result")
     sp.add_argument("--ask", action="store_true",
                     help="pose the ```cards round after publishing")

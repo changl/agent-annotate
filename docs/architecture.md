@@ -8,7 +8,7 @@ One project page serves Review, Library, Findings, and Plans from the same page 
 | `copy.json` schema 1 | Library groups and block metadata; immutable revisions; browser proposals wait for shared Send |
 | `categories.json` | Optional findings set IDs and labels |
 | `plans/<id>/meta.json` and `versions/vN.html` | Independent plan streams with title, current version and labeled history |
-| Registry exception | Reason and parent_slug; main page discovers Linked pages; separate ownership |
+| Registry exception | Reason and parent_slug; main page lists it in the rail's Documents tab; separate ownership |
 
 `categories.py` validates storage, computes category counts, records fixes with proof, and publishes plans. `pagegen.py` supplies Markdown rendering and anchors. `cli.py` provides finding, plan, library/copy, ask and filtered reads; `mcp_server.py` provides the corresponding fix and read tools. `workspace.py` enforces canonical reuse and exposes linked exceptions. The HTTP server owns identity checks and shared round delivery.
 

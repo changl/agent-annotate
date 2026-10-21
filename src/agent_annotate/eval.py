@@ -64,6 +64,7 @@ if not __package__:  # Preserve the documented bare-script entry point.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "agent_annotate"
 from . import measurement
+from .page_names import page_name, validate_name
 
 HOME = os.path.expanduser("~")
 try:
@@ -155,14 +156,30 @@ BOOKKEEPING_EVENTS = frozenset({
     "page_closed",
 })
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
-# Two notice formats in the corpus: v2.18's "New comments since last turn — …"
-# and v2.19's one-line-per-slug "[annotate] proj/slug: N reviewer event(s) …".
-# Both have to parse or the hook's own history disappears from section 7.
+# Preserve historic slug labels; named notices carry identity in the inbox command.
 NOTICE_RE = re.compile(
-    r"\[annotate\]\s*(?:New comments since last turn\s*[—-]\s*)?([^\"\\\n]{0,400})"
+    r"\[annotate\]\s*(?:New comments since last turn\s*[—-]\s*)?([^\n]{0,2000})"
 )
 NOTICE_PAIR_RE = re.compile(
     r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+):\s*(\d+)\s*(?:new|reviewer) event")
+NOTICE_ROUTE_RE = re.compile(
+    r".*:\s*(\d+)\s+reviewer event\(s\) since your last read.*?\. Read: [^\n]*?"
+    r"\binbox ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+) --unread")
+
+
+def _notice_pairs(text):
+    routed = [(project, slug, count) for count, project, slug in NOTICE_ROUTE_RE.findall(text)]
+    return routed or NOTICE_PAIR_RE.findall(text)
+
+
+def _notice_strings(value):
+    """Read decoded strings so quotes/backslashes in names cannot truncate notices."""
+    if isinstance(value, str):
+        if "[annotate]" in value:
+            yield value
+    elif isinstance(value, (list, dict)):
+        for child in value.values() if isinstance(value, dict) else value:
+            yield from _notice_strings(child)
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +277,7 @@ def load_registry():
             if not isinstance(s, dict):
                 continue
             out[f"{project}/{slug}"] = {
+                "name": page_name(s),
                 "archived": s.get("archived"),
                 "owner_session": s.get("owner_session"),
                 "superseded_by": s.get("superseded_by"),
@@ -547,6 +565,7 @@ def section1(slugs, since):
 
         rows.append({
             "slug": slug,
+            "name": info.get("name") or "Untitled page",
             "project": info.get("project"),
             "created": created.isoformat() if created else None,
             "in_window": any(t and t >= since for t in [created,
@@ -908,7 +927,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
             cache = json.load(open(CACHE_PATH, encoding="utf-8"))
         except Exception:
             cache = None
-    if (cache and cache.get("sig") == sig
+    if (cache and cache.get("notice_format") == "canonical-names-v1" and cache.get("sig") == sig
             and set(cache.get("ids") or []) == set(ids_of_interest)):
         return (
             {k: v for k, v in cache["sightings"].items()},
@@ -967,18 +986,16 @@ def scan_transcripts(ids_of_interest, refresh=False):
                     continue
 
                 # The hook notice arrives as a type:"attachment" line and is also
-                # mirrored into `rendered`, so match against the whole serialised
-                # line rather than message.content only.
-                sline = json.dumps(obj, ensure_ascii=False)
+                # mirrored into `rendered`; include both decoded strings and dedupe.
                 line_has_notice = False
-                for m in NOTICE_RE.finditer(sline):
+                for m in NOTICE_RE.finditer("\n".join(_notice_strings(obj))):
                     body = m.group(1)
                     line_has_notice = True
-                    key = (path, ts, body[:200])
+                    key = (path, ts, body)
                     if key in seen_notice:
                         continue
                     seen_notice.add(key)
-                    for proj, slug, n in NOTICE_PAIR_RE.findall(body):
+                    for proj, slug, n in _notice_pairs(body):
                         notices.append({"ts": ts, "file": path, "project": proj,
                                         "slug": slug, "count": int(n),
                                         "line_type": obj.get("type")})
@@ -1008,7 +1025,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
                                                "how": how, "tool": tname})
                 # ids that only appear outside message.content (attachments,
                 # toolUseResult payloads, queue operations)
-                for cid in (set(idpat.findall(sline)) & ids_of_interest) - in_blocks:
+                for cid in (set(idpat.findall(line)) & ids_of_interest) - in_blocks:
                     file_ids[path].add(cid)
                     sightings[cid].append({
                         "ts": ts, "file": path, "tool": None,
@@ -1132,7 +1149,6 @@ def hook_log_stats(since):
     lines = 0
     if not os.path.exists(HOOK_LOG):
         return {"log_lines": 0, "notices": 0, "per_slug": {}}
-    pat = NOTICE_PAIR_RE
     tspat = re.compile(r"(\d{4}-\d{2}-\d{2}T[\d:]+Z)")
     for line in open(HOOK_LOG, encoding="utf-8", errors="replace"):
         m = tspat.search(line)
@@ -1140,7 +1156,7 @@ def hook_log_stats(since):
         if since and t and t < since:
             continue
         lines += 1
-        for _p, slug, _n in pat.findall(line):
+        for _p, slug, _n in _notice_pairs(line):
             total += 1
             per_slug[slug] += 1
     return {"log_lines": lines, "notices": total, "per_slug": dict(per_slug)}
@@ -1160,6 +1176,15 @@ def md_table(headers, rows):
 
 def render_md(res):
     since = res["meta"]["since"]
+    names = {row["slug"]: row.get("name") for row in res["s1"]}
+    escapes = str.maketrans({c: f"&#{ord(c)};" for c in "&<>|[]*_`\\"})
+
+    def page_label(slug):
+        try:
+            return validate_name(names.get(slug)).translate(escapes)
+        except ValueError:
+            return "Untitled page"
+
     L = []
     A = L.append
     A("# Agent-annotate review loop — quantitative baseline")
@@ -1171,13 +1196,13 @@ def render_md(res):
       "No annotate command was run.")
     A("")
 
-    A("## 1. Per-slug shape")
+    A("## 1. Per-page shape")
     A("")
     rows = []
     for r in res["s1"]:
         v = r["verdicts"]
         rows.append([
-            ("**" if r["in_window"] else "") + r["slug"] + ("**" if r["in_window"] else ""),
+            ("**" if r["in_window"] else "") + page_label(r["slug"]) + ("**" if r["in_window"] else ""),
             (r["created"] or "")[:10], r["comments"], r["decision_requests"],
             f"{v['accept']}/{v['reject']}/{v['changes']}/{v['none']}/{v['closed']}",
             fmt_min(r["time_to_verdict_min"]["median"]),
@@ -1187,7 +1212,7 @@ def render_md(res):
             ",".join(f"{k}:{n}" for k, n in sorted(r["delivery"].items())) or "-",
             r["versions"],
         ])
-    A(md_table(["slug (bold = in window)", "created", "cmts", "DRs",
+    A(md_table(["page (bold = in window)", "created", "cmts", "DRs",
                 "acc/rej/chg/none/closed", "t→verdict med", "p90", "agent/rev evts",
                 "burst 15m", "pushes", "delivery", "vers"], rows))
     A("")
@@ -1202,12 +1227,12 @@ def render_md(res):
 
     A("## 2. Reviewer round shape (gap > 10 min = new round)")
     A("")
-    rows = [[r["slug"], r["round"], r["verdicts"], r["start"][:16].replace("T", " "),
+    rows = [[page_label(r["slug"]), r["round"], r["verdicts"], r["start"][:16].replace("T", " "),
              fmt_min(r["duration_min"]), fmt_min(r["first_reaction_min"]),
              "yes" if r["reacted_mid_round"] else "no",
              ",".join(f"{k}:{n}" for k, n in sorted(r["verdict_mix"].items()))]
             for r in res["s2"]]
-    A(md_table(["slug", "#", "verdicts", "start (UTC)", "round dur",
+    A(md_table(["page", "#", "verdicts", "start (UTC)", "round dur",
                 "1st verdict→agent", "mid-round?", "mix"], rows))
     A("")
     b = res["s2_summary"]
@@ -1240,8 +1265,8 @@ def render_md(res):
     if res["s3"]["unanswered"][:15]:
         A("Oldest unanswered (top 15):")
         A("")
-        A(md_table(["slug", "id", "age d", "status", "prompt"],
-                   [[u["slug"], u["comment_id"], u["age_days"], u["status"], u["prompt"]]
+        A(md_table(["page", "id", "age d", "status", "prompt"],
+                   [[page_label(u["slug"]), u["comment_id"], u["age_days"], u["status"], u["prompt"]]
                     for u in res["s3"]["unanswered"][:15]]))
         A("")
 
@@ -1253,8 +1278,8 @@ def render_md(res):
     A("")
     A("Every classified item, text truncated to 160 chars:")
     A("")
-    A(md_table(["class", "slug", "id", "kind", "author", "prompt", "reviewer text"],
-               [[i["label"], i["slug"], i["comment_id"], i["kind"], i.get("author"),
+    A(md_table(["class", "page", "id", "kind", "author", "prompt", "reviewer text"],
+               [[i["label"], page_label(i["slug"]), i["comment_id"], i["kind"], i.get("author"),
                  i["prompt"].replace("|", "\\|"), i["text"].replace("|", "\\|")]
                 for i in res["s4"]["items"]]))
     A("")
@@ -1268,9 +1293,9 @@ def render_md(res):
 
     A("## 6. Trace join — when did a session actually see the verdict?")
     A("")
-    A(md_table(["slug", "ids", "ids never in any transcript", "transcripts",
+    A(md_table(["page", "ids", "ids never in any transcript", "transcripts",
                 "verdicts", "seen med", "seen p90", "how first seen"],
-               [[r["slug"], r["comment_ids"], r["ids_never_in_any_transcript"],
+               [[page_label(r["slug"]), r["comment_ids"], r["ids_never_in_any_transcript"],
                  r["transcripts"], r["verdicts"], fmt_min(r["seen_median_min"]),
                  fmt_min(r["seen_p90_min"]),
                  ", ".join(f"{k}:{n}" for k, n in sorted(r["how"].items()))]
@@ -1296,9 +1321,9 @@ def render_md(res):
         ["notices the hook logged (since cutoff)", res["hook_log"]["notices"]],
     ]))
     A("")
-    A(md_table(["slug", "owner (strict)", "owner (loose)", "bystander (strict)",
+    A(md_table(["page", "owner (strict)", "owner (loose)", "bystander (strict)",
                 "owner transcripts", "bystander transcripts"],
-               [[k, v["owner"], v["owner_loose"], v["bystander"],
+               [[page_label(k), v["owner"], v["owner_loose"], v["bystander"],
                  v["owner_transcripts"], v["bystander_transcripts"]]
                 for k, v in s7["per_slug"].items()]))
     A("")

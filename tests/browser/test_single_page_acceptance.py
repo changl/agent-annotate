@@ -133,7 +133,7 @@ def test_tab_positions_are_identical_across_all_tabs(tmp_path, workspace, theme)
         if theme == "light":
             page.locator("#theme-toggle").click()
         positions = []
-        for view in ("review", "library", "findings", "plans", "linked"):
+        for view in ("review", "library", "findings", "plans"):
             go(page, view)
             page.evaluate(
                 "async () => {await document.fonts.ready; await new Promise(requestAnimationFrame)}"
@@ -143,7 +143,7 @@ def test_tab_positions_are_identical_across_all_tabs(tmp_path, workspace, theme)
                     "els => els.map(e => ({tab:e.dataset.view,x:e.getBoundingClientRect().x}))"
                 )
             )
-        assert len(positions[0]) == 5
+        assert len(positions[0]) == 4
         assert all(p == positions[0] for p in positions)
 
 
@@ -207,12 +207,33 @@ def test_fixed_finding_shows_image_and_link_and_reopen_becomes_ready(tmp_path, w
         assert "fixed" not in card and len(card["fixed_history"]) == 1
 
 
-def test_exception_page_is_listed_under_linked_pages(tmp_path, workspace):
+def test_project_pages_are_listed_once_in_documents_by_name(tmp_path, workspace):
     with browser_page(tmp_path, workspace) as (page, _):
-        go(page, "linked")
-        link = page.locator('#linked-list a[href="https://example.test/lab"]')
-        assert link.is_visible() and "Motion lab" in link.inner_text()
-        assert "Interactive worksheet" in page.locator("#linked-list").inner_text()
+        # One place: the rail's Documents tab, not a header tab or view.
+        assert page.locator('#aa-tabs [data-view="linked"], #aa-tabs-menu [data-view="linked"], #view-linked').count() == 0
+        assert "Linked pages" not in page.locator(".hdr").inner_text()
+        feedback(page)
+        page.locator("#tab-documents").click()
+        body = page.locator("#documents-body")
+        body.wait_for(state="visible")
+        link = body.locator('a[href="https://example.test/lab"]')
+        assert link.count() == 1 and link.is_visible()
+        assert link.inner_text().strip() == "Motion lab" and link.get_attribute("target") == "_blank"
+        # The declared exception keeps its reason under the name; no slug is shown.
+        assert "Interactive worksheet" in body.inner_text()
+        assert "motion-lab" not in body.inner_text()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_old_linked_pages_link_opens_review_with_documents(tmp_path, workspace, width):
+    with browser_page(tmp_path, workspace, width=width, height=844) as (page, _):
+        page.evaluate("() => { document.body.dataset.ready = '0'; location.hash = 'view=linked'; }")
+        page.locator('body[data-ready="1"]').wait_for(state="attached")
+        playwright.expect(page.locator("body")).to_have_attribute("data-view", "review")
+        hash_ = page.evaluate("location.hash")
+        assert "view=review" in hash_ and "tab=documents" in hash_
+        playwright.expect(page.locator("#tab-documents")).to_have_attribute("aria-selected", "true")
+        playwright.expect(page.locator('#documents-body a[href="https://example.test/lab"]')).to_be_visible()
 
 
 def test_one_send_covers_every_pending_tab_and_records_one_round(tmp_path, workspace):
@@ -331,7 +352,7 @@ def test_all_tabs_have_no_horizontal_scroll_or_console_errors(tmp_path, workspac
         page.locator('body[data-ready="1"]').wait_for(state="attached")
         if theme == "light":
             page.locator("#theme-toggle").click()
-        for view in ("review", "library", "findings", "plans", "linked"):
+        for view in ("review", "library", "findings", "plans"):
             go(page, view)
             if view in ("review", "plans"):
                 anchor = "s:checks" if view == "review" else "s:launch"
