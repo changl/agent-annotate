@@ -9,7 +9,7 @@ document and in the rail, open the issue.
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, ready, section
+from single_page import browser_page, feedback, go, section
 from test_card_jump import page_dir  # noqa: F401  (fixture)
 from test_card_layout import CHROME, _wait
 
@@ -119,18 +119,9 @@ HEADER_GEOMETRY = r"""() => {
 
 def test_header_items_never_overlap_and_share_one_baseline(tmp_path, board_page):
     with browser_page(tmp_path, board_page) as (page, _):
-        # Three linked pages, as on the agent-annotate page (#23), crowd the row most.
-        def linked(route):
-            response = route.fetch()
-            data = response.json()
-            data["linked_pages"] = [{"slug": f"l{i}", "title": f"Linked {i}", "url": f"https://example.com/{i}",
-                                     "reason": "Linked page"} for i in (1, 2, 3)]
-            route.fulfill(response=response, json=data)
-        page.route("**/api/categories*", linked)
-        page.reload(wait_until="networkidle")
-        ready(page)
         _wait(lambda: _link(page).locator(".aa-board-count").count() == 1, page, timeout_ms=10_000)
-        assert page.locator("#aa-tabs .aa-linked-tab").count() == 1
+        # k5y: the project's other pages are listed in the rail, never in the header.
+        assert page.locator('#aa-tabs [data-view="linked"]').count() == 0
         for collapsed in (False, True):
             page.set_viewport_size({"width": 1440, "height": 900})
             page.evaluate("id => document.getElementById(id).click()", "drawer-collapse" if collapsed else "drawer-strip")

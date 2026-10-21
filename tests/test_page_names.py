@@ -8,7 +8,7 @@ import pytest
 from test_decision_api import _call
 from test_decision_api import server as server
 
-from agent_annotate import cli, page_names, paths, project_state, workspace
+from agent_annotate import cli, page_names, paths, project_state, urls, workspace
 from agent_annotate.hooks import session_start
 from agent_annotate.pagegen import PageGenError, generate
 
@@ -101,7 +101,8 @@ def test_workspace_and_project_tabs_use_the_targets_own_name(estate, tmp_path):
     for tab in project["tabs"]:
         linked = linked_by_slug[tab["slug"]]
         assert tab["label"] == tab["name"] == names[tab["slug"]] == linked["name"] == linked["title"]
-    assert all(set(p) <= {"slug", "name", "url", "reason"} for p in project["related_pages"])
+    # Workspace tabs are not exceptions: no reason to show under the name.
+    assert all(set(p) == {"slug", "name", "url"} for p in project["related_pages"])
 
 
 def test_migration_dry_run_backups_apply_and_idempotence(estate, tmp_path, capsys):
@@ -297,3 +298,23 @@ def test_project_meta_categories_workspace_and_notice_agree(server, monkeypatch,
     data = json.loads(capsys.readouterr().out)
     assert {p["slug"].split("/")[-1]: p["name"] for p in data["pages"] if p["slug"] != "reviews/review"} == expected
     assert "Agent Annotate https://reviews.test/main/" in session_start.notice(directory.parent)
+
+
+@pytest.mark.parametrize("authenticated", [True, False])
+def test_related_pages_carry_review_keys_only_for_a_signed_in_reviewer(server, monkeypatch, authenticated):
+    httpd, directory, _ = server
+    main = {"slug_dir": str(directory), "url": "https://reviews.test/main/", "workspace_primary": True,
+            "workspace_root": str(directory.parent), "port": httpd.server_address[1]}
+    child = directory.parent / "assessment"
+    child.mkdir()
+    (child / "current.meta.json").write_text(json.dumps({"name": "Assessment"}))
+    record = {"slug_dir": str(child), "url": "https://reviews.test/assessment/", "workspace_root": str(directory.parent)}
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("reviews", "review", main), ("reviews", "assessment", record)])
+    monkeypatch.setattr(httpd.RequestHandlerClass, "_registered_record", lambda self: main)
+    identity = httpd.RequestHandlerClass._identity
+    monkeypatch.setattr(httpd.RequestHandlerClass, "_identity", lambda self: {**identity(self), "authenticated": authenticated})
+    monkeypatch.setattr(urls, "page_url", lambda r: r["url"] + "#review=key")
+    project_state.save_project(directory, {"modules": [], "tabs": [{"id": "assessment", "url": record["url"]}]})
+    project = _call(httpd, "GET", "/api/project")[1]
+    assert project["related_pages"] == [{"slug": "assessment", "name": "Assessment",
+                                         "url": record["url"] + ("#review=key" if authenticated else "")}]

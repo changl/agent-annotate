@@ -18,7 +18,7 @@
 // the document whose version state is loaded into the variables below;
 // DOC_STATE keeps the other document's, and withDoc() swaps it in for a
 // synchronous read (counts, Send summary). VIEW_DOC is the document on
-// screen (null while Library, Findings or Linked pages is shown); rendering
+// screen (null while Library or Findings is shown); rendering
 // only ever happens for VIEW_DOC.
 let DOCS = ['review'];
 let DOC = 'review';
@@ -89,6 +89,7 @@ const ICONS = {
   chevRight: '<path d="m9 18 6-6-6-6"/>',
   chevUp: '<path d="m18 15-6-6-6 6"/>',
   locate: '<line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
 };
 function ico(name) {
   return '<svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (ICONS[name] || '') + '</svg>';
@@ -794,12 +795,27 @@ function projectLinkItems(module) {
   return module.items.map(item => {
     let url; try { url = new URL(item.url); } catch { return ''; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
-    return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}</a>${item.description ? `<span class="project-detail">${ticketsHTML(item.description)}</span>` : ''}</li>`;
+    return `<li><a href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer">${esc(item.label)}${ico('external')}</a>${item.description ? `<span class="project-detail">${ticketsHTML(item.description)}</span>` : ''}${item.declared ? `<span class="project-detail">${esc(item.declared)}</span>` : ''}</li>`;
   }).join('');
 }
 // PROJECT.tabs of kind reference (F5) are listed with the project's links.
 function referenceTabs() {
   return (PROJECT.tabs || []).filter(t => t && t.url && (!t.kind || t.kind === 'reference'));
+}
+// k5y (Chang: "let's make sure that we are referencing things by the same name
+// consistently"): the project's other pages are listed once, here, each by its
+// own name: the reference tabs in their order, then the declared exceptions
+// with their reason. A reference that is not a registered page keeps its label.
+function projectPages() {
+  const related = PROJECT.related_pages || [];
+  const page = (p) => ({ label: p.name, url: p.url, description: p.reason,
+    declared: p.declared_by ? `Declared by ${p.declared_by} to ${p.told_to || 'the orchestrator'}${p.declared_at ? ' · ' + fmtTs(p.declared_at) : ''}` : '' });
+  const items = referenceTabs().map(t => {
+    const p = t.slug && related.find(r => r.slug === t.slug);
+    return p ? page(p) : { label: t.name || t.label, url: t.url };
+  });
+  const listed = new Set(referenceTabs().map(t => t.slug));
+  return items.concat(related.filter(p => !listed.has(p.slug)).map(page));
 }
 // U-01 + F2: project branding wins, then the page's stable name.
 function updateProjectTitle() {
@@ -818,8 +834,8 @@ function renderProject() {
   const modules = DOC === 'review' ? (PROJECT.modules || []) : [];
   const links = modules.filter(m => m.kind === 'links');
   const rest = modules.filter(m => m.kind !== 'links');
-  const refs = DOC === 'review' ? referenceTabs() : [];
-  if (refs.length) links.push({ id: 'reference-tabs', title: 'Documents', items: refs.map(t => ({ label: t.label, url: t.url })) });
+  const pages = DOC === 'review' ? projectPages() : [];
+  if (pages.length) links.unshift({ id: 'project-pages', title: 'Project pages', items: pages });
   // Documents tab
   const docTab = document.getElementById('tab-documents');
   const docBody = document.getElementById('documents-body');
@@ -827,7 +843,7 @@ function renderProject() {
     // Only the document on screen fills the Documents tab.
   } else if (links.length) {
     docTab.hidden = false;
-    docTab.textContent = links.length === 1 ? links[0].title : 'Documents';
+    docTab.textContent = links.length === 1 && !pages.length ? links[0].title : 'Documents';
     docBody.innerHTML = links.map(m => `<section class="hist-section">${links.length > 1 ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
   } else {
     docTab.hidden = true;

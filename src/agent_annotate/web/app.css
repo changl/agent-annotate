@@ -28,13 +28,10 @@
 .aa-tabs .tab:hover{color:var(--color-base-content)}
 .aa-tabs .tab.tab-active{color:var(--color-base-content)}
 .aa-tabs .badge{font-variant-numeric:tabular-nums}
-/* A declared exception: listed after the tabs, set apart */
-.aa-tabs .tab.aa-linked-tab{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
-/* The project's board: an outside link after the tabs, set apart the same way */
+/* The project's board: an outside link after the tabs, set apart */
 .aa-tabs .tab.aa-board-link{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
 .aa-tabs .aa-board-link svg.i,.aa-tabs-list .aa-board-link svg.i{width:14px;height:14px}
 .aa-tabs-list a.aa-board-link{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
-.aa-tabs-list a.aa-linked-tab + a.aa-board-link{margin-top:0}
 .aa-tabs-list .aa-board-link .aa-tab-name{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .aa-tabs-menu{display:none;position:relative}
 .aa-tabs-menu > summary{list-style:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-field);font-size:calc(13px * var(--aa-text, 1));font-weight:600;cursor:pointer;white-space:nowrap;background:var(--color-base-100)}
@@ -47,7 +44,6 @@
 .aa-tabs-list .aa-tab-name{font-weight:600;font-size:calc(14px * var(--aa-text, 1));min-width:72px}
 .aa-tabs-list .aa-tab-state{flex:1;font-size:calc(12px * var(--aa-text, 1));color:var(--muted)}
 .aa-tabs-list .aa-tab-state.is-needs{color:var(--err-text);font-weight:600}
-.aa-tabs-list a.aa-linked-tab{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
 
 /* ── Content title: what used to be the header's second line ─────────── */
 .view-hd{flex:none;display:flex;align-items:center;min-height:40px;padding:6px 18px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
@@ -58,7 +54,7 @@
 .view-hd-plan[hidden]{display:none}
 .frame-area[hidden],.aa-view[hidden]{display:none}
 
-/* ── Views of this page (Library, Findings, Linked pages) ─────────────── */
+/* ── Views of this page (Library, Findings) ──────────────────────────── */
 .aa-view{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--color-base-100)}
 .aa-scroll{flex:1;min-height:0;overflow-y:auto}
 .lib-main{display:flex;flex:1;min-height:0;overflow:hidden}
@@ -141,8 +137,6 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .hist-text del{color:var(--muted)}
 #hist-sent-body .unified-receipt li .hist-tag{margin-right:2px}
 .rail-note{padding:8px 4px}
-.aa .card h4 a{display:inline-flex;align-items:center;gap:6px}
-.aa .card h4 svg.i{width:14px;height:14px;flex:none}
 .vrail-body.is-clipped .vrow:nth-child(n+6){display:none}
 .hist-more{margin:2px 0 6px 4px}
 #hist-sent{margin-bottom:6px}

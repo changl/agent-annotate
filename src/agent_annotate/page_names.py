@@ -107,7 +107,7 @@ def project_payload(directory: Path | str, data: dict | None = None) -> dict:
     # A simple collection for clients merging the legacy tab/link surfaces.
     from .project_state import linked_pages
     primary = next((r for _, _, r in entries if r.get("slug_dir") == str(directory)), None)
-    data["related_pages"] = [{k: value for k, value in page.items() if k in {"slug", "name", "url", "reason"}}
+    data["related_pages"] = [{k: value for k, value in page.items() if k != "title"}
                              for page in linked_pages(primary)] if primary else []
     return data
 

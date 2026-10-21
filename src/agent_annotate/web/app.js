@@ -1,13 +1,14 @@
 // ── annotate: one page per project ──────────────────────────────────────
 // The page has the tabs Review · Library · Findings · Plans (each shown when
-// the project has that kind of content) and, when the owner declared one, a
-// "Linked pages" tab. They switch views in place on one URL and share one
-// feedback rail, one History, one Send and one set of needs-you and unread
-// counts (computed by the server, ./api/categories, so every device agrees).
+// the project has that kind of content). They switch views in place on one URL
+// and share one feedback rail, one History, one Send and one set of needs-you
+// and unread counts (computed by the server, ./api/categories, so every device
+// agrees).
 // Review and Plans are documents served by the accepted shell (shell.js,
 // window.AnnotateDocs); Library and Findings are views of this page
 // (library.js, findings.js). This file holds the shared helpers (AAUI), the
-// page core (AA), the header tabs, the rail, the one Send and Linked pages.
+// page core (AA), the header tabs, the rail and the one Send. The project's
+// other pages are listed in the rail's Documents tab (shell.js).
 
 // ── Shared helpers ──────────────────────────────────────────────────────
 (function () {
@@ -207,11 +208,11 @@
   function setTitle(title) {
     projectTitle = title || projectTitle;
     const t = tab(view);
-    document.title = (projectTitle || 'annotate') + (view ? ' · ' + (t ? t.label : 'Linked pages') : '');
+    document.title = (projectTitle || 'annotate') + (t ? ' · ' + t.label : '');
   }
   function showPane(id) {
     document.getElementById('frame-area').hidden = !isDoc(id);
-    ['library', 'findings', 'linked'].forEach(v => { const el = document.getElementById('view-' + v); if (el) el.hidden = v !== id; });
+    ['library', 'findings'].forEach(v => { const el = document.getElementById('view-' + v); if (el) el.hidden = v !== id; });
     document.body.dataset.view = id;
   }
   let routing = Promise.resolve();
@@ -222,8 +223,11 @@
   async function doRoute() {
     const p = params();
     if (p.get('theme') === 'light' || p.get('theme') === 'dark') document.dispatchEvent(new CustomEvent('annotate:set-theme', { detail: p.get('theme') }));
+    // k5y: the old Linked pages tab is the rail's Documents tab on Review.
+    const linked = p.get('view') === 'linked';
+    if (linked) { p.set('view', 'review'); p.set('tab', 'documents'); history.replaceState(null, '', '#' + p.toString()); }
     let next = p.get('view') || UI.local.get('view', 'review');
-    if (!tab(next) && !(next === 'linked' && AA.linked)) next = 'review';
+    if (!tab(next)) next = 'review';
     // UI-28: a tab this page does not have reads as Review in the address too.
     if (p.get('view') && p.get('view') !== next && DOCS().categories()) { p.set('view', next); history.replaceState(null, '', '#' + p.toString()); }
     if (next === 'plans' && p.get('plan') && p.get('plan') !== DOCS().planId()) {
@@ -254,6 +258,7 @@
     if (p.get('sumedit') && isDoc(next)) { DOCS().sumEdit(p.get('sumedit')); AA.send.render(); }
     if (p.get('history')) AA.rail.setFilter(p.get('history'));
     if (p.get('tab') && isDoc(next)) AA.rail.setTab(p.get('tab'));
+    if (linked) AA.rail.reveal('documents');
     AA.header.openMenu(p.get('cats') === 'open');
     changed();
     document.body.dataset.ready = '1';
@@ -269,8 +274,6 @@
     ALL_TABS, get TABS() { return tabs(); }, tab, isDoc, provider, providers, counts, changed, onChange,
     go, route, params, noteVersion, versionFor, docTitle, setTitle, shortcut,
     get view() { return view; },
-    get linkedPages() { const c = DOCS() && DOCS().categories(); return (c && c.linked_pages) || []; },
-    get linked() { return this.linkedPages.length > 0; },
     esc: UI.esc,
     // Filled below by the header, the rail and the Send.
     header: null, rail: null, send: null,
@@ -292,8 +295,7 @@
 // ── The header's tabs ───────────────────────────────────────────────────
 // The project name sits in a fixed-width block (Chang: tabs must start at
 // the same place on every tab), then the tabs, each with its red "needs
-// you" count, then the project's linked pages (an exception the owner
-// declared), then the project's board with its ready count (decision #20),
+// you" count, then the project's board with its ready count (decision #20),
 // which opens in a new tab. On a phone the tabs become one menu with a
 // sentence per tab.
 (function () {
@@ -347,25 +349,24 @@
 
   function render(counts) {
     const cur = AA.view;
-    const linked = AA.linkedPages;
     const b = board();
     nav.innerHTML = '<div class="tabs tabs-border">' + AA.TABS.map(t => {
       const k = counts[t.id], s = sentence(k);
       const badge = k.needs ? ` <span class="badge badge-error badge-xs" aria-hidden="true">${k.needs}</span>` : '';
       return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + ', ' + s.text)}">${esc(t.label)}${badge}</a>`;
-    }).join('') + (linked.length ? `<a class="tab aa-linked-tab${cur === 'linked' ? ' tab-active' : ''}" href="${href('linked')}" data-view="linked"${cur === 'linked' ? ' aria-current="page"' : ''} title="Separate pages the owner declared for this project">Linked pages <span class="badge badge-ghost badge-xs" aria-hidden="true">${linked.length}</span></a>` : '') + boardHtml(b, false) + '</div>';
+    }).join('') + boardHtml(b, false) + '</div>';
 
     const curTab = AA.tab(cur);
-    const curLabel = curTab ? curTab.label : 'Linked pages';
+    const curLabel = curTab ? curTab.label : '';
     const curNeeds = curTab ? counts[cur].needs : 0;
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
-    menu.hidden = AA.TABS.length < 2 && !linked.length && !b; // UI-28: one tab, no menu
+    menu.hidden = AA.TABS.length < 2 && !b; // UI-28: one tab, no menu
     menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
-      }).join('')}${linked.length ? `<a role="listitem" href="${href('linked')}" data-view="linked" class="aa-linked-tab"${cur === 'linked' ? ' aria-current="page"' : ''}><span class="aa-tab-name">Linked pages</span><span class="aa-tab-state">${linked.length} separate page${linked.length === 1 ? '' : 's'} declared for this project</span></a>` : ''}${boardHtml(b, true)}</div>`;
+      }).join('')}${boardHtml(b, true)}</div>`;
     menu.open = open;
     fit();
   }
@@ -390,8 +391,8 @@
   'use strict';
   const AA = window.AA, UI = window.AAUI, esc = UI.esc;
   const $ = (s) => document.querySelector(s);
-  const FEEDBACK_PANE = { review: 'drawer-body', plans: 'drawer-body', library: 'rail-library', findings: 'rail-findings', linked: 'rail-linked' };
-  const ALL_PANES = ['drawer-body', 'rail-library', 'rail-findings', 'rail-linked', 'documents-body', 'history-body'];
+  const FEEDBACK_PANE = { review: 'drawer-body', plans: 'drawer-body', library: 'rail-library', findings: 'rail-findings' };
+  const ALL_PANES = ['drawer-body', 'rail-library', 'rail-findings', 'documents-body', 'history-body'];
   let railTab = 'feedback';
   let view = 'review';
   let filter = null; // null = the tab on screen; 'all' = every tab
@@ -515,9 +516,9 @@
   AA.rail = {
     setTab, setView, setFilter, renderHistory, tagHtml,
     get tab() { return railTab; },
-    // Open the rail on the Feedback tab (phone: the bottom sheet).
-    reveal() {
-      setTab('feedback');
+    // Open the rail on a tab, Feedback by default (phone: the bottom sheet).
+    reveal(t = 'feedback') {
+      setTab(t);
       window.AnnotateDocs.setDrawerCollapsed(false);
       if (window.AnnotateDocs.isMobileLayout()) window.AnnotateDocs.setMobileSheetOpen(true);
     },
@@ -768,27 +769,4 @@
     open: openSummary, close, isOpen: () => open, submit, render, syncCounts, note: setNote, receipts, refresh, plan,
     justSent: () => !!(lastSend && lastSend.fresh),
   };
-})();
-
-// ── Linked pages (declared exceptions) ──────────────────────────────────
-// Chang: "any exceptions would be spelled out to the orchestrator. but even
-// then, it should be linked from a tab in the annotation page." A project
-// whose owner declared a separate page lists it here, with why; the page
-// itself opens in a new browser tab. The tab exists only when the project
-// declares at least one linked page.
-(function () {
-  'use strict';
-  const AA = window.AA, UI = window.AAUI, esc = UI.esc;
-  function render() {
-    const pages = AA.linkedPages;
-    document.getElementById('linked-list').innerHTML = `<div class="plan-scope"><strong>Linked pages</strong> · separate pages the owner declared for this project</div>
-      <p>Each project has one annotate page. A separate page exists only when the owner spells out the exception to the orchestrator; it is still listed here, so everything about the project starts from this page.</p>
-      <div class="cards">${pages.map(p => `<div class="card" data-linked="${esc(p.slug)}">
-        <h4><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name || p.title || 'Untitled page')} ${UI.ico('external')}</a></h4>
-        ${p.reason ? `<p class="ctx">${esc(p.reason)}</p>` : ''}
-        ${p.declared_by ? `<p class="muted">Declared by ${esc(p.declared_by)} to ${esc(p.told_to || 'the orchestrator')}${p.declared_at ? ' · ' + esc(UI.fmtTs(p.declared_at)) : ''}</p>` : ''}
-      </div>`).join('')}</div>`;
-    document.getElementById('rail-linked').innerHTML = `<p class="project-detail rail-note">Feedback on a linked page is given on that page.</p>`;
-  }
-  AA.provider('linked', { show() { render(); } });
 })();

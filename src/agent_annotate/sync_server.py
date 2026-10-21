@@ -3312,6 +3312,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for tab in data.get("tabs", []):
                 if tab.get("url") in links and links[tab["url"]]:
                     tab["url"] = links[tab["url"]]
+        else:
+            # Like the tabs: a related page's review key only for a signed-in reviewer.
+            from .urls import redact_review_key
+            for page in data.get("related_pages", []):
+                page["url"] = redact_review_key(page["url"])
         return data
 
     @staticmethod
