@@ -362,7 +362,7 @@
     AA.changed();
     if (user) {
       history.replaceState(null, '', '#view=findings&set=' + BY[id].finding.set + '&f=' + id);
-      // Compact: the finding's card is in the rail (the overlay).
+      // Phone: the finding's card is in the rail (the bottom sheet).
       if (D().isMobileLayout()) AA.rail.reveal();
     }
   }
