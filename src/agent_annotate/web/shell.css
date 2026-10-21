@@ -75,13 +75,17 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 /* ── Re-pin mode banner ─────────────────────────────── */
 .repin-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:12px;background:var(--color-neutral);color:var(--color-neutral-content);padding:8px 14px;border-radius:var(--radius-box);box-shadow:0 4px 14px color-mix(in oklab,var(--color-neutral) 25%,transparent);font-size:calc(11px * var(--aa-text, 1));font-weight:600;max-width:90%}
 
-/* ── Collapsible rail (kept from 2.20: the rail must never squeeze the document) ── */
-.rail-collapse svg,.rail-strip svg{display:block;width:18px;height:18px}
-.rail-strip{display:none;flex-direction:column;align-items:center;gap:8px;padding:12px 0;background:var(--color-base-100);border:none;cursor:pointer;width:100%;height:100%;color:var(--muted);font-family:"Roboto", sans-serif}
-.rail-strip:hover{background:var(--soft);color:var(--color-base-content)}
-.drawer.collapsed{width:34px}
-.drawer.collapsed > *:not(.rail-strip){display:none !important}
-.drawer.collapsed .rail-strip{display:flex}
+/* ── Collapsible rail (kept from 2.20: the rail must never squeeze the document) ──
+   Closed, at every width, it leaves an edge strip: one button per rail tab
+   (VS Code activity bar, Atlassian's 56px collapsed aside). */
+.rail-collapse svg,.rail-strip svg,#unified-sheet-close svg{display:block;width:18px;height:18px}
+.rail-strip{display:none;flex-direction:column;align-items:center;gap:4px;padding:6px 0;width:48px;flex-shrink:0;background:var(--color-base-100);border-left:1px solid var(--line)}
+.rail-strip-btn{position:relative;width:44px;height:44px;color:var(--muted)}
+.rail-strip-btn:hover{color:var(--color-base-content)}
+.rail-strip-btn[hidden],.rail-strip-n[hidden]{display:none}
+.rail-strip-n{position:absolute;top:3px;right:1px;font-variant-numeric:tabular-nums}
+.drawer.collapsed{display:none}
+.drawer.collapsed ~ .rail-strip{display:flex}
 
 /* ── Drawer + tabs ──────────────────────────────────── */
 .drawer{width:440px;flex-shrink:0;background:var(--color-base-100);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
@@ -304,7 +308,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .cgroup-lbl{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;padding:0 6px 5px}
 
 /* ── Phone-only chrome, hidden on desktop ───────────── */
-.mobile-fab{display:none}
+#unified-sheet-close,#unified-sheet-backdrop{display:none}
 #mobile-dialog-backdrop{display:none;position:fixed;inset:0;background:color-mix(in oklab,var(--color-neutral) 40%,transparent);z-index:999}
 .round-bar{display:none !important}
 /* X1: one filled primary in view — the header Send hides behind the open summary */
@@ -337,10 +341,12 @@ body.has-summary #send-btn{visibility:hidden}
 .kbd-xs{font-size:calc(9.5px * var(--aa-text, 1))}
 
 /* ══════════════════════════════════════════════════════════════════════
-   COMPACT LAYOUT (same breakpoint as 2.20): full-width document, feedback
-   in a bottom sheet, and (D2) one sticky Send bar at the bottom.
+   COMPACT LAYOUT (below 1024px, where an inline 440px rail would leave the
+   document under ~580px): full-width document beside the rail's edge strip,
+   the rail a right-side overlay (M3 modal side sheet; full width under
+   600px), and (D2) one sticky Send bar at the bottom.
    ══════════════════════════════════════════════════════════════════════ */
-@media (max-width: 1160px), (max-height: 480px) {
+@media (max-width: 1023px), (max-height: 480px) {
   .hdr{padding:8px 10px;gap:8px}
   .hdr-title{font-size:calc(16px * var(--aa-text, 1))}
   .hdr-right{gap:4px}
@@ -350,23 +356,24 @@ body.has-summary #send-btn{visibility:hidden}
 
   .frame-area{width:100%}
 
-  .drawer{
-    position:fixed;left:0;right:0;bottom:0;top:auto;
-    width:100%;height:85vh;max-height:85vh;
-    border-left:none;border-top:1px solid var(--line);
-    border-radius:16px 16px 0 0;
-    box-shadow:0 -6px 28px color-mix(in oklab,var(--color-neutral) 30%,transparent);
-    transform:translateY(100%);
-    transition:transform .28s cubic-bezier(.32,.72,0,1);
-    z-index:200;padding-top:14px;
+  .drawer,.drawer.collapsed{
+    display:flex;position:fixed;top:0;right:0;bottom:0;
+    width:440px;max-width:100%;
+    box-shadow:-6px 0 28px color-mix(in oklab,var(--color-neutral) 30%,transparent);
+    transform:translateX(100%);visibility:hidden;
+    transition:transform .28s cubic-bezier(.32,.72,0,1),visibility 0s linear .28s;
+    z-index:200;
   }
-  .drawer.collapsed{width:100%}
-  .drawer .rail-strip{display:none !important}
-  body.is-mobile-sheet-open .drawer{transform:translateY(0)}
-  .drawer::before{content:'';position:absolute;top:6px;left:50%;transform:translateX(-50%);width:36px;height:4px;border-radius:2px;background:var(--line)}
+  body.is-mobile-sheet-open .drawer{transform:none;visibility:visible;transition:transform .28s cubic-bezier(.32,.72,0,1),visibility 0s}
+  .rail-strip,.drawer.collapsed ~ .rail-strip{display:flex}
   .drawer-body{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
   body.has-round-bar .drawer{padding-bottom:72px}
   .drawer-tabs .tab{min-height:44px}
+  .drawer-hdr .rail-collapse{display:none}
+  #unified-sheet-close{display:flex;min-width:44px;min-height:44px}
+  body.is-mobile-sheet-open #unified-sheet-backdrop{display:block;position:fixed;inset:0;background:var(--color-base-content);opacity:.15;z-index:190}
+  /* Primer's fullscreen sidebar: under 600px the open rail takes the full width */
+  @media (max-width: 599px) { .drawer,.drawer.collapsed{width:100%} }
 
   /* D2: one sticky Send bar */
   body > .round-bar.is-on{display:flex !important}
@@ -379,19 +386,6 @@ body.has-summary #send-btn{visibility:hidden}
   .round-bar-sub.is-success{color:var(--ok-text)}
   .round-bar-sub.is-queued{color:var(--warn-text)}
   .round-bar-btn{min-height:44px;padding:0 20px;font-size:calc(14px * var(--aa-text, 1));touch-action:manipulation}
-
-  .mobile-fab{
-    display:flex;align-items:center;justify-content:center;position:fixed;
-    right:16px;bottom:calc(16px + env(safe-area-inset-bottom));
-    width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;
-    background:var(--color-neutral);color:var(--color-neutral-content);box-shadow:0 4px 16px color-mix(in oklab,var(--color-neutral) 35%,transparent);
-    z-index:150;touch-action:manipulation;
-  }
-  body.has-round-bar .mobile-fab{bottom:calc(84px + env(safe-area-inset-bottom))}
-  body.is-mobile-sheet-open .mobile-fab{display:none}
-  .mobile-fab-icon{font-size:calc(18px * var(--aa-text, 1));line-height:1}
-  .mobile-fab-count{display:none}
-  .mobile-fab-badge{position:absolute;top:-4px;right:-4px}
 
   #mobile-dialog-backdrop.vis{display:block}
   #popover,#pin-popover{left:0;right:0;bottom:0;top:auto;width:100%;max-width:100%;border-radius:16px 16px 0 0;max-height:80vh}
@@ -422,8 +416,7 @@ body.has-summary #send-btn{visibility:hidden}
 .unified-version-banner{padding:8px 16px;background:var(--color-base-200);border-bottom:1px solid var(--line);font-size:calc(12.5px * var(--aa-text, 1));flex:none}
 .unified-history-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:0 0 10px}.unified-receipt{font-size:calc(11px * var(--aa-text, 1));padding:10px 0;border-bottom:1px solid var(--line)}.unified-receipt summary,.hist-collapse > summary{cursor:pointer}.unified-receipt ul{padding-left:20px;margin-top:8px}.unified-receipt li{margin:6px 0}
 .send-note.unified-durable-receipt{max-width:260px;white-space:normal;font-size:calc(11px * var(--aa-text, 1));color:var(--color-base-content)}
-#unified-sheet-close,#unified-sheet-backdrop{display:none}
-@media(max-width:768px),(max-height:480px){#unified-sheet-close{display:flex;min-width:44px;min-height:44px}.drawer-hdr .rail-collapse{display:none}body.is-mobile-sheet-open #unified-sheet-backdrop{display:block;position:fixed;inset:0;background:var(--color-base-content);opacity:.15;z-index:190}.unified-skip[data-skip=feedback]{left:160px}.unified-version-banner{font-size:calc(12px * var(--aa-text, 1));padding:6px 10px}.send-note.unified-durable-receipt{display:none}}
+@media(max-width:768px),(max-height:480px){.unified-skip[data-skip=feedback]{left:160px}.unified-version-banner{font-size:calc(12px * var(--aa-text, 1));padding:6px 10px}.send-note.unified-durable-receipt{display:none}}
 
 /* Issue id links (F18) and a failed-run pill on progress. */
 .ticket-link{color:var(--color-primary);font-weight:600;text-decoration:underline;text-underline-offset:2px}

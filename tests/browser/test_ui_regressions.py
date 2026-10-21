@@ -224,6 +224,9 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
                 stored = json.loads((directory / "comments.json").read_text())
                 assert {card["id"]: card["number"] for card in _decision_cards(stored)} == expected
 
+            # Compact: the closed overlay is hidden; open it to read the cards.
+            page.wait_for_function("() => window.AA && window.AA.rail")
+            page.evaluate("() => window.AA.rail.reveal()")
             assert_labels()
             for cid in expected:
                 _api(
@@ -237,7 +240,9 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
             page.evaluate("() => window.AA.rail.reveal()")
             page.locator('[data-section-toggle="done"]').click()
             assert_labels()
-            assert page.title() == second_title + " · Review"
+            # The page keeps the name it was first published with; a version's
+            # own title never renames it (docs/page-names.md).
+            assert page.title() == TITLE + " · Review"
             page.locator('body[data-ready="1"]').wait_for(state="attached")
             go(page, "review", v="v1")
             playwright.expect(frame.locator(".aa-page-title")).to_have_text(TITLE)
