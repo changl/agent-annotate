@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Standing rule (#38 on the agent-annotate page): with the rail closed, nothing scrolls sideways at any width; tables wrap with whole words; a table scrolls inside itself only when a single word or image cannot fit. Tables lose their 1000px and per-cell minimum widths; the edge fade and the "Scroll sideways" hint appear only on a table that actually overflows.
+
 ## 2.27.0
 
 The reviewer's 2026-10-20 rail feedback (#34, #36, #37 on the agent-annotate page; the rail-at-every-width change, #35, is held for a revision).
