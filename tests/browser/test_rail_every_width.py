@@ -7,8 +7,10 @@ overlay it is a modal dialog (APG): focus moves in, Tab stays inside, Escape
 closes and focus returns to the button that opened it.
 
 Closed, the document is exactly the viewport minus the strip: nothing in it
-runs under the strip. A wide table scrolls in its own box, and the side with
-more columns fades so it reads as that box, not the page (Chang on #35).
+runs under the strip, and nothing scrolls sideways at any width (Chang on
+#38). Tables wrap with whole words; a table scrolls inside itself only when a
+single word or image cannot fit, and then the side with more columns fades so
+it reads as that box, not the page (Chang on #35).
 """
 
 import struct
@@ -224,9 +226,19 @@ other_files_required: none
 
 ## Coverage
 
-| Configuration | Recommendation | Implementation | Verification | Performance | Ownership | Dependencies |
-|---|---|---|---|---|---|---|
-| Consistent configuration | Existing components | Small implementation | Independent verification | Predictable performance | Established ownership | Existing dependencies |
+A read-only dry run over the 10 M1 pages changed no files.
+
+| Result | Count | Which |
+| --- | --- | --- |
+| Safe to file | 6 | This page's #24 roll out 2.26.1, #26 approving files into Plans, #28 the one-line rule, #29 the wake-up hook, #30 install #34 on the M1, #32 keep the three M5 changes |
+| Already filed | 1 | #33 |
+| Not filed: no saved card snapshot | 49 | Approvals from before Sept 30, when the exact card shown was not yet saved |
+| Not filed: not cast in the browser | 13 | Windmill CheerTicketing plan votes |
+
+| Gate | Owner | Status | Evidence | Next step |
+| --- | --- | --- | --- | --- |
+| Rail at every width | Chang | Approved | Browser suite at nine sizes, focus review fixed three bugs | Ship on the M1 with the other approved changes |
+| One name per page | Agent | Waiting | Five metadata files with backups, URLs unchanged | Rename the four pages after the answer |
 
 ## Shots
 
@@ -239,20 +251,22 @@ proposed: shots/wide.png | Proposed
 ```
 """
 
-# Inside the document: no sideways scroll, and every image, compare block and
-# table box ends inside the visible width.
+# Inside the document: no sideways scroll, no table scrolls inside itself, and
+# every image, compare block and table box ends inside the visible width.
 DOCUMENT_FITS = """() => {
   const de = document.documentElement, w = de.clientWidth;
   const over = [...document.querySelectorAll('img, figure, .unified-table-frame')]
     .filter(el => el.getBoundingClientRect().right > w + 0.5).map(el => el.tagName + '.' + el.className);
-  return {scrolls: de.scrollWidth > w, over};
+  const tables = [...document.querySelectorAll('.unified-table-scroll')]
+    .filter(s => s.scrollWidth > s.clientWidth).map(s => s.scrollWidth + '>' + s.clientWidth);
+  const hints = [...document.querySelectorAll('.unified-table-hint')].filter(h => h.offsetParent).length;
+  return {scrolls: de.scrollWidth > w, over, tables, hints};
 }"""
 
 
-@pytest.fixture
-def wide_page(tmp_path):
+def _wide_page(tmp_path, text):
     source = tmp_path / "wide.md"
-    source.write_text(WIDE)
+    source.write_text(text)
     (tmp_path / "shots").mkdir()
     (tmp_path / "shots" / "wide.png").write_bytes(_png(1600, 900))
     directory = tmp_path / "items-model"
@@ -260,31 +274,56 @@ def wide_page(tmp_path):
     return directory
 
 
-@pytest.mark.parametrize("size", [(1440, 900), (1160, 800), (1024, 768), (1023, 768), (768, 1024),
-                                  (600, 900), (599, 900), (390, 844), (844, 390)])
-def test_closed_rail_leaves_the_document_the_viewport_minus_the_strip(tmp_path, wide_page, size):
+@pytest.fixture
+def wide_page(tmp_path):
+    return _wide_page(tmp_path, WIDE)
+
+
+SIZES = [(1440, 900), (1160, 800), (1024, 768), (1023, 768), (768, 1024),
+         (600, 900), (599, 900), (390, 844), (844, 390)]
+
+
+def _closed(page, size):
+    width, _ = size
+    if page.locator("#drawer-collapse").is_visible():
+        page.locator("#drawer-collapse").click()
+    assert not _open(page)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), size
+    frame_box = page.locator("#content-frame").bounding_box()
+    strip = page.locator("#rail-strip").bounding_box()
+    assert strip["x"] + strip["width"] == width
+    assert frame_box["x"] + frame_box["width"] <= strip["x"], "the document runs under the strip"
+    page.frame_locator("#content-frame").locator(".unified-table-frame").first.wait_for()
+    doc = page.locator("#content-frame").element_handle().content_frame()
+    _wait(lambda: doc.evaluate("() => [...document.images].every(i => i.complete)"), page)
+    return doc
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_closed_rail_never_scrolls_sideways_and_tables_wrap(tmp_path, wide_page, size):
     width, height = size
     with browser_page(tmp_path, wide_page, width=width, height=height) as (page, _):
-        if page.locator("#drawer-collapse").is_visible():
-            page.locator("#drawer-collapse").click()
-        assert not _open(page)
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), size
-        frame_box = page.locator("#content-frame").bounding_box()
-        strip = page.locator("#rail-strip").bounding_box()
-        assert strip["x"] + strip["width"] == width
-        assert frame_box["x"] + frame_box["width"] <= strip["x"], "the document runs under the strip"
-        frame = page.frame_locator("#content-frame")
-        frame.locator(".unified-table-frame").wait_for()
-        frame.locator("img").first.wait_for()
-        doc = page.locator("#content-frame").element_handle().content_frame()
-        _wait(lambda: doc.evaluate("() => [...document.images].every(i => i.complete)"), page)
-        assert doc.evaluate(DOCUMENT_FITS) == {"scrolls": False, "over": []}, size
-        # The table's own box: the side with more columns fades, and follows the scroll.
-        table = frame.locator(".unified-table-frame")
-        wide = doc.evaluate("() => { const s = document.querySelector('.unified-table-scroll');"
-                            " return s.scrollWidth > s.clientWidth; }")
+        doc = _closed(page, size)
+        assert doc.evaluate(DOCUMENT_FITS) == {"scrolls": False, "over": [], "tables": [], "hints": 0}, size
+        # Whole words: no cell breaks inside a word.
+        assert doc.evaluate("() => [...document.querySelectorAll('.unified-table-scroll td, .unified-table-scroll th')]"
+                            ".every(c => getComputedStyle(c).wordBreak === 'normal'"
+                            " && getComputedStyle(c).overflowWrap === 'normal')")
+
+
+UNBREAKABLE = WIDE.replace("| Already filed | 1 | #33 |", "| Already filed | 1 | " + "x" * 300 + " |")
+
+
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844)])
+def test_a_word_that_cannot_fit_scrolls_inside_its_table_with_a_fade(tmp_path, size):
+    width, height = size
+    with browser_page(tmp_path, _wide_page(tmp_path, UNBREAKABLE), width=width, height=height) as (page, _):
+        doc = _closed(page, size)
+        fits = doc.evaluate(DOCUMENT_FITS)
+        assert fits["scrolls"] is False and fits["over"] == [] and len(fits["tables"]) == 1, size
+        assert fits["hints"] == 1, "the hint shows only on the table that scrolls"
+        table = page.frame_locator("#content-frame").locator(".unified-table-frame").first
         classes = lambda: table.get_attribute("class").split()  # noqa: E731
-        assert ("is-more-right" in classes()) == wide and "is-more-left" not in classes(), size
-        if wide:
-            doc.evaluate("() => { const s = document.querySelector('.unified-table-scroll'); s.scrollLeft = s.scrollWidth; }")
-            _wait(lambda: "is-more-left" in classes() and "is-more-right" not in classes(), page)
+        assert "is-more-right" in classes() and "is-more-left" not in classes(), size
+        doc.evaluate("() => { const s = document.querySelector('.unified-table-scroll'); s.scrollLeft = s.scrollWidth; }")
+        _wait(lambda: "is-more-left" in classes() and "is-more-right" not in classes(), page)

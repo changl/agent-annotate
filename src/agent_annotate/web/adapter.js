@@ -2889,9 +2889,10 @@ function wireCommentableHover() {
     }
   });
 }
-// Wide tables scroll sideways in their own labelled region. The side with
-// more columns fades out, so a cut-off table reads as its own scroll box,
-// not as the page running under the rail (lh1).
+// Tables wrap to fit the document at every width, whole words only (lh1).
+// Only when a single word or image cannot fit does the table scroll sideways
+// in its own labelled region; then the side with more columns fades and the
+// hint shows, so it reads as its own scroll box, not the page.
 function wrapScrollTables() {
   document.querySelectorAll('table').forEach(t => {
     if (t.closest('.unified-table-scroll') || t.closest('[data-annotate-strip]')) return;
@@ -2905,20 +2906,26 @@ function wrapScrollTables() {
     t.before(frame);
     frame.append(wrap);
     wrap.append(t);
-    wrap.addEventListener('scroll', () => markTableEdges(wrap), { passive: true });
-    markTableEdges(wrap);
     const hint = document.createElement('p');
     hint.className = 'unified-table-hint';
     hint.textContent = 'Scroll sideways to see all columns';
     frame.after(hint);
+    wrap.addEventListener('scroll', () => markTableEdges(wrap), { passive: true });
+    t.querySelectorAll('img').forEach(img => img.addEventListener('load', () => markTableEdges(wrap)));
+    markTableEdges(wrap);
   });
   window.addEventListener('resize', () => document.querySelectorAll('.unified-table-scroll').forEach(markTableEdges));
   scheduleBadgeRefresh();
 }
 function markTableEdges(wrap) {
   const rest = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft;
+  const wide = wrap.scrollWidth - wrap.clientWidth > 1;
   wrap.parentElement.classList.toggle('is-more-left', wrap.scrollLeft > 1);
   wrap.parentElement.classList.toggle('is-more-right', rest > 1);
+  wrap.parentElement.classList.toggle('is-wide', wide);
+  wrap.setAttribute('aria-label', wide ? 'Table · scroll sideways' : 'Table');
+  const hint = wrap.parentElement.nextElementSibling;
+  if (hint && hint.classList.contains('unified-table-hint')) hint.hidden = !wide;
 }
 function ensureAffordanceStyle() {
   if (document.getElementById('annotate-affordance-style')) return;
@@ -2933,10 +2940,11 @@ function ensureAffordanceStyle() {
     .unified-table-frame::before{left:0;background:linear-gradient(to right,var(--color-base-100),transparent)}
     .unified-table-frame::after{right:2px;background:linear-gradient(to left,var(--color-base-100),transparent)}
     .unified-table-frame.is-more-left::before,.unified-table-frame.is-more-right::after{opacity:1}
-    .unified-table-scroll{overflow-x:auto;scrollbar-gutter:stable;overscroll-behavior-x:contain;border-right:2px solid var(--color-base-300)}
-    .unified-table-scroll table{min-width:1000px;width:100%;max-width:none;table-layout:auto!important}
-    .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;min-width:120px}
-    .unified-table-scroll th:first-child,.unified-table-scroll td:first-child{min-width:48px}
+    .unified-table-scroll{overflow-x:auto;overscroll-behavior-x:contain}
+    .unified-table-frame.is-wide .unified-table-scroll{border-right:2px solid var(--color-base-300)}
+    .unified-table-scroll table{width:100%;min-width:0;max-width:100%;table-layout:auto!important}
+    .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;hyphens:none!important;min-width:0}
+    @media (max-width:480px){.unified-table-scroll th,.unified-table-scroll td{padding-left:4px!important;padding-right:4px!important}}
     .unified-table-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:4px 0 14px 28px;color:var(--color-base-content)}
   `;
   document.head.append(style);
