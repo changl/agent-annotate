@@ -3392,6 +3392,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                              "plans": bool(plans) or "plans" in present}
                 record = self._registered_record()
                 links = linked_pages(record) if record else []
+            if not self._identity()["authenticated"]:
+                # As in /api/project: another page's review key only for a signed-in reviewer.
+                from .urls import redact_review_key
+                for page in links:
+                    page["url"] = redact_review_key(page["url"])
             result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
                       "findings_sets": category_data["findings_sets"], "plans": plans,
                       "library": {"groups": library.get("groups", []),

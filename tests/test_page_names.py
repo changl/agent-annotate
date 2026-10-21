@@ -318,3 +318,6 @@ def test_related_pages_carry_review_keys_only_for_a_signed_in_reviewer(server, m
     project = _call(httpd, "GET", "/api/project")[1]
     assert project["related_pages"] == [{"slug": "assessment", "name": "Assessment",
                                          "url": record["url"] + ("#review=key" if authenticated else "")}]
+    # The legacy linked_pages alias follows the same rule.
+    categories = _call(httpd, "GET", "/api/categories")[1]
+    assert [p["url"] for p in categories["linked_pages"]] == [p["url"] for p in project["related_pages"]]
