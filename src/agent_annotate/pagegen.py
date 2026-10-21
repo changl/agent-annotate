@@ -103,7 +103,7 @@ def inline(text: str) -> str:
             out.append(f"<code>{E(code)}</code>")
         elif label is not None:
             href = "#" if _UNSAFE_URL.match(url) else url
-            out.append(f'<a href="{E(href, quote=True)}">{E(label)}</a>')
+            out.append(f'<a href="{E(href, quote=True)}">{E(html.unescape(label))}</a>')
         elif bold is not None or bold2 is not None:
             out.append(f"<strong>{E(bold if bold is not None else bold2)}</strong>")
         else:
@@ -1131,10 +1131,12 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
     html_out = build_html(meta, canvas, registry, version)
+    from .page_names import page_name, set_page_name
+    # Resolve legacy titles before an in-place regeneration replaces their HTML.
+    initial_name = page_name(slug_dir, fallback=meta["title"])
     images.copy_into(slug_dir)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
-    from .page_names import set_page_name
-    name = set_page_name(slug_dir, title)
+    name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
         save_project(slug_dir, project_data)

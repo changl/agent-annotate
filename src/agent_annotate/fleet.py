@@ -17,8 +17,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
-from .page_names import validate_name
-
 MAX_TARGETS = 64
 MAX_RESPONSE_BYTES = 64 * 1024
 _NAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
@@ -232,6 +230,9 @@ def _safe_value(value: object, pattern: re.Pattern, maximum: int = 80) -> str | 
 
 
 def _collect_target(target: dict, fetch: Fetch, timeout: float, maximum: int) -> dict:
+    # The isolated fetch worker executes this file without a package context.
+    from .page_names import validate_name
+
     documents, statuses = {}, {}
     for endpoint, path in (("meta", "current.meta.json"), ("capabilities", "api/capabilities"), ("delivery", "api/delivery")):
         documents[endpoint], statuses[endpoint] = _endpoint(fetch, target["url"] + path, timeout, maximum)

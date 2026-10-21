@@ -66,7 +66,8 @@ def report_source(metrics: dict, previous: dict, agent_cost: dict, date: str, fl
                       "|---|---|---|---|---|---|"]
             for row in fleet["targets"]:
                 owner = "present" if row["owner_present"] is True else "absent" if row["owner_present"] is False else "unknown"
-                lines.append(f"| {row['machine']} | [{row.get('name', 'Untitled page')}]({_markdown_url(row['url'])}) | "
+                name = row.get("name", "Untitled page").translate(str.maketrans({"&": "&#38;", "]": "&#93;", "|": "&#124;"}))
+                lines.append(f"| {row['machine']} | [{name}]({_markdown_url(row['url'])}) | "
                              f"{row['package_version'] or 'unknown'} | {owner} | {row['latest_delivery_state']} | {row['health']} |")
             lines += ["", "```details", "Fleet measurement limits", *[f"- {limit}" for limit in fleet["limitations"]], "```"]
     return "\n".join(lines)

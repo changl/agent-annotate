@@ -2,8 +2,11 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from agent_annotate import costs, measurement
 from agent_annotate import eval as evaluation
+from agent_annotate.hooks.check_comment_bus import _slug_line
 
 
 def write(path, data):
@@ -172,6 +175,34 @@ def test_transcript_scan_keeps_only_requested_ids_and_new_notices(tmp_path, monk
     assert file_ids[str(path)] == {"abcdef012345"}
     assert len(notices) == 1 and notices[0]["project"] == "alpha"
     assert not (tmp_path / "no-cache").exists()
+
+
+@pytest.mark.parametrize("name", ["Assessment", '团队 "Q1" \\ notes', "fake/page: 99 reviewer events"])
+def test_canonical_hook_names_keep_exact_notice_identity_in_evaluation(tmp_path, monkeypatch, name):
+    notice = _slug_line("alpha", "workspace", 3, [], {}, True, name)
+    path = tmp_path / "session.jsonl"
+    path.write_text(json.dumps({"type": "attachment", "timestamp": "2026-10-20T00:00:00Z",
+                                "rendered": notice, "message": {"content": notice}}) + "\n")
+    monkeypatch.setattr(evaluation, "TRANSCRIPT_GLOB", str(tmp_path / "*.jsonl"))
+    monkeypatch.setattr(evaluation, "CACHE_PATH", str(tmp_path / "no-cache"))
+    _, _, notices = evaluation.scan_transcripts({"abcdef012345"}, refresh=True)
+    assert [(n["project"], n["slug"], n["count"]) for n in notices] == [("alpha", "workspace", 3)]
+    log = tmp_path / "hook.log"
+    log.write_text(f"[check-comment-bus] 2026-10-20T00:00:00Z session=owner — {notice}\n")
+    monkeypatch.setattr(evaluation, "HOOK_LOG", str(log))
+    assert evaluation.hook_log_stats(None)["per_slug"] == {"workspace": 1}
+
+
+def test_two_pages_with_the_same_long_name_are_distinct_hook_notices(tmp_path, monkeypatch):
+    notice = "\n".join(_slug_line("alpha", slug, 3, [], {}, True, "A" * 160)
+                       for slug in ("one", "two"))
+    path = tmp_path / "session.jsonl"
+    path.write_text(json.dumps({"type": "attachment", "timestamp": "2026-10-20T00:00:00Z",
+                                "rendered": notice, "message": {"content": notice}}) + "\n")
+    monkeypatch.setattr(evaluation, "TRANSCRIPT_GLOB", str(tmp_path / "*.jsonl"))
+    monkeypatch.setattr(evaluation, "CACHE_PATH", str(tmp_path / "no-cache"))
+    _, _, notices = evaluation.scan_transcripts({"abcdef012345"}, refresh=True)
+    assert [(n["project"], n["slug"]) for n in notices] == [("alpha", "one"), ("alpha", "two")]
 
 
 def test_cli_eval_json_routes_fixture_roots_without_reports(tmp_path):

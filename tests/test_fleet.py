@@ -12,6 +12,7 @@ from io import BytesIO
 from urllib.error import HTTPError, URLError
 
 import pytest
+from test_decision_api import server as server
 
 from agent_annotate import fleet
 
@@ -382,3 +383,13 @@ def test_real_isolated_worker_returns_safe_failure_without_network_protocol():
     # private pipe protocol without contacting any server or provider.
     with pytest.raises(fleet.FleetFetchError, match="^unreachable$"):
         fleet.fetch_json("fleet-inert://not-a-network-host/", timeout=10, max_bytes=100)
+
+
+def test_real_isolated_worker_reads_a_reachable_sandbox_page(server):
+    httpd, directory, _ = server
+    (directory / "current.meta.json").write_text('{"current":"v1","name":"Operations"}')
+    status, body = fleet.fetch_json(
+        f"http://127.0.0.1:{httpd.server_address[1]}/current.meta.json", timeout=3,
+        max_bytes=fleet.MAX_RESPONSE_BYTES,
+    )
+    assert status == 200 and json.loads(body)["name"] == "Operations"

@@ -155,14 +155,30 @@ BOOKKEEPING_EVENTS = frozenset({
     "page_closed",
 })
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
-# Two notice formats in the corpus: v2.18's "New comments since last turn — …"
-# and v2.19's one-line-per-slug "[annotate] proj/slug: N reviewer event(s) …".
-# Both have to parse or the hook's own history disappears from section 7.
+# Preserve historic slug labels; named notices carry identity in the inbox command.
 NOTICE_RE = re.compile(
-    r"\[annotate\]\s*(?:New comments since last turn\s*[—-]\s*)?([^\"\\\n]{0,400})"
+    r"\[annotate\]\s*(?:New comments since last turn\s*[—-]\s*)?([^\n]{0,2000})"
 )
 NOTICE_PAIR_RE = re.compile(
     r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+):\s*(\d+)\s*(?:new|reviewer) event")
+NOTICE_ROUTE_RE = re.compile(
+    r".*:\s*(\d+)\s+reviewer event\(s\) since your last read.*?\. Read: [^\n]*?"
+    r"\binbox ([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+) --unread")
+
+
+def _notice_pairs(text):
+    routed = [(project, slug, count) for count, project, slug in NOTICE_ROUTE_RE.findall(text)]
+    return routed or NOTICE_PAIR_RE.findall(text)
+
+
+def _notice_strings(value):
+    """Read decoded strings so quotes/backslashes in names cannot truncate notices."""
+    if isinstance(value, str):
+        if "[annotate]" in value:
+            yield value
+    elif isinstance(value, (list, dict)):
+        for child in value.values() if isinstance(value, dict) else value:
+            yield from _notice_strings(child)
 
 
 # --------------------------------------------------------------------------- #
@@ -908,7 +924,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
             cache = json.load(open(CACHE_PATH, encoding="utf-8"))
         except Exception:
             cache = None
-    if (cache and cache.get("sig") == sig
+    if (cache and cache.get("notice_format") == "canonical-names-v1" and cache.get("sig") == sig
             and set(cache.get("ids") or []) == set(ids_of_interest)):
         return (
             {k: v for k, v in cache["sightings"].items()},
@@ -967,18 +983,16 @@ def scan_transcripts(ids_of_interest, refresh=False):
                     continue
 
                 # The hook notice arrives as a type:"attachment" line and is also
-                # mirrored into `rendered`, so match against the whole serialised
-                # line rather than message.content only.
-                sline = json.dumps(obj, ensure_ascii=False)
+                # mirrored into `rendered`; include both decoded strings and dedupe.
                 line_has_notice = False
-                for m in NOTICE_RE.finditer(sline):
+                for m in NOTICE_RE.finditer("\n".join(_notice_strings(obj))):
                     body = m.group(1)
                     line_has_notice = True
-                    key = (path, ts, body[:200])
+                    key = (path, ts, body)
                     if key in seen_notice:
                         continue
                     seen_notice.add(key)
-                    for proj, slug, n in NOTICE_PAIR_RE.findall(body):
+                    for proj, slug, n in _notice_pairs(body):
                         notices.append({"ts": ts, "file": path, "project": proj,
                                         "slug": slug, "count": int(n),
                                         "line_type": obj.get("type")})
@@ -1008,7 +1022,7 @@ def scan_transcripts(ids_of_interest, refresh=False):
                                                "how": how, "tool": tname})
                 # ids that only appear outside message.content (attachments,
                 # toolUseResult payloads, queue operations)
-                for cid in (set(idpat.findall(sline)) & ids_of_interest) - in_blocks:
+                for cid in (set(idpat.findall(line)) & ids_of_interest) - in_blocks:
                     file_ids[path].add(cid)
                     sightings[cid].append({
                         "ts": ts, "file": path, "tool": None,
@@ -1132,7 +1146,6 @@ def hook_log_stats(since):
     lines = 0
     if not os.path.exists(HOOK_LOG):
         return {"log_lines": 0, "notices": 0, "per_slug": {}}
-    pat = NOTICE_PAIR_RE
     tspat = re.compile(r"(\d{4}-\d{2}-\d{2}T[\d:]+Z)")
     for line in open(HOOK_LOG, encoding="utf-8", errors="replace"):
         m = tspat.search(line)
@@ -1140,7 +1153,7 @@ def hook_log_stats(since):
         if since and t and t < since:
             continue
         lines += 1
-        for _p, slug, _n in pat.findall(line):
+        for _p, slug, _n in _notice_pairs(line):
             total += 1
             per_slug[slug] += 1
     return {"log_lines": lines, "notices": total, "per_slug": dict(per_slug)}

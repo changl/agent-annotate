@@ -25,7 +25,7 @@ def _name(value) -> str | None:
         return None
 
 
-def page_name(record: dict | Path | str) -> str:
+def page_name(record: dict | Path | str, *, fallback: str = "Untitled page") -> str:
     """Resolve without writing, including legacy pages that have no saved name."""
     if not isinstance(record, dict):
         record = {"slug_dir": str(record)}
@@ -59,13 +59,13 @@ def page_name(record: dict | Path | str) -> str:
             name = _name(unescape(title[1]).strip()) if title else None
             if name:
                 return name
-    return "Untitled page"
+    return _name(fallback) or "Untitled page"
 
 
-def set_page_name(directory: Path, title: str | None = None) -> str:
+def set_page_name(directory: Path, title: str | None = None, *, initial_name: str | None = None) -> str:
     """Freeze the initial name; only an explicit title can change it later."""
     from .cli import _write_meta_locked
-    name = validate_name(title) if title is not None else page_name(directory)
+    name = validate_name(title) if title is not None else initial_name or page_name(directory)
 
     def update(meta):
         if title is not None or not _name(meta.get("name")):
@@ -122,6 +122,7 @@ def cmd_names(args) -> int:
     from .cli import STATE_DIR, _flock, _registry_entries
     from .consolidate import refuse_if_moved
     from .project_state import load_project
+    from .sync_server import _locked_store
 
     def unique_fields(pairs):
         result = {}
@@ -154,10 +155,14 @@ def cmd_names(args) -> int:
         with contextlib.ExitStack() as locks:
             if args.apply:
                 for directory in sorted(selected):
+                    # Archive/consolidation and server stamp writes take this
+                    # store lock before metadata locks; keep the same order.
+                    locks.enter_context(_locked_store(directory))
                     for filename in ("current.meta.json", "project.json"):
                         locks.enter_context(_flock(directory / (filename + ".lock")))
             changes, pages, unresolved = [], [], []
             for directory, (ref, name, record) in selected.items():
+                refuse_if_moved(directory)
                 files = []
                 for filename in ("current.meta.json", "project.json"):
                     path = directory / filename

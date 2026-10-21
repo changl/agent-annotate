@@ -1,8 +1,12 @@
 import datetime as dt
+import html
 from types import SimpleNamespace
+
+import pytest
 
 from agent_annotate import cli, reports
 from agent_annotate.metrics import collect_metrics
+from agent_annotate.pagegen import generate
 
 
 def test_report_keeps_project_owner_when_stopped(tmp_path, monkeypatch):
@@ -56,3 +60,20 @@ def test_first_report_uses_complete_publish_options(tmp_path, monkeypatch):
     assert captured[0].transport is None
     assert captured[0].path_prefix is None
     assert captured[0].verify_timeout==45.0
+
+
+@pytest.mark.parametrize("name", ["Operations | Q1 [approved]", "团队 🐳 &amp; [Q1]",
+                                  "Operations](https://unconfigured.test/) | [remainder"])
+def test_fleet_report_renders_plain_page_names_without_breaking_links_or_columns(tmp_path, name):
+    metrics = {"global": {}}
+    cost = {"calls": 0, "failures": 0, "rounds": 0, "output_tokens": 0, "median_round_tokens": None}
+    fleet = {"summary": {"total": 1, "by_machine": {"mbp": 1}, "healthy": 1, "degraded": 0, "unreachable": 0},
+             "targets": [{"machine": "mbp", "name": name, "url": "https://example.test/operations/",
+                          "owner_present": True, "package_version": "2.21.0", "latest_delivery_state": "none",
+                          "health": "healthy"}], "limitations": []}
+    source = tmp_path / "report.md"
+    source.write_text(reports.report_source(metrics, metrics, cost, "2026-10-20", fleet))
+    result = generate(source, tmp_path / "report")
+    rendered = result["html"].read_text()
+    assert f'<a href="https://example.test/operations/">{html.escape(name)}</a>' in rendered
+    assert '<a href="https://unconfigured.test/">' not in rendered

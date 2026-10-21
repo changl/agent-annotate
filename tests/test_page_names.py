@@ -48,6 +48,20 @@ def test_revision_titles_do_not_rename_page_and_explicit_title_does(tmp_path):
     assert page_names.page_name(directory) == "Assessment and evidence"
 
 
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_legacy_name_is_frozen_before_replacing_its_document(tmp_path, version):
+    source, directory = tmp_path / "page.md", tmp_path / "page"
+    source.write_text("---\ntitle: Original assessment\n---\n## Scope\nInitial text.\n")
+    generate(source, directory)
+    meta = cli._read_meta(directory)
+    del meta["name"]
+    (directory / "current.meta.json").write_text(json.dumps(meta))
+    source.write_text("---\ntitle: Revised assessment\n---\n## Scope\nRevised text.\n")
+    result = generate(source, directory, version)
+    assert result["name"] == page_names.page_name(directory) == "Original assessment"
+    assert result["title"] == "Revised assessment"
+
+
 @pytest.mark.parametrize("name", ["", " ", "x" * 161, "Name\nInjected", "<b>Name</b>", "hidden\u202ename"])
 def test_bad_names_are_rejected_before_generation_writes(tmp_path, name):
     source = tmp_path / "page.md"
@@ -99,10 +113,12 @@ def test_migration_dry_run_backups_apply_and_idempotence(estate, tmp_path, capsy
     source.write_text(json.dumps(mapping))
     args = SimpleNamespace(from_file=str(source), apply=False, dry_run=True, json=True)
     before = snapshot(tmp_path)
+    mtimes = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
     assert page_names.cmd_names(args) == 0
     preview = json.loads(capsys.readouterr().out)
     assert preview["dry_run"] and preview["changed_files"] == 5 and preview["backups"] == []
     assert snapshot(tmp_path) == before
+    assert {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")} == mtimes
     args.apply, args.dry_run = True, False
     assert page_names.cmd_names(args) == 0
     applied = json.loads(capsys.readouterr().out)
@@ -119,6 +135,71 @@ def test_migration_dry_run_backups_apply_and_idempotence(estate, tmp_path, capsy
     assert page_names.cmd_names(args) == 0
     repeated = json.loads(capsys.readouterr().out)
     assert repeated["changed_files"] == 0 and repeated["backups"] == []
+
+
+@pytest.mark.parametrize("existed", [False, True])
+def test_migration_manifest_can_restore_exact_original_bytes(estate, tmp_path, capsys, existed):
+    import hashlib
+
+    directory = Path(estate[0][2]["slug_dir"])
+    meta = directory / "current.meta.json"
+    if existed:
+        meta.write_bytes(b'{\r\n "current": "v1", "owner": {"label": "caf\\u00e9"}\r\n}\r\n')
+    else:
+        meta.unlink()
+    before = snapshot(directory)
+    source = tmp_path / "names.json"
+    source.write_text('{"reviews/main":"团队 🐳"}')
+    assert page_names.cmd_names(SimpleNamespace(from_file=str(source), apply=True, json=True)) == 0
+    result = json.loads(capsys.readouterr().out)
+    for backup in map(Path, result["backups"]):
+        for entry in json.loads((backup / "manifest.json").read_text()):
+            path = Path(entry["path"])
+            if entry["existed"]:
+                original = (backup / entry["file"]).read_bytes()
+                assert hashlib.sha256(original).hexdigest() == entry["sha256"]
+                path.write_bytes(original)
+            else:
+                path.unlink()
+    assert meta.exists() == existed
+    assert all((directory / path).read_bytes() == original for path, original in before.items())
+
+
+def test_migration_waits_for_server_metadata_lock_and_keeps_its_fields(estate, tmp_path, monkeypatch):
+    import contextlib
+    import fcntl
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    directory = Path(estate[0][2]["slug_dir"])
+    meta = directory / "current.meta.json"
+    source = tmp_path / "names.json"
+    source.write_text('{"reviews/main":"Assessment"}')
+    attempted = threading.Event()
+    original_flock = cli._flock
+
+    @contextlib.contextmanager
+    def observe_lock(lock_path):
+        if lock_path == directory / "current.meta.json.lock":
+            attempted.set()
+        with original_flock(lock_path):
+            yield
+
+    monkeypatch.setattr(cli, "_flock", observe_lock)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        with (directory / "current.meta.json.lock").open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            future = worker.submit(page_names.cmd_names, SimpleNamespace(from_file=str(source), apply=True, json=True))
+            assert attempted.wait(3)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            fresh = json.loads(meta.read_bytes())
+            fresh.update(owner={"owner_session": "keep"}, content_stamps={"v1": {"whole": "server-stamp"}})
+            meta.write_text(json.dumps(fresh))
+        assert future.result(timeout=3) == 0
+    renamed = json.loads(meta.read_bytes())
+    assert renamed["name"] == "Assessment"
+    assert renamed["owner"] == fresh["owner"] and renamed["content_stamps"] == fresh["content_stamps"]
 
 
 def test_invalid_migration_does_not_partially_update_pages(estate, tmp_path, capsys):
@@ -143,6 +224,29 @@ def test_duplicate_migration_identity_is_rejected_without_writes(estate, tmp_pat
     assert page_names.cmd_names(SimpleNamespace(from_file=str(source), apply=True, json=True)) == 2
     assert "duplicate migration field" in capsys.readouterr().out
     assert snapshot(tmp_path) == before
+
+
+def test_migration_rechecks_archive_state_after_taking_locks(estate, tmp_path, monkeypatch, capsys):
+    import contextlib
+
+    directory = Path(estate[0][2]["slug_dir"])
+    path = directory / "current.meta.json"
+    before = path.read_bytes()
+    source = tmp_path / "names.json"
+    source.write_text('{"reviews/main":"Renamed"}')
+    original_flock = cli._flock
+
+    @contextlib.contextmanager
+    def archive_before_lock(lock_path):
+        if lock_path == directory / "current.meta.json.lock":
+            (directory / "archived.json").write_text('{"why":"Archived concurrently"}')
+        with original_flock(lock_path):
+            yield
+
+    monkeypatch.setattr(cli, "_flock", archive_before_lock)
+    assert page_names.cmd_names(SimpleNamespace(from_file=str(source), apply=True, json=True)) == 2
+    assert "read-only" in capsys.readouterr().out
+    assert path.read_bytes() == before
 
 
 def test_names_are_operator_only():
