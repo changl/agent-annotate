@@ -181,25 +181,63 @@ function setDraft(key, value) {
 }
 
 // ── Compact layout detection ─────────────────────────────────────────
-// Matches shell.css exactly.  The width includes constrained desktop
-// webviews (not just phones): with both fixed rails expanded, anything below
-// 1160px would leave less than a useful 600px document canvas.
+// Matches shell.css exactly. The rail sits inline beside the document from
+// 1024px (Atlassian's aside; below that a 440px rail would leave the
+// document under ~580px); narrower, it is a right-side overlay.
 function isMobileLayout() {
-  return window.matchMedia('(max-width: 1160px), (max-height: 480px)').matches;
+  return window.matchMedia('(max-width: 1023px), (max-height: 480px)').matches;
 }
 
-// The drawer becomes a bottom sheet on mobile (body.is-mobile-sheet-open,
-// see shell.css); this is the single place that flips it, so the FAB, the
-// drawer's own close control, and any future callers stay in sync. Sheet
-// open-state and the drawer's own scroll position (renderDrawer) both
-// survive the 8s poll's re-render because neither lives inside the
-// re-rendered DOM.
+// In the compact layout the rail is a right-side overlay (body.is-mobile-
+// sheet-open, see shell.css) and, while open, a modal dialog (APG): focus
+// moves in, Tab stays inside, Escape closes, focus returns to what opened
+// it. This is the single place that flips it, so the edge strip, the
+// rail's own close control, and any other callers stay in sync. Open-state
+// and the drawer's own scroll position (renderDrawer) both survive the 8s
+// poll's re-render because neither lives inside the re-rendered DOM.
+let railOpener = null;
 function setMobileSheetOpen(open) {
+  const was = isMobileSheetOpen();
   document.body.classList.toggle('is-mobile-sheet-open', open);
-  if (open) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
+  syncRailDialog();
+  if (open && !was) {
+    railOpener = document.activeElement;
+    requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
+    if (!document.getElementById('drawer').contains(document.activeElement)) focusRailTab();
+  } else if (!open && was) {
+    const back = railOpener && railOpener.isConnected && railOpener.getClientRects().length ? railOpener : document.getElementById('drawer-strip');
+    railOpener = null;
+    if (document.getElementById('drawer').contains(document.activeElement) || document.activeElement === document.body) back.focus({ preventScroll: true });
+  }
 }
 function isMobileSheetOpen() {
   return document.body.classList.contains('is-mobile-sheet-open');
+}
+function isRailModal() {
+  return isMobileLayout() && isMobileSheetOpen();
+}
+// Inline the rail is a complementary landmark; open as the overlay it is a
+// dialog that owns the phone Send bar (it stays in reach above the rail).
+function syncRailDialog() {
+  const drawer = document.getElementById('drawer');
+  const modal = isRailModal();
+  if (modal) {
+    drawer.setAttribute('role', 'dialog');
+    drawer.setAttribute('aria-modal', 'true');
+    drawer.setAttribute('aria-labelledby', 'drawer-title');
+    drawer.setAttribute('aria-owns', 'round-bar');
+    drawer.removeAttribute('aria-label');
+  } else {
+    drawer.setAttribute('role', 'complementary');
+    drawer.setAttribute('aria-label', 'Feedback');
+    ['aria-modal', 'aria-labelledby', 'aria-owns'].forEach(a => drawer.removeAttribute(a));
+  }
+  const shown = isMobileLayout() ? modal : !isDrawerCollapsed();
+  document.querySelectorAll('#rail-strip button, #drawer-collapse').forEach(b => b.setAttribute('aria-expanded', shown ? 'true' : 'false'));
+}
+function focusRailTab() {
+  const tab = document.querySelector('#drawer-tabs [role="tab"][aria-selected="true"]');
+  if (tab) tab.focus({ preventScroll: true });
 }
 
 // ── OAuth identity ─────────────────────────────────────────────────
@@ -1435,21 +1473,7 @@ function renderCounts() {
   // B1: the tab badge counts only the cards that still need you.
   const tb = document.getElementById('tab-feedback-n');
   if (tb) { tb.textContent = String(k.needs); tb.hidden = k.needs === 0; }
-  updateStripBadge();
-  updateMobileFab(k.total, k.unread);
   if (window.AA) window.AA.changed();
-}
-
-// Phone button: 2.20's title; no count badge (B1: one progress count —
-// the bottom bar and the Feedback tab already carry the numbers).
-function updateMobileFab(total, unread) {
-  const fab = document.getElementById('mobile-fab');
-  if (!fab) return;
-  const badge = document.getElementById('mobile-fab-badge');
-  const countEl = document.getElementById('mobile-fab-count');
-  if (countEl) countEl.textContent = String(total);
-  if (badge) badge.style.display = 'none';
-  fab.title = total + (total === 1 ? ' comment' : ' comments') + (unread > 0 ? ', ' + unread + ' unread' : '') + ' — open feedback';
 }
 
 function renderDrawer() {
@@ -2687,11 +2711,12 @@ function wirePinPopover() {
 // Scroll the drawer to a card and mark it active. If the current chip filter
 // hides the card, fall back to the All filter so the focus is never a no-op.
 function focusSidebarCard(commentId) {
-  if (isMobileLayout()) setMobileSheetOpen(true); // pin/card focus needs the sheet visible, not just scrolled-to
-  else if (isDrawerCollapsed()) setDrawerCollapsed(false); // desktop: rail must be expanded
   highlightedCommentId = commentId;
-  // The card must be visible: Feedback tab, and its section open.
+  // The card must be visible: Feedback tab (before the overlay opens, so
+  // focus lands on it), and its section open.
   if (activeTab !== 'feedback') setActiveTab('feedback');
+  if (isMobileLayout()) setMobileSheetOpen(true); // pin/card focus needs the overlay open, not just scrolled-to
+  else if (isDrawerCollapsed()) setDrawerCollapsed(false); // inline: rail must be expanded
   const fc = findCommentById(commentId);
   if (fc && !sectionOpen(sectionOf(fc))) SECTION_OPEN[sectionOf(fc)] = true; // for this visit only
   renderDrawer();
@@ -2757,7 +2782,7 @@ function setDrawerCollapsed(collapsed, persist) {
   if (persist !== false) {
     try { localStorage.setItem('annotate:drawerCollapsed', collapsed ? '1' : '0'); } catch {}
   }
-  updateStripBadge();
+  syncRailDialog();
   if (!collapsed) requestAnimationFrame(() => syncExcerptClamps(document.getElementById('comment-list')));
 }
 // (The left version rail moved into the History tab, so only the feedback
@@ -2781,46 +2806,95 @@ function autoCollapseForFullscreen(active) {
 function isDrawerCollapsed() {
   return document.getElementById('drawer').classList.contains('collapsed');
 }
-function updateStripBadge() {
-  const el = document.getElementById('drawer-strip-unread');
-  if (!el || DOC !== VIEW_DOC) return;
-  // B1: same "needs you" count as the Feedback tab badge.
-  const needs = flattenAll(false).filter(c => inScope(c) && sectionOf(c) === 'needs').length;
-  el.textContent = String(needs);
-  el.style.display = needs > 0 ? '' : 'none';
+// The edge strip mirrors the rail's tabs: which are shown, their names and
+// (B1) the same counts as the tab badges, whoever set them (the shell for
+// Review and Plans, app.js for the other tabs).
+function syncRailStrip() {
+  document.querySelectorAll('#rail-strip [data-rail-open]').forEach(btn => {
+    const tab = document.getElementById('tab-' + btn.dataset.railOpen);
+    const label = Array.from(tab.childNodes).filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join('').trim();
+    const n = tab.querySelector('.tab-n');
+    const count = n && !n.hidden ? n.textContent : '';
+    const badge = btn.querySelector('.rail-strip-n');
+    if (badge) { badge.textContent = count; badge.hidden = !count; }
+    btn.hidden = tab.hidden;
+    btn.title = label + (count ? ' — ' + count + ' need you' : '');
+    btn.setAttribute('aria-label', btn.title);
+  });
+}
+// Open the rail (on a tab, if given): inline it expands, compact it opens
+// the overlay. Focus moves into the rail either way.
+function openRail(tab) {
+  if (tab) setActiveTab(tab);
+  if (isMobileLayout()) setMobileSheetOpen(true);
+  else { setDrawerCollapsed(false); focusRailTab(); }
 }
 function wireRailCollapse() {
-  // On mobile the drawer is a bottom sheet, not a collapsible rail — this
-  // same button (still visually the "»" affordance in the drawer header)
-  // closes the sheet instead of setting the desktop .collapsed state, so
-  // the two mechanisms never both apply to the one element at once.
+  // In the compact layout the rail is an overlay, not a collapsible column —
+  // its close control (×) closes the overlay; the panel toggle collapses
+  // the inline rail, so the two mechanisms never both apply at once.
   document.getElementById('drawer-collapse').addEventListener('click', () => {
     if (isMobileLayout()) { setMobileSheetOpen(false); return; }
     setDrawerCollapsed(true);
+    document.getElementById('drawer-strip').focus();
   });
-  document.getElementById('drawer-strip').addEventListener('click', () => setDrawerCollapsed(false));
+  document.getElementById('drawer-strip').addEventListener('click', () => openRail());
+  document.querySelectorAll('#rail-strip [data-rail-open]').forEach(btn => btn.addEventListener('click', () => openRail(btn.dataset.railOpen)));
+  new MutationObserver(syncRailStrip).observe(document.getElementById('drawer-tabs'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
+  syncRailStrip();
   try {
-    // A collapsed-rail preference saved from a prior desktop session must
-    // not apply on a phone: mobile visibility is owned entirely by
+    // A collapsed-rail preference saved from a prior wide session must not
+    // apply in the compact layout: there the overlay is owned entirely by
     // body.is-mobile-sheet-open, never by .collapsed.
     if (!isMobileLayout() && localStorage.getItem('annotate:drawerCollapsed') === '1') setDrawerCollapsed(true);
   } catch {}
+  syncRailDialog();
 }
 
-// ── Mobile-only chrome: FAB, dialog backdrop ─────────────────────────
+// ── Compact-only chrome: the rail overlay, dialog backdrop ───────────
 function wireMobileChrome() {
-  const fab = document.getElementById('mobile-fab');
-  if (fab) fab.addEventListener('click', () => setMobileSheetOpen(true));
-  // U-12: the phone sheet closes with ×, a tap outside it or a swipe down.
+  // U-12: the overlay closes with ×, a tap outside it, Escape (onShellKey)
+  // or a swipe toward the edge.
   document.getElementById('unified-sheet-close').addEventListener('click', () => setMobileSheetOpen(false));
   document.getElementById('unified-sheet-backdrop').addEventListener('click', () => setMobileSheetOpen(false));
   const hdr = document.querySelector('.drawer-hdr');
-  let touchY = null;
-  hdr.addEventListener('touchstart', e => { touchY = e.touches[0] ? e.touches[0].clientY : null; }, { passive: true });
+  let touchX = null;
+  hdr.addEventListener('touchstart', e => { touchX = e.touches[0] ? e.touches[0].clientX : null; }, { passive: true });
   hdr.addEventListener('touchend', e => {
-    if (touchY !== null && e.changedTouches[0].clientY - touchY > 65) setMobileSheetOpen(false);
-    touchY = null;
+    if (touchX !== null && e.changedTouches[0].clientX - touchX > 65) setMobileSheetOpen(false);
+    touchX = null;
   }, { passive: true });
+  // Crossing the breakpoint (a resize, a tablet turned): the open overlay
+  // stays open as the inline rail, even if it was collapsed there before;
+  // the inline rail becomes the closed overlay, and focus inside it moves to
+  // the edge strip rather than being lost.
+  window.matchMedia('(max-width: 1023px), (max-height: 480px)').addEventListener('change', () => {
+    if (!isMobileLayout() && isMobileSheetOpen()) {
+      document.body.classList.remove('is-mobile-sheet-open');
+      railOpener = null;
+      if (isDrawerCollapsed()) setDrawerCollapsed(false);
+      // The collapsed rail's style change already dropped focus from the dialog.
+      if (document.activeElement === document.body) focusRailTab();
+    } else if (isMobileLayout() && document.getElementById('drawer').contains(document.activeElement)) {
+      document.getElementById('drawer-strip').focus({ preventScroll: true });
+    }
+    syncRailDialog();
+  });
+  // APG modal: Tab and Shift+Tab stay inside the open overlay (and the Send
+  // bar it owns). Another dialog on top (Send summary, popovers) keeps its own.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Tab' || !isRailModal()) return;
+    const scope = [document.getElementById('drawer'), document.getElementById('round-bar')];
+    const active = document.activeElement;
+    if (active !== document.body && !scope.some(el => el.contains(active))) return;
+    const items = scope.flatMap(el => Array.from(el.querySelectorAll('button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])')))
+      .filter(el => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length);
+    if (!items.length) return;
+    // Moved by hand throughout: the edge strip sits between the two in the DOM.
+    const i = items.indexOf(active), n = items.length;
+    e.preventDefault();
+    items[i === -1 ? (e.shiftKey ? n - 1 : 0) : (i + (e.shiftKey ? n - 1 : 1)) % n].focus();
+  });
   // U-14: skip links.
   document.querySelectorAll('.unified-skip').forEach(a => a.addEventListener('click', e => {
     e.preventDefault();
@@ -3546,6 +3620,9 @@ function wirePopover() {
 function onShellKey(e) {
   {
     if (e.key === 'Escape') {
+      // The open rail overlay closes last: only when nothing on top of it was open.
+      const layered = document.getElementById('popover').classList.contains('vis') || document.getElementById('pin-popover').classList.contains('vis') || isRoundConfirmOpen() || openMenuId;
+      if (!layered && isRailModal()) setMobileSheetOpen(false);
       closePopover(); closePinPopover(); cancelRepin(); closeRoundConfirm();
       if (openMenuId) { openMenuId = null; document.querySelectorAll('.citem-menu').forEach(m => { m.hidden = true; }); }
       const wp = document.getElementById('who-panel'); if (wp) wp.hidden = true;
