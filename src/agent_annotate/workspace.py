@@ -175,7 +175,7 @@ def exception_reason(args) -> str | None:
     """An explicit exception, with the legacy standalone spelling preserved."""
     reason = getattr(args, "exception", None)
     if reason is not None:
-        # One line of plain text: it is shown under Linked pages.
+        # One line of plain text: it is shown under the page's name in Documents.
         reason = " ".join("".join(ch for ch in reason if ch.isprintable() or ch.isspace()).split())
         if not reason:
             raise ValueError('--exception requires a nonempty reason')

@@ -88,12 +88,6 @@
     <div class="aa-scroll" id="find-scroll"><div class="aa" id="find-register"></div></div>
   </section>
 
-  <!-- Linked pages: separate pages the owner declared (exceptions) -->
-  <section class="aa-view" id="view-linked" aria-label="Linked pages" hidden>
-    <div class="view-hd"><h2 class="view-hd-title">Linked pages<span class="view-hd-sub">Declared exceptions</span></h2></div>
-    <div class="aa-scroll"><div class="aa" id="linked-list"></div></div>
-  </section>
-
   <!-- The one feedback rail: Feedback (first) … History (last) -->
   <div id="unified-sheet-backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="Feedback" tabindex="-1">
@@ -129,12 +123,11 @@
       </div>
       <div id="comment-list" style="display:none"></div>
     </div>
-    <!-- Feedback: Library, Findings, Linked pages -->
+    <!-- Feedback: Library, Findings -->
     <div class="drawer-body" id="rail-library" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
     <div class="drawer-body" id="rail-findings" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
-    <div class="drawer-body" id="rail-linked" role="tabpanel" aria-labelledby="tab-feedback" hidden></div>
 
-    <!-- Documents (E2: only when the document has links) -->
+    <!-- Documents (E2: only when the document has links; k5y: the project's other pages, once) -->
     <div class="drawer-body tab-pane" id="documents-body" role="tabpanel" aria-labelledby="tab-documents" hidden></div>
 
     <!-- History: one for the project; each part tagged with its tab -->
