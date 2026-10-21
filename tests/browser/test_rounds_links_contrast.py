@@ -261,6 +261,10 @@ def test_recorded_version_answers_and_missing_originals_are_honest(tmp_path):
 def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_path):
     directory, process, base = _fixture(tmp_path)
     try:
+        # The round on v1 went out before v2 was published (2026-10-02).
+        rounds = directory / "rounds.ndjson"
+        records = [json.loads(line) for line in rounds.read_text().splitlines()]
+        rounds.write_text("".join(json.dumps(dict(r, ts="2026-10-01T12:00:00Z")) + "\n" for r in records))
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             for width, height in ((390, 844), (1440, 900)):
@@ -302,9 +306,14 @@ def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_
                 toggle.click()
                 playwright.expect(panel).to_be_hidden()
                 # Arrow keys move between the versions; the row opens the version.
+                # Only the focused version's chevron is in the Tab order.
+                assert toggle.get_attribute("tabindex") == "-1"
                 v2.locator(".vrow").focus()
                 page.keyboard.press("ArrowDown")
                 playwright.expect(v1.locator(".vrow")).to_be_focused()
+                assert toggle.get_attribute("tabindex") == "0"
+                page.keyboard.press("Tab")
+                playwright.expect(toggle).to_be_focused()
                 if width > 800:
                     v1.locator(".vrow").click()
                     page.wait_for_function("() => document.querySelector('#content-frame').src.includes('v=v1')")
@@ -350,6 +359,74 @@ def test_each_sent_round_sits_under_the_version_it_was_sent_on(tmp_path):
                     assert item.locator(".vact-head").first.inner_text().startswith(("Sent · Feedback saved (", "Sent · Sent ("))
                 page.evaluate("() => localStorage.clear()")
                 page.close()
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_agent_response_and_republished_versions_follow_publish_time(tmp_path):
+    directory, process, base = _fixture(tmp_path)
+    try:
+        rounds = directory / "rounds.ndjson"
+        first = json.loads(rounds.read_text().splitlines()[0])
+        # The fixture's round on v1 went out after v2 was published: v2 is
+        # not what the agent did in response to it.
+        assert first["version"] == "v1" and first["ts"] > "2026-10-02T09:00:00Z"
+        # v1 republished on 2026-10-04 (its time updates in place, so it is
+        # still listed first); a round with no version on 2026-10-05 was sent
+        # while v1 was live again.
+        meta_path = directory / "current.meta.json"
+        meta = json.loads(meta_path.read_text())
+        meta["history"][0]["ts"] = "2026-10-04T09:00:00Z"
+        meta_path.write_text(json.dumps(meta))
+        bare = dict(first, id="bare", send_id="bare-republished", ts="2026-10-05T09:00:00Z")
+        bare.pop("version")
+        with rounds.open("a") as out:
+            out.write(json.dumps(bare) + "\n")
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.set_default_timeout(5000)
+            page.goto(base + "#view=review", wait_until="networkidle")
+            ready(page)
+            history(page)
+            sent(page)
+            v1 = page.locator('#vrail-body-review .vitem[data-version="v1"]')
+            playwright.expect(v1.locator(".vact-block:not(.vact-agent)")).to_have_count(2)
+            playwright.expect(v1.locator(".vact-agent")).to_have_count(0)
+            assert page.locator('#vrail-body-review .vitem[data-version="v2"] .vrow-toggle').count() == 0
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_a_send_shows_under_its_version_before_the_server_record_arrives(tmp_path):
+    directory, process, base = _fixture(tmp_path)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page()
+            page.set_default_timeout(5000)
+            page.goto(base + "#view=review&v=v1", wait_until="networkidle")
+            ready(page)
+            page.wait_for_function("() => document.querySelector('#content-frame').src.includes('v=v1')")
+            feedback(page)
+            page.locator('.citem[data-comment-id="question-11"] .decision-accept').click()
+            section(page, "ready")
+            # History cannot refetch: only this visit's Send is known.
+            page.route("**/api/history", lambda route: route.abort())
+            page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
+            page.locator("#round-submit-btn").click()
+            page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+            history(page)
+            sent(page)
+            v1 = page.locator('#vrail-body-review .vitem[data-version="v1"]')
+            playwright.expect(v1.locator(".vact-block:not(.vact-agent)")).to_have_count(2)
+            assert page.locator('#vrail-body-review .vitem[data-version="v2"] .vrow-toggle').count() == 0
             browser.close()
     finally:
         process.terminate()

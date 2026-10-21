@@ -941,7 +941,7 @@ function sentRounds() {
     // The page version the Send was made on (pushes may not record one).
     const version = (g.find(r => typeof r.version === 'string' && r.version) || {}).version || '';
     if (withReceipt.length) {
-      const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' }))
+      const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
       return { ts, version, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
     }
@@ -966,7 +966,7 @@ function legacyRound(r) {
       const cat = a.category || (c ? commentCategory(c) : 'review');
       const text = roundItemText(a);
       const at = text.indexOf(' → ');
-      return { cat, label: at === -1 ? text : text.slice(0, at), answer: at === -1 ? '' : text.slice(at + 3) };
+      return { cat, label: at === -1 ? text : text.slice(0, at), answer: at === -1 ? '' : text.slice(at + 3), doc: c ? c.doc : undefined };
     });
     (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
     if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
@@ -1004,11 +1004,24 @@ async function loadDelivery() {
 // yvj: one list. Each version's chevron opens what was sent on it and what
 // the agent did in response; the separate Sent rounds list is gone.
 let HISTORY_SHOWN = null; // the tabs History shows (app/rail.js); null = every tab
+// The versions in publish order: a republish updates its version's time in
+// place, so the list's own order is not the order they went live.
+function historyByTime() {
+  const t = (h) => Date.parse(h.ts) || 0;
+  return (META.history || []).slice().sort((a, b) => t(a) - t(b));
+}
 function versionAt(ts) {
   const t = Date.parse(ts) || 0;
+  const hs = historyByTime();
   let at = null;
-  for (const h of (META.history || [])) if ((Date.parse(h.ts) || 0) <= t) at = h.version;
-  return at || ((META.history || [])[0] || {}).version || null;
+  for (const h of hs) if ((Date.parse(h.ts) || 0) <= t) at = h.version;
+  return at || (hs[0] || {}).version || null;
+}
+// What the agent published next: the first other version to go live after
+// the last round sent on this one (or after this one, with no rounds).
+function publishedAfter(h, rounds) {
+  const t = Math.max(Date.parse(h.ts) || 0, ...rounds.map(r => Date.parse(r.ts) || 0));
+  return historyByTime().find(x => x.version !== h.version && (Date.parse(x.ts) || 0) > t) || null;
 }
 // The rounds sent on each version of this document, oldest first. Review
 // rounds name their version; others (and older records) go under the
@@ -1020,7 +1033,8 @@ function roundsByVersion(shown) {
   const out = {};
   for (const r of rounds) {
     const items = r.items.filter(it => (!shown || shown.includes(it.cat)) &&
-      (it.cat === DOC || (DOC === 'review' && !(window.AA && window.AA.isDoc(it.cat)))));
+      ((it.cat === DOC && (DOC !== 'plans' || !it.doc || it.doc === 'plan:' + PLAN_ID)) ||
+        (DOC === 'review' && !(window.AA && window.AA.isDoc(it.cat)))));
     if (!items.length) continue;
     const v = DOC === 'review' && known.has(r.version) ? r.version : versionAt(r.ts);
     if (v) (out[v] = out[v] || []).unshift(Object.assign({}, r, { items }));
@@ -1033,7 +1047,7 @@ function agentDoneOn(version) {
     (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent'));
 }
 function versionFolds(value) {
-  const key = 'annotate:vfold:' + location.pathname + DOC;
+  const key = 'annotate:vfold:' + location.pathname + ':' + (DOC === 'plans' ? 'plan:' + PLAN_ID : DOC);
   try {
     if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
     return JSON.parse(localStorage.getItem(key) || '{}') || {};
@@ -1067,20 +1081,21 @@ function renderVersionRail(shown) {
   // The keyboard hint belongs to the document on screen only, as in final/.
   const hint = body.parentNode.querySelector('.unified-history-hint');
   if (hint) hint.hidden = doc !== VIEW_DOC;
-  const history = (META.history || []).slice().reverse();
+  const byVersion = roundsByVersion(HISTORY_SHOWN);
+  // Library or Findings alone: only the versions their lines were sent on.
+  const sentOnly = !!HISTORY_SHOWN && !HISTORY_SHOWN.includes(doc);
+  const history = (META.history || []).slice().reverse().filter(h => !sentOnly || byVersion[h.version]);
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
-    return;
+    return 0;
   }
-  const byVersion = roundsByVersion(HISTORY_SHOWN);
   const folds = versionFolds();
-  const order = META.history || [];
   body.innerHTML = history.map(h => {
     const rounds = byVersion[h.version] || [];
-    const done = agentDoneOn(h.version);
+    const done = sentOnly ? [] : agentDoneOn(h.version);
     const activity = rounds.length || done.length;
-    const next = activity ? order[order.findIndex(x => x.version === h.version) + 1] : null;
-    const open = !!activity && (h.version in folds ? folds[h.version] : h.version === CURRENT_VERSION);
+    const next = activity ? publishedAfter(h, rounds) : null;
+    const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION);
     const pid = 'vact-' + doc + '-' + h.version;
     const counts = countsForVersion(h.version);
     const isCur = h.version === CURRENT_VERSION;
@@ -1123,10 +1138,16 @@ function renderVersionRail(shown) {
       withDoc(doc, () => versionFolds(Object.assign(versionFolds(), { [btn.closest('.vitem').dataset.version]: open })));
     });
   });
-  // U-14: Up/Down/Home/End move between the versions.
+  // U-14: Up/Down/Home/End move between the versions; one version (and its
+  // chevron) is in the Tab order, not every chevron in the list.
   const rows = [...body.querySelectorAll('.vrow')];
+  const rove = (to) => rows.forEach(x => {
+    x.tabIndex = x === to ? 0 : -1;
+    const toggle = x.parentNode.querySelector('.vrow-toggle');
+    if (toggle) toggle.tabIndex = x.tabIndex;
+  });
+  rove(rows.find(r => r.dataset.version === CURRENT_VERSION) || rows[0]);
   rows.forEach(r => {
-    r.tabIndex = r.dataset.version === CURRENT_VERSION ? 0 : -1;
     r.addEventListener('keydown', e => {
       let n = rows.indexOf(r);
       if (e.key === 'ArrowDown') n++;
@@ -1136,17 +1157,18 @@ function renderVersionRail(shown) {
       else return;
       e.preventDefault();
       const next = rows[Math.max(0, Math.min(rows.length - 1, n))];
-      rows.forEach(x => { x.tabIndex = x === next ? 0 : -1; });
+      rove(next);
       next.focus();
     });
   });
   const restore = focusedVersion && !document.getElementById('history-body').hidden && (!isMobileLayout() || isMobileSheetOpen()) && rows.find(r => r.dataset.version === focusedVersion);
   if (restore) {
-    rows.forEach(r => { r.tabIndex = r === restore ? 0 : -1; });
+    rove(restore);
     const toggle = focusedToggle && restore.parentNode.querySelector('.vrow-toggle');
     (toggle || restore).focus();
   }
   if (doc === VIEW_DOC) renderVersionBanner();
+  return rows.length;
 }
 // U-10: an older version on screen says so, with the way back.
 function renderVersionBanner() {
@@ -3053,6 +3075,8 @@ function sendItems() {
     return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer, kind: p.push.includes(c) ? 'push' : 'round', id: c.id };
   });
   if (gfDraft()) items.push({ label: 'General feedback', answer: gfDraft(), kind: 'push', id: 'gf:' + DOC });
+  // A Plans line names its plan (History lists it under that plan only).
+  if (DOC === 'plans') items.forEach(it => { it.doc = 'plan:' + PLAN_ID; });
   return items;
 }
 // A document's part of one Send (2.20's order): comment-box text on an
@@ -3167,6 +3191,7 @@ function receiptPayload(receipt, id) {
     receipt: receipt.slice(0, 200).map(it => {
       const line = { cat: it.cat, label: String(it.label || '—').slice(0, 300) };
       if (it.answer) line.answer = String(it.answer).slice(0, 600);
+      if (it.doc) line.doc = it.doc;
       return line;
     }),
   };
@@ -3953,7 +3978,7 @@ window.AnnotateDocs = {
   warning: (doc) => withDoc(doc, summaryWarning),
   items: (doc) => withDoc(doc, sendItems),
   renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
-  renderHistoryInto: (doc, shown) => withDoc(doc, () => { renderVersionRail(shown); }),
+  renderHistoryInto: (doc, shown) => withDoc(doc, () => renderVersionRail(shown)),
   submitPage,
   discardPage,
   pageRoundPending,

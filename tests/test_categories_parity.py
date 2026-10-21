@@ -136,7 +136,8 @@ def test_one_send_keeps_its_summary_lines_for_history(server):
     _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "select", "text": "Yes", "defer_push": True}, author="chang@example.com")
     assert _call(httpd, "POST", "/api/comments", {"anchor_id": "s:b", "text": "Typo here"}, author="chang@example.com")[0] == 201
     receipt = [{"cat": "review", "label": "#1 · Rename?", "answer": "Yes"}, {"cat": "review", "label": "#2 · Typo here"},
-               {"cat": "library", "label": "#9 Footer", "answer": "Edited"}]
+               {"cat": "library", "label": "#9 Footer", "answer": "Edited"},
+               {"cat": "plans", "label": "#31 · Launch?", "answer": "Approve", "doc": "plan:launch"}]
     send = {"send_id": "send-0123456789", "receipt": receipt}
     assert _call(httpd, "POST", "/api/rounds/submit", {**send, "version": "v1"}, author="chang@example.com")[0] == 200
     # The round carries the new comment too, so an old chrome's push finds nothing.
@@ -154,6 +155,8 @@ def test_one_send_keeps_its_summary_lines_for_history(server):
 @pytest.mark.parametrize("bad", [{"send_id": "x"}, {"receipt": [{"cat": "other", "label": "x"}]},
                                  {"receipt": [{"cat": "review", "label": ""}]},
                                  {"receipt": [{"cat": "review", "label": "x", "extra": 1}]},
+                                 {"receipt": [{"cat": "plans", "label": "x", "doc": "review"}]},
+                                 {"receipt": [{"cat": "plans", "label": "x", "doc": "plan:Bad Id"}]},
                                  {"receipt": [{"cat": "review", "label": "x"}] * 201}])
 def test_send_receipt_is_validated(server, bad):
     from test_decision_api import _call

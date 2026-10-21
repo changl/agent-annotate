@@ -453,12 +453,16 @@
     const shown = cur ? shownTabs() : AA.TABS.map(t => t.id);
     const docs = window.AnnotateDocs ? window.AnnotateDocs.docs : [];
     body.querySelectorAll('.hist-cat').forEach(sec => {
-      const on = shown.includes(sec.dataset.cat) && (!AA.isDoc(sec.dataset.cat) || docs.includes(sec.dataset.cat));
+      // Library and Findings lines go out with the page: shown alone, they
+      // sit under the Review version they were sent on.
+      const sentOnly = sec.dataset.cat === 'review' && !shown.includes('review') && shown.some(t => !AA.isDoc(t));
+      const on = (shown.includes(sec.dataset.cat) || sentOnly) && (!AA.isDoc(sec.dataset.cat) || docs.includes(sec.dataset.cat));
       sec.hidden = !on;
       if (!on) return;
       const p = AA.providers[sec.dataset.cat];
       if (AA.isDoc(sec.dataset.cat)) {
-        window.AnnotateDocs.renderHistoryInto(sec.dataset.cat, shown);
+        const rows = window.AnnotateDocs.renderHistoryInto(sec.dataset.cat, shown);
+        if (sentOnly && !rows) { sec.hidden = true; return; }
         // "All tabs": another document's versions show its latest five.
         clip(sec.querySelector('.vrail-body'), sec.dataset.cat !== view);
       } else if (p && p.history) p.history(sec.querySelector('.hist-cat-body'));
@@ -690,7 +694,7 @@
       if (!t.n) return;
       const lines = AA.isDoc(t.id) ? docs.items(t.id) : (AA.providers[t.id] && AA.providers[t.id].pending ? AA.providers[t.id].pending() : []);
       // `kind` and `id` (UI-2) tell the shell which call carries a line.
-      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id }));
+      lines.forEach(it => items.push({ cat: t.id, label: it.label, answer: it.answer || '', kind: it.kind, id: it.id, doc: it.doc }));
     });
     const libraryPending = !!(AA.providers.library && AA.providers.library.roundPending && AA.providers.library.roundPending());
     let r = null;
@@ -698,7 +702,7 @@
     submitBtn.innerHTML = submitHtml;
     sending = false;
     // UI-2: the receipt lists only what was sent; what failed stays pending.
-    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '' })) : [];
+    const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc })) : [];
     const failed = r ? (r.failed || []).length : items.length;
     if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
@@ -709,7 +713,9 @@
     const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' :
       (r.automatic ? 'Feedback saved (' + n + ')' : '⏳ Queued — no session listening (' + n + ')');
-    lastSend = { ts: new Date().toISOString(), result, items: sent, fresh: true, send_id: r.send_id };
+    // The Review version on screen, as the round records it, so History
+    // places this Send right before the server's record arrives.
+    lastSend = { ts: new Date().toISOString(), version: docs.version('review') || '', result, items: sent, fresh: true, send_id: r.send_id };
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
       setNote(result, r.delivered ? 'is-success' : 'is-queued');
