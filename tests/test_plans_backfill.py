@@ -1,0 +1,523 @@
+import copy
+import fcntl
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+from agent_annotate.approval_catalog import item_id, read_bundle
+from agent_annotate.cli import build_parser, run_command
+from agent_annotate.plans_backfill import backfill_page, restore_page
+
+
+def snapshot(directory):
+    return {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in directory.rglob("*") if p.is_file()}
+
+
+def page(directory, *, verdict="accept"):
+    directory.mkdir(exist_ok=True)
+    request = {"prompt": "Ship this design?", "evidence": [{"anchor": "design"}],
+               "options": [{"id": "blue", "label": "Blue", "consequence": "Use blue"}]}
+    decision = {"verdict": verdict, "text": "Blue" if verdict == "select" else None,
+                "by": "reviewer@example.com", "ts": "2026-10-01T12:00:00Z"}
+    comment = {"id": "card-one", "number": 1, "anchor_id": "d:q1", "version": "v1",
+               "decision_request": request, "decision": decision,
+               "replies": [{"author": decision["by"], "author_email": decision["by"], "ts": decision["ts"],
+                            "text": "☑ Selected: Blue" if verdict == "select" else "✓ Accepted"}]}
+    store = {"schema_version": 2, "anchors": {"d:q1": [comment]}}
+    (directory / "comments.json").write_text(json.dumps(store))
+    (directory / ".comments.json.lock").touch()
+    (directory / "versions").mkdir()
+    (directory / "versions/v1.html").write_text('<section id="design"><p>The original design</p></section>')
+    (directory / "versions/v1.cards.json").write_text(json.dumps([{
+        "number": 1, "anchor_id": "d:q1", "decision_request": request}]))
+    for p in (directory / "versions").iterdir():
+        os.utime(p, (1, 1))
+    answer = {"comment_id": comment["id"], "prompt": request["prompt"], **decision}
+    (directory / "rounds.ndjson").write_text(json.dumps({"id": "round-one", "snapshot": True,
+        "by": decision["by"], "version": "v1", "answers": [answer]}) + "\n")
+    return store, comment
+
+
+def save(directory, store):
+    (directory / "comments.json").write_text(json.dumps(store))
+
+
+@pytest.mark.parametrize("verdict", ["accept", "select"])
+def test_dry_run_apply_exact_version_idempotence_and_restore(tmp_path, verdict):
+    store, comment = page(tmp_path, verdict=verdict)
+    before = snapshot(tmp_path)
+    dry = backfill_page(tmp_path)
+    assert snapshot(tmp_path) == before
+    assert dry["counts"]["would_file"] == 1
+    assert dry["branches"] == {"browser_and_sent": 1}
+    (tmp_path / "comments.json").chmod(0o640)
+    applied = backfill_page(tmp_path, apply=True)
+    backup = Path(applied["backup"])
+    updated = json.loads((tmp_path / "comments.json").read_text())
+    plan = updated["approved_plans"][item_id(comment)]
+    assert plan["kind"] == ("Approved" if verdict == "accept" else "Decided")
+    entry = plan["history"][0]
+    assert "original design" in read_bundle(tmp_path, entry["evidence_revision"])["html"]
+    assert entry["source_version"] == "v1"
+    assert updated["anchors"]["d:q1"][0]["decision"] == comment["decision"]
+    assert (tmp_path / "comments.json").stat().st_mode & 0o777 == 0o640
+    second_before = snapshot(tmp_path)
+    second = backfill_page(tmp_path, apply=True)
+    assert second["counts"]["already_linked"] == 1
+    assert "backup" not in second
+    assert snapshot(tmp_path) == second_before
+    assert (backup / "comments.json").read_bytes() == json.dumps(store).encode()
+    restore_page(tmp_path, backup)
+    assert (tmp_path / "comments.json").read_bytes() == json.dumps(store).encode()
+    assert (tmp_path / "comments.json").stat().st_mode & 0o777 == 0o640
+    assert not list((tmp_path / "approval-evidence").glob("*/bundle.json"))
+    restore_page(tmp_path, backup)
+
+
+def test_existing_plan_links_without_refiling(tmp_path):
+    _, comment = page(tmp_path)
+    backfill_page(tmp_path, apply=True)
+    store = json.loads((tmp_path / "comments.json").read_text())
+    del store["anchors"]["d:q1"][0]["catalog_plan"]
+    # Existing catalog provides evidence even when both card-side links were lost.
+    plan = store["approved_plans"][item_id(comment)]
+    save(tmp_path, store)
+    assert backfill_page(tmp_path)["counts"]["would_link"] == 1
+    backfill_page(tmp_path, apply=True)
+    updated = json.loads((tmp_path / "comments.json").read_text())
+    assert updated["approved_plans"][item_id(comment)] == plan
+    assert updated["anchors"]["d:q1"][0]["catalog_plan"] == item_id(comment)
+
+
+@pytest.mark.parametrize("change", ["agent", "legacy", "opt_out", "ineligible"])
+def test_agent_legacy_and_opt_out_excluded(tmp_path, change):
+    store, comment = page(tmp_path)
+    if change == "agent":
+        comment["decision"]["by"] = "agent:codex"
+    elif change == "legacy":
+        comment["decision"]["legacy"] = True
+    elif change == "ineligible":
+        comment["decision"]["catalog_eligible"] = False
+    else:
+        comment["decision_request"]["catalog"] = False
+    save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["items"] == []
+    assert report["branches"] == {"excluded_agent_legacy_opt_out": 1}
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("problem,reason", [
+    ("missing", "No such file"), ("media", "historical media"), ("changed", "modified after"),
+    ("reversed", "later reversed"), ("two", "multiple approvals"), ("different", "different content"),
+    ("browser", "provenance"), ("sent", "provenance"), ("pending", "still pending"),
+    ("prompt", "prompt differs"), ("manual", "manual Plan"),
+])
+def test_conflicts_never_write(tmp_path, problem, reason):
+    store, comment = page(tmp_path)
+    if problem == "missing":
+        (tmp_path / "versions/v1.html").unlink()
+    elif problem == "media":
+        (tmp_path / "versions/v1.html").write_text('<section id="design"><img src="screen.png"></section>')
+        (tmp_path / "screen.png").write_bytes(b"image")
+        os.utime(tmp_path / "versions/v1.html", (1, 1))
+    elif problem == "changed":
+        (tmp_path / "versions/v1.html").touch()
+    elif problem == "reversed":
+        comment["decision_history"] = [copy.deepcopy(comment["decision"])]
+        comment["decision"] = {"verdict": "reject", "by": "reviewer@example.com", "ts": "2026-10-02T12:00:00Z"}
+    elif problem == "two":
+        other = copy.deepcopy(comment)
+        other["id"] = "card-two"
+        store["anchors"]["d:q1"].append(other)
+        r = json.loads((tmp_path / "rounds.ndjson").read_text())
+        r["answers"].append({**r["answers"][0], "comment_id": other["id"]})
+        (tmp_path / "rounds.ndjson").write_text(json.dumps(r))
+    elif problem == "different":
+        store["approved_plans"] = {item_id(comment): {"current": "v1", "history": [
+            {"version": "v1", "key": "other", "evidence_revision": "a" * 64}]}}
+    elif problem == "browser":
+        comment["replies"] = []
+    elif problem == "sent":
+        (tmp_path / "rounds.ndjson").unlink()
+    elif problem == "pending":
+        comment["decision"]["round_pending"] = True
+    elif problem == "prompt":
+        r = json.loads((tmp_path / "rounds.ndjson").read_text())
+        r["answers"][0]["prompt"] = "Different prompt"
+        (tmp_path / "rounds.ndjson").write_text(json.dumps(r))
+    else:
+        p = tmp_path / "plans" / item_id(comment)
+        p.mkdir(parents=True)
+        (p / "meta.json").write_text('{}')
+    save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] >= 1
+    assert all(reason in row["reason"] for row in report["items"])
+    assert snapshot(tmp_path) == before
+
+
+def test_restore_refuses_later_edits_or_corrupt_backup(tmp_path):
+    page(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    path = tmp_path / "comments.json"
+    body = path.read_bytes()
+    path.write_bytes(body + b" ")
+    with pytest.raises(ValueError, match="changed since"):
+        restore_page(tmp_path, report["backup"])
+    path.write_bytes(body)
+    (Path(report["backup"]) / "comments.json").write_text("corrupt")
+    with pytest.raises(ValueError, match="backup changed"):
+        restore_page(tmp_path, report["backup"])
+
+
+@pytest.mark.parametrize("browser,sent,branch", [(False, True, "sent_only"), (False, False, "neither")])
+def test_provenance_requires_both_independent_records(tmp_path, browser, sent, branch):
+    store, comment = page(tmp_path)
+    if not browser:
+        comment["replies"] = []
+    if not sent:
+        (tmp_path / "rounds.ndjson").unlink()
+    save(tmp_path, store)
+    report = backfill_page(tmp_path)
+    assert report["branches"] == {branch: 1}
+    assert report["counts"]["conflict"] == 1
+
+
+def test_dry_run_does_not_create_lock_and_apply_requires_existing_lock(tmp_path):
+    page(tmp_path)
+    (tmp_path / ".comments.json.lock").unlink()
+    before = snapshot(tmp_path)
+    assert backfill_page(tmp_path)["counts"]["would_file"] == 1
+    assert snapshot(tmp_path) == before
+    with pytest.raises(ValueError, match="existing .comments.json.lock"):
+        backfill_page(tmp_path, apply=True)
+    assert snapshot(tmp_path) == before
+
+
+def test_legacy_cards_report_the_same_number_as_the_page(tmp_path):
+    store, comment = page(tmp_path)
+    del comment["number"]
+    save(tmp_path, store)
+    report = backfill_page(tmp_path)
+    assert report["items"][0]["card"] == 1
+
+
+def test_archived_cards_and_corrupt_sealed_evidence(tmp_path):
+    store, comment = page(tmp_path)
+    store["archived"] = store.pop("anchors")
+    save(tmp_path, store)
+    backfill_page(tmp_path, apply=True)
+    updated = json.loads((tmp_path / "comments.json").read_text())
+    target = updated["archived"]["d:q1"][0]
+    del target["catalog_plan"]
+    plan = updated["approved_plans"][item_id(comment)]
+    revision = plan["history"][0]["evidence_revision"]
+    (tmp_path / "approval-evidence" / revision / "bundle.json").write_text("{}")
+    save(tmp_path, updated)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "changed" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+def test_cli_local_live_registry_scope_and_json(tmp_path, monkeypatch, capsys):
+    from agent_annotate import cli
+    page(tmp_path)
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [
+        ("project", "live", {"slug_dir": str(tmp_path), "pid": 123}),
+        ("project", "stopped", {"slug_dir": "/missing", "pid": 0}),
+        ("project", "archived", {"slug_dir": "/missing", "pid": 123, "archived": True})])
+    monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid == 123)
+    before = snapshot(tmp_path)
+    args = build_parser().parse_args(["plans", "backfill", "--dry-run", "--json"])
+    assert run_command(args) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["dry_run"] is True
+    assert len(report["pages"]) == 1
+    assert len(report["skipped_inactive"]) == 2
+    assert snapshot(tmp_path) == before
+    assert "plans" not in build_parser().format_help().split("positional arguments:")[-1]
+
+
+def bus_send(directory, comment, **overrides):
+    path = directory / "bus.ndjson"
+    event = {"event": "round_submitted", "by": comment["decision"]["by"],
+             "comment_ids": [comment["id"]], "ts": "2026-10-01T12:10:00Z", "version": "v1", **overrides}
+    path.write_text(json.dumps(event) + "\n")
+    return path
+
+
+@pytest.mark.parametrize("source", ["snapshot", "bus"])
+def test_both_sent_receipt_branches_qualify_without_writes(tmp_path, source):
+    _, comment = page(tmp_path)
+    bus = bus_send(tmp_path, comment)
+    if source == "bus":
+        (tmp_path / "rounds.ndjson").unlink()
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["counts"]["would_file"] == 1
+    assert report["items"][0]["sent_source"] == source
+    assert report["sent_sources"] == {source: 1}
+    assert snapshot(tmp_path) == before
+
+
+def test_vote_changed_before_bus_send_only_later_vote_is_candidate(tmp_path):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    comment["decision_history"] = [copy.deepcopy(comment["decision"])]
+    comment["decision"] = {**comment["decision"], "verdict": "select", "text": "Blue",
+                           "ts": "2026-10-01T12:02:00Z"}
+    comment["replies"].append({"author": comment["decision"]["by"], "author_email": comment["decision"]["by"],
+                               "ts": comment["decision"]["ts"], "text": "☑ Selected: Blue"})
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment, version=None)
+    (tmp_path / "current.meta.json").write_text(json.dumps({"history": [
+        {"version": "v1", "ts": "2026-10-01T09:00:00Z"},
+        {"version": "v2", "ts": "2026-10-01T13:00:00Z"}]}))
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["branches"] == {"superseded_before_send": 1, "browser_and_sent": 1}
+    assert report["counts"]["would_file"] == 1 and report["counts"]["conflict"] == 0
+    assert len(report["items"]) == 1
+    assert report["items"][0]["candidates"][0]["verdict"] == "select"
+    backfill_page(tmp_path, bus=bus, apply=True)
+    updated = json.loads((tmp_path / "comments.json").read_text())
+    plan = updated["approved_plans"][item_id(comment)]
+    assert plan["kind"] == "Decided" and plan["history"][0]["chosen_option"] == "Blue"
+
+
+def test_vote_sent_then_changed_remains_a_conflict(tmp_path):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    comment["decision_history"] = [copy.deepcopy(comment["decision"])]
+    comment["decision"] = {**comment["decision"], "text": "later approval", "ts": "2026-10-01T12:02:00Z"}
+    comment["replies"].append({"author": comment["decision"]["by"], "author_email": comment["decision"]["by"],
+                               "ts": comment["decision"]["ts"], "text": "✓ Accepted"})
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment, ts="2026-10-01T12:01:00Z")
+    with bus.open("a") as out:
+        out.write(json.dumps({"event": "round_submitted", "by": comment["decision"]["by"],
+                              "comment_ids": [comment["id"]], "ts": "2026-10-01T12:10:00Z", "version": "v1"}) + "\n")
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["counts"]["conflict"] == 2
+    assert report["branches"] == {"browser_and_sent": 2}
+
+
+@pytest.mark.parametrize("override", [
+    {"by": "other@example.com"}, {"comment_ids": ["another-card"]}, {"ts": "2026-10-01T11:00:00Z"},
+    {"answers": [{"comment_id": "card-one", "verdict": "reject"}]},
+])
+def test_bus_requires_reviewer_card_time_and_no_conflicting_answer(tmp_path, override):
+    _, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    bus = bus_send(tmp_path, comment, **override)
+    report = backfill_page(tmp_path, bus=bus)
+    assert report["branches"] == {"browser_only": 1}
+    assert report["counts"]["conflict"] == 1
+
+
+@pytest.mark.parametrize("problem", ["browser", "snapshot"])
+def test_bus_does_not_relax_browser_or_evidence_requirements(tmp_path, problem):
+    store, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    if problem == "browser":
+        comment["replies"] = []
+    else:
+        (tmp_path / "versions/v1.cards.json").unlink()
+    save(tmp_path, store)
+    bus = bus_send(tmp_path, comment)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, bus=bus, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert report["branches"] == {"sent_only" if problem == "browser" else "browser_and_sent": 1}
+    assert snapshot(tmp_path) == before
+
+
+def test_archived_bus_receipt_is_read_without_recreating_live_bus(tmp_path):
+    _, comment = page(tmp_path)
+    (tmp_path / "rounds.ndjson").unlink()
+    bus = tmp_path / "bus/project/page.ndjson"
+    archive = tmp_path / "archive"
+    archived = archive / "20261001/project/page.ndjson"
+    archived.parent.mkdir(parents=True)
+    archived.write_bytes(bus_send(tmp_path, comment).read_bytes())
+    before = snapshot(tmp_path)
+    assert backfill_page(tmp_path, bus=bus, archive=archive)["counts"]["would_file"] == 1
+    assert snapshot(tmp_path) == before
+
+
+def test_apply_refuses_symlinked_backup_root(tmp_path):
+    directory, outside = tmp_path / "page", tmp_path / "outside"
+    page(directory)
+    outside.mkdir()
+    (directory / ".plans-backfill-backups").symlink_to(outside, target_is_directory=True)
+    before = snapshot(tmp_path)
+    with pytest.raises(ValueError, match="symlink"):
+        backfill_page(directory, apply=True)
+    assert snapshot(tmp_path) == before
+    assert list(outside.iterdir()) == []
+
+
+def test_missing_historical_request_cannot_inherit_current_request(tmp_path):
+    page(tmp_path)
+    cards = tmp_path / "versions/v1.cards.json"
+    cards.write_text(json.dumps([{"number": 1, "anchor_id": "d:q1"}]))
+    os.utime(cards, (1, 1))
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "historical decision request" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("style", [".design { background: url(screen.png) }", '@import "theme.css";'])
+@pytest.mark.parametrize("sealed", [False, True])
+def test_historical_styles_cannot_depend_on_unsealed_media(tmp_path, style, sealed):
+    from agent_annotate.plans_backfill import _bundle, _prepared_bundle
+    store, comment = page(tmp_path)
+    html = tmp_path / "versions/v1.html"
+    html.write_text(f'<style>{style}</style><section id="design">The design</section>')
+    os.utime(html, (1, 1))
+    if sealed:
+        revision, writes = _prepared_bundle(_bundle(comment, "v1", html.read_text()))
+        for name, body in writes.items():
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        comment["decision"]["evidence"] = {"committed": True, "revision": revision}
+        save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "historical media" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+def test_sealed_opt_out_cannot_be_overridden_by_current_request_or_stale_link(tmp_path):
+    from agent_annotate.plans_backfill import _bundle, _prepared_bundle
+    store, comment = page(tmp_path)
+    frozen = copy.deepcopy(comment)
+    frozen["decision_request"]["catalog"] = False
+    revision, writes = _prepared_bundle(_bundle(frozen, "v1", (tmp_path / "versions/v1.html").read_text()))
+    for name, body in writes.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    comment["decision"]["evidence"] = {"committed": True, "revision": revision}
+    comment["catalog_plan"] = item_id(comment)
+    save(tmp_path, store)
+    before = snapshot(tmp_path)
+    report = backfill_page(tmp_path, apply=True)
+    assert report["counts"]["conflict"] == 1
+    assert "opted out" in report["items"][0]["reason"]
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("stage", ["style", "bundle", "comments"])
+@pytest.mark.parametrize("existing_bundle", [False, True])
+def test_restore_after_interrupted_apply_is_byte_exact(tmp_path, monkeypatch, stage, existing_bundle):
+    from agent_annotate import plans_backfill
+    page(tmp_path)
+    html = tmp_path / "versions/v1.html"
+    html.write_text('<style>.design { color: blue }</style><section id="design">Original</section>')
+    os.utime(html, (1, 1))
+    # Also exercise overwriting a pre-existing, differently serialized bundle.
+    if existing_bundle:
+        store = json.loads((tmp_path / "comments.json").read_text())
+        _, operations = plans_backfill.inspect_page(tmp_path, store)
+        _, writes = plans_backfill._prepared_bundle(operations[0][3])
+        for name, body in writes.items():
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(json.dumps(json.loads(body), indent=4).encode() if name.endswith(".json") else body)
+    before = snapshot(tmp_path)
+    atomic = plans_backfill._atomic_bytes
+
+    class Crash(BaseException):
+        pass
+
+    def interrupt(path, body):
+        atomic(path, body)
+        if ".plans-backfill-backups" in path.parts:
+            return
+        if ((stage == "style" and path.suffix == ".css")
+                or (stage == "bundle" and path.name == "bundle.json")
+                or (stage == "comments" and path.name == "comments.json")):
+            raise Crash()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(plans_backfill, "_atomic_bytes", interrupt)
+        with pytest.raises(Crash):
+            backfill_page(tmp_path, apply=True)
+    backup = next((tmp_path / ".plans-backfill-backups").iterdir())
+    restore_page(tmp_path, backup)
+    restored = {name: digest for name, digest in snapshot(tmp_path).items()
+                if not name.startswith(".plans-backfill-backups/")}
+    assert restored == before
+
+
+@pytest.mark.parametrize("action", ["apply", "restore"])
+def test_apply_and_restore_wait_for_server_lock_then_recheck(tmp_path, monkeypatch, action):
+    page(tmp_path)
+    backup = backfill_page(tmp_path, apply=True)["backup"] if action == "restore" else None
+    # A separate process models the server, using the same existing lock inode.
+    script = '''
+import fcntl, json, sys
+from pathlib import Path
+page = Path(sys.argv[1])
+with (page / ".comments.json.lock").open("r") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    print("locked", flush=True)
+    sys.stdin.readline()
+    path = page / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["d:q1"][0]["decision"]["verdict"] = "reject"
+    path.write_text(json.dumps(store))
+'''
+    child = subprocess.Popen([sys.executable, "-c", script, str(tmp_path)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    attempted = threading.Event()
+    flock = fcntl.flock
+
+    def observed_flock(file, operation):
+        attempted.set()
+        return flock(file, operation)
+
+    monkeypatch.setattr(fcntl, "flock", observed_flock)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            assert child.stdout.readline().strip() == "locked"
+            pending = pool.submit(restore_page, tmp_path, backup) if backup else pool.submit(backfill_page, tmp_path, apply=True)
+            assert attempted.wait(5)
+            assert not pending.done()
+        finally:
+            _, stderr = child.communicate(input="\n", timeout=5)
+        assert child.returncode == 0, stderr
+        if backup:
+            with pytest.raises(ValueError, match="changed since"):
+                pending.result(timeout=5)
+        else:
+            assert pending.result(timeout=5)["items"] == []
+            assert not (tmp_path / ".plans-backfill-backups").exists()
+
+
+def test_dry_run_preserves_directory_entries_and_mtimes(tmp_path):
+    _, comment = page(tmp_path)
+    bus = bus_send(tmp_path, comment)
+    def metadata():
+        return {str(p.relative_to(tmp_path)): (p.stat().st_mtime_ns, p.stat().st_mode)
+                for p in [tmp_path, *tmp_path.rglob("*")]}
+    before = metadata()
+    assert backfill_page(tmp_path, bus=bus)["counts"]["would_file"] == 1
+    assert metadata() == before
