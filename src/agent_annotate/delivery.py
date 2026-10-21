@@ -270,9 +270,12 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
             continue
         # No reviewer text in this prompt: the owner reads trusted routing
         # metadata here, then treats inbox content as reviewer data.
+        from .page_names import page_name
         from .urls import page_url, redact_review_key
-        url = redact_review_key((record.get("workspace_owner") or {}).get("url") or page_url(record))
-        prompt = (f"[annotate] Round submitted on {url or f'{project}/{slug}'}. "
+        workspace_owner = record.get("workspace_owner") or {}
+        url = redact_review_key(workspace_owner.get("url") or page_url(record))
+        name = workspace_owner.get("name") or page_name(record)
+        prompt = (f"[annotate] Round submitted on {name}{f' {url}' if url else ''}. "
                   f"Read annotate inbox {project}/{slug} --unread. "
                   "Act on every answer and note; show results on the page; "
                   "withdraw questions that no longer apply; "

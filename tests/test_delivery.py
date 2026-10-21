@@ -353,7 +353,7 @@ def test_reviewer_text_is_never_in_wakeup_prompt(estate):
     _dispatch(estate)
     prompt = _sends(estate)[0][_sends(estate)[0].index("--text") + 1]
     assert injection not in prompt
-    assert "Round submitted on proj/demo" in prompt
+    assert "Round submitted on Untitled page" in prompt
     assert "annotate inbox proj/demo --unread" in prompt
     assert "Act on every answer and note" in prompt
     assert "show results on the page" in prompt
@@ -368,7 +368,7 @@ def test_round_wakeup_uses_mounted_url_from_legacy_registry(estate):
     _append(estate, _round())
     _dispatch(estate)
     prompt = _sends(estate)[0][_sends(estate)[0].index("--text") + 1]
-    assert "Round submitted on https://page.example:8447/demo/." in prompt
+    assert "Round submitted on Untitled page https://page.example:8447/demo/." in prompt
 
 
 def test_delivery_cursor_does_not_consume_inbox_hook_or_monitor_cursors(estate):

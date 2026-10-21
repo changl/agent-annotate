@@ -240,7 +240,9 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
             page.evaluate("() => window.AA.rail.reveal()")
             page.locator('[data-section-toggle="done"]').click()
             assert_labels()
-            assert page.title() == second_title + " · Review"
+            # The page keeps the name it was first published with; a version's
+            # own title never renames it (docs/page-names.md).
+            assert page.title() == TITLE + " · Review"
             page.locator('body[data-ready="1"]').wait_for(state="attached")
             go(page, "review", v="v1")
             playwright.expect(frame.locator(".aa-page-title")).to_have_text(TITLE)

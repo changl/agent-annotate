@@ -12,6 +12,7 @@ from io import BytesIO
 from urllib.error import HTTPError, URLError
 
 import pytest
+from test_decision_api import server as server
 
 from agent_annotate import fleet
 
@@ -26,7 +27,7 @@ def _config(*targets):
 
 def _responses(**changes):
     responses = {
-        "current.meta.json": {"current": "v2", "owner": {"owner_session": "private-owner"}},
+        "current.meta.json": {"current": "v2", "name": "Operations", "owner": {"owner_session": "private-owner"}},
         "api/capabilities": {"version": "2.21.0", "runtime": {"package_version": "2.21.0", "build_id": "a" * 40},
                              "automatic_round_delivery": True, "rounds": True, "batch": True, "decision_schema": 2},
         "api/delivery": {"latest": {"state": "uncertain", "detail": "private transport error"}},
@@ -54,6 +55,7 @@ def test_collection_whitelists_runtime_owner_delivery_and_aggregates():
     result = fleet.collect_fleet(_config(), fetch=_fetch(_responses(), calls))
     row = result["targets"][0]
     assert row["current_version"] == "v2"
+    assert row["name"] == "Operations"
     assert row["package_version"] == "2.21.0" and row["build_id"] == "a" * 40
     assert row["owner_present"] is True
     assert row["latest_delivery_state"] == "uncertain"
@@ -381,3 +383,13 @@ def test_real_isolated_worker_returns_safe_failure_without_network_protocol():
     # private pipe protocol without contacting any server or provider.
     with pytest.raises(fleet.FleetFetchError, match="^unreachable$"):
         fleet.fetch_json("fleet-inert://not-a-network-host/", timeout=10, max_bytes=100)
+
+
+def test_real_isolated_worker_reads_a_reachable_sandbox_page(server):
+    httpd, directory, _ = server
+    (directory / "current.meta.json").write_text('{"current":"v1","name":"Operations"}')
+    status, body = fleet.fetch_json(
+        f"http://127.0.0.1:{httpd.server_address[1]}/current.meta.json", timeout=3,
+        max_bytes=fleet.MAX_RESPONSE_BYTES,
+    )
+    assert status == 200 and json.loads(body)["name"] == "Operations"

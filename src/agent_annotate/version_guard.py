@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 from . import __version__, paths
+from .page_names import page_name
 from .updates import build_identity, runtime_manifest
 
 OK, MISMATCH, SKIP = "OK", "MISMATCH", "SKIP"
@@ -361,13 +362,16 @@ def _page_rows(release: dict, local_only: bool, scope: tuple[str, str] | None = 
             fix = (f"kill {server['pid']} && nohup {shlex.quote(release['python'])} -I -m agent_annotate.sync_server "
                    f"{shlex.join(server['tail'])} >> {shlex.quote(str(log))} 2>&1 &")
             record = {"local_url": f"http://127.0.0.1:{server['port']}/", "port": server["port"],
+                      "slug_dir": server["slug_dir"], "pid": server["pid"],
                       "public_base_path": server["public_base_path"]}
             entries.append((None, f"{server['slug_dir']} (unregistered, pid {server['pid']})", record, fix))
     for entry in entries:
         project, slug, record = entry[:3]
         if inactive(record):
             continue
-        name = f"{project}/{slug}" if project else slug
+        name = page_name(record)
+        if project is None:
+            name += f" (unregistered, pid {record['pid']})"
         fix = entry[3] if len(entry) > 3 else _restart_fix(release, project, slug)
         if local_only:
             manifest = record.get("runtime_manifest")
@@ -416,7 +420,8 @@ def check(*, local_only: bool = False, pages: bool = True, server: tuple[str, st
         if pages:
             rows += _page_rows(release, local_only, scope)
         if server is not None:
-            rows.append(_compare("page", f"{server[0]}/{server[1]} (this server)", __version__,
+            record = next((r for p, s, r in _registry() if (p, s) == server), {})
+            rows.append(_compare("page", f"{page_name(record)} (this server)", __version__,
                                  runtime_manifest()["build_id"], release,
                                  _restart_fix(release, *server), label="this server"))
     bad = [row for row in rows if row["status"] == MISMATCH]

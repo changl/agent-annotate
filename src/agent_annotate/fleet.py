@@ -230,6 +230,9 @@ def _safe_value(value: object, pattern: re.Pattern, maximum: int = 80) -> str | 
 
 
 def _collect_target(target: dict, fetch: Fetch, timeout: float, maximum: int) -> dict:
+    # The isolated fetch worker executes this file without a package context.
+    from .page_names import validate_name
+
     documents, statuses = {}, {}
     for endpoint, path in (("meta", "current.meta.json"), ("capabilities", "api/capabilities"), ("delivery", "api/delivery")):
         documents[endpoint], statuses[endpoint] = _endpoint(fetch, target["url"] + path, timeout, maximum)
@@ -261,8 +264,13 @@ def _collect_target(target: dict, fetch: Fetch, timeout: float, maximum: int) ->
     health = "healthy" if all(status == "ok" for status in statuses.values()) else "degraded"
     if all(status in ("unreachable", "timeout", "tls_error") for status in statuses.values()):
         health = "unreachable"
+    try:
+        name = validate_name(meta.get("name") if meta else None)
+    except ValueError:
+        name = "Untitled page"
     return {
         **target,
+        "name": name,
         "current_version": _safe_value(meta.get("current"), re.compile(r"v[0-9]{1,10}\Z")) if meta else None,
         "package_version": package,
         "build_id": _safe_value(runtime.get("build_id"), _BUILD),

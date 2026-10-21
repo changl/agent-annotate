@@ -82,7 +82,8 @@ def build_server():
                 except (OSError, json.JSONDecodeError):
                     pass
             url = page_url(record)
-            pages.append({**record, "project": project, "slug": slug, "url": url,
+            from .page_names import page_name
+            pages.append({**record, "project": project, "slug": slug, "name": page_name(record), "url": url,
                           "public_url": url if record.get("transport") == "funnel" else
                           mounted_url(record.get("public_url"), record.get("public_base_path")),
                           "owner": owner_data(record), "legacy_monitor": lease})
@@ -196,7 +197,8 @@ def build_server():
         rc = cli.cmd_connect(SimpleNamespace(slug=slug, thread=thread_id, takeover=takeover))
         if rc:
             raise RuntimeError(f"Could not connect {slug!r}; annotate connect exited {rc}")
-        return f"Legacy monitor connected: {slug} to {thread_id}; durable page ownership unchanged"
+        from .page_names import page_name
+        return f"Legacy monitor connected: {page_name(_record(slug))} to {thread_id}; durable page ownership unchanged"
 
     @server.tool()
     def disconnect_page(slug: str) -> str:
@@ -205,7 +207,8 @@ def build_server():
         rc = cli.cmd_disconnect(SimpleNamespace(slug=slug))
         if rc:
             raise RuntimeError(f"Could not disconnect {slug!r}; annotate disconnect exited {rc}")
-        return f"Legacy monitor disconnected: {slug}; durable page ownership unchanged"
+        from .page_names import page_name
+        return f"Legacy monitor disconnected: {page_name(_record(slug))}; durable page ownership unchanged"
 
     return server
 

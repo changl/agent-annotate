@@ -6,13 +6,13 @@ Each decision supports a choice, Answer in words, an explanation, and a card com
 
 Library revisions preserve current text and immutable history. Findings may be marked fixed only with proof; the reviewer can reopen with an explanation while retaining earlier fix records. Plans have their own revisions and inline comments, without replacing the Review document.
 
-A second page requires --exception "REASON", explicitly requested by the orchestrator. The recorded exception appears under Linked pages. --standalone remains an alias with reason standalone; exception pages keep separate ownership.
+A second page requires --exception "REASON", explicitly requested by the orchestrator. The recorded exception is listed by name, with its reason, in the rail's Documents tab. --standalone remains an alias with reason standalone; exception pages keep separate ownership.
 
 
 ## Runtime details
 
 
-1. One page per project across sessions. Post into Review, Library, Findings, or Plans. Documents holds supporting resources; History holds past versions and rounds. A second page needs `--exception "REASON"`, explicitly requested by the orchestrator, and appears under Linked pages.
+1. One page per project across sessions. Post into Review, Library, Findings, or Plans. Documents lists the project's other pages once, by name, and its links; History holds past versions and rounds. A second page needs `--exception "REASON"`, explicitly requested by the orchestrator, and is listed in Documents.
 2. Publish supplies the URL; the agent shares it without being asked. The full Tailscale Funnel share link is canonical; explicit local setup is for development.
 3. Updates are meaningful, batched, and concise. Identical project content changes neither timestamp nor unread count. Progress does not create feedback rounds.
 4. Every decision can receive a text answer, an explanation with any choice, and a card comment, including after **the reviewere verdict**. Native controls retain their behavior. Cmd/Ctrl+Enter submits text.

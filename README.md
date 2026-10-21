@@ -23,9 +23,11 @@ annotate library my-project/workspace --from copy.json --json
 
 Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
 
+Each page owns one stable display name in `current.meta.json.name`; set or rename it with `new --title` or `publish --title`. Without an explicit name, the initial document title seeds it; later Markdown titles describe revisions. Page links, receipts, workspace JSON and session-start notices use that name. The header and browser tab title prefer project branding (`project.json.title`), then the stable page name. Use sentence case, preserving proper nouns such as **Agent Annotate**; `agent-annotate` is the package/repository identifier. New directory slugs use lowercase ASCII kebab-case from the initial name; reserve `-YYYYMMDD` for separate dated reports/events, and preserve existing routes. Parent page references derive names from their targets; see [naming and migration](docs/page-names.md).
+
 ## Review interface
 
-Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents holds supporting resources, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. `project.issue_links` maps issue ids from any tracker to URLs and makes them clickable. `project.board` (`url`, `project`, optional `label`, `prefix` and `dir`) adds a header link to the project's board with its ready count (`bd ready --json` in `dir`, or in the directory Bead Me Up Scotty lists for `project`; cached, never delaying the page), and ids with the board's prefix, such as `agent-annotate-w6e.4`, open that issue on the board.
+Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents lists the project's other pages once, by name, and its supporting links, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. `project.issue_links` maps issue ids from any tracker to URLs and makes them clickable. `project.board` (`url`, `project`, optional `label`, `prefix` and `dir`) adds a header link to the project's board with its ready count (`bd ready --json` in `dir`, or in the directory Bead Me Up Scotty lists for `project`; cached, never delaying the page), and ids with the board's prefix, such as `agent-annotate-w6e.4`, open that issue on the board.
 
 Every decision supports **Answer in words**, a note with any choice, and click-to-comment, including after changing a verdict. Choices are never preselected. **Send** submits one durable round across categories, including proposed Library revisions and reopened findings. Drafts, decisions, numbering, and history survive refreshes and handoffs.
 
@@ -35,7 +37,7 @@ Mark findings fixed only with proof. `finding --fixed N` accepts repeated `--pro
 
 `plan SLUG PLAN_ID --from plan.md|plan.html` appends an independent plan revision, optionally with `--title` and `--label`. Markdown uses the renderer and anchors from `new`; Review stays on its current version.
 
-A second page requires `--exception "REASON"`, explicitly requested by the orchestrator. Its reason and parent are recorded, and the main page lists it under Linked pages. `--standalone` remains an alias with reason `standalone`.
+A second page requires `--exception "REASON"`, explicitly requested by the orchestrator. Its reason and parent are recorded, and the main page lists it by name, with the reason, in the rail's Documents tab. `--standalone` remains an alias with reason `standalone`.
 
 MCP exposes `mark_finding_fixed`, `list_cards`, and `read_inbox`; card, inbox, and comment reads support category filters. CLI category commands support `--json`.
 

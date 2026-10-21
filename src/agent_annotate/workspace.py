@@ -175,7 +175,7 @@ def exception_reason(args) -> str | None:
     """An explicit exception, with the legacy standalone spelling preserved."""
     reason = getattr(args, "exception", None)
     if reason is not None:
-        # One line of plain text: it is shown under Linked pages.
+        # One line of plain text: it is shown under the page's name in Documents.
         reason = " ".join("".join(ch for ch in reason if ch.isprintable() or ch.isspace()).split())
         if not reason:
             raise ValueError('--exception requires a nonempty reason')
@@ -186,7 +186,8 @@ def exception_reason(args) -> str | None:
 
 
 def duplicate_message(record: dict) -> str:
-    return (f"ERROR: project page already exists: {record.get('slug') or Path(record['slug_dir']).name}\n"
+    from .page_names import page_name
+    return (f"ERROR: project page already exists: {page_name(record)}\n"
             f"  Directory: {record['slug_dir']}\n  URL: {page_url(record)}\n"
             'Post into a category of this page: Review, Library, Findings, or Plans.\n'
             'A second page requires --exception "REASON".')
@@ -282,8 +283,9 @@ def workspace_owner_record(record: dict) -> dict:
     if len(parents) != 1:
         return record
     project, slug, primary = parents[0]
+    from .page_names import page_name
     return {**record, **{key: primary.get(key) for key in OWNER_FIELDS},
-            "workspace_owner": {"project": project, "slug": slug, "url": _record_url(primary)}}
+            "workspace_owner": {"project": project, "slug": slug, "name": page_name(primary), "url": _record_url(primary)}}
 
 
 def owner_data(record: dict) -> dict | None:
@@ -303,7 +305,8 @@ def workspace_data(path: Path, project: str | None = None) -> dict:
 
     def page(item):
         name, slug, record = item
-        return {"slug": f"{name}/{slug}", "directory": record["slug_dir"], "url": page_url(record),
+        from .page_names import page_name
+        return {"slug": f"{name}/{slug}", "name": page_name(record), "directory": record["slug_dir"], "url": page_url(record),
                 "owner": owner_data(record)}
 
     return {"workspace": page(selected) if selected else None, "pages": [page(item) for item in entries]}
@@ -360,11 +363,11 @@ def cmd_workspace(args) -> int:
     if args.json:
         print(json.dumps(data))
     elif selected:
-        print(f"  Workspace: {selected['slug']}\n  Directory: {selected['directory']}\n  URL:       {selected['url']}")
+        print(f"  Workspace: {selected['name']}\n  Directory: {selected['directory']}\n  URL:       {selected['url']}")
     elif data["pages"]:
         print("Select the main page once: annotate workspace --select PROJECT/SLUG")
         for item in data["pages"]:
-            print(f"  {item['slug']}  {item['url']}")
+            print(f"  {item['name']}  {item['url']}")
     else:
         print("No project page. Create one workspace with an explicit project name.")
     return 0

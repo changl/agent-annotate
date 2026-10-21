@@ -174,7 +174,7 @@ def test_linked_exception_is_project_scoped_and_registry_based(server):
     registry.write_text(json.dumps({"project": "Rebex", "slugs": {"review": primary, "motion-lab": child}}))
     try:
         result = _call(httpd, "GET", "/api/categories")[1]
-        assert result["linked_pages"] == [{"slug": "motion-lab", "title": "Motion lab", "url": child["url"], "reason": "Interactive worksheet"}]
+        assert result["linked_pages"] == [{"slug": "motion-lab", "name": "Motion lab", "title": "Motion lab", "url": child["url"], "reason": "Interactive worksheet"}]
     finally:
         registry.unlink()
 
