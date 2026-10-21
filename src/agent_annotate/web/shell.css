@@ -78,7 +78,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 /* ── Collapsible rail (kept from 2.20: the rail must never squeeze the document) ──
    Closed, at every width, it leaves an edge strip: one button per rail tab
    (VS Code activity bar, Atlassian's 56px collapsed aside). */
-.rail-collapse svg,.rail-strip svg{display:block;width:18px;height:18px}
+.rail-collapse svg,.rail-strip svg,#unified-sheet-close svg{display:block;width:18px;height:18px}
 .rail-strip{display:none;flex-direction:column;align-items:center;gap:4px;padding:6px 0;width:48px;flex-shrink:0;background:var(--color-base-100);border-left:1px solid var(--line)}
 .rail-strip-btn{position:relative;width:44px;height:44px;color:var(--muted)}
 .rail-strip-btn:hover{color:var(--color-base-content)}
@@ -369,7 +369,7 @@ body.has-summary #send-btn{visibility:hidden}
   body.has-round-bar .drawer{padding-bottom:72px}
   .drawer-tabs .tab{min-height:44px}
   .drawer-hdr .rail-collapse{display:none}
-  #unified-sheet-close{display:flex;min-width:44px;min-height:44px;font-size:calc(22px * var(--aa-text, 1))}
+  #unified-sheet-close{display:flex;min-width:44px;min-height:44px}
   body.is-mobile-sheet-open #unified-sheet-backdrop{display:block;position:fixed;inset:0;background:var(--color-base-content);opacity:.15;z-index:190}
   /* Primer's fullscreen sidebar: under 600px the open rail takes the full width */
   @media (max-width: 599px) { .drawer,.drawer.collapsed{width:100%} }
