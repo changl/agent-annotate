@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.27.3
+
+agent-annotate-v9o follow-up (PR #50). `current.meta.json` (937 KB on FLD) and every other polled route now answer 304 with an empty body when unchanged: private strong ETags over the exact response, `Cache-Control: no-cache`. On a copy of FLD, idle poll bodies went from 244 KB/min to 0 and server CPU from 0.35 to 0.24 s/min. (2.27.2's "4.6 KB/min" left this file out.)
+
+- Every writer of comments.json replaces it atomically under the shared store lock: legacy migration no longer overwrites in place, a new page's first store appears complete, and offline close takes the server's store lock.
+
 ## 2.27.2
 
 agent-annotate-v9o: the page was slow on heavy pages (FLD: 6.4 MB store, 265 versions) and lost typed comments. On a copy of FLD, Post-to-shown went from 1,765 ms to 27 ms; idle traffic from 76.5 to 4.6 KB/min; server CPU from 8.25 to 0.23 s/min; server memory from 1.5 GB to 235 MB settled.
