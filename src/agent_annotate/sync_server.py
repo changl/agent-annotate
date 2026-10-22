@@ -866,6 +866,14 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 # Handler
 # ────────────────────────────────────────────────────────────────────────────
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
+    _store_snapshot = None
+    _store_responses = {}
+
+    def handle_one_request(self):
+        from .page_names import resolution_scope
+        with resolution_scope():
+            return super().handle_one_request()
+
     protocol_version = "HTTP/1.1"
     timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
 
@@ -1260,7 +1268,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     status = board_status(load_project(self.artifact_dir).get("board"))
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
-                return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store")
+                return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store", conditional=True)
             if route_path == "/api/copy":
                 from .copy_state import load_copy
                 try:
@@ -1272,8 +1280,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if route_path.startswith("/api/plans/"):
                 from .categories import plan_meta
                 try:
-                    meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]))
-                    return self._respond(200, json.dumps(meta).encode(), cache_control="no-store")
+                    with _locked_store(self.artifact_dir, write=False):
+                        meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]),
+                                         store=self._v2_load(read_only=True))
+                    return self._respond(200, json.dumps(meta).encode(), cache_control="no-store", conditional=True)
                 except KeyError:
                     return self._respond(404, b'{"error":"plan not found"}')
                 except (ValueError, OSError) as exc:
@@ -1293,7 +1303,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode())
             if route_path == "/comments.json":
-                return self._v2_get_store()
+                return self._v2_get_store(parsed)
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
             if route_path.lstrip("/") in _WEB_ASSETS:
@@ -1506,20 +1516,59 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _meta_path(self) -> Path:
         return self.artifact_dir / "current.meta.json"
 
-    def _v2_load(self) -> dict:
-        return _load_v2_store(self._store_path(), migrate=getattr(self, "command", "POST") not in {"GET", "HEAD"})
+    def _store_signature(self):
+        try:
+            stat = self._store_path().stat()
+            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        except FileNotFoundError:
+            return (str(self._store_path()),)
+
+    def _v2_load(self, *, read_only=False) -> dict:
+        with _locked_store(self.artifact_dir, write=False):
+            signature = self._store_signature()
+            snapshot = type(self)._store_snapshot
+            writing = getattr(self, "command", "POST") not in {"GET", "HEAD"}
+            if snapshot is None or snapshot[0] != signature or (writing and not snapshot[2]):
+                store = _load_v2_store(self._store_path(), migrate=writing)
+                snapshot = (self._store_signature(), store, writing)
+                type(self)._store_snapshot = snapshot
+            if not read_only:
+                # Transfer ownership to this locked transaction. An aborted
+                # write leaves no mutated cache: the next reader reloads disk.
+                # A durable save returns the same snapshot to the cache.
+                type(self)._store_snapshot = None
+            return snapshot[1]
 
     def _v2_save(self, store: dict) -> None:
-        if store.get("approved_plans"):
-            from .categories import _atomic_bytes
-            _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, indent=2).encode())
-            return
-        _atomic_write_json(self._store_path(), store)
+        from .categories import _atomic_bytes
+        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode())
+        type(self)._store_snapshot = (self._store_signature(), store, True)
+        type(self)._store_responses.clear()
 
-    def _v2_get_store(self):
+    def _v2_get_store(self, parsed=None):
+        poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
+        compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
-            store = self._v2_load()
-        self._respond(200, json.dumps(store, ensure_ascii=False).encode(), "application/json", conditional=True)
+            signature = self._store_signature()
+            cache = type(self)._store_responses
+            if cache.get("signature") != signature:
+                cache.clear()
+                cache["signature"] = signature
+            key = (poll, compressed)
+            if key not in cache:
+                store = self._v2_load(read_only=True)
+                if poll:
+                    # Carry provenance remains on disk and in full comments.json;
+                    # the shell does not render it. Decision history is rendered.
+                    store = {**store, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
+                                                        for comment in items]
+                                               for anchor, items in store.get(area, {}).items()}
+                                         for area in ("anchors", "archived")}}
+                body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
+                packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+                cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
+            representation = cache[key]
+        self._respond(200, b"", "application/json", conditional=True, representation=representation)
 
     def _v2_get_meta(self):
         p = self._meta_path()
@@ -1795,7 +1844,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if plan_id is None and not self._moved():
             from .approval_catalog import seal_review
             with _locked_store(self.artifact_dir, write=False):
-                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(), base)
+                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(read_only=True), base)
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
@@ -2726,8 +2775,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._v2_save(store)
             else:
                 delivery["delivery"] = "noop"
-        if flagged_ids:
-            self._wake_feedback_owner()
         print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2735,6 +2782,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": flagged_count,
             "comment_ids": flagged_ids,
         }, ensure_ascii=False).encode(), "application/json")
+        if flagged_ids:
+            self._wake_feedback_owner()
 
     def _v2_post_push_single(self, comment_id: str, parsed):
         """Flag a single comment with flagged_for_session=true."""
@@ -2769,7 +2818,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             delivery = self._compute_delivery()
             self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             self._v2_save(store)
-        self._wake_feedback_owner()
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2777,6 +2825,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": 1,
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
+        self._wake_feedback_owner()
 
     def _queue_feedback_delivery(self, delivery, comments, author, send=None, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
@@ -2800,9 +2849,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       "delivery": delivery["delivery"], **(send or {})})
 
     def _wake_feedback_owner(self):
-        if record := self._registered_record():
+        def wake():
             from .delivery import dispatch_record
-            threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
+            try:
+                if record := self._registered_record():
+                    dispatch_record(record, _monitor_project(self.bus_dir), self.slug)
+            except (OSError, ValueError, TimeoutError) as exc:
+                print(f"WARN: automatic delivery: {exc}", flush=True)
+        threading.Thread(target=wake, daemon=True).start()
 
     # `comment` is the free-text answer path; a reviewer's reply on an
     # unanswered card is recorded as one (see _v2_post_reply).
@@ -3090,6 +3144,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         recovered = True
             if recovered:
                 self._v2_save(store)
+                # The recovery checkpoint returned this object to the cache.
+                # Reclaim it before edits that a later validation may abort.
+                store = self._v2_load()
             pending = []
             reopens = []
             edits = [{"category": "library", "block_id": block["id"], "revision_id": revision["id"],
@@ -3196,20 +3253,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)
             self._v2_save(store)
 
-        def wake_owner():
-            from .delivery import dispatch_record
-            try:
-                state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
-                record = state.get("slugs", {}).get(self.slug)
-                if record:
-                    dispatch_record(record, _monitor_project(self.bus_dir), self.slug)
-            except (OSError, ValueError, TimeoutError) as exc:
-                print(f"WARN: automatic delivery: {exc}", flush=True)
-        threading.Thread(target=wake_owner, daemon=True).start()
         self._respond(200, json.dumps({"ok": True, **delivery,
                                       "comment_count": len(comment_ids), **event,
                                       "undecided_count": len(undecided_ids), **skipped},
                                      ensure_ascii=False).encode(), "application/json")
+        self._wake_feedback_owner()
 
     def _v2_post_rounds_discard(self, parsed):
         """POST /api/rounds/discard — drop the round_pending flags WITHOUT
@@ -3377,15 +3425,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 author = self._author()
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
-                counts = category_counts(self.artifact_dir, author, read_state=read)
-                plans = list_plans(self.artifact_dir)
+                store = self._v2_load(read_only=True)
+                plans = list_plans(self.artifact_dir, store=store)
+                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans)
                 category_data = load_categories(self.artifact_dir)
                 try:
                     library = load_copy(self.artifact_dir)
                 except ValueError as exc:
                     # The other tabs still count; Library reports the problem.
                     library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
-                store = self._v2_load()
                 present = {comment_category(c) for items in store["anchors"].values() for c in items}
                 available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
                              "findings": bool(category_data["findings_sets"]) or "findings" in present,
@@ -3402,7 +3450,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       "library": {"groups": library.get("groups", []),
                                   **({"error": library["error"]} if "error" in library else {})},
                       "linked_pages": links, "read_only": self._moved() is not None}
-            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store")
+            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store", conditional=True)
         except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
             # Unexpected page data is reported, never a dropped connection.
             return self._respond(400, json.dumps({"error": f"page data could not be read: {exc}"}).encode())
@@ -3732,13 +3780,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
-                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None):
+                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None,
+                 representation: tuple[bytes, bool] | None = None):
         compressible = content_type.split(";", 1)[0] in {
             "text/javascript", "application/javascript", "text/css", "text/html",
             "application/json", "image/svg+xml",
         }
         compressed = False
-        if compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
+        if representation is not None:
+            body, compressed = representation
+        elif compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
             packed = gzip.compress(body, compresslevel=6, mtime=0)
             if len(packed) < len(body):
                 body, compressed = packed, True
@@ -3807,6 +3858,9 @@ def make_handler(
     BoundHandler.local_author_name = local_author_name
     BoundHandler.proxy_urls = proxy_urls
     BoundHandler.trusted_access_origins = trusted_access_origins
+    # At most four immutable bodies: full/poll × identity/gzip, one file revision.
+    BoundHandler._store_responses = {}
+    BoundHandler._store_snapshot = None
     return BoundHandler
 
 

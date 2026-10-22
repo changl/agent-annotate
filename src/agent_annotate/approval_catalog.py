@@ -4,10 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import threading
 import uuid
 from collections import OrderedDict
 from copy import deepcopy
+from functools import lru_cache
 from html import escape, unescape
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
@@ -26,6 +28,36 @@ _MAX_VIEW_BYTES = 128 * 1024 * 1024
 
 def _digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _retained_size(value, seen=None):
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return 0
+    seen.add(id(value))
+    size = sys.getsizeof(value)
+    if isinstance(value, dict):
+        size += sum(_retained_size(k, seen) + _retained_size(v, seen) for k, v in value.items())
+    elif isinstance(value, (list, tuple)):
+        size += sum(_retained_size(v, seen) for v in value)
+    return size
+
+
+def _image_hash(path, *, fresh=False):
+    stat = path.stat()
+    if stat.st_size > 10 * 1024 * 1024:
+        raise ValueError("oversized image")
+    if fresh:
+        # Mapped writes can change bytes without changing any stat field.
+        # Vote-time integrity must not rely on a metadata cache hit.
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _cached_image_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+
+
+@lru_cache(maxsize=512)
+def _cached_image_hash(path, signature):
+    # Cache digests only for rendering; votes always verify the current bytes.
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def item_id(comment: dict) -> str:
@@ -115,10 +147,7 @@ def _pin_images(page_dir, html, base):
                 path = safe_path(page_dir, relative)
                 if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
                     raise ValueError("unsupported image")
-                if path.stat().st_size > 10 * 1024 * 1024:
-                    raise ValueError("oversized image")
-                body = path.read_bytes()
-                digest = hashlib.sha256(body).hexdigest()
+                digest = _image_hash(path)
                 name = "attachments/approval-" + digest + path.suffix.lower()
                 assets[name] = digest
                 sources[name] = relative
@@ -220,10 +249,10 @@ def seal_review(page_dir, html, version, store, base=""):
         except (OSError, ValueError, TypeError, KeyError):
             continue
     key = (str(page_dir), view)
-    size = len(html.encode())
+    entry = {"cards": snapshots, "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
+    entry["size"] = _retained_size(entry)
     with _VIEW_LOCK:
-        _VIEWS[key] = {"cards": snapshots, "size": size,
-                       "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
+        _VIEWS[key] = entry
         while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:
@@ -258,13 +287,14 @@ def persist_evidence(page_dir, comment, evidence):
     for name in bundle["assets"]:
         try:
             source = safe_path(page_dir, bundle["image_sources"][name])
-            if source.stat().st_size > 10 * 1024 * 1024:
-                raise ValueError("image oversized at vote")
-            body = source.read_bytes()
-            if hashlib.sha256(body).hexdigest() != bundle["assets"][name]:
+            digest = bundle["assets"][name]
+            if _image_hash(source, fresh=True) != digest:
                 raise ValueError("image changed since view")
             target = safe_path(page_dir, name)
-            if not target.exists():
+            if not target.exists() or _image_hash(target, fresh=True) != digest:
+                body = source.read_bytes()
+                if hashlib.sha256(body).hexdigest() != digest:
+                    raise ValueError("image changed while freezing")
                 _atomic_bytes(target, body)
         except (OSError, ValueError, KeyError):
             bundle["incomplete"].append("Image unavailable or changed since view: " + name)

@@ -1,0 +1,373 @@
+[
+  {
+    "source": "/tmp/fld-stack-round8-copy",
+    "fake_orca_calls_started": 28,
+    "comments_bytes": 4543423,
+    "fake_orca_seconds": 1,
+    "samples": 30,
+    "slowest_write": "decision accept",
+    "profile_decision_accept": "         30077 function calls (29556 primitive calls) in 0.085 seconds\n\n   Ordered by: cumulative time\n   List reduced from 325 to 30 due to restriction <30>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        1    0.000    0.000    0.085    0.085 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:1326(do_POST)\n        1    0.000    0.000    0.082    0.082 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:2900(_v2_post_decision)\n        1    0.000    0.000    0.028    0.028 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/approval_catalog.py:277(persist_evidence)\n        1    0.002    0.002    0.027    0.027 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:1526(_v2_load)\n        1    0.000    0.000    0.026    0.026 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:1542(_v2_save)\n        1    0.000    0.000    0.024    0.024 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:639(_load_v2_store)\n       80    0.000    0.000    0.022    0.000 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/approval_catalog.py:46(_image_hash)\n        5    0.000    0.000    0.021    0.004 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/__init__.py:299(loads)\n        5    0.000    0.000    0.021    0.004 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/decoder.py:333(decode)\n        5    0.021    0.004    0.021    0.004 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/decoder.py:344(raw_decode)\n        8    0.000    0.000    0.020    0.003 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/__init__.py:183(dumps)\n        8    0.000    0.000    0.020    0.003 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/encoder.py:183(encode)\n        8    0.020    0.003    0.020    0.003 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/encoder.py:205(iterencode)\n       86    0.017    0.000    0.017    0.000 {built-in method _hashlib.openssl_sha256}\n       84    0.000    0.000    0.005    0.000 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/categories.py:39(safe_path)\n       80    0.000    0.000    0.005    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:1015(read_bytes)\n        4    0.000    0.000    0.003    0.001 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:1022(read_text)\n        4    0.001    0.000    0.003    0.001 {method 'read' of '_io.TextIOWrapper' objects}\n       28    0.003    0.000    0.003    0.000 {method 'encode' of 'str' objects}\n       81    0.003    0.000    0.003    0.000 {method 'read' of '_io.BufferedReader' objects}\n        1    0.000    0.000    0.002    0.002 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/categories.py:69(_atomic_bytes)\n       87    0.002    0.000    0.002    0.000 {built-in method _io.open}\n      549    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:551(drive)\n       86    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:1005(open)\n      900    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:437(__str__)\n      316    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:519(__eq__)\n        1    0.000    0.000    0.002    0.002 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:963(_allow_request)\n        7    0.000    0.000    0.002    0.000 /Users/changlee/orca/workspaces/codex/fast-writes/src/agent_annotate/sync_server.py:587(_contained_path)\n      329    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:407(_load_parts)\n      634    0.000    0.000    0.002    0.000 /Users/changlee/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:484(_str_normcase)\n\n\n",
+    "routes": {
+      "comment create": {
+        "p50": 48.89,
+        "p95": 52.73,
+        "max": 53.87,
+        "statuses": [
+          201
+        ],
+        "body_bytes_p50": 303.0,
+        "server_cpu_p50_ms": 47.36
+      },
+      "reply": {
+        "p50": 27.67,
+        "p95": 31.97,
+        "max": 32.49,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 441.0,
+        "server_cpu_p50_ms": 26.4
+      },
+      "edit": {
+        "p50": 27.5,
+        "p95": 29.26,
+        "max": 34.94,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 581.0,
+        "server_cpu_p50_ms": 26.22
+      },
+      "comment batch": {
+        "p50": 30.24,
+        "p95": 32.91,
+        "max": 37.0,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 53.0,
+        "server_cpu_p50_ms": 28.98
+      },
+      "decision accept": {
+        "p50": 53.96,
+        "p95": 61.99,
+        "max": 78.38,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 1252.0,
+        "server_cpu_p50_ms": 52.41
+      },
+      "decision select": {
+        "p50": 52.58,
+        "p95": 61.17,
+        "max": 63.87,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 2076.0,
+        "server_cpu_p50_ms": 51.21
+      },
+      "decision reject": {
+        "p50": 27.75,
+        "p95": 29.57,
+        "max": 31.42,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 2856.0,
+        "server_cpu_p50_ms": 26.44
+      },
+      "decision comment": {
+        "p50": 27.75,
+        "p95": 32.11,
+        "max": 33.26,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 3648.0,
+        "server_cpu_p50_ms": 26.48
+      },
+      "decision changes": {
+        "p50": 27.7,
+        "p95": 34.28,
+        "max": 38.44,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 4446.0,
+        "server_cpu_p50_ms": 26.41
+      },
+      "verdict notes": {
+        "p50": 52.71,
+        "p95": 55.94,
+        "max": 59.19,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 5254.0,
+        "server_cpu_p50_ms": 51.4
+      },
+      "rounds/submit": {
+        "p50": 42.58,
+        "p95": 48.72,
+        "max": 48.74,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 394.0,
+        "server_cpu_p50_ms": 41.42
+      },
+      "immediate accept": {
+        "p50": 53.13,
+        "p95": 62.53,
+        "max": 63.11,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 6078.0,
+        "server_cpu_p50_ms": 51.51
+      },
+      "immediate select": {
+        "p50": 52.9,
+        "p95": 63.25,
+        "max": 63.51,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 6857.0,
+        "server_cpu_p50_ms": 51.5
+      },
+      "immediate reject": {
+        "p50": 28.47,
+        "p95": 30.32,
+        "max": 32.56,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 7633.0,
+        "server_cpu_p50_ms": 27.09
+      },
+      "immediate comment": {
+        "p50": 28.11,
+        "p95": 32.17,
+        "max": 34.66,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 8412.0,
+        "server_cpu_p50_ms": 26.73
+      },
+      "immediate changes": {
+        "p50": 27.96,
+        "p95": 33.5,
+        "max": 34.62,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 9197.0,
+        "server_cpu_p50_ms": 26.6
+      },
+      "push-session": {
+        "p50": 36.22,
+        "p95": 37.47,
+        "max": 42.04,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 173.0,
+        "server_cpu_p50_ms": 34.79
+      },
+      "push single": {
+        "p50": 35.54,
+        "p95": 38.55,
+        "max": 43.61,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 173.0,
+        "server_cpu_p50_ms": 34.11
+      },
+      "archive": {
+        "p50": 27.77,
+        "p95": 29.11,
+        "max": 29.16,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 764.0,
+        "server_cpu_p50_ms": 26.38
+      },
+      "restore": {
+        "p50": 27.56,
+        "p95": 28.86,
+        "max": 48.85,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 760.0,
+        "server_cpu_p50_ms": 26.22
+      },
+      "accept comment": {
+        "p50": 27.78,
+        "p95": 31.11,
+        "max": 36.23,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 916.0,
+        "server_cpu_p50_ms": 26.49
+      },
+      "rounds/discard": {
+        "p50": 4.82,
+        "p95": 5.86,
+        "max": 10.09,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 88.0,
+        "server_cpu_p50_ms": 4.28
+      },
+      "read-state write": {
+        "p50": 5.02,
+        "p95": 5.28,
+        "max": 7.26,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 56.0,
+        "server_cpu_p50_ms": 4.54
+      },
+      "seen write": {
+        "p50": 26.52,
+        "p95": 28.11,
+        "max": 28.17,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 63.0,
+        "server_cpu_p50_ms": 25.88
+      },
+      "GET /comments.json": {
+        "p50": 77.13,
+        "p95": 82.03,
+        "max": 83.82,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 4293713.0,
+        "server_cpu_p50_ms": 52.69
+      },
+      "conditional /comments.json": {
+        "p50": 3.69,
+        "p95": 4.59,
+        "max": 8.5,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 2.97
+      },
+      "GET /api/read-state": {
+        "p50": 2.12,
+        "p95": 3.85,
+        "max": 5.41,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 1096.0,
+        "server_cpu_p50_ms": 1.66
+      },
+      "conditional /api/read-state": {
+        "p50": 1.93,
+        "p95": 3.42,
+        "max": 8.07,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 1.55
+      },
+      "GET /api/categories": {
+        "p50": 26.95,
+        "p95": 29.45,
+        "max": 29.49,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 41044.0,
+        "server_cpu_p50_ms": 26.26
+      },
+      "conditional /api/categories": {
+        "p50": 26.4,
+        "p95": 29.53,
+        "max": 32.09,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 25.9
+      },
+      "GET /api/session-monitor": {
+        "p50": 1.42,
+        "p95": 1.76,
+        "max": 4.57,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 74.0,
+        "server_cpu_p50_ms": 0.88
+      },
+      "conditional /api/session-monitor": {
+        "p50": 1.25,
+        "p95": 1.82,
+        "max": 5.61,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 0.81
+      },
+      "GET /api/board": {
+        "p50": 1.87,
+        "p95": 2.33,
+        "max": 2.47,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 50.0,
+        "server_cpu_p50_ms": 1.45
+      },
+      "conditional /api/board": {
+        "p50": 1.78,
+        "p95": 2.26,
+        "max": 2.31,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 1.4
+      },
+      "GET /api/plans/benchmark": {
+        "p50": 1.42,
+        "p95": 1.8,
+        "max": 1.81,
+        "statuses": [
+          200
+        ],
+        "body_bytes_p50": 113.0,
+        "server_cpu_p50_ms": 1.01
+      },
+      "conditional /api/plans/benchmark": {
+        "p50": 1.42,
+        "p95": 1.74,
+        "max": 1.78,
+        "statuses": [
+          304
+        ],
+        "body_bytes_p50": 0.0,
+        "server_cpu_p50_ms": 1.01
+      }
+    }
+  }
+]

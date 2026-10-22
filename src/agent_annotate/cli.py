@@ -4642,6 +4642,10 @@ def cmd_addressed(args) -> int:
 
 def _registry_entries() -> list[tuple[str, str, dict]]:
     """Every registered (project, slug, record), newest state file last."""
+    from .page_names import _RESOLUTIONS
+    cache = _RESOLUTIONS.get()
+    if cache is not None and "registry" in cache:
+        return cache["registry"]
     out: list[tuple[str, str, dict]] = []
     for sf in _all_state_files():
         try:
@@ -4652,7 +4656,10 @@ def _registry_entries() -> list[tuple[str, str, dict]]:
         for slug, record in (st.get("slugs") or {}).items():
             if isinstance(record, dict):
                 out.append((project, slug, record))
-    return sorted(out, key=lambda e: (e[0], e[1]))
+    out.sort(key=lambda e: (e[0], e[1]))
+    if cache is not None:
+        cache["registry"] = out
+    return out
 
 
 def _registered_listing() -> str:
