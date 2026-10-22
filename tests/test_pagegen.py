@@ -456,6 +456,29 @@ def test_generated_page_without_decisions_can_publish_a_second_round(tmp_path):
     assert cli._carryover_blockers(slug_dir, "v2") == []
 
 
+def test_generation_exposes_only_complete_locked_initial_store(tmp_path, monkeypatch):
+    from agent_annotate import sync_server
+
+    src = tmp_path / "weekly.md"
+    src.write_text(_doc("## Progress\n\nWeekly status.\n", version="v1"), encoding="utf-8")
+    slug_dir = (tmp_path / "weekly").resolve()
+    path = slug_dir / "comments.json"
+    replaced = []
+    original = sync_server.os.replace
+
+    def replace(source, target):
+        if target == path:
+            assert not path.exists()
+            assert slug_dir / ".comments.json.lock" in sync_server._STORE_LOCAL.held
+            assert json.loads(Path(source).read_text())["schema_version"] == 2
+            replaced.append(True)
+        return original(source, target)
+
+    monkeypatch.setattr(sync_server.os, "replace", replace)
+    generate(src, slug_dir)
+    assert replaced and json.loads(path.read_text())["anchors"] == {}
+
+
 @pytest.mark.parametrize("stored", [
     '{"schema_version":2,"anchors":{"s:progress":[{"id":"feedback","text":"Keep this"}]},"archived":{}}',
     'damaged feedback awaiting recovery',

@@ -1205,12 +1205,10 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
     # Reports can have no decision cards, so the server may never write this
     # store before the next publish gate reads it. Initialize valid JSON while
     # leaving any existing feedback (including a damaged store) untouched.
-    try:
-        with (slug_dir / "comments.json").open("x", encoding="utf-8") as store:
-            json.dump({"schema_version": 2, "anchors": {}, "archived": {}}, store)
-            store.write("\n")
-    except FileExistsError:
-        pass
+    from .sync_server import _atomic_write_json, _locked_store
+    with _locked_store(slug_dir):
+        if not (slug_dir / "comments.json").exists():
+            _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
     return [v for v in prior if v != version]
 
 

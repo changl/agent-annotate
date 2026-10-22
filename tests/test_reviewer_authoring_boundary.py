@@ -191,7 +191,8 @@ def test_project_get_grants_only_transient_bounded_child_links_without_persistin
     status, _, _ = page.call("GET", "api/project")
     assert status == 403
     status, headers, data = page.call("GET", "api/project", cookie=page.cookie)
-    assert status == 200 and headers["Cache-Control"] == "no-store"
+    assert status == 200 and headers["Cache-Control"] == "private, no-cache"
+    assert "Cookie" in headers["Vary"]
     returned = {tab["id"]: tab["url"] for tab in data["tabs"]}
     assert returned["child"] == page_url(state["slugs"]["child"])
     assert returned["foreign"] == urls["foreign"] and returned["worksheet"] == urls["worksheet"]
