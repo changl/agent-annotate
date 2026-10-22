@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+agent-annotate-v9o (browser half): typed text is never lost, and polling is light.
+
+- The comment composer (a click or a selection in the document) keeps its text as a draft with where it goes: another click in the document, a re-render, a new version, a server restart or a reload no longer empties it, and after a reload it opens again. × and Esc keep the text; Cancel discards it; a failed Save reopens it with the text and the error.
+- Every draft is saved on each keystroke (was 400 ms after the last one). General feedback is one draft per document (was per version, so a reload onto a new version showed an empty box). A rail card holding a typed reply or comment stays open with its box, and its section opens, even after the agent answers or resolves it. The body strip's comment box is cleared only once its answer posted, and keeps its caret across rebuilds. Plans no longer switch to a new revision under a box being typed in or an open composer; the "Latest is …" banner offers it.
+- Comments, replies and answers show the moment they are posted (marked Sending…); a failure takes them back out and puts the text back in its box with the error.
+- Polling sends `If-None-Match` with the last ETag and keeps its data on a 304; a poll where nothing changed does no rendering. After a quiet minute it polls every 15 s, after two every 30 s; any key, click or return to the tab brings back 8 s.
+
 ## 2.27.1
 
 #38 and #39 on the agent-annotate page.
