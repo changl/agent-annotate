@@ -120,6 +120,31 @@ def _poll(page, times=1):
         page.wait_for_timeout(400)
 
 
+def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, _):
+        _poll(page)  # content bootstrap can have populated metadata content stamps
+        responses = []
+        meta_url = base + "current.meta.json"
+        page.on("response", lambda response: responses.append(response) if response.url == meta_url else None)
+        _poll(page, 2)
+        assert len(responses) == 2 and all(response.status == 304 for response in responses)
+        assert all(response.request.sizes()["responseBodySize"] == 0 for response in responses)
+        assert all(response.headers["cache-control"] == "private, no-cache" for response in responses)
+        responses.clear()
+        delivery = tmp_path / "state/deliveries/bus/items-model.json"
+        delivery.parent.mkdir(parents=True)
+        delivery.write_text(json.dumps({"deliveries": {"test": {
+            "id": "test", "state": "acknowledged", "detail": "Owner read the round"}}}))
+        _poll(page)
+        assert len(responses) == 1 and responses[0].status == 200
+        assert responses[0].json()["delivery_status"]["latest"]["state"] == "acknowledged"
+        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
+        responses.clear()
+        _poll(page)
+        assert responses and all(response.status == 304 for response in responses)
+
+
 def _blur(page):
     page.wait_for_timeout(300)  # the document's own click handling settles first
     page.evaluate("() => { document.activeElement && document.activeElement.blur(); }")

@@ -1,0 +1,125 @@
+{
+  "baseline_ref": "36c2a16 (2.27.2)",
+  "change_branch": "changl/meta-etag",
+  "server_source_sha256": "e7cf6bd3a294c72e9bb2774dbe0af8fecd5eb5e14b71a1d9948d0f749a640a97",
+  "method": {
+    "browser": "Installed Google Chrome, headless Playwright",
+    "duration": "180 elapsed seconds per revision after the first natural timer poll",
+    "execution": "Independent server/browser processes measured during overlapping windows; CPU is per-server ps time, not host CPU",
+    "isolation": "Private fixture copies, tests/conftest.py state overrides, loopback only, external browser requests blocked, Orca disabled",
+    "transport": "Sandbox Funnel registry selects the production metadata no-store branch on baseline; loopback HTTP, no live TLS/proxy changes",
+    "bytes": "Compressed response bodies and HTTP response wire bytes including headers; excludes bootstrap, TLS and TCP overhead",
+    "routes": "Five actual idle GETs observed; metadata supplies project/delivery summaries, no board configured, review document rather than plan tab",
+    "fixture_note": "The supplied copy contains 191 version files/history entries, rather than the task description's 265; source metadata 937735 B, private owner-stripped copy 936659 B",
+    "timer_note": "Unmodified 2.27.2 shell.js, actual adaptive 8/15/30 second timers, no synthetic refresh or fetch loop"
+  },
+  "before": {
+    "source_fixture": "fld-stack-round8-copy",
+    "fixture_meta_bytes": 936659,
+    "source_meta_bytes": 937735,
+    "source_meta_sha256": "99b4cbb49b097968016f59e476953e02f3781344cac1a3f3cc2ef967d545f5ea",
+    "version_files": 191,
+    "history_versions": 191,
+    "elapsed_seconds": 180.003,
+    "cpu_seconds_per_minute": 0.35,
+    "body_bytes_per_minute": 244105.71,
+    "wire_bytes_per_minute": 251845.57,
+    "poll_endpoints": {
+      "/comments.json": {
+        "body_bytes": 0,
+        "wire_bytes": 5070,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/session-monitor": {
+        "body_bytes": 0,
+        "wire_bytes": 4650,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/read-state": {
+        "body_bytes": 0,
+        "wire_bytes": 4650,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/categories": {
+        "body_bytes": 0,
+        "wire_bytes": 5055,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/current.meta.json": {
+        "body_bytes": 732330,
+        "wire_bytes": 736125,
+        "statuses": {
+          "200": 15
+        }
+      }
+    },
+    "requests_in_flight_at_end": 0,
+    "notes": "Real browser timers, warmed bootstrap excluded; private copy and isolated state, no external traffic; no synthetic polling."
+  },
+  "after": {
+    "source_fixture": "fld-stack-round8-copy",
+    "fixture_meta_bytes": 936659,
+    "source_meta_bytes": 937735,
+    "source_meta_sha256": "99b4cbb49b097968016f59e476953e02f3781344cac1a3f3cc2ef967d545f5ea",
+    "version_files": 191,
+    "history_versions": 191,
+    "elapsed_seconds": 180.003,
+    "cpu_seconds_per_minute": 0.2867,
+    "body_bytes_per_minute": 0.0,
+    "wire_bytes_per_minute": 17484.71,
+    "poll_endpoints": {
+      "/comments.json": {
+        "body_bytes": 0,
+        "wire_bytes": 10665,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/session-monitor": {
+        "body_bytes": 0,
+        "wire_bytes": 10245,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/read-state": {
+        "body_bytes": 0,
+        "wire_bytes": 10245,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/categories": {
+        "body_bytes": 0,
+        "wire_bytes": 10650,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/current.meta.json": {
+        "body_bytes": 0,
+        "wire_bytes": 10650,
+        "statuses": {
+          "304": 15
+        }
+      }
+    },
+    "requests_in_flight_at_end": 0,
+    "notes": "Real browser timers, warmed bootstrap excluded; private copy and isolated state, no external traffic; no synthetic polling."
+  },
+  "validation": {
+    "non_browser_passed": 1632,
+    "non_browser_skipped": 2,
+    "affected_browser_passed": 23,
+    "ruff": "passed",
+    "coverage": "All ten poll route families, exact representation SHA-256, gzip/identity, 304 empty bodies, meta/project/owner/delivery invalidation, auth/session isolation and key rotation, bounded cache"
+  }
+}

@@ -1,4 +1,6 @@
 """Writes commit before slow delivery; poll validators preserve auth and state."""
+import gzip
+import hashlib
 import http.client
 import json
 import os
@@ -94,11 +96,15 @@ def test_every_write_returns_while_orca_delivery_is_blocked(server):
 
 
 @pytest.mark.parametrize("encoding", ["identity", "gzip"])
-def test_six_poll_routes_revalidate_and_invalidate_on_change(server, encoding):
+def test_all_poll_routes_revalidate_and_invalidate_on_change(server, encoding):
     httpd, root, _, _ = server
-    for path in ("/comments.json", "/api/read-state", "/api/categories", "/api/session-monitor", "/api/board", "/api/plans/test"):
-        status, headers, _ = request(httpd, path, headers={"Accept-Encoding": encoding})
+    for path in ("/comments.json", "/api/read-state", "/api/categories", "/api/session-monitor", "/api/board", "/api/plans/test",
+                 "/current.meta.json", "/api/delivery", "/api/history", "/api/project"):
+        status, headers, body = request(httpd, path, headers={"Accept-Encoding": encoding})
         assert status == 200 and len(headers["ETag"]) == 66 and not headers["ETag"].startswith("W/")
+        assert headers["ETag"] == '"' + hashlib.sha256(body).hexdigest() + '"'
+        assert headers["Cache-Control"] == "private, no-cache"
+        assert "Cookie" in headers["Vary"] and "Tailscale-User-Login" in headers["Vary"]
         status, cached, body = request(httpd, path, headers={"Accept-Encoding": encoding, "If-None-Match": headers["ETag"]})
         assert status == 304 and body == b""
         assert cached["ETag"] == headers["ETag"]
@@ -245,7 +251,7 @@ def test_encoded_store_cache_retains_only_four_current_representations(server):
         assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"]
 
 
-def test_poll_validators_never_bypass_review_key_authentication(server):
+def test_poll_validators_never_bypass_review_key_authentication(server, monkeypatch):
     from agent_annotate import review_access
 
     httpd, root, _, _ = server
@@ -258,7 +264,8 @@ def test_poll_validators_never_bypass_review_key_authentication(server):
     second = review_access.issue_cookie(root, key, "Second reviewer")
     headers = {"Host": "review.example.ts.net", "Cookie": review_access.cookie_name(root) + "=" + first}
     for route in ("/comments.json", "/comments.json?view=poll", "/api/categories", "/api/read-state",
-                  "/api/session-monitor", "/api/board", "/api/plans/test"):
+                  "/api/session-monitor", "/api/board", "/api/plans/test", "/current.meta.json",
+                  "/api/delivery", "/api/history", "/api/project"):
         status, cached, _ = request(httpd, route, headers=headers)
         assert status == 200
         anonymous = {"Host": headers["Host"], "If-None-Match": cached["ETag"]}
@@ -269,3 +276,82 @@ def test_poll_validators_never_bypass_review_key_authentication(server):
         **headers, "Cookie": review_access.cookie_name(root) + "=" + second, "If-None-Match": cached["ETag"]})
     assert status == 200 and changed["ETag"] != cached["ETag"]
     assert json.loads(body)["author"] == review_access.identity(root, review_access.cookie_name(root) + "=" + second)[0]
+    monkeypatch.setattr(httpd.RequestHandlerClass, "_project_payload", lambda self: {
+        "name": self._identity()["name"], "modules": []})
+    cached = request(httpd, "/current.meta.json", headers=headers)[1]
+    status, changed, body = request(httpd, "/current.meta.json", headers={
+        **headers, "Cookie": review_access.cookie_name(root) + "=" + second, "If-None-Match": cached["ETag"]})
+    assert status == 200 and changed["ETag"] != cached["ETag"]
+    assert json.loads(body)["project_info"]["name"] == "Second reviewer"
+    assert request(httpd, "/current.meta.json", headers={**headers, "If-None-Match": cached["ETag"]})[0] == 304
+    review_access._key_path(root).unlink()
+    review_access.ensure_key(root)
+    assert request(httpd, "/current.meta.json", headers={**headers, "If-None-Match": cached["ETag"]})[0] == 403
+
+
+@pytest.mark.parametrize("encoding", ["identity", "gzip"])
+def test_meta_cache_tracks_file_and_all_injected_inputs(server, monkeypatch, encoding):
+    httpd, root, _, _ = server
+    handler = httpd.RequestHandlerClass
+    # Keep name resolution out of this probe so re-reading/re-encoding the large
+    # metadata itself can fail loudly while small live inputs are still read.
+    project = {"name": "Page", "modules": []}
+    monkeypatch.setattr(handler, "_project_payload", lambda self: dict(project))
+    latest = {"latest": None}
+    monkeypatch.setattr(delivery, "delivery_status", lambda *args: dict(latest))
+    path = root / "current.meta.json"
+    meta = json.loads(path.read_text())
+    meta["padding"] = "Large history " * 10000
+    path.write_text(json.dumps(meta))
+    headers = {"Accept-Encoding": encoding}
+    status, first, body = request(httpd, "/current.meta.json", headers=headers)
+    assert status == 200
+    assert first["ETag"] == '"' + hashlib.sha256(body).hexdigest() + '"'
+    with monkeypatch.context() as context:
+        original_dumps = json.dumps
+        original_read = type(path).read_text
+
+        def dumps(value, *args, **kwargs):
+            assert not isinstance(value, dict) or "padding" not in value, "must reuse encoded meta body"
+            return original_dumps(value, *args, **kwargs)
+
+        def read(self, *args, **kwargs):
+            assert self != path, "must reuse parsed meta"
+            return original_read(self, *args, **kwargs)
+
+        context.setattr(sync_server.json, "dumps", dumps)
+        context.setattr(type(path), "read_text", read)
+        context.setattr(sync_server.gzip, "compress", lambda *args, **kwargs: pytest.fail("must reuse compressed meta"))
+        assert request(httpd, "/current.meta.json", headers={**headers, "If-None-Match": first["ETag"]})[::2] == (304, b"")
+    etag = first["ETag"]
+
+    def changed():
+        nonlocal etag
+        status, response, body = request(httpd, "/current.meta.json", headers={**headers, "If-None-Match": etag})
+        assert status == 200 and response["ETag"] != etag
+        assert response["ETag"] == '"' + hashlib.sha256(body).hexdigest() + '"'
+        etag = response["ETag"]
+        return json.loads(gzip.decompress(body) if response.get("Content-Encoding") == "gzip" else body)
+
+    latest["latest"] = {"id": "round", "state": "acknowledged"}
+    assert changed()["delivery_status"] == latest
+    project["modules"] = ["library"]
+    assert changed()["project_info"] == project
+    state_path = root / "state/project.json"
+    registry = json.loads(state_path.read_text())
+    registry["slugs"]["page"]["owner_target"]["terminal_name"] = "Renamed terminal"
+    state_path.write_text(json.dumps(registry))
+    owner = changed()["owner"]
+    assert owner["terminal_name"] == "Renamed terminal" and "target" not in owner
+    # An atomic replacement, even preserving mtime and size, invalidates by inode/ctime.
+    original_stat = path.stat()
+    replacement = path.with_suffix(".replacement")
+    replacement.write_text(path.read_text().replace('"v1"', '"v2"'))
+    os.utime(replacement, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    replacement.replace(path)
+    assert changed()["current"] == "v2"
+    for i in range(10):
+        latest["latest"]["id"] = str(i)
+        changed()
+        assert len(handler._meta_responses) <= 4
+    assert "target" not in request(httpd, "/current.meta.json")[2].decode().split('"owner":', 1)[1]

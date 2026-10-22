@@ -1571,34 +1571,55 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, b"", "application/json", conditional=True, representation=representation)
 
     def _v2_get_meta(self):
+        from .delivery import delivery_status
+        from .workspace import owner_data
+
         p = self._meta_path()
-        if p.exists():
-            try:
-                meta = self._read_meta()
-                meta["name"] = page_name(self.artifact_dir)
-                if isinstance(meta.get("owner"), dict):
-                    target = meta["owner"].get("target") or {}
-                    if isinstance(target.get("terminal_name"), str):
-                        meta["owner"]["terminal_name"] = target["terminal_name"]
-                    meta["owner"] = {k: v for k, v in meta["owner"].items() if k != "target"}
-                from .delivery import delivery_status
+        try:
+            stat = p.stat()
+            signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        except FileNotFoundError:
+            signature = None
+        try:
+            project = self._project_payload()
+        except (OSError, ValueError):
+            project = {"name": page_name(self.artifact_dir), "modules": []}
+        injected = {"name": project["name"], "project_info": project,
+                    "delivery_status": delivery_status(_monitor_project(self.bus_dir), self.slug)}
+        owner = owner_data(self._registered_record() or {})
+        compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
+        key = (signature, json.dumps((injected, owner), sort_keys=True), compressed)
+        # Two encodings for each of at most two injected/auth contexts. Never
+        # cache a validator alone: injection changes must change the actual body.
+        with type(self)._meta_response_lock:
+            cache = type(self)._meta_responses
+            representation = cache.get(key)
+            if representation is None:
                 try:
-                    meta["project_info"] = self._project_payload()
+                    snapshot = type(self)._meta_snapshot
+                    if snapshot is None or snapshot[0] != signature:
+                        raw = json.loads(p.read_text(encoding="utf-8")) if signature is not None else {"current": "v1", "history": []}
+                        snapshot = (signature, raw)
+                        type(self)._meta_snapshot = snapshot
+                        cache.clear()
+                    meta = {**snapshot[1], **injected}
+                    if owner:
+                        meta["owner"] = owner
+                    if isinstance(meta.get("owner"), dict):
+                        target = meta["owner"].get("target") or {}
+                        meta["owner"] = dict(meta["owner"])
+                        if isinstance(target.get("terminal_name"), str):
+                            meta["owner"]["terminal_name"] = target["terminal_name"]
+                        meta["owner"] = {k: v for k, v in meta["owner"].items() if k != "target"}
+                    data = json.dumps(meta).encode()
                 except (OSError, ValueError):
-                    meta["project_info"] = {"name": meta["name"], "modules": []}
-                meta["delivery_status"] = delivery_status(_monitor_project(self.bus_dir), self.slug)
-                data = json.dumps(meta).encode()
-            except (OSError, ValueError):
-                data = b"{}"
-        else:
-            meta = {"current": "v1", "history": [], "name": page_name(self.artifact_dir)}
-            try:
-                meta["project_info"] = self._project_payload()
-            except (OSError, ValueError):
-                meta["project_info"] = {"name": meta["name"], "modules": []}
-            data = json.dumps(meta).encode()
-        self._respond(200, data, "application/json", cache_control="no-store" if self._is_funnel_origin() else "no-cache",
-                      conditional=not self._is_funnel_origin())
+                    data = b"{}"
+                packed = gzip.compress(data, compresslevel=6, mtime=0) if compressed else data
+                representation = (packed, True) if len(packed) < len(data) else (data, False)
+                if len(cache) >= 4:
+                    del cache[next(iter(cache))]
+                cache[key] = representation
+        self._respond(200, b"", representation=representation)
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -3782,6 +3803,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
                  cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None,
                  representation: tuple[bytes, bool] | None = None):
+        route = self._strip_base(urllib.parse.urlsplit(self.path).path)
+        poll = self.v2_mode and self.command in ("GET", "HEAD") and code == 200 and (
+            route in {"/comments.json", "/api/read-state", "/api/session-monitor", "/api/categories",
+                      "/api/board", "/current.meta.json", "/api/delivery", "/api/history", "/api/project"}
+            or route.startswith("/api/plans/"))
+        if poll:
+            cache_control, conditional = "private, no-cache", True
+            extra_headers = {**(extra_headers or {}), "Vary": ", ".join(filter(None, [
+                (extra_headers or {}).get("Vary"), "Cookie", *self._PROXY_MARKERS, "X-Annotate-Agent"]))}
         compressible = content_type.split(";", 1)[0] in {
             "text/javascript", "application/javascript", "text/css", "text/html",
             "application/json", "image/svg+xml",
@@ -3861,6 +3891,9 @@ def make_handler(
     # At most four immutable bodies: full/poll × identity/gzip, one file revision.
     BoundHandler._store_responses = {}
     BoundHandler._store_snapshot = None
+    BoundHandler._meta_snapshot = None
+    BoundHandler._meta_responses = {}
+    BoundHandler._meta_response_lock = threading.Lock()
     return BoundHandler
 
 
