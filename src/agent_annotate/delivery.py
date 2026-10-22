@@ -76,10 +76,10 @@ def _parent_handle(expected: str) -> str | None:
             proc = _process(pid)
             if proc and re.search(rf"(?:^|/){expected}(?:$|[.-])", proc[1]):
                 result = subprocess.run(["ps", "eww", "-p", str(pid), "-o", "command="],
-                                        capture_output=True, text=True, timeout=3)
+                                        capture_output=True, text=True, timeout=3, cwd=Path.home())
                 match = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(term_[A-Za-z0-9_-]+)(?:\s|$)", result.stdout)
                 return match[1] if match else None
-            parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="], capture_output=True, text=True, timeout=3)
+            parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="], capture_output=True, text=True, timeout=3, cwd=Path.home())
             pid = int(parent.stdout.strip())
             if pid < 2:
                 break
@@ -143,7 +143,7 @@ def capture_target(session: str, agent: str) -> dict | None:
                         "worktree": terminal["worktreeId"], "agent": expected,
                         "pid": pid, "process_start": proc[0], **display}
             parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="],
-                                    capture_output=True, text=True, timeout=3)
+                                    capture_output=True, text=True, timeout=3, cwd=Path.home())
             pid = int(parent.stdout.strip())
             if pid < 2:
                 break

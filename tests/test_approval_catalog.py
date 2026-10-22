@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from datetime import datetime, timezone
 
 import pytest
@@ -70,6 +71,42 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
     assert shown == html
     assert 'src="assets/screen.png"' in shown
     assert './' + pinned in render_plan(tmp_path, plan, "v1")
+
+
+def test_unchanged_images_reuse_hashes_but_edits_and_tampering_are_detected(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_annotate.approval_catalog import _cached_image_hash
+    _cached_image_hash.cache_clear()
+    original = tmp_path / "screen.png"
+    original.write_bytes(b"first-image")
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", '<img src="screen.png">')
+    token = seal_review(tmp_path, html, "v1", store)[1][comment["id"]]
+    decide(tmp_path, store, comment, token)
+    # Warm the frozen target's hash, then no image bytes need reading on a vote.
+    decide(tmp_path, store, comment, token)
+    reads = []
+    original_read = Path.read_bytes
+
+    def read(path):
+        reads.append(path)
+        return original_read(path)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    decide(tmp_path, store, comment, token)
+    assert reads == []
+    pinned = next((tmp_path / "attachments").glob("approval-*.png"))
+    pinned.write_bytes(b"corrupted copy")
+    decide(tmp_path, store, comment, token)
+    assert original in reads and original_read(pinned) == b"first-image"
+    reads.clear()
+    saved_stat = original.stat()
+    original.write_bytes(b"other-image")  # same length, deliberately restored mtime
+    os.utime(original, ns=(saved_stat.st_atime_ns, saved_stat.st_mtime_ns))
+    plan = decide(tmp_path, store, comment, token)
+    assert reads == [original]
+    assert "changed since view" in render_plan(tmp_path, plan, plan["current"])
 
 
 def test_stable_identity_survives_comment_recreation_and_carry():

@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from copy import deepcopy
+from functools import lru_cache
 from html import escape, unescape
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
@@ -26,6 +27,20 @@ _MAX_VIEW_BYTES = 128 * 1024 * 1024
 
 def _digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _image_hash(path):
+    stat = path.stat()
+    if stat.st_size > 10 * 1024 * 1024:
+        raise ValueError("oversized image")
+    return _cached_image_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+
+
+@lru_cache(maxsize=512)
+def _cached_image_hash(path, signature):
+    # Cache digests only, never image bytes. ctime catches edits with restored
+    # mtime; inode catches atomic replacements. Changed images are rehashed.
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def item_id(comment: dict) -> str:
@@ -115,10 +130,7 @@ def _pin_images(page_dir, html, base):
                 path = safe_path(page_dir, relative)
                 if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
                     raise ValueError("unsupported image")
-                if path.stat().st_size > 10 * 1024 * 1024:
-                    raise ValueError("oversized image")
-                body = path.read_bytes()
-                digest = hashlib.sha256(body).hexdigest()
+                digest = _image_hash(path)
                 name = "attachments/approval-" + digest + path.suffix.lower()
                 assets[name] = digest
                 sources[name] = relative
@@ -258,13 +270,14 @@ def persist_evidence(page_dir, comment, evidence):
     for name in bundle["assets"]:
         try:
             source = safe_path(page_dir, bundle["image_sources"][name])
-            if source.stat().st_size > 10 * 1024 * 1024:
-                raise ValueError("image oversized at vote")
-            body = source.read_bytes()
-            if hashlib.sha256(body).hexdigest() != bundle["assets"][name]:
+            digest = bundle["assets"][name]
+            if _image_hash(source) != digest:
                 raise ValueError("image changed since view")
             target = safe_path(page_dir, name)
-            if not target.exists():
+            if not target.exists() or _image_hash(target) != digest:
+                body = source.read_bytes()
+                if hashlib.sha256(body).hexdigest() != digest:
+                    raise ValueError("image changed while freezing")
                 _atomic_bytes(target, body)
         except (OSError, ValueError, KeyError):
             bundle["incomplete"].append("Image unavailable or changed since view: " + name)

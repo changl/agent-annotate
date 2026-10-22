@@ -866,6 +866,11 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 # Handler
 # ────────────────────────────────────────────────────────────────────────────
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        from .page_names import resolution_scope
+        with resolution_scope():
+            return super().handle_one_request()
+
     protocol_version = "HTTP/1.1"
     timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
 
@@ -1260,7 +1265,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     status = board_status(load_project(self.artifact_dir).get("board"))
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
-                return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store")
+                return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store", conditional=True)
             if route_path == "/api/copy":
                 from .copy_state import load_copy
                 try:
@@ -1273,7 +1278,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 from .categories import plan_meta
                 try:
                     meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]))
-                    return self._respond(200, json.dumps(meta).encode(), cache_control="no-store")
+                    return self._respond(200, json.dumps(meta).encode(), cache_control="no-store", conditional=True)
                 except KeyError:
                     return self._respond(404, b'{"error":"plan not found"}')
                 except (ValueError, OSError) as exc:
@@ -2726,8 +2731,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._v2_save(store)
             else:
                 delivery["delivery"] = "noop"
-        if flagged_ids:
-            self._wake_feedback_owner()
         print(f"  POST /api/push-session → {flagged_count} comment(s), {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2735,6 +2738,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": flagged_count,
             "comment_ids": flagged_ids,
         }, ensure_ascii=False).encode(), "application/json")
+        if flagged_ids:
+            self._wake_feedback_owner()
 
     def _v2_post_push_single(self, comment_id: str, parsed):
         """Flag a single comment with flagged_for_session=true."""
@@ -2769,7 +2774,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             delivery = self._compute_delivery()
             self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             self._v2_save(store)
-        self._wake_feedback_owner()
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
             "ok": True,
@@ -2777,6 +2781,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "flagged_count": 1,
             "comment_ids": [comment_id],
         }, ensure_ascii=False).encode(), "application/json")
+        self._wake_feedback_owner()
 
     def _queue_feedback_delivery(self, delivery, comments, author, send=None, **extra):
         """Explicit Send feedback uses the same durable owner outbox as Finish review."""
@@ -2800,9 +2805,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       "delivery": delivery["delivery"], **(send or {})})
 
     def _wake_feedback_owner(self):
-        if record := self._registered_record():
+        def wake():
             from .delivery import dispatch_record
-            threading.Thread(target=dispatch_record, args=(record, _monitor_project(self.bus_dir), self.slug), daemon=True).start()
+            try:
+                if record := self._registered_record():
+                    dispatch_record(record, _monitor_project(self.bus_dir), self.slug)
+            except (OSError, ValueError, TimeoutError) as exc:
+                print(f"WARN: automatic delivery: {exc}", flush=True)
+        threading.Thread(target=wake, daemon=True).start()
 
     # `comment` is the free-text answer path; a reviewer's reply on an
     # unanswered card is recorded as one (see _v2_post_reply).
@@ -3196,20 +3206,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)
             self._v2_save(store)
 
-        def wake_owner():
-            from .delivery import dispatch_record
-            try:
-                state = json.loads((STATE_DIR / f"{_monitor_project(self.bus_dir)}.json").read_text())
-                record = state.get("slugs", {}).get(self.slug)
-                if record:
-                    dispatch_record(record, _monitor_project(self.bus_dir), self.slug)
-            except (OSError, ValueError, TimeoutError) as exc:
-                print(f"WARN: automatic delivery: {exc}", flush=True)
-        threading.Thread(target=wake_owner, daemon=True).start()
         self._respond(200, json.dumps({"ok": True, **delivery,
                                       "comment_count": len(comment_ids), **event,
                                       "undecided_count": len(undecided_ids), **skipped},
                                      ensure_ascii=False).encode(), "application/json")
+        self._wake_feedback_owner()
 
     def _v2_post_rounds_discard(self, parsed):
         """POST /api/rounds/discard — drop the round_pending flags WITHOUT
@@ -3402,7 +3403,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       "library": {"groups": library.get("groups", []),
                                   **({"error": library["error"]} if "error" in library else {})},
                       "linked_pages": links, "read_only": self._moved() is not None}
-            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store")
+            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store", conditional=True)
         except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
             # Unexpected page data is reported, never a dropped connection.
             return self._respond(400, json.dumps({"error": f"page data could not be read: {exc}"}).encode())
