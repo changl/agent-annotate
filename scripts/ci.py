@@ -7,6 +7,7 @@ from pathlib import Path
 
 TESTS = (
     "tests/test_http_cache.py",
+    "tests/test_fast_writes.py",
     "tests/test_package_contract.py",
     "tests/test_skill_contract_parity.py",
     "tests/test_skillgen.py",

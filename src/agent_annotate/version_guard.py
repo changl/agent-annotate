@@ -76,7 +76,7 @@ def _package_dir(python: Path) -> Path | None:
     try:
         result = subprocess.run(
             [str(python), "-I", "-c", "import agent_annotate, os; print(os.path.dirname(agent_annotate.__file__))"],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=10, cwd=Path.home())
     except (OSError, subprocess.SubprocessError):
         return None
     found = Path(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else None
@@ -316,7 +316,7 @@ def _unregistered_servers(records: list[dict]) -> list[dict]:
     estate (a sandbox or preview with its own bus root) are not ours. Read
     from `ps`; full check only."""
     try:
-        out = subprocess.run(["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, cwd=Path.home()).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     bus_root = os.path.realpath(paths.BUS_ROOT) + os.sep

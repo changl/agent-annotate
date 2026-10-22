@@ -45,7 +45,7 @@ def project_key(path: Path) -> str | None:
         origin = config.get('remote "origin"', "url", fallback="").strip()
         if any(section.lower().startswith("include") for section in config.sections()):
             origin = subprocess.run(["git", "-C", str(directory), "config", "--get", "remote.origin.url"],
-                                    capture_output=True, text=True, timeout=3).stdout.strip()
+                                    capture_output=True, text=True, timeout=3, cwd=Path.home()).stdout.strip()
         if origin.startswith('"') and origin.endswith('"'):
             origin = origin[1:-1]
         if origin.startswith(("https://", "ssh://", "http://")):

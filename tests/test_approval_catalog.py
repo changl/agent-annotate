@@ -1,5 +1,7 @@
 import copy
 import json
+import mmap
+import os
 from datetime import datetime, timezone
 
 import pytest
@@ -70,6 +72,80 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
     assert shown == html
     assert 'src="assets/screen.png"' in shown
     assert './' + pinned in render_plan(tmp_path, plan, "v1")
+
+
+def test_votes_rehash_images_and_detect_edits_and_tampering(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_annotate.approval_catalog import _cached_image_hash
+    _cached_image_hash.cache_clear()
+    original = tmp_path / "screen.png"
+    original.write_bytes(b"first-image")
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", '<img src="screen.png">')
+    token = seal_review(tmp_path, html, "v1", store)[1][comment["id"]]
+    decide(tmp_path, store, comment, token)
+    # Warm all metadata caches; votes must still check the actual image bytes.
+    decide(tmp_path, store, comment, token)
+    reads = []
+    original_read = Path.read_bytes
+
+    def read(path):
+        reads.append(path)
+        return original_read(path)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    decide(tmp_path, store, comment, token)
+    pinned = next((tmp_path / "attachments").glob("approval-*.png"))
+    assert reads == [original, pinned]
+    pinned.write_bytes(b"corrupted copy")
+    decide(tmp_path, store, comment, token)
+    assert original in reads and original_read(pinned) == b"first-image"
+    reads.clear()
+    saved_stat = original.stat()
+    original.write_bytes(b"other-image")  # same length, deliberately restored mtime
+    os.utime(original, ns=(saved_stat.st_atime_ns, saved_stat.st_mtime_ns))
+    plan = decide(tmp_path, store, comment, token)
+    assert reads == [original]
+    assert "changed since view" in render_plan(tmp_path, plan, plan["current"])
+
+
+def test_view_budget_counts_retained_snapshot_objects(tmp_path, monkeypatch):
+    from agent_annotate import approval_catalog
+    approval_catalog._VIEWS.clear()
+    monkeypatch.setattr(approval_catalog, "_MAX_VIEW_BYTES", 2000)
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", "x" * 700)
+    assert len(html.encode()) < 2000
+    # Python requests, fragments and dictionaries exceed this budget even
+    # though the input document alone fits. Eviction uses their actual size.
+    assert seal_review(tmp_path, html, "v1", store)[1] == {}
+    assert not approval_catalog._VIEWS
+
+
+@pytest.mark.parametrize("changed", ["source", "frozen"])
+def test_vote_verifies_image_bytes_after_memory_mapped_edit(tmp_path, changed):
+    original = tmp_path / "screen.png"
+    original.write_bytes(b"first-image")
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", '<img src="screen.png">')
+    token = seal_review(tmp_path, html, "v1", store)[1][comment["id"]]
+    decide(tmp_path, store, comment, token)
+    pinned = next((tmp_path / "attachments").glob("approval-*.png"))
+    path = original if changed == "source" else pinned
+    with path.open("r+b") as file, mmap.mmap(file.fileno(), 0) as mapping:
+        # Kernels can leave both mtime and ctime unchanged on subsequent
+        # stores through the same mapping. Warm the digest after the first.
+        mapping[:] = b"first-image"
+        decide(tmp_path, store, comment, token)
+        mapping[:] = b"other-image"
+        plan = decide(tmp_path, store, comment, token)
+        if changed == "source":
+            assert "changed since view" in render_plan(tmp_path, plan, plan["current"])
+        else:
+            assert pinned.read_bytes() == b"first-image"
 
 
 def test_stable_identity_survives_comment_recreation_and_carry():

@@ -5,8 +5,22 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 from html import unescape
 from pathlib import Path
+
+_RESOLUTIONS = ContextVar("page_resolutions", default=None)
+
+
+@contextmanager
+def resolution_scope():
+    """One HTTP request sees one registry/name resolution, never stale on reuse."""
+    token = _RESOLUTIONS.set({})
+    try:
+        yield
+    finally:
+        _RESOLUTIONS.reset(token)
 
 
 def validate_name(value: str) -> str:
@@ -29,6 +43,16 @@ def page_name(record: dict | Path | str, *, fallback: str = "Untitled page") -> 
     """Resolve without writing, including legacy pages that have no saved name."""
     if not isinstance(record, dict):
         record = {"slug_dir": str(record)}
+    cache = _RESOLUTIONS.get()
+    key = ("name", str(record.get("slug_dir")), repr(record.get("title")), repr(fallback))
+    if cache is None:
+        return _page_name(record, fallback)
+    if key not in cache:
+        cache[key] = _page_name(record, fallback)
+    return cache[key]
+
+
+def _page_name(record, fallback):
     directory = record.get("slug_dir")
     if directory:
         from .cli import _read_meta

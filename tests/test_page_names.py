@@ -17,6 +17,29 @@ def snapshot(directory):
     return {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
 
 
+def test_request_resolutions_reuse_reads_and_refresh_between_requests(tmp_path, monkeypatch):
+    state = tmp_path / "registry.json"
+    meta = tmp_path / "current.meta.json"
+    state.write_text('{"slugs":{"page":{"title":"First"}}}')
+    meta.write_text('{"name":"First"}')
+    scans = []
+
+    def files():
+        scans.append(True)
+        return [state]
+    monkeypatch.setattr(cli, "_all_state_files", files)
+    for name in ("First", "Second"):
+        with page_names.resolution_scope():
+            assert cli._registry_entries()[0][2]["title"] == name
+            assert page_names.page_name(tmp_path) == name
+            state.write_text('{"slugs":{"page":{"title":"Second"}}}')
+            meta.write_text('{"name":"Second"}')
+            assert cli._registry_entries()[0][2]["title"] == name
+            assert page_names.page_name(tmp_path) == name
+    assert len(scans) == 2
+    assert page_names._RESOLUTIONS.get() is None
+
+
 def test_resolution_is_read_only_and_has_no_slug_display_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_registry_entries", lambda: [])
     record = {"slug_dir": str(tmp_path), "title": "Legacy title"}

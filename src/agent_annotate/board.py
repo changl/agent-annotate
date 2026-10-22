@@ -18,6 +18,7 @@ import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 CACHE_SECONDS = 60
 _cache: dict[tuple[str, str], dict] = {}
@@ -45,7 +46,7 @@ def ready_count(board: dict) -> int | None:
         return None
     result = subprocess.run(
         [executable, "-C", directory, "ready", "--json", "--brief", "-n", "0", "--exclude-type", "epic", "--readonly"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=60, cwd=Path.home(),
     )
     if result.returncode != 0:
         return None

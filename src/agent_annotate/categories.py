@@ -293,10 +293,10 @@ def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str)
         return comment
 
 
-def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
+def plan_meta(page_dir: Path | str, plan_id: str, *, store: dict | None = None) -> dict:
     validate_plan_id(plan_id)
     from .approval_catalog import catalog_meta
-    managed = _comments(page_dir).get("approved_plans", {}).get(plan_id)
+    managed = (store if store is not None else _comments(page_dir)).get("approved_plans", {}).get(plan_id)
     if managed:
         return catalog_meta(managed)
     path = safe_path(page_dir, f"plans/{plan_id}/meta.json")
@@ -305,16 +305,16 @@ def plan_meta(page_dir: Path | str, plan_id: str) -> dict:
     return _json(path, {})
 
 
-def list_plans(page_dir: Path | str) -> list[dict]:
+def list_plans(page_dir: Path | str, *, store: dict | None = None) -> list[dict]:
     from .approval_catalog import catalog_meta
     managed = [{"id": identifier, **catalog_meta(plan)} for identifier, plan in
-               _comments(page_dir).get("approved_plans", {}).items()]
+               (store if store is not None else _comments(page_dir)).get("approved_plans", {}).items()]
     managed.sort(key=lambda plan: plan.get("updated_at", ""), reverse=True)
     directory = safe_path(page_dir, "plans")
     if not directory.exists():
         return managed
     # A folder without meta.json (notes, a half-copied plan) is not a plan.
-    return managed + [{"id": p.name, **plan_meta(page_dir, p.name)} for p in sorted(directory.iterdir())
+    return managed + [{"id": p.name, **_json(safe_path(page_dir, f"plans/{p.name}/meta.json"), {})} for p in sorted(directory.iterdir())
             if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()
             and p.name not in {plan["id"] for plan in managed}]
 
@@ -504,10 +504,10 @@ def _follows_viewer(comment: dict) -> bool:
                 and comment.get("status") not in ("archived", "resolved_in_version", "addressed_by_agent"))
 
 
-def _current_versions(page_dir: Path | str) -> dict:
+def _current_versions(page_dir: Path | str, plans: list | None = None) -> dict:
     """The current version of each document: "review" and "plan:<id>"."""
     versions = {"review": _json(safe_path(page_dir, "current.meta.json"), {}).get("current")}
-    for plan in list_plans(page_dir):
+    for plan in plans if plans is not None else list_plans(page_dir):
         versions["plan:" + plan["id"]] = plan.get("current")
     return versions
 
@@ -520,7 +520,8 @@ def block_can_be_unread(block: dict) -> bool:
     return bool(block.get("held_note")) or later_agent
 
 
-def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None) -> dict:
+def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
+                    store: dict | None = None, plans: list | None = None) -> dict:
     from .consolidate import marker
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
@@ -528,8 +529,9 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         return counts
     read = (read_state if read_state is not None else
             _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
-    versions = _current_versions(page_dir) if author else {}
-    for items in _comments(page_dir)["anchors"].values():
+    store = _comments(page_dir) if store is None else store
+    versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
+    for items in store["anchors"].values():
         for comment in items:
             section = comment_section(comment)
             if section is None:

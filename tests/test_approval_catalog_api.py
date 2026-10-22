@@ -223,7 +223,7 @@ def test_agents_and_legacy_votes_are_not_cataloged_on_push(server, route):
     assert plans(httpd) == [] and not (directory / "approval-evidence").exists()
 
 
-def test_browser_card_text_is_ignored_and_store_mode_format_preserved(server):
+def test_browser_card_text_is_ignored_and_compact_store_permissions_preserved(server):
     httpd, directory, _ = server
     comment = seed(server)
     evidence = token(httpd, comment)
@@ -231,7 +231,7 @@ def test_browser_card_text_is_ignored_and_store_mode_format_preserved(server):
     path.chmod(0o644)
     vote(httpd, comment, evidence, shown_request={"prompt": "Invented browser prompt", "context": "Invented"})
     assert path.stat().st_mode & 0o777 == 0o644
-    assert path.read_text().startswith('{\n  "schema_version": 2,\n  "anchors": {')
+    assert path.read_text().startswith('{"schema_version":2,"anchors":{')
     plan = plans(httpd)[0]
     status, body = _call(httpd, "GET", f"/plans/{plan['id']}/v1.html")
     assert status == 200 and b"Invented" not in body and b"Rename?" in body
