@@ -1576,10 +1576,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         p = self._meta_path()
         try:
-            stat = p.stat()
-            signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            source = p.read_bytes()
         except FileNotFoundError:
-            signature = None
+            source = None
+        except OSError:
+            source = b""
+        # mmap writes can leave even nanosecond mtime/ctime unchanged. Hash the
+        # exact bytes parsed so stat races and same-size edits cannot hide changes.
+        signature = hashlib.sha256(source).digest() if source is not None else None
         try:
             project = self._project_payload()
         except (OSError, ValueError):
@@ -1599,9 +1603,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     snapshot = type(self)._meta_snapshot
                     if snapshot is None or snapshot[0] != signature:
                         try:
-                            raw = json.loads(p.read_text(encoding="utf-8")) if signature is not None else {"current": "v1", "history": []}
+                            raw = json.loads(source) if source is not None else {"current": "v1", "history": []}
                         except (OSError, ValueError):
                             raw = {}  # Keep the live summaries, as _read_meta() does.
+                        if not isinstance(raw, dict):
+                            raw = {}
                         snapshot = (signature, raw)
                         type(self)._meta_snapshot = snapshot
                         cache.clear()

@@ -122,7 +122,7 @@ def _poll(page, times=1):
 
 def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_path):
     directory = _directory(tmp_path)
-    with _session(tmp_path, directory) as (page, base, _):
+    with _session(tmp_path, directory) as (page, base, restart):
         _poll(page)  # content bootstrap can have populated metadata content stamps
         responses = []
         meta_url = base + "current.meta.json"
@@ -143,6 +143,16 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         responses.clear()
         _poll(page)
         assert responses and all(response.status == 304 for response in responses)
+        responses.clear()
+        restart()
+        _poll(page)
+        assert responses and all(response.status == 304 for response in responses)
+        responses.clear()
+        page.reload(wait_until="networkidle")
+        _loaded(page)
+        assert responses and responses[0].status == 200
+        assert "if-none-match" not in responses[0].request.headers
+        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
 
 
 def _blur(page):

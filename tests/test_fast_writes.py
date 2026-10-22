@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import http.client
 import json
+import mmap
 import os
 import threading
 import time
@@ -360,3 +361,34 @@ def test_meta_cache_tracks_file_and_all_injected_inputs(server, monkeypatch, enc
     assert fallback["project_info"] == project and fallback["delivery_status"] == latest
     path.unlink()
     assert changed()["current"] == "v1"
+
+
+@pytest.mark.parametrize("encoding", ["identity", "gzip"])
+def test_meta_cache_detects_mapped_edits_without_stat_changes(server, encoding):
+    httpd, root, _, _ = server
+    path = root / "current.meta.json"
+    path.write_text(json.dumps({"current": "v1", "history": [], "padding": "metadata " * 1000}))
+    headers = {"Accept-Encoding": encoding}
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        offset = mapped.find(b"v1")
+        mapped[offset:offset + 2] = b"v2"
+        first = request(httpd, "/current.meta.json", headers=headers)[1]
+        before = path.stat()
+        mapped[offset:offset + 2] = b"v3"
+        after = path.stat()
+        assert (before.st_mtime_ns, before.st_ctime_ns) == (after.st_mtime_ns, after.st_ctime_ns)
+        status, response, body = request(httpd, "/current.meta.json", headers={**headers, "If-None-Match": first["ETag"]})
+        assert status == 200 and response["ETag"] != first["ETag"]
+        assert json.loads(gzip.decompress(body) if response.get("Content-Encoding") == "gzip" else body)["current"] == "v3"
+
+
+@pytest.mark.parametrize("raw", ["[]", "null", '"metadata"', "42"])
+def test_non_object_meta_keeps_live_summaries(server, raw):
+    httpd, root, _, _ = server
+    (root / "current.meta.json").write_text(raw)
+    status, headers, body = request(httpd, "/current.meta.json")
+    meta = json.loads(body)
+    assert status == 200 and meta["project_info"]["name"] == meta["name"]
+    assert meta["delivery_status"] == {"latest": None}
+    assert meta["owner"]["owner_session"] == "test-owner"
+    assert request(httpd, "/current.meta.json", headers={"If-None-Match": headers["ETag"]})[0] == 304
