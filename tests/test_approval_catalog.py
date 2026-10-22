@@ -1,5 +1,6 @@
 import copy
 import json
+import mmap
 import os
 from datetime import datetime, timezone
 
@@ -73,7 +74,7 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
     assert './' + pinned in render_plan(tmp_path, plan, "v1")
 
 
-def test_unchanged_images_reuse_hashes_but_edits_and_tampering_are_detected(tmp_path, monkeypatch):
+def test_votes_rehash_images_and_detect_edits_and_tampering(tmp_path, monkeypatch):
     from pathlib import Path
 
     from agent_annotate.approval_catalog import _cached_image_hash
@@ -85,7 +86,7 @@ def test_unchanged_images_reuse_hashes_but_edits_and_tampering_are_detected(tmp_
     html = HTML.replace("Full details", '<img src="screen.png">')
     token = seal_review(tmp_path, html, "v1", store)[1][comment["id"]]
     decide(tmp_path, store, comment, token)
-    # Warm the frozen target's hash, then no image bytes need reading on a vote.
+    # Warm all metadata caches; votes must still check the actual image bytes.
     decide(tmp_path, store, comment, token)
     reads = []
     original_read = Path.read_bytes
@@ -95,8 +96,8 @@ def test_unchanged_images_reuse_hashes_but_edits_and_tampering_are_detected(tmp_
         return original_read(path)
     monkeypatch.setattr(Path, "read_bytes", read)
     decide(tmp_path, store, comment, token)
-    assert reads == []
     pinned = next((tmp_path / "attachments").glob("approval-*.png"))
+    assert reads == [original, pinned]
     pinned.write_bytes(b"corrupted copy")
     decide(tmp_path, store, comment, token)
     assert original in reads and original_read(pinned) == b"first-image"
@@ -121,6 +122,30 @@ def test_view_budget_counts_retained_snapshot_objects(tmp_path, monkeypatch):
     # though the input document alone fits. Eviction uses their actual size.
     assert seal_review(tmp_path, html, "v1", store)[1] == {}
     assert not approval_catalog._VIEWS
+
+
+@pytest.mark.parametrize("changed", ["source", "frozen"])
+def test_vote_verifies_image_bytes_after_memory_mapped_edit(tmp_path, changed):
+    original = tmp_path / "screen.png"
+    original.write_bytes(b"first-image")
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", '<img src="screen.png">')
+    token = seal_review(tmp_path, html, "v1", store)[1][comment["id"]]
+    decide(tmp_path, store, comment, token)
+    pinned = next((tmp_path / "attachments").glob("approval-*.png"))
+    path = original if changed == "source" else pinned
+    with path.open("r+b") as file, mmap.mmap(file.fileno(), 0) as mapping:
+        # Kernels can leave both mtime and ctime unchanged on subsequent
+        # stores through the same mapping. Warm the digest after the first.
+        mapping[:] = b"first-image"
+        decide(tmp_path, store, comment, token)
+        mapping[:] = b"other-image"
+        plan = decide(tmp_path, store, comment, token)
+        if changed == "source":
+            assert "changed since view" in render_plan(tmp_path, plan, plan["current"])
+        else:
+            assert pinned.read_bytes() == b"first-image"
 
 
 def test_stable_identity_survives_comment_recreation_and_carry():

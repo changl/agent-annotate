@@ -43,17 +43,20 @@ def _retained_size(value, seen=None):
     return size
 
 
-def _image_hash(path):
+def _image_hash(path, *, fresh=False):
     stat = path.stat()
     if stat.st_size > 10 * 1024 * 1024:
         raise ValueError("oversized image")
+    if fresh:
+        # Mapped writes can change bytes without changing any stat field.
+        # Vote-time integrity must not rely on a metadata cache hit.
+        return hashlib.sha256(path.read_bytes()).hexdigest()
     return _cached_image_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
 
 
 @lru_cache(maxsize=512)
 def _cached_image_hash(path, signature):
-    # Cache digests only, never image bytes. ctime catches edits with restored
-    # mtime; inode catches atomic replacements. Changed images are rehashed.
+    # Cache digests only for rendering; votes always verify the current bytes.
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -285,10 +288,10 @@ def persist_evidence(page_dir, comment, evidence):
         try:
             source = safe_path(page_dir, bundle["image_sources"][name])
             digest = bundle["assets"][name]
-            if _image_hash(source) != digest:
+            if _image_hash(source, fresh=True) != digest:
                 raise ValueError("image changed since view")
             target = safe_path(page_dir, name)
-            if not target.exists() or _image_hash(target) != digest:
+            if not target.exists() or _image_hash(target, fresh=True) != digest:
                 body = source.read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError("image changed while freezing")

@@ -3144,6 +3144,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         recovered = True
             if recovered:
                 self._v2_save(store)
+                # The recovery checkpoint returned this object to the cache.
+                # Reclaim it before edits that a later validation may abort.
+                store = self._v2_load()
             pending = []
             reopens = []
             edits = [{"category": "library", "block_id": block["id"], "revision_id": revision["id"],

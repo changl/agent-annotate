@@ -1,6 +1,7 @@
 """Writes commit before slow delivery; poll validators preserve auth and state."""
 import http.client
 import json
+import os
 import threading
 import time
 
@@ -178,3 +179,93 @@ def test_failed_write_cannot_poison_cached_snapshot_and_legacy_get_still_migrate
     status, _, body = request(httpd, "/comments.json", headers={"If-None-Match": headers["ETag"]})
     assert status == 304 and body == b""
     assert "Uncommitted" not in request(httpd, "/comments.json")[2].decode()
+
+
+def test_round_recovery_save_cannot_publish_later_uncommitted_mutations(server):
+    httpd, root, _, _ = server
+    path = root / "comments.json"
+    store = json.loads(path.read_text())
+    card = store["anchors"]["s:test"][0]
+    decision = {"id": "recovered-vote", "verdict": "accept", "by": "reviewer@example.test",
+                "ts": "2026-10-22T08:00:00Z", "round_pending": True}
+    card["decision"] = decision
+    store["anchors"]["s:test"] += [
+        {**card, "id": "archived", "status": "archived", "decision": {**decision, "id": "archived-vote"}},
+        {**card, "id": "pending", "decision": {**decision, "id": "pending-vote"}},
+    ]
+    path.write_text(json.dumps(store))
+    (root / "rounds.ndjson").write_text(json.dumps({"id": "receipt", "ts": decision["ts"], "answers": [
+        {"comment_id": card["id"], "decision_id": decision["id"], "by": decision["by"],
+         "ts": decision["ts"], "verdict": decision["verdict"]}]}) + "\n")
+    assert request(httpd, "/api/rounds/submit", "POST", {"version": "unknown"})[0] == 400
+    saved = json.loads(path.read_text())
+    assert not saved["anchors"]["s:test"][0]["decision"].get("round_pending")
+    assert saved["anchors"]["s:test"][1]["decision"]["round_pending"] is True
+    # Recovery was durable, but the rejected round's later edits were not.
+    assert json.loads(request(httpd, "/comments.json")[2]) == saved
+
+
+@pytest.mark.parametrize("replacement", ["in-place", "atomic", "recreated"])
+def test_external_same_size_store_edits_invalidate_all_representations(server, replacement):
+    httpd, root, _, _ = server
+    path = root / "comments.json"
+    variants = [(route, encoding) for route in ("/comments.json", "/comments.json?view=poll")
+                for encoding in ("identity", "gzip")]
+    before = {(route, encoding): request(httpd, route, headers={"Accept-Encoding": encoding})[1]["ETag"]
+              for route, encoding in variants}
+    previous = path.stat()
+    body = path.read_bytes().replace(b'"Choose"', b'"Newest"')
+    assert len(body) == previous.st_size
+    if replacement == "atomic":
+        temporary = path.with_suffix(".new")
+        temporary.write_bytes(body)
+        os.utime(temporary, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        temporary.replace(path)
+    else:
+        if replacement == "recreated":
+            path.unlink()
+        path.write_bytes(body)
+        os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    for route, encoding in variants:
+        status, headers, _ = request(httpd, route, headers={"Accept-Encoding": encoding,
+                                                         "If-None-Match": before[route, encoding]})
+        assert status == 200 and headers["ETag"] != before[route, encoding]
+    assert json.loads(request(httpd, "/comments.json")[2])["anchors"]["s:test"][0]["text"] == "Newest"
+
+
+def test_encoded_store_cache_retains_only_four_current_representations(server):
+    httpd, root, _, _ = server
+    for index in range(8):
+        assert request(httpd, "/api/comments/card", "PUT", {"text": f"Revision {index}"})[0] == 200
+        for route in ("/comments.json", "/comments.json?view=poll"):
+            for encoding in ("identity", "gzip"):
+                assert request(httpd, route, headers={"Accept-Encoding": encoding})[0] == 200
+        cache = httpd.RequestHandlerClass._store_responses
+        assert set(cache) == {"signature", (False, False), (False, True), (True, False), (True, True)}
+        assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"]
+
+
+def test_poll_validators_never_bypass_review_key_authentication(server):
+    from agent_annotate import review_access
+
+    httpd, root, _, _ = server
+    state = root / "state/project.json"
+    registry = json.loads(state.read_text())
+    registry["slugs"]["page"].update(transport="funnel", url="https://review.example.ts.net/")
+    state.write_text(json.dumps(registry))
+    key = review_access.ensure_key(root)
+    first = review_access.issue_cookie(root, key, "First reviewer")
+    second = review_access.issue_cookie(root, key, "Second reviewer")
+    headers = {"Host": "review.example.ts.net", "Cookie": review_access.cookie_name(root) + "=" + first}
+    for route in ("/comments.json", "/comments.json?view=poll", "/api/categories", "/api/read-state",
+                  "/api/session-monitor", "/api/board", "/api/plans/test"):
+        status, cached, _ = request(httpd, route, headers=headers)
+        assert status == 200
+        anonymous = {"Host": headers["Host"], "If-None-Match": cached["ETag"]}
+        assert request(httpd, route, headers=anonymous)[0] == 403
+        assert request(httpd, route, headers={**headers, "If-None-Match": cached["ETag"]})[0] == 304
+    cached = request(httpd, "/api/read-state", headers=headers)[1]
+    status, changed, body = request(httpd, "/api/read-state", headers={
+        **headers, "Cookie": review_access.cookie_name(root) + "=" + second, "If-None-Match": cached["ETag"]})
+    assert status == 200 and changed["ETag"] != cached["ETag"]
+    assert json.loads(body)["author"] == review_access.identity(root, review_access.cookie_name(root) + "=" + second)[0]

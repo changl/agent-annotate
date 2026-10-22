@@ -303,7 +303,7 @@ RSS rises in the compressed burst and does not return to startup size. This prov
 - Server writes use compact UTF-8 JSON, atomic replace, and file/directory fsync. There is no new database or reader format. History, permissions, Plans filing, durable rounds and uncertain-send suppression remain intact.
 - At most four encoded comments bodies are retained for one revision: full/poll × identity/gzip. Unchanged polls reuse bytes without decoding, serialization or compression. All six endpoints have strong quoted SHA-256 ETags of their actual representation. If-None-Match returns empty 304s; auth/security/cache headers remain, including existing no-store policies. Gzip/identity tags differ and Vary: Accept-Encoding remains.
 - The client should use comments.json?view=poll, send the stored ETag, and retain prior parsed data on 304 without calling response.json() or applying an update. The full endpoint stays compatible. The contract was sent to keep-drafts dispatch ctx_d94c5eac465a.
-- Evidence remains frozen at accept/select time, including deferred votes. A 512-entry digest cache invalidates on file identity/size/mtime/ctime; changed sources remain incomplete and frozen targets are checked/repaired. View byte accounting measures retained Python objects under the existing 16-view/128 MiB ceilings.
+- Evidence remains frozen at accept/select time, including deferred votes. Vote-time checks hash current image bytes, mark changed sources incomplete, and repair changed frozen targets; the 512-entry stat-keyed digest cache is used only while rendering. View byte accounting measures retained Python objects under the existing 16-view/128 MiB ceilings.
 - Push/Send persist their existing records, reply, then wake delivery in the background. Remaining server subprocesses use Path.home() as cwd. Request-local registry/name caches expire at the next request, including keep-alive.
 
 ## Profile and validation
@@ -316,6 +316,23 @@ Complete before/after cProfile traces are in v9o-server-latency.json. Separate p
 - Changed Python files pass Ruff; git diff --check passes.
 
 Existing review-key auth, Plans transactions, delivery uncertainty and browser behavior remain covered. No live restart, install, merge or release was performed.
+
+## Independent server review (2026-10-22)
+
+Reviewed PR #47 at 093598a independently; two correctness findings reproduced before fixes and now have regression tests.
+
+| Finding | Reproduction and consequence | Fix |
+|---|---|---|
+| P1: vote-time image integrity bypass | Repeated writes through a memory mapping changed image bytes on this Mac while device, inode, size, mtime_ns and ctime_ns all stayed identical. Warm source hashes allowed approval without marking changed evidence incomplete; warm frozen-target hashes left a corrupted copy untouched. Both regression variants failed before the fix. | Accept/select now hash current source and existing frozen-target bytes. Stat-based digest reuse remains confined to rendering, outside the vote-time integrity boundary. |
+| P2: round recovery exposed uncommitted edits | A prior round receipt triggers an intermediate durable save, which publishes the same mutable object to the snapshot cache. The remainder of rounds/submit clears an archived pending vote, then rejects an unknown version with HTTP 400; the next GET exposed that unsaved clearing although comments.json still contained it. The regression failed before the fix. | Reclaim the snapshot immediately after the recovery checkpoint, so an aborted continuation cannot remain cached. |
+
+Added adversarial checks for same-size writes with restored mtime, atomic replacement with restored mtime, delete/recreate, all four full/poll identity/gzip validators, four current encoded representations across eight revisions, and conditional requests across authenticated/anonymous and distinct review-key identities. All pass. The fast-write regressions are now included in the GitHub CI gate.
+
+No additional correctness finding in the reviewed paths: read authorization runs before conditional responses; author-sensitive read-state tags derive from the actual response; no shell/library/findings consumer reads carry_history; full comments.json and on-disk history retain it; compact stores remain ordinary UTF-8 JSON consumed through json.load/json.loads by eval, inbox, backfill and the baseline reader. Store and read-state locks have no reversed acquisition in these paths, and view-cache acquisition does not hold the view lock while taking the store lock. Representation retention is one revision with at most four bodies per handler; view retention remains bounded by 16 entries and 128 MiB of measured retained values, and the rendering digest cache holds at most 512 hashes. These bounds do not imply a long-term RSS guarantee or a byte ceiling on arbitrary comment-store growth.
+
+Post-fix FLD benchmark: 30 samples per route on a private copied fixture, including 40 cited 512 KiB images and a fake one-second Orca. All 24 write p95 values remain below 64 ms: accept 61.99 ms, select 61.17 ms, immediate accept 62.53 ms, and worst immediate select 63.25 ms; unchanged polls on all six routes return 304 with no body. The integrity checks deliberately read image bytes at every new accept/select. Raw measurements: v9o-review-fld-writes.json. Source comments remain 6,457,554 bytes, SHA-256 b9e68dc3d934b0a33455345bf8ad07da1ef383a3531e391792b8c77e34dc360f.
+
+Validation: full non-browser suite **1,630 passed, 2 skipped** (211.38 s); affected browser suite **26 passed** (127.82 s); focused regression suite **39 passed**; Ruff and git diff --check pass. A broader 195-case browser run was intentionally interrupted after 27 passing cases to keep browser verification scoped to these server changes; this is not a complete browser-suite result. CI now includes tests/test_fast_writes.py, and the completion receipt reports its final status. No web files, live pages, installed runtime or M5 state were changed. The parent v9o bead remains in progress for the coordinator to settle with its UI work.
 
 ## Reproduce
 
