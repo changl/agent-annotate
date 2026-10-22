@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-agent-annotate-v9o (browser half): typed text is never lost, and polling is light.
+## 2.27.2
+
+agent-annotate-v9o: the page was slow on heavy pages (FLD: 6.4 MB store, 265 versions) and lost typed comments. On a copy of FLD, Post-to-shown went from 1,765 ms to 27 ms; idle traffic from 76.5 to 4.6 KB/min; server CPU from 8.25 to 0.23 s/min; server memory from 1.5 GB to 235 MB settled.
+
+- Server: `/api/categories` and plans reuse one store snapshot instead of reparsing the whole comments.json per plan while holding the comment lock (on FLD it held the lock ~1.3 s every poll, so posts waited 1-2 s). Writes are compact JSON. The six poll endpoints answer 304 with an empty body when unchanged (strong ETags); `comments.json?view=poll` omits carry history. At most four store representations are cached, keyed by file identity. Vote-time image evidence still hashes the actual bytes. Every subprocess the server starts runs from the home directory.
 
 - The comment composer (a click or a selection in the document) keeps its text as a draft with where it goes: another click in the document, a re-render, a new version, a server restart or a reload no longer empties it, and after a reload it opens again. × and Esc keep the text; Cancel discards it; a failed Save reopens it with the text and the error.
 - Every draft is saved on each keystroke (was 400 ms after the last one). General feedback is one draft per document (was per version, so a reload onto a new version showed an empty box). A rail card holding a typed reply or comment stays open with its box, and its section opens, even after the agent answers or resolves it. The body strip's comment box is cleared only once its answer posted, and keeps its caret across rebuilds. Plans no longer switch to a new revision under a box being typed in or an open composer; the "Latest is …" banner offers it.
