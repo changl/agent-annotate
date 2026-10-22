@@ -73,7 +73,7 @@ def test_feedback_first_dense_workspace(tmp_path, width, theme):
         )
         page.reload(wait_until="networkidle")
         section(page, "ready")
-        card.locator('[data-decision-action="change"]').click()
+        # v9o: a card holding unsent text opens with it; no click needed.
         assert card.locator(".decision-say-ta").input_value() == draft
         history(page)
         module = page.locator('#project-panel-review [data-module="progress"]')

@@ -1324,21 +1324,31 @@ function swapStripItemToResolved(itemEl, verdict, deliveryMsg, pendingId) {
   }
 }
 
+// v9o: the answer shows at once. The comment box's draft is cleared only
+// once the server has the answer; a failure rebuilds the strip as it was,
+// with the text back in its box and the error under it.
 async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   pendingDecisionIds.add(id);
-  setStripItemDisabled(itemEl, true);
-  const feedback = itemEl.querySelector('.annotate-decision-feedback');
-  if (feedback) { feedback.classList.remove('is-error'); feedback.textContent = 'Sending…'; }
+  const wasChanging = stripChanging[id];
+  delete stripChanging[id];
+  swapStripItemToResolved(itemEl, verdict, null);
 
   let result = await stripApiDecision(id, verdict, text, optionId);
   if (!result || result.fallback) result = await stripApiDecisionFallback(id, verdict, text);
   pendingDecisionIds.delete(id);
+  const live = document.querySelector('[data-strip-item="' + CSS.escape(id) + '"]') || itemEl;
 
   if (!result) {
-    setStripItemDisabled(itemEl, false);
-    if (feedback) { feedback.classList.add('is-error'); feedback.textContent = 'Failed to send — try again.'; }
+    if (wasChanging) stripChanging[id] = true;
+    renderDecisionStrips();
+    renderBadges();
+    const again = document.querySelector('[data-strip-item="' + CSS.escape(id) + '"] .annotate-decision-feedback');
+    if (again) { again.classList.add('is-error'); again.textContent = 'Failed to send — try again.'; }
     return;
   }
+
+  delete stripSayText[id];
+  postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
 
   delete stripDraftText[id];
   delete stripFormOpen[id];
@@ -1353,9 +1363,9 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   // Delivery note rides on the resolved strip briefly since the swap
   // destroys the feedback node.
   if (deferred) {
-    swapStripItemToResolved(itemEl, verdict, null, id);
+    swapStripItemToResolved(live, verdict, null, id);
   } else {
-    swapStripItemToResolved(itemEl, verdict, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed');
+    swapStripItemToResolved(live, verdict, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed');
   }
   postToParent({ type: 'annotate:decision-posted', commentId: id });
 }
@@ -1763,7 +1773,9 @@ function buildDecisionItemEl(entry) {
   ta.placeholder = 'Comment (optional)';
   ta.setAttribute('aria-label', 'Comment (optional)');
   ta.dataset.stripSay = id;
-  ta.value = typeof entry.sayDraft === 'string' ? entry.sayDraft : '';
+  // The box's own last text wins over the shell's copy, which can trail it
+  // by a message when the strip is rebuilt.
+  ta.value = typeof stripSayText[id] === 'string' ? stripSayText[id] : typeof entry.sayDraft === 'string' ? entry.sayDraft : '';
   const hint = document.createElement('div');
   hint.className = 'annotate-decision-cmt-hint';
   const syncHint = () => {
@@ -1775,6 +1787,7 @@ function buildDecisionItemEl(entry) {
   ta.addEventListener('annotate-sync', syncHint);
   ta.addEventListener('input', () => {
     syncHint();
+    stripSayText[id] = ta.value;
     postToParent({ type: 'annotate:say-draft', commentId: id, text: ta.value });
   });
 
@@ -1785,15 +1798,12 @@ function buildDecisionItemEl(entry) {
     const t = (ta.value || '').trim();
     return t || null;
   };
-  const clearDraft = () => {
-    postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
-  };
 
   const isRec = o => !!rec && stripCanonicalOptionId(rec) === o.id;
   for (const o of opts) {
     if (o.id === 'accept' || o.id === 'reject') {
       const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
-      b.addEventListener('click', () => { const n = noteText(); clearDraft(); submitStripDecision(id, o.id, n, item); });
+      b.addEventListener('click', () => { submitStripDecision(id, o.id, noteText(), item); });
       btnRow.appendChild(b);
     } else if (o.id === 'comment' || o.id === 'changes') {
       // Request changes (pre-D2: Comment) still needs words.
@@ -1807,7 +1817,6 @@ function buildDecisionItemEl(entry) {
           feedback.textContent = o.id === 'changes' ? 'Say what needs to change in the box, then pick it again.' : 'Write your answer in the box, then pick it again.';
           return;
         }
-        clearDraft();
         submitStripDecision(id, o.id, n, item);
       });
       btnRow.appendChild(b);
@@ -1819,7 +1828,6 @@ function buildDecisionItemEl(entry) {
         const n = noteText();
         const v = latestSelect ? 'select' : 'comment';
         const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
-        clearDraft();
         submitStripDecision(id, v, text, item, o.id);
       });
       btnRow.appendChild(b);
@@ -2010,6 +2018,11 @@ function stripTarget(anchorId, items) {
 
 function renderDecisionStrips() {
   ensureStripStyle();
+  // v9o: a rebuild under the reviewer's typing keeps the box focused with
+  // its caret (its text is rebuilt from stripSayText).
+  const ae = document.activeElement;
+  const typing = ae && ae.matches && ae.matches('textarea[data-strip-say]')
+    ? { id: ae.dataset.stripSay, start: ae.selectionStart, end: ae.selectionEnd, dir: ae.selectionDirection } : null;
   document.querySelectorAll('[data-annotate-strip]').forEach(n => n.remove());
   // One card per question in the body. A generated card whose question the
   // interactive strip now renders is hidden (it stays in the HTML as the
@@ -2059,6 +2072,11 @@ function renderDecisionStrips() {
     sec.dataset.annotateMoved = '1';
   });
   syncAllExcerptClamps();
+  const back = typing && document.querySelector('textarea[data-strip-say="' + CSS.escape(typing.id) + '"]');
+  if (back) {
+    back.focus({ preventScroll: true });
+    try { back.setSelectionRange(typing.start, typing.end, typing.dir); } catch {}
+  }
 }
 
 // Reading order of anchors, with a question counted where its strip renders,
@@ -2510,6 +2528,7 @@ function wireBridge() {
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:say-draft-set') {
       // A1: the rail card's comment box changed; mirror it here.
+      if (data.commentId) stripSayText[data.commentId] = typeof data.text === 'string' ? data.text : '';
       document.querySelectorAll('textarea[data-strip-say]').forEach(ta => {
         if (ta.dataset.stripSay !== data.commentId || ta === document.activeElement) return;
         ta.value = typeof data.text === 'string' ? data.text : '';

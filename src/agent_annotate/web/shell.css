@@ -129,6 +129,8 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem{position:relative;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-box);padding:10px 10px 8px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s}
 .citem:hover{border-color:color-mix(in oklab,var(--color-primary) 45%,transparent)}
 .citem.hl{border-color:var(--color-primary);box-shadow:0 0 0 1px var(--color-primary)}
+/* v9o: posted, not yet confirmed by the server */
+.citem.is-pending,.thread-reply.is-pending{opacity:.6}
 .citem.decision-required{background:color-mix(in oklab,var(--color-primary) 6%,var(--color-base-100))}
 .citem-node{font-size:calc(11px * var(--aa-text, 1));font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px;min-height:22px}
 .citem-node-name{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}

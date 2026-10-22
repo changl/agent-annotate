@@ -156,28 +156,47 @@ function stepTextSize(dir) {
   applyTextSize(TEXT_SIZE);
 })();
 // T11: unposted drafts survive re-renders, VERSION SWITCHES, and reloads.
-// Keys: comment id for reply boxes, 'gf:<version>' for general feedback.
-// Drafts are kept per page and document, since two documents can share a
-// version name (Review v6, Plans v6).
+// Keys: comment id for reply boxes, 'say:<id>' for a card's comment box,
+// 'gf' for general feedback, 'pop' for the comment composer
+// ({anchorId, anchorLabel, target, version, text}). Drafts are kept per page
+// and document, since two documents can share a version name (Review v6,
+// Plans v6). v9o: every keystroke is written at once (a reload, a restart or
+// a closed tab right after typing kept nothing under the old 400 ms
+// debounce), and a draft is cleared only when its post succeeds.
 let DRAFTS = {};
-const draftsSaveTimer = {};
 function draftsKey(doc) {
   return 'annotate:drafts:' + location.pathname + ':' + (doc === 'plans' ? 'plan:' + PLAN_ID : doc);
 }
 function loadDrafts(doc) {
-  try { return JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
+  let drafts;
+  try { drafts = JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
+  // General feedback used to be kept per version ('gf:<version>'), so a new
+  // version or a reload onto the latest showed an empty box.
+  const old = Object.keys(drafts).filter(k => k.indexOf('gf:') === 0 || k.indexOf('sending:') === 0);
+  for (const k of old) {
+    if (k.indexOf('sending:') === 0) {
+      // The page closed before a post's answer: its text goes back in its
+      // box unless the server has it (the store is loaded first).
+      const key = k.slice(8);
+      if (!sentLanded(key, drafts[k])) drafts[key] = mergeDraft(drafts[key], drafts[k]);
+    } else if (!drafts.gf && drafts[k]) drafts.gf = drafts[k];
+    delete drafts[k];
+  }
+  if (old.length) try { localStorage.setItem(draftsKey(doc), JSON.stringify(drafts)); } catch {}
+  return drafts;
 }
-function saveDraftsSoon() {
-  const key = draftsKey(DOC), drafts = DRAFTS;
-  clearTimeout(draftsSaveTimer[key]);
-  draftsSaveTimer[key] = setTimeout(() => {
-    try { localStorage.setItem(key, JSON.stringify(drafts)); } catch {}
-  }, 400);
-}
+// Two tabs on one page share the key: a write changes only its own entry in
+// what is stored, so one tab never erases what the other typed.
 function setDraft(key, value) {
+  if ((DRAFTS[key] || '') === (value || '')) return;
   if (value) DRAFTS[key] = value;
   else delete DRAFTS[key];
-  saveDraftsSoon();
+  try {
+    const k = draftsKey(DOC);
+    const stored = JSON.parse(localStorage.getItem(k) || '{}') || {};
+    if (value) stored[key] = value; else delete stored[key];
+    localStorage.setItem(k, JSON.stringify(stored));
+  } catch {}
 }
 
 // ── Compact layout detection ─────────────────────────────────────────
@@ -320,13 +339,47 @@ function authorQuery() {
   return AUTHOR ? ('?author=' + encodeURIComponent(AUTHOR)) : '';
 }
 
+// ── Polled reads (v9o) ──────────────────────────────────────────────
+// Every read the 8 s poll repeats asks with the last answer's ETag, so an
+// unchanged answer is a 304 with no body; without an ETag an identical body
+// counts as unchanged too. `same` answers keep what the page already has and
+// cost no parsing or rendering; `pollChanged` records whether any read in a
+// poll brought something new (`quiet` reads handle their own changes).
+const pollLast = {};
+let pollChanged = false;
+// Posts not answered yet, each with how to put it on a fresh store (see
+// "Optimistic posts").
+const pendingEdits = new Map();
+async function pollJson(url, quiet) {
+  const last = pollLast[url];
+  const r = await fetch(apiUrl(url), { cache: 'no-store', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
+  // Read the empty 304 body: an unread one ends as an aborted request.
+  if (r.status === 304 && last) { await r.text(); return { ok: true, same: true, data: last.data }; }
+  if (!r.ok) return { ok: false, status: r.status };
+  const text = await r.text();
+  const etag = r.headers.get('ETag');
+  if (last && last.text != null && text === last.text) { last.etag = etag; return { ok: true, same: true, data: last.data }; }
+  const data = JSON.parse(text);
+  // The body is kept for comparing only when the server sends no ETag (the
+  // FLD store's text is megabytes held twice otherwise).
+  pollLast[url] = { etag, text: etag ? null : text, data };
+  if (!quiet) pollChanged = true;
+  return { ok: true, same: false, data };
+}
+
 // The page's one comment store, shared by every document and tab.
+// `view=poll` (servers from v9o on) leaves out each comment's carry_history, which
+// nothing in the browser shows (megabytes on long-lived pages); an older
+// server ignores the query and sends the whole store, which works the same.
 async function loadStore() {
   try {
-    const r = await fetch(apiUrl('./comments.json'), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return false;
-    const store = await r.json();
+    const got = await pollJson('./comments.json?view=poll');
+    if (!got.ok) return false;
+    if (got.same) return true;
+    const store = got.data;
     STORE = store && store.schema_version === 2 ? store : { schema_version: 2, anchors: {}, archived: {} };
+    // Posts still on their way stay on screen (v9o).
+    for (const apply of pendingEdits.values()) apply();
     computeNumbers();
     return true;
   } catch { return false; }
@@ -375,10 +428,11 @@ async function loadMeta() {
   const doc = DOC;
   try {
     const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
-    const r = await fetch(apiUrl(url), { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return false;
-    const meta = await r.json();
+    const got = await pollJson(url);
+    if (!got.ok) return false;
     if (doc !== DOC) return false;
+    if (got.same && (META.current || (META.history || []).length)) return true;
+    const meta = got.data;
     if (doc === 'plans') { META = { current: meta.current, history: meta.history || [], content_stamps: {}, title: meta.title }; return true; }
     if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
@@ -442,10 +496,9 @@ function readStateOf(c) {
 // Read state is per viewer and shared by every document.
 async function loadReadState() {
   try {
-    const r = await fetch(apiUrl('./api/read-state' + authorQuery()), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return false;
-    const j = await r.json();
-    READ = j.read || {};
+    const got = await pollJson('./api/read-state' + authorQuery());
+    if (!got.ok) return false;
+    if (!got.same) READ = got.data.read || {};
     return true;
   } catch { return false; }
 }
@@ -456,7 +509,7 @@ function markRead(comments) {
   const items = [];
   const now = new Date().toISOString();
   for (const c of comments) {
-    if (!c || !c.id) continue;
+    if (!c || !c.id || c.pending) continue;
     const sig = commentSig(c);
     const rec = READ[c.id];
     if (rec && rec.sig === sig) continue; // already read at this sig
@@ -712,8 +765,8 @@ async function apiPushAll(send) {
 
 async function loadSessionMonitor() {
   try {
-    const r = await fetch(apiUrl('./api/session-monitor'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-    if (r.ok) SESSION_MONITOR = await r.json();
+    const got = await pollJson('./api/session-monitor');
+    if (got.ok && !got.same) SESSION_MONITOR = got.data;
   } catch {
     SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
   }
@@ -913,9 +966,9 @@ async function loadProject() {
       return;
     }
     const doc = DOC;
-    const response = await fetch(apiUrl('./api/project'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-    if (!response.ok) return;
-    const data = await response.json();
+    const got = await pollJson('./api/project');
+    if (!got.ok || got.same) return;
+    const data = got.data;
     if (doc !== DOC) return;
     const snapshot = JSON.stringify(data);
     if (snapshot !== projectSnapshot) { PROJECT = data; projectSnapshot = snapshot; renderProject(); }
@@ -928,9 +981,10 @@ let boardFirstTries = 0;
 async function loadBoard() {
   if (!PROJECT.board) { BOARD_READY = null; return; }
   try {
-    const response = await fetch(apiUrl('./api/board'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-    if (!response.ok) return;
-    const data = await response.json();
+    // Its check time moves every minute; only the ready count matters.
+    const got = await pollJson('./api/board', true);
+    if (!got.ok) return;
+    const data = got.data;
     // The server's first count is still running: ask again soon, a few times.
     if (!data.checked_at && boardFirstTries < 8) { boardFirstTries++; setTimeout(loadBoard, 1500); }
     const ready = typeof data.ready === 'number' ? data.ready : null;
@@ -1037,9 +1091,9 @@ async function loadDelivery() {
   try {
     let data = SUMMARY_DELIVERY;
     if (!HAS_SUMMARY) {
-      const response = await fetch(apiUrl('./api/delivery'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) return;
-      data = await response.json();
+      const got = await pollJson('./api/delivery');
+      if (!got.ok || got.same) return;
+      data = got.data;
     }
     node.hidden = !data.latest;
     if (data.latest) {
@@ -1242,9 +1296,10 @@ function switchVersion(v) {
   // one URL holds several documents.
   if (window.AA) window.AA.noteVersion(DOC, v);
   renderAll();
-  // T11: the general-feedback draft is per-version
+  // v9o: one general-feedback draft per document; it goes with the version
+  // on screen at Send.
   const gf = document.getElementById('gf-ta');
-  if (gf) gf.value = DRAFTS['gf:' + v] || '';
+  if (gf) gf.value = DRAFTS.gf || '';
   renderGeneralFeedback();
   updateSendState();
 }
@@ -1417,6 +1472,10 @@ function clearSayDraft(id) {
 function hasSayDraft(c) {
   return (isUnresolvedDecision(c) || isChangingAnswer(c)) && !!sayDraft(c);
 }
+// A reply or comment typed on the card and not sent yet.
+function hasUnsentText(c) {
+  return !!((DRAFTS[c.id] || '').trim() || (DRAFTS['say:' + c.id] || '').trim());
+}
 function isChangingAnswer(c) {
   return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
 }
@@ -1450,7 +1509,7 @@ function sendables() {
     total: p.round.length + p.answers.length + p.push.length + (gf ? 1 : 0) };
 }
 function gfDraft() {
-  return CURRENT_VERSION ? (DRAFTS['gf:' + CURRENT_VERSION] || '').trim() : '';
+  return CURRENT_VERSION ? (DRAFTS.gf || '').trim() : '';
 }
 
 // final/: one count model for the whole page. docCounts() is what the
@@ -1496,6 +1555,14 @@ function renderDrawer() {
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
 
+  // v9o: a card holding unsent text stays open with its box, even after the
+  // agent answered or resolved it meanwhile (its section opens too).
+  for (const c of flattenAll(false)) {
+    if (!hasUnsentText(c)) continue;
+    cardExpanded[c.id] = true;
+    if ((DRAFTS['say:' + c.id] || '').trim() && canChangeAnswer(c) && !c.decision.pending) decisionChanging[c.id] = true;
+  }
+
   const groups = { needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
   // Feedback given on earlier versions stays listed, collapsed under
   // "Earlier feedback", instead of vanishing when a version is published.
@@ -1525,7 +1592,7 @@ function renderDrawer() {
   listEl.style.display = 'block';
 
   listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
-    const open = sectionOpen(k);
+    const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
     const badgeCls = k === 'needs' ? 'badge-error' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
@@ -2035,6 +2102,8 @@ function newerLocationHtml(c) {
 // "Show more" / "Show less" (as on quoted excerpts) appears only when the
 // clamp cuts the text off (see syncExcerptClamps).
 const commentTextOpen = {};
+// v9o: the error of a reply that failed.
+const replyError = {};
 function commentTextHtml(c) {
   const text = String(c.text == null ? '' : c.text);
   if (text.length < 400 && (text.match(/\n/g) || []).length < 10) return `<div class="citem-txt">${ticketsHTML(text)}</div>`;
@@ -2079,8 +2148,8 @@ function renderCItem(c) {
   const replies = (c.replies || []).filter(r => !(d && r.ts === d.ts && r.author === d.by &&
     (r.text === generatedAnswer || r.text.startsWith(generatedAnswer + '\n\n(revised verdict'))));
   const renderReply = r => `
-    <div class="thread-reply">
-      <div class="thread-reply-hdr">${esc(authorLabel(r))} &middot; ${esc(fmtTs(r.ts))}</div>
+    <div class="thread-reply${r.pending ? ' is-pending' : ''}">
+      <div class="thread-reply-hdr">${esc(authorLabel(r))} &middot; ${r.pending ? 'Sending…' : esc(fmtTs(r.ts))}</div>
       <div>${ticketsHTML(r.text)}</div>
     </div>`;
   let replyHtml = '';
@@ -2103,7 +2172,7 @@ function renderCItem(c) {
     <div class="reply-form">
       <textarea class="textarea textarea-sm reply-ta" data-reply-for="${escAttr(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
       <button class="btn btn-sm reply-submit" data-action="reply" data-id="${escAttr(c.id)}">Post reply</button>
-    </div>` : '';
+    </div>${replyError[c.id] ? `<div class="decision-feedback is-error" role="alert">${esc(replyError[c.id])}</div>` : ''}` : '';
 
   // Location: always visible, never a silent no-op (2.20). C2: decision
   // cards carry "Open in document" on their quoted excerpt instead.
@@ -2129,13 +2198,13 @@ function renderCItem(c) {
   const newerHtml = newerLocationHtml(c);
   const navKeys = showKbd(c) ? '<span class="citem-kbd"><kbd class="kbd kbd-xs" title="Previous card">A</kbd><kbd class="kbd kbd-xs" title="Next card">F</kbd></span>' : '';
 
-  return `<div class="citem${hl}${unreadCls}${decisionCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
+  return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
       ${unreadDotHtml(c)}
       <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
-      ${navKeys}${collapseHtml}${cardMenuHtml(c, cls)}
+      ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
-    ${cardMenuPanel(c, cls)}
+    ${c.pending ? '' : cardMenuPanel(c, cls)}
     ${locHtml}
     ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
     ${agentReplyHtml}
@@ -2143,7 +2212,7 @@ function renderCItem(c) {
     ${quoteHtml}${newerHtml}
     <div class="citem-meta">
       <span class="citem-author">${esc(authorLabel(c))}</span>
-      <span>${fmtTs(c.created_at)}${c.edited_at ? ' (edited)' : ''}</span>
+      <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')}</span>
     </div>
     ${decisionHtml}
     ${replyFormHtml}
@@ -2286,16 +2355,39 @@ function wireCardActions(root) {
   })));
   root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const ta = root.querySelector('[data-reply-for="' + cssEsc(btn.dataset.id) + '"]');
+    const id = btn.dataset.id;
+    const ta = root.querySelector('[data-reply-for="' + cssEsc(id) + '"]');
     const text = (ta && ta.value || '').trim();
-    if (!text) { if (ta) ta.focus(); return; }
-    const posted = await apiReply(btn.dataset.id, text);
-    if (posted) {
-      if (ta) ta.value = '';
-      setDraft(btn.dataset.id, '');
+    const c = storedComment(id);
+    if (!text || !c) { if (ta) ta.focus(); return; }
+    // v9o: the reply shows at once, marked Sending…, and the box is free for
+    // the next one; the text waits as a 'sending:' draft until the server has
+    // it, and a failure puts it back in the box (ahead of anything newer).
+    const reply = { text, author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email, ts: new Date().toISOString(), pending: true };
+    const unpost = () => [c, storedComment(id)].forEach(cur => { const i = cur ? (cur.replies || []).indexOf(reply) : -1; if (i !== -1) cur.replies.splice(i, 1); });
+    addPendingEdit(reply, () => { const cur = storedComment(id); if (cur && !(cur.replies || []).includes(reply)) (cur.replies = cur.replies || []).push(reply); });
+    setDraft('sending:' + id, text);
+    setDraft(id, '');
+    ta.value = '';
+    delete replyError[id];
+    renderDrawer();
+    let posted = await settlePending(apiReply(id, text));
+    pendingEdits.delete(reply);
+    unpost();
+    // An answer lost on the way back: the server may have the reply anyway.
+    if (!posted && await loadStore()) posted = sentLanded(id, text);
+    setDraft('sending:' + id, '');
+    if (!posted) {
+      const merged = mergeDraft(DRAFTS[id], text);
+      setDraft(id, merged);
+      const box = document.querySelector('#comment-list [data-reply-for="' + cssEsc(id) + '"]');
+      if (box) box.value = merged;
+      replyError[id] = 'Reply not sent — the server did not answer. Your text is still in the box; try again.';
+      renderDrawer();
+      return;
     }
     await refreshStore();
-    markReadAfterAction(btn.dataset.id);
+    markReadAfterAction(id);
   }));
 }
 
@@ -2318,12 +2410,41 @@ function decisionCommentText(root, id) {
   return t || null;
 }
 
+// v9o: the answer shows at once (the card, its strip and the counts); the
+// comment box keeps its draft until the server has the answer, and a failure
+// puts the card back as it was, text included.
 async function submitDecision(root, id, verdict, text, optionId) {
   setDecisionButtonsDisabled(root, id, true);
   setDecisionFeedback(root, id, 'Sending…', false);
-  let result = await apiDecision(id, verdict, text, optionId);
-  if (!result || result.fallback) result = await apiDecisionFallback(id, verdict, text);
+  const c = storedComment(id);
+  const was = c && { changing: decisionChanging[id], expanded: cardExpanded[id] };
+  const optimistic = { verdict, text: text || undefined, option_id: optionId, by: IDENTITY ? IDENTITY.email : AUTHOR,
+    ts: new Date().toISOString(), round_pending: roundsEnabled(), pending: true };
+  // The card it went on and what it replaced (a store read meanwhile puts
+  // it on the fresh copy of the card).
+  let holder = null, prior = null;
+  if (c) {
+    addPendingEdit(optimistic, () => {
+      const cur = storedComment(id);
+      if (cur && cur.decision !== optimistic) { holder = cur; prior = cur.decision; cur.decision = optimistic; }
+    });
+    delete decisionChanging[id];
+    renderDrawer();
+    sendCommentCountsToFrame();
+    updateSendState();
+  }
+  let result = await settlePending(apiDecision(id, verdict, text, optionId));
+  if (!result || result.fallback) result = await settlePending(apiDecisionFallback(id, verdict, text));
+  pendingEdits.delete(optimistic);
   if (!result) {
+    if (c) {
+      if (holder && holder.decision === optimistic) holder.decision = prior;
+      if (was.changing) decisionChanging[id] = true;
+      if (was.expanded) cardExpanded[id] = true;
+      renderDrawer();
+      sendCommentCountsToFrame();
+      updateSendState();
+    }
     setDecisionFeedback(root, id, 'Failed to send — try again.', true);
     setDecisionButtonsDisabled(root, id, false);
     return null;
@@ -2479,25 +2600,53 @@ function wireTabs() {
 let pendingAnchor = null; // {anchorId, anchorLabel, target}
 let editingCommentId = null;
 
+// v9o: the composer's text is the 'pop' draft, saved with where it goes on
+// every keystroke. A click elsewhere in the document, a re-render, a new
+// version, a restart or a reload never empties it: until Save succeeds or
+// Cancel is pressed, any click that would open a composer opens this one.
+function popDraft() {
+  const d = DRAFTS.pop;
+  return d && typeof d === 'object' && d.text ? d : null;
+}
 function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
   if (pageReadOnly()) return;
   if (!IDENTITY) {
     updateAuthorIndicator();
     return;
   }
-  pendingAnchor = { anchorId, anchorLabel, target: target || null };
-  editingCommentId = null;
   const pop = document.getElementById('popover');
+  const ta = document.getElementById('pop-ta');
+  const kept = popDraft();
+  if (kept && pop.classList.contains('vis')) { ta.focus(); return; }
+  if (kept) ({ anchorId, anchorLabel, target } = kept);
+  pendingAnchor = { anchorId, anchorLabel, target: target || null, version: (kept && kept.version) || CURRENT_VERSION };
+  editingCommentId = null;
   const node = document.getElementById('pop-node-name');
   const quote = target && target.selected_quote;
   node.classList.toggle('unified-selection-title', !!quote);
   node.textContent = quote ? '“' + quote + '”' : (anchorLabel || anchorId);
   node.title = node.textContent;
-  document.getElementById('pop-ta').value = '';
+  ta.value = kept ? kept.text : '';
+  document.getElementById('pop-err').textContent = '';
   positionPopover(x, y);
   pop.classList.add('vis');
   setMobileBackdropVisible(true);
-  document.getElementById('pop-ta').focus();
+  ta.focus();
+}
+function keepPopDraft() {
+  const text = document.getElementById('pop-ta').value;
+  setDraft('pop', pendingAnchor && text.trim() ? Object.assign({}, pendingAnchor, { text }) : '');
+}
+function discardPopover() {
+  setDraft('pop', '');
+  closePopover();
+}
+// After a reload or a restart the composer that held unsent text is open
+// again, on its document.
+function reopenPopDraft() {
+  const d = popDraft();
+  if (!d || DOC !== VIEW_DOC || document.getElementById('popover').classList.contains('vis')) return;
+  openPopoverForCreate(d.anchorId, d.anchorLabel, window.innerWidth / 2, window.innerHeight / 3, d.target);
 }
 function positionPopover(cx, cy) {
   const pop = document.getElementById('popover');
@@ -2528,19 +2677,99 @@ function closePopover() {
   editingCommentId = null;
   if (!document.getElementById('pin-popover').classList.contains('vis')) setMobileBackdropVisible(false);
 }
+// v9o: the card shows at once, marked Sending…, and the composer is free for
+// the next note; the text waits as the 'sending:pop' draft until the server
+// has it. A failed post takes the card away and opens the composer again
+// with the text (ahead of anything typed since) and the error.
 async function savePopover() {
   if (!IDENTITY) return;
   const text = document.getElementById('pop-ta').value.trim();
   if (!text || !pendingAnchor) return;
-  const created = await apiCreateComment(pendingAnchor.anchorId, pendingAnchor.anchorLabel, text, CURRENT_VERSION, pendingAnchor.target);
+  const at = pendingAnchor;
+  const sent = Object.assign({}, at, { text });
+  setDraft('sending:pop', sent);
+  setDraft('pop', '');
   closePopover();
-  if (created) {
-    await refreshStore();
-    // The author has obviously "read" their own new comment.
-    markReadAfterAction(created.id);
-    setActiveTab('feedback');
-    focusSidebarCard(created.id);
+  const temp = addPendingComment(at.anchorId, {
+    anchor_label: at.anchorLabel, text, version: at.version || CURRENT_VERSION, target: at.target || null,
+    ...(DOC === 'plans' ? { category: 'plans', doc: 'plan:' + PLAN_ID } : {}),
+  });
+  setActiveTab('feedback');
+  focusSidebarCard(temp.id);
+  let created = await settlePending(apiCreateComment(at.anchorId, at.anchorLabel, text, at.version || CURRENT_VERSION, at.target));
+  dropPendingComment(temp);
+  // An answer lost on the way back: the server may have the comment anyway.
+  if (!created && await loadStore()) created = sentLanded('pop', sent);
+  setDraft('sending:pop', '');
+  if (!created) {
+    setDraft('pop', mergeDraft(DRAFTS.pop, sent));
+    closePopover();
+    renderAll();
+    openPopoverForCreate(at.anchorId, at.anchorLabel, window.innerWidth / 2, window.innerHeight / 3, at.target);
+    document.getElementById('pop-err').textContent = 'Not saved — the server did not answer. Your text is still here; try again.';
+    return;
   }
+  await refreshStore();
+  // The author has obviously "read" their own new comment.
+  markReadAfterAction(created.id);
+  setActiveTab('feedback');
+  focusSidebarCard(created.id);
+}
+
+// ── Optimistic posts (v9o) ──────────────────────────────────────────
+// A comment, reply or answer is drawn the moment it is posted, marked
+// Sending…. The 8 s poll waits until the server has answered, and any store
+// read in between (a poll already on its way, another action's refresh)
+// gets each one again from pendingEdits, so it never leaves the screen.
+let pendingPosts = 0;
+async function settlePending(promise) {
+  pendingPosts++;
+  try { return await promise; } finally { pendingPosts--; }
+}
+// The comment as the store holds it (findCommentById gives a copy).
+function storedComment(id) {
+  for (const area of [STORE.anchors, STORE.archived]) {
+    for (const items of Object.values(area || {})) for (const c of items) if (c.id === id) return c;
+  }
+  return null;
+}
+function addPendingEdit(key, apply) {
+  pendingEdits.set(key, apply);
+  apply();
+}
+function addPendingComment(anchorId, fields) {
+  const c = Object.assign({
+    id: 'pending-' + Math.random().toString(36).slice(2), anchor_id: anchorId, status: 'open', pending: true,
+    author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email,
+    created_at: new Date().toISOString(), replies: [],
+  }, fields);
+  addPendingEdit(c, () => {
+    const list = STORE.anchors[anchorId] = STORE.anchors[anchorId] || [];
+    if (!list.includes(c)) list.push(c);
+  });
+  computeNumbers();
+  return c;
+}
+// A post whose text waits as a 'sending:' draft ('sending:pop' for the
+// composer, 'sending:<comment id>' for a reply): what the server has of it.
+function sentLanded(key, sent) {
+  const same = x => !x.pending && String(x.text || '').trim() === String(key === 'pop' ? sent.text : sent).trim();
+  if (key === 'pop') return (STORE.anchors[sent.anchorId] || []).find(same) || null;
+  const c = findCommentById(key);
+  return (c && (c.replies || []).find(same)) || null;
+}
+// Text that did not reach the server goes back ahead of what was typed since.
+function mergeDraft(now, sent) {
+  if (typeof sent === 'object') return now && (now.text || '').trim() ? Object.assign({}, sent, { text: sent.text + '\n\n' + now.text }) : sent;
+  return now && now.trim() ? sent + '\n\n' + now : sent;
+}
+function dropPendingComment(c) {
+  pendingEdits.delete(c);
+  const list = STORE.anchors[c.anchor_id];
+  const i = list ? list.indexOf(c) : -1;
+  if (i !== -1) list.splice(i, 1);
+  if (list && !list.length) delete STORE.anchors[c.anchor_id];
+  computeNumbers();
 }
 
 // ── Re-pin: correct a mis-anchored comment ───────────────────────────
@@ -2758,13 +2987,13 @@ function wireGeneralFeedback() {
   document.getElementById('gf-done').addEventListener('click', () => setGeneralFeedbackOpen(false));
   document.getElementById('gf-cancel').addEventListener('click', () => {
     document.getElementById('gf-ta').value = '';
-    setDraft('gf:' + CURRENT_VERSION, '');
+    setDraft('gf', '');
     setGeneralFeedbackOpen(false);
     updateSendState();
   });
-  // T11: general-feedback drafts persist per version
+  // T11: the general-feedback draft persists (one per document, v9o)
   document.getElementById('gf-ta').addEventListener('input', (e) => {
-    setDraft('gf:' + CURRENT_VERSION, e.target.value || '');
+    setDraft('gf', e.target.value || '');
     updateSendState();
   });
   renderGeneralFeedback();
@@ -3114,9 +3343,9 @@ function renderSummaryInto(list, editable) {
   }
   const gta = list.querySelector('#sum-gf-ta');
   if (gta) {
-    gta.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+    gta.value = DRAFTS.gf || '';
     gta.addEventListener('input', () => {
-      setDraft('gf:' + CURRENT_VERSION, gta.value || '');
+      setDraft('gf', gta.value || '');
       const box = document.getElementById('gf-ta');
       if (box) box.value = gta.value;
       renderGeneralFeedback();
@@ -3181,11 +3410,11 @@ async function prepareDocCore() {
   const gf = gfDraft();
   if (gf) {
     const created = IDENTITY ? await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION) : null;
-    if (created) setDraft('gf:' + CURRENT_VERSION, ''); else { ok = false; failed.push('gf:' + DOC); }
+    if (created) setDraft('gf', ''); else { ok = false; failed.push('gf:' + DOC); }
   }
   if (DOC === VIEW_DOC) {
     const g = document.getElementById('gf-ta');
-    if (g) g.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+    if (g) g.value = DRAFTS.gf || '';
   }
   return { ok, items, failed };
 }
@@ -3604,9 +3833,11 @@ function scrollToAnchorInFrame(anchorId, target, back) {
 
 // ── Wire popover buttons ─────────────────────────────────────────────
 function wirePopover() {
+  // Close (×, Esc) keeps the text for the next composer; Cancel discards it.
   document.getElementById('pop-close').addEventListener('click', closePopover);
-  document.getElementById('pop-cancel').addEventListener('click', closePopover);
+  document.getElementById('pop-cancel').addEventListener('click', discardPopover);
   document.getElementById('pop-save').addEventListener('click', savePopover);
+  document.getElementById('pop-ta').addEventListener('input', keepPopDraft);
   // One delegated keydown handler on the document: Ctrl/Cmd+Enter submits
   // whichever comment composer holds focus, so every composer behaves
   // identically and the binding survives drawer re-renders. The reply and
@@ -3806,14 +4037,18 @@ async function activateDoc(doc, version) {
     loadIframe(CURRENT_VERSION);
   }
   const gf = document.getElementById('gf-ta');
-  if (gf) gf.value = DRAFTS['gf:' + CURRENT_VERSION] || '';
+  if (gf) gf.value = DRAFTS.gf || '';
   projectSnapshot = '';
   renderProject();
   loadDelivery();
   renderAll();
   openLinkedCard();
+  // v9o: the first time a document shows after a load, a composer that held
+  // unsent text is open again.
+  if (!popReopened.has(doc)) { popReopened.add(doc); reopenPopDraft(); }
   return whenFrameReady();
 }
+const popReopened = new Set();
 function parkDoc() {
   VIEW_DOC = null;
 }
@@ -3824,9 +4059,10 @@ function parkDoc() {
 let CATEGORIES = null;
 async function loadCategories() {
   try {
-    const r = await fetch(apiUrl('./api/categories'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return false;
-    CATEGORIES = await r.json();
+    const got = await pollJson('./api/categories');
+    if (!got.ok) return false;
+    if (got.same) return true;
+    CATEGORIES = got.data;
     if (typeof CATEGORIES.read_only === 'boolean') {
       CAPS = Object.assign({}, CAPS, { read_only: CATEGORIES.read_only });
       document.body.classList.toggle('page-read-only', pageReadOnly());
@@ -3840,7 +4076,9 @@ async function loadCategories() {
         if (saved.CURRENT_VERSION === previousPlan.current) saved.CURRENT_VERSION = nextPlan.current;
         saved.META = { ...saved.META, current: nextPlan.current, history: nextPlan.history };
       }
-      if (DOC === 'plans' && CURRENT_VERSION === previousPlan.current) {
+      // v9o: never under a box being typed in or an open composer; the
+      // "Latest is …" banner offers the new revision instead.
+      if (DOC === 'plans' && CURRENT_VERSION === previousPlan.current && !isEditing() && !document.getElementById('popover').classList.contains('vis')) {
         CURRENT_VERSION = nextPlan.current;
         loadIframe(CURRENT_VERSION);
       }
@@ -3934,10 +4172,12 @@ function openLinkedCard() {
   cardExpanded[c.id] = true;
   focusSidebarCard(c.id);
 }
-// True while the reviewer is typing in the rail or the document.
+// True while the reviewer is typing in the rail or the document. A render
+// never rebuilds the composer or the general-feedback box, so typing there
+// holds nothing back (v9o); every box's text is a draft either way.
 function isEditing() {
   const ae = document.activeElement;
-  if (ae && ae.closest('textarea,input,[contenteditable="true"]')) return true;
+  if (ae && ae.closest('textarea,input,[contenteditable="true"]') && !ae.closest('#popover, #general-feedback-box')) return true;
   try {
     const inner = document.getElementById('content-frame').contentDocument.activeElement;
     return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
@@ -4014,40 +4254,74 @@ async function init() {
   loadHistory();
 
   // One refresh at a time. Hidden tabs make no requests; foreground resumes now.
+  // v9o: a poll that brings nothing new (every read a 304 or the same body)
+  // does no other work. Every 8 s while things change or the reviewer is
+  // active; after a quiet minute every 15 s, after two every 30 s; any key,
+  // click or return to the tab brings 8 s back. A render the reviewer's
+  // typing held back runs on the next poll even if nothing else changed.
   let refreshing = false;
   let refreshTimer;
+  let nextAt = 0;
+  let idlePolls = 0;
+  let held = false;
+  let lastStoreSig = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
+  const pollDelay = () => idlePolls < 8 ? 8000 : idlePolls < 16 ? 15000 : 30000;
+  function schedule(ms) {
+    clearTimeout(refreshTimer);
+    if (document.hidden) return;
+    nextAt = Date.now() + ms;
+    refreshTimer = setTimeout(refresh, ms);
+  }
   async function refresh() {
     clearTimeout(refreshTimer);
-    if (document.hidden || refreshing || docBusy) {
-      if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
-      return;
-    }
+    if (document.hidden) return;
+    if (refreshing || docBusy || pendingPosts) { schedule(8000); return; }
     refreshing = true;
+    let changed = false;
     try {
-      const before = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
+      pollChanged = false;
       await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
       if (historyDirty) loadHistory();
       loadBoard();
-      const storeChanged = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly() !== before;
-      if (storeChanged && !isEditing()) document.dispatchEvent(new CustomEvent('annotate:store'));
       const doc = VIEW_DOC;
-      if (doc && DOC === doc && !docBusy) {
-        await loadMeta();
-        loadDelivery();
-        const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ) + pageReadOnly();
-        if (snap !== lastSnap[doc]) { if (!isEditing()) { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
+      const onDoc = doc && DOC === doc && !docBusy;
+      if (onDoc) { await loadMeta(); loadDelivery(); }
+      changed = pollChanged;
+      if (changed || held) {
+        held = false;
+        // The store is written out once per poll (megabytes on FLD).
+        const storeJson = JSON.stringify(STORE), readJson = JSON.stringify(READ);
+        const storeSig = storeJson + readJson + pageReadOnly();
+        if (storeSig !== lastStoreSig) {
+          if (isEditing()) held = true;
+          else { lastStoreSig = storeSig; document.dispatchEvent(new CustomEvent('annotate:store')); }
+        }
+        if (onDoc && !docBusy) {
+          const snap = storeJson + JSON.stringify(META) + readJson + pageReadOnly();
+          if (snap !== lastSnap[doc]) { if (isEditing()) held = true; else { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
+        }
+        if (window.AA) window.AA.changed();
       }
-      if (window.AA) window.AA.changed();
     } finally {
       refreshing = false;
-      if (!document.hidden) refreshTimer = setTimeout(refresh, 8000);
+      idlePolls = changed ? 0 : idlePolls + 1;
+      schedule(pollDelay());
     }
   }
+  const active = () => {
+    if (idlePolls < 8) return;
+    idlePolls = 0;
+    if (nextAt - Date.now() > 8000) schedule(8000);
+  };
+  document.addEventListener('pointerdown', active, true);
+  document.addEventListener('keydown', active, true);
+  window.addEventListener('message', (e) => { if (e.data && e.data.type && String(e.data.type).indexOf('annotate:') === 0) active(); });
   document.addEventListener('visibilitychange', () => {
     clearTimeout(refreshTimer);
+    idlePolls = 0;
     if (!document.hidden) refresh();
   });
-  refreshTimer = setTimeout(refresh, 8000);
+  schedule(8000);
 }
 
 // What app/*.js reads and calls. Reads go through withDoc(), so a document

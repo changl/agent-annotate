@@ -263,8 +263,11 @@
   const latestOf = (id) => BY_ID[id] ? latestRev(BY_ID[id]).id : null;
   const editorChanged = () => !!quill && JSON.stringify(withoutMarks(quill.getContents()).ops) !== baseline;
   function forgetDraft(id) {
-    delete drafts[id]; delete draftBases[id];
-    UI.local.set('lib:drafts', drafts); UI.local.set('lib:draft-base', draftBases);
+    UI.local.entry('lib:drafts', drafts, id); UI.local.entry('lib:draft-base', draftBases, id);
+  }
+  function keepDraft(id, delta, base) {
+    UI.local.entry('lib:drafts', drafts, id, delta);
+    if (!draftBases[id]) UI.local.entry('lib:draft-base', draftBases, id, base);
   }
   // A newer revision than the one the editor started from is the latest.
   // The notice stays in the status line until Save (which then replaces the
@@ -291,9 +294,7 @@
       $('#sp-save').disabled = !c; $('#sp-save').classList.toggle('btn-primary', c);
       $('#sp-discard').disabled = !c;
       if (c) {
-        drafts[it.id] = withoutMarks(quill.getContents());
-        if (!draftBases[it.id]) draftBases[it.id] = editorBase;
-        UI.local.set('lib:drafts', drafts); UI.local.set('lib:draft-base', draftBases);
+        keepDraft(it.id, withoutMarks(quill.getContents()), editorBase);
         setStatus(staleSeen ? STALE_NOTE : 'Draft kept in this browser.');
       } else { forgetDraft(it.id); setStatus(''); }
     });
@@ -319,6 +320,8 @@
   function syncEditor() {
     const it = BY_ID[selected];
     if (!it || !quill || saving || editorItem !== it.id) return;
+    // A rebuild would empty the link box being typed in (v9o).
+    if (UI.isTyping(document.activeElement) && !quill.hasFocus()) return;
     const latest = latestRev(it).id;
     if (latest === editorBase) return;
     const intent = saveIntents[it.id];
@@ -414,10 +417,15 @@
       return;
     }
     delete saveIntents[it.id]; UI.local.set('lib:save-intent', saveIntents);
+    // v9o: text typed while the save was on its way stays, as a draft on the
+    // revision just saved.
+    const typed = quill && editorItem === it.id && JSON.stringify(forSave(quill.getContents()).ops) !== content
+      ? withoutMarks(quill.getContents()) : null;
     forgetDraft(it.id);
     setData(r.data);
+    if (typed) keepDraft(it.id, typed, latestOf(it.id));
     renderAll();
-    setStatus('Saved · goes out with Send');
+    setStatus(typed ? 'Saved · your newer typing is kept as a draft' : 'Saved · goes out with Send');
   }
   async function restore(it, revisionId) {
     // base_revision: the latest revision this browser has seen; the server
@@ -524,8 +532,7 @@
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
   }
   function setCommentDraft(id, text) {
-    if (text.trim()) commentDrafts[id] = text; else delete commentDrafts[id];
-    UI.local.set('lib:comment-drafts', commentDrafts);
+    UI.local.entry('lib:comment-drafts', commentDrafts, id, text.trim() ? text : undefined);
   }
   // "Change" on an answered question shows its options again.
   function qCardOpen(q) {
@@ -560,8 +567,13 @@
     const target = Object.assign({ copy_block: it.id }, pendingQuote ? { selected_quote: pendingQuote } : {});
     const c = await D().createComment('copy:' + it.id, labelOf(it), text, undefined, target, { category: 'library' });
     if (!c) { setStatus('Could not save the comment — try again.'); return; }
-    ta.value = '';
-    setCommentDraft(it.id, '');
+    // v9o: the box (its draft) empties only if nothing was typed while it
+    // was posting.
+    if ((commentDrafts[it.id] || '').trim() === text) {
+      setCommentDraft(it.id, '');
+      const box = selected === it.id && $('#sp-compose-ta');
+      if (box) box.value = '';
+    }
     pendingQuote = null; pendingRange = null;
     await D().refreshStore();
     // ⌘↵ leaves focus in the box, so the store refresh skips the rail.
