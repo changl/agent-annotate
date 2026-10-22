@@ -1,7 +1,7 @@
 {
   "baseline_ref": "36c2a16 (2.27.2)",
   "change_branch": "changl/meta-etag",
-  "server_source_sha256": "e7cf6bd3a294c72e9bb2774dbe0af8fecd5eb5e14b71a1d9948d0f749a640a97",
+  "server_source_sha256": "f71963bdbc0451992556b375e3f1a99a0484b0ee44bcdef3864f56288217f088",
   "method": {
     "browser": "Installed Google Chrome, headless Playwright",
     "duration": "180 elapsed seconds per revision after the first natural timer poll",
@@ -11,7 +11,8 @@
     "bytes": "Compressed response bodies and HTTP response wire bytes including headers; excludes bootstrap, TLS and TCP overhead",
     "routes": "Five actual idle GETs observed; metadata supplies project/delivery summaries, no board configured, review document rather than plan tab",
     "fixture_note": "The supplied copy contains 191 version files/history entries, rather than the task description's 265; source metadata 937735 B, private owner-stripped copy 936659 B",
-    "timer_note": "Unmodified 2.27.2 shell.js, actual adaptive 8/15/30 second timers, no synthetic refresh or fetch loop"
+    "timer_note": "Unmodified 2.27.2 shell.js, actual adaptive 8/15/30 second timers, no synthetic refresh or fetch loop",
+    "review_execution": "Final code remeasured for 180 seconds during independent sandboxed test runs; recorded baseline retained; CPU is per-server ps time."
   },
   "before": {
     "source_fixture": "fld-stack-round8-copy",
@@ -71,6 +72,65 @@
     "source_meta_sha256": "99b4cbb49b097968016f59e476953e02f3781344cac1a3f3cc2ef967d545f5ea",
     "version_files": 191,
     "history_versions": 191,
+    "elapsed_seconds": 180.002,
+    "cpu_seconds_per_minute": 0.24,
+    "body_bytes_per_minute": 0.0,
+    "wire_bytes_per_minute": 17484.82,
+    "poll_endpoints": {
+      "/comments.json": {
+        "body_bytes": 0,
+        "wire_bytes": 10665,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/session-monitor": {
+        "body_bytes": 0,
+        "wire_bytes": 10245,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/read-state": {
+        "body_bytes": 0,
+        "wire_bytes": 10245,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/api/categories": {
+        "body_bytes": 0,
+        "wire_bytes": 10650,
+        "statuses": {
+          "304": 15
+        }
+      },
+      "/current.meta.json": {
+        "body_bytes": 0,
+        "wire_bytes": 10650,
+        "statuses": {
+          "304": 15
+        }
+      }
+    },
+    "requests_in_flight_at_end": 0,
+    "notes": "Real browser timers, warmed bootstrap excluded; private copy and isolated state, no external traffic; no synthetic polling."
+  },
+  "validation": {
+    "non_browser_passed": 1641,
+    "non_browser_skipped": 2,
+    "affected_browser_passed": 23,
+    "ruff": "passed",
+    "coverage": "All ten poll route families, exact representation SHA-256, gzip/identity, 304 empty bodies, meta/project/owner/delivery invalidation, auth/session isolation and key rotation, bounded cache; mapped edits with unchanged stat fields, non-object JSON, atomic migration/bootstrap and shared offline-close lock"
+  },
+  "measured_change_commit": "2624c797c7812d8c45b822073e77734c149e5f64",
+  "pre_review_after": {
+    "source_fixture": "fld-stack-round8-copy",
+    "fixture_meta_bytes": 936659,
+    "source_meta_bytes": 937735,
+    "source_meta_sha256": "99b4cbb49b097968016f59e476953e02f3781344cac1a3f3cc2ef967d545f5ea",
+    "version_files": 191,
+    "history_versions": 191,
     "elapsed_seconds": 180.003,
     "cpu_seconds_per_minute": 0.2867,
     "body_bytes_per_minute": 0.0,
@@ -115,13 +175,32 @@
     "requests_in_flight_at_end": 0,
     "notes": "Real browser timers, warmed bootstrap excluded; private copy and isolated state, no external traffic; no synthetic polling."
   },
-  "validation": {
-    "non_browser_passed": 1632,
+  "pre_review_measured_change_commit": "ec58e2185fb920a8901ba7b4e81f1107c4589788",
+  "independent_review": {
+    "fix_commits": [
+      "449e04c",
+      "2624c79"
+    ],
+    "findings_fixed": [
+      "Stat-only metadata cache served stale 304 after repeated mmap edits; key now hashes the exact parsed source bytes.",
+      "Non-object JSON metadata disconnected HTTP requests; normalize to empty metadata while retaining live summaries.",
+      "Legacy migration could overwrite an existing comments.json in place; replace atomically under the server store lock.",
+      "Initial generation exposed an empty or partial comments.json; initialize atomically under the same lock.",
+      "Offline close took a different lock from the HTTP server; use the shared store lock and atomic writer."
+    ],
+    "writer_audit": {
+      "server": "All v2 mutations and legacy-store conversion use atomic helpers under _locked_store.",
+      "cli": "publish/withdraw and finding changes use shared helpers or the API; migrate/close fixed here; claim and names write metadata, not comments.",
+      "backfill": "Apply and restore use _atomic_bytes under the page store lock.",
+      "hooks_mcp": "Hooks only read comments; MCP writes delegate to the local API or shared CLI helpers.",
+      "staging": "Consolidation writes into a private staging directory installed by rename; benchmark in-place writes affect private test copies only.",
+      "cache_contract": "Keep stat signatures for comments.json: supported production writers replace files atomically; arbitrary external in-place/mmap edits are outside this writer contract."
+    },
+    "non_browser_passed": 1641,
     "non_browser_skipped": 2,
-    "affected_browser_passed": 23,
     "ruff": "passed",
-    "coverage": "All ten poll route families, exact representation SHA-256, gzip/identity, 304 empty bodies, meta/project/owner/delivery invalidation, auth/session isolation and key rotation, bounded cache"
-  },
-  "measured_change_commit": "ec58e2185fb920a8901ba7b4e81f1107c4589788",
-  "post_measurement_change": "Preserve injected summaries for malformed metadata; the measured steady valid-metadata hot path is unchanged."
+    "ci_code_commit": "2624c797c7812d8c45b822073e77734c149e5f64",
+    "ci_run": "39849715678",
+    "ci_result": "success"
+  }
 }
