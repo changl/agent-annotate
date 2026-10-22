@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import threading
 import uuid
 from collections import OrderedDict
@@ -27,6 +28,19 @@ _MAX_VIEW_BYTES = 128 * 1024 * 1024
 
 def _digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _retained_size(value, seen=None):
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return 0
+    seen.add(id(value))
+    size = sys.getsizeof(value)
+    if isinstance(value, dict):
+        size += sum(_retained_size(k, seen) + _retained_size(v, seen) for k, v in value.items())
+    elif isinstance(value, (list, tuple)):
+        size += sum(_retained_size(v, seen) for v in value)
+    return size
 
 
 def _image_hash(path):
@@ -232,10 +246,10 @@ def seal_review(page_dir, html, version, store, base=""):
         except (OSError, ValueError, TypeError, KeyError):
             continue
     key = (str(page_dir), view)
-    size = len(html.encode())
+    entry = {"cards": snapshots, "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
+    entry["size"] = _retained_size(entry)
     with _VIEW_LOCK:
-        _VIEWS[key] = {"cards": snapshots, "size": size,
-                       "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
+        _VIEWS[key] = entry
         while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:

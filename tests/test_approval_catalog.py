@@ -109,6 +109,20 @@ def test_unchanged_images_reuse_hashes_but_edits_and_tampering_are_detected(tmp_
     assert "changed since view" in render_plan(tmp_path, plan, plan["current"])
 
 
+def test_view_budget_counts_retained_snapshot_objects(tmp_path, monkeypatch):
+    from agent_annotate import approval_catalog
+    approval_catalog._VIEWS.clear()
+    monkeypatch.setattr(approval_catalog, "_MAX_VIEW_BYTES", 2000)
+    comment = card()
+    store = {"anchors": {"d:q1": [comment]}}
+    html = HTML.replace("Full details", "x" * 700)
+    assert len(html.encode()) < 2000
+    # Python requests, fragments and dictionaries exceed this budget even
+    # though the input document alone fits. Eviction uses their actual size.
+    assert seal_review(tmp_path, html, "v1", store)[1] == {}
+    assert not approval_catalog._VIEWS
+
+
 def test_stable_identity_survives_comment_recreation_and_carry():
     a = card()
     b = {**a, "id": "new-thread", "version": "v99", "origin_version": "v1"}

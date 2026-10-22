@@ -78,7 +78,7 @@ def prepare(root, source=None):
     return page, version, tokens
 
 
-def measure(root, source, samples, delay):
+def measure(root, source, samples, delay, contention_only=False):
     page, version, tokens = prepare(root, source)
     profile = cProfile.Profile()
     base = make_handler(page, slug=root.name, bus_dir=root / root.name, v2_mode=True,
@@ -86,12 +86,20 @@ def measure(root, source, samples, delay):
 
     class Handler(base):
         profiling = False
+        cpu = {}
 
         def handle_one_request(self):
-            if self.profiling:
-                profile.runcall(super().handle_one_request)
-            else:
-                super().handle_one_request()
+            begin = time.thread_time()
+            try:
+                if self.profiling:
+                    profile.runcall(super().handle_one_request)
+                else:
+                    super().handle_one_request()
+            finally:
+                if getattr(self, "raw_requestline", None) and getattr(self, "headers", None):
+                    label = self.headers.get("X-Benchmark-Label")
+                    if label:
+                        self.cpu.setdefault(label, []).append((time.thread_time() - begin) * 1000)
 
     server = ReviewHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -113,20 +121,21 @@ def measure(root, source, samples, delay):
                     'print(json.dumps({"ok":True,"result":{"terminal":terminal,"send":{"accepted":True,"prompt":{"stages":["input_accepted"]}}}}))\n')
     fake.chmod(0o700)
     os.environ["ORCA_CLI_COMMAND"] = str(fake)
-    times, validators, statuses = {}, {}, {}
+    times, validators, statuses, wire = {}, {}, {}, {}
     original = (page / "comments.json").read_bytes()
 
     def call(label, method, path, payload=None):
         started = time.perf_counter()
-        status, headers, body = request(server, method, path, payload)
+        status, headers, body = request(server, method, path, payload, headers={"X-Benchmark-Label": label})
         times.setdefault(label, []).append((time.perf_counter() - started) * 1000)
         statuses.setdefault(label, set()).add(status)
+        wire.setdefault(label, []).append(int(headers.get("Content-Length", 0)) if status != 304 else 0)
         if headers.get("ETag"):
             validators[path] = headers["ETag"]
         return body
 
     try:
-        for iteration in range(samples):
+        for iteration in range(0 if contention_only else samples):
             # Restore a fixed-size input so iteration count cannot inflate the store.
             (page / "comments.json").write_bytes(original)
             comment = call("comment create", "POST", "/api/comments", {"anchor_id": "bench-evidence", "text": "New feedback"})
@@ -157,10 +166,27 @@ def measure(root, source, samples, delay):
             for path in ("/comments.json", "/api/read-state", "/api/categories", "/api/session-monitor", "/api/board", "/api/plans/benchmark"):
                 call("GET " + path, "GET", path)
                 started = time.perf_counter()
-                status, _, _ = request(server, "GET", path, headers={"If-None-Match": validators.get(path, '"missing"')})
                 label = "conditional " + path
+                status, headers, _ = request(server, "GET", path, headers={"If-None-Match": validators.get(path, '"missing"'), "X-Benchmark-Label": label})
                 times.setdefault(label, []).append((time.perf_counter() - started) * 1000)
                 statuses.setdefault(label, set()).add(status)
+                wire.setdefault(label, []).append(int(headers.get("Content-Length", 0)) if status != 304 else 0)
+        if contention_only:
+            for iteration in range(samples):
+                errors = []
+
+                def poll():
+                    try:
+                        request(server, "GET", "/api/categories")
+                    except Exception as exc:
+                        errors.append(str(exc))
+                poller = threading.Thread(target=poll)
+                poller.start()
+                time.sleep(.05)  # give the real categories route the shared lock
+                call("comment create during categories", "POST", "/api/comments", {"anchor_id": "bench-evidence", "text": f"Concurrent {iteration}"})
+                poller.join(timeout=30)
+                if errors or poller.is_alive():
+                    raise RuntimeError(f"concurrent poll failed: {errors}")
         slowest = max((k for k in times if not k.startswith(("GET", "conditional"))), key=lambda k: statistics.median(times[k]))
         # Profile a full pass separately so profiling overhead is absent from timings.
         Handler.profiling = True
@@ -173,7 +199,9 @@ def measure(root, source, samples, delay):
                 "comments_bytes": len(original), "fake_orca_seconds": delay, "samples": samples,
                 "slowest_write": slowest, "profile_decision_accept": stream.getvalue(),
                 "routes": {k: {"p50": round(statistics.median(v), 2), "p95": round(sorted(v)[math.ceil(len(v)*.95)-1], 2),
-                               "max": round(max(v), 2), "statuses": sorted(statuses[k])} for k, v in times.items()}}
+                               "max": round(max(v), 2), "statuses": sorted(statuses[k]),
+                               "body_bytes_p50": statistics.median(wire[k]),
+                               "server_cpu_p50_ms": round(statistics.median(Handler.cpu.get(k, [0])), 2)} for k, v in times.items()}}
     finally:
         server.shutdown()
         server.server_close()
@@ -186,14 +214,16 @@ def main():
     parser.add_argument("--samples", type=int, default=30)
     parser.add_argument("--orca-delay", type=float, default=1)
     parser.add_argument("--source", type=Path, action="append")
+    parser.add_argument("--no-synthetic", action="store_true")
+    parser.add_argument("--contention-only", action="store_true")
     args = parser.parse_args()
     sources = args.source or [Path("/Users/changlee/projects/agent-annotate/reviews/annotate-conformity-20260927"),
                               Path("/Users/changlee/projects/agent-annotate/reviews/annotate-assessment-20260917")]
     results = []
-    for n, source in enumerate([*sources, None]):
+    for n, source in enumerate(sources if args.no_synthetic else [*sources, None]):
         # Retain diagnostics without flooding the benchmark output.
         with (conftest._SANDBOX / f"fixture-{n}.log").open("w") as log, redirect_stdout(log):
-            result = measure(conftest._SANDBOX / f"fixture-{n}", source, args.samples, args.orca_delay)
+            result = measure(conftest._SANDBOX / f"fixture-{n}", source, args.samples, args.orca_delay, args.contention_only)
         results.append(result)
         args.output.write_text(json.dumps(results, indent=2))
         print(json.dumps({"fixture": result["source"], "writes": {k: v for k, v in result["routes"].items() if not k.startswith(("GET", "conditional"))}}), flush=True)

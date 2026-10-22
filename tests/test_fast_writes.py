@@ -110,3 +110,71 @@ def test_six_poll_routes_revalidate_and_invalidate_on_change(server, encoding):
     for path, etag in before.items():
         status, headers, _ = request(httpd, path, headers={"If-None-Match": etag})
         assert status == 200 and headers["ETag"] != etag
+
+
+def test_categories_loads_the_comment_store_once_even_with_many_plans(server, monkeypatch):
+    httpd, root, _, _ = server
+    for n in range(15):
+        publish_plan_revision(root, f"manual-{n}", "<html><body>Plan</body></html>", title="Manual")
+    loads = []
+    original = sync_server._load_v2_store
+
+    def load(*args, **kwargs):
+        loads.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(sync_server, "_load_v2_store", load)
+    status, _, body = request(httpd, "/api/categories")
+    assert status == 200 and len(json.loads(body)["plans"]) == 16
+    assert len(loads) == 1
+
+
+def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(server, monkeypatch):
+    httpd, root, _, _ = server
+    path = root / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["s:test"][0]["carry_history"] = [{"version": "v0", "text": "History " * 5000}]
+    store["anchors"]["s:test"][0]["decision_history"] = [{"verdict": "reject"}]
+    path.write_text(json.dumps(store))
+    full = json.loads(request(httpd, "/comments.json")[2])
+    status, headers, body = request(httpd, "/comments.json?view=poll")
+    card = json.loads(body)["anchors"]["s:test"][0]
+    assert status == 200 and "carry_history" not in card
+    assert card["decision_history"] == [{"verdict": "reject"}]
+    assert full["anchors"]["s:test"][0]["carry_history"]
+    gzip_headers = {"Accept-Encoding": "gzip"}
+    zipped = request(httpd, "/comments.json?view=poll", headers=gzip_headers)[1]
+    with monkeypatch.context() as context:
+        def unexpected(*args, **kwargs):
+            raise AssertionError("unchanged poll must reuse the encoded representation")
+        context.setattr(sync_server, "_load_v2_store", unexpected)
+        context.setattr(sync_server.gzip, "compress", unexpected)
+        assert request(httpd, "/comments.json?view=poll", headers={"If-None-Match": headers["ETag"]})[0] == 304
+        assert request(httpd, "/comments.json?view=poll", headers={**gzip_headers, "If-None-Match": zipped["ETag"]})[0] == 304
+    assert request(httpd, "/api/comments/card", "PUT", {"text": "Edited"})[0] == 200
+    assert json.loads(path.read_text())["anchors"]["s:test"][0]["carry_history"]
+    assert request(httpd, "/comments.json?view=poll", headers={"If-None-Match": headers["ETag"]})[0] == 200
+
+
+def test_failed_write_cannot_poison_cached_snapshot_and_legacy_get_still_migrates_on_write(server, monkeypatch):
+    httpd, root, _, _ = server
+    path = root / "comments.json"
+    original = json.loads(path.read_text())
+    legacy = original["anchors"]
+    path.write_text(json.dumps(legacy))
+    assert request(httpd, "/comments.json")[0] == 200
+    backup = path.with_suffix(".json.v1.bak")
+    assert not backup.exists()
+    assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Committed"})[0] == 201
+    assert json.loads(backup.read_text()) == legacy
+    before = path.read_bytes()
+    status, headers, _ = request(httpd, "/comments.json")
+    assert status == 200
+    with monkeypatch.context() as context:
+        def fail(*args, **kwargs):
+            raise OSError("injected durable save failure")
+        context.setattr(httpd.RequestHandlerClass, "_v2_save", fail)
+        assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Uncommitted"})[0] == 500
+    assert path.read_bytes() == before
+    status, _, body = request(httpd, "/comments.json", headers={"If-None-Match": headers["ETag"]})
+    assert status == 304 and body == b""
+    assert "Uncommitted" not in request(httpd, "/comments.json")[2].decode()

@@ -1,186 +1,331 @@
-# v9o server latency
+# v9o server latency and FLD resource use
 
-Measured on Apple M1 Max, 2026-10-22. Baseline: origin/main c6c59c7 (2.27.1). After: changl/fast-writes.
+Apple M1 Max, 2026-10-22. Baseline c6c59c7 (2.27.1); after changl/fast-writes. All tests serve private copies. No live page, M5 service, installed runtime or transport was modified.
 
-Every measured write is below 150 ms p95: the maximum after is **17.04 ms**, versus **35.50 ms** before. Image-heavy deferred accept p50 falls from **18.02–20.23 ms to 5.85–8.27 ms**. All six unchanged polls return **304 with zero response body** after the change.
+**The real FLD copy reproduces the reported pause.** Its categories GET repeatedly decodes the 6.46 MB comment store for 15 manual Plans while holding the shared write lock. A comment posted during that poll takes **1,294.15 ms p50 / 1,346.21 ms p95** before and **31.71 / 40.79 ms** after. Categories itself falls from **1,264.77 / 1,344.84 ms** to **28.48 / 37.26 ms**.
 
-The reported 1–2 second delay was **not reproduced on M1 loopback**, even before the patch. These results prove local server budgets and a smaller image-vote cost; they do not establish M5 or Funnel round-trip latency. Live pages, installed tooling, live routes, the M5 and the coordinator checkout were not modified.
+All 24 write labels meet p95 <150 ms on all four fixtures. FLD's largest isolated write p95 falls from **194.74 to 83.48 ms**; reply server CPU p50 falls from **134.23 to 27.83 ms**. The fake Orca sleeps one second per actual call and does not delay replies. All six unchanged polls return 304 with an empty body.
+
+The baseline resource run reaches **1,551.59 MiB RSS** at simulated minute 1 and is stopped by the 1,500 MiB guard. The complete after workload peaks at **453.36 MiB**, then settles to **234.58 MiB** during a real polling minute that uses **0.29 CPU seconds**. The workload simulates 30 minutes of use at accelerated pace; it is not 30 elapsed minutes or an 11-hour soak.
 
 ## Method
 
-`scripts/bench_writes.py` imports `tests/conftest.py` before package imports, so every ANNOTATE state/config/bus path is sandboxed. The source trees are copied with symlinks dereferenced; only copies are served on ephemeral loopback ports. The two largest comments stores under the M1 reviews directory were conformity (143,393 source bytes) and assessment (45,877 source bytes). Their complete comment data and Plans are retained; each copy gets one extra stress card citing 40 distinct 512 KiB image assets. The synthetic page has 60 cards citing those same 40 assets (20 MiB). Image decoding is outside this server-only measurement.
+Both scripts import tests/conftest.py before annotate, isolating every ANNOTATE state/config/bus path. Source trees are read-only inputs, copied with symlinks dereferenced, then served on ephemeral loopback ports. The same current harness drives an archived c6c59c7 baseline and this checkout.
 
-Each label below has 30 real HTTP calls, timed through full response-body read using fresh connections. Comment data is restored before each iteration to hold input size stable; the routes perform their normal JSON rewrites, bus appends, fsyncs and round/catalog work. Deferred and immediate accept/select both run; verdict notes are an accept with a note. First-vote asset freezing is included (cold maxima remain under 54 ms). A separate cProfile pass exercises the same decision endpoint without adding profiler overhead to route timings.
+Conformity and assessment are the two largest comments files under M1 reviews (143,393 and 45,877 source bytes). Each copy retains its complete data and Plans, plus one stress card citing 40 distinct 512 KiB image assets. Synthetic has 60 such cards. The FLD primary input is /tmp/fld-stack-round8-copy: 6,457,554 comment bytes, 940 active plus 71 archived comments, 265 version files, and 863,530,042 bytes across 2,778 files. FLD write timings also add one stress card; resource runs use the unaugmented real copy. Image decoding is outside this server-only test. The source comments file remains exactly 6,457,554 bytes after testing.
 
-`ORCA_CLI_COMMAND` points at an executable sandbox fake that logs invocation and sleeps **1 second on every call**. Real delivery uses sandbox owner bindings and its normal durable records; no real Orca call or terminal send is possible. The fake starts during every fixture, so the fast HTTP numbers are not merely a no-owner/no-op case. Pending background delivery threads are daemon workers and the sandbox outbox remains their source of truth.
+Each route has 30 real HTTP calls timed through response-body read on fresh connections. The comment input is restored each iteration to hold size stable; normal JSON rewrites, fsync, bus and round/catalog work run. Cold freezing is included in maxima. Server CPU uses time.thread_time around the actual handler, excluding client parsing and subprocess CPU. Separate cProfile passes do not affect timings.
 
-| Fixture | Input comments bytes (compact JSON) | Fake calls started before / after |
+The contention test starts a real categories GET, waits 50 ms, then posts a comment, over 30 trials. No server sleep is injected. ORCA_CLI_COMMAND points at a sandbox executable that logs calls and sleeps one second; route fixtures bind only a fake owner. Resource fixtures have no delivery pending and issue no live Orca/board calls. All private input bodies and review keys are omitted from reports.
+
+| Fixture | Compact benchmark input bytes | Fake calls started before / after |
 |---|---:|---:|
-| Conformity copy | 106,735 | 8 / 6 |
-| Assessment copy | 36,280 | 12 / 8 |
-| Synthetic | 16,680 | 18 / 14 |
+| Conformity copy | 106,735 | 8 / 4 |
+| Assessment copy | 36,280 | 12 / 7 |
+| Synthetic 60-card / 40-image page | 16,680 | 18 / 12 |
+| FLD copy (primary) | 4,543,423 | 166 / 28 |
 
 ## Route timings
 
-All values are milliseconds; cells are **p50 / p95**. `decision ...` uses defer_push; `immediate ...` uses the identical endpoint without deferral. Conditional GET rows send the ETag from the preceding GET.
+Milliseconds, **p50 / p95**. Decision defers delivery; immediate does not. This table uses full comments.json. The opt-in smaller poll payload is measured below.
 
 ### Conformity copy
 
 | Route | Before p50 / p95 | After p50 / p95 | After status |
 |---|---:|---:|---|
-| comment create | 5.69 / 9.59 | 5.72 / 10.12 | 201 |
-| reply | 5.58 / 6.30 | 5.62 / 6.47 | 200 |
-| edit | 5.54 / 6.64 | 5.59 / 6.17 | 200 |
-| comment batch | 5.84 / 7.71 | 5.94 / 7.32 | 200 |
-| decision accept | 20.23 / 24.92 | 8.27 / 9.53 | 200 |
-| decision select | 20.30 / 24.62 | 8.37 / 9.94 | 200 |
-| decision reject | 6.18 / 8.91 | 5.97 / 7.41 | 200 |
-| decision comment | 5.97 / 7.04 | 6.05 / 10.30 | 200 |
-| decision changes | 5.96 / 9.17 | 6.10 / 8.47 | 200 |
-| verdict notes | 20.41 / 24.49 | 8.58 / 9.45 | 200 |
-| rounds/submit | 8.36 / 10.04 | 8.21 / 10.12 | 200 |
-| immediate accept | 20.72 / 35.50 | 8.89 / 14.98 | 200 |
-| immediate select | 20.82 / 23.11 | 9.11 / 10.26 | 200 |
-| immediate reject | 6.56 / 10.55 | 6.35 / 8.89 | 200 |
-| immediate comment | 6.39 / 17.68 | 6.35 / 10.55 | 200 |
-| immediate changes | 6.46 / 7.80 | 6.47 / 8.64 | 200 |
-| push-session | 7.47 / 8.26 | 7.35 / 9.44 | 200 |
-| push single | 7.37 / 8.75 | 7.30 / 9.32 | 200 |
-| archive | 5.99 / 6.93 | 6.20 / 6.92 | 200 |
-| restore | 5.97 / 6.78 | 6.03 / 7.24 | 200 |
-| accept comment | 6.08 / 7.16 | 6.01 / 6.64 | 200 |
-| rounds/discard | 2.70 / 4.61 | 2.81 / 3.46 | 200 |
-| read-state write | 2.23 / 2.77 | 2.16 / 2.76 | 200 |
-| seen write | 2.70 / 3.22 | 2.53 / 3.55 | 200 |
-| GET /comments.json | 3.57 / 3.88 | 3.46 / 3.95 | 200 |
-| conditional /comments.json | 2.93 / 3.23 | 2.87 / 3.26 | 304 |
-| GET /api/read-state | 1.64 / 1.96 | 1.57 / 2.03 | 200 |
-| conditional /api/read-state | 1.50 / 1.94 | 1.50 / 1.88 | 304 |
-| GET /api/categories | 10.48 / 11.62 | 10.42 / 11.87 | 200 |
-| conditional /api/categories | 10.71 / 11.68 | 10.61 / 12.29 | 304 |
-| GET /api/session-monitor | 1.41 / 1.68 | 1.40 / 1.74 | 200 |
-| conditional /api/session-monitor | 1.28 / 1.67 | 1.21 / 1.58 | 304 |
-| GET /api/board | 1.43 / 1.97 | 1.42 / 1.82 | 200 |
-| conditional /api/board | 1.41 / 1.92 | 1.34 / 1.79 | 304 |
-| GET /api/plans/benchmark | 2.27 / 2.69 | 2.19 / 2.57 | 200 |
-| conditional /api/plans/benchmark | 2.19 / 2.76 | 2.24 / 2.63 | 304 |
+| comment create | 5.69 / 9.59 | 4.18 / 4.71 | 201 |
+| reply | 5.58 / 6.30 | 3.20 / 3.86 | 200 |
+| edit | 5.54 / 6.64 | 3.09 / 3.76 | 200 |
+| comment batch | 5.84 / 7.71 | 3.50 / 5.05 | 200 |
+| decision accept | 20.23 / 24.92 | 5.96 / 8.40 | 200 |
+| decision select | 20.30 / 24.62 | 6.03 / 7.82 | 200 |
+| decision reject | 6.18 / 8.91 | 3.45 / 4.42 | 200 |
+| decision comment | 5.97 / 7.04 | 3.38 / 4.16 | 200 |
+| decision changes | 5.96 / 9.17 | 3.49 / 4.12 | 200 |
+| verdict notes | 20.41 / 24.49 | 6.07 / 7.47 | 200 |
+| rounds/submit | 8.36 / 10.04 | 5.62 / 8.31 | 200 |
+| immediate accept | 20.72 / 35.50 | 6.63 / 12.60 | 200 |
+| immediate select | 20.82 / 23.11 | 6.31 / 7.46 | 200 |
+| immediate reject | 6.56 / 10.55 | 3.78 / 4.74 | 200 |
+| immediate comment | 6.39 / 17.68 | 3.73 / 4.25 | 200 |
+| immediate changes | 6.46 / 7.80 | 3.72 / 4.98 | 200 |
+| push-session | 7.47 / 8.26 | 4.55 / 7.94 | 200 |
+| push single | 7.37 / 8.75 | 4.52 / 9.19 | 200 |
+| archive | 5.99 / 6.93 | 3.40 / 4.15 | 200 |
+| restore | 5.97 / 6.78 | 3.38 / 4.10 | 200 |
+| accept comment | 6.08 / 7.16 | 3.27 / 4.60 | 200 |
+| rounds/discard | 2.70 / 4.61 | 2.01 / 3.29 | 200 |
+| read-state write | 2.23 / 2.77 | 2.27 / 3.19 | 200 |
+| seen write | 2.70 / 3.22 | 2.83 / 3.65 | 200 |
+| GET /comments.json | 3.57 / 3.88 | 3.60 / 4.57 | 200 |
+| conditional /comments.json | 2.93 / 3.23 | 1.50 / 2.41 | 304 |
+| GET /api/read-state | 1.64 / 1.96 | 1.74 / 2.34 | 200 |
+| conditional /api/read-state | 1.50 / 1.94 | 1.62 / 2.33 | 304 |
+| GET /api/categories | 10.48 / 11.62 | 4.00 / 4.84 | 200 |
+| conditional /api/categories | 10.71 / 11.68 | 3.99 / 7.02 | 304 |
+| GET /api/session-monitor | 1.41 / 1.68 | 1.44 / 2.85 | 200 |
+| conditional /api/session-monitor | 1.28 / 1.67 | 1.31 / 1.80 | 304 |
+| GET /api/board | 1.43 / 1.97 | 1.65 / 2.11 | 200 |
+| conditional /api/board | 1.41 / 1.92 | 1.61 / 2.14 | 304 |
+| GET /api/plans/benchmark | 2.27 / 2.69 | 1.61 / 2.14 | 200 |
+| conditional /api/plans/benchmark | 2.19 / 2.76 | 1.58 / 2.02 | 304 |
 
 ### Assessment copy
 
 | Route | Before p50 / p95 | After p50 / p95 | After status |
 |---|---:|---:|---|
-| comment create | 3.45 / 4.14 | 3.44 / 10.05 | 201 |
-| reply | 3.40 / 3.89 | 3.41 / 12.20 | 200 |
-| edit | 3.45 / 3.80 | 3.31 / 6.90 | 200 |
-| comment batch | 3.74 / 5.18 | 3.65 / 5.28 | 200 |
-| decision accept | 18.02 / 31.60 | 5.85 / 8.58 | 200 |
-| decision select | 18.15 / 23.02 | 6.06 / 9.76 | 200 |
-| decision reject | 3.94 / 8.50 | 3.83 / 4.40 | 200 |
-| decision comment | 3.84 / 4.83 | 3.71 / 5.12 | 200 |
-| decision changes | 3.94 / 8.74 | 3.81 / 5.47 | 200 |
-| verdict notes | 18.22 / 25.46 | 6.31 / 7.61 | 200 |
-| rounds/submit | 5.86 / 6.93 | 5.69 / 11.44 | 200 |
-| immediate accept | 18.61 / 25.90 | 6.87 / 13.44 | 200 |
-| immediate select | 19.33 / 21.13 | 6.95 / 7.72 | 200 |
-| immediate reject | 4.36 / 5.22 | 4.33 / 5.93 | 200 |
-| immediate comment | 4.28 / 7.13 | 4.13 / 6.65 | 200 |
-| immediate changes | 4.40 / 6.52 | 4.14 / 5.04 | 200 |
-| push-session | 5.06 / 6.32 | 4.61 / 5.90 | 200 |
-| push single | 5.02 / 6.38 | 4.77 / 5.68 | 200 |
-| archive | 3.86 / 4.34 | 3.71 / 4.59 | 200 |
-| restore | 3.95 / 4.45 | 3.78 / 4.37 | 200 |
-| accept comment | 3.94 / 4.68 | 3.89 / 4.58 | 200 |
-| rounds/discard | 2.37 / 2.66 | 2.18 / 2.69 | 200 |
-| read-state write | 2.20 / 2.74 | 2.14 / 2.95 | 200 |
-| seen write | 2.46 / 2.82 | 2.35 / 3.18 | 200 |
-| GET /comments.json | 2.40 / 2.66 | 2.25 / 2.57 | 200 |
-| conditional /comments.json | 2.04 / 2.64 | 1.97 / 2.62 | 304 |
-| GET /api/read-state | 1.68 / 2.06 | 1.55 / 1.95 | 200 |
-| conditional /api/read-state | 1.67 / 1.99 | 1.52 / 1.99 | 304 |
-| GET /api/categories | 5.10 / 6.11 | 4.97 / 5.56 | 200 |
-| conditional /api/categories | 5.10 / 5.92 | 5.00 / 5.94 | 304 |
-| GET /api/session-monitor | 1.36 / 1.68 | 1.32 / 1.62 | 200 |
-| conditional /api/session-monitor | 1.32 / 1.66 | 1.21 / 1.75 | 304 |
-| GET /api/board | 1.26 / 1.59 | 1.22 / 1.51 | 200 |
-| conditional /api/board | 1.26 / 1.68 | 1.21 / 1.52 | 304 |
-| GET /api/plans/benchmark | 1.74 / 2.14 | 1.74 / 2.12 | 200 |
-| conditional /api/plans/benchmark | 1.76 / 2.14 | 1.75 / 2.12 | 304 |
+| comment create | 3.45 / 4.14 | 3.39 / 4.37 | 201 |
+| reply | 3.40 / 3.89 | 2.79 / 4.24 | 200 |
+| edit | 3.45 / 3.80 | 2.80 / 8.32 | 200 |
+| comment batch | 3.74 / 5.18 | 3.03 / 7.22 | 200 |
+| decision accept | 18.02 / 31.60 | 5.33 / 10.86 | 200 |
+| decision select | 18.15 / 23.02 | 5.47 / 12.04 | 200 |
+| decision reject | 3.94 / 8.50 | 3.11 / 4.45 | 200 |
+| decision comment | 3.84 / 4.83 | 3.13 / 4.78 | 200 |
+| decision changes | 3.94 / 8.74 | 2.99 / 5.21 | 200 |
+| verdict notes | 18.22 / 25.46 | 5.65 / 16.82 | 200 |
+| rounds/submit | 5.86 / 6.93 | 4.82 / 22.38 | 200 |
+| immediate accept | 18.61 / 25.90 | 6.12 / 16.44 | 200 |
+| immediate select | 19.33 / 21.13 | 5.92 / 16.37 | 200 |
+| immediate reject | 4.36 / 5.22 | 3.33 / 6.47 | 200 |
+| immediate comment | 4.28 / 7.13 | 3.35 / 10.52 | 200 |
+| immediate changes | 4.40 / 6.52 | 3.15 / 8.62 | 200 |
+| push-session | 5.06 / 6.32 | 3.91 / 7.32 | 200 |
+| push single | 5.02 / 6.38 | 4.00 / 5.83 | 200 |
+| archive | 3.86 / 4.34 | 2.99 / 5.43 | 200 |
+| restore | 3.95 / 4.45 | 2.80 / 5.92 | 200 |
+| accept comment | 3.94 / 4.68 | 2.91 / 4.72 | 200 |
+| rounds/discard | 2.37 / 2.66 | 1.96 / 2.63 | 200 |
+| read-state write | 2.20 / 2.74 | 2.21 / 4.28 | 200 |
+| seen write | 2.46 / 2.82 | 2.40 / 3.30 | 200 |
+| GET /comments.json | 2.40 / 2.66 | 2.35 / 2.84 | 200 |
+| conditional /comments.json | 2.04 / 2.64 | 1.41 / 1.85 | 304 |
+| GET /api/read-state | 1.68 / 2.06 | 1.68 / 3.16 | 200 |
+| conditional /api/read-state | 1.67 / 1.99 | 1.62 / 2.29 | 304 |
+| GET /api/categories | 5.10 / 6.11 | 3.02 / 6.39 | 200 |
+| conditional /api/categories | 5.10 / 5.92 | 2.89 / 4.12 | 304 |
+| GET /api/session-monitor | 1.36 / 1.68 | 1.38 / 2.23 | 200 |
+| conditional /api/session-monitor | 1.32 / 1.66 | 1.29 / 1.88 | 304 |
+| GET /api/board | 1.26 / 1.59 | 1.31 / 1.80 | 200 |
+| conditional /api/board | 1.26 / 1.68 | 1.28 / 1.72 | 304 |
+| GET /api/plans/benchmark | 1.74 / 2.14 | 1.47 / 2.10 | 200 |
+| conditional /api/plans/benchmark | 1.76 / 2.14 | 1.46 / 2.11 | 304 |
 
-### Synthetic
+### Synthetic 60-card / 40-image page
 
 | Route | Before p50 / p95 | After p50 / p95 | After status |
 |---|---:|---:|---|
-| comment create | 3.63 / 7.38 | 3.54 / 6.99 | 201 |
-| reply | 3.54 / 4.63 | 3.35 / 3.80 | 200 |
-| edit | 3.52 / 7.31 | 3.42 / 4.53 | 200 |
-| comment batch | 3.70 / 7.76 | 3.57 / 5.48 | 200 |
-| decision accept | 18.47 / 33.21 | 6.02 / 7.37 | 200 |
-| decision select | 18.52 / 22.83 | 6.35 / 11.89 | 200 |
-| decision reject | 4.16 / 4.64 | 3.92 / 5.48 | 200 |
-| decision comment | 4.00 / 4.61 | 3.93 / 7.25 | 200 |
-| decision changes | 3.96 / 4.29 | 3.99 / 4.86 | 200 |
-| verdict notes | 18.48 / 22.99 | 6.50 / 7.59 | 200 |
-| rounds/submit | 6.25 / 10.56 | 5.81 / 7.25 | 200 |
-| immediate accept | 18.94 / 23.24 | 6.93 / 17.04 | 200 |
-| immediate select | 18.97 / 20.27 | 6.94 / 9.24 | 200 |
-| immediate reject | 4.50 / 5.04 | 4.36 / 5.32 | 200 |
-| immediate comment | 4.48 / 5.16 | 4.24 / 6.31 | 200 |
-| immediate changes | 4.50 / 5.15 | 4.32 / 5.79 | 200 |
-| push-session | 5.38 / 7.90 | 5.04 / 9.71 | 200 |
-| push single | 5.25 / 9.18 | 4.96 / 8.42 | 200 |
-| archive | 4.05 / 4.64 | 3.94 / 5.97 | 200 |
-| restore | 4.10 / 4.85 | 3.91 / 4.29 | 200 |
-| accept comment | 4.11 / 4.60 | 3.93 / 4.78 | 200 |
-| rounds/discard | 2.33 / 3.12 | 2.15 / 2.79 | 200 |
-| read-state write | 2.21 / 2.72 | 2.02 / 2.53 | 200 |
-| seen write | 2.31 / 3.16 | 2.12 / 3.02 | 200 |
-| GET /comments.json | 2.18 / 2.92 | 2.05 / 2.51 | 200 |
-| conditional /comments.json | 1.97 / 2.73 | 1.80 / 2.43 | 304 |
-| GET /api/read-state | 1.73 / 2.40 | 1.55 / 2.50 | 200 |
-| conditional /api/read-state | 1.63 / 2.07 | 1.52 / 3.94 | 304 |
-| GET /api/categories | 5.07 / 5.99 | 4.84 / 6.40 | 200 |
-| conditional /api/categories | 5.14 / 6.26 | 4.85 / 5.42 | 304 |
-| GET /api/session-monitor | 1.42 / 3.81 | 1.41 / 1.77 | 200 |
-| conditional /api/session-monitor | 1.33 / 1.68 | 1.31 / 1.75 | 304 |
-| GET /api/board | 1.37 / 1.66 | 1.25 / 1.58 | 200 |
-| conditional /api/board | 1.32 / 2.07 | 1.21 / 1.47 | 304 |
-| GET /api/plans/benchmark | 1.80 / 2.33 | 1.73 / 2.02 | 200 |
-| conditional /api/plans/benchmark | 1.85 / 2.68 | 1.77 / 2.58 | 304 |
+| comment create | 3.63 / 7.38 | 3.43 / 5.57 | 201 |
+| reply | 3.54 / 4.63 | 2.91 / 4.34 | 200 |
+| edit | 3.52 / 7.31 | 3.02 / 5.42 | 200 |
+| comment batch | 3.70 / 7.76 | 3.28 / 4.05 | 200 |
+| decision accept | 18.47 / 33.21 | 5.76 / 24.83 | 200 |
+| decision select | 18.52 / 22.83 | 5.73 / 14.23 | 200 |
+| decision reject | 4.16 / 4.64 | 3.23 / 6.72 | 200 |
+| decision comment | 4.00 / 4.61 | 3.28 / 5.47 | 200 |
+| decision changes | 3.96 / 4.29 | 3.32 / 7.43 | 200 |
+| verdict notes | 18.48 / 22.99 | 5.86 / 8.68 | 200 |
+| rounds/submit | 6.25 / 10.56 | 5.12 / 8.36 | 200 |
+| immediate accept | 18.94 / 23.24 | 6.28 / 9.87 | 200 |
+| immediate select | 18.97 / 20.27 | 6.06 / 11.59 | 200 |
+| immediate reject | 4.50 / 5.04 | 3.31 / 4.66 | 200 |
+| immediate comment | 4.48 / 5.16 | 3.31 / 6.79 | 200 |
+| immediate changes | 4.50 / 5.15 | 3.32 / 7.25 | 200 |
+| push-session | 5.38 / 7.90 | 3.97 / 12.73 | 200 |
+| push single | 5.25 / 9.18 | 4.08 / 6.80 | 200 |
+| archive | 4.05 / 4.64 | 2.95 / 5.39 | 200 |
+| restore | 4.10 / 4.85 | 2.90 / 8.29 | 200 |
+| accept comment | 4.11 / 4.60 | 2.74 / 5.27 | 200 |
+| rounds/discard | 2.33 / 3.12 | 2.05 / 3.08 | 200 |
+| read-state write | 2.21 / 2.72 | 2.25 / 3.31 | 200 |
+| seen write | 2.31 / 3.16 | 2.38 / 3.12 | 200 |
+| GET /comments.json | 2.18 / 2.92 | 2.32 / 3.86 | 200 |
+| conditional /comments.json | 1.97 / 2.73 | 1.50 / 2.53 | 304 |
+| GET /api/read-state | 1.73 / 2.40 | 1.77 / 3.55 | 200 |
+| conditional /api/read-state | 1.63 / 2.07 | 1.80 / 6.14 | 304 |
+| GET /api/categories | 5.07 / 5.99 | 3.13 / 8.12 | 200 |
+| conditional /api/categories | 5.14 / 6.26 | 3.14 / 6.53 | 304 |
+| GET /api/session-monitor | 1.42 / 3.81 | 1.48 / 3.00 | 200 |
+| conditional /api/session-monitor | 1.33 / 1.68 | 1.45 / 2.30 | 304 |
+| GET /api/board | 1.37 / 1.66 | 1.42 / 6.02 | 200 |
+| conditional /api/board | 1.32 / 2.07 | 1.40 / 3.36 | 304 |
+| GET /api/plans/benchmark | 1.80 / 2.33 | 1.66 / 5.24 | 200 |
+| conditional /api/plans/benchmark | 1.85 / 2.68 | 1.74 / 2.73 | 304 |
 
-## What changed and what remains durable
+### FLD copy (primary)
 
-- Evidence remains frozen **at accept/select time**, including deferred votes; Send never depends on the process-local view cache. A bounded 512-entry LRU stores image digests, not image bytes. Keys include path, device, inode, size, mtime_ns and ctime_ns, so same-size edits with restored mtime and atomic replacements invalidate. Original sources are still checked at the vote; missing or changed sources produce incomplete evidence as before. Existing content-hash copies are verified and reused; tampered copies are repaired from a verified source. First writes retain file and directory fsync.
-- Push, per-card push and Send write their existing durable bus/round/comment records before replying. Owner lookup and delivery now share one background wake path started after the HTTP response; the existing durable outbox/watchdog remains responsible for recovery. This removes no delivery journals or uncertain-send suppression. No comments/rounds fsync was removed: the profile did not justify weakening it.
-- Registry scans and page-name resolution are shared within one HTTP request using a ContextVar, discarded even on failure, and rebuilt on the next request (including a keep-alive request). CLI calls outside that scope retain fresh reads; owner delivery retains its existing lock/revalidation behavior.
-- Remaining delivery `ps`, board, workspace-git and server version-check subprocesses use `cwd=Path.home()`; the primary Orca subprocess already did on main.
-- Categories, board and Plans metadata now use the existing conditional-response machinery. The other three poll endpoints already supported it. Representation generation remains fresh; unchanged requests avoid transferring full bodies without a cross-request payload cache that could hide new votes or ownership.
+| Route | Before p50 / p95 | After p50 / p95 | After status |
+|---|---:|---:|---|
+| comment create | 130.16 / 142.80 | 52.99 / 83.48 | 201 |
+| reply | 136.84 / 151.68 | 29.45 / 38.83 | 200 |
+| edit | 137.87 / 154.47 | 29.34 / 45.59 | 200 |
+| comment batch | 141.17 / 156.76 | 32.50 / 56.94 | 200 |
+| decision accept | 152.39 / 177.14 | 32.58 / 59.25 | 200 |
+| decision select | 152.94 / 171.91 | 32.48 / 46.17 | 200 |
+| decision reject | 143.47 / 162.18 | 29.43 / 47.92 | 200 |
+| decision comment | 140.21 / 178.79 | 29.61 / 41.16 | 200 |
+| decision changes | 140.24 / 192.43 | 29.48 / 42.53 | 200 |
+| verdict notes | 157.21 / 176.89 | 32.54 / 49.64 | 200 |
+| rounds/submit | 157.39 / 194.74 | 45.30 / 58.92 | 200 |
+| immediate accept | 156.01 / 180.86 | 32.91 / 44.75 | 200 |
+| immediate select | 157.56 / 187.12 | 32.33 / 37.94 | 200 |
+| immediate reject | 139.90 / 159.51 | 30.12 / 34.90 | 200 |
+| immediate comment | 144.95 / 158.92 | 29.51 / 33.65 | 200 |
+| immediate changes | 138.35 / 154.87 | 29.32 / 35.92 | 200 |
+| push-session | 147.88 / 176.08 | 37.42 / 45.16 | 200 |
+| push single | 147.09 / 173.07 | 37.25 / 53.88 | 200 |
+| archive | 139.05 / 153.89 | 29.43 / 33.75 | 200 |
+| restore | 137.67 / 166.05 | 28.86 / 29.96 | 200 |
+| accept comment | 140.81 / 184.16 | 29.01 / 36.47 | 200 |
+| rounds/discard | 36.77 / 42.05 | 5.06 / 8.05 | 200 |
+| read-state write | 5.37 / 12.13 | 5.24 / 19.41 | 200 |
+| seen write | 27.67 / 35.73 | 27.68 / 44.21 | 200 |
+| GET /comments.json | 91.42 / 115.40 | 81.36 / 93.99 | 200 |
+| conditional /comments.json | 63.09 / 69.54 | 3.85 / 5.98 | 304 |
+| GET /api/read-state | 2.43 / 8.33 | 2.57 / 12.32 | 200 |
+| conditional /api/read-state | 2.21 / 2.95 | 2.27 / 3.74 | 304 |
+| GET /api/categories | 1264.77 / 1344.84 | 28.48 / 37.26 | 200 |
+| conditional /api/categories | 1279.37 / 1338.60 | 28.52 / 38.84 | 304 |
+| GET /api/session-monitor | 1.72 / 2.36 | 1.59 / 10.78 | 200 |
+| conditional /api/session-monitor | 1.38 / 1.92 | 1.48 / 4.40 | 304 |
+| GET /api/board | 2.09 / 3.02 | 2.18 / 9.23 | 200 |
+| conditional /api/board | 2.04 / 3.32 | 2.07 / 4.14 | 304 |
+| GET /api/plans/benchmark | 35.51 / 38.45 | 1.65 / 4.56 | 200 |
+| conditional /api/plans/benchmark | 35.53 / 39.59 | 1.61 / 3.05 | 304 |
 
-## ETag contract
+### FLD comment during categories poll
 
-All six endpoints return a strong quoted SHA-256 of the **actual response representation**. The client stores the ETag and sends it unchanged as `If-None-Match`; a match returns 304 with an empty body and the same ETag/security/cache headers. A changed representation returns 200 and a new ETag. Gzip and identity have distinct ETags and `Vary: Accept-Encoding`. Auth and review-key checks run before validators; the existing no-store policy on categories/board/plans is preserved, so the browser uses explicit in-memory validators. A 304 must reuse the client's previous parsed data, without calling response.json() or applying a data update. This contract was sent to the keep-drafts worker through its Dispatch mailbox.
+| Metric | Before | After |
+|---|---:|---:|
+| p50 ms | 1294.15 | 31.71 |
+| p95 ms | 1346.21 | 40.79 |
+| Server CPU p50 ms | 138.53 | 30.05 |
 
-## Profile
+## FLD CPU per write
 
-The slowest family before is POST `/api/comments/<id>/decision` (accept/select). On the synthetic fixture, the final isolated deferred-accept profile falls from 32 ms to 19 ms overall (29 ms to 16 ms inside the route); `persist_evidence` falls from 18 ms to 6 ms and 40 image reads disappear once hashes and frozen assets are warm. JSON serialization and safe-path validation remain the largest costs after that reduction. Complete profiles from the final expanded run, p50/p95/max and HTTP statuses are in `v9o-server-latency.json`.
+Actual server-thread CPU, milliseconds p50, excluding contention.
 
-## Validation
+| Route | Before CPU ms | After CPU ms |
+|---|---:|---:|
+| comment create | 127.00 | 51.03 |
+| reply | 134.23 | 27.83 |
+| edit | 134.55 | 27.91 |
+| comment batch | 137.88 | 30.75 |
+| decision accept | 149.60 | 30.87 |
+| decision select | 150.30 | 30.54 |
+| decision reject | 140.68 | 27.94 |
+| decision comment | 136.32 | 28.02 |
+| decision changes | 137.11 | 27.87 |
+| verdict notes | 154.23 | 30.90 |
+| rounds/submit | 150.94 | 43.57 |
+| immediate accept | 152.67 | 30.87 |
+| immediate select | 154.87 | 30.68 |
+| immediate reject | 136.32 | 28.55 |
+| immediate comment | 141.40 | 27.85 |
+| immediate changes | 135.53 | 27.72 |
+| push-session | 145.18 | 35.91 |
+| push single | 143.83 | 35.63 |
+| archive | 136.20 | 27.71 |
+| restore | 134.99 | 27.36 |
+| accept comment | 136.94 | 27.57 |
+| rounds/discard | 35.79 | 4.46 |
+| read-state write | 4.75 | 4.77 |
+| seen write | 27.00 | 27.04 |
 
-- Full non-browser suite: **1,617 passed, 2 skipped** (208.27 s).
-- Affected browser suite (approval catalog, decision verdicts, rounds/links/contrast, runtime HTTP, HTTP cache): **24 passed** (109.59 s).
-- Additional focused cache-scope and blocked-delivery checks: **4 passed**; final tampered-image/same-mtime edit check: **1 passed**.
-- Ruff for all changed Python files and `git diff --check`: passed.
+## Bytes per poll
 
-The blocked-delivery regression leaves fake Orca waiting on an event while comment/reply/edit/decision/read-state/seen/Send/push writes must finish under a generous 500 ms and have real persisted receipts. Poll tests cover identity/gzip, strong ETags, empty 304s, security/cache headers and invalidation after comment/read/plan changes. Existing auth, immutable-evidence, Plans filing, uncertain delivery and browser suites remain green. Synthetic timings do not bound arbitrary future assets, remote storage or client/network delays.
+Response-body bytes; headers remain on a 304. Actual gzip transfers on the unaugmented FLD copy; changed values are observed maxima. Before categories/board/plans have no ETag and resend unchanged bodies. Full compact identity JSON is 4,282,098 bytes; ?view=poll is 2,293,265 bytes. All history remains on disk, compacted on the next successful server write; no fields are deleted.
+
+| Endpoint | Before changed gzip bytes | Before unchanged gzip bytes | After changed gzip bytes | After unchanged bytes |
+|---|---:|---:|---:|---:|
+| /comments.json?view=poll | 528,795 | 0 | 390,713 | 0 |
+| /api/read-state | 44 | 0 | 44 | 0 |
+| /api/categories | 10,595 | 10,595 | 10,596 | 0 |
+| /api/session-monitor | 74 | 0 | 74 | 0 |
+| /api/board | 50 | 50 | 50 | 0 |
+| /api/plans/decision-cf527c30c7a76b563f11eeeb | 535 | 535 | 535 | 0 |
+
+After transfers 31 changed comments bodies and 203 empty 304s across warmup, the simulated workload and real polling minute. The opt-in projection omits only carry_history in active/archived comments; decision_history remains because Findings/Library render it. Full comments.json and History remain complete.
+
+## RSS and idle CPU
+
+Thirty simulated minutes contain 225 eight-second poll ticks (six endpoints each), 30 content reloads and 60 writes (comment and Seen per minute). They execute in **14.91 real seconds**, using **13.77 server CPU seconds**. An actual 60-second no-request idle interval precedes the workload, and an actual 60-second polling interval at the normal eight-second cadence follows it. RSS/CPU are from ps on the separate server process.
+
+| Measure | Before | After |
+|---|---:|---:|
+| No-request idle CPU seconds per actual minute | 0.01 | 0.00 (ps resolution 0.01 s) |
+| Normal polling CPU seconds per actual minute | not completed: baseline guard stopped run | 0.29 |
+| RSS after initial idle, MiB | 768.11 | 58.30 |
+| RSS at simulated minute 1, MiB | 1,551.59, guard stop | 122.31 |
+| Peak RSS through simulated minute 30, MiB | incomplete | 453.36 |
+| RSS after real polling minute, MiB | incomplete | 234.58 |
+
+| Simulated minute | After RSS MiB | Cumulative server CPU s |
+|---:|---:|---:|
+| 0 | 58.30 | 0.31 |
+| 1 | 122.31 | 0.82 |
+| 2 | 139.20 | 1.26 |
+| 3 | 151.05 | 1.74 |
+| 4 | 163.58 | 2.23 |
+| 5 | 176.30 | 2.70 |
+| 6 | 186.89 | 3.13 |
+| 7 | 197.48 | 3.62 |
+| 8 | 208.06 | 4.05 |
+| 9 | 219.53 | 4.52 |
+| 10 | 231.92 | 4.97 |
+| 11 | 242.52 | 5.43 |
+| 12 | 254.39 | 5.87 |
+| 13 | 266.91 | 6.34 |
+| 14 | 278.36 | 6.82 |
+| 15 | 288.94 | 7.29 |
+| 16 | 299.70 | 7.76 |
+| 17 | 310.28 | 8.22 |
+| 18 | 321.00 | 8.66 |
+| 19 | 340.47 | 9.13 |
+| 20 | 352.17 | 9.58 |
+| 21 | 363.27 | 10.04 |
+| 22 | 373.86 | 10.47 |
+| 23 | 384.45 | 10.94 |
+| 24 | 395.05 | 11.37 |
+| 25 | 405.64 | 11.84 |
+| 26 | 416.23 | 12.27 |
+| 27 | 426.83 | 12.75 |
+| 28 | 437.83 | 13.17 |
+| 29 | 444.80 | 13.65 |
+| 30 | 453.36 | 14.08 |
+
+RSS rises in the compressed burst and does not return to startup size. This proves a lower observed peak and bounded application caches, not a long-term leak-free guarantee. Tracemalloc isolated large transient churn to repeated store decoding in categories. Five current evidence snapshots total about 1.6 MB per view and are not FLD's primary RSS cause.
+
+## Changes and guarantees
+
+- list_plans checks managed identities once and reads manual metadata directly. Categories passes one snapshot through list_plans, category_counts and current versions instead of ~35 full-store decodes under the shared write lock. Plan metadata polls also reuse the snapshot.
+- One parsed revision per page is keyed by path/device/inode/size/mtime_ns/ctime_ns. Read routes share it under the store lock. A write transfers ownership out of the cache and returns it only after durable save; aborted writes cannot poison the cache. CLI replacements invalidate it. A legacy GET still defers migration until a write and preserves the v1 backup.
+- Server writes use compact UTF-8 JSON, atomic replace, and file/directory fsync. There is no new database or reader format. History, permissions, Plans filing, durable rounds and uncertain-send suppression remain intact.
+- At most four encoded comments bodies are retained for one revision: full/poll × identity/gzip. Unchanged polls reuse bytes without decoding, serialization or compression. All six endpoints have strong quoted SHA-256 ETags of their actual representation. If-None-Match returns empty 304s; auth/security/cache headers remain, including existing no-store policies. Gzip/identity tags differ and Vary: Accept-Encoding remains.
+- The client should use comments.json?view=poll, send the stored ETag, and retain prior parsed data on 304 without calling response.json() or applying an update. The full endpoint stays compatible. The contract was sent to keep-drafts dispatch ctx_d94c5eac465a.
+- Evidence remains frozen at accept/select time, including deferred votes. A 512-entry digest cache invalidates on file identity/size/mtime/ctime; changed sources remain incomplete and frozen targets are checked/repaired. View byte accounting measures retained Python objects under the existing 16-view/128 MiB ceilings.
+- Push/Send persist their existing records, reply, then wake delivery in the background. Remaining server subprocesses use Path.home() as cwd. Request-local registry/name caches expire at the next request, including keep-alive.
+
+## Profile and validation
+
+Complete before/after cProfile traces are in v9o-server-latency.json. Separate profiled accepts exercise the expensive decision endpoint; timings above exclude profiling. The final FLD profile spends about 28 ms in durable compact save; the equivalent pretty-printed baseline spends most time in Python JSON encoding. Poll profiling exposed repeated full-store decoding, while the explicit overlap test establishes its impact on writes.
+
+- Final full non-browser suite: **1,622 passed, 2 skipped** (208.10 s).
+- Final affected browser suite: **26 passed** (131.54 s): approval catalog, verdicts, rounds/links, runtime HTTP, HTTP cache and card consistency.
+- Focused security/cache/migration checks: **82 passed**, including aborted-save isolation and legacy GET-then-write migration; all are included in the final full suite.
+- Changed Python files pass Ruff; git diff --check passes.
+
+Existing review-key auth, Plans transactions, delivery uncertainty and browser behavior remain covered. No live restart, install, merge or release was performed.
 
 ## Reproduce
 
-Run each command separately, using the repository's test interpreter; never point the server at a live page.
+Run commands separately with the test interpreter. Both scripts import tests/conftest.py before annotate. /tmp/v9o-baseline is a git archive extraction of c6c59c7. Add --source /tmp/fld-stack-round8-copy --no-synthetic to bench_writes for FLD, and --contention-only for the overlap test. Default samples=30 and fake Orca delay=1 second.
 
 ```sh
 env PYTHONPATH=/tmp/v9o-baseline/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python scripts/bench_writes.py --output /tmp/v9o-before-all.json --samples 30
-env PYTHONPATH=/Users/changlee/orca/workspaces/codex/fast-writes/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python scripts/bench_writes.py --output /tmp/v9o-after-all.json --samples 30
+env PYTHONPATH=/Users/changlee/orca/workspaces/codex/fast-writes/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python scripts/bench_writes.py --output /tmp/v9o-after-all-final.json --samples 30
+env PYTHONPATH=/Users/changlee/orca/workspaces/codex/fast-writes/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python scripts/bench_server_session.py --source /tmp/fld-stack-round8-copy --poll-view '?view=poll' --output /tmp/v9o-fld-session-final3.json
 env PYTHONPATH=/Users/changlee/orca/workspaces/codex/fast-writes/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python -m pytest tests --ignore=tests/browser -q
-env PYTHONPATH=/Users/changlee/orca/workspaces/codex/fast-writes/src /Users/changlee/projects/agent-annotate/codex/.venv/bin/python -m pytest tests/browser/test_approval_catalog_browser.py tests/browser/test_decision_verdicts.py tests/browser/test_rounds_links_contrast.py tests/browser/test_runtime_http.py tests/browser/test_http_cache_browser.py -q
 ```
 
-The baseline directory is a `git archive` extraction of c6c59c7, and the same current harness is used against both source trees. `--source` may be repeated for other read-only page copies; `--orca-delay 0` is available for a zero-delay control. No release, install, merge, restart or live publish was performed.
+Raw p50/p95/max, server CPU, body bytes, HTTP statuses, profiles and per-minute resource samples accompany this report in v9o-server-latency.json.

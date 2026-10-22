@@ -866,6 +866,9 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 # Handler
 # ────────────────────────────────────────────────────────────────────────────
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
+    _store_snapshot = None
+    _store_responses = {}
+
     def handle_one_request(self):
         from .page_names import resolution_scope
         with resolution_scope():
@@ -1277,7 +1280,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if route_path.startswith("/api/plans/"):
                 from .categories import plan_meta
                 try:
-                    meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]))
+                    with _locked_store(self.artifact_dir, write=False):
+                        meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]),
+                                         store=self._v2_load(read_only=True))
                     return self._respond(200, json.dumps(meta).encode(), cache_control="no-store", conditional=True)
                 except KeyError:
                     return self._respond(404, b'{"error":"plan not found"}')
@@ -1298,7 +1303,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 except (OSError, ValueError) as exc:
                     return self._respond(500, json.dumps({"error": str(exc)}).encode())
             if route_path == "/comments.json":
-                return self._v2_get_store()
+                return self._v2_get_store(parsed)
             if route_path == "/current.meta.json":
                 return self._v2_get_meta()
             if route_path.lstrip("/") in _WEB_ASSETS:
@@ -1511,20 +1516,59 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _meta_path(self) -> Path:
         return self.artifact_dir / "current.meta.json"
 
-    def _v2_load(self) -> dict:
-        return _load_v2_store(self._store_path(), migrate=getattr(self, "command", "POST") not in {"GET", "HEAD"})
+    def _store_signature(self):
+        try:
+            stat = self._store_path().stat()
+            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        except FileNotFoundError:
+            return (str(self._store_path()),)
+
+    def _v2_load(self, *, read_only=False) -> dict:
+        with _locked_store(self.artifact_dir, write=False):
+            signature = self._store_signature()
+            snapshot = type(self)._store_snapshot
+            writing = getattr(self, "command", "POST") not in {"GET", "HEAD"}
+            if snapshot is None or snapshot[0] != signature or (writing and not snapshot[2]):
+                store = _load_v2_store(self._store_path(), migrate=writing)
+                snapshot = (self._store_signature(), store, writing)
+                type(self)._store_snapshot = snapshot
+            if not read_only:
+                # Transfer ownership to this locked transaction. An aborted
+                # write leaves no mutated cache: the next reader reloads disk.
+                # A durable save returns the same snapshot to the cache.
+                type(self)._store_snapshot = None
+            return snapshot[1]
 
     def _v2_save(self, store: dict) -> None:
-        if store.get("approved_plans"):
-            from .categories import _atomic_bytes
-            _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, indent=2).encode())
-            return
-        _atomic_write_json(self._store_path(), store)
+        from .categories import _atomic_bytes
+        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode())
+        type(self)._store_snapshot = (self._store_signature(), store, True)
+        type(self)._store_responses.clear()
 
-    def _v2_get_store(self):
+    def _v2_get_store(self, parsed=None):
+        poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
+        compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
-            store = self._v2_load()
-        self._respond(200, json.dumps(store, ensure_ascii=False).encode(), "application/json", conditional=True)
+            signature = self._store_signature()
+            cache = type(self)._store_responses
+            if cache.get("signature") != signature:
+                cache.clear()
+                cache["signature"] = signature
+            key = (poll, compressed)
+            if key not in cache:
+                store = self._v2_load(read_only=True)
+                if poll:
+                    # Carry provenance remains on disk and in full comments.json;
+                    # the shell does not render it. Decision history is rendered.
+                    store = {**store, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
+                                                        for comment in items]
+                                               for anchor, items in store.get(area, {}).items()}
+                                         for area in ("anchors", "archived")}}
+                body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
+                packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+                cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
+            representation = cache[key]
+        self._respond(200, b"", "application/json", conditional=True, representation=representation)
 
     def _v2_get_meta(self):
         p = self._meta_path()
@@ -1800,7 +1844,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if plan_id is None and not self._moved():
             from .approval_catalog import seal_review
             with _locked_store(self.artifact_dir, write=False):
-                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(), base)
+                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(read_only=True), base)
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
@@ -3378,15 +3422,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 author = self._author()
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
-                counts = category_counts(self.artifact_dir, author, read_state=read)
-                plans = list_plans(self.artifact_dir)
+                store = self._v2_load(read_only=True)
+                plans = list_plans(self.artifact_dir, store=store)
+                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans)
                 category_data = load_categories(self.artifact_dir)
                 try:
                     library = load_copy(self.artifact_dir)
                 except ValueError as exc:
                     # The other tabs still count; Library reports the problem.
                     library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
-                store = self._v2_load()
                 present = {comment_category(c) for items in store["anchors"].values() for c in items}
                 available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
                              "findings": bool(category_data["findings_sets"]) or "findings" in present,
@@ -3733,13 +3777,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Helpers ───────────────────────────────────────────────────────
     def _respond(self, code: int, body: bytes, content_type: str = "application/json",
-                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None):
+                 cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None,
+                 representation: tuple[bytes, bool] | None = None):
         compressible = content_type.split(";", 1)[0] in {
             "text/javascript", "application/javascript", "text/css", "text/html",
             "application/json", "image/svg+xml",
         }
         compressed = False
-        if compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
+        if representation is not None:
+            body, compressed = representation
+        elif compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
             packed = gzip.compress(body, compresslevel=6, mtime=0)
             if len(packed) < len(body):
                 body, compressed = packed, True
@@ -3808,6 +3855,9 @@ def make_handler(
     BoundHandler.local_author_name = local_author_name
     BoundHandler.proxy_urls = proxy_urls
     BoundHandler.trusted_access_origins = trusted_access_origins
+    # At most four immutable bodies: full/poll × identity/gzip, one file revision.
+    BoundHandler._store_responses = {}
+    BoundHandler._store_snapshot = None
     return BoundHandler
 
 
