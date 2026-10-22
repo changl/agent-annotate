@@ -126,6 +126,26 @@ def test_close_archives_only_the_stale_unanswered_cards(page, capsys):
     assert "session_id" in ev
 
 
+def test_offline_close_uses_the_servers_store_lock_and_atomic_replace(page, monkeypatch):
+    from agent_annotate import sync_server
+
+    path = page.slug_dir / "comments.json"
+    before = path.read_bytes()
+    replaced = []
+    original = sync_server.os.replace
+
+    def replace(source, target):
+        if target == path:
+            assert page.slug_dir / ".comments.json.lock" in sync_server._STORE_LOCAL.held
+            assert path.read_bytes() == before
+            replaced.append(True)
+        return original(source, target)
+
+    monkeypatch.setattr(sync_server.os, "replace", replace)
+    assert cli.cmd_close(_close()) == 0
+    assert replaced and _store(page)["archived"]
+
+
 def test_close_is_bounded_by_older_than(page, capsys):
     """The threshold is the whole contract. The unanswered cards are 90, 45
     and 3 days old, so each boundary picks a different set."""

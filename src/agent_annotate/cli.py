@@ -1948,34 +1948,29 @@ def cmd_migrate(args) -> int:
             src_comments = cand
             break
 
-    if src_comments:
-        try:
-            raw = json.loads(src_comments.read_text(encoding="utf-8"))
-        except Exception as e:
-            print(f"WARN: could not parse {src_comments}: {e}", file=sys.stderr)
-            raw = []
+    from .sync_server import _atomic_write_json, _coerce_v2, _locked_store
+    with _locked_store(slug_dir):
+        if src_comments:
+            try:
+                raw = json.loads(src_comments.read_text(encoding="utf-8"))
+            except Exception as e:
+                print(f"WARN: could not parse {src_comments}: {e}", file=sys.stderr)
+                raw = []
 
-        # Reuse _coerce_v2 from sync_server
-        from .sync_server import _coerce_v2
-        store = _coerce_v2(raw)
-        # Stamp version on every comment
-        for items in store["anchors"].values():
-            for c in items:
-                c.setdefault("version", initial_version)
-        (slug_dir / "comments.json").write_text(
-            json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        # Back up original comments
-        if args.copy:
-            backup = slug_dir / f"comments.{legacy_stem}.v1.bak.json"
-            backup.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+            store = _coerce_v2(raw)
+            # Stamp version on every comment
+            for items in store["anchors"].values():
+                for c in items:
+                    c.setdefault("version", initial_version)
+            _atomic_write_json(slug_dir / "comments.json", store)
+            # Back up original comments
+            if args.copy:
+                backup = slug_dir / f"comments.{legacy_stem}.v1.bak.json"
+                backup.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+            else:
+                os.replace(src_comments, slug_dir / f"comments.{legacy_stem}.v1.bak.json")
         else:
-            os.replace(src_comments, slug_dir / f"comments.{legacy_stem}.v1.bak.json")
-    else:
-        (slug_dir / "comments.json").write_text(
-            json.dumps({"schema_version": 2, "anchors": {}, "archived": {}}, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+            _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
 
     print(f"  Migrated {legacy_path} → {slug_dir}/")
     print(f"    HTML:          {action} → versions/{initial_version}.html")
@@ -3034,10 +3029,6 @@ def _store_file(record: dict) -> Path | None:
     return Path(slug_dir) / "comments.json" if slug_dir else None
 
 
-def _store_lock_path(project: str, slug: str) -> Path:
-    return LOCK_DIR / f"{_safe_component(project)}.{_safe_component(slug)}.store.lock"
-
-
 def _read_store_file(path: Path) -> dict:
     """The store exactly as written, not the flattened view `_load_store` gives.
 
@@ -3208,16 +3199,15 @@ def cmd_close(args) -> int:
     else:
         stamp = _now_iso()
         try:
-            with _flock(_store_lock_path(project, slug)):
+            from .sync_server import _atomic_write_json, _locked_store
+            with _locked_store(store_path.parent):
                 store = _read_store_file(store_path)
                 for cid in ids:
                     if _archive_comment_in_store(store, cid, author, stamp):
                         archived_ids.append(cid)
                     else:
                         failures.append((cid, 0, "not found in store"))
-                tmp = store_path.with_name(store_path.name + ".tmp")
-                tmp.write_text(json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8")
-                os.replace(tmp, store_path)
+                _atomic_write_json(store_path, store)
         except TimeoutError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 4
