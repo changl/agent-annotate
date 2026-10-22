@@ -91,7 +91,8 @@ def _session(tmp_path, directory):
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            # A context of its own, so a test can open a second tab on it.
+            page = browser.new_context(viewport={"width": 1440, "height": 960}).new_page()
             page.set_default_timeout(8000)
             page.goto(base + "#view=review", wait_until="networkidle")
             _loaded(page)
@@ -298,3 +299,170 @@ def test_posts_show_at_once_and_a_failed_post_gives_the_text_back(tmp_path):
         assert page.locator("#popover.vis").count() == 1
         assert page.locator("#pop-ta").input_value() == POP + " again"
         assert page.locator("#comment-list .citem.is-pending").count() == 0
+
+
+# Independent review (v9o): two tabs, a poll or a refresh landing while a
+# post is on its way, typing during a post, an answer lost on the way back,
+# a reload mid-post, and the poll view of the store.
+SLOW_POSTS = """([pattern, ms, mode]) => {
+    const real = window.__realFetch || (window.__realFetch = window.fetch);
+    const re = new RegExp(pattern);
+    window.fetch = async (url, opts) => {
+        if (!(opts && opts.method && opts.method !== 'GET' && re.test(String(url)))) return real(url, opts);
+        await new Promise(r => setTimeout(r, ms));
+        if (mode === 'fail') throw new TypeError('network down');
+        const answer = await real(url, opts);
+        if (mode === 'lose') throw new TypeError('answer lost');
+        return answer;
+    };
+}"""
+CREATE = r"/api/comments(\?|$)"
+REPLY_URL = r"/api/comments/reply-card/reply"
+
+
+def _slow(page, pattern, ms, mode="ok"):
+    page.evaluate(SLOW_POSTS, [pattern, ms, mode])
+
+
+def _store(directory):
+    return json.loads((directory / "comments.json").read_text())
+
+
+def _drafts(page):
+    return page.evaluate("""() => JSON.parse(localStorage.getItem(
+        Object.keys(localStorage).find(k => k.startsWith('annotate:drafts:') && k.endsWith(':review')) || '') || '{}')""")
+
+
+def test_two_tabs_on_one_page_never_erase_each_others_drafts(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        other = page.context.new_page()
+        other.goto(base + "#view=review", wait_until="networkidle")
+        _loaded(other)
+        page.bring_to_front()
+        _reply(page).fill(REPLY)
+        other.bring_to_front()
+        other.locator("#general-feedback-toggle").click()
+        other.locator("#gf-ta").fill(GF)
+        assert _drafts(page) == {"reply-card": REPLY, "gf": GF}
+        page.bring_to_front()
+        page.reload(wait_until="networkidle")
+        _loaded(page)
+        assert _reply(page).input_value() == REPLY
+        assert page.locator("#gf-ta").input_value() == GF
+
+
+def test_a_store_read_during_a_post_keeps_it_on_screen_and_it_posts_once(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        _slow(page, REPLY_URL, 1500)
+        _reply(page).fill(REPLY)
+        page.locator('[data-action="reply"][data-id="reply-card"]').click()
+        page.locator("#comment-list .thread-reply.is-pending").wait_for()
+        # The box is free at once for the next reply.
+        assert _reply(page).input_value() == ""
+        _reply(page).press_sequentially("Next reply")
+        # The agent writes and the page reads the fresh store meanwhile.
+        _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Agent note meanwhile.", "version": "v1"}]})
+        page.evaluate("() => window.AnnotateDocs.refreshStore()")
+        page.locator("#comment-list .citem", has_text="Agent note meanwhile.").wait_for()
+        assert page.locator("#comment-list .thread-reply.is-pending").count() == 1
+        page.wait_for_function("() => !document.querySelector('#comment-list .thread-reply.is-pending')")
+        assert page.locator("#comment-list .thread-reply", has_text=REPLY).count() == 1
+        assert [r["text"] for r in _store(directory)["anchors"]["s:checks:p1"][0]["replies"]].count(REPLY) == 1
+        assert _reply(page).input_value() == "Next reply"
+        page.reload(wait_until="networkidle")
+        _loaded(page)
+        assert _reply(page).input_value() == "Next reply"
+
+        # An answer, the same way: a refresh while it is on its way leaves it answered.
+        _slow(page, r"/api/comments/question-11/decision", 1500)
+        page.locator('#comment-list [data-comment-id="question-11"] .decision-btn').first.click()
+        answered = "() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision?.pending"
+        assert page.evaluate(answered) is True
+        page.evaluate("() => window.AnnotateDocs.refreshStore()")
+        assert page.evaluate(answered) is True
+        page.wait_for_function("() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision?.pending === undefined"
+                               " && !!window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision")
+
+
+def test_a_failed_post_gives_back_its_text_ahead_of_newer_typing(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        frame = page.frame_locator("#content-frame")
+        _slow(page, REPLY_URL, 800, "fail")
+        _reply(page).fill(REPLY)
+        page.locator('[data-action="reply"][data-id="reply-card"]').click()
+        page.locator("#comment-list .thread-reply.is-pending").wait_for()
+        _reply(page).press_sequentially("Next")
+        page.locator('#comment-list [data-comment-id="reply-card"]', has_text="Reply not sent").wait_for()
+        assert _reply(page).input_value() == REPLY + "\n\nNext"
+        assert _drafts(page)["reply-card"] == REPLY + "\n\nNext"
+
+        _slow(page, CREATE, 1000, "fail")
+        frame.locator('[data-anchor-id="s:checks"] h2').click(position={"x": 10, "y": 5})
+        page.locator("#pop-ta").fill(POP)
+        page.locator("#pop-save").click()
+        page.locator("#comment-list .citem.is-pending").wait_for()
+        # Clicking in the document meanwhile opens an empty composer, never
+        # the one being sent (saving that again would post it twice).
+        frame.locator('[data-anchor-id="s:checks:p1"]').first.click(position={"x": 10, "y": 5})
+        page.locator("#popover.vis").wait_for()
+        assert page.locator("#pop-ta").input_value() == ""
+        page.locator("#pop-ta").press_sequentially("Second note")
+        page.locator("#pop-err").wait_for(state="visible")
+        assert page.locator("#pop-ta").input_value() == POP + "\n\nSecond note"
+        assert not any(c["text"] == POP for c in _store(directory)["anchors"].get("s:checks", []))
+
+
+def test_an_answer_lost_on_the_way_back_is_not_posted_twice(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        frame = page.frame_locator("#content-frame")
+        _slow(page, CREATE, 200, "lose")
+        frame.locator('[data-anchor-id="s:checks"] h2').click(position={"x": 10, "y": 5})
+        page.locator("#pop-ta").fill(POP)
+        page.locator("#pop-save").click()
+        page.wait_for_function("t => window.AnnotateDocs.comments().some(c => c.text === t && !c.pending)", arg=POP)
+        assert page.locator("#popover.vis").count() == 0
+        assert [c["text"] for c in _store(directory)["anchors"]["s:checks"]].count(POP) == 1
+
+        _slow(page, REPLY_URL, 200, "lose")
+        _reply(page).fill(REPLY)
+        page.locator('[data-action="reply"][data-id="reply-card"]').click()
+        page.wait_for_function("() => !document.querySelector('#comment-list .thread-reply.is-pending')")
+        page.wait_for_timeout(300)
+        assert "Reply not sent" not in page.locator('#comment-list [data-comment-id="reply-card"]').inner_text()
+        assert _reply(page).input_value() == ""
+        assert [r["text"] for r in _store(directory)["anchors"]["s:checks:p1"][0]["replies"]].count(REPLY) == 1
+        assert not [k for k in _drafts(page) if k.startswith("sending:")]
+
+
+def test_a_reload_mid_post_gives_back_only_what_the_server_lacks(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Already on the server", "version": "v1"}]})
+        page.evaluate("""() => {
+            const key = 'annotate:drafts:' + location.pathname + ':review';
+            localStorage.setItem(key, JSON.stringify({
+                'sending:reply-card': 'Lost on the way',
+                'sending:pop': { anchorId: 's:checks', anchorLabel: 'Checks', target: null, version: 'v1', text: 'Already on the server' },
+            }));
+        }""")
+        page.reload(wait_until="networkidle")
+        _loaded(page)
+        assert _reply(page).input_value() == "Lost on the way"
+        page.wait_for_timeout(300)
+        assert page.locator("#popover.vis").count() == 0
+        assert _drafts(page) == {"reply-card": "Lost on the way"}
+
+
+def test_polls_read_the_poll_view_of_the_store(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        urls = []
+        page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
+        _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the poll view.", "version": "v1"}]})
+        _poll(page)
+        page.locator("#comment-list .citem", has_text="Seen through the poll view.").wait_for()
+        assert urls and all(u.endswith("/comments.json?view=poll") for u in urls)

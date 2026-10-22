@@ -80,6 +80,15 @@
   const local = {
     get(k, d) { try { const v = JSON.parse(localStorage.getItem('annotate:' + location.pathname + ':' + k) || 'null'); return v == null ? d : v; } catch { return d; } },
     set(k, v) { try { localStorage.setItem('annotate:' + location.pathname + ':' + k, JSON.stringify(v)); } catch {} },
+    // One entry of a stored map (`mem` is this tab's copy; undefined drops
+    // it). v9o: two tabs on one page share the key, so a write changes only
+    // its own entry in what is stored and never erases the other tab's.
+    entry(k, mem, id, v) {
+      if (v === undefined) delete mem[id]; else mem[id] = v;
+      const all = local.get(k, {});
+      if (v === undefined) delete all[id]; else all[id] = v;
+      local.set(k, all);
+    },
   };
   async function api(path, body) {
     const r = await fetch(path, body === undefined ? { cache: 'no-store' }

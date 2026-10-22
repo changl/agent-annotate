@@ -237,3 +237,20 @@ def test_ui28_phone_comment_save_target_is_at_least_44px(tmp_path, findings, wid
         for sel in ("#f-reopen-save", "#f-reopen-cancel"):
             box = page.locator(sel).bounding_box()
             assert box["height"] >= 44 and box["width"] >= 44, (sel, box)
+
+
+# v9o: text typed while a comment is on its way stays in the box.
+def test_typing_while_a_finding_comment_is_on_its_way_is_kept(tmp_path, findings):
+    from test_keep_drafts import SLOW_POSTS
+
+    with browser_page(tmp_path, findings) as (page, _):
+        go(page, "findings")
+        open_finding(page, "finding-21")
+        page.evaluate(SLOW_POSTS, [r"/api/comments(\?|$)", 1000, "ok"])
+        page.locator("#f-compose").fill("First note")
+        page.locator("#f-save").click()
+        page.wait_for_timeout(300)
+        page.locator("#f-compose").press("End")
+        page.keyboard.type(" and more")
+        page.locator("#rail-findings .citem-txt", has_text="First note").first.wait_for()
+        assert page.locator("#f-compose").input_value() == "First note and more"

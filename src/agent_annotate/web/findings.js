@@ -23,8 +23,13 @@
   const drafts = { compose: UI.local.get('find:drafts', {}), reopen: UI.local.get('find:reopen-drafts', {}) };
   const DRAFT_KEY = { compose: 'find:drafts', reopen: 'find:reopen-drafts' };
   function setDraft(kind, id, text) {
-    if (text) drafts[kind][id] = text; else delete drafts[kind][id];
-    UI.local.set(DRAFT_KEY[kind], drafts[kind]);
+    UI.local.entry(DRAFT_KEY[kind], drafts[kind], id, text || undefined);
+  }
+  // After a post: the box empties only if nothing was typed meanwhile (v9o).
+  function clearSent(box, kind, id, sent) {
+    if (box && box.value.trim() !== sent) { setDraft(kind, id, box.value); return; }
+    setDraft(kind, id, '');
+    if (box) box.value = '';
   }
 
   // ── The store's findings ────────────────────────────────────────────────
@@ -305,7 +310,7 @@
       const r = await D().decide(f.id, 'comment', t);
       busy = false;
       if (!r || r.fallback) { fail('Failed to send — try again.'); return; }
-      setDraft('compose', f.id, '');
+      clearSent($('#f-compose'), 'compose', f.id, t);
       changing = false;
       await D().refreshStore();
     });
@@ -313,8 +318,7 @@
       const t = $('#f-compose').value.trim(); if (!t) return;
       const c = await D().createComment(f.anchor_id, tag(f) + ' · ' + titleOf(f), t, f.version, null, { category: 'findings' });
       if (!c) { fail('Failed to save — try again.'); return; }
-      setDraft('compose', f.id, '');
-      const box = $('#f-compose'); if (box) box.value = '';
+      clearSent($('#f-compose'), 'compose', f.id, t);
       await D().refreshStore();
     });
     on('f-reopen', () => { reopening = true; renderRail(); const ta = $('#f-reopen-ta'); if (ta) ta.focus(); });

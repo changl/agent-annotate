@@ -172,21 +172,31 @@ function loadDrafts(doc) {
   try { drafts = JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
   // General feedback used to be kept per version ('gf:<version>'), so a new
   // version or a reload onto the latest showed an empty box.
-  for (const k of Object.keys(drafts)) {
-    if (k.indexOf('gf:') !== 0) continue;
-    if (!drafts.gf && drafts[k]) drafts.gf = drafts[k];
+  const old = Object.keys(drafts).filter(k => k.indexOf('gf:') === 0 || k.indexOf('sending:') === 0);
+  for (const k of old) {
+    if (k.indexOf('sending:') === 0) {
+      // The page closed before a post's answer: its text goes back in its
+      // box unless the server has it (the store is loaded first).
+      const key = k.slice(8);
+      if (!sentLanded(key, drafts[k])) drafts[key] = mergeDraft(drafts[key], drafts[k]);
+    } else if (!drafts.gf && drafts[k]) drafts.gf = drafts[k];
     delete drafts[k];
   }
+  if (old.length) try { localStorage.setItem(draftsKey(doc), JSON.stringify(drafts)); } catch {}
   return drafts;
 }
-function saveDrafts() {
-  try { localStorage.setItem(draftsKey(DOC), JSON.stringify(DRAFTS)); } catch {}
-}
+// Two tabs on one page share the key: a write changes only its own entry in
+// what is stored, so one tab never erases what the other typed.
 function setDraft(key, value) {
   if ((DRAFTS[key] || '') === (value || '')) return;
   if (value) DRAFTS[key] = value;
   else delete DRAFTS[key];
-  saveDrafts();
+  try {
+    const k = draftsKey(DOC);
+    const stored = JSON.parse(localStorage.getItem(k) || '{}') || {};
+    if (value) stored[key] = value; else delete stored[key];
+    localStorage.setItem(k, JSON.stringify(stored));
+  } catch {}
 }
 
 // ── Compact layout detection ─────────────────────────────────────────
@@ -337,6 +347,9 @@ function authorQuery() {
 // poll brought something new (`quiet` reads handle their own changes).
 const pollLast = {};
 let pollChanged = false;
+// Posts not answered yet, each with how to put it on a fresh store (see
+// "Optimistic posts").
+const pendingEdits = new Map();
 async function pollJson(url, quiet) {
   const last = pollLast[url];
   const r = await fetch(apiUrl(url), { cache: 'no-store', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
@@ -345,21 +358,28 @@ async function pollJson(url, quiet) {
   if (!r.ok) return { ok: false, status: r.status };
   const text = await r.text();
   const etag = r.headers.get('ETag');
-  if (last && text === last.text) { last.etag = etag; return { ok: true, same: true, data: last.data }; }
+  if (last && last.text != null && text === last.text) { last.etag = etag; return { ok: true, same: true, data: last.data }; }
   const data = JSON.parse(text);
-  pollLast[url] = { etag, text, data };
+  // The body is kept for comparing only when the server sends no ETag (the
+  // FLD store's text is megabytes held twice otherwise).
+  pollLast[url] = { etag, text: etag ? null : text, data };
   if (!quiet) pollChanged = true;
   return { ok: true, same: false, data };
 }
 
 // The page's one comment store, shared by every document and tab.
+// `view=poll` (servers from v9o on) leaves out each comment's carry_history, which
+// nothing in the browser shows (megabytes on long-lived pages); an older
+// server ignores the query and sends the whole store, which works the same.
 async function loadStore() {
   try {
-    const got = await pollJson('./comments.json');
+    const got = await pollJson('./comments.json?view=poll');
     if (!got.ok) return false;
     if (got.same) return true;
     const store = got.data;
     STORE = store && store.schema_version === 2 ? store : { schema_version: 2, anchors: {}, archived: {} };
+    // Posts still on their way stay on screen (v9o).
+    for (const apply of pendingEdits.values()) apply();
     computeNumbers();
     return true;
   } catch { return false; }
@@ -1527,7 +1547,7 @@ function renderDrawer() {
   let focusedTa = null;
   const unifiedCaret = document.activeElement && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd, document.activeElement.selectionDirection] : null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
-    if (!replyHidden[ta.dataset.replyFor]) setDraft(ta.dataset.replyFor, ta.value || '');
+    setDraft(ta.dataset.replyFor, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-reply-for="' + cssEsc(ta.dataset.replyFor) + '"]';
   });
   listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
@@ -1583,7 +1603,7 @@ function renderDrawer() {
 
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     const draft = DRAFTS[ta.dataset.replyFor];
-    if (draft && !replyHidden[ta.dataset.replyFor]) ta.value = draft;
+    if (draft) ta.value = draft;
   });
   listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
     const draft = DRAFTS['say:' + ta.dataset.decisionSayTa];
@@ -2082,9 +2102,7 @@ function newerLocationHtml(c) {
 // "Show more" / "Show less" (as on quoted excerpts) appears only when the
 // clamp cuts the text off (see syncExcerptClamps).
 const commentTextOpen = {};
-// v9o: a reply being posted (its box shows empty, its draft is kept until the
-// server has it), and the error of a reply that failed.
-const replyHidden = {};
+// v9o: the error of a reply that failed.
 const replyError = {};
 function commentTextHtml(c) {
   const text = String(c.text == null ? '' : c.text);
@@ -2340,28 +2358,34 @@ function wireCardActions(root) {
     const id = btn.dataset.id;
     const ta = root.querySelector('[data-reply-for="' + cssEsc(id) + '"]');
     const text = (ta && ta.value || '').trim();
-    const c = findCommentById(id);
+    const c = storedComment(id);
     if (!text || !c) { if (ta) ta.focus(); return; }
-    // v9o: the reply shows at once, marked Sending…; the box keeps its draft
-    // until the server has it, and a failure puts the text back in the box.
-    setDraft(id, ta.value);
+    // v9o: the reply shows at once, marked Sending…, and the box is free for
+    // the next one; the text waits as a 'sending:' draft until the server has
+    // it, and a failure puts it back in the box (ahead of anything newer).
     const reply = { text, author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email, ts: new Date().toISOString(), pending: true };
-    (c.replies = c.replies || []).push(reply);
-    replyHidden[id] = true;
+    const unpost = () => [c, storedComment(id)].forEach(cur => { const i = cur ? (cur.replies || []).indexOf(reply) : -1; if (i !== -1) cur.replies.splice(i, 1); });
+    addPendingEdit(reply, () => { const cur = storedComment(id); if (cur && !(cur.replies || []).includes(reply)) (cur.replies = cur.replies || []).push(reply); });
+    setDraft('sending:' + id, text);
+    setDraft(id, '');
+    ta.value = '';
+    delete replyError[id];
     renderDrawer();
-    const posted = await settlePending(apiReply(id, text));
-    const box = document.querySelector('#comment-list [data-reply-for="' + cssEsc(id) + '"]');
-    if (!posted && box && !box.value) box.value = DRAFTS[id] || text;
-    delete replyHidden[id];
-    const i = c.replies.indexOf(reply);
-    if (i !== -1) c.replies.splice(i, 1);
+    let posted = await settlePending(apiReply(id, text));
+    pendingEdits.delete(reply);
+    unpost();
+    // An answer lost on the way back: the server may have the reply anyway.
+    if (!posted && await loadStore()) posted = sentLanded(id, text);
+    setDraft('sending:' + id, '');
     if (!posted) {
+      const merged = mergeDraft(DRAFTS[id], text);
+      setDraft(id, merged);
+      const box = document.querySelector('#comment-list [data-reply-for="' + cssEsc(id) + '"]');
+      if (box) box.value = merged;
       replyError[id] = 'Reply not sent — the server did not answer. Your text is still in the box; try again.';
       renderDrawer();
       return;
     }
-    delete replyError[id];
-    setDraft(id, '');
     await refreshStore();
     markReadAfterAction(id);
   }));
@@ -2392,11 +2416,18 @@ function decisionCommentText(root, id) {
 async function submitDecision(root, id, verdict, text, optionId) {
   setDecisionButtonsDisabled(root, id, true);
   setDecisionFeedback(root, id, 'Sending…', false);
-  const c = findCommentById(id);
-  const was = c && { decision: c.decision, changing: decisionChanging[id], expanded: cardExpanded[id] };
+  const c = storedComment(id);
+  const was = c && { changing: decisionChanging[id], expanded: cardExpanded[id] };
+  const optimistic = { verdict, text: text || undefined, option_id: optionId, by: IDENTITY ? IDENTITY.email : AUTHOR,
+    ts: new Date().toISOString(), round_pending: roundsEnabled(), pending: true };
+  // The card it went on and what it replaced (a store read meanwhile puts
+  // it on the fresh copy of the card).
+  let holder = null, prior = null;
   if (c) {
-    c.decision = { verdict, text: text || undefined, option_id: optionId, by: IDENTITY ? IDENTITY.email : AUTHOR,
-      ts: new Date().toISOString(), round_pending: roundsEnabled(), pending: true };
+    addPendingEdit(optimistic, () => {
+      const cur = storedComment(id);
+      if (cur && cur.decision !== optimistic) { holder = cur; prior = cur.decision; cur.decision = optimistic; }
+    });
     delete decisionChanging[id];
     renderDrawer();
     sendCommentCountsToFrame();
@@ -2404,9 +2435,10 @@ async function submitDecision(root, id, verdict, text, optionId) {
   }
   let result = await settlePending(apiDecision(id, verdict, text, optionId));
   if (!result || result.fallback) result = await settlePending(apiDecisionFallback(id, verdict, text));
+  pendingEdits.delete(optimistic);
   if (!result) {
     if (c) {
-      c.decision = was.decision;
+      if (holder && holder.decision === optimistic) holder.decision = prior;
       if (was.changing) decisionChanging[id] = true;
       if (was.expanded) cardExpanded[id] = true;
       renderDrawer();
@@ -2645,14 +2677,18 @@ function closePopover() {
   editingCommentId = null;
   if (!document.getElementById('pin-popover').classList.contains('vis')) setMobileBackdropVisible(false);
 }
-// v9o: the card shows at once, marked Sending…; a failed post takes it away
-// and opens the composer again with the text and the error.
+// v9o: the card shows at once, marked Sending…, and the composer is free for
+// the next note; the text waits as the 'sending:pop' draft until the server
+// has it. A failed post takes the card away and opens the composer again
+// with the text (ahead of anything typed since) and the error.
 async function savePopover() {
   if (!IDENTITY) return;
   const text = document.getElementById('pop-ta').value.trim();
   if (!text || !pendingAnchor) return;
   const at = pendingAnchor;
-  keepPopDraft();
+  const sent = Object.assign({}, at, { text });
+  setDraft('sending:pop', sent);
+  setDraft('pop', '');
   closePopover();
   const temp = addPendingComment(at.anchorId, {
     anchor_label: at.anchorLabel, text, version: at.version || CURRENT_VERSION, target: at.target || null,
@@ -2660,15 +2696,19 @@ async function savePopover() {
   });
   setActiveTab('feedback');
   focusSidebarCard(temp.id);
-  const created = await settlePending(apiCreateComment(at.anchorId, at.anchorLabel, text, at.version || CURRENT_VERSION, at.target));
+  let created = await settlePending(apiCreateComment(at.anchorId, at.anchorLabel, text, at.version || CURRENT_VERSION, at.target));
   dropPendingComment(temp);
+  // An answer lost on the way back: the server may have the comment anyway.
+  if (!created && await loadStore()) created = sentLanded('pop', sent);
+  setDraft('sending:pop', '');
   if (!created) {
+    setDraft('pop', mergeDraft(DRAFTS.pop, sent));
+    closePopover();
     renderAll();
     openPopoverForCreate(at.anchorId, at.anchorLabel, window.innerWidth / 2, window.innerHeight / 3, at.target);
     document.getElementById('pop-err').textContent = 'Not saved — the server did not answer. Your text is still here; try again.';
     return;
   }
-  setDraft('pop', '');
   await refreshStore();
   // The author has obviously "read" their own new comment.
   markReadAfterAction(created.id);
@@ -2677,13 +2717,25 @@ async function savePopover() {
 }
 
 // ── Optimistic posts (v9o) ──────────────────────────────────────────
-// A comment or reply is drawn the moment it is posted, marked Sending…,
-// and the 8 s poll waits until the server has answered, so it never draws
-// the store without it in between.
+// A comment, reply or answer is drawn the moment it is posted, marked
+// Sending…. The 8 s poll waits until the server has answered, and any store
+// read in between (a poll already on its way, another action's refresh)
+// gets each one again from pendingEdits, so it never leaves the screen.
 let pendingPosts = 0;
 async function settlePending(promise) {
   pendingPosts++;
   try { return await promise; } finally { pendingPosts--; }
+}
+// The comment as the store holds it (findCommentById gives a copy).
+function storedComment(id) {
+  for (const area of [STORE.anchors, STORE.archived]) {
+    for (const items of Object.values(area || {})) for (const c of items) if (c.id === id) return c;
+  }
+  return null;
+}
+function addPendingEdit(key, apply) {
+  pendingEdits.set(key, apply);
+  apply();
 }
 function addPendingComment(anchorId, fields) {
   const c = Object.assign({
@@ -2691,11 +2743,28 @@ function addPendingComment(anchorId, fields) {
     author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email,
     created_at: new Date().toISOString(), replies: [],
   }, fields);
-  (STORE.anchors[anchorId] = STORE.anchors[anchorId] || []).push(c);
+  addPendingEdit(c, () => {
+    const list = STORE.anchors[anchorId] = STORE.anchors[anchorId] || [];
+    if (!list.includes(c)) list.push(c);
+  });
   computeNumbers();
   return c;
 }
+// A post whose text waits as a 'sending:' draft ('sending:pop' for the
+// composer, 'sending:<comment id>' for a reply): what the server has of it.
+function sentLanded(key, sent) {
+  const same = x => !x.pending && String(x.text || '').trim() === String(key === 'pop' ? sent.text : sent).trim();
+  if (key === 'pop') return (STORE.anchors[sent.anchorId] || []).find(same) || null;
+  const c = findCommentById(key);
+  return (c && (c.replies || []).find(same)) || null;
+}
+// Text that did not reach the server goes back ahead of what was typed since.
+function mergeDraft(now, sent) {
+  if (typeof sent === 'object') return now && (now.text || '').trim() ? Object.assign({}, sent, { text: sent.text + '\n\n' + now.text }) : sent;
+  return now && now.trim() ? sent + '\n\n' + now : sent;
+}
 function dropPendingComment(c) {
+  pendingEdits.delete(c);
   const list = STORE.anchors[c.anchor_id];
   const i = list ? list.indexOf(c) : -1;
   if (i !== -1) list.splice(i, 1);
@@ -4220,13 +4289,15 @@ async function init() {
       changed = pollChanged;
       if (changed || held) {
         held = false;
-        const storeSig = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
+        // The store is written out once per poll (megabytes on FLD).
+        const storeJson = JSON.stringify(STORE), readJson = JSON.stringify(READ);
+        const storeSig = storeJson + readJson + pageReadOnly();
         if (storeSig !== lastStoreSig) {
           if (isEditing()) held = true;
           else { lastStoreSig = storeSig; document.dispatchEvent(new CustomEvent('annotate:store')); }
         }
         if (onDoc && !docBusy) {
-          const snap = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ) + pageReadOnly();
+          const snap = storeJson + JSON.stringify(META) + readJson + pageReadOnly();
           if (snap !== lastSnap[doc]) { if (isEditing()) held = true; else { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
         }
         if (window.AA) window.AA.changed();

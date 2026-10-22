@@ -392,3 +392,47 @@ def test_first_visit_opens_the_declared_start_item(tmp_path, lib_site):
     with browser_page(tmp_path, lib_site) as (page, _):
         go(page, "library")
         assert page.locator("#sp-list-body .sp-row.hl").get_attribute("data-item") == "article-2"
+
+
+# ── v9o: text typed while a save or a post is on its way, two tabs ────────
+def test_typing_while_a_save_or_comment_is_on_its_way_is_kept(tmp_path, lib_site):
+    from test_keep_drafts import SLOW_POSTS
+
+    with browser_page(tmp_path, lib_site) as (page, _):
+        go(page, "library", item="row-14")
+        editor(page).fill("Saved text.")
+        page.evaluate(SLOW_POSTS, [r"/api/copy/row-14/revisions", 1000, "ok"])
+        page.locator("#sp-save").click()
+        page.wait_for_timeout(300)
+        editor(page).press("End")
+        page.keyboard.type(" Typed later.")
+        playwright.expect(status(page)).to_contain_text("Saved")
+        assert [op["insert"] for op in revisions(lib_site)[-1]["delta"]["ops"]] == ["Saved text.\n"]
+        assert editor(page).inner_text().strip() == "Saved text. Typed later."
+        page.reload(wait_until="networkidle")
+        ready(page)
+        go(page, "library", item="row-14")
+        assert editor(page).inner_text().strip() == "Saved text. Typed later."
+
+        page.evaluate(SLOW_POSTS, [r"/api/comments(\?|$)", 1000, "ok"])
+        comment(page, "First note")
+        page.locator("#sp-compose-save").click()
+        page.wait_for_timeout(300)
+        page.locator("#sp-compose-ta").press("End")
+        page.keyboard.type(" and more")
+        page.locator('#rail-library [data-cid] .citem-txt', has_text="First note").first.wait_for()
+        assert page.locator("#sp-compose-ta").input_value() == "First note and more"
+
+
+def test_another_tabs_library_drafts_survive_typing_here(tmp_path, lib_site):
+    with browser_page(tmp_path, lib_site) as (page, _):
+        go(page, "library", item="row-14")
+        # Another tab of the page saves a comment draft on another item after
+        # this one loaded.
+        page.evaluate("""() => {
+            const k = 'annotate:' + location.pathname + ':lib:comment-drafts';
+            localStorage.setItem(k, JSON.stringify({ 'article-1': 'From the other tab' }));
+        }""")
+        comment(page, "Typed here")
+        stored = page.evaluate("() => JSON.parse(localStorage.getItem('annotate:' + location.pathname + ':lib:comment-drafts'))")
+        assert stored == {"article-1": "From the other tab", "row-14": "Typed here"}
