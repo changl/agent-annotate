@@ -1598,7 +1598,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     snapshot = type(self)._meta_snapshot
                     if snapshot is None or snapshot[0] != signature:
-                        raw = json.loads(p.read_text(encoding="utf-8")) if signature is not None else {"current": "v1", "history": []}
+                        try:
+                            raw = json.loads(p.read_text(encoding="utf-8")) if signature is not None else {"current": "v1", "history": []}
+                        except (OSError, ValueError):
+                            raw = {}  # Keep the live summaries, as _read_meta() does.
                         snapshot = (signature, raw)
                         type(self)._meta_snapshot = snapshot
                         cache.clear()

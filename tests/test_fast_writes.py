@@ -355,3 +355,8 @@ def test_meta_cache_tracks_file_and_all_injected_inputs(server, monkeypatch, enc
         changed()
         assert len(handler._meta_responses) <= 4
     assert "target" not in request(httpd, "/current.meta.json")[2].decode().split('"owner":', 1)[1]
+    path.write_text("{broken json")
+    fallback = changed()
+    assert fallback["project_info"] == project and fallback["delivery_status"] == latest
+    path.unlink()
+    assert changed()["current"] == "v1"

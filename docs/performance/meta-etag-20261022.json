@@ -121,5 +121,7 @@
     "affected_browser_passed": 23,
     "ruff": "passed",
     "coverage": "All ten poll route families, exact representation SHA-256, gzip/identity, 304 empty bodies, meta/project/owner/delivery invalidation, auth/session isolation and key rotation, bounded cache"
-  }
+  },
+  "measured_change_commit": "ec58e2185fb920a8901ba7b4e81f1107c4589788",
+  "post_measurement_change": "Preserve injected summaries for malformed metadata; the measured steady valid-metadata hot path is unchanged."
 }
