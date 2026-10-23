@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.27.4
+
+agent-annotate-dw4, server half (PR #52): `/api/history` rebuilt everything (~300 ms on FLD) on every request, even unchanged ones, while holding the store lock that comment posts need. It is now cached by the identities of the store, rounds and bus (reusing an unchanged bus prefix), rebuilt outside the lock from one consistent snapshot, and answers 304 when unchanged: unchanged p95 297 → 2 ms; a comment posted during it p95 264 → 50 ms. CLI writes (ask, resolve, withdraw, new, publish) change every polled ETag, so an open page sees them at its next poll.
+
 agent-annotate-dw4 (browser half): an open page did not show new feedback requests until it was reloaded, and a post took seconds to settle. On a copy of FLD: a new agent card shows within 8 s on an idle page (was up to 30 s, never while a box kept focus) and the page moves to a new version; a post settles in 77 ms (was 608 ms) with no long tasks (was ~0.9 s). `docs/performance/dw4/client.md`.
 
 - Review follows the agent: a reviewer on the latest version moves to a newer one at the first poll after it is published, and the document reloads when the agent republishes the version on screen. While a draft is open (the composer, a box with focus, the Send summary) the page stays, the new cards still show in the rail, and the banner offers the new version ("… new from the agent — open vN · your draft stays"); the move happens at the first poll after the draft closes. A reviewer who opened an older version (History, a link, Back) stays on it.
