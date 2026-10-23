@@ -442,7 +442,6 @@ async function loadMeta() {
       delete meta.project_info;
       delete meta.delivery_status;
     }
-    noteNewerVersion(meta);
     META = meta;
     return true;
   } catch { return false; }
@@ -838,23 +837,20 @@ function withdrawnQuestions() {
   }));
 }
 
-// Every version's counts, in one pass over the store (one pass per version
-// made History cost versions × comments: 0.7 s a render on FLD, dw4).
-function countsByVersion() {
-  const out = {};
-  for (const c of flattenAll(false)) {
-    // A card that follows the viewer is attributed to the version ON SCREEN
-    // (where it is actionable) rather than to its origin version, so the
-    // rail's red badge agrees with the drawer's "Needs my review" chip.
-    const v = followsViewer(c) ? CURRENT_VERSION : c.version;
-    const k = out[v] || (out[v] = { review: 0, waiting: 0, done: 0, total: 0 });
+function countsForVersion(version) {
+  // A card that follows the viewer is attributed to the version ON SCREEN
+  // (where it is actionable) rather than to its origin version, so the
+  // rail's red badge agrees with the drawer's "Needs my review" chip.
+  const all = flattenAll(false).filter(c => !version || (
+    followsViewer(c) ? version === CURRENT_VERSION : c.version === version));
+  let review = 0, waiting = 0, done = 0;
+  for (const c of all) {
     const cls = classify(c);
-    if (cls === 'review') k.review++;
-    else if (cls === 'waiting') k.waiting++;
-    else k.done++;
-    k.total++;
+    if (cls === 'review') review++;
+    else if (cls === 'waiting') waiting++;
+    else done++;
   }
-  return out;
+  return { review, waiting, done, total: all.length };
 }
 
 // ── ↑NEW detection ──────────────────────────────────────────────────
@@ -1151,13 +1147,10 @@ function roundsByVersion(shown) {
   }
   return out;
 }
-// What the agent did on each version's comments: resolved or addressed them.
-function agentDoneByVersion() {
-  const out = {};
-  for (const c of flattenAll(true)) {
-    if (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent') (out[c.version] = out[c.version] || []).push(c);
-  }
-  return out;
+// What the agent did on a version's comments: resolved or addressed them.
+function agentDoneOn(version) {
+  return flattenAll(true).filter(c => c.version === version &&
+    (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent'));
 }
 function versionFolds(value) {
   const key = 'annotate:vfold:' + location.pathname + ':' + (DOC === 'plans' ? 'plan:' + PLAN_ID : DOC);
@@ -1203,17 +1196,14 @@ function renderVersionRail(shown) {
     return 0;
   }
   const folds = versionFolds();
-  const doneBy = sentOnly ? {} : agentDoneByVersion();
-  const countsBy = countsByVersion();
-  const none = { review: 0, waiting: 0, done: 0, total: 0 };
   body.innerHTML = history.map(h => {
     const rounds = byVersion[h.version] || [];
-    const done = doneBy[h.version] || [];
+    const done = sentOnly ? [] : agentDoneOn(h.version);
     const activity = rounds.length || done.length;
     const next = activity ? publishedAfter(h, rounds) : null;
     const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION);
     const pid = 'vact-' + doc + '-' + h.version;
-    const counts = countsBy[h.version] || none;
+    const counts = countsForVersion(h.version);
     const isCur = h.version === CURRENT_VERSION;
     const isNew = !neverVisited(h.version) && hasNewContent(h.version);
     let dotHtml = '<span class="vrow-dot"></span>';
@@ -1290,19 +1280,9 @@ function renderVersionRail(shown) {
 function renderVersionBanner() {
   const banner = document.getElementById('unified-version-banner');
   const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
-  // dw4: what the agent published while a draft was open (see followAgent).
-  const updated = DOC === 'review' && !!followTo && followTo === CURRENT_VERSION;
-  banner.hidden = !updated && (!latest || CURRENT_VERSION === latest);
+  banner.hidden = !latest || CURRENT_VERSION === latest;
   if (banner.hidden) return;
-  const btn = (label) => '<button type="button" class="btn btn-link btn-sm">' + esc(label) + '</button>';
-  if (updated) {
-    banner.innerHTML = 'The agent updated ' + esc(CURRENT_VERSION) + ' — ' + btn('show the update') + ' · your draft stays';
-    banner.querySelector('button').onclick = () => { followTo = null; frameReady = { doc: null, version: null }; loadIframe(CURRENT_VERSION); renderVersionBanner(); };
-    return;
-  }
-  banner.innerHTML = followTo && DOC === 'review'
-    ? 'Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest) + ', new from the agent — ' + btn('open ' + latest) + ' · your draft stays'
-    : 'Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest) + ' — ' + btn('back to latest');
+  banner.innerHTML = 'Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest) + ' — <button type="button" class="btn btn-link btn-sm">back to latest</button>';
   banner.querySelector('button').onclick = () => switchVersion(latest);
 }
 // (The phone header's version <select> is gone: History is the one version
@@ -1310,7 +1290,6 @@ function renderVersionBanner() {
 
 function switchVersion(v) {
   if (!v || v === CURRENT_VERSION) return;
-  if (DOC === 'review') followTo = null;
   CURRENT_VERSION = v;
   loadIframe(v);
   // final/: the version is part of the page's hash (#view=plans&v=v5), since
@@ -1565,7 +1544,7 @@ function renderDrawer() {
   const savedScrollTop = drawerBodyEl ? drawerBodyEl.scrollTop : 0;
 
   // Keep half-typed text across re-renders (T11).
-  let focusedTa = null, focusedTop = null;
+  let focusedTa = null;
   const unifiedCaret = document.activeElement && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd, document.activeElement.selectionDirection] : null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     setDraft(ta.dataset.replyFor, ta.value || '');
@@ -1575,7 +1554,6 @@ function renderDrawer() {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
-  if (focusedTa) focusedTop = document.activeElement.getBoundingClientRect().top;
 
   // v9o: a card holding unsent text stays open with its box, even after the
   // agent answered or resolved it meanwhile (its section opens too).
@@ -1632,10 +1610,12 @@ function renderDrawer() {
     if (draft) ta.value = draft;
     syncSayHint(ta);
   });
-  const focused = focusedTa && listEl.querySelector(focusedTa);
-  if (focused) {
-    focused.focus({ preventScroll: true });
-    if (unifiedCaret) focused.setSelectionRange(...unifiedCaret); else focused.selectionStart = focused.selectionEnd = focused.value.length;
+  if (focusedTa) {
+    const ta = listEl.querySelector(focusedTa);
+    if (ta) {
+      ta.focus();
+      if (unifiedCaret) ta.setSelectionRange(...unifiedCaret); else ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
   }
 
   listEl.querySelectorAll('[data-section-toggle]').forEach(btn => btn.addEventListener('click', () => {
@@ -1652,11 +1632,7 @@ function renderDrawer() {
   wireCardActions(listEl);
   wireDecisionActions(listEl);
   syncExcerptClamps(listEl);
-  if (!drawerBodyEl) return;
-  drawerBodyEl.scrollTop = savedScrollTop;
-  // dw4: a poll can render while a box has focus; the box stays where the
-  // reviewer's eyes are, whatever arrived above it.
-  if (focused) drawerBodyEl.scrollTop += focused.getBoundingClientRect().top - focusedTop;
+  if (drawerBodyEl && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -2265,16 +2241,10 @@ function markReadAfterAction(commentId) {
   }
 }
 
-// The elements a wiring pass binds: every one under root, or (dw4) only
-// those of one card redrawn in place. Handlers keep looking under root.
-function wiring(root, only) {
-  return sel => only ? [only, ...only.querySelectorAll(sel)].filter(el => el.matches(sel)) : root.querySelectorAll(sel);
-}
-function wireCardActions(root, only) {
-  const pick = wiring(root, only);
+function wireCardActions(root) {
   // U-14: each card is a named, focusable group; Enter opens it.
   // U-04: hovering a card outlines what it is about in the document.
-  pick('.citem').forEach(card => {
+  root.querySelectorAll('.citem').forEach(card => {
     const c = findCommentById(card.dataset.commentId);
     if (!c) return;
     card.tabIndex = 0;
@@ -2296,7 +2266,7 @@ function wireCardActions(root, only) {
   });
   // Whole-card click navigates (T1). On a one-line answered card (C1) it
   // also expands the card.
-  pick('.citem').forEach(card => card.addEventListener('click', (e) => {
+  root.querySelectorAll('.citem').forEach(card => card.addEventListener('click', (e) => {
     if (e.target.closest('button, textarea, a, input, select, .citem-menu')) return;
     const c = findCommentById(card.dataset.commentId);
     if (!c) return;
@@ -2315,7 +2285,7 @@ function wireCardActions(root, only) {
     goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id);
   }));
   // D3 item 3 (2.20): focus entering a card's box navigates too, quietly.
-  pick('.citem').forEach(card => card.addEventListener('focusin', (e) => {
+  root.querySelectorAll('.citem').forEach(card => card.addEventListener('focusin', (e) => {
     if (!e.target.closest('textarea, input')) return;
     const c = findCommentById(card.dataset.commentId);
     if (!c || isGeneralAnchor(c.anchor_id)) return;
@@ -2329,7 +2299,7 @@ function wireCardActions(root, only) {
     } else goToCommentLocation(c.anchor_id, gotoVersionFor(c), c.id, { quiet: true });
   }));
   // C3: the ⋯ menu
-  pick('[data-action="menu"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-action="menu"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const id = btn.dataset.id;
     openMenuId = openMenuId === id ? null : id;
@@ -2343,7 +2313,7 @@ function wireCardActions(root, only) {
     openMenuId = null;
     await fn(e.currentTarget);
   };
-  pick('[data-action="earlier"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-action="earlier"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = !earlierOpen[btn.dataset.id];
     earlierOpen[btn.dataset.id] = open;
@@ -2351,39 +2321,39 @@ function wireCardActions(root, only) {
     const list = document.getElementById(btn.getAttribute('aria-controls'));
     if (list) list.hidden = !open;
   }));
-  pick('[data-action="collapse"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-action="collapse"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     delete cardExpanded[btn.dataset.id];
     renderDrawer();
   }));
-  pick('[data-action="accept"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="accept"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiAccept(b.dataset.id);
     await refreshStore();
   })));
-  pick('[data-action="archive"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="archive"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiArchive(b.dataset.id);
     await refreshStore();
   })));
-  pick('[data-action="restore"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="restore"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiRestore(b.dataset.id);
     await refreshStore();
     markReadAfterAction(b.dataset.id);
   })));
-  pick('[data-action="reopen"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="reopen"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiPutComment(b.dataset.id, { status: 'open' });
     await refreshStore();
     markReadAfterAction(b.dataset.id);
   })));
-  pick('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     const c = findCommentById(b.dataset.id);
     if (!c || !c.resolved_in_version || !c.resolution_anchor_id) return;
     goToCommentLocation(c.resolution_anchor_id, c.resolved_in_version, null);
   })));
-  pick('[data-action="repin"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+  root.querySelectorAll('[data-action="repin"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     renderDrawer();
     startRepin(b.dataset.id);
   })));
-  pick('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
+  root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const id = btn.dataset.id;
     const ta = root.querySelector('[data-reply-for="' + cssEsc(id) + '"]');
@@ -2416,9 +2386,8 @@ function wireCardActions(root, only) {
       renderDrawer();
       return;
     }
-    // (A reply found on a re-read is already in the store.)
-    if (posted.id === id && applyServerComment(posted)) settledPost(id);
-    else { await refreshStore(); markReadAfterAction(id); }
+    await refreshStore();
+    markReadAfterAction(id);
   }));
 }
 
@@ -2484,9 +2453,9 @@ async function submitDecision(root, id, verdict, text, optionId) {
   delete cardExpanded[id];
   delete decisionHint[id];
   clearSayDraft(id);
-  // The old-server fallback answers with a push, not the card.
-  if (result.id === id && applyServerComment(result)) settledPost(id);
-  else { await refreshStore(); markReadAfterAction(id); updateSendState(); }
+  await refreshStore();
+  markReadAfterAction(id);
+  updateSendState();
   return result;
 }
 
@@ -2544,9 +2513,8 @@ function pickOption(root, btn) {
   return submitDecision(root, id, v, text, btn.dataset.optionId);
 }
 
-function wireDecisionActions(root, only) {
-  const pick = wiring(root, only);
-  pick('.decision-btn[data-decision-action]').forEach(btn => btn.addEventListener('click', (e) => {
+function wireDecisionActions(root) {
+  root.querySelectorAll('.decision-btn[data-decision-action]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     pickOption(root, btn);
   }));
@@ -2556,21 +2524,21 @@ function wireDecisionActions(root, only) {
     if (region) region.hidden = !open;
     return region;
   };
-  pick('[data-decision-action="evidence-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="evidence-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = !decisionEvidenceOpen[btn.dataset.id];
     decisionEvidenceOpen[btn.dataset.id] = open;
     const region = toggleRegion(btn, open);
     if (open) syncExcerptClamps(region);
   }));
-  pick('[data-decision-action="evidence-preview"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="evidence-preview"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = !decisionEvidenceItemOpen[btn.dataset.key];
     decisionEvidenceItemOpen[btn.dataset.key] = open;
     const region = toggleRegion(btn, open);
     if (open) syncExcerptClamps(region);
   }));
-  pick('[data-decision-action="excerpt-more"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="excerpt-more"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = !decisionExcerptOpen[btn.dataset.key];
     decisionExcerptOpen[btn.dataset.key] = open;
@@ -2580,17 +2548,17 @@ function wireDecisionActions(root, only) {
     btn.textContent = open ? 'Show less' : 'Show more';
     if (box && box.parentElement) syncExcerptClamps(box.parentElement);
   }));
-  pick('[data-decision-action="evidence"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="evidence"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     goToEvidence(btn.dataset.anchor, btn.dataset.id);
   }));
-  pick('.decision-say-ta').forEach(ta => ta.addEventListener('input', () => {
+  root.querySelectorAll('.decision-say-ta').forEach(ta => ta.addEventListener('input', () => {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     syncSayHint(ta);
     syncStripSayDraft(ta.dataset.decisionSayTa);
     updateSendState();
   }));
-  pick('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     decisionChanging[btn.dataset.id] = true;
     highlightedCommentId = btn.dataset.id;
@@ -2599,7 +2567,7 @@ function wireDecisionActions(root, only) {
     const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
-  pick('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
+  root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     delete decisionChanging[btn.dataset.id];
     delete decisionHint[btn.dataset.id];
@@ -2741,13 +2709,8 @@ async function savePopover() {
     document.getElementById('pop-err').textContent = 'Not saved — the server did not answer. Your text is still here; try again.';
     return;
   }
-  // The author has obviously "read" their own new comment.
-  if (applyServerComment(created, at.anchorId)) {
-    if (highlightedCommentId === temp.id) highlightedCommentId = created.id;
-    settledPost(created.id, temp.id);
-    return;
-  }
   await refreshStore();
+  // The author has obviously "read" their own new comment.
   markReadAfterAction(created.id);
   setActiveTab('feedback');
   focusSidebarCard(created.id);
@@ -2770,75 +2733,6 @@ function storedComment(id) {
   }
   return null;
 }
-// dw4: a write answers with the comment as the server now holds it; that
-// copy goes into the store in place of the one on screen, so a post needs
-// no re-read of the whole store (megabytes on FLD) and no full render. The
-// next poll reads the same store. Delivery fields are the answer's, not the
-// comment's; carry history is left out, as in the poll view.
-const ANSWER_ONLY = ['delivery', 'monitor_count', 'monitor_owner', 'delivery_id', 'carry_history'];
-function applyServerComment(answer, anchorId) {
-  if (!answer || typeof answer !== 'object' || !answer.id) return false;
-  const fresh = Object.assign({}, answer);
-  ANSWER_ONLY.forEach(k => delete fresh[k]);
-  for (const area of [STORE.anchors, STORE.archived]) {
-    for (const items of Object.values(area || {})) {
-      const i = items.findIndex(c => c.id === answer.id);
-      if (i !== -1) { items[i] = fresh; computeNumbers(); return true; }
-    }
-  }
-  const aid = answer.anchor_id || anchorId;
-  if (!aid) return false;
-  (STORE.anchors[aid] = STORE.anchors[aid] || []).push(fresh);
-  computeNumbers();
-  return true;
-}
-// One card drawn again in place (it was `oldId` while Sending…), when it
-// stays in the section it is shown in; false when the rail needs a full
-// render. The card's boxes keep their text, focus and caret (T11). A poll
-// drawn while it was Sending… can show it twice (the server's copy beside
-// the one on its way); that takes the full render too.
-function redrawCard(id, oldId) {
-  const listEl = document.getElementById('comment-list');
-  const nodes = DOC === VIEW_DOC ? listEl.querySelectorAll([...new Set([id, oldId || id])].map(x => '.sec-body [data-comment-id="' + cssEsc(x) + '"]').join(', ')) : [];
-  const node = nodes.length === 1 && nodes[0];
-  const c = node && findCommentById(id);
-  if (!c || !inScope(c) || node.closest('.sec').dataset.section !== sectionOf(c)) return false;
-  const ae = node.contains(document.activeElement) ? document.activeElement : null;
-  const focusSel = ae && ae.dataset.replyFor != null ? '[data-reply-for="' + cssEsc(ae.dataset.replyFor) + '"]'
-    : ae && ae.dataset.decisionSayTa != null ? '[data-decision-say-ta="' + cssEsc(ae.dataset.decisionSayTa) + '"]' : null;
-  const caret = focusSel && ae.selectionStart != null ? [ae.selectionStart, ae.selectionEnd, ae.selectionDirection] : null;
-  node.querySelectorAll('.reply-ta').forEach(ta => setDraft(ta.dataset.replyFor, ta.value || ''));
-  node.querySelectorAll('.decision-say-ta').forEach(ta => setDraft('say:' + ta.dataset.decisionSayTa, ta.value || ''));
-  const tpl = document.createElement('template');
-  tpl.innerHTML = renderCItem(c).trim();
-  const card = tpl.content.firstElementChild;
-  node.replaceWith(card);
-  card.querySelectorAll('.reply-ta').forEach(ta => { const d = DRAFTS[ta.dataset.replyFor]; if (d) ta.value = d; });
-  card.querySelectorAll('.decision-say-ta').forEach(ta => { const d = DRAFTS['say:' + ta.dataset.decisionSayTa]; if (d) ta.value = d; syncSayHint(ta); });
-  wireCardActions(listEl, card);
-  wireDecisionActions(listEl, card);
-  syncExcerptClamps(card);
-  const ta = focusSel && card.querySelector(focusSel);
-  if (ta) { ta.focus(); if (caret) ta.setSelectionRange(...caret); }
-  return true;
-}
-// After a post the server has: its card drawn again in place (the whole
-// rail only when it moved section), its pin, the Send count; History,
-// Library and Findings and the server's tab counts follow when the page is
-// idle. A post costs no full render (agent-annotate-kbv).
-function settledPost(id, oldId) {
-  const c = findCommentById(id);
-  if (c && c.status !== 'archived') markRead([c]);
-  if (!redrawCard(id, oldId)) renderDrawer();
-  sendCommentCountsToFrame();
-  updateSendState();
-  whenIdle(() => {
-    renderVersionRail();
-    document.dispatchEvent(new CustomEvent('annotate:store'));
-  });
-  refreshCountsSoon();
-}
-const whenIdle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1000 }) : setTimeout(fn, 200));
 function addPendingEdit(key, apply) {
   pendingEdits.set(key, apply);
   apply();
@@ -4135,12 +4029,7 @@ async function activateDoc(doc, version) {
     await loadMeta();
     CURRENT_VERSION = latestVersion();
   }
-  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) {
-    CURRENT_VERSION = version;
-    // dw4: a version opened by its address (a link, Back) is the reviewer's
-    // choice, as a History click is: a move that waited on a draft is off.
-    if (doc === 'review') followTo = null;
-  }
+  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
   const frame = document.getElementById('content-frame');
   if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
     frameReady = { doc: null, version: null };
@@ -4294,51 +4183,6 @@ function isEditing() {
     return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
   } catch { return false; }
 }
-// dw4: a render waits only while the reviewer is actually typing (a key in
-// the last 1.5 s, or an input method composing); a box that merely keeps
-// focus no longer holds new cards back. Typing in the document reaches the
-// shell as its 'annotate:say-draft' messages.
-let typedAt = 0, composing = false;
-document.addEventListener('input', () => { typedAt = Date.now(); }, true);
-document.addEventListener('compositionstart', () => { composing = true; }, true);
-document.addEventListener('compositionend', () => { composing = false; typedAt = Date.now(); }, true);
-function typingNow() {
-  return composing || (isEditing() && Date.now() - typedAt < 1500);
-}
-// A draft is open while the composer is up, any box has focus (rail, general
-// feedback, the document) or the Send summary is open. A version change
-// waits for none of these; unsent text elsewhere is a draft that follows
-// the reviewer to the new version (T11).
-function draftOpen() {
-  if (document.getElementById('popover').classList.contains('vis') || document.body.classList.contains('has-summary')) return true;
-  const ae = document.activeElement;
-  return !!(ae && ae.closest && ae.closest('textarea,input,[contenteditable="true"]')) || isEditing();
-}
-// dw4: Review follows the agent. A reviewer on the latest version moves to
-// a newer one when it is published (the frame reloads when the version on
-// screen is republished) at the first poll with no draft open; meanwhile
-// the banner offers it. One who opened an older version stays on it.
-let followTo = null;
-function noteNewerVersion(meta) {
-  if (DOC !== 'review') return;
-  const before = latestVersion();
-  const latest = meta.current || ((meta.history || []).slice(-1)[0] || {}).version;
-  const stamp = (m, v) => ((m.content_stamps || {})[v] || {}).whole;
-  if (latest && before && latest !== before && (followTo || CURRENT_VERSION === before)) followTo = latest;
-  else if (CURRENT_VERSION && latest === CURRENT_VERSION && stamp(META, CURRENT_VERSION) && stamp(meta, CURRENT_VERSION) &&
-    stamp(META, CURRENT_VERSION) !== stamp(meta, CURRENT_VERSION)) followTo = CURRENT_VERSION;
-}
-// Moves to the version the agent published, unless a draft is open.
-function followAgent() {
-  if (DOC !== 'review' || !followTo || draftOpen()) return false;
-  const v = followTo;
-  followTo = null;
-  if (!(META.history || []).some(h => h.version === v)) return false;
-  if (v !== CURRENT_VERSION) { switchVersion(v); return true; }
-  frameReady = { doc: null, version: null };
-  loadIframe(v);
-  return false;
-}
 let DOCS_LOADED_resolve;
 const DOCS_LOADED = new Promise(res => { DOCS_LOADED_resolve = res; });
 async function init() {
@@ -4411,44 +4255,22 @@ async function init() {
 
   // One refresh at a time. Hidden tabs make no requests; foreground resumes now.
   // v9o: a poll that brings nothing new (every read a 304 or the same body)
-  // does no other work. dw4: every 8 s the page asks for the store and the
-  // version list (two empty 304s while nothing changes), so what the agent
-  // posts or publishes shows within 8 s even on a page left alone; the
-  // other reads run with them while things change or the reviewer is
-  // active, after a quiet minute every 15 s, after two every 30 s, and any
-  // change, key, click or return to the tab brings them back to 8 s.
+  // does no other work. Every 8 s while things change or the reviewer is
+  // active; after a quiet minute every 15 s, after two every 30 s; any key,
+  // click or return to the tab brings 8 s back. A render the reviewer's
+  // typing held back runs on the next poll even if nothing else changed.
   let refreshing = false;
   let refreshTimer;
+  let nextAt = 0;
   let idlePolls = 0;
-  let fullAt = 0;
-  let held = false, heldTimer = null;
+  let held = false;
   let lastStoreSig = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
   const pollDelay = () => idlePolls < 8 ? 8000 : idlePolls < 16 ? 15000 : 30000;
   function schedule(ms) {
     clearTimeout(refreshTimer);
     if (document.hidden) return;
+    nextAt = Date.now() + ms;
     refreshTimer = setTimeout(refresh, ms);
-  }
-  // Draws what the polls brought, once the reviewer is not typing: a
-  // render held back runs by itself 1.6 s later, not a poll later.
-  function applyPoll() {
-    clearTimeout(heldTimer);
-    held = true;
-    if (refreshing) return;
-    if (typingNow()) { heldTimer = setTimeout(applyPoll, 1600); return; }
-    held = false;
-    const doc = VIEW_DOC;
-    // The store is written out once per poll (megabytes on FLD).
-    const storeJson = JSON.stringify(STORE), readJson = JSON.stringify(READ);
-    const storeSig = storeJson + readJson + pageReadOnly();
-    if (storeSig !== lastStoreSig) { lastStoreSig = storeSig; document.dispatchEvent(new CustomEvent('annotate:store')); }
-    if (doc && DOC === doc && !docBusy) {
-      const moved = followAgent();
-      const snap = storeJson + JSON.stringify(META) + readJson + pageReadOnly();
-      if (snap !== lastSnap[doc]) { lastSnap[doc] = snap; if (!moved) renderAll(); } else updateSendState();
-      renderVersionBanner();
-    }
-    if (window.AA) window.AA.changed();
   }
   async function refresh() {
     clearTimeout(refreshTimer);
@@ -4456,44 +4278,47 @@ async function init() {
     if (refreshing || docBusy || pendingPosts) { schedule(8000); return; }
     refreshing = true;
     let changed = false;
-    const full = Date.now() >= fullAt;
     try {
       pollChanged = false;
-      const onDoc = () => VIEW_DOC && DOC === VIEW_DOC && !docBusy;
-      if (!full) await Promise.all([loadStore(), onDoc() ? loadMeta() : null]);
-      if (full || pollChanged) {
-        await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
-        if (historyDirty) loadHistory();
-        loadBoard();
-        if (onDoc()) { await loadMeta(); loadDelivery(); }
-      }
+      await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
+      if (historyDirty) loadHistory();
+      loadBoard();
+      const doc = VIEW_DOC;
+      const onDoc = doc && DOC === doc && !docBusy;
+      if (onDoc) { await loadMeta(); loadDelivery(); }
       changed = pollChanged;
+      if (changed || held) {
+        held = false;
+        // The store is written out once per poll (megabytes on FLD).
+        const storeJson = JSON.stringify(STORE), readJson = JSON.stringify(READ);
+        const storeSig = storeJson + readJson + pageReadOnly();
+        if (storeSig !== lastStoreSig) {
+          if (isEditing()) held = true;
+          else { lastStoreSig = storeSig; document.dispatchEvent(new CustomEvent('annotate:store')); }
+        }
+        if (onDoc && !docBusy) {
+          const snap = storeJson + JSON.stringify(META) + readJson + pageReadOnly();
+          if (snap !== lastSnap[doc]) { if (isEditing()) held = true; else { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
+        }
+        if (window.AA) window.AA.changed();
+      }
     } finally {
       refreshing = false;
-      if (changed || held) applyPoll();
-      // A move to a new version that waited on a draft is tried every poll.
-      else if (followTo && VIEW_DOC && DOC === VIEW_DOC && !docBusy) { followAgent(); renderVersionBanner(); }
       idlePolls = changed ? 0 : idlePolls + 1;
-      if (full || changed) fullAt = Date.now() + pollDelay() - 100;
-      schedule(8000);
+      schedule(pollDelay());
     }
   }
   const active = () => {
     if (idlePolls < 8) return;
     idlePolls = 0;
-    fullAt = 0;
+    if (nextAt - Date.now() > 8000) schedule(8000);
   };
   document.addEventListener('pointerdown', active, true);
   document.addEventListener('keydown', active, true);
-  window.addEventListener('message', (e) => {
-    if (!e.data || !e.data.type || String(e.data.type).indexOf('annotate:') !== 0) return;
-    if (e.data.type === 'annotate:say-draft') typedAt = Date.now();
-    active();
-  });
+  window.addEventListener('message', (e) => { if (e.data && e.data.type && String(e.data.type).indexOf('annotate:') === 0) active(); });
   document.addEventListener('visibilitychange', () => {
     clearTimeout(refreshTimer);
     idlePolls = 0;
-    fullAt = 0;
     if (!document.hidden) refresh();
   });
   schedule(8000);
