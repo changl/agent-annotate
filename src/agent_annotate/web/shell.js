@@ -1565,7 +1565,7 @@ function renderDrawer() {
   const savedScrollTop = drawerBodyEl ? drawerBodyEl.scrollTop : 0;
 
   // Keep half-typed text across re-renders (T11).
-  let focusedTa = null;
+  let focusedTa = null, focusedTop = null;
   const unifiedCaret = document.activeElement && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd, document.activeElement.selectionDirection] : null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
     setDraft(ta.dataset.replyFor, ta.value || '');
@@ -1575,6 +1575,7 @@ function renderDrawer() {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
+  if (focusedTa) focusedTop = document.activeElement.getBoundingClientRect().top;
 
   // v9o: a card holding unsent text stays open with its box, even after the
   // agent answered or resolved it meanwhile (its section opens too).
@@ -1631,12 +1632,10 @@ function renderDrawer() {
     if (draft) ta.value = draft;
     syncSayHint(ta);
   });
-  if (focusedTa) {
-    const ta = listEl.querySelector(focusedTa);
-    if (ta) {
-      ta.focus();
-      if (unifiedCaret) ta.setSelectionRange(...unifiedCaret); else ta.selectionStart = ta.selectionEnd = ta.value.length;
-    }
+  const focused = focusedTa && listEl.querySelector(focusedTa);
+  if (focused) {
+    focused.focus({ preventScroll: true });
+    if (unifiedCaret) focused.setSelectionRange(...unifiedCaret); else focused.selectionStart = focused.selectionEnd = focused.value.length;
   }
 
   listEl.querySelectorAll('[data-section-toggle]').forEach(btn => btn.addEventListener('click', () => {
@@ -1653,7 +1652,11 @@ function renderDrawer() {
   wireCardActions(listEl);
   wireDecisionActions(listEl);
   syncExcerptClamps(listEl);
-  if (drawerBodyEl && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
+  if (!drawerBodyEl) return;
+  drawerBodyEl.scrollTop = savedScrollTop;
+  // dw4: a poll can render while a box has focus; the box stays where the
+  // reviewer's eyes are, whatever arrived above it.
+  if (focused) drawerBodyEl.scrollTop += focused.getBoundingClientRect().top - focusedTop;
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -2791,10 +2794,13 @@ function applyServerComment(answer, anchorId) {
 }
 // One card drawn again in place (it was `oldId` while Sending…), when it
 // stays in the section it is shown in; false when the rail needs a full
-// render. The card's boxes keep their text, focus and caret (T11).
+// render. The card's boxes keep their text, focus and caret (T11). A poll
+// drawn while it was Sending… can show it twice (the server's copy beside
+// the one on its way); that takes the full render too.
 function redrawCard(id, oldId) {
   const listEl = document.getElementById('comment-list');
-  const node = DOC === VIEW_DOC && listEl.querySelector('.sec-body [data-comment-id="' + cssEsc(oldId || id) + '"]');
+  const nodes = DOC === VIEW_DOC ? listEl.querySelectorAll([...new Set([id, oldId || id])].map(x => '.sec-body [data-comment-id="' + cssEsc(x) + '"]').join(', ')) : [];
+  const node = nodes.length === 1 && nodes[0];
   const c = node && findCommentById(id);
   if (!c || !inScope(c) || node.closest('.sec').dataset.section !== sectionOf(c)) return false;
   const ae = node.contains(document.activeElement) ? document.activeElement : null;
@@ -4129,7 +4135,12 @@ async function activateDoc(doc, version) {
     await loadMeta();
     CURRENT_VERSION = latestVersion();
   }
-  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
+  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) {
+    CURRENT_VERSION = version;
+    // dw4: a version opened by its address (a link, Back) is the reviewer's
+    // choice, as a History click is: a move that waited on a draft is off.
+    if (doc === 'review') followTo = null;
+  }
   const frame = document.getElementById('content-frame');
   if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
     frameReady = { doc: null, version: null };

@@ -10,6 +10,7 @@ versions. Polls run on Playwright's clock, so two idle minutes take seconds.
 """
 
 import json
+import re
 import socket
 from contextlib import contextmanager
 
@@ -276,3 +277,84 @@ def test_a_post_is_ready_to_send_at_once_and_settles_without_a_full_render(tmp_p
         assert page.evaluate(SAME, cid), "the rail was drawn again on confirmation"
         decision = page.evaluate("() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision")
         assert decision and decision.get("verdict") and not decision.get("pending")
+
+
+def test_a_version_opened_by_its_address_is_not_left_for_the_agents(tmp_path):
+    # A move to a new version that waited on the composer is off once the
+    # reviewer opens an older version by a link or Back.
+    directory = _large(tmp_path)
+    with _session(tmp_path, directory, clock=True) as (page, base, reads):
+        frame = page.frame_locator("#content-frame")
+        frame.locator('[data-anchor-id="s:checks"] h2').click(position={"x": 10, "y": 5})
+        _advance(page, 1, step=0.25)
+        page.locator("#popover.vis").wait_for()
+        page.locator("#pop-ta").fill("A note")
+        new = f"v{VERSIONS + 1}"
+        _publish(tmp_path, directory, new)
+        _agent(base, "api/comments/batch", {"items": [_card(15, new, "And the newer one?")]})
+        assert _advance(page, 12, step=0.5, until=_shows("And the newer one?")) is not None
+        page.evaluate("() => { location.hash = '#view=review&v=v100'; }")
+        assert _advance(page, 5, step=0.25, until=f"() => ({FRAME_VERSION})() === 'v100'") is not None
+        page.locator("#pop-close").click()
+        _advance(page, 20, step=1)
+        assert page.evaluate(FRAME_VERSION) == "v100"
+
+
+def test_a_post_that_a_poll_already_drew_settles_as_one_card(tmp_path):
+    # A poll on its way when Save is pressed brings the server's copy of the
+    # comment while it is still Sending…; settling it leaves one card.
+    directory = _large(tmp_path)
+    with _session(tmp_path, directory, clock=True) as (page, base, reads):
+        hold = {"get": True}
+        held, posts = [], []
+        page.route(re.compile(r"/comments\.json"), lambda route: held.append(route) if hold["get"] else route.continue_())
+
+        def answer_later(route):
+            if route.request.method != "POST":
+                return route.continue_()
+            posts.append((route, route.fetch()))
+        page.route(re.compile(r"/api/comments(\?|$)"), answer_later)
+        _agent(base, "api/comments/batch", {"items": [_card(12, f"v{VERSIONS}", "Something to poll")]})
+        for _ in range(40):
+            if held:
+                break
+            _advance(page, 0.5, step=0.5)
+        assert held, "no poll went out"
+        hold["get"] = False
+        frame = page.frame_locator("#content-frame")
+        frame.locator('[data-anchor-id="s:checks"] h2').click(position={"x": 10, "y": 5})
+        _advance(page, 1, step=0.25)
+        page.locator("#popover.vis").wait_for()
+        page.locator("#pop-ta").fill("Posted while a poll was out")
+        page.locator("#pop-save").click()
+        for _ in range(100):
+            if posts:
+                break
+            page.wait_for_timeout(50)
+        for route in held:
+            route.continue_()
+        _advance(page, 3, step=0.25)
+        cards = page.locator("#comment-list .citem", has_text="Posted while a poll was out")
+        assert cards.count() == 2  # the server's copy and the one Sending…
+        route, response = posts[0]
+        route.fulfill(response=response)
+        _advance(page, 2, step=0.25)
+        assert cards.count() == 1 and "Sending…" not in cards.inner_text()
+
+
+def test_a_box_with_focus_stays_put_when_a_card_arrives_above_it(tmp_path):
+    directory = _large(tmp_path)
+    with _session(tmp_path, directory, clock=True) as (page, base, reads):
+        page.set_viewport_size({"width": 1440, "height": 640})
+        say = page.locator('#comment-list [data-decision-say-ta="question-11"]')
+        say.click()
+        say.press_sequentially("Half an answer")
+        page.evaluate("() => document.activeElement.setSelectionRange(2, 6, 'backward')")
+        top = page.evaluate("() => document.activeElement.getBoundingClientRect().top")
+        _agent(base, "api/comments/batch", {"items": [_card(1, f"v{VERSIONS}", "A card above the box")]})
+        assert _advance(page, 12, step=0.5, until=_shows("A card above the box")) is not None
+        _advance(page, 1, step=0.5)
+        box = page.evaluate("""() => { const t = document.activeElement;
+          return [t.dataset.decisionSayTa, t.value, t.selectionStart, t.selectionEnd, t.selectionDirection, t.getBoundingClientRect().top]; }""")
+        assert box[:5] == ["question-11", "Half an answer", 2, 6, "backward"]
+        assert abs(box[5] - top) < 2, (top, box[5])

@@ -55,6 +55,8 @@ The 2-3 s Chang sees on the M5 is the before column's settle: a 4 MB store re-re
 
 `tests/browser/test_live_updates.py` (1,100 comments, 160 versions; polls on Playwright's clock): idle page gets an `ask` card ≤ 8.5 s, store/meta still polled every 8 s after two idle minutes while read-state backs off; a focused box neither blocks the card nor loses text/focus; a new version is followed with nothing open, offered with the composer open (text kept) and followed after the draft is posted; typing holds a render only until a pause (≤ 2.5 s); comment, reply and verdict are counted in Send < 100 ms and settle with no store read and no rail re-render. All three fail on 2.27.3.
 
+Independent review (same PR) added three, each failing on the first dw4 commit: an older version opened by a link or Back while a move waited on the composer stays on screen (it was moved to the new version once the composer closed); a post that a poll already drew while Sending… settles as one card (it showed twice until a later poll); a focused box keeps its place when a card arrives above it (it moved down by the new card). Same review, not fixed here: a card the agent resolves while its box holds text loses the box, as in agent-annotate-5uy.
+
 ## Left
 
 - A question the agent withdraws (`new --ask` withdraws unanswered cards it does not ask again) takes its rail box with it; text typed there stays in drafts storage but is no longer on screen. Same on 2.27.3 (on blur). Separate bead.
