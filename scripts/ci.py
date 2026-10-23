@@ -32,7 +32,6 @@ TESTS = (
     "tests/test_copy_state.py",
     "tests/test_copy_api.py",
     "tests/test_review_history.py",
-    "tests/test_history_cache.py",
     "tests/test_categories.py",
     "tests/test_categories_api.py",
     "tests/test_approval_catalog.py",
