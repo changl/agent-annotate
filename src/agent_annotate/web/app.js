@@ -552,11 +552,10 @@
     return [lastSend].concat(server);
   }
   // What each tab would send now.
-  // `counts`: the change notification's own (counting walks the whole store).
-  function plan(counts) {
+  function plan() {
     const out = [];
     let total = 0;
-    const k = counts || AA.counts();
+    const k = AA.counts();
     AA.TABS.forEach(t => {
       const n = k[t.id].pending;
       out.push({ id: t.id, label: t.label, n });
@@ -567,7 +566,7 @@
 
   // ── Header Send, progress and the phone Send bar ───────────────────────
   function refresh(counts) {
-    const p = plan(counts);
+    const p = plan();
     const btn = $('#send-btn');
     $('#send-count').textContent = String(p.total);
     btn.disabled = p.total === 0 || sending;

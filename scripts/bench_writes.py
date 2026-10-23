@@ -5,7 +5,6 @@ Uses the suite's sandbox before importing annotate, just like bench_http_cache.
 """
 import argparse
 import cProfile
-import gzip
 import http.client
 import io
 import json
@@ -26,24 +25,20 @@ import conftest  # noqa: E402
 from agent_annotate import delivery  # noqa: E402
 from agent_annotate.approval_catalog import seal_review  # noqa: E402
 from agent_annotate.categories import publish_plan_revision  # noqa: E402
-from agent_annotate.paths import STATE_DIR, WEB_DIR  # noqa: E402
+from agent_annotate.paths import STATE_DIR  # noqa: E402
 from agent_annotate.sync_server import ReviewHTTPServer, make_handler  # noqa: E402
-
-REQUEST_ENCODING = "identity"
 
 
 def request(server, method, path, payload=None, headers=None):
     conn = http.client.HTTPConnection(*server.server_address, timeout=30)
     try:
         conn.request(method, path, json.dumps(payload) if payload is not None else None,
-                     headers={"Content-Type": "application/json", "Accept-Encoding": REQUEST_ENCODING, **(headers or {})})
+                     headers={"Content-Type": "application/json", **(headers or {})})
         response = conn.getresponse()
         body = response.read()
         if response.status not in (200, 201, 304):
             raise RuntimeError(f"{method} {path}: {response.status} {body[:400]!r}")
-        decoded = gzip.decompress(body) if body and response.getheader("Content-Encoding") == "gzip" else body
-        value = json.loads(decoded) if decoded and "application/json" in response.getheader("Content-Type", "") else decoded
-        return response.status, dict(response.getheaders()), value
+        return response.status, dict(response.getheaders()), json.loads(body) if body else None
     finally:
         conn.close()
 
@@ -83,14 +78,11 @@ def prepare(root, source=None):
     return page, version, tokens
 
 
-def measure(root, source, samples, delay, contention_only=False, bus_source=None, contention_path="/api/categories"):
+def measure(root, source, samples, delay, contention_only=False):
     page, version, tokens = prepare(root, source)
     profile = cProfile.Profile()
     base = make_handler(page, slug=root.name, bus_dir=root / root.name, v2_mode=True,
-                        local_author="bench@example.test", skill_dir=WEB_DIR)
-    if bus_source:
-        base.bus_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(bus_source, base.bus_dir / f"{root.name}.ndjson")
+                        local_author="bench@example.test")
 
     class Handler(base):
         profiling = False
@@ -171,9 +163,7 @@ def measure(root, source, samples, delay, contention_only=False, bus_source=None
             call("rounds/discard", "POST", "/api/rounds/discard", {})
             call("read-state write", "POST", "/api/read-state", {"items": [{"id": cid, "sig": "signature"}]})
             call("seen write", "POST", "/api/seen", {"version": version})
-            for path in ("/comments.json", "/comments.json?view=poll", "/current.meta.json", "/api/read-state", "/api/seen",
-                         "/api/categories", "/api/session-monitor", "/api/board", "/api/plans/benchmark",
-                         "/api/history", "/api/project", "/api/copy", "/api/delivery", "/api/identity", "/api/capabilities"):
+            for path in ("/comments.json", "/api/read-state", "/api/categories", "/api/session-monitor", "/api/board", "/api/plans/benchmark"):
                 call("GET " + path, "GET", path)
                 started = time.perf_counter()
                 label = "conditional " + path
@@ -181,25 +171,19 @@ def measure(root, source, samples, delay, contention_only=False, bus_source=None
                 times.setdefault(label, []).append((time.perf_counter() - started) * 1000)
                 statuses.setdefault(label, set()).add(status)
                 wire.setdefault(label, []).append(int(headers.get("Content-Length", 0)) if status != 304 else 0)
-        # Rendering the real document seals its evidence view, so measure load
-        # after writes rather than replacing the synthetic image-card view
-        # between accept/select samples.
-        for _ in range(0 if contention_only or not (page / "current.html").is_file() else samples):
-            for path in ("/", "/content"):
-                call("GET " + path, "GET", path)
         if contention_only:
             for iteration in range(samples):
                 errors = []
 
                 def poll():
                     try:
-                        request(server, "GET", contention_path)
+                        request(server, "GET", "/api/categories")
                     except Exception as exc:
                         errors.append(str(exc))
                 poller = threading.Thread(target=poll)
                 poller.start()
                 time.sleep(.05)  # give the real categories route the shared lock
-                call("comment create during " + contention_path, "POST", "/api/comments", {"anchor_id": "bench-evidence", "text": f"Concurrent {iteration}"})
+                call("comment create during categories", "POST", "/api/comments", {"anchor_id": "bench-evidence", "text": f"Concurrent {iteration}"})
                 poller.join(timeout=30)
                 if errors or poller.is_alive():
                     raise RuntimeError(f"concurrent poll failed: {errors}")
@@ -210,21 +194,10 @@ def measure(root, source, samples, delay, contention_only=False, bus_source=None
         Handler.profiling = False
         stream = io.StringIO()
         pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(30)
-        write_profile = stream.getvalue()
-        profile.clear()
-        # Force a new history revision, then profile cold and warm reads separately.
-        request(server, "POST", "/api/comments", {"anchor_id": "bench-evidence", "text": "History profile"})
-        Handler.profiling = True
-        request(server, "GET", "/api/history")
-        Handler.profiling = False
-        stream = io.StringIO()
-        pstats.Stats(profile, stream=stream).sort_stats("cumulative").print_stats(30)
         return {"source": str(source) if source else "synthetic: 60 cards, 40 x 512 KiB images",
                 "fake_orca_calls_started": sum(str(fake) in line for line in fake_log.read_text().splitlines()) if fake_log.exists() else 0,
                 "comments_bytes": len(original), "fake_orca_seconds": delay, "samples": samples,
-                "bus_source": str(bus_source) if bus_source else None,
-                "accept_encoding": REQUEST_ENCODING,
-                "slowest_write": slowest, "profile_decision_accept": write_profile, "profile_history": stream.getvalue(),
+                "slowest_write": slowest, "profile_decision_accept": stream.getvalue(),
                 "routes": {k: {"p50": round(statistics.median(v), 2), "p95": round(sorted(v)[math.ceil(len(v)*.95)-1], 2),
                                "max": round(max(v), 2), "statuses": sorted(statuses[k]),
                                "body_bytes_p50": statistics.median(wire[k]),
@@ -236,7 +209,6 @@ def measure(root, source, samples, delay, contention_only=False, bus_source=None
 
 
 def main():
-    global REQUEST_ENCODING
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=30)
@@ -244,19 +216,14 @@ def main():
     parser.add_argument("--source", type=Path, action="append")
     parser.add_argument("--no-synthetic", action="store_true")
     parser.add_argument("--contention-only", action="store_true")
-    parser.add_argument("--bus-source", type=Path)
-    parser.add_argument("--contention-path", default="/api/categories")
-    parser.add_argument("--accept-encoding", choices=("identity", "gzip"), default="identity")
     args = parser.parse_args()
-    REQUEST_ENCODING = args.accept_encoding
     sources = args.source or [Path("/Users/changlee/projects/agent-annotate/reviews/annotate-conformity-20260927"),
                               Path("/Users/changlee/projects/agent-annotate/reviews/annotate-assessment-20260917")]
     results = []
     for n, source in enumerate(sources if args.no_synthetic else [*sources, None]):
         # Retain diagnostics without flooding the benchmark output.
         with (conftest._SANDBOX / f"fixture-{n}.log").open("w") as log, redirect_stdout(log):
-            result = measure(conftest._SANDBOX / f"fixture-{n}", source, args.samples, args.orca_delay,
-                             args.contention_only, args.bus_source, args.contention_path)
+            result = measure(conftest._SANDBOX / f"fixture-{n}", source, args.samples, args.orca_delay, args.contention_only)
         results.append(result)
         args.output.write_text(json.dumps(results, indent=2))
         print(json.dumps({"fixture": result["source"], "writes": {k: v for k, v in result["routes"].items() if not k.startswith(("GET", "conditional"))}}), flush=True)
