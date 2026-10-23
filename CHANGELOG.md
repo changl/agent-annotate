@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+agent-annotate-dw4 (browser half): an open page did not show new feedback requests until it was reloaded, and a post took seconds to settle. On a copy of FLD: a new agent card shows within 8 s on an idle page (was up to 30 s, never while a box kept focus) and the page moves to a new version; a post settles in 77 ms (was 608 ms) with no long tasks (was ~0.9 s). `docs/performance/dw4/client.md`.
+
+- Review follows the agent: a reviewer on the latest version moves to a newer one at the first poll after it is published, and the document reloads when the agent republishes the version on screen. While a draft is open (the composer, a box with focus, the Send summary) the page stays, the new cards still show in the rail, and the banner offers the new version ("… new from the agent — open vN · your draft stays"); the move happens at the first poll after the draft closes. A reviewer who opened an older version (History, a link, Back) stays on it.
+- A box that keeps focus no longer holds new cards back: a poll's render waits only while the reviewer is typing (a key in the last 1.5 s, or an input method composing) and runs by itself once they pause, with the box's text, focus, caret and place on screen kept.
+- The store and the version list are checked every 8 s even on an idle page (two empty 304s); the other reads keep the 15 s / 30 s idle backoff. What the agent asks or publishes shows within 8 s.
+- A post (comment, reply, answer) settles from the server's own answer: the card is drawn again in place, with no re-read of the store and no full render. A poll that already drew the comment while it was Sending… no longer leaves it twice. History counts each version in one pass over the store (it walked every comment once per version: 0.7 s a render on FLD).
+
 ## 2.27.3
 
 agent-annotate-v9o follow-up (PR #50). `current.meta.json` (937 KB on FLD) and every other polled route now answer 304 with an empty body when unchanged: private strong ETags over the exact response, `Cache-Control: no-cache`. On a copy of FLD, idle poll bodies went from 244 KB/min to 0 and server CPU from 0.35 to 0.24 s/min. (2.27.2's "4.6 KB/min" left this file out.)
