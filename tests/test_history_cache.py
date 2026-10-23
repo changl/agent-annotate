@@ -82,6 +82,99 @@ def test_cold_history_does_not_hold_the_comment_transaction_lock(server, monkeyp
         assert pending.result()[0] == 200
 
 
+def test_history_retries_when_a_round_is_submitted_during_reconstruction(server, monkeypatch):
+    httpd, root, _, release = server
+    release.set()
+    (root / "current.meta.json").write_text(json.dumps({"current": "v1", "history": [
+        {"version": "v1", "ts": "2026-01-01T00:00:00Z"}]}))
+    assert request(httpd, "/api/comments/card/decision", "POST", {
+        "verdict": "accept", "defer_push": True})[0] == 200
+    original = review_history.review_history
+    calls = []
+
+    def submit(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            assert request(httpd, "/api/rounds/submit", "POST", {"version": "v1"})[0] == 200
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(review_history, "review_history", submit)
+    status, headers, body = request(httpd, "/api/history")
+    expected = original(root, root / "project/page.ndjson", paths.BUS_ARCHIVE_ROOT)
+    assert status == 200 and json.loads(body) == expected
+    assert len(calls) == 2
+    assert request(httpd, "/api/history", headers={"If-None-Match": headers["ETag"]})[0] == 304
+
+
+def test_history_bus_cache_has_a_total_prefix_and_source_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_history, "_BUS_CACHE_BYTES", 180)
+    monkeypatch.setattr(review_history, "_BUS_CACHE_FILES", 2)
+    cache = {}
+    for index in range(5):
+        path = tmp_path / f"{index}.ndjson"
+        path.write_text(json.dumps({"event": "round_submitted", "round_id": str(index)}) + "\n")
+        assert review_history._bus_rounds(path, cache)[0]["round_id"] == str(index)
+        assert len(cache) <= 2
+        assert sum(len(prefix) for prefix, _ in cache.values()) <= 180
+    path.write_text(path.read_text() + '{"event":"noop"}\n' * 100)
+    assert review_history._bus_rounds(path, cache)[0]["round_id"] == "4"
+    assert sum(len(prefix) for prefix, _ in cache.values()) <= 180
+
+
+@pytest.mark.parametrize("change", ["append", "rewrite_longer", "truncate", "rotate", "archive", "rounds_rewrite"])
+def test_cached_history_matches_uncached_builder_after_bus_changes(server, monkeypatch, change):
+    httpd, root, _, _ = server
+    bus = root / "project/page.ndjson"
+    archive = root / "archive"
+    monkeypatch.setattr(paths, "BUS_ARCHIVE_ROOT", archive)
+    bus.parent.mkdir(exist_ok=True)
+
+    def event(identifier):
+        return json.dumps({"event": "round_submitted", "round_id": identifier, "id": identifier,
+                           "ts": "2026-10-01T00:00:00Z", "answers": [{"text": identifier}]}) + "\n"
+
+    bus.write_text(event("old"))
+    rounds = root / "rounds.ndjson"
+    rounds.write_text(event("receipt"))
+    before = request(httpd, "/api/history")[1]["ETag"]
+    if change == "append":
+        with bus.open("a") as output:
+            output.write(event("new"))
+    elif change == "rewrite_longer":
+        bus.write_text(event("replacement") + '{"event":"noop"}\n' * 100)
+    elif change == "truncate":
+        bus.write_text("")
+    elif change == "rotate":
+        bus.rename(bus.with_suffix(".old"))
+        bus.write_text(event("new"))
+    elif change == "archive":
+        archived = archive / "20261001/project/page.ndjson"
+        archived.parent.mkdir(parents=True)
+        bus.rename(archived)
+        bus.write_text(event("new"))
+    else:
+        rounds.write_text(event("rewritten-receipt"))
+    expected = review_history.review_history(root, bus, archive)
+    status, headers, body = request(httpd, "/api/history", headers={"If-None-Match": before})
+    assert status == 200 and json.loads(body) == expected
+    assert request(httpd, "/api/history", headers={"If-None-Match": headers["ETag"]})[0] == 304
+
+
+def test_history_does_not_return_a_mixed_revision_under_continuous_writes(server, monkeypatch):
+    httpd, root, _, _ = server
+    original = review_history.review_history
+
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        with (root / "rounds.ndjson").open("a") as output:
+            output.write('{"id":"another round"}\n')
+        return result
+
+    monkeypatch.setattr(review_history, "review_history", changed)
+    assert request(httpd, "/api/history")[0] == 503
+    assert httpd.RequestHandlerClass._history_responses == {}
+
+
 def test_bus_cache_checks_exact_prefix_and_retries_partial_lines(tmp_path, monkeypatch):
     (tmp_path / "current.meta.json").write_text('{"history":[]}')
     bus = tmp_path / "page.ndjson"

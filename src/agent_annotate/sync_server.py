@@ -1629,34 +1629,53 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
-        try:
-            # Includes creation/deletion/replacement, archived buses and newly
-            # available version files. CLI writers need no in-process invalidation.
+
+        def disk_signature():
             paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
                      self.artifact_dir / "versions", self.artifact_dir / "content",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
+            signature = []
+            for path in paths:
+                try:
+                    stat = path.stat()
+                    signature.append((str(path), stat.st_dev, stat.st_ino, stat.st_size,
+                                      stat.st_mtime_ns, stat.st_ctime_ns))
+                except FileNotFoundError:
+                    signature.append((str(path),))
+            return signature
+
+        try:
             with type(self)._history_response_lock:
-                signature = []
-                for path in paths:
-                    try:
-                        stat = path.stat()
-                        signature.append((str(path), stat.st_dev, stat.st_ino, stat.st_size,
-                                          stat.st_mtime_ns, stat.st_ctime_ns))
-                    except FileNotFoundError:
-                        signature.append((str(path),))
                 cache = type(self)._history_responses
-                if cache.get("signature") != signature:
-                    # Take an immutable pair under the transaction lock; parsing
-                    # the large bus and reconstructing history never hold it.
+                for _ in range(3):
+                    # Check even cache hits under the transaction lock, so a
+                    # reader waiting on a writer cannot return its old revision.
                     with _locked_store(self.artifact_dir, write=False):
+                        signature = disk_signature()
+                        if cache.get("signature") == signature:
+                            break
                         meta_bytes = self._meta_path().read_bytes()
                         store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
-                    history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
-                                             meta_bytes=meta_bytes, store_bytes=store_bytes,
-                                             bus_cache=type(self)._history_bus_cache)
+                    try:
+                        history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
+                                                 meta_bytes=meta_bytes, store_bytes=store_bytes,
+                                                 bus_cache=type(self)._history_bus_cache)
+                    except (OSError, ValueError):
+                        with _locked_store(self.artifact_dir, write=False):
+                            if disk_signature() != signature:
+                                continue
+                        raise
+                    # Reconstruction stays outside the writer lock, but every
+                    # input must belong to the revision copied above.
+                    with _locked_store(self.artifact_dir, write=False):
+                        if disk_signature() != signature:
+                            continue
                     body = json.dumps(history, ensure_ascii=False).encode()
                     cache.clear()
                     cache.update(signature=signature, body=body)
+                    break
+                else:
+                    return self._respond(503, b'{"error":"history changed during reconstruction; retry"}')
                 if compressed not in cache:
                     body = cache["body"]
                     packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body

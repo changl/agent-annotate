@@ -9,6 +9,9 @@ from bisect import bisect_right
 from datetime import datetime
 from pathlib import Path
 
+_BUS_CACHE_BYTES = 16 * 1024 * 1024
+_BUS_CACHE_FILES = 32
+
 
 def _time(value):
     try:
@@ -93,6 +96,10 @@ def _bus_rounds(path, cache):
 
     rounds = rounds + list(parse(tail[:boundary]))
     cache[path] = (data[:len(prefix) + boundary], rounds)
+    # Bound retained prefixes across both the current bus and all archives.
+    while (len(cache) > _BUS_CACHE_FILES
+           or sum(len(value[0]) for value in cache.values()) > _BUS_CACHE_BYTES):
+        del cache[next(iter(cache))]
     return [*rounds, *parse(tail[boundary:])]
 
 
