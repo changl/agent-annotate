@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import re
+from bisect import bisect_right
 from datetime import datetime
 from pathlib import Path
 
@@ -61,10 +62,47 @@ def save_round(directory: Path, event: dict) -> None:
         os.fsync(source.fileno())
 
 
-def review_history(directory: Path, bus: Path | None = None, archive: Path | None = None) -> dict:
+def history_buses(bus: Path | None, archive: Path | None) -> list[Path]:
+    paths = [bus] if bus else []
+    if bus and archive:
+        paths += sorted(archive.glob("*/" + bus.parent.name + "/" + bus.name))
+    return paths
+
+
+def _bus_rounds(path, cache):
+    """Reuse complete lines only after checking the exact previously read prefix.
+
+    Unlike an inode/offset cursor, this also handles in-place rewrites and
+    replacement files that grow. A partial trailing line is retried next time.
+    """
+    data = path.read_bytes() if path.is_file() else b""
+    prefix, rounds = cache.get(path, (b"", []))
+    if not data.startswith(prefix):
+        prefix, rounds = b"", []
+    tail = data[len(prefix):]
+    boundary = tail.rfind(b"\n") + 1
+
+    def parse(chunk):
+        for line in chunk.splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and event.get("event") == "round_submitted":
+                yield event
+
+    rounds = rounds + list(parse(tail[:boundary]))
+    cache[path] = (data[:len(prefix) + boundary], rounds)
+    return [*rounds, *parse(tail[boundary:])]
+
+
+def review_history(directory: Path, bus: Path | None = None, archive: Path | None = None,
+                   *, meta_bytes: bytes | None = None, store_bytes: bytes | None = None,
+                   bus_cache: dict | None = None) -> dict:
     from .categories import comment_category
-    meta = json.loads((directory / "current.meta.json").read_text())
-    store = json.loads((directory / "comments.json").read_text()) if (directory / "comments.json").exists() else {}
+    meta = json.loads(meta_bytes if meta_bytes is not None else (directory / "current.meta.json").read_bytes())
+    store = json.loads(store_bytes) if store_bytes is not None else (
+        json.loads((directory / "comments.json").read_bytes()) if (directory / "comments.json").exists() else {})
     versions = []
     for item in meta.get("history", []):
         version = item.get("version", "")
@@ -80,35 +118,41 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
             for comment in items:
                 if isinstance(comment, dict) and comment.get("id"):
                     records[comment["id"]] = comment
+    # Index each source's publication intervals once. Previously every version
+    # rescanned every decision and reparsed its timestamp while holding up writes.
+    intervals = {}
     for item in versions:
-        start = _time(item.get("ts"))
-        next_times = [_time(other.get("ts")) for other in versions
-                      if other.get("source_page") == item.get("source_page") and _time(other.get("ts")) > start]
-        end = min(next_times) if next_times else float("inf")
         item["answers"] = []
-        if not start:
-            continue
-        for comment in records.values():
-            target = comment.get("target") if isinstance(comment.get("target"), dict) else {}
-            if item.get("source_page") and target.get("source_page") != item["source_page"]:
+        intervals.setdefault(item.get("source_page"), {}).setdefault(_time(item.get("ts")), []).append(item)
+    starts = {source: sorted(items) for source, items in intervals.items()}
+    wildcards = [source for source in intervals if not source]
+    for comment in records.values():
+        target = comment.get("target") if isinstance(comment.get("target"), dict) else {}
+        history = comment.get("decision_history") if isinstance(comment.get("decision_history"), list) else []
+        for decision in history + [comment.get("decision")]:
+            if (not isinstance(decision, dict) or not decision.get("verdict")
+                    or decision.get("round_pending") or decision.get("discarded")):
                 continue
-            history = comment.get("decision_history") if isinstance(comment.get("decision_history"), list) else []
-            for decision in history + [comment.get("decision")]:
-                if not isinstance(decision, dict):
-                    continue  # older or hand-edited data
-                if (decision.get("verdict") and not decision.get("round_pending") and not decision.get("discarded")
-                        and start <= _time(decision.get("ts")) < end):
+            timestamp = _time(decision.get("ts"))
+            for source in wildcards + ([target["source_page"]] if target.get("source_page") else []):
+                times = starts.get(source, [])
+                index = bisect_right(times, timestamp) - 1
+                if index < 0 or not times[index]:
+                    continue
+                for item in intervals[source][times[index]]:
                     item["answers"].append({"comment_id": comment["id"],
                         "category": comment_category(comment),
                         "number": target.get("source_number", comment.get("number")),
                         "prompt": "", "verdict": decision["verdict"], "text": decision.get("text", ""),
                         "by": decision.get("by"), "ts": decision.get("ts")})
     rounds = {event["id"]: event for event in _events(directory / "rounds.ndjson") if event.get("id")}
-    paths = [bus] if bus else []
-    if bus and archive:
-        paths += sorted(archive.glob("*/" + bus.parent.name + "/" + bus.name))
-    for path in paths:
-        for event in _events(path):
+    buses = history_buses(bus, archive)
+    if bus_cache is not None:
+        for path in list(bus_cache):
+            if path not in buses:
+                del bus_cache[path]
+    for path in buses:
+        for event in _bus_rounds(path, bus_cache) if bus_cache is not None else _events(path):
             if event.get("event") != "round_submitted":
                 continue
             identifier = event.get("round_id") or str(event.get("ts")) + ":" + str(event.get("by"))

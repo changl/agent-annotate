@@ -1294,14 +1294,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     return self._respond(400, b'{"error":"invalid plan path"}')
                 return self._v2_serve_content(parsed, plan_id=match[1], plan_version=match[2])
             if route_path == "/api/history":
-                from .paths import BUS_ARCHIVE_ROOT
-                from .review_history import review_history
-                try:
-                    with _locked_store(self.artifact_dir, write=False):
-                        history = review_history(self.artifact_dir, self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None, BUS_ARCHIVE_ROOT)
-                    return self._respond(200, json.dumps(history, ensure_ascii=False).encode(), cache_control="no-store")
-                except (OSError, ValueError) as exc:
-                    return self._respond(500, json.dumps({"error": str(exc)}).encode())
+                return self._v2_get_history()
             if route_path == "/comments.json":
                 return self._v2_get_store(parsed)
             if route_path == "/current.meta.json":
@@ -1629,6 +1622,49 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     del cache[next(iter(cache))]
                 cache[key] = representation
         self._respond(200, b"", representation=representation)
+
+    def _v2_get_history(self):
+        from .paths import BUS_ARCHIVE_ROOT
+        from .review_history import history_buses, review_history
+
+        bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
+        compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
+        try:
+            # Includes creation/deletion/replacement, archived buses and newly
+            # available version files. CLI writers need no in-process invalidation.
+            paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
+                     self.artifact_dir / "versions", self.artifact_dir / "content",
+                     *history_buses(bus, BUS_ARCHIVE_ROOT)]
+            with type(self)._history_response_lock:
+                signature = []
+                for path in paths:
+                    try:
+                        stat = path.stat()
+                        signature.append((str(path), stat.st_dev, stat.st_ino, stat.st_size,
+                                          stat.st_mtime_ns, stat.st_ctime_ns))
+                    except FileNotFoundError:
+                        signature.append((str(path),))
+                cache = type(self)._history_responses
+                if cache.get("signature") != signature:
+                    # Take an immutable pair under the transaction lock; parsing
+                    # the large bus and reconstructing history never hold it.
+                    with _locked_store(self.artifact_dir, write=False):
+                        meta_bytes = self._meta_path().read_bytes()
+                        store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
+                    history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
+                                             meta_bytes=meta_bytes, store_bytes=store_bytes,
+                                             bus_cache=type(self)._history_bus_cache)
+                    body = json.dumps(history, ensure_ascii=False).encode()
+                    cache.clear()
+                    cache.update(signature=signature, body=body)
+                if compressed not in cache:
+                    body = cache["body"]
+                    packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+                    cache[compressed] = (packed, True) if len(packed) < len(body) else (body, False)
+                representation = cache[compressed]
+            return self._respond(200, b"", "application/json", representation=representation)
+        except (OSError, ValueError) as exc:
+            return self._respond(500, json.dumps({"error": str(exc)}).encode())
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -3903,6 +3939,9 @@ def make_handler(
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
     BoundHandler._meta_response_lock = threading.Lock()
+    BoundHandler._history_responses = {}
+    BoundHandler._history_response_lock = threading.Lock()
+    BoundHandler._history_bus_cache = {}
     return BoundHandler
 
 
