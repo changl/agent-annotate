@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reverts 2.27.4 (PRs #52 and #53); the code is identical to 2.27.3. On the reviewer's live FLD page it made the page jump back to the top while scrolling, and new feedback requests still did not appear without a reload. Both Macs went back to the 2.27.3 release on 2026-10-23. The live-update problem stays open (agent-annotate-dw4) and needs a simpler fix tested in Orca's own browser.
+
 ## 2.27.4
 
 agent-annotate-dw4, server half (PR #52): `/api/history` rebuilt everything (~300 ms on FLD) on every request, even unchanged ones, while holding the store lock that comment posts need. It is now cached by the identities of the store, rounds and bus (reusing an unchanged bus prefix), rebuilt outside the lock from one consistent snapshot, and answers 304 when unchanged: unchanged p95 297 → 2 ms; a comment posted during it p95 264 → 50 ms. CLI writes (ask, resolve, withdraw, new, publish) change every polled ETag, so an open page sees them at its next poll.
