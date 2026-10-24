@@ -114,13 +114,13 @@ def _comment(cid, card, created="2026-09-27T09:00:00Z"):
     }
 
 
-def _page(tmp_path):
+def _page(tmp_path, migration="Two statements and two weeks of dual writes."):
     slug_dir = tmp_path / "items-model"
     v1 = tmp_path / "v1.md"
     v1.write_text(_doc("v1", "Two statements and a week of dual writes."), encoding="utf-8")
     generate(v1, slug_dir)
     v2 = tmp_path / "v2.md"
-    v2.write_text(_doc("v2", "Two statements and two weeks of dual writes.", CARDS), encoding="utf-8")
+    v2.write_text(_doc("v2", migration, CARDS), encoding="utf-8")
     result = generate(v2, slug_dir)
     assert result["unchanged_sections"] == ["s:scope", "s:columns"]
     (slug_dir / "current.html").unlink()
@@ -297,6 +297,34 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             page.screenshot(path="/tmp/annotate-questions-in-flow-mobile.png", full_page=True)
             overflow = frame.locator("body").evaluate("el => ({width: el.scrollWidth, viewport: innerWidth, outside: [...document.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => e.className).slice(0, 10)})")
             assert overflow["width"] <= overflow["viewport"], overflow
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_question_citing_a_subheading_follows_its_content(tmp_path):
+    # Chang, 2026-10-23: a card citing a `###` heading sat between the heading
+    # and the pictures it asked about; it goes after them.
+    slug_dir = _page(tmp_path, "### Steps\n\nFirst statement.\n\nSecond statement.\n\n### Rollback\n\nRestore the snapshot.")
+    store = json.loads((slug_dir / "comments.json").read_text())
+    store["anchors"]["d:q1"][0]["decision_request"]["evidence"] = [{"label": "the column", "anchor": "tbl:columns:row:status"}]
+    store["anchors"]["d:q2"][0]["decision_request"]["evidence"] = [{"label": "steps", "anchor": "s:migration-sketch:steps"}]
+    (slug_dir / "comments.json").write_text(json.dumps(store))
+    process, base = _serve(tmp_path, slug_dir)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
+            page.set_default_timeout(5000)
+            page.goto(base, wait_until="networkidle")
+            frame = page.frame_locator("#content-frame")
+            frame.locator('[data-strip-item="card-2"]').wait_for()
+            around = frame.locator('[data-strip-item="card-2"]').evaluate(
+                "el => { const s = el.closest('.annotate-decision-strip');"
+                " return [s.previousElementSibling.textContent.trim(), s.nextElementSibling.tagName, s.nextElementSibling.textContent.trim()]; }")
+            assert around == ["Second statement.", "H3", "Rollback"]
             browser.close()
     finally:
         process.terminate()

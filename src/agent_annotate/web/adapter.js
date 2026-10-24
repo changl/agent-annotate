@@ -1987,6 +1987,22 @@ function inActivePanel(el) {
   return !(subPanel && !subPanel.classList.contains('active'));
 }
 
+// A `###` heading is a bare <h3>, so citing it means the heading and what
+// follows it up to the next heading of its level. The question goes after
+// that content, not between the heading and the pictures it asks about
+// (Chang, 2026-10-23: feedback comes after what he reviews).
+function headingBlockEnd(el) {
+  const level = /^H([1-6])$/.exec(el.tagName);
+  if (!level) return el;
+  let end = el;
+  for (let n = el.nextElementSibling; n; n = n.nextElementSibling) {
+    const h = /^H([1-6])$/.exec(n.tagName);
+    if ((h && +h[1] <= +level[1]) || n.matches('.cards')) break;
+    if (!n.matches('[data-annotate-strip], [data-annotate-back], .bpin, .bpin-inline, .annotate-unchanged-bar')) end = n;
+  }
+  return end;
+}
+
 // Where a question renders: right after its evidence, so the reviewer
 // answers beside the images or rows it asks about instead of scrolling
 // between a question list and the content (Chang, 2026-10-10). With several
@@ -1997,7 +2013,7 @@ function stripTarget(anchorId, items) {
   const targets = [];
   items.forEach(e => evidenceOf(e.decisionRequest).forEach(x => {
     const el = findAnchorEl(x.anchor);
-    if (el && el !== own && !isStaticCard(el) && !el.closest('.cards') && inActivePanel(el)) targets.push(el);
+    if (el && el !== own && !isStaticCard(el) && !el.closest('.cards') && inActivePanel(el)) targets.push(headingBlockEnd(el));
   }));
   if (!targets.length) return own;
   // The target that ends last: compare deepest last descendants; a container
