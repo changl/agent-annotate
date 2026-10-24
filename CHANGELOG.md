@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A question that cites a `###` heading renders after that subsection's content (up to the next heading of its level), not between the heading and the pictures it asks about. On FLD v238, card 2492 sat above both screenshots it referred to.
 - Reverts 2.27.4 (PRs #52 and #53); the code is identical to 2.27.3. On the reviewer's live FLD page it made the page jump back to the top while scrolling, and new feedback requests still did not appear without a reload. Both Macs went back to the 2.27.3 release on 2026-10-23. The live-update problem stays open (agent-annotate-dw4) and needs a simpler fix tested in Orca's own browser.
 
 ## 2.27.4
