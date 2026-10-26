@@ -135,6 +135,23 @@ def test_process_argv_is_exact_where_ps_text_is_lossy(tmp_path):
     assert cli._process_argv(child.pid) is None
 
 
+def test_process_argv_never_reads_the_environment_as_an_argument():
+    # macOS: an empty argv[0] looks like the padding before it, and the environment
+    # follows argv. Linux keeps it exact; macOS cannot place it, so it is unread.
+    # A new session keeps CPython off posix_spawn, which refuses an empty argv[0].
+    child = subprocess.Popen(["", "3"], executable="/bin/sleep", env={"WM_ARGV_SENTINEL": "controlled"},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        time.sleep(0.2)  # Popen returns at exec; the new image places its argv just after
+        argv = cli._process_argv(child.pid)
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait()
+    assert argv == (["", "3"] if sys.platform.startswith("linux") else None)
+    assert not any("WM_ARGV_SENTINEL" in arg for arg in argv or [])
+
+
 def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch):
     prefix, spaced = tmp_path / "legacy", tmp_path / "legacy page"
     prefix.mkdir()

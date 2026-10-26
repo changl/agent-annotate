@@ -1718,8 +1718,8 @@ def _process_argv(pid: int) -> list[str] | None:
     `ps` joins arguments with spaces and quotes nothing, so a path with a space
     cannot be read back from it. Linux keeps argv in /proc; macOS returns it
     from sysctl KERN_PROCARGS2. A process that exited, one the OS will not
-    describe (another user's, on macOS) or any other platform gives None,
-    which is never an identity.
+    describe (another user's, on macOS), an argv it cannot place exactly or any
+    other platform gives None, which is never an identity.
     """
     try:
         if sys.platform.startswith("linux"):
@@ -1737,10 +1737,17 @@ def _process_argv(pid: int) -> list[str] | None:
                 return None
             raw = buffer.raw[:size.value]
             argc = int.from_bytes(raw[:4], sys.byteorder)
-            # argc, the executable path, NUL padding, then argc NUL-terminated arguments.
-            args = raw[4:].split(b"\0", 1)[1].lstrip(b"\0").split(b"\0")[:argc]
-            if len(args) != argc:
+            # argc, the executable path, NULs padding it to a multiple of 8 bytes, then
+            # argc NUL-terminated arguments and the environment. An empty argv[0] reads
+            # as one more padding NUL, so a NUL where argv[0] must start, anything but
+            # NULs in the padding, or a missing terminator leaves argv unplaced.
+            path_end = raw.index(b"\0", 4) + 1
+            start = path_end + (4 - path_end) % 8
+            parts = raw[start:].split(b"\0", argc)
+            if (raw[path_end:start].strip(b"\0") or raw[start:start + 1] in (b"", b"\0")
+                    or len(parts) <= argc):
                 return None
+            args = parts[:argc]
         else:
             return None
     except (OSError, ValueError, IndexError, AttributeError):
