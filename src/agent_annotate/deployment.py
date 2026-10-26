@@ -79,9 +79,9 @@ def _identity(record: dict, *, listening: bool = True) -> dict:
     if (process.get("port") != port or (listener != pid if listening else listener not in (None, pid))
             or (capabilities is not None and capabilities["slug_dir"] != str(directory))):
         raise DeploymentError(f"foreign or unreconciled listener for port {port}")
-    result = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
-                            check=True, capture_output=True, text=True, timeout=5)
-    argv = shlex.split(result.stdout.strip())
+    argv = cli._process_argv(pid)  # a fresh, exact read: `ps` text cannot keep a spaced path whole
+    if not argv:
+        raise DeploymentError(f"server command identity is unreadable for pid {pid}")
     def arg(flag):
         return argv[argv.index(flag) + 1] if flag in argv and argv.index(flag) + 1 < len(argv) else None
     module = "-m" in argv and arg("-m") == "agent_annotate.sync_server"

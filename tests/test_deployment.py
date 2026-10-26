@@ -3,7 +3,6 @@
 import copy
 import json
 import os
-import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,10 +60,9 @@ def estate(tmp_path, monkeypatch):
         processes.pop(pid, None)
         return True
 
-    def run(argv, **kwargs):
-        assert argv[0] == "ps"
-        process = processes.get(int(argv[argv.index("-p") + 1]))
-        return SimpleNamespace(stdout=shlex.join(process["argv"]) if process else "")
+    def argv_of(pid):
+        process = processes.get(pid)
+        return list(process["argv"]) if process else None
 
     def spawn(argv, **kwargs):
         assert kwargs["start_new_session"]
@@ -86,7 +84,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_is_process_alive", lambda pid: pid in processes)
     monkeypatch.setattr(cli, "_stop_server", stop)
     monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, **kwargs: pid in processes)
-    monkeypatch.setattr(deployment.subprocess, "run", run)
+    monkeypatch.setattr(cli, "_process_argv", argv_of)
     monkeypatch.setattr(deployment.subprocess, "Popen", spawn)
     monkeypatch.setattr(deployment, "_target_manifest", lambda python: copy.deepcopy(MANIFEST))
     monkeypatch.setattr(deployment, "_verify_server", lambda record, pid, expected: {"anchors": 1, "runtime": expected})
@@ -162,6 +160,14 @@ def test_identity_rechecked_immediately_before_stop(estate, monkeypatch):
 def test_unrecognized_python_command_is_never_guessed(estate):
     estate.processes[10]["argv"][0] = "python3"
     with pytest.raises(deployment.DeploymentError, match="command identity"):
+        deployment.restart_record("reviews", "review", estate.new)
+    assert estate.stops == []
+
+
+def test_unreadable_process_command_is_never_guessed(estate, monkeypatch):
+    # Another user's process, or a platform without an exact argv source.
+    monkeypatch.setattr(cli, "_process_argv", lambda pid: None)
+    with pytest.raises(deployment.DeploymentError, match="command identity is unreadable"):
         deployment.restart_record("reviews", "review", estate.new)
     assert estate.stops == []
 
