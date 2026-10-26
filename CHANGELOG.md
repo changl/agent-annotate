@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Brings back the server half of 2.27.4 (PR #52), which the 2.27.4 revert removed although only the page half caused the jumping. `/api/history` is cached by the files it reads and rebuilt outside the lock that comment posts need. On the M5 under heavy load it took 7.1 s and held posts behind it. On a copy of FLD: history 0.32 s → 0.002 s; a post made while history builds 0.33 s → 0.045 s. No page code changes; in an Orca tab, 17 polls with 5 new comments left the scroll position where it was.
+
 ## 2.27.6
 
 agent-annotate-awf: Plans held every answer the reviewer gave (84 on FLD, from "Which chapter hosted the mixer?" to three rally-email versions) ahead of the plans he asked for, and opened on the latest one-off answer.
