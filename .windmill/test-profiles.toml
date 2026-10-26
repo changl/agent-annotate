@@ -38,7 +38,8 @@ toolchain = [
 # job-local TMPDIR keeps that sandbox and the test servers inside the job.
 TMPDIR = "{tmp}"
 PYTHONDONTWRITEBYTECODE = "1"
-PYTEST_ADDOPTS = "-p no:cacheprovider --junitxml={artifacts}/junit.xml"
+# pytest splits PYTEST_ADDOPTS like a shell: quote the path, which may hold spaces.
+PYTEST_ADDOPTS = "-p no:cacheprovider \"--junitxml={artifacts}/junit.xml\""
 
 # capacity: "heavy" takes the single heavy slot; "light" does not.
 # allowed_skips: the only skips that may pass. Any other skip (a browser module

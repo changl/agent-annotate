@@ -1,6 +1,7 @@
 """The Windmill test profiles stay runnable against this checkout (agent-annotate-4zw)."""
 
 import re
+import shlex
 import tomllib
 from pathlib import Path
 
@@ -40,4 +41,8 @@ def test_allowed_skips_name_real_skip_marked_tests():
 def test_environment_routes_scratch_and_junit_into_the_job():
     env = PROFILES["environment"]
     assert env["TMPDIR"] == "{tmp}"
-    assert "--junitxml={artifacts}/junit.xml" in env["PYTEST_ADDOPTS"]
+    # The M1 executor's job directory is under "Application Support"; pytest
+    # splits PYTEST_ADDOPTS with shlex, so the path must survive a space.
+    artifacts = "/Users/x/Library/Application Support/job/artifacts"
+    options = shlex.split(env["PYTEST_ADDOPTS"].replace("{artifacts}", artifacts))
+    assert options == ["-p", "no:cacheprovider", f"--junitxml={artifacts}/junit.xml"]
