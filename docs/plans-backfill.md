@@ -27,8 +27,8 @@ qualifying Send is used. When a legacy event has no version, the published page
 history determines the version active at Send; a missing version remains an
 evidence conflict. JSON reports separately count `snapshot` and `bus` receipts.
 
-Agents, explicitly ineligible/legacy decisions, non-review cards and opted-out
-cards are excluded. Missing provenance or sent-round receipts are conflicts,
+Agents, explicitly ineligible/legacy decisions, non-review cards and cards not
+marked `catalog: true` (a plan or design approval) are excluded. Missing provenance or sent-round receipts are conflicts,
 with branch counts distinguishing browser-only, sent-only and neither. Old
 unsent votes are never treated as committed just because they lack a pending flag.
 
@@ -38,7 +38,7 @@ vote, and the prompt must match the sent receipt. Missing anchors, later edits,
 ambiguous versions, absent historical decision requests, and historical media
 without vote-time hashes are conflicts. CSS URLs and imports are rejected even
 when the stylesheet itself was sealed; its dependencies have no vote-time hashes.
-The frozen request's Plans opt-out also applies to sealed evidence.
+The frozen request's `catalog: true` is required for sealed evidence too.
 Selections use the existing catalog's **Decided** semantics; they do not imply an
 affirmative interpretation of labels such as "not now".
 
@@ -70,3 +70,14 @@ the first page write, so restore also handles an interrupted apply; restore
 
 The M1 task authorizes live dry runs only. No live apply, M5 operation, server
 restart, installation or deployment is part of this change.
+
+## Plans sections
+
+`annotate plans section PROJECT/SLUG tracking|approved|reference|hidden [PLAN_ID ...] [--decisions] [--apply] [--json]`
+moves plans between the Plans picker's sections: tracking the reviewer asked
+for, approved plans, agent reference (listed last), and hidden (out of the
+picker; the plan, its history and the decisions behind it stay, and a link still
+opens it). `--decisions` adds every plan filed from a reviewer decision. The
+default is a dry run listing each move. `--apply` needs the server's lock, writes
+`comments.json` and the plans' `meta.json` files, and keeps a backup that
+`annotate plans restore` reverts.

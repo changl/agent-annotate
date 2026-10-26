@@ -92,6 +92,26 @@ def test_parallel_plan_publication_preserves_each_version(tmp_path):
     assert len({p.read_text() for p in (tmp_path / "plans/shopify-plan/versions").iterdir()}) == 8
 
 
+def test_plans_list_tracking_first_reference_last_hidden_out(tmp_path):
+    # Chang, 2026-10-25: what he asked to track first, approved plans next,
+    # agent reference last; by title within each.
+    publish_plan_revision(tmp_path, "zeta-notes", "<p>z</p>", title="Zeta notes")
+    publish_plan_revision(tmp_path, "tester-tracking", "<p>t</p>", title="Tester tracking", section="tracking")
+    publish_plan_revision(tmp_path, "rollout", "<p>r</p>", title="Rollout", section="approved")
+    publish_plan_revision(tmp_path, "alpha-notes", "<p>a</p>", title="Alpha notes", section="reference")
+    publish_plan_revision(tmp_path, "old", "<p>o</p>", title="Old", section="hidden")
+    filed = {"title": "Approve the design?", "current": "v1", "history": [{"version": "v1", "label": "Approved"}]}
+    store = {"anchors": {}, "approved_plans": {"design": filed}}
+    assert [(p["id"], p["section"]) for p in list_plans(tmp_path, store=store)] == [
+        ("tester-tracking", "tracking"), ("design", "approved"), ("rollout", "approved"),
+        ("alpha-notes", "reference"), ("zeta-notes", "reference"), ("old", "hidden")]
+    # A later revision keeps the section unless it names one.
+    publish_plan_revision(tmp_path, "tester-tracking", "<p>t2</p>")
+    assert plan_meta(tmp_path, "tester-tracking")["section"] == "tracking"
+    with pytest.raises(ValueError, match="section"):
+        publish_plan_revision(tmp_path, "tester-tracking", "<p>t3</p>", section="junk")
+
+
 def test_library_metadata_and_restore_append_without_changing_revision(tmp_path):
     data = document()
     data["groups"] = [{"id": "home", "label": "Home"}]

@@ -317,12 +317,15 @@ def read_bundle(page_dir, digest):
 
 
 def promote(page_dir, store, comment):
-    """Mutate only the caller's locked store: verdict and index commit together."""
+    """Mutate only the caller's locked store: verdict and index commit together.
+
+    Only a card marked `catalog: true` (it approves a plan or design) is filed;
+    one-off answers stay in Review history (Chang, 2026-10-25)."""
     decision = comment.get("decision") or {}
     if (decision.get("verdict") not in {"accept", "select"} or decision.get("round_pending")
             or not decision.get("catalog_eligible") or str(decision.get("by", "")).startswith("agent:")
             or not comment.get("decision_request")
-            or (comment.get("decision_request") or {}).get("catalog") is False
+            or (comment.get("decision_request") or {}).get("catalog") is not True
             or comment.get("category", "review") != "review"):
         return
     evidence = decision.get("evidence") or bind_evidence(page_dir, store, comment, None)
@@ -334,7 +337,7 @@ def promote(page_dir, store, comment):
         evidence.update(revision=_save_bundle(page_dir, bundle), committed=True)
     decision["evidence"] = evidence
     request = bundle["request"]
-    if request.get("catalog") is False:
+    if request.get("catalog") is not True:
         return
     identifier = bundle["item_id"]
     plans = store.setdefault("approved_plans", {})

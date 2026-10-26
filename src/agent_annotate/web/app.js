@@ -203,15 +203,19 @@
     if (sub) sub.textContent = text;
     renderPlanPicker();
   }
+  // Plans sections in the server's order (Chang, 2026-10-25): what he asked to
+  // track, approved plans, then agent reference. Hidden plans stay out unless
+  // one is open (by link).
+  const PLAN_SECTIONS = [['tracking', 'Tracking'], ['approved', 'Approved plans'], ['reference', 'Agent reference'], ['hidden', 'Hidden']];
   function renderPlanPicker() {
     const pick = document.getElementById('view-hd-plan');
-    const plans = DOCS() ? DOCS().plans() : [];
+    const cur = DOCS() ? DOCS().planId() : null;
+    const plans = (DOCS() ? DOCS().plans() : []).filter(p => p.section !== 'hidden' || p.id === cur);
     pick.hidden = view !== 'plans' || plans.length < 2;
     if (pick.hidden) return;
-    const cur = DOCS().planId();
-    pick.innerHTML = ['Approved', 'Decided', 'Plans'].map(group => {
-      const items = plans.filter(p => (p.kind || 'Plans') === group);
-      return items.length ? `<optgroup label="${group}">` + items.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('') + '</optgroup>' : '';
+    pick.innerHTML = PLAN_SECTIONS.map(([key, label]) => {
+      const items = plans.filter(p => p.section === key);
+      return items.length ? `<optgroup label="${label}">` + items.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('') + '</optgroup>' : '';
     }).join('');
   }
   function setTitle(title) {

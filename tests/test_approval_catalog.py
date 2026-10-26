@@ -21,7 +21,7 @@ from agent_annotate.categories import publish_plan_revision
 
 def card():
     return {"id": "card-one", "anchor_id": "d:q1", "version": "v1", "number": 1,
-            "decision_request": {"prompt": "Ship the design?", "context": "Review both screens",
+            "decision_request": {"prompt": "Ship the design?", "context": "Review both screens", "catalog": True,
                                  "evidence": [{"anchor": "s:design"}, {"anchor": "p:detail"}],
                                  "options": [{"id": "blue", "label": "Blue", "consequence": "Use blue"}]}}
 
@@ -31,7 +31,7 @@ def decide(directory, store, comment, token, verdict="accept", text=None, ts=Non
     comment["decision"] = {"verdict": verdict, "text": text, "ts": ts, "by": "chang@example.com",
                            "catalog_eligible": True,
                            "evidence": bind_evidence(directory, store, comment, token)}
-    if verdict in {"accept", "select"} and comment["decision_request"].get("catalog") is not False:
+    if verdict in {"accept", "select"} and comment["decision_request"].get("catalog") is True:
         persist_evidence(directory, comment, comment["decision"]["evidence"])
     promote(directory, store, comment)
     return store.get("approved_plans", {}).get(item_id(comment))
@@ -205,11 +205,14 @@ def test_external_and_missing_images_never_prevent_vote(tmp_path):
     assert "Image not sealed" in render_plan(tmp_path, plan, "v1")
 
 
-def test_opt_out_and_pending_votes_do_not_file(tmp_path):
+def test_unmarked_opt_out_and_pending_votes_do_not_file(tmp_path):
     comment = card()
+    # Chang, 2026-10-25: only a card marked as a plan or design is filed.
+    del comment["decision_request"]["catalog"]
+    assert decide(tmp_path, {}, comment, None) is None
     comment["decision_request"]["catalog"] = False
     assert decide(tmp_path, {}, comment, None) is None
-    del comment["decision_request"]["catalog"]
+    comment["decision_request"]["catalog"] = True
     comment["decision"]["round_pending"] = True
     store = {}
     promote(tmp_path, store, comment)

@@ -17,6 +17,9 @@ from .copy_state import _link, _text, load_copy
 CATEGORIES = ("review", "library", "findings", "plans")
 MAX_PROOF_BYTES = 10 * 1024 * 1024
 MAX_PLAN_BYTES = 4 * 1024 * 1024
+# Plans sections in picker order. A plan folder without one is reference; a
+# plan filed from a decision is approved; hidden leaves the picker.
+PLAN_SECTIONS = ("tracking", "approved", "reference", "hidden")
 # Proof files are served from the review origin, so only inert types are taken.
 PROOF_SUFFIXES = ("png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "log", "json", "csv")
 _PLAN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
@@ -306,21 +309,25 @@ def plan_meta(page_dir: Path | str, plan_id: str, *, store: dict | None = None) 
 
 
 def list_plans(page_dir: Path | str, *, store: dict | None = None) -> list[dict]:
+    """Every plan with its section, in Plans order: tracking the reviewer asked
+    for, approved plans, agent reference, then hidden (out of the picker, still
+    reachable by id); by title within a section (Chang, 2026-10-25)."""
     from .approval_catalog import catalog_meta
-    managed = [{"id": identifier, **catalog_meta(plan)} for identifier, plan in
+    managed = [{"id": identifier, "section": "approved", **catalog_meta(plan)} for identifier, plan in
                (store if store is not None else _comments(page_dir)).get("approved_plans", {}).items()]
-    managed.sort(key=lambda plan: plan.get("updated_at", ""), reverse=True)
     directory = safe_path(page_dir, "plans")
-    if not directory.exists():
-        return managed
     # A folder without meta.json (notes, a half-copied plan) is not a plan.
-    return managed + [{"id": p.name, **_json(safe_path(page_dir, f"plans/{p.name}/meta.json"), {})} for p in sorted(directory.iterdir())
-            if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()
-            and p.name not in {plan["id"] for plan in managed}]
+    folders = [{"id": p.name, "section": "reference", **_json(safe_path(page_dir, f"plans/{p.name}/meta.json"), {})}
+               for p in sorted(directory.iterdir())
+               if _PLAN_ID.fullmatch(p.name) and p.is_dir() and (p / "meta.json").is_file()
+               and p.name not in {plan["id"] for plan in managed}] if directory.exists() else []
+    order = {section: i for i, section in enumerate(PLAN_SECTIONS)}
+    return sorted(managed + folders, key=lambda plan: (order.get(plan.get("section"), len(order)),
+                                                       str(plan.get("title") or plan["id"]).lower()))
 
 
 def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, title: str | None = None,
-                          label: str | None = None) -> dict:
+                          label: str | None = None, section: str | None = None) -> dict:
     validate_plan_id(plan_id)
     if not isinstance(html, str) or not html.strip() or len(html.encode()) > MAX_PLAN_BYTES:
         raise ValueError("plan HTML must be nonempty and at most 4 MB")
@@ -328,6 +335,8 @@ def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, titl
         _text(title, "plan title", 200)
     if label is not None:
         _text(label, "plan label", 200)
+    if section is not None and section not in PLAN_SECTIONS:
+        raise ValueError("plan section must be one of: " + ", ".join(PLAN_SECTIONS))
     from .sync_server import _locked_store
     with _locked_store(page_dir), _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
         if plan_id in _comments(page_dir).get("approved_plans", {}):
@@ -345,9 +354,12 @@ def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, titl
         meta["current"] = version
         if title is not None:
             meta["title"] = title
+        if section is not None:
+            meta["section"] = section
         meta.setdefault("history", []).append(entry)
         _write(path, meta)
-        return {"id": plan_id, **entry, "title": meta["title"], "current": version, "history": meta["history"]}
+        return {"id": plan_id, **entry, "title": meta["title"], "current": version, "history": meta["history"],
+                "section": meta.get("section", "reference")}
 
 
 _SEND_ID = re.compile(r"[A-Za-z0-9-]{8,64}\Z")

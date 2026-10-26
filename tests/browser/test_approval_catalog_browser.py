@@ -17,7 +17,7 @@ def _card(version):
     return {"id": "design-" + version, "anchor_id": "d:q1", "number": 1, "version": version,
             "author": "agent:test", "created_at": "2026-10-16T10:00:00Z", "status": "open",
             "text": "Approve the FLD routing design?",
-            "decision_request": {"prompt": "Approve the FLD routing design?", "context": "The proposed screen and routing contract are shown together.",
+            "decision_request": {"prompt": "Approve the FLD routing design?", "context": "The proposed screen and routing contract are shown together.", "catalog": True,
                 "options": [{"id": "accept", "label": "Approve design"}, {"id": "changes", "label": "Request changes"}],
                 "evidence": [{"anchor": "s:design", "label": "Routing design"}]}}
 
@@ -129,7 +129,7 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             page.screenshot(path=str(output / "plans-after-changes.png"), full_page=True)
             selection = _card("v3")
             selection.update(id="rollout-v3", anchor_id="d:q2", number=2, text="When should routing roll out?")
-            selection["decision_request"] = {"prompt": "When should routing roll out?", "evidence": [{"anchor": "s:design"}],
+            selection["decision_request"] = {"prompt": "When should routing roll out?", "evidence": [{"anchor": "s:design"}], "catalog": True,
                 "options": [{"id": "later", "label": "Next month", "consequence": "Defer the rollout"}]}
             response = page.request.post(base + "api/comments", data=selection, headers={"X-Annotate-Agent": "agent:test"})
             assert response.status == 201
@@ -146,7 +146,7 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             go(page, "plans", plan=decided["id"])
             playwright.expect(frame.locator("header")).to_contain_text("Decided: Next month")
             playwright.expect(frame.locator("header")).to_contain_text("Defer the rollout")
-            assert page.locator("#view-hd-plan optgroup").evaluate_all("els => els.map(e => e.label)") == ["Approved", "Decided"]
+            assert page.locator("#view-hd-plan optgroup").evaluate_all("els => els.map(e => e.label)") == ["Approved plans"]
             page.screenshot(path=str(output / "plans-decided.png"), full_page=True)
             browser.close()
         if "ANNOTATE_APPROVAL_SCREENSHOTS" in os.environ:

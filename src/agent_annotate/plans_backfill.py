@@ -51,7 +51,7 @@ def _excluded(comment, decision):
     return (str(decision.get("by", "")).startswith("agent:")
             or decision.get("catalog_eligible") is False or decision.get("legacy")
             or not isinstance(comment.get("decision_request"), dict)
-            or comment["decision_request"].get("catalog") is False
+            or comment["decision_request"].get("catalog") is not True
             or comment.get("category", "review") != "review")
 
 
@@ -129,8 +129,8 @@ def _evidence(directory, comment, decision, rounds):
         bundle = read_bundle(directory, evidence["revision"])
         if bundle["item_id"] != item_id(comment) or bundle.get("incomplete"):
             raise ValueError("sealed evidence incomplete or belongs to another item")
-        if bundle["request"].get("catalog") is False:
-            raise ValueError("historical card opted out of Plans")
+        if bundle["request"].get("catalog") is not True:
+            raise ValueError("historical card is not marked as a plan (catalog: true)")
         for name, digest in bundle.get("assets", {}).items():
             if _hash(safe_path(directory, name).read_bytes()) != digest:
                 raise ValueError("sealed image changed")
@@ -164,8 +164,8 @@ def _evidence(directory, comment, decision, rounds):
     if not isinstance(request, dict) or not request:
         raise ValueError("historical decision request missing")
     frozen = {**comment, **candidates[0], "id": comment["id"]}
-    if request.get("catalog") is False:
-        raise ValueError("historical card opted out of Plans")
+    if request.get("catalog") is not True:
+        raise ValueError("historical card is not marked as a plan (catalog: true)")
     if any(a.get("prompt") != request.get("prompt") for r in rounds for a in r.get("answers", [])
            if a.get("comment_id") == comment["id"] and a.get("ts") == decision.get("ts")):
         raise ValueError("sent prompt differs from versioned card")
@@ -332,6 +332,58 @@ def backfill_page(directory, *, apply=False, bus=None, archive=None):
         return report
 
 
+def section_page(directory, section, ids, *, decisions=False, apply=False):
+    """Move plans between Plans sections. Hidden leaves the picker; the plan,
+    its history and the decisions behind it stay. Apply keeps a backup that
+    `annotate plans restore` reverts."""
+    from .categories import PLAN_SECTIONS, list_plans
+    if section not in PLAN_SECTIONS:
+        raise ValueError("section must be one of: " + ", ".join(PLAN_SECTIONS))
+    directory = Path(directory).resolve()
+    if apply and not (directory / ".comments.json.lock").is_file():
+        raise ValueError("apply requires the page server's existing .comments.json.lock")
+    with _locked_store(directory, write=False):
+        refuse_if_moved(directory)
+        path = safe_path(directory, "comments.json")
+        store = json.loads(path.read_bytes())
+        filed = store.get("approved_plans", {})
+        plans = {plan["id"]: plan for plan in list_plans(directory, store=store)}
+        missing = [i for i in ids if i not in plans]
+        if missing:
+            raise ValueError("no such plan: " + ", ".join(missing))
+        chosen = dict.fromkeys([*ids, *(filed if decisions else ())])
+        items = [{"id": i, "title": plans[i].get("title") or i, "from": plans[i]["section"], "to": section}
+                 for i in chosen if plans[i]["section"] != section]
+        report = {"items": items}
+        if not apply or not items:
+            return report
+        updated, writes = deepcopy(store), {}
+        for item in items:
+            if item["id"] in filed:
+                updated["approved_plans"][item["id"]]["section"] = section
+            else:
+                name = f"plans/{item['id']}/meta.json"
+                meta = json.loads(safe_path(directory, name).read_bytes())
+                writes[name] = (json.dumps({**meta, "section": section}, ensure_ascii=False, indent=2) + "\n").encode()
+        if updated != store:
+            writes["comments.json"] = (json.dumps(updated, ensure_ascii=False, indent=2) + "\n").encode()
+        backup = safe_path(directory, ".plans-backfill-backups/" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-") + uuid.uuid4().hex[:8])
+        backup.mkdir(parents=True, mode=0o700)
+        manifest = {"page": str(directory), "files": {}}
+        for name, body in writes.items():
+            original = safe_path(directory, name)
+            saved = backup / name
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_bytes(saved, original.read_bytes())
+            manifest["files"][name] = {"before": _hash(original.read_bytes()), "after": _hash(body)}
+        # The restore manifest is complete before the first page write.
+        _atomic_bytes(backup / "manifest.json", json.dumps(manifest, indent=2).encode())
+        for name, body in writes.items():
+            _atomic_bytes(safe_path(directory, name), body)
+        report["backup"] = str(backup)
+        return report
+
+
 def restore_page(directory, backup):
     directory, backup = Path(directory).resolve(), Path(backup).resolve()
     if backup.parent != directory / ".plans-backfill-backups":
@@ -369,6 +421,25 @@ def cmd_plans(args):
             print("ERROR: " + str(exc))
             return 2
         print("Restored " + args.slug)
+        return 0
+    if args.plans_action == "section":
+        entry = _resolve_scoped_slug(args.slug)
+        if not entry:
+            return 2
+        try:
+            report = section_page(entry[2]["slug_dir"], args.section, args.ids,
+                                  decisions=args.decisions, apply=args.apply)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            print("ERROR: " + str(exc))
+            return 2
+        report["dry_run"] = not args.apply
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        for item in report["items"]:
+            print(f"  {item['id']}: {item['from']} -> {item['to']}  ({item['title'][:80]})")
+        print(f"{len(report['items'])} plan(s) " + ("moved; backup: " + report["backup"] if report.get("backup")
+              else "would move; nothing written (add --apply)" if report["items"] else "already there"))
         return 0
     entries = _registry_entries()
     if args.slugs:
