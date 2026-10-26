@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.27.6
+
 agent-annotate-awf: Plans held every answer the reviewer gave (84 on FLD, from "Which chapter hosted the mixer?" to three rally-email versions) ahead of the plans he asked for, and opened on the latest one-off answer.
 
 - Plans has sections, in this order: Tracking (what the reviewer asked to keep current), Approved plans, Agent reference. Titles sort A–Z within each, and Plans opens on the first tracking plan. `annotate plan SLUG ID --from plan.md --section tracking|approved|reference` sets a plan's section; a plan without one is agent reference.
