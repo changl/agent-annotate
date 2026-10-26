@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `.windmill/test-profiles.toml` declares the repo's test profiles for the M1 Windmill pilot (agent-annotate-4zw): `fast` (the CI gate), `full` (`scripts/ci.py --full`) and `browser`. Each has a job-local `uv sync --frozen` environment, an import check that the checkout under test is what runs, a toolchain manifest, a junit artifact and an explicit list of allowed skips. GitHub CI is unchanged; `tests/test_windmill_profiles.py` keeps the file in step with the repo.
+
 ## 2.27.7
 
 - Brings back the server half of 2.27.4 (PR #52), which the 2.27.4 revert removed although only the page half caused the jumping. `/api/history` is cached by the files it reads and rebuilt outside the lock that comment posts need. On the M5 under heavy load it took 7.1 s and held posts behind it. On a copy of FLD: history 0.32 s → 0.002 s; a post made while history builds 0.33 s → 0.045 s. No page code changes; in an Orca tab, 17 polls with 5 new comments left the scroll position where it was.

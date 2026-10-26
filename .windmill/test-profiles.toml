@@ -1,0 +1,75 @@
+# Test profiles a Windmill job may run for agent-annotate (bead agent-annotate-4zw).
+#
+# The runner reads this file at the pinned SHA and runs every command from the
+# root of a clean checkout of that SHA, never from a shared checkout. Commands
+# are argv lists (no shell). Steps run in order: setup, assert_imports,
+# toolchain, then the profile's command; the first non-zero exit ends the job.
+# "{tmp}" and "{artifacts}" in environment values are the job's own scratch
+# and artifact directories; the runner creates them and removes {tmp} after
+# cleanup is verified.
+#
+# Identity: profile_sha256 = sha256 of this file's bytes at the pinned SHA;
+# environment_sha256 = sha256 of [environment] before substitution, as
+# sorted-key JSON; toolchain_sha256 = sha256 of the toolchain commands'
+# stdout, in order.
+schema = 1
+
+# A job-local .venv pinned by uv.lock, with this checkout installed editable.
+setup = [
+  ["uv", "sync", "--frozen", "--python", "3.12", "--extra", "dev", "--extra", "mcp", "--extra", "browser"],
+]
+
+# The code under test is this checkout's src/, not another install. A shared
+# editable venv can import a different checkout.
+assert_imports = [
+  ".venv/bin/python", "-c",
+  "import agent_annotate, pathlib; p = pathlib.Path(agent_annotate.__file__).resolve(); assert p.is_relative_to(pathlib.Path('src').resolve()), p",
+]
+
+toolchain = [
+  [".venv/bin/python", "--version"],
+  ["uv", "--version"],
+  ["node", "--version"],
+  ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+]
+
+[environment]
+# tests/conftest.py sandboxes every live annotate path under a mkdtemp; a
+# job-local TMPDIR keeps that sandbox and the test servers inside the job.
+TMPDIR = "{tmp}"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTEST_ADDOPTS = "-p no:cacheprovider --junitxml={artifacts}/junit.xml"
+
+# capacity: "heavy" takes the single heavy slot; "light" does not.
+# allowed_skips: the only skips that may pass. Any other skip (a browser module
+# skipped because playwright or Chrome is missing) fails the profile.
+# artifacts: files the receipt must list with their sha256.
+
+[profiles.fast]
+# The PR gate GitHub CI runs: ruff, node --check on web/*.js, selected tests.
+command = [".venv/bin/python", "scripts/ci.py"]
+timeout_s = 600
+capacity = "light"
+allowed_skips = []
+artifacts = ["junit.xml"]
+
+[profiles.full]
+# Lint, JS syntax and every test (1874 passed, 2 skipped, 23.5 min on the M1
+# at 3074ebc, 2026-10-25).
+command = [".venv/bin/python", "scripts/ci.py", "--full"]
+timeout_s = 2700
+capacity = "heavy"
+allowed_skips = [
+  "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
+  "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img",
+]
+artifacts = ["junit.xml"]
+
+[profiles.browser]
+# Real Chrome, headless. Page-behaviour changes still need a check in an Orca
+# browser tab on a live-like copy; this profile does not replace it.
+command = [".venv/bin/python", "-m", "pytest", "-q", "tests/browser"]
+timeout_s = 2400
+capacity = "heavy"
+allowed_skips = []
+artifacts = ["junit.xml"]
