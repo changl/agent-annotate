@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `.windmill/test-profiles.toml` declares the repo's test profiles for the M1 Windmill pilot (agent-annotate-4zw): `fast` (the CI gate), `full` (`scripts/ci.py --full`) and `browser`. Each has a job-local `uv sync --frozen` environment, an import check that the checkout under test is what runs, a toolchain manifest, a junit artifact and an explicit list of allowed skips. GitHub CI is unchanged; `tests/test_windmill_profiles.py` keeps the file in step with the repo.
+- `scripts/verified_install.py WHEEL --request STATE.json` installs a release wheel on a Mac only behind a validated `full` receipt for that wheel's exact source commit. It reads the commit from the wheel's own `_build.json` stamp, and checks a downloaded wheel against the release's `SHA256SUMS`. `wm-test validate` checks the receipt against the server's record, and only then does `uv tool install` run on the same bytes. `--tool-dir/--bin-dir` install into a disposable target, and `--dry-run` installs nothing.
 
 ## 2.27.7
 
