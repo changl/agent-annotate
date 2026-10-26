@@ -13,11 +13,15 @@ import urllib.request
 import venv
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import platformdirs
 import pytest
 
 from agent_annotate import cli, deployment, pagegen, sync_server
+
+# pip/uv's launcher header: the kernel cannot exec a #! interpreter path with a space.
+PYTHON_SCRIPT = f"#!/bin/sh\n'''exec' \"{sys.executable}\" \"$0\" \"$@\"\n' '''\n"
 
 
 @contextmanager
@@ -115,13 +119,44 @@ def test_browser_capabilities_do_not_expose_process_identity(tmp_path):
             assert not {"pid", "slug_dir", "port", "public_base_path"}.intersection(payload)
 
 
+def test_process_argv_is_exact_where_ps_text_is_lossy(tmp_path):
+    argv = [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)",
+            "--slug-dir", str(tmp_path / "a dir" / "page dir"), "--public-base-path", "",
+            "--local-author-name", "Ada  Lovelace"]
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline() == "ready\n"
+        exact = sys.platform == "darwin" or sys.platform.startswith("linux")
+        assert cli._process_argv(child.pid) == (argv if exact else None)
+    finally:
+        child.kill()
+        child.wait()
+        child.stdout.close()
+    assert cli._process_argv(child.pid) is None
+
+
+def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch):
+    prefix, spaced = tmp_path / "legacy", tmp_path / "legacy page"
+    prefix.mkdir()
+    spaced.mkdir()
+    exact = {41: [sys.executable, "-I", "-m", "agent_annotate.sync_server", "--slug-dir", str(spaced),
+                  "--slug", spaced.name, "--port", "8802"]}
+    # `ps` joins argv with spaces and quotes nothing; 42's argv cannot be read (exited, or another user's).
+    table = (f"   41 {' '.join(exact[41])}\n"
+             f"   42 {sys.executable} -m agent_annotate.sync_server --slug-dir {prefix} --port 8803\n")
+    monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=table))
+    monkeypatch.setattr(cli, "_process_argv", exact.get)
+    assert cli._running_servers(strict=True) == {
+        str(spaced.resolve()): [{"pid": 41, "port": 8802, "public_base_path": None}]}
+
+
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     """Run worktree source, including isolated deployment subprocesses, only."""
     source = Path(cli.__file__).resolve().parents[1]
     monkeypatch.setenv("PYTHONPATH", str(source))
     python = tmp_path / "python"
-    python.write_text(f"#!{sys.executable}\nimport os, sys\nos.environ['PYTHONPATH'] = {str(source)!r}\n"
+    python.write_text(f"{PYTHON_SCRIPT}import os, sys\nos.environ['PYTHONPATH'] = {str(source)!r}\n"
                       f"os.execvpe({sys.executable!r}, [{sys.executable!r}, "
                       "*[a for a in sys.argv[1:] if a != '-I']], os.environ)\n")
     python.chmod(0o755)
@@ -160,7 +195,7 @@ def test_real_page_lifecycle_finishes_in_seconds_without_lsof(runtime, tmp_path,
     marker = tmp_path / "lsof-called"
     if lsof_mode == "sleeps-60s":
         stub = tools / "lsof"
-        stub.write_text(f"#!{sys.executable}\nimport time\nfrom pathlib import Path\n"
+        stub.write_text(f"{PYTHON_SCRIPT}import time\nfrom pathlib import Path\n"
                         f"Path({str(marker)!r}).touch()\ntime.sleep(60)\n")
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(tools))
@@ -217,14 +252,16 @@ def test_legacy_server_restarts_onto_new_identity_and_can_roll_back(runtime, tmp
         "server.AnnotateHandler._is_identity_probe = lambda self: False\nserver.main()\n")
     # A sandbox interpreter keeps its source path on rollback even when deployment
     # intentionally strips PYTHONPATH. No installed runtime or environment is edited.
-    legacy_env = tmp_path / "legacy-env"
+    # Spaced on purpose: `ps` cannot quote these paths, and identity must not depend on it.
+    spaced = tmp_path / "spaced dir"
+    legacy_env = spaced / "legacy env"
     venv.EnvBuilder(with_pip=False, symlinks=True).create(legacy_env)
     site = next((legacy_env / "lib").glob("python*/site-packages"))
     (site / "sandbox-source.pth").write_text(f"{overlay}\n{package.parent}\n{Path(platformdirs.__file__).parents[1]}\n")
     legacy_python = legacy_env / "bin" / "python"
     markdown = tmp_path / "legacy.md"
     markdown.write_text("---\ntitle: Legacy sandbox\n---\n\n## Scope\n\nUpgrade this sandbox.\n")
-    page = tmp_path / "legacy-page"
+    page = spaced / "legacy-page"
     pagegen.generate(markdown, page, version="v1")
     with socket.socket() as sock:
         sock.bind(("localhost", 0))

@@ -9,6 +9,7 @@ import fcntl
 import http.server
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -39,7 +40,9 @@ def estate(monkeypatch, tmp_path):
     shim.parent.mkdir()
     shim.write_text(f'#!/bin/sh\n# agent-annotate shim\nexec "{sys.executable}" -m agent_annotate.cli "$@"\n')
     shim.chmod(0o755)
-    claude, codex = tmp_path / "home" / ".claude" / "skills" / "annotate", tmp_path / "home" / ".agents" / "skills" / "annotate"
+    # On the cwd chain: the effective-skill walk up from estate.root stops here, never at a real
+    # home's skills when TMPDIR happens to sit under one.
+    claude, codex = tmp_path / ".claude" / "skills" / "annotate", tmp_path / ".agents" / "skills" / "annotate"
     for name, value in {"SHIM_PATH": shim, "CONFIG_DIR": tmp_path / "config", "STATE_DIR": tmp_path / "state",
                         "HOOK_OFFSET_ROOT": tmp_path / "state" / "hook-offsets", "LOCK_DIR": tmp_path / "state" / "locks",
                         "SKILL_DIRS": (claude, codex),
@@ -162,7 +165,7 @@ def test_an_unregistered_hand_copied_skill_gets_the_install_command(estate, caps
     code, out, _err = _doctor(capsys)
     assert code == 1
     assert "no install stamp" in out
-    assert f"fix: annotate install-skill --provider codex --dest {estate.codex}" in out
+    assert f"fix: annotate install-skill --provider codex --dest {shlex.quote(str(estate.codex))}" in out
 
 
 def test_a_live_page_on_an_older_runtime_is_reported(estate, page_server, capsys):
@@ -179,33 +182,44 @@ def test_a_live_page_on_an_older_runtime_is_reported(estate, page_server, capsys
 def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server, monkeypatch, capsys):
     _install_everything(estate)
     port = page_server(None)  # a pre-capabilities server: /api/capabilities is 404
-    bus = paths.BUS_ROOT / "prem-fin"
-    page = estate.root / "prem-fin"
-    page.mkdir()
+    # Spaced on purpose: `ps` text cannot keep these paths whole; each process's exact argv can.
+    bus = paths.BUS_ROOT / "prem fin"
+    page = estate.root / "spaced dir" / "prem-fin"
+    page.mkdir(parents=True)
     _register("registered", 1)  # pid os.getpid(), port 1
-    legacy = (f"  4242 /usr/bin/python3 /home/x/.claude/skills/annotate/sync_server.py --slug-dir {page} "
-              f"--slug prem-fin --bus-dir {bus} --port {port} --public-base-path /prem-fin\n"
-              # another estate's sandbox server (its own bus root) is not reported
-              f"  4343 /venv/bin/python -m agent_annotate.sync_server --slug-dir {estate.root} --slug p "
-              f"--bus-dir /tmp/x/bus/p --port {port} --strict-port\n"
-              # a registered server whose spaced path `ps` cannot quote: its pid is a record's, never a kill target
-              f"  {os.getpid()} /venv/bin/python -m agent_annotate.sync_server --slug-dir {estate.root} --slug q "
-              f"--bus-dir {bus} --port {port} --strict-port\n"
-              # a directory that does not exist (a mis-split path) is skipped
-              f"  4545 /venv/bin/python -m agent_annotate.sync_server --slug-dir /no/such/half --slug r "
-              f"--bus-dir {bus} --port {port} --strict-port\n")
+    tail = ["--slug-dir", str(page), "--slug", "prem-fin", "--bus-dir", str(bus), "--port", str(port),
+            "--public-base-path", "/prem-fin"]
+    module = ["/venv/bin/python", "-m", "agent_annotate.sync_server"]
+    argv = {4242: ["/usr/bin/python3", "/home/x/.claude/skills/annotate/sync_server.py", *tail],
+            # another estate's sandbox server (its own bus root) is not reported
+            4343: [*module, "--slug-dir", str(estate.root), "--slug", "p", "--bus-dir", "/tmp/x/bus/p",
+                   "--port", str(port), "--strict-port"],
+            # a registered server's pid is a record's, never a kill target
+            os.getpid(): [*module, "--slug-dir", str(estate.root), "--slug", "q", "--bus-dir", str(bus),
+                          "--port", str(port), "--strict-port"],
+            # a directory that does not exist is skipped
+            4545: [*module, "--slug-dir", "/no/such/half", "--slug", "r", "--bus-dir", str(bus),
+                   "--port", str(port), "--strict-port"]}
+    # `ps` joins argv with spaces and quotes nothing. 4646's argv cannot be read (exited, or
+    # another user's), so it is never reported, however its `ps` text would split.
+    unreadable = estate.root / "unreadable"
+    unreadable.mkdir()
+    legacy = "".join(f"  {pid} {' '.join(args)}\n" for pid, args in argv.items())
+    legacy += (f"  4646 {' '.join(module)} --slug-dir {unreadable} --slug unreadable "
+               f"--bus-dir {paths.BUS_ROOT / 'unreadable'} --port {port}\n")
     original = subprocess.run
     monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=legacy)
                         if command[:1] == ["ps"] else original(command, *args, **kwargs))
+    monkeypatch.setattr(cli, "_process_argv", argv.get)
     monkeypatch.setattr(version_guard, "_unregistered_servers", UNREGISTERED_SERVERS)
     code, out, _err = _doctor(capsys)
     assert code == 1
     line = next(line for line in out.splitlines() if "prem-fin" in line)
     assert line.startswith("MISMATCH  page      Untitled page (unregistered, pid 4242)  runtime unknown "
                            "(/api/capabilities HTTP 404; legacy server)")
-    assert (f"fix: kill 4242 && nohup {sys.executable} -I -m agent_annotate.sync_server --slug-dir {page} "
-            f"--slug prem-fin --bus-dir {bus} --port {port} --public-base-path /prem-fin >> ") in line
-    assert "4343" not in out and f"pid {os.getpid()}" not in out and "4545" not in out
+    assert (f"fix: kill 4242 && nohup {shlex.quote(sys.executable)} -I -m agent_annotate.sync_server "
+            f"{shlex.join(tail)} >> ") in line
+    assert "4343" not in out and f"pid {os.getpid()}" not in out and "4545" not in out and "4646" not in out
 
 
 def test_json_output_lists_components_and_fixes(estate, page_server, capsys):
@@ -230,7 +244,7 @@ def test_an_older_annotate_first_on_path_is_reported(estate, monkeypatch, capsys
     (old / "bin" / "python").write_text("")
     other = estate.root / "other-bin"
     other.mkdir()
-    (other / "annotate").write_text(f"#!/bin/sh\n# agent-annotate shim\nexec {old / 'bin' / 'python'} -I -m agent_annotate.cli \"$@\"\n")
+    (other / "annotate").write_text(f"#!/bin/sh\n# agent-annotate shim\nexec {shlex.quote(str(old / 'bin' / 'python'))} -I -m agent_annotate.cli \"$@\"\n")
     (other / "annotate").chmod(0o755)
     monkeypatch.setenv("PATH", f"{other}{os.pathsep}{os.environ['PATH']}")
     code, out, _err = _doctor(capsys)
@@ -385,7 +399,7 @@ def test_an_update_in_progress_defers_the_warning_and_the_served_status(estate, 
     (old / "bin").mkdir()
     (old / "bin" / "python").write_text("")
     current = estate.shim.read_text()
-    estate.shim.write_text(f"#!/bin/sh\n# agent-annotate shim\nexec {old / 'bin' / 'python'} -I -m agent_annotate.cli \"$@\"\n")
+    estate.shim.write_text(f"#!/bin/sh\n# agent-annotate shim\nexec {shlex.quote(str(old / 'bin' / 'python'))} -I -m agent_annotate.cli \"$@\"\n")
     monkeypatch.setattr(version_guard, "CACHE_SECONDS", 0)
     lock = paths.LOCK_DIR / "runtime-update.lock"
     lock.parent.mkdir(parents=True)
@@ -410,7 +424,7 @@ def test_a_locally_edited_registered_skill_gets_the_overwriting_command(estate, 
     (estate.claude / "SKILL.md").write_text("edited by hand")
     code, out, _err = _doctor(capsys)
     assert code == 1
-    assert (f"fix: annotate install-skill --provider claude --dest {estate.claude}  "
+    assert (f"fix: annotate install-skill --provider claude --dest {shlex.quote(str(estate.claude))}  "
             "# overwrites local edits to SKILL.md") in out
 
 

@@ -1712,6 +1712,42 @@ def cmd_unpublish(args) -> int:
     return 0
 
 
+def _process_argv(pid: int) -> list[str] | None:
+    """The exact argv of a live process, or None when it cannot be read.
+
+    `ps` joins arguments with spaces and quotes nothing, so a path with a space
+    cannot be read back from it. Linux keeps argv in /proc; macOS returns it
+    from sysctl KERN_PROCARGS2. A process that exited, one the OS will not
+    describe (another user's, on macOS) or any other platform gives None,
+    which is never an identity.
+    """
+    try:
+        if sys.platform.startswith("linux"):
+            raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+            args = raw[:-1].split(b"\0") if raw.endswith(b"\0") else raw.split(b"\0")
+        elif sys.platform == "darwin":
+            import ctypes
+            sysctl = ctypes.CDLL(None, use_errno=True).sysctl
+            sysctl.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                               ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t)
+            size = ctypes.c_size_t(os.sysconf("SC_ARG_MAX"))
+            buffer = ctypes.create_string_buffer(size.value)
+            name = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
+            if sysctl(name, 3, buffer, ctypes.byref(size), None, 0) != 0:
+                return None
+            raw = buffer.raw[:size.value]
+            argc = int.from_bytes(raw[:4], sys.byteorder)
+            # argc, the executable path, NUL padding, then argc NUL-terminated arguments.
+            args = raw[4:].split(b"\0", 1)[1].lstrip(b"\0").split(b"\0")[:argc]
+            if len(args) != argc:
+                return None
+        else:
+            return None
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+    return [os.fsdecode(arg) for arg in args] if raw and args else None
+
+
 def _running_servers(strict: bool = False) -> dict:
     """Map resolved slug_dir -> [{pid, port}] for every live page server.
 
@@ -1719,6 +1755,7 @@ def _running_servers(strict: bool = False) -> dict:
     (a supervisor, a manual relaunch, a peer session) keeps the ORIGINAL pid in
     the state file forever, so a live page reads as dead everywhere slugs are
     enumerated. slug_dir is the stable identity — pid and port both move.
+    `ps` only finds candidates; each one's arguments are its exact argv.
     """
     try:
         out = subprocess.run(
@@ -1732,11 +1769,12 @@ def _running_servers(strict: bool = False) -> dict:
     for line in out.splitlines():
         if "sync_server" not in line or "--slug-dir" not in line:
             continue
-        pid_str, _, rest = line.strip().partition(" ")
         try:
-            argv = shlex.split(rest)
-            pid = int(pid_str)
+            pid = int(line.split()[0])
         except ValueError:
+            continue
+        argv = _process_argv(pid)
+        if not argv:
             continue
 
         def _arg(flag, argv=argv):

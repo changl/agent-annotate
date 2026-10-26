@@ -31,7 +31,8 @@ def _wheel(directory, version="2.27.7", stamp=None):
 
 def _tool(directory, name, body):
     path = directory / name
-    path.write_text(f"#!{sys.executable}\nimport json, os, sys\n{body}\n")
+    # pip/uv's launcher header: the kernel cannot exec a #! interpreter path with a space.
+    path.write_text(f"#!/bin/sh\n'''exec' \"{sys.executable}\" \"$0\" \"$@\"\n' '''\nimport json, os, sys\n{body}\n")
     path.chmod(0o755)
     return path
 
