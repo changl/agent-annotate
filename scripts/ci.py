@@ -1,9 +1,14 @@
 """Fast PR gate. Full browser/runtime verification belongs on the local machine."""
 
 import argparse
+import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
 
 TESTS = (
     "tests/test_http_cache.py",
@@ -62,10 +67,45 @@ TESTS = (
 )
 
 
-def main():
+def full_route(root=ROOT, env=os.environ, config=None):
+    """The wm-test command for --full when a ready private route exists; None runs it here.
+
+    Inside the M1 executor (WM_TEST_ARTIFACTS set) and without a ready config,
+    --full runs locally as before. A routed run tests exactly HEAD, so
+    uncommitted or untracked changes are refused rather than left out.
+    """
+    if env.get("WM_TEST_ARTIFACTS"):
+        return None
+    config = Path(config or Path.home() / ".config/agent-tools/wm-test.json")
+    if not config.is_file():
+        return None
+    settings = json.loads(config.read_text())
+    if (settings.get("ready") is not True or "agent-annotate" not in settings.get("repos", {})
+            or "full" not in settings.get("profiles", {})):
+        return None
+    git = ["git", "-C", str(root)]
+    if subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip():
+        raise SystemExit("ci.py --full: uncommitted or untracked changes; commit them "
+                         "(the M1 run tests exactly HEAD) or pass --local")
+    wm_test = shutil.which("wm-test", path=env.get("PATH"))
+    if not wm_test:
+        raise SystemExit("ci.py --full: the wm-test route is ready but wm-test is not on PATH")
+    sha = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    return [wm_test, "agent-annotate", "full", "--sha", sha, "--config", str(config)]
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full", action="store_true", help="Run all local tests, including installed browser coverage")
-    args = parser.parse_args()
+    parser.add_argument("--local", action="store_true",
+                        help="with --full, run here even when a wm-test route is ready (no receipt)")
+    parser.add_argument("--work-item", help="with a routed --full, the bead or task the receipt belongs to")
+    args = parser.parse_args(argv)
+    route = full_route() if args.full and not args.local else None
+    if route:
+        print("ci.py --full: running on the M1 through " + " ".join(route[1:5]), flush=True)
+        work_item = ["--work-item", args.work_item] if args.work_item else []
+        sys.exit(subprocess.run(route + work_item).returncode)
     subprocess.run([sys.executable, "-m", "ruff", "check", "src", "tests", "scripts/ci.py", "scripts/release.py"], check=True)
     for script in sorted((Path(__file__).resolve().parents[1] / "src/agent_annotate/web").glob("*.js")):
         subprocess.run(["node", "--check", str(script)], check=True)
