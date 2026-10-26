@@ -4084,7 +4084,9 @@ async function loadCategories() {
       }
       if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
     }
-    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = PLANS.length ? PLANS[0].id : null;
+    // Plans opens on the first plan in section order (tracking first); a
+    // hidden plan opens only by link.
+    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden') || {}).id || null;
     DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
     if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
     return true;

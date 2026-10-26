@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+agent-annotate-awf: Plans held every answer the reviewer gave (84 on FLD, from "Which chapter hosted the mixer?" to three rally-email versions) ahead of the plans he asked for, and opened on the latest one-off answer.
+
+- Plans has sections, in this order: Tracking (what the reviewer asked to keep current), Approved plans, Agent reference. Titles sort A–Z within each, and Plans opens on the first tracking plan. `annotate plan SLUG ID --from plan.md --section tracking|approved|reference` sets a plan's section; a plan without one is agent reference.
+- A reviewer's answer is filed into Plans only when its card says `catalog: true` (it approves a plan or design), then under Approved plans. Other answers stay in Review history. `plans backfill` follows the same rule.
+- `annotate plans section PROJECT/SLUG tracking|approved|reference|hidden [PLAN_ID ...] [--decisions] [--apply]` (operator): a dry run by default; `--apply` keeps a backup for `annotate plans restore`. Hidden plans leave the picker; the plan, its history and its decisions stay, and a link still opens it.
+
 ## 2.27.5
 
 - A question that cites a `###` heading renders after that subsection's content (up to the next heading of its level), not between the heading and the pictures it asks about. On FLD v238, card 2492 sat above both screenshots it referred to.

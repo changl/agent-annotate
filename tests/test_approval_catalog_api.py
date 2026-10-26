@@ -18,7 +18,7 @@ def seed(server, text="First design", version="v1", **extra):
         '<p>Complete evidence</p></section></body></html>')
     (directory / "current.meta.json").write_text(json.dumps({"current": version, "history": [{"version": version}]}))
     status, comment = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
-        {**_card("d:q1", **{"evidence": [{"anchor": "s:design"}], **extra}), "version": version, "number": 1}]})
+        {**_card("d:q1", **{"evidence": [{"anchor": "s:design"}], "catalog": True, **extra}), "version": version, "number": 1}]})
     assert status == 200
     return _store(directory)["anchors"]["d:q1"][-1]
 
@@ -135,7 +135,7 @@ def test_token_cannot_file_another_items_evidence(server):
     httpd, directory, _ = server
     comment = seed(server)
     evidence = token(httpd, comment)
-    _, other = _call(httpd, "POST", "/api/comments", _card("d:q2"))
+    _, other = _call(httpd, "POST", "/api/comments", _card("d:q2", catalog=True))
     vote(httpd, other, evidence)
     plan = _store(directory)["approved_plans"][item_id(other)]
     assert plan["history"][0]["evidence_incomplete"]

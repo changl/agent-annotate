@@ -3859,7 +3859,7 @@ def cmd_plan(args) -> int:
                                          base_dir=source.absolute().parent,
                                          page_dir=Path(record["slug_dir"]))
         result = publish_plan_revision(record["slug_dir"], args.plan_id, content,
-                                       title=title, label=args.label)
+                                       title=title, label=args.label, section=getattr(args, "section", None))
         _bus_emit(record.get("bus_file"), {"event": "plan_published", "slug": slug,
                   "category": "plans", "doc": f"plan:{args.plan_id}", "version": result["version"],
                   "session_id": _session_id()})
@@ -5315,6 +5315,9 @@ def build_parser(*, all_commands=False):
     sp_plan.add_argument("--from", dest="from_file", required=True, metavar="plan.md|.html")
     sp_plan.add_argument("--title", default=None)
     sp_plan.add_argument("--label", default=None)
+    sp_plan.add_argument("--section", default=None, choices=("tracking", "approved", "reference"),
+                         help="Plans section: tracking the reviewer asked for, an approved plan, "
+                              "or agent reference (the default for a new plan)")
     sp_plan.add_argument("--project", default=None)
     sp_plan.add_argument("--json", action="store_true")
     sp_plan.set_defaults(func=cmd_plan)
@@ -5328,7 +5331,15 @@ def build_parser(*, all_commands=False):
     mode.add_argument("--apply", action="store_true")
     backfill.add_argument("--json", action="store_true")
     backfill.set_defaults(func=cmd_plans)
-    restore = plans_sub.add_parser("restore", help="restore an unchanged backfill using its backup")
+    move = plans_sub.add_parser("section", help="move plans between Plans sections; default writes nothing")
+    move.add_argument("slug", metavar="PROJECT/SLUG")
+    move.add_argument("section", choices=("tracking", "approved", "reference", "hidden"))
+    move.add_argument("ids", nargs="*", metavar="PLAN_ID")
+    move.add_argument("--decisions", action="store_true", help="also every plan filed from a reviewer decision")
+    move.add_argument("--apply", action="store_true")
+    move.add_argument("--json", action="store_true")
+    move.set_defaults(func=cmd_plans)
+    restore = plans_sub.add_parser("restore", help="restore an unchanged backfill or section move using its backup")
     restore.add_argument("slug", metavar="PROJECT/SLUG")
     restore.add_argument("--backup", required=True)
     restore.set_defaults(func=cmd_plans)

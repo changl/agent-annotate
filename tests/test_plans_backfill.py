@@ -23,7 +23,7 @@ def snapshot(directory):
 
 def page(directory, *, verdict="accept"):
     directory.mkdir(exist_ok=True)
-    request = {"prompt": "Ship this design?", "evidence": [{"anchor": "design"}],
+    request = {"prompt": "Ship this design?", "evidence": [{"anchor": "design"}], "catalog": True,
                "options": [{"id": "blue", "label": "Blue", "consequence": "Use blue"}]}
     decision = {"verdict": verdict, "text": "Blue" if verdict == "select" else None,
                 "by": "reviewer@example.com", "ts": "2026-10-01T12:00:00Z"}
@@ -420,7 +420,7 @@ def test_sealed_opt_out_cannot_be_overridden_by_current_request_or_stale_link(tm
     before = snapshot(tmp_path)
     report = backfill_page(tmp_path, apply=True)
     assert report["counts"]["conflict"] == 1
-    assert "opted out" in report["items"][0]["reason"]
+    assert "not marked as a plan" in report["items"][0]["reason"]
     assert snapshot(tmp_path) == before
 
 
@@ -521,3 +521,42 @@ def test_dry_run_preserves_directory_entries_and_mtimes(tmp_path):
     before = metadata()
     assert backfill_page(tmp_path, bus=bus)["counts"]["would_file"] == 1
     assert metadata() == before
+
+
+def test_section_moves_plans_dry_run_apply_and_restore(tmp_path):
+    from agent_annotate.categories import list_plans, publish_plan_revision
+    from agent_annotate.plans_backfill import section_page
+    filed = {"title": "Send the rally email?", "current": "v1", "history": [{"version": "v1", "label": "Approved"}]}
+    store = {"schema_version": 2, "anchors": {}, "archived": {},
+             "approved_plans": {"rally-email": filed, "routing-design": {**filed, "title": "Approve routing?"}}}
+    save(tmp_path, store)
+    (tmp_path / ".comments.json.lock").touch()
+    publish_plan_revision(tmp_path, "tester-tracking", "<p>t</p>", title="Tester tracking")
+    sections = lambda: {p["id"]: p["section"] for p in list_plans(tmp_path)}  # noqa: E731
+    before = snapshot(tmp_path)
+    dry = section_page(tmp_path, "hidden", [], decisions=True)
+    assert {i["id"] for i in dry["items"]} == {"rally-email", "routing-design"} and "backup" not in dry
+    assert snapshot(tmp_path) == before
+    section_page(tmp_path, "hidden", [], decisions=True, apply=True)
+    section_page(tmp_path, "approved", ["routing-design"], apply=True)
+    moved = section_page(tmp_path, "tracking", ["tester-tracking"], apply=True)
+    assert sections() == {"tester-tracking": "tracking", "routing-design": "approved", "rally-email": "hidden"}
+    # Hidden keeps the plan and its history; restore reverts the last move only.
+    assert json.loads((tmp_path / "comments.json").read_text())["approved_plans"]["rally-email"]["history"] == filed["history"]
+    restore_page(tmp_path, moved["backup"])
+    assert sections()["tester-tracking"] == "reference"
+    assert section_page(tmp_path, "hidden", ["rally-email"], apply=True)["items"] == []
+    with pytest.raises(ValueError, match="no such plan"):
+        section_page(tmp_path, "approved", ["missing"])
+
+
+def test_section_cli_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
+    from agent_annotate import cli
+    from agent_annotate.categories import publish_plan_revision
+    save(tmp_path, {"schema_version": 2, "anchors": {}, "archived": {}})
+    publish_plan_revision(tmp_path, "tester-tracking", "<p>t</p>", title="Tester tracking")
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda slug, project=None: ("p", "s", {"slug_dir": str(tmp_path)}))
+    before = snapshot(tmp_path)
+    assert run_command(build_parser().parse_args(["plans", "section", "p/s", "tracking", "tester-tracking"])) == 0
+    assert "reference -> tracking" in capsys.readouterr().out
+    assert snapshot(tmp_path) == before

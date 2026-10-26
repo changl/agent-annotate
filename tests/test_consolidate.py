@@ -33,7 +33,7 @@ def _card(cid, number, anchor="s:scope", **extra):
     return {"id": cid, "anchor_id": anchor, "text": f"Question {number}?", "author": "agent:claude",
             "created_at": f"2026-10-01T00:00:{number:02d}Z", "version": "v1", "status": "open",
             "response_text": None, "replies": [], "number": number,
-            "decision_request": {"prompt": f"Question {number}?", "options": [
+            "decision_request": {"prompt": f"Question {number}?", "catalog": True, "options": [
                 {"id": "fix", "label": "Fix it"}, {"id": "keep", "label": "Keep it"}]}, **extra}
 
 

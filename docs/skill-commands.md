@@ -109,6 +109,7 @@ options:
 
 ```text
 usage: annotate plan [-h] --from plan.md|.html [--title TITLE] [--label LABEL]
+                     [--section {tracking,approved,reference}]
                      [--project PROJECT] [--json]
                      slug plan_id
 
@@ -121,6 +122,10 @@ options:
   --from plan.md|.html
   --title TITLE
   --label LABEL
+  --section {tracking,approved,reference}
+                        Plans section: tracking the reviewer asked for, an
+                        approved plan, or agent reference (the default for a
+                        new plan)
   --project PROJECT
   --json
 ```

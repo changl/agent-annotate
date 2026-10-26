@@ -3021,7 +3021,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             c["decision"]["catalog_eligible"] = identity["authenticated"]
             c["decision"]["evidence"] = evidence
             if (identity["authenticated"] and verdict in {"accept", "select"}
-                    and (c.get("decision_request") or {}).get("catalog") is not False
+                    and (c.get("decision_request") or {}).get("catalog") is True
                     and c.get("category", "review") == "review"):
                 persist_evidence(self.artifact_dir, c, evidence)
             if isinstance(payload.get("option_id"), str):
@@ -3467,7 +3467,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 present = {comment_category(c) for items in store["anchors"].values() for c in items}
                 available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
                              "findings": bool(category_data["findings_sets"]) or "findings" in present,
-                             "plans": bool(plans) or "plans" in present}
+                             "plans": any(p["section"] != "hidden" for p in plans) or "plans" in present}
                 record = self._registered_record()
                 links = linked_pages(record) if record else []
             if not self._identity()["authenticated"]:
