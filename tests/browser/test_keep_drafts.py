@@ -363,9 +363,12 @@ def _store(directory):
     return json.loads((directory / "comments.json").read_text())
 
 
+DRAFTS = """() => JSON.parse(localStorage.getItem(
+    Object.keys(localStorage).find(k => k.startsWith('annotate:drafts:') && k.endsWith(':review')) || '') || '{}')"""
+
+
 def _drafts(page):
-    return page.evaluate("""() => JSON.parse(localStorage.getItem(
-        Object.keys(localStorage).find(k => k.startsWith('annotate:drafts:') && k.endsWith(':review')) || '') || '{}')""")
+    return page.evaluate(DRAFTS)
 
 
 def test_two_tabs_on_one_page_never_erase_each_others_drafts(tmp_path):
@@ -379,6 +382,11 @@ def test_two_tabs_on_one_page_never_erase_each_others_drafts(tmp_path):
         other.bring_to_front()
         other.locator("#general-feedback-toggle").click()
         other.locator("#gf-ta").fill(GF)
+        # The tab that typed wrote both drafts: it kept the other tab's reply.
+        assert _drafts(other) == {"reply-card": REPLY, "gf": GF}
+        # The first tab's localStorage is its own renderer's copy: Chrome
+        # brings it up to date a moment after the write, not with it.
+        page.wait_for_function(f"() => 'gf' in ({DRAFTS})()")
         assert _drafts(page) == {"reply-card": REPLY, "gf": GF}
         page.bring_to_front()
         page.reload(wait_until="networkidle")
