@@ -10,8 +10,8 @@
 #
 # Identity: profile_sha256 = sha256 of this file's bytes at the pinned SHA;
 # environment_sha256 = sha256 of [environment] before substitution, as
-# sorted-key JSON; toolchain_sha256 = sha256 of the toolchain commands'
-# stdout, in order.
+# json.dumps(env, sort_keys=True, separators=(",", ":")); toolchain_sha256 =
+# sha256 of the toolchain commands' stdout, concatenated in order.
 schema = 1
 
 # A job-local .venv pinned by uv.lock, with this checkout installed editable.
