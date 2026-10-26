@@ -1,4 +1,4 @@
-"""Fast PR gate. Full browser/runtime verification belongs on the local machine."""
+"""Fast PR gate. --full runs every test, on the M1 through wm-test when a private route is configured."""
 
 import argparse
 import json
@@ -68,10 +68,12 @@ TESTS = (
 
 
 def full_route(root=ROOT, env=os.environ, config=None):
-    """The wm-test command for --full when a ready private route exists; None runs it here.
+    """The wm-test command for --full when a private route is configured; None runs it here.
 
-    Inside the M1 executor (WM_TEST_ARTIFACTS set) and without a ready config,
-    --full runs locally as before. A routed run tests exactly HEAD, so
+    Inside the M1 executor (WM_TEST_ARTIFACTS set), without a config, or with
+    one that does not register agent-annotate's full profile, --full runs
+    locally as before. A registered route that is not ready fails instead of
+    silently running the heavy suite here. A routed run tests exactly HEAD, so
     uncommitted or untracked changes are refused rather than left out.
     """
     if env.get("WM_TEST_ARTIFACTS"):
@@ -80,9 +82,11 @@ def full_route(root=ROOT, env=os.environ, config=None):
     if not config.is_file():
         return None
     settings = json.loads(config.read_text())
-    if (settings.get("ready") is not True or "agent-annotate" not in settings.get("repos", {})
-            or "full" not in settings.get("profiles", {})):
+    if "agent-annotate" not in settings.get("repos", {}) or "full" not in settings.get("profiles", {}):
         return None
+    if settings.get("ready") is not True:
+        raise SystemExit("ci.py --full: the wm-test route for agent-annotate full is configured but not ready; "
+                         "fix the route or pass --local")
     git = ["git", "-C", str(root)]
     if subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip():
         raise SystemExit("ci.py --full: uncommitted or untracked changes; commit them "
@@ -96,9 +100,11 @@ def full_route(root=ROOT, env=os.environ, config=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--full", action="store_true", help="Run all local tests, including installed browser coverage")
+    parser.add_argument("--full", action="store_true",
+                        help="Run every test, including browser coverage: through the configured wm-test route, "
+                             "or here when none is configured")
     parser.add_argument("--local", action="store_true",
-                        help="with --full, run here even when a wm-test route is ready (no receipt)")
+                        help="with --full, run here even when a wm-test route is configured (no receipt)")
     parser.add_argument("--work-item", help="with a routed --full, the bead or task the receipt belongs to")
     args = parser.parse_args(argv)
     route = full_route() if args.full and not args.local else None

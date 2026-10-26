@@ -45,15 +45,24 @@ def test_inside_the_executor_full_stays_local(repo):
     assert ci.full_route(root, {**env, "WM_TEST_ARTIFACTS": "/job/artifacts"}, config) is None
 
 
-@pytest.mark.parametrize("settings", [None, {**READY, "ready": False}, {**READY, "repos": {"other": {}}},
-                                      {**READY, "profiles": {"fast": {}}}])
-def test_no_ready_config_for_this_repo_and_profile_stays_local(repo, settings):
+@pytest.mark.parametrize("settings", [None, {**READY, "repos": {"other": {}}}, {**READY, "profiles": {"fast": {}}},
+                                      {"ready": False, "repos": {"other": {}}, "profiles": {"full": {}}}])
+def test_no_config_for_this_repo_and_profile_stays_local(repo, settings):
     root, _, config, env = repo
     if settings is None:
         config.unlink()
     else:
         config.write_text(json.dumps(settings))
     assert ci.full_route(root, env, config) is None
+
+
+@pytest.mark.parametrize("ready", [False, None, "true"])
+def test_registered_route_that_is_not_ready_fails_instead_of_running_here(repo, ready):
+    root, _, config, env = repo
+    settings = {**READY, "ready": ready} if ready is not None else {k: v for k, v in READY.items() if k != "ready"}
+    config.write_text(json.dumps(settings))
+    with pytest.raises(SystemExit, match="configured but not ready"):
+        ci.full_route(root, env, config)
 
 
 @pytest.mark.parametrize("change", ["modified", "untracked"])
