@@ -39,6 +39,77 @@ def test_copy_proposal_retry_preserves_current_and_waits_for_shared_send(server)
     assert len(_events(bus, "session_push")) == 1
 
 
+def _seed_draft(directory):
+    save_copy(directory, {"schema_version": 1, "blocks": [{"id": "hero", "title": "Hero", "current": "r1", "status": "needs_you",
+        "revisions": [{"id": "r1", "created_at": "2026-10-02T00:00:00+00:00", "author": {"id": "agent:builder"},
+                       "status": "approved", "delta": {"ops": [{"insert": "Approved headline\n"}]}},
+                      {"id": "r2", "created_at": "2026-10-03T00:00:00+00:00", "author": {"id": "agent:builder"},
+                       "status": "draft", "delta": {"ops": [{"insert": "Draft headline\n"}]}}]}]})
+
+
+def test_approve_a_draft_in_one_action_goes_out_with_send_as_an_approval(server):
+    httpd, directory, bus = server
+    _seed_draft(directory)
+    body = {"revision_id": "r2", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/approve", body, author="agent:builder")[0] == 403
+    assert _call(httpd, "POST", "/api/copy/hero/approve", {"revision_id": "r1", "request_id": str(uuid.uuid4())},
+                 author="reviewer@example.com")[0] == 409
+    assert _call(httpd, "POST", "/api/copy/hero/approve", dict(body, delta={"ops": []}), author="reviewer@example.com")[0] == 400
+    for _ in range(2):
+        status, result = _call(httpd, "POST", "/api/copy/hero/approve", body, author="reviewer@example.com")
+        assert status == 200
+    block = result["blocks"][0]
+    assert block["current"] == "r_" + body["request_id"] and block["status"] == "done" and len(block["revisions"]) == 3
+    assert _events(bus, "session_push") == []
+    status, result = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert status == 200 and result["edit_count"] == 1
+    edit = _events(bus, "session_push")[0]["edits"][0]
+    assert edit["status"] == "approved" and edit["base_revision"] == "r2" and edit["delta"] == {"ops": [{"insert": "Draft headline\n"}]}
+    assert load_copy(directory)["blocks"][0]["revisions"][-1]["round_pending"] is False
+
+
+def test_edit_approved_copy_then_approve_and_discard_restores_the_block(server):
+    httpd, directory, _ = server
+    _seed_draft(directory)
+    before = load_copy(directory)
+    approval = {"revision_id": "r2", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/approve", approval, author="reviewer@example.com")[0] == 200
+    edit = {"delta": {"ops": [{"insert": "Edited headline\n"}]}, "base_revision": "r_" + approval["request_id"],
+            "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/revisions", edit, author="reviewer@example.com")[0] == 200
+    status, result = _call(httpd, "POST", "/api/copy/hero/approve", {"revision_id": "r_" + edit["request_id"],
+                                                                      "request_id": str(uuid.uuid4())}, author="reviewer@example.com")
+    assert status == 200
+    block = result["blocks"][0]
+    assert [r["status"] for r in block["revisions"]] == ["approved", "draft", "approved", "proposed", "approved"]
+    assert block["current"] == block["revisions"][-1]["id"]
+    status, result = _call(httpd, "POST", "/api/rounds/discard", {}, author="reviewer@example.com")
+    assert status == 200 and result["edit_count"] == 3
+    assert load_copy(directory) == before
+
+
+def test_two_reviewers_discard_never_sends_the_discarded_approval(server):
+    # Review P1-2 over HTTP: A's discarded approval stays only as the revision
+    # B's approval replaced, and A's next Send does not deliver it.
+    httpd, directory, bus = server
+    _seed_draft(directory)
+    a = {"revision_id": "r2", "request_id": str(uuid.uuid4())}
+    assert _call(httpd, "POST", "/api/copy/hero/approve", a, author="a@example.com")[0] == 200
+    document = load_copy(directory)
+    document["blocks"][0]["revisions"].append({"id": "r3", "created_at": "2026-10-04T00:00:00+00:00", "author": {"id": "agent:builder"},
+                                               "status": "draft", "delta": {"ops": [{"insert": "Newer headline\n"}]}})
+    document["blocks"][0]["status"] = "needs_you"
+    save_copy(directory, document)
+    assert _call(httpd, "POST", "/api/copy/hero/approve", {"revision_id": "r3", "request_id": str(uuid.uuid4())},
+                 author="b@example.com")[0] == 200
+    status, result = _call(httpd, "POST", "/api/rounds/discard", {}, author="a@example.com")
+    assert status == 200 and result["edit_count"] == 0
+    assert not any(r.get("round_pending") and r["author"]["id"] == "a@example.com" for r in load_copy(directory)["blocks"][0]["revisions"])
+    assert _call(httpd, "POST", "/api/rounds/submit", {"note": "Unrelated feedback"}, author="a@example.com")[0] == 200
+    sent = [edit for event in _events(bus, "session_push") for edit in event.get("edits", [])]
+    assert not any(edit["revision_id"] == "r_" + a["request_id"] for edit in sent)
+
+
 def test_copy_api_rejects_html_embeds_and_identity_spoof(server):
     httpd, directory, _ = server
     _seed(directory)
