@@ -257,6 +257,42 @@ def test_discard_undoes_unsent_approvals_and_send_keeps_them(tmp_path):
     assert block["current"] == "r_" + request_id and block["status"] == "done"
 
 
+def test_discard_keeps_a_status_the_agent_set_after_the_approval(tmp_path):
+    # Review P1-1: a later held, or a later needs_you on a newer draft, stays.
+    save_copy(tmp_path, waiting_document())
+    document = approve_revision(tmp_path, "home-hero", "r2", {"id": "reviewer:a"}, request_id=str(uuid.uuid4()))
+    document["blocks"][0].update(status="held", held_note="Later agent hold")
+    save_copy(tmp_path, document)
+    discard_revisions(tmp_path, {"reviewer:a"})
+    block = load_copy(tmp_path)["blocks"][0]
+    assert block["status"] == "held" and block["current"] == "draft-1"
+    save_copy(tmp_path / "b", waiting_document(status="done"))
+    document = approve_revision(tmp_path / "b", "home-hero", "r2", {"id": "reviewer:a"}, request_id=str(uuid.uuid4()))
+    document["blocks"][0]["revisions"].append({"id": "r3", "created_at": "2026-10-04T12:00:00Z", "author": {"id": "agent:copy"},
+                                               "status": "draft", "delta": {"ops": [{"insert": "Newer\n"}]}})
+    document["blocks"][0]["status"] = "needs_you"
+    save_copy(tmp_path / "b", document)
+    discard_revisions(tmp_path / "b", {"reviewer:a"})
+    assert load_copy(tmp_path / "b")["blocks"][0]["status"] == "needs_you"
+
+
+def test_discard_keeps_an_approval_another_approval_replaced_and_never_sends_it(tmp_path):
+    # Review P1-2: B's approval names A's as the current revision it replaced.
+    save_copy(tmp_path, waiting_document())
+    document = approve_revision(tmp_path, "home-hero", "r2", {"id": "reviewer:a"}, request_id=str(uuid.uuid4()))
+    first = document["blocks"][0]["current"]
+    document["blocks"][0]["revisions"].append({"id": "r3", "created_at": "2026-10-04T12:00:00Z", "author": {"id": "agent:copy"},
+                                               "status": "draft", "delta": {"ops": [{"insert": "Newer\n"}]}})
+    document["blocks"][0]["status"] = "needs_you"
+    save_copy(tmp_path, document)
+    approve_revision(tmp_path, "home-hero", "r3", {"id": "reviewer:b"}, request_id=str(uuid.uuid4()))
+    assert discard_revisions(tmp_path, {"reviewer:a"}) == []
+    block = load_copy(tmp_path)["blocks"][0]
+    kept = next(r for r in block["revisions"] if r["id"] == first)
+    assert kept["round_pending"] is False and block["revisions"][-1]["author"]["id"] == "reviewer:b"
+    assert block["current"] == block["revisions"][-1]["id"] and block["status"] == "done"
+
+
 def test_previous_is_only_valid_on_an_approval_naming_an_earlier_revision():
     data = waiting_document()
     data["blocks"][0]["revisions"][1]["previous"] = {"current": "draft-1"}

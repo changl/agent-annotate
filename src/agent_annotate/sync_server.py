@@ -3352,10 +3352,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         pushing. The verdicts themselves stay recorded (reversible via
         "Change verdict"); they simply never go out as a round. Emits
         `round_discarded`, never a session_push."""
-        from .copy_state import discard_revisions
+        from .copy_state import discard_revisions, load_copy
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
         with _locked_store(self.artifact_dir):
+            # Unsent Library edits and approvals are drafts: Discard drops
+            # them, first, so a Discard that cannot be applied changes nothing.
+            try:
+                load_copy(self.artifact_dir)
+            except ValueError:
+                revision_ids = []  # an invalid copy.json has nothing to discard
+            else:
+                try:
+                    revision_ids = discard_revisions(self.artifact_dir, reviewer_authors)
+                except ValueError as exc:
+                    return self._respond(500, json.dumps({"error": f"Library edits could not be discarded: {exc}"}).encode())
             store = self._v2_load()
             comment_ids = []
             for anchor_id, items in store.get("anchors", {}).items():
@@ -3389,11 +3400,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             comment_ids = list(dict.fromkeys(comment_ids))
             if comment_ids:
                 self._v2_save(store)
-            # Unsent Library edits are drafts: Discard drops them.
-            try:
-                revision_ids = discard_revisions(self.artifact_dir, reviewer_authors)
-            except ValueError:
-                revision_ids = []  # an invalid copy.json has nothing to discard
         _bus_append(self.bus_dir, self.slug, {
             "event": "round_discarded",
             "comment_ids": comment_ids,

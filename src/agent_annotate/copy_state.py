@@ -382,6 +382,11 @@ def restore_revision(slug_dir: Path | str, block_id: str, revision_id: str, auth
                                 request_id=request_id, round_pending=round_pending, latest=latest)
 
 
+def _after_approval(status: str | None) -> str | None:
+    """The block status an approval leaves: waiting on the reviewer is done."""
+    return "done" if status in {"needs_you", "ready", "waiting"} else status
+
+
 def approve_revision(slug_dir: Path | str, block_id: str, revision_id: str, author: Any,
                      *, request_id: str) -> dict:
     """Approve the block's latest revision by appending an approved copy of it.
@@ -423,8 +428,8 @@ def approve_revision(slug_dir: Path | str, block_id: str, revision_id: str, auth
                                    "author": author, "status": "approved", "base_revision": revision_id,
                                    "delta": latest["delta"], "previous": previous, "round_pending": True})
         block["current"] = approval_id
-        if block.get("status") in {"needs_you", "ready", "waiting"}:
-            block["status"] = "done"
+        if "status" in block:
+            block["status"] = _after_approval(block["status"])
         normalized = validate_copy(data)
         _write(directory, normalized)
         return normalized
@@ -455,28 +460,50 @@ def discard_revisions(slug_dir: Path | str, authors: set[str]) -> list[str]:
     with (directory / ".copy.json.lock").open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         data = load_copy(directory)
-        dropped = []
+        dropped, changed = [], False
         for block in data["blocks"]:
+            by_id = {revision["id"]: revision for revision in block["revisions"]}
             pending = {revision["id"] for revision in block["revisions"]
                        if revision.get("round_pending") and revision["author"]["id"] in authors}
-            # An unsent approval nothing builds on is undone: the block gets
-            # back the current revision and status it had (latest first).
-            built_on = {revision.get("base_revision") for revision in block["revisions"] if revision["id"] not in pending}
+
+            def closure(start: set) -> set:
+                # Every revision a kept one refers to, as its base or as the
+                # current revision an approval replaced, transitively.
+                seen, todo = set(), [rid for rid in start if rid in by_id]
+                while todo:
+                    rid = todo.pop()
+                    if rid in seen:
+                        continue
+                    seen.add(rid)
+                    revision = by_id[rid]
+                    todo += [ref for ref in (revision.get("base_revision"), (revision.get("previous") or {}).get("current"))
+                             if ref in by_id]
+                return seen
+
+            kept = {rid for rid in by_id if rid not in pending}
+            referenced = closure({ref for rid in kept for ref in (by_id[rid].get("base_revision"),
+                                                                    (by_id[rid].get("previous") or {}).get("current")) if ref})
+            # An unsent approval nothing kept refers to is undone, latest
+            # first: the block gets back the current revision it replaced,
+            # and its status unless someone set another one since.
             for revision in reversed(block["revisions"]):
-                if (revision["id"] in pending and "previous" in revision and revision["id"] not in built_on
+                if (revision["id"] in pending and "previous" in revision and revision["id"] not in referenced
                         and block["current"] == revision["id"]):
-                    block["current"] = revision["previous"]["current"]
-                    block.pop("status", None)
-                    if "status" in revision["previous"]:
-                        block["status"] = revision["previous"]["status"]
-            kept = [revision for revision in block["revisions"] if revision["id"] not in pending]
-            needed = {block["current"]} | {revision.get("base_revision") for revision in kept}
+                    previous = revision["previous"]
+                    block["current"] = previous["current"]
+                    if block.get("status") == _after_approval(previous.get("status")):
+                        block.pop("status", None)
+                        if "status" in previous:
+                            block["status"] = previous["status"]
+                    changed = True
+            needed = closure(kept | {block["current"]})
             for revision in block["revisions"]:
                 if revision["id"] in pending and revision["id"] in needed:
-                    revision["round_pending"] = False  # built on: kept, not sent
+                    revision["round_pending"] = False  # referred to: kept, not sent
+                    changed = True
             block["revisions"] = [revision for revision in block["revisions"]
                                   if revision["id"] not in pending or revision["id"] in needed]
             dropped += sorted(pending - needed)
-        if dropped:
+        if dropped or changed:
             _write(directory, validate_copy(data))
         return dropped
