@@ -22,6 +22,7 @@ MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 MAX_DELTA_CHARS = 50_000
 _ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 _INLINE = {"bold", "italic", "underline", "strike", "code"}
+_BLOCK_STATUSES = {"needs_you", "ready", "waiting", "done", "held"}
 
 
 def _object(value: Any, fields: set[str], required: set[str], label: str) -> dict:
@@ -147,7 +148,7 @@ def validate_copy(value: Any) -> dict:
             raise ValueError("copy block.revisions must contain 1 to 1000 revisions")
         clean_revisions, revision_ids = [], set()
         for revision in revisions:
-            revision = _object(revision, {"id", "created_at", "author", "status", "delta", "base_revision", "round_pending"},
+            revision = _object(revision, {"id", "created_at", "author", "status", "delta", "base_revision", "round_pending", "previous"},
                                {"id", "created_at", "author", "status", "delta"}, "copy revision")
             revision_id = _id(revision["id"], "copy revision.id")
             if revision_id in revision_ids:
@@ -163,14 +164,23 @@ def validate_copy(value: Any) -> dict:
             clean = {"id": revision_id, "created_at": timestamp, "author": _author(revision["author"]),
                      "status": revision["status"], "delta": validate_delta(revision["delta"])}
             if "round_pending" in revision:
-                if type(revision["round_pending"]) is not bool or revision["status"] != "proposed":
-                    raise ValueError("round_pending must be boolean on a proposed revision")
+                if type(revision["round_pending"]) is not bool or revision["status"] not in {"proposed", "approved"}:
+                    raise ValueError("round_pending must be boolean on a proposed or approved revision")
                 clean["round_pending"] = revision["round_pending"]
             if "base_revision" in revision:
                 base = _id(revision["base_revision"], "copy revision.base_revision")
                 if base not in revision_ids:
                     raise ValueError("copy revision must reference an earlier base revision")
                 clean["base_revision"] = base
+            # A reviewer's approval records the block's current revision and
+            # status it replaced, so Discard can undo it before it is sent.
+            if "previous" in revision:
+                previous = _object(revision["previous"], {"current", "status"}, {"current"}, "copy revision.previous")
+                if revision["status"] != "approved" or _id(previous["current"], "copy previous.current") not in revision_ids:
+                    raise ValueError("copy revision.previous must name an earlier revision of an approval")
+                if "status" in previous and previous["status"] not in _BLOCK_STATUSES:
+                    raise ValueError("invalid copy revision.previous.status")
+                clean["previous"] = dict(previous)
             revision_ids.add(revision_id)
             clean_revisions.append(clean)
         current = _id(block["current"], "copy block.current")
@@ -184,7 +194,7 @@ def validate_copy(value: Any) -> dict:
                 if type(item) is not int or not 1 <= item <= 999999:
                     raise ValueError("copy block.number must be a positive integer")
             elif field == "status":
-                if not isinstance(item, str) or item not in {"needs_you", "ready", "waiting", "done", "held"}:
+                if not isinstance(item, str) or item not in _BLOCK_STATUSES:
                     raise ValueError("invalid copy block.status")
             elif field == "alternatives":
                 if not isinstance(item, list) or len(item) > 30:
@@ -288,6 +298,15 @@ class StaleRevisionError(ValueError):
     """A browser edit was made on a revision that is no longer the latest (HTTP 409)."""
 
 
+def _request_id(value: Any) -> str:
+    try:
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("copy request_id must be a UUID") from exc
+    return value
+
+
 def add_browser_revision(slug_dir: Path | str, block_id: str, delta: Any, author: Any,
                          *, base_revision: str, request_id: str, round_pending: bool = True,
                          latest: str | None = None) -> dict:
@@ -303,11 +322,7 @@ def add_browser_revision(slug_dir: Path | str, block_id: str, delta: Any, author
     _id(block_id, "copy block.id")
     _id(base_revision, "copy base_revision")
     delta, author = validate_delta(delta), _author(author)
-    try:
-        if not isinstance(request_id, str) or str(uuid.UUID(request_id)) != request_id:
-            raise ValueError
-    except (ValueError, AttributeError) as exc:
-        raise ValueError("copy request_id must be a UUID") from exc
+    _request_id(request_id)
     directory = Path(slug_dir)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".copy.json.lock").open("a+") as lock:
@@ -367,6 +382,54 @@ def restore_revision(slug_dir: Path | str, block_id: str, revision_id: str, auth
                                 request_id=request_id, round_pending=round_pending, latest=latest)
 
 
+def approve_revision(slug_dir: Path | str, block_id: str, revision_id: str, author: Any,
+                     *, request_id: str) -> dict:
+    """Approve the block's latest revision by appending an approved copy of it.
+
+    Nothing existing changes: the new revision has the draft's text, names the
+    draft as its base and records the current revision and status it replaces
+    (Discard restores them while the approval is unsent). The block's current
+    revision becomes the approval; a block waiting on the reviewer is done,
+    held copy stays held. Approving a revision that is no longer the latest is
+    refused (StaleRevisionError); a retry with the same request id is a no-op.
+    """
+    _id(block_id, "copy block.id")
+    _id(revision_id, "copy revision.id")
+    author = _author(author)
+    _request_id(request_id)
+    directory = Path(slug_dir)
+    with (directory / ".copy.json.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        data = load_copy(directory)
+        block = next((block for block in data["blocks"] if block["id"] == block_id), None)
+        if block is None:
+            raise KeyError(block_id)
+        approval_id = "r_" + request_id
+        existing = next((revision for revision in block["revisions"] if revision["id"] == approval_id), None)
+        if existing is not None:
+            if (existing["status"] != "approved" or existing["author"]["id"] != author["id"]
+                    or existing.get("base_revision") != revision_id):
+                raise ValueError("copy request_id was already used for a different proposal")
+            return data
+        if revision_id not in {revision["id"] for revision in block["revisions"]}:
+            raise KeyError(revision_id)
+        latest = block["revisions"][-1]
+        if latest["id"] != revision_id:
+            raise StaleRevisionError("copy has a newer revision; reload it before approving")
+        if latest["status"] == "approved" and block["current"] == latest["id"]:
+            raise ValueError("this copy is already approved")
+        previous = {"current": block["current"], **({"status": block["status"]} if "status" in block else {})}
+        block["revisions"].append({"id": approval_id, "created_at": datetime.now(timezone.utc).isoformat(),
+                                   "author": author, "status": "approved", "base_revision": revision_id,
+                                   "delta": latest["delta"], "previous": previous, "round_pending": True})
+        block["current"] = approval_id
+        if block.get("status") in {"needs_you", "ready", "waiting"}:
+            block["status"] = "done"
+        normalized = validate_copy(data)
+        _write(directory, normalized)
+        return normalized
+
+
 def submit_revisions(slug_dir: Path | str, revision_ids: set[str], authors: set[str]) -> None:
     """Clear delivery bookkeeping only; authored revision content stays immutable."""
     directory = Path(slug_dir)
@@ -396,6 +459,16 @@ def discard_revisions(slug_dir: Path | str, authors: set[str]) -> list[str]:
         for block in data["blocks"]:
             pending = {revision["id"] for revision in block["revisions"]
                        if revision.get("round_pending") and revision["author"]["id"] in authors}
+            # An unsent approval nothing builds on is undone: the block gets
+            # back the current revision and status it had (latest first).
+            built_on = {revision.get("base_revision") for revision in block["revisions"] if revision["id"] not in pending}
+            for revision in reversed(block["revisions"]):
+                if (revision["id"] in pending and "previous" in revision and revision["id"] not in built_on
+                        and block["current"] == revision["id"]):
+                    block["current"] = revision["previous"]["current"]
+                    block.pop("status", None)
+                    if "status" in revision["previous"]:
+                        block["status"] = revision["previous"]["status"]
             kept = [revision for revision in block["revisions"] if revision["id"] not in pending]
             needed = {block["current"]} | {revision.get("base_revision") for revision in kept}
             for revision in block["revisions"]:

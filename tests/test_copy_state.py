@@ -9,10 +9,13 @@ import pytest
 
 from agent_annotate.copy_state import (
     StaleRevisionError,
+    approve_revision,
+    discard_revisions,
     load_copy,
     propose_copy,
     restore_revision,
     save_copy,
+    submit_revisions,
     validate_copy,
     validate_delta,
 )
@@ -172,3 +175,97 @@ def test_ui28_start_item_is_kept_and_must_name_a_block(tmp_path):
     assert saved["start_item"] == "home-hero" and load_copy(tmp_path)["start_item"] == "home-hero"
     with pytest.raises(ValueError, match="start_item"):
         validate_copy(dict(document(), start_item="missing"))
+
+
+def waiting_document(status="needs_you"):
+    """An approved r1 and the agent's newer draft r2 waiting on the reviewer."""
+    data = document()
+    block = data["blocks"][0]
+    block.update(status=status, current="draft-1")
+    block["revisions"][0]["status"] = "approved"
+    block["revisions"].append({"id": "r2", "created_at": "2026-10-03T12:00:00Z", "author": {"id": "agent:copy"},
+                               "status": "draft", "delta": {"ops": [{"insert": "Rebex knives.\n"}]}})
+    return data
+
+
+def test_approve_appends_an_approved_copy_and_keeps_every_revision(tmp_path):
+    original = save_copy(tmp_path, waiting_document())
+    request_id = str(uuid.uuid4())
+    result = approve_revision(tmp_path, "home-hero", "r2", {"id": "reviewer:chang", "name": "Chang"}, request_id=request_id)
+    block = result["blocks"][0]
+    assert block["revisions"][:2] == original["blocks"][0]["revisions"]
+    approval = block["revisions"][-1]
+    assert approval["id"] == "r_" + request_id and approval["status"] == "approved"
+    assert approval["delta"] == original["blocks"][0]["revisions"][1]["delta"]
+    assert approval["base_revision"] == "r2" and approval["round_pending"] is True
+    assert approval["previous"] == {"current": "draft-1", "status": "needs_you"}
+    assert block["current"] == approval["id"] and block["status"] == "done"
+    assert load_copy(tmp_path) == result
+    # A retry is the same approval; a second approval of approved copy is refused.
+    mtime = (tmp_path / "copy.json").stat().st_mtime_ns
+    assert approve_revision(tmp_path, "home-hero", "r2", {"id": "reviewer:chang"}, request_id=request_id) == result
+    assert (tmp_path / "copy.json").stat().st_mtime_ns == mtime
+    with pytest.raises(ValueError, match="already approved"):
+        approve_revision(tmp_path, "home-hero", approval["id"], {"id": "reviewer:chang"}, request_id=str(uuid.uuid4()))
+    # An agent export taken before the approval cannot silently drop it.
+    with pytest.raises(ValueError, match="cannot be changed or removed"):
+        save_copy(tmp_path, original)
+
+
+def test_approve_refuses_an_older_revision_and_keeps_held_copy_held(tmp_path):
+    save_copy(tmp_path, waiting_document(status="held"))
+    with pytest.raises(StaleRevisionError):
+        approve_revision(tmp_path, "home-hero", "draft-1", {"id": "reviewer:chang"}, request_id=str(uuid.uuid4()))
+    with pytest.raises(KeyError):
+        approve_revision(tmp_path, "home-hero", "missing", {"id": "reviewer:chang"}, request_id=str(uuid.uuid4()))
+    block = approve_revision(tmp_path, "home-hero", "r2", {"id": "reviewer:chang"}, request_id=str(uuid.uuid4()))["blocks"][0]
+    assert block["status"] == "held" and block["current"] == block["revisions"][-1]["id"]
+
+
+def test_edit_approved_copy_into_a_new_draft_then_approve_it(tmp_path):
+    save_copy(tmp_path, waiting_document())
+    chang = {"id": "reviewer:chang"}
+    first = approve_revision(tmp_path, "home-hero", "r2", chang, request_id=str(uuid.uuid4()))["blocks"][0]["revisions"][-1]["id"]
+    edit = str(uuid.uuid4())
+    propose_copy(tmp_path, "home-hero", {"ops": [{"insert": "Rebex knives, engraved.\n"}]}, chang,
+                 base_revision=first, request_id=edit)
+    block = load_copy(tmp_path)["blocks"][0]
+    assert block["current"] == first and block["revisions"][-1]["status"] == "proposed"
+    block = approve_revision(tmp_path, "home-hero", "r_" + edit, chang, request_id=str(uuid.uuid4()))["blocks"][0]
+    assert block["current"] == block["revisions"][-1]["id"] and block["revisions"][-1]["base_revision"] == "r_" + edit
+    assert block["revisions"][-1]["previous"] == {"current": first, "status": "done"}
+    assert [r["status"] for r in block["revisions"]] == ["approved", "draft", "approved", "proposed", "approved"]
+
+
+def test_discard_undoes_unsent_approvals_and_send_keeps_them(tmp_path):
+    original = save_copy(tmp_path, waiting_document())
+    chang = {"id": "reviewer:chang"}
+    approve_revision(tmp_path, "home-hero", "r2", chang, request_id=str(uuid.uuid4()))
+    first = load_copy(tmp_path)["blocks"][0]["revisions"][-1]["id"]
+    edit = str(uuid.uuid4())
+    propose_copy(tmp_path, "home-hero", {"ops": [{"insert": "Another\n"}]}, chang, base_revision=first, request_id=edit)
+    approve_revision(tmp_path, "home-hero", "r_" + edit, chang, request_id=str(uuid.uuid4()))
+    assert len(discard_revisions(tmp_path, {"reviewer:other"})) == 0
+    assert len(discard_revisions(tmp_path, {"reviewer:chang"})) == 3
+    assert load_copy(tmp_path) == original
+    # A sent approval is the agent's to act on: Discard leaves it.
+    request_id = str(uuid.uuid4())
+    approve_revision(tmp_path, "home-hero", "r2", chang, request_id=request_id)
+    submit_revisions(tmp_path, {"r_" + request_id}, {"reviewer:chang"})
+    assert discard_revisions(tmp_path, {"reviewer:chang"}) == []
+    block = load_copy(tmp_path)["blocks"][0]
+    assert block["current"] == "r_" + request_id and block["status"] == "done"
+
+
+def test_previous_is_only_valid_on_an_approval_naming_an_earlier_revision():
+    data = waiting_document()
+    data["blocks"][0]["revisions"][1]["previous"] = {"current": "draft-1"}
+    with pytest.raises(ValueError, match="previous"):
+        validate_copy(data)
+    data = waiting_document()
+    data["blocks"][0]["revisions"][1].update(status="approved", previous={"current": "r9"})
+    with pytest.raises(ValueError, match="previous"):
+        validate_copy(data)
+    data["blocks"][0]["revisions"][1]["previous"] = {"current": "draft-1", "status": "bogus"}
+    with pytest.raises(ValueError, match="previous"):
+        validate_copy(data)

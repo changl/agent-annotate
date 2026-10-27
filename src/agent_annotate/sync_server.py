@@ -1328,9 +1328,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if route_path == "/api/reviewer/session":
                 return self._reviewer_session()
             if route_path.startswith("/api/copy/"):
-                match = re.fullmatch(r"/api/copy/([^/]+)/(proposal|revisions|restore)", route_path)
+                match = re.fullmatch(r"/api/copy/([^/]+)/(proposal|revisions|restore|approve)", route_path)
                 if match:
-                    return self._post_copy_proposal(urllib.parse.unquote(match[1]), restore=match[2] == "restore")
+                    return self._post_copy_proposal(urllib.parse.unquote(match[1]), restore=match[2] == "restore",
+                                                    approve=match[2] == "approve")
             if route_path.startswith("/api/comments/") and route_path.endswith("/reopen"):
                 cid = urllib.parse.unquote(route_path[len("/api/comments/"):-len("/reopen")])
                 return self._post_finding_reopen(cid)
@@ -3234,9 +3235,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 store = self._v2_load()
             pending = []
             reopens = []
+            # status: "approved" is the reviewer's approval of base_revision as
+            # is (the block's current revision now); "proposed" is an edit.
             edits = [{"category": "library", "block_id": block["id"], "revision_id": revision["id"],
                       "title": block["title"], "delta": revision["delta"], "base_revision": revision.get("base_revision"),
-                      "by": revision["author"]["id"], "ts": revision["created_at"]}
+                      "status": revision["status"], "by": revision["author"]["id"], "ts": revision["created_at"]}
                      for block in library_blocks for revision in block["revisions"]
                      if revision.get("round_pending") and revision["author"]["id"] in reviewer_authors]
             cleared_archived = False
@@ -3580,13 +3583,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._respond(400, json.dumps({"error": str(exc)}).encode())
 
-    def _post_copy_proposal(self, block_id: str, *, restore=False):
-        from .copy_state import StaleRevisionError, add_browser_revision, restore_revision
+    def _post_copy_proposal(self, block_id: str, *, restore=False, approve=False):
+        from .copy_state import StaleRevisionError, add_browser_revision, approve_revision, restore_revision
         payload = self._bounded_json_body()
         if payload is None:
             return
         try:
-            expected = {"revision_id", "request_id"} if restore else {"delta", "base_revision", "request_id"}
+            expected = {"revision_id", "request_id"} if restore or approve else {"delta", "base_revision", "request_id"}
             # Restore may name the latest revision the browser saw (UI-3).
             if set(payload) != expected and not (restore and set(payload) == expected | {"base_revision"}):
                 raise ValueError("invalid copy revision fields")
@@ -3595,7 +3598,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._respond(403, b'{"error":"reviewer identity required"}')
             author = {"id": identity["email"], "name": identity.get("name")}
             with _locked_store(self.artifact_dir):
-                if restore:
+                if approve:
+                    # Approve the latest revision as is; it goes out with Send.
+                    document = approve_revision(self.artifact_dir, block_id, payload["revision_id"], author,
+                                                request_id=payload["request_id"])
+                elif restore:
                     document = restore_revision(self.artifact_dir, block_id, payload["revision_id"], author,
                                                 request_id=payload["request_id"],
                                                 base_revision=payload.get("base_revision"))

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.27.9
+
+Library approval (Rebex RBX-swu.66): a reviewer could not approve an agent's draft, or change approved copy and approve the change. The tab counted 16 blocks waiting on him, but the list did not show them, and History left the agents' drafts out.
+
+- **Approve this draft**: one click approves a block's latest revision as is. It appends an approved copy of that revision (its base is the draft; it records the current revision and status it replaces), makes it the block's current revision, and marks a block that was waiting on the reviewer as done. Held copy stays held. Nothing existing is changed or removed, so an agent export taken before the approval is refused on import rather than overwriting it. `POST /api/copy/<block>/approve {revision_id, request_id}` is for reviewers only, works on the latest revision only (409 if stale) and is idempotent per request id.
+- Approvals go out with Send like edits: the round's edit records carry `status` ("approved" or "proposed"), and the CLI round view shows `library approve`. Discard undoes an unsent approval and puts back the block's earlier current revision and status.
+- A draft shows who wrote it, when, and its word-level changes from the approved text. Approved copy says that editing it and pressing Save starts a new draft, which then shows **Approve this draft**. The button waits while there is unsaved text.
+- **Needs you** at the top of the list shows the blocks waiting on the reviewer (the tab's count), plus the reviewer's own unapproved edits, ahead of the open question's held-back lines. History lists agent drafts and approvals alongside reviewer edits.
+- Pages whose copy uses no approval (no block status and no approved revision) look as they did before.
+- The codex plugin manifest version matches the package again (2.27.8 had left it at 2.27.7).
+
 ## 2.27.8
 
 - Library builds its pending-item membership once per list render instead of rebuilding every item's pending state for each row. Large copy libraries stay responsive when opening, switching items and clearing search, while edited items and pending comments still appear under Ready to send.

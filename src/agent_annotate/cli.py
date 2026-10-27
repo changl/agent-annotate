@@ -2300,8 +2300,9 @@ def _round_lines(ev: dict) -> list[str]:
     for edit in ev.get("edits") or []:
         if not isinstance(edit, dict):
             continue
-        lines.append(row % ("", "  library edit", "", str(edit.get("block_id") or "")[:18],
-                            str(edit.get("by") or "")[:24], "edit",
+        approved = edit.get("status") == "approved"
+        lines.append(row % ("", "  library approve" if approved else "  library edit", "", str(edit.get("block_id") or "")[:18],
+                            str(edit.get("by") or "")[:24], "approve" if approved else "edit",
                             f"{_clip(str(edit.get('title') or ''), 60)}: {_delta_excerpt(edit.get('delta'))}"))
     return lines
 
