@@ -11,7 +11,6 @@ Library approval (Rebex RBX-swu.66): a reviewer could not approve an agent's dra
 - A draft shows who wrote it, when, and its word-level changes from the approved text. Approved copy says that editing it and pressing Save starts a new draft, which then shows **Approve this draft**. The button waits while there is unsaved text.
 - **Needs you** at the top of the list shows the blocks waiting on the reviewer (the tab's count), plus the reviewer's own unapproved edits, ahead of the open question's held-back lines. History lists agent drafts and approvals alongside reviewer edits.
 - Pages whose copy uses no approval (no block status and no approved revision) look as they did before.
-- The codex plugin manifest version matches the package again (2.27.8 had left it at 2.27.7).
 
 ## 2.27.8
 
