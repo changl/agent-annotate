@@ -119,7 +119,6 @@
     else if (q && d.needsPush(q)) out.push({ item: null, label: '#' + (d.number(q.id) || '') + ' ' + d.displayPrompt(q), answer: qAnswer(q) || 'Comment', kind: 'push' });
     return out;
   }
-  const isPendingItem = (it) => pendingItems().some(p => p.item === it.id);
   const readKey = (it) => 'copy:' + it.id;
   const isUnread = (it) => { const r = D().readRecord(readKey(it)); return !r || r.sig !== latestRev(it).id; };
   // What counts as unread (as the server's Library count): the agent's note on
@@ -158,7 +157,8 @@
     const qc = questionComment();
     const held = items.filter(it => it.question_comment_id);
     if (qc && !qAnswer(qc) && held.length) html += UI.section('needs', 'Needs you', held.length, `<p class="project-detail">Question #${esc(D().number(qc.id) || '')} covers these ${held.length} held-back lines. Answer it, or edit a line yourself.</p>` + held.map(rowHtml).join(''), { cls: 'sec-needs', badge: 'badge-error', open: openGroups.needs !== false, scope: 'lib' });
-    const ready = items.filter(isPendingItem);
+    const pendingIds = new Set(pendingItems().map(p => p.item));
+    const ready = items.filter(it => pendingIds.has(it.id));
     if (ready.length) html += UI.section('ready', 'Ready to send', ready.length, ready.map(rowHtml).join(''), { open: openGroups.ready !== false, scope: 'lib' });
     GROUP_ORDER.forEach(g => {
       const rows = items.filter(it => (it.group || '') === g);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.27.8
+
+- Library builds its pending-item membership once per list render instead of rebuilding every item's pending state for each row. Large copy libraries stay responsive when opening, switching items and clearing search, while edited items and pending comments still appear under Ready to send.
+
 ## 2.27.7
 
 - Brings back the server half of 2.27.4 (PR #52), which the 2.27.4 revert removed although only the page half caused the jumping. `/api/history` is cached by the files it reads and rebuilt outside the lock that comment posts need. On the M5 under heavy load it took 7.1 s and held posts behind it. On a copy of FLD: history 0.32 s → 0.002 s; a post made while history builds 0.33 s → 0.045 s. No page code changes; in an Orca tab, 17 polls with 5 new comments left the scroll position where it was.

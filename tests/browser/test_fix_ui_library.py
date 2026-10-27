@@ -104,6 +104,34 @@ def comment(page, text):
     page.locator("#sp-compose-ta").fill(text)
 
 
+def test_large_library_keeps_ready_items_without_quadratic_comment_projection(tmp_path):
+    directory = _page(tmp_path)
+    count = 150
+    save_copy(directory, {"blocks": [
+        _block(f"copy-{i}", f"Copy {i}", f"Place {i}", "copy", f"Text {i}.")
+        for i in range(count)
+    ], "groups": [{"id": "copy", "label": "Copy"}]})
+    add_browser_revision(directory, "copy-7", {"ops": [{"insert": "Edited text.\n"}]},
+                         {"id": "reviewer@example.com", "name": "Browser Reviewer"},
+                         base_revision="seed-1", request_id=str(uuid.uuid4()))
+    with browser_page(tmp_path, directory) as (page, _):
+        page.evaluate("""() => {
+            const docs = window.AnnotateDocs, comments = docs.comments;
+            window.commentProjectionReads = 0;
+            docs.comments = (...args) => { window.commentProjectionReads++; return comments(...args); };
+        }""")
+        go(page, "library", item="copy-1")
+        assert page.locator('#sp-list-body [data-section="ready"] .sp-row').get_attribute("data-item") == "copy-7"
+        # The shared API copies the page's comments. Reads must grow with rows,
+        # rather than rescanning every item's pending state for every row.
+        assert page.evaluate("window.commentProjectionReads") < count * 20
+        comment(page, "A new pending comment")
+        page.locator("#sp-compose-save").click()
+        ready_rows = page.locator('#sp-list-body [data-section="ready"] .sp-row')
+        playwright.expect(ready_rows).to_have_count(2)
+        assert {row.get_attribute("data-item") for row in ready_rows.all()} == {"copy-1", "copy-7"}
+
+
 # ── UI-4 ──────────────────────────────────────────────────────────────────
 def test_toolbar_formats_the_current_selection_after_typing(tmp_path, lib_site):
     with browser_page(tmp_path, lib_site) as (page, _):
