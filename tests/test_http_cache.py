@@ -21,7 +21,7 @@ def server(tmp_path):
     (tmp_path / "comments.json").write_text('{"schema_version":2,"anchors":{},"archived":{}}')
     (tmp_path / "current.meta.json").write_text('{"current":"v1","history":[]}')
     (tmp_path / "current.html").write_text("<html><body>Review</body></html>")
-    handler = make_handler(tmp_path, v2_mode=True, skill_dir=web, public_base_path="/review", slug="review")
+    handler = make_handler(tmp_path, skill_dir=web, public_base_path="/review", slug="review")
     httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

@@ -29,7 +29,7 @@ def server(tmp_path):
         encoding="utf-8")
     bus_dir = tmp_path / "bus"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="review",
-                           bus_dir=bus_dir, v2_mode=True, proxy_urls=("https://review.example.test",),
+                           bus_dir=bus_dir, proxy_urls=("https://review.example.test",),
                            trusted_access_origins=("https://review.example.test",))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)

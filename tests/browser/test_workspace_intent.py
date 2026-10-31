@@ -171,7 +171,6 @@ def _public_funnel_browser(tmp_path):
         bus_dir=bus,
         slug="review",
         public_base_path="/page",
-        v2_mode=True,
         skill_dir=sync_server.WEB_DIR,
     )
     server = sync_server.ReviewHTTPServer(("127.0.0.1", 0), handler)

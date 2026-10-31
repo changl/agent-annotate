@@ -270,7 +270,7 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
     from .paths import BUS_ARCHIVE_ROOT
     from .project_state import load_project, validate_project
     from .review_history import review_history
-    from .sync_server import _coerce_v2
+    from .sync_server import _validate_store
 
     now = now or _now()
     reviews = [s for s in sources if s.tab == "review"]
@@ -309,8 +309,8 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
 
     for source in sources:
         hashes[source.name] = _hashes(source.dir)
-        raw = _read_json(source.dir / "comments.json", {})
-        source_store = _coerce_v2(raw)
+        raw = _read_json(source.dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
+        source_store = _validate_store(raw)
         if source.tab == "review" and source_store.get("approved_plans"):
             store["approved_plans"] = source_store["approved_plans"]
         meta = _read_json(source.dir / "current.meta.json", {})

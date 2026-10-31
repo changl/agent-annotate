@@ -15,7 +15,7 @@ def test_archived_page_has_no_active_counts_or_answer_controls(tmp_path):
     directory = _page(tmp_path)
     (directory / "archived.json").write_text(json.dumps({"at": "2026-10-16T00:00:00Z", "why": "Superseded"}))
     handler = sync_server.make_handler(artifact_dir=directory, slug="old", bus_dir=tmp_path / "bus",
-                                       v2_mode=True, skill_dir=sync_server.WEB_DIR,
+                                       skill_dir=sync_server.WEB_DIR,
                                        local_author="reviewer@example.com", local_author_name="Reviewer")
     server = sync_server.ReviewHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

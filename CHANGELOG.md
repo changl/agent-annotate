@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplification step 3: remove unused v1 comment-store readers, the migrate command, single-file server mode and the temporary 2.26 identity bridge. Existing v2 page data and baked-document rendering remain supported.
+
 - Simplification step 2: remove old-server browser fallbacks, unreachable Send now controls and unused inline-card state. A failed decision request keeps its draft without retrying through reply/status/push routes.
 
 - Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.

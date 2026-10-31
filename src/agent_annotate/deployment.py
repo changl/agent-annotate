@@ -75,12 +75,9 @@ def _identity(record: dict, *, listening: bool = True) -> dict:
         return {"pid": None, "python": str(python), "argv": _arguments(record, python)}
     process = processes[0]
     pid = process["pid"]
-    legacy = capabilities is not None and "pid" not in capabilities
     listener = capabilities.get("pid") if capabilities is not None else None
-    if legacy:
-        listener = pid  # The complete command identity is checked immediately below.
     if (process.get("port") != port or (listener != pid if listening else listener not in (None, pid))
-            or (capabilities is not None and not legacy and capabilities["slug_dir"] != str(directory))):
+            or (capabilities is not None and capabilities["slug_dir"] != str(directory))):
         raise DeploymentError(f"foreign or unreconciled listener for port {port}")
     result = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
                             check=True, capture_output=True, text=True, timeout=5)
