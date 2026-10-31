@@ -19,7 +19,7 @@ MAX_PROOF_BYTES = 10 * 1024 * 1024
 MAX_PLAN_BYTES = 4 * 1024 * 1024
 # Plans sections in picker order. A plan folder without one is reference; a
 # plan filed from a decision is approved; hidden leaves the picker.
-PLAN_SECTIONS = ("tracking", "approved", "reference", "hidden")
+PLAN_SECTIONS = ("tracking", "approved", "reference", "hidden", "archive")
 # Proof files are served from the review origin, so only inert types are taken.
 PROOF_SUFFIXES = ("png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "log", "json", "csv")
 _PLAN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
@@ -31,6 +31,12 @@ def comment_category(comment: dict) -> str:
     if category in CATEGORIES:
         return category
     return "library" if str(comment.get("anchor_id", "")).startswith("copy:") else "review"
+
+
+def is_archive_plan(plan: dict) -> bool:
+    """An archive page of finished Review topics (long_pages), not a plan: kept
+    out of the Plans picker and listed under Open project. shell.js isArchivePlan mirrors it."""
+    return plan.get("section") == "archive"
 
 
 def validate_plan_id(plan_id: str) -> str:
