@@ -395,4 +395,3 @@ def arrange(canvas: str, cards: list[dict], registry: dict, unchanged: list[str]
         _save_index(page_dir, index)
     report["sections"], report["screenshots"] = sections_n, shots_n
     return canvas, cards, registry, report
-
