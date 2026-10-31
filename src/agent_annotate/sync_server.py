@@ -182,7 +182,7 @@ _NO_STORE = "no-store, max-age=0, must-revalidate"
 # /assets/<digits>/<known asset name> — the stamp must match the served bytes.
 _WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", "adapter.js", "diagram-plot.js",
                          "quill.js", "quill.snow.css",
-                         "RobotoVariable.ttf", "RobotoVariable-Italic.ttf",
+                         "RobotoVariable.woff2", "RobotoVariable-Italic.woff2",
                          "app.js", "app.css", "library.js", "findings.js"})
 _ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
 
@@ -223,7 +223,7 @@ def _asset_bytes(path: Path) -> bytes:
     if path.suffix == ".css":
         # CSS and its fonts need independent immutable keys. Include the font
         # hashes in the served CSS bytes so changing a font also changes its key.
-        for name in ("RobotoVariable.ttf", "RobotoVariable-Italic.ttf"):
+        for name in ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2"):
             data = data.replace(f"url({name})".encode(),
                                 f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
     return data
@@ -932,7 +932,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if origin[0] == "https" and not self._identity()["authenticated"]:
             route = self._strip_base(path)
             bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "quill.js", "quill.snow.css",
-                                "RobotoVariable.ttf", "RobotoVariable-Italic.ttf", "app.js", "app.css", "library.js", "findings.js"}
+                                "RobotoVariable.woff2", "RobotoVariable-Italic.woff2", "app.js", "app.css", "library.js", "findings.js"}
             bootstrap = (self.command == "GET" and ((route == "/") or route.lstrip("/") in bootstrap_assets
                          or ((match := _ASSET_PATH_RE.fullmatch(route)) and match[2] in bootstrap_assets)))
             session = self.command == "POST" and route == "/api/reviewer/session"
@@ -1233,7 +1233,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return self._respond(400, b'{"error":"invalid plan path"}')
             return self._v2_serve_content(parsed, plan_id=match[1], plan_version=match[2])
         if route_path == "/api/history":
-            return self._v2_get_history()
+            return self._v2_get_history(parsed)
         if route_path == "/comments.json":
             return self._v2_get_store(parsed)
         if route_path == "/current.meta.json":
@@ -1591,12 +1591,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 cache[key] = representation
         self._respond(200, b"", representation=representation)
 
-    def _v2_get_history(self):
+    def _v2_get_history(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
-        from .review_history import history_buses, review_history
+        from .review_history import history_buses, latest_round, review_history
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
+        latest = urllib.parse.parse_qs(parsed.query).get("latest") == ["1"]
 
         def disk_signature():
             paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
@@ -1640,15 +1641,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             continue
                     body = json.dumps(history, ensure_ascii=False).encode()
                     cache.clear()
-                    cache.update(signature=signature, body=body)
+                    cache.update(signature=signature, body=body,
+                                 latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
                     break
                 else:
                     return self._respond(503, b'{"error":"history changed during reconstruction; retry"}')
-                if compressed not in cache:
-                    body = cache["body"]
+                key = (latest, compressed)
+                if key not in cache:
+                    body = cache["latest" if latest else "body"]
                     packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-                    cache[compressed] = (packed, True) if len(packed) < len(body) else (body, False)
-                representation = cache[compressed]
+                    cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
+                representation = cache[key]
             return self._respond(200, b"", "application/json", representation=representation)
         except (OSError, ValueError) as exc:
             return self._respond(500, json.dumps({"error": str(exc)}).encode())

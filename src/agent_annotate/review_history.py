@@ -188,3 +188,12 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
                                   "edits": event.get("edits", []),
                                   "snapshot": isinstance(event.get("answers"), list)}
     return {"versions": versions, "rounds": sorted(rounds.values(), key=lambda r: _time(r.get("ts")), reverse=True)}
+
+
+def latest_round(history: dict) -> dict:
+    """The newest Send only (its round and push records share a send_id): all the header and Send read on load."""
+    rounds = [r for r in history["rounds"] if r.get("receipt") or r.get("answers") or r.get("edits") or r.get("note")]
+    if not rounds:
+        return {"rounds": []}
+    send_id = rounds[0].get("send_id")
+    return {"rounds": [r for r in rounds if r is rounds[0] or (send_id and r.get("send_id") == send_id)]}
