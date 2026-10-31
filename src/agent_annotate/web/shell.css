@@ -216,7 +216,8 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .decision-evidence-preview .decision-excerpt{margin:0 0 6px}
 .decision-evidence-missing{font-style:italic;color:var(--faint);margin-bottom:6px}
 /* A1: one comment box per card */
-.decision-later{margin-top:6px;align-self:flex-start;font-weight:600;color:color-mix(in oklab,var(--color-base-content) 70%,transparent)}
+.decision-later{display:inline-flex;margin-top:8px;padding-inline:4px;height:auto;min-height:28px;font-weight:600;color:color-mix(in oklab,var(--color-base-content) 70%,transparent)}
+.decision-later+.decision-evidence{margin-top:0}
 .decision-cmt{margin-top:8px;position:relative}
 .decision-say-ta{width:100%;min-height:2.4rem;font-size:calc(11px * var(--aa-text, 1));line-height:1.4;padding-right:34px}
 .decision-cmt .kbd{position:absolute;right:8px;top:8px}
@@ -412,7 +413,8 @@ body.has-summary #send-btn{visibility:hidden}
   /* ≥44px targets + 16px inputs (no iOS zoom-on-focus) */
   .decision-btn{min-height:44px;padding:10px 14px;font-size:calc(13px * var(--aa-text, 1))}
   .decision-btns{gap:8px}
-  .decision-later{min-height:44px;touch-action:manipulation}
+  .decision-later{position:relative;touch-action:manipulation}
+  .decision-later::before{content:"";position:absolute;inset:-8px 0}
   .decision-evidence-toggle,.decision-evidence-link,.decision-excerpt-more,.open-doc,.earlier-toggle{min-height:44px;padding:10px 4px;touch-action:manipulation}
   .citem-menu-btn,.collapse-btn,.change-btn,.rail-collapse{min-width:44px;min-height:44px}
   .citem-menu button{min-height:44px}

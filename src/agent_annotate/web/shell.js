@@ -1438,7 +1438,7 @@ async function setAnswerLater(id, on) {
   if (!ok) {
     const c = storedComment(id);
     if (c) c.answer_later = was;
-    setSendNote('Could not set this question aside. Try again.', 'is-error', 4000);
+    setSendNote(on ? 'Could not set this question aside. Try again.' : 'Could not move this question back. Try again.', 'is-error', 4000);
   }
   refreshStore();
 }
@@ -2117,7 +2117,7 @@ function renderDecisionBlock(c) {
     ${renderDecisionReco(opts, dr)}
     ${renderDecisionExcerpt(c, dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
-    ${!decisionAnswer(c) && !isSetAside(c) ? `<button type="button" class="btn btn-ghost btn-sm decision-later" data-decision-action="later" data-id="${escAttr(c.id)}">Answer later</button>` : ''}
+    ${decisionAnswer(c) ? '' : `<button type="button" class="btn btn-ghost btn-sm decision-later" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${escAttr(c.id)}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
     ${renderDecisionEvidence(c, dr)}
     ${cmtHtml}
     <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}">${decisionHint[c.id] ? esc(decisionHint[c.id].msg) : ''}</div>
@@ -2922,7 +2922,7 @@ function wireDecisionActions(root) {
   }));
   root.querySelectorAll('[data-decision-action="later"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    setAnswerLater(btn.dataset.id, true);
+    setAnswerLater(btn.dataset.id, btn.dataset.later === '1');
   }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4064,7 +4064,7 @@ function wireBridge() {
       onShellKey({ key: String(data.key || ''), metaKey: !!data.meta, ctrlKey: !!data.ctrl, shiftKey: !!data.shift, altKey: false,
         target: document.body, preventDefault() {} });
     } else if (data.type === 'annotate:answer-later') {
-      if (data.commentId && findCommentById(data.commentId)) setAnswerLater(data.commentId, true);
+      if (data.commentId && findCommentById(data.commentId)) setAnswerLater(data.commentId, data.on !== false);
     } else if (data.type === 'annotate:say-draft') {
       // A1: the body strip's comment box and the rail card's box are the
       // same draft, so either one can carry the card's comment to Send.
