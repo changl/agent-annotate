@@ -7,6 +7,7 @@
 - Simplification step 2: remove old-server browser fallbacks, unreachable Send now controls and unused inline-card state. A failed decision request keeps its draft without retrying through reply/status/push routes.
 
 - Send review: "Not in this Send" starts collapsed and builds its rows only when opened (Chang, 2026-10-31). The header shows the count and how many are not answered, e.g. `Not in this Send 417 · 6 not answered`. On FLD, opening Send went from 3,775 nodes in 55 ms to 27 nodes in 31 ms.
+- Answer later (Chang, 2026-10-31): every unanswered question has an Answer later button under its options. One tap moves it into an Answer later section at the top of the rail, collapsed, with a grey count; it no longer counts in Needs you or "decided". The card stays a full card there and in the document, with Back to Needs you in the same slot. Answering it takes it out. The page remembers it on the server, so it shows the same on every device. Agents never track it: it is not undecided in inbox, hooks, round summaries or Send, and a new version never withdraws it.
 - Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.
 - Faster long pages, measured on a copy of FLD (1,418 comments, 535 versions):
   - Opening History went from a 1.4 s freeze to none. Each version's counts used to scan every comment twice.

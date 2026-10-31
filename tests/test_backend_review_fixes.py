@@ -652,7 +652,7 @@ def test_be8_legacy_library_blocks_do_not_need_you(server):
     httpd, directory, _ = server
     _legacy_copy(directory)
     counts = category_counts(directory, "chang@example.com", read_state={})["library"]
-    assert counts == {"needs_you": 0, "ready": 0, "waiting": 1, "done": 1, "unread": 0}
+    assert counts == {"needs_you": 0, "later": 0, "ready": 0, "waiting": 1, "done": 1, "unread": 0}
     status, result = _call(httpd, "GET", "/api/categories", author="chang@example.com")
     assert status == 200 and next(c for c in result["categories"] if c["id"] == "library")["counts"] == counts
     # Nothing old goes out again.

@@ -1165,6 +1165,12 @@ function ensureStripStyle() {
     .annotate-decision-change:hover { background: var(--color-base-300) !important; text-decoration: none !important; }
     .annotate-decision-changing-note { background: var(--color-base-200) !important; color: var(--color-base-content) !important; border: 1px solid var(--line) !important; }
     .annotate-decision-cancel { color: var(--color-base-content) !important; }
+    .annotate-decision-later {
+      display: block !important; margin: 6px 0 !important; padding: 4px 8px !important; min-height: 0 !important; width: auto !important; background: transparent !important;
+      color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; font-weight: 600 !important;
+      font-size: calc(12px * var(--aa-text, 1)) !important; border-radius: .25rem !important;
+    }
+    @media (pointer: coarse) { .annotate-decision-later { position: relative !important; touch-action: manipulation !important; } .annotate-decision-later::before { content: '' !important; position: absolute !important; inset: -10px 0 !important; } }
     /* Answered card: your choice, your notes, add a note (2026-10-30). Buttons
        keep their words on one line; the note text takes the rest. */
     .annotate-decision-cancel, .annotate-answer-change, .annotate-note-add, .annotate-note-cancel, .annotate-note-save {
@@ -1876,6 +1882,12 @@ function buildDecisionItemEl(entry) {
     }
   }
 
+  // Answer later: the shell sets it aside on the server; the card stays here as it is.
+  if (!entry.decisionVerdict) {
+    const later = makeStripBtn(entry.answerLater ? 'Back to Needs you' : 'Answer later', 'annotate-decision-later');
+    later.addEventListener('click', () => postToParent({ type: 'annotate:answer-later', commentId: id, on: !entry.answerLater }));
+    item.appendChild(later);
+  }
   if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
   item.appendChild(ta);
   item.appendChild(hint);

@@ -69,7 +69,7 @@ let CAPS = null;
 // replaced by collapsible sections (B2) and the History tab (B3).
 // SECTION_OPEN[key] overrides the default open state of a section.
 let SECTION_OPEN = {};
-const SECTION_DEFAULT_OPEN = { needs: true, ready: true, waiting: true, done: false, earlier: false, archived: false };
+const SECTION_DEFAULT_OPEN = { later: false, needs: true, ready: true, waiting: true, done: false, earlier: false, archived: false };
 let activeTab = 'feedback';
 const cardExpanded = {};   // C1: answered cards shown in full instead of one line
 const earlierOpen = {};    // B3: "n earlier replies" expanded
@@ -1378,6 +1378,32 @@ function decisionAnswer(c) {
 // options?". Such cards are always listed (origin version chip still shown)
 // and always get a pin/strip on the version being viewed. Resolved and plain
 // comments keep the normal per-version scope.
+// Answer later: the server remembers it (comments.json); answering clears it.
+function isSetAside(c) {
+  return !!(c && c.answer_later) && isUnresolvedDecision(c);
+}
+async function setAnswerLater(id, on) {
+  if (!storedComment(id)) return;
+  const was = storedComment(id).answer_later;
+  const key = 'later:' + id;
+  addPendingEdit(key, () => { const c = storedComment(id); if (c) c.answer_later = on ? { ts: new Date().toISOString() } : undefined; });
+  renderAll();
+  let ok = false;
+  await settlePending((async () => {
+    try {
+      const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/answer-later' + authorQuery()), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !!on }) });
+      ok = r.ok;
+    } catch {}
+  })());
+  pendingEdits.delete(key);
+  if (!ok) {
+    const c = storedComment(id);
+    if (c) c.answer_later = was;
+    setSendNote(on ? 'Could not set this question aside. Try again.' : 'Could not move this question back. Try again.', 'is-error', 4000);
+  }
+  refreshStore();
+}
 function isUnresolvedDecision(c) {
   return !!(c && c.decision_request && !decisionAnswer(c) &&
     c.status !== 'archived' && c.status !== 'resolved_in_version' &&
@@ -1427,8 +1453,8 @@ function isNewerThanViewed(c) {
 // Four sections replace the chip filters, "Mark all read" and the per-card
 // status pill: Needs you · Ready to send · Waiting on agent · Done (plus
 // Archived at the bottom when there is any).
-const SECTION_ORDER = ['needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
-const SECTION_LABEL = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
+const SECTION_ORDER = ['later', 'needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
+const SECTION_LABEL = { later: 'Answer later', needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
 function sectionOpen(k) {
   return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
 }
@@ -1485,6 +1511,7 @@ function sectionOf(c) {
   if (pageReadOnly()) return 'archived';
   if (c.status === 'archived') return 'archived';
   if (isRoundPending(c) || userNeedsSend(c) || strandedSay(c)) return 'ready';
+  if (isSetAside(c)) return 'later';
   const cls = classify(c);
   return cls === 'review' ? 'needs' : cls === 'waiting' ? 'waiting' : 'done';
 }
@@ -1579,7 +1606,7 @@ function renderDrawerNow() {
     cardExpanded[c.id] = true;
   }
 
-  const groups = { needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
+  const groups = { later: [], needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
   // Feedback given on earlier versions stays listed, collapsed under
   // "Earlier feedback", instead of vanishing when a version is published.
   const earlier = (c) => !inScope(c) && !isNewerThanViewed(c);
@@ -1610,7 +1637,7 @@ function renderDrawerNow() {
   listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
-    const badgeCls = k === 'needs' ? 'badge-error' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
+    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
       <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
       <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
@@ -2040,6 +2067,7 @@ function renderDecisionBlock(c) {
     ${renderDecisionReco(opts, dr)}
     ${renderDecisionExcerpt(c, dr)}
     <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
+    ${decisionAnswer(c) ? '' : `<button type="button" class="btn btn-ghost btn-sm decision-later" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${escAttr(c.id)}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
     ${renderDecisionEvidence(c, dr)}
     ${cmtHtml}
     <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}">${decisionHint[c.id] ? esc(decisionHint[c.id].msg) : ''}</div>
@@ -2839,6 +2867,10 @@ function wireDecisionActions(root) {
     const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
+  root.querySelectorAll('[data-decision-action="later"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setAnswerLater(btn.dataset.id, btn.dataset.later === '1');
+  }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     delete decisionChanging[btn.dataset.id];
@@ -3490,6 +3522,7 @@ function roundStats() {
   for (const c of flattenAll(false)) {
     if (!inScope(c)) continue;
     if (sectionOf(c) === 'needs') { total++; undecided++; }
+    else if (isSetAside(c) && hasSayDraft(c)) total++; // answered in words at this Send
     else if (answersNeed(c)) { total++; decided++; }
     if (isRoundPending(c)) pending++;
   }
@@ -3534,7 +3567,7 @@ function summarySentence() {
 function summaryWarning() {
   const plan = sendPlan();
   const roundN = plan.round.length + plan.answers.length;
-  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c)).length;
+  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c) && !isSetAside(c)).length;
   if (undecided > 0 && roundN > 0) {
     return undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
       ' still undecided — the round will report ' + (undecided === 1 ? 'it' : 'them') + ' as undecided.';
@@ -3986,6 +4019,8 @@ function wireBridge() {
     } else if (data.type === 'annotate:key') {
       onShellKey({ key: String(data.key || ''), metaKey: !!data.meta, ctrlKey: !!data.ctrl, shiftKey: !!data.shift, altKey: false,
         target: document.body, preventDefault() {} });
+    } else if (data.type === 'annotate:answer-later') {
+      if (data.commentId && findCommentById(data.commentId)) setAnswerLater(data.commentId, data.on !== false);
     } else if (data.type === 'annotate:say-draft') {
       // A1: the body strip's comment box and the rail card's box are the
       // same draft, so either one can carry the card's comment to Send.
@@ -4055,6 +4090,7 @@ function sendCommentCountsToFrame() {
         return {
           id: c.id,
           section: sectionOf(c),
+          answerLater: isSetAside(c),
           n: NUM_MAP[c.id] || 0,
           unread: readStateOf(c) !== 'read',
           // Creation-time granular target. Older comments without one remain

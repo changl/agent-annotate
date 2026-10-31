@@ -25,9 +25,9 @@ if __package__ in (None, ""):
 from agent_annotate.page_names import page_name
 
 try:
-    from agent_annotate.hooks.decision_state import is_live_card, is_undecided
+    from agent_annotate.hooks.decision_state import is_live_card, is_set_aside, is_undecided
 except ImportError:  # bare script without the package on PYTHONPATH
-    from decision_state import is_live_card, is_undecided
+    from decision_state import is_live_card, is_set_aside, is_undecided
 
 HOME = os.path.expanduser("~")
 
@@ -278,6 +278,7 @@ def _load_cards(slug_dir: str) -> dict:
                 "text": (decision or {}).get("text") or "",
                 "pending": bool((decision or {}).get("round_pending")),
                 "fixed": c.get("fixed"),
+                "answer_later": is_set_aside(c),
             }
     return cards
 
