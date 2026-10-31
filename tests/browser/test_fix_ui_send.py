@@ -217,6 +217,7 @@ def test_ui14_discard_shows_the_sent_answer_again(tmp_path):
         page.locator("#send-btn").click()
         page.locator("#round-submit-btn").click()
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+        card.locator('[data-action="open-card"]').click()
         card.locator('[data-decision-action="change"]').click()
         card.locator(".decision-btn").nth(1).click()
         section(page, "ready")
@@ -238,18 +239,19 @@ def test_ui15_changing_the_option_keeps_the_earlier_comment(tmp_path):
         card.locator(".decision-btn").first.click()
         section(page, "ready")
         assert _comment(directory, "question-11")["decision"]["text"] == "Ship now\n\nBoth builds passed."
+        card.locator('[data-action="open-card"]').click()
         card.locator('[data-decision-action="change"]').click()
-        assert card.locator(".decision-say-ta").input_value() == ""
+        assert card.locator(".decision-say-ta").count() == 0  # the options only; notes stay
         card.locator(".decision-btn").nth(1).click()
         section(page, "ready")
         playwright.expect(card.locator(".ans")).to_contain_text("Ship later")
         assert _comment(directory, "question-11")["decision"]["text"] == "Ship later\n\nBoth builds passed."
-        # A new comment replaces the earlier one.
-        card.locator('[data-decision-action="change"]').click()
+        # A new note adds on; it never replaces the earlier one (2026-10-30).
+        card.locator('[data-action="open-card"]').click()
         card.locator(".decision-say-ta").fill("Wait for the copy review.")
-        card.locator(".decision-btn").first.click()
-        section(page, "ready")
-        assert _comment(directory, "question-11")["decision"]["text"] == "Ship now\n\nWait for the copy review."
+        card.locator('[data-note-action="add"]').click()
+        playwright.expect(card.locator(".answer-note-txt")).to_have_text(["Both builds passed.", "Wait for the copy review."])
+        assert _comment(directory, "question-11")["decision"]["text"] == "Ship later\n\nBoth builds passed."
 
 
 # ── UI-26: the Plans tab counts the revision on screen (final/) ───────────

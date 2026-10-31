@@ -294,7 +294,7 @@ def test_http11_framing_redirect_head_errors_and_polling(server):
         options, body = request(conn, "/review/", method="OPTIONS")
         assert options.status == 204 and body == b"" and options.getheader("Content-Length") == "0"
     with connection(server) as conn:
-        error, _ = request(conn, "/review/", method="DELETE")
+        error, _ = request(conn, "/review/", method="PATCH")
         assert error.status == 501
 
 

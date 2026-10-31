@@ -90,6 +90,7 @@ const ICONS = {
   chevUp: '<path d="m18 15-6-6-6 6"/>',
   locate: '<line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
 };
 function ico(name) {
   return '<svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (ICONS[name] || '') + '</svg>';
@@ -620,6 +621,14 @@ async function apiArchive(id) {
   return null;
 }
 
+async function apiDelete(id) {
+  try {
+    const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + authorQuery()), { method: 'DELETE' });
+    if (r.ok) return await r.json();
+  } catch {}
+  return null;
+}
+
 async function apiRestore(id) {
   try {
     const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/restore' + authorQuery()), { method: 'POST' });
@@ -827,7 +836,7 @@ function flattenStore(includeArchived) {
 }
 // The comments of the document whose state is loaded (DOC).
 function flattenAll(includeArchived) {
-  return flattenStore(includeArchived).filter(c => docOf(c) === DOC && !c.withdrawn);
+  return flattenStore(includeArchived).filter(c => docOf(c) === DOC && (!c.withdrawn || strandedSay(c)));
 }
 
 function withdrawnQuestions() {
@@ -1470,7 +1479,24 @@ function clearSayDraft(id) {
 // P1: text typed while an answered card's Change is open (on the card or in
 // the Send summary) is that card's new answer at Send, as on an open card.
 function hasSayDraft(c) {
-  return (isUnresolvedDecision(c) || isChangingAnswer(c)) && !!sayDraft(c);
+  return isUnresolvedDecision(c) && sayIsNew(c);
+}
+// Change opens with the saved words in the box; only different text is new.
+function sayIsNew(c) {
+  const d = decisionAnswer(c);
+  return !!sayDraft(c) && sayDraft(c) !== String((d && d.text) || '').trim();
+}
+// Text typed on a question the agent then answered, withdrew or replaced.
+// The card keeps showing it, and Send posts it as a reply (Chang lost these
+// as the orchestrator loaded new cards, 2026-10-30).
+function strandedSay(c) {
+  return sayIsNew(c) && !hasSayDraft(c) && c.status !== 'archived';
+}
+function strandedSayHtml(c) {
+  return `<div class="decision-stranded">
+    <div class="decision-feedback">This card changed while you were typing. Your text is kept and goes as a reply when you send.</div>
+    <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" rows="2" aria-label="Your reply on #${NUM_MAP[c.id] || ''}"></textarea>
+  </div>`;
 }
 // A reply or comment typed on the card and not sent yet.
 function hasUnsentText(c) {
@@ -1482,7 +1508,7 @@ function isChangingAnswer(c) {
 function sectionOf(c) {
   if (pageReadOnly()) return 'archived';
   if (c.status === 'archived') return 'archived';
-  if (isRoundPending(c) || userNeedsSend(c)) return 'ready';
+  if (isRoundPending(c) || userNeedsSend(c) || strandedSay(c)) return 'ready';
   const cls = classify(c);
   return cls === 'review' ? 'needs' : cls === 'waiting' ? 'waiting' : 'done';
 }
@@ -1497,7 +1523,7 @@ function sendPlan() {
   for (const c of flattenAll(false)) {
     if (hasSayDraft(c)) answers.push(c);
     else if (isRoundPending(c)) round.push(c);
-    else if (needsPush(c)) push.push(c);
+    else if (needsPush(c) || strandedSay(c)) push.push(c);
   }
   return { round, answers, push };
 }
@@ -1554,13 +1580,26 @@ function renderDrawer() {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
+  listEl.querySelectorAll('.note-edit-ta').forEach(ta => {
+    const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
+    if (!editingNote[k]) return;
+    setDraft('note:' + k, ta.value || '');
+    if (ta === document.activeElement) focusedTa = '[data-note-edit="' + cssEsc(ta.dataset.noteEdit) + '"][data-key="' + cssEsc(ta.dataset.key) + '"]';
+  });
+  for (const k of Object.keys(DRAFTS)) if (k.startsWith('note:') && DRAFTS[k]) editingNote[k.slice(5)] = true;
+  listEl.querySelectorAll('.edit-ta').forEach(ta => {
+    if (!editingComment[ta.dataset.editFor]) return; // just saved or cancelled
+    setDraft('edit:' + ta.dataset.editFor, ta.value || '');
+    if (ta === document.activeElement) focusedTa = '[data-edit-for="' + cssEsc(ta.dataset.editFor) + '"]';
+  });
+  // An edit left open survives a reload: its draft reopens the editor.
+  for (const k of Object.keys(DRAFTS)) if (k.startsWith('edit:') && DRAFTS[k]) editingComment[k.slice(5)] = true;
 
   // v9o: a card holding unsent text stays open with its box, even after the
   // agent answered or resolved it meanwhile (its section opens too).
   for (const c of flattenAll(false)) {
     if (!hasUnsentText(c)) continue;
     cardExpanded[c.id] = true;
-    if ((DRAFTS['say:' + c.id] || '').trim() && canChangeAnswer(c) && !c.decision.pending) decisionChanging[c.id] = true;
   }
 
   const groups = { needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
@@ -1610,6 +1649,15 @@ function renderDrawer() {
     if (draft) ta.value = draft;
     syncSayHint(ta);
   });
+  listEl.querySelectorAll('.note-edit-ta').forEach(ta => {
+    const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
+    const n = cardNotes(findCommentById(ta.dataset.noteEdit) || {}).find(n => n.key === ta.dataset.key);
+    ta.value = DRAFTS['note:' + k] || (n && n.text) || '';
+  });
+  listEl.querySelectorAll('.edit-ta').forEach(ta => {
+    const c = findCommentById(ta.dataset.editFor);
+    ta.value = DRAFTS['edit:' + ta.dataset.editFor] || (c && c.text) || '';
+  });
   if (focusedTa) {
     const ta = listEl.querySelector(focusedTa);
     if (ta) {
@@ -1631,6 +1679,7 @@ function renderDrawer() {
   });
   wireCardActions(listEl);
   wireDecisionActions(listEl);
+  wireNoteActions(listEl);
   syncExcerptClamps(listEl);
   if (drawerBodyEl && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
 }
@@ -1981,19 +2030,9 @@ function renderDecisionBlock(c) {
     </div>`;
   }
   const changing = !!decisionChanging[c.id];
-  if (decisionAnswer(c) && !changing) {
-    const a = answerLabel(c);
-    return `<div class="decision-block decision-resolved">
-      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
-      <div class="decision-resolved-row">
-        <div class="decision-answer-text">${esc(a.text)}</div>
-        ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
-      </div>
-      ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
-      ${c.decision?.catalog_conflict ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
-    </div>`;
-  }
-  const opts = withAnswerInWords(decisionOptions(dr));
+  if (decisionAnswer(c) && !changing) return answerBlockHtml(c);
+  // Changing the choice: the options only; your notes stay as they are.
+  const opts = changing ? decisionOptions(dr) : withAnswerInWords(decisionOptions(dr));
   const wantsChanges = opts.some(o => o.id === 'changes');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
@@ -2012,11 +2051,14 @@ function renderDecisionBlock(c) {
     btns += `<button class="btn decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head">${k}<span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   });
   const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
-      <span>Changing verdict &mdash; currently ${esc(c.decision.verdict === 'select' ? '☑ ' + answerLabel(c).text : (DECISION_VERDICT_TEXT[c.decision.verdict] || c.decision.verdict))}</span>
-      <button class="btn btn-ghost btn-xs" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
+      <span>Pick a new choice. Your notes stay.</span>
+      <button type="button" class="btn btn-ghost btn-xs" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
     </div>` : '';
-  const cmtHtml = `<div class="decision-cmt">
-      <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(decisionHint[c.id] ? decisionHint[c.id].ph : 'Comment (optional)')}" rows="1" aria-label="Comment on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
+  const cmtHtml = changing ? '' : `<div class="decision-cmt">
+      <div class="add-note">
+        <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(decisionHint[c.id] ? decisionHint[c.id].ph : 'Add a note (optional)')}" rows="1" aria-label="Note on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
+        <button type="button" class="btn btn-sm" data-note-action="add" data-id="${escAttr(c.id)}" title="Answer in words with this note">Add note</button>
+      </div>
       ${kbd ? '<kbd class="kbd kbd-xs">C</kbd>' : ''}
       <div class="decision-cmt-hint" data-say-hint="${escAttr(c.id)}"></div>
     </div>`;
@@ -2047,6 +2089,8 @@ function syncSayHint(ta) {
 function cardMenuItems(c, cls) {
   const id = escAttr(c.id);
   const items = [];
+  if (canEditComment(c)) items.push(`<li><button type="button" data-action="edit" data-id="${id}">${ico('pencil')} Edit</button></li>`);
+  if (canDeleteComment(c)) items.push(`<li><button type="button" data-action="delete" data-id="${id}">Delete</button></li>`);
   if (c.status !== 'archived') {
     if (cls === 'review' || c.status === 'user_confirmed' || c.status === 'resolved_in_version') {
       items.push(`<li><button type="button" data-action="accept" data-id="${id}">Resolve</button></li>`);
@@ -2064,6 +2108,205 @@ function cardMenuItems(c, cls) {
     items.push(`<li><button type="button" data-action="restore" data-id="${id}">Restore</button></li>`);
   }
   return items.join('');
+}
+// Your own comment (not a question card) can be edited; the edit goes to the
+// agent with the next Send (Chang, 2026-10-30).
+const editingComment = {};
+function isMine(author) {
+  return !!author && (author === AUTHOR || !!(IDENTITY && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(author)));
+}
+function canEditComment(c) {
+  return !pageReadOnly() && !c.pending && !c.decision_request && c.status !== 'archived' && isMine(c.author);
+}
+// Not sent and not answered: nothing to archive, so it can simply go (Chang,
+// 2026-10-30). The server refuses anything else.
+function canDeleteComment(c) {
+  return canEditComment(c) && !c.flagged_for_session && !(c.replies || []).length && !c.response_text && !c.round_pending;
+}
+function editBoxHtml(c) {
+  return `<div class="comment-edit">
+    <textarea class="textarea textarea-sm edit-ta" data-edit-for="${escAttr(c.id)}" rows="3" aria-label="Edit your comment"></textarea>
+    <div class="comment-edit-ft">
+      <button type="button" class="btn btn-ghost btn-xs" data-action="edit-cancel" data-id="${escAttr(c.id)}">Cancel</button>
+      <button type="button" class="btn btn-primary btn-xs" data-action="edit-save" data-id="${escAttr(c.id)}">Save</button>
+    </div>
+  </div>${replyError[c.id] ? `<div class="decision-feedback is-error" role="alert">${esc(replyError[c.id])}</div>` : ''}`;
+}
+// ── A question card's answer: your choice and your notes ──────────────
+// A second worded answer used to replace the first, and only the last one
+// reached the agent (Chang, 2026-10-30, #2659 and #2671). Words are now
+// notes: adding one never replaces another, each can be edited, and an
+// unsent one deleted. The choice is separate and changing it keeps them.
+// The first note lives in the decision; later ones are your replies.
+const GENERATED_REPLY = /^(💬 Answer in words: |☑ Selected: |↻ Changes requested: |✓ Accepted|✗ Rejected|↺ Changed to )/;
+const editingNote = {}; // 'id|key' while that note's editor is open
+function choiceLabel(c) {
+  const d = decisionAnswer(c);
+  if (!d || d.verdict === 'comment' || d.verdict === 'changes') return '';
+  if (d.verdict === 'select') return String(d.text || '').split('\n\n')[0].replace(/^Selected:\s*/, '');
+  const o = decisionOptions(c.decision_request || {}).find(o => o.id === d.verdict);
+  return o ? o.labelText : (DECISION_VERDICT_LABEL[d.verdict] || d.verdict);
+}
+function decisionNote(c) {
+  const d = decisionAnswer(c);
+  if (!d || !d.text) return '';
+  if (d.verdict === 'select' || /^Selected: /.test(d.text)) {
+    const at = d.text.indexOf('\n\n');
+    return at === -1 ? '' : d.text.slice(at + 2).trim();
+  }
+  return d.text.trim();
+}
+const tsOf = s => new Date(s || 0).getTime();
+// The server's _note_unsent: new notes carry sent_at; older ones go by the card's last send.
+function noteUnsent(c, r) {
+  if ('sent_at' in r) return !r.sent_at;
+  return !c.flagged_at || tsOf(c.flagged_at) < tsOf(r.edited_at || r.ts);
+}
+function cardNotes(c) {
+  const notes = [];
+  const d = decisionAnswer(c);
+  const dn = decisionNote(c);
+  if (dn && isMine(d.by)) notes.push({ key: 'decision', text: dn, pending: !!(d.round_pending || d.pending) });
+  (c.replies || []).forEach((r, i) => {
+    if (!isMine(r.author) || r.pending || GENERATED_REPLY.test(r.text || '')) return;
+    const pending = noteUnsent(c, r);
+    notes.push({ key: 'r' + i, idx: i, ts: r.ts, text: r.text, pending, deletable: pending });
+  });
+  return notes;
+}
+// The card shows the add-note box itself, so typed text is a note, not stranded.
+function hasAddNoteBox(c) {
+  return !pageReadOnly() && !!c.decision_request && !!decisionAnswer(c) && c.status !== 'archived' && c.status !== 'resolved_in_version';
+}
+function stateTag(pending) {
+  return pending ? '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>'
+    : '<span class="send-state" title="Sent to the agent">Sent</span>';
+}
+function noteHtml(c, n) {
+  const id = escAttr(c.id), key = escAttr(n.key);
+  if (editingNote[c.id + '|' + n.key]) return `<div class="answer-note is-editing">
+      <textarea class="textarea textarea-sm note-edit-ta" data-note-edit="${id}" data-key="${key}" rows="3" aria-label="Edit your note"></textarea>
+      <div class="note-actions"><button type="button" class="btn btn-ghost btn-xs" data-note-action="cancel" data-id="${id}" data-key="${key}">Cancel</button><button type="button" class="btn btn-primary btn-xs" data-note-action="save" data-id="${id}" data-key="${key}">Save</button></div>
+    </div>`;
+  return `<div class="answer-note">
+      <div class="answer-note-txt">${ticketsHTML(n.text)}</div>
+      <div class="note-actions">${stateTag(n.pending)}<button type="button" class="btn btn-ghost btn-xs btn-square" data-note-action="edit" data-id="${id}" data-key="${key}" aria-label="Edit note" title="Edit">${ico('pencil')}</button>${n.deletable ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-note-action="delete" data-id="${id}" data-key="${key}" aria-label="Delete note" title="Delete">${ico('trash')}</button>` : ''}</div>
+    </div>`;
+}
+function addNoteHtml(c) {
+  return `<div class="add-note">
+      <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" rows="1" placeholder="Add a note…" aria-label="Add a note to #${NUM_MAP[c.id] || ''}"></textarea>
+      <button type="button" class="btn btn-sm" data-note-action="add" data-id="${escAttr(c.id)}">Add note</button>
+    </div>`;
+}
+function answerBlockHtml(c) {
+  const choice = choiceLabel(c);
+  const notes = cardNotes(c);
+  const d = decisionAnswer(c);
+  return `<div class="decision-block decision-answered">
+      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
+      <div class="answer-row"><span class="answer-lbl">Your choice</span><span class="answer-choice">${choice ? esc(choice) : '<span class="answer-none">None (answered in words)</span>'}</span>${choice ? stateTag(!!(d.round_pending || d.pending)) : ''}${canChangeAnswer(c) ? `<button type="button" class="btn btn-ghost btn-xs" data-decision-action="change" data-id="${escAttr(c.id)}">${choice ? 'Change' : 'Choose'}</button>` : ''}</div>
+      ${notes.length ? `<div class="answer-notes"><span class="answer-lbl">Your notes</span>${notes.map(n => noteHtml(c, n)).join('')}</div>` : ''}
+      ${addNoteHtml(c)}
+      <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div>
+      ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
+      ${c.decision?.catalog_conflict ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
+    </div>`;
+}
+async function apiReplyNote(id, idx, ts, text) {
+  try {
+    const url = apiUrl('./api/comments/' + encodeURIComponent(id) + '/replies/' + idx + authorQuery());
+    const r = text == null
+      ? await fetch(url + (url.includes('?') ? '&' : '?') + 'ts=' + encodeURIComponent(ts), { method: 'DELETE' })
+      : await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts, text }) });
+    return r.ok;
+  } catch { return false; }
+}
+// A decision re-posted with new words keeps whatever the box under it holds.
+async function keepingAddNoteDraft(id, fn) {
+  const keep = DRAFTS['say:' + id] || '';
+  const r = await fn();
+  if (keep && !DRAFTS['say:' + id]) { setDraft('say:' + id, keep); syncStripSayDraft(id); renderDrawer(); }
+  return r;
+}
+async function addNote(root, id) {
+  const c = findCommentById(id);
+  const text = c && sayDraft(c);
+  if (!text) return;
+  // No answer yet: the first note answers the card in words.
+  if (!decisionAnswer(c)) return submitDecision(root, id, 'comment', text);
+  if (await apiReply(id, text)) {
+    clearSayDraft(id);
+    await refreshStore();
+    markReadAfterAction(id);
+  } else setDecisionFeedback(root, id, 'Could not add the note. Your text is still in the box; try again.', true);
+}
+async function saveNote(root, id, key, text) {
+  const c = findCommentById(id);
+  if (!c || !text) return false;
+  if (key === 'decision') {
+    const d = decisionAnswer(c);
+    const verdict = d.verdict;
+    const body = verdict === 'select' ? choiceLabel(c) + '\n\n' + text : text;
+    return !!(await keepingAddNoteDraft(id, () => submitDecision(root, id, verdict, body, d.option_id)));
+  }
+  const n = cardNotes(c).find(n => n.key === key);
+  const ok = n && await apiReplyNote(id, n.idx, n.ts, text);
+  if (ok) { await refreshStore(); markReadAfterAction(id); }
+  return !!ok;
+}
+async function deleteNote(id, key) {
+  const n = cardNotes(findCommentById(id) || {}).find(n => n.key === key);
+  if (!n || !n.deletable || !confirm('Delete this note? It has not been sent.')) return;
+  if (await apiReplyNote(id, n.idx, n.ts, null)) await refreshStore();
+  else { alert('Could not delete the note; it may have just been sent. Edit it instead.'); await refreshStore(); }
+}
+function wireNoteActions(root) {
+  root.querySelectorAll('[data-note-action]').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const { id, key } = btn.dataset;
+    const k = id + '|' + key;
+    const action = btn.dataset.noteAction;
+    if (action === 'add') return addNote(root, id);
+    if (action === 'delete') return deleteNote(id, key);
+    if (action === 'edit') {
+      editingNote[k] = true;
+      renderDrawer();
+      const ta = document.querySelector('#comment-list [data-note-edit="' + cssEsc(id) + '"][data-key="' + cssEsc(key) + '"]');
+      if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+      return;
+    }
+    if (action === 'cancel') { delete editingNote[k]; setDraft('note:' + k, ''); return renderDrawer(); }
+    if (action === 'save') {
+      const ta = root.querySelector('[data-note-edit="' + cssEsc(id) + '"][data-key="' + cssEsc(key) + '"]');
+      const text = (ta && ta.value || '').trim();
+      if (!text) return;
+      btn.disabled = true;
+      delete editingNote[k];
+      setDraft('note:' + k, '');
+      if (!(await saveNote(root, id, key, text))) {
+        setDraft('note:' + k, text);
+        editingNote[k] = true;
+        renderDrawer();
+        setDecisionFeedback(document, id, 'Could not save the note. Your text is still here; try again.', true);
+      }
+    }
+  }));
+  root.querySelectorAll('.note-edit-ta').forEach(ta => ta.addEventListener('input', () => setDraft('note:' + ta.dataset.noteEdit + '|' + ta.dataset.key, ta.value)));
+  root.querySelectorAll('[data-action="open-card"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cardExpanded[btn.dataset.id] = true;
+    renderDrawer();
+    const ta = document.querySelector('#comment-list [data-decision-say-ta="' + cssEsc(btn.dataset.id) + '"]');
+    if (ta) ta.focus();
+  }));
+}
+// Pending: saved here, not sent to the agent yet. Sent: in a Send (or round).
+function sendStateHtml(c) {
+  if (!isMine(c.author) && !(c.decision && isMine(c.decision.by))) return '';
+  if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
+  if (c.flagged_for_session || (c.decision && !c.decision.round_pending)) return '<span class="send-state" title="Sent to the agent">Sent</span>';
+  return '';
 }
 function cardMenuHtml(c, cls) {
   const num = NUM_MAP[c.id];
@@ -2086,7 +2329,7 @@ function agentResponded(c) {
   return !c.decision_request && isAgentAuthor(c.author);
 }
 function isLineCard(c) {
-  if (cardExpanded[c.id] || decisionChanging[c.id]) return false;
+  if (cardExpanded[c.id] || decisionChanging[c.id] || strandedSay(c)) return false;
   if (!c.decision_request || c.status === 'archived') return false;
   return !!decisionAnswer(c) || c.status === 'resolved_in_version' || c.status === 'addressed_by_agent';
 }
@@ -2126,7 +2369,8 @@ function renderCItem(c) {
       <div class="citem-line">
         ${unreadDotHtml(c)}${numHtml}
         <span class="citem-line-txt"><span class="citem-line-q">${ticketsHTML(displayPrompt(c))}</span><span class="citem-line-arrow" aria-hidden="true">&rarr;</span><span class="ans${a.muted ? ' is-muted' : ''}">${esc(a.text)}</span></span>
-        ${canChangeAnswer(c) ? changeBtnHtml(c) : ''}
+        ${sendStateHtml(c)}
+        ${hasAddNoteBox(c) ? `<button type="button" class="btn btn-ghost btn-xs btn-square change-btn" data-action="open-card" data-id="${escAttr(c.id)}" aria-label="Edit your answer to #${num || ''}" title="Edit your answer">${ico('pencil')}</button>` : ''}
         ${cardMenuHtml(c, cls)}
       </div>
       ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
@@ -2145,7 +2389,7 @@ function renderCItem(c) {
     : d.verdict === 'select' ? '☑ Selected: ' : '') +
     (['comment', 'changes', 'select'].includes(d.verdict) ? (d.text || '')
       : (DECISION_VERDICT_TEXT[d.verdict] || d.verdict) + (d.text ? '\n\n' + d.text : '')));
-  const replies = (c.replies || []).filter(r => !(d && r.ts === d.ts && r.author === d.by &&
+  const replies = (c.replies || []).filter(r => !(c.decision_request && isMine(r.author) && !GENERATED_REPLY.test(r.text || ''))).filter(r => !(d && r.ts === d.ts && r.author === d.by &&
     (r.text === generatedAnswer || r.text.startsWith(generatedAnswer + '\n\n(revised verdict'))));
   const renderReply = r => `
     <div class="thread-reply${r.pending ? ' is-pending' : ''}">
@@ -2167,7 +2411,7 @@ function renderCItem(c) {
       <div>${ticketsHTML(c.response_text)}</div>
     </div>` : '';
 
-  const showReply = !pageReadOnly() && c.status !== 'archived' && agentResponded(c) && !isUnresolvedDecision(c) && !decisionChanging[c.id];
+  const showReply = !pageReadOnly() && c.status !== 'archived' && agentResponded(c) && !isUnresolvedDecision(c) && !decisionChanging[c.id] && !hasAddNoteBox(c);
   const replyFormHtml = showReply ? `
     <div class="reply-form">
       <textarea class="textarea textarea-sm reply-ta" data-reply-for="${escAttr(c.id)}" placeholder="Add a reply&hellip;" rows="2"></textarea>
@@ -2206,15 +2450,16 @@ function renderCItem(c) {
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
     ${locHtml}
-    ${sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
+    ${editingComment[c.id] ? editBoxHtml(c) : sameText(c.text, c.decision_request && (c.decision_request.prompt || '')) ? '' : commentTextHtml(c)}
     ${agentReplyHtml}
     ${replyHtml}
     ${quoteHtml}${newerHtml}
     <div class="citem-meta">
       <span class="citem-author">${esc(authorLabel(c))}</span>
-      <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')}</span>
+      <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span>
     </div>
     ${decisionHtml}
+    ${strandedSay(c) && !hasAddNoteBox(c) ? strandedSayHtml(c) : ''}
     ${replyFormHtml}
   </div>`;
 }
@@ -2353,6 +2598,51 @@ function wireCardActions(root) {
     renderDrawer();
     startRepin(b.dataset.id);
   })));
+  root.querySelectorAll('[data-action="edit"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    editingComment[b.dataset.id] = true;
+    renderDrawer();
+    const ta = document.querySelector('#comment-list [data-edit-for="' + cssEsc(b.dataset.id) + '"]');
+    if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+  })));
+  root.querySelectorAll('[data-action="delete"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
+    if (!confirm('Delete this comment? It has not been sent, so the agent never sees it.')) return;
+    if (await apiDelete(b.dataset.id)) {
+      delete editingComment[b.dataset.id];
+      setDraft('edit:' + b.dataset.id, '');
+      await refreshStore();
+    } else {
+      alert('Could not delete this comment; it may have just been sent. Archive it instead.');
+      await refreshStore();
+    }
+  })));
+  root.querySelectorAll('.edit-ta').forEach(ta => ta.addEventListener('input', () => setDraft('edit:' + ta.dataset.editFor, ta.value)));
+  root.querySelectorAll('[data-action="edit-cancel"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    delete editingComment[btn.dataset.id];
+    setDraft('edit:' + btn.dataset.id, '');
+    renderDrawer();
+  }));
+  root.querySelectorAll('[data-action="edit-save"]').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.id;
+    const c = findCommentById(id);
+    const ta = root.querySelector('[data-edit-for="' + cssEsc(id) + '"]');
+    const text = (ta && ta.value || '').trim();
+    if (!c || !text) return;
+    btn.disabled = true;
+    // Saved text goes to the agent with the next Send; a closed comment re-opens.
+    const patch = c.status === 'open' ? { text } : { text, status: 'open' };
+    if (await apiPutComment(id, patch)) {
+      delete editingComment[id];
+      setDraft('edit:' + id, '');
+      await refreshStore();
+      markReadAfterAction(id);
+    } else {
+      btn.disabled = false;
+      replyError[id] = 'Could not save the edit. Your text is still here; try again.';
+      renderDrawer();
+    }
+  }));
   root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const id = btn.dataset.id;
@@ -2485,8 +2775,18 @@ function earlierAnswerComment(c) {
 function pickOption(root, btn) {
   const id = btn.dataset.id;
   const action = btn.dataset.decisionAction;
+  const c = findCommentById(id);
+  // A new choice on an answered card keeps the note that went with the old
+  // one (a word answer included); the add-note box is left as it is.
+  if (c && decisionAnswer(c) && !['comment', 'changes'].includes(action)) {
+    const kept = decisionNote(c) || null;
+    if (action === 'accept' || action === 'reject') return keepingAddNoteDraft(id, () => submitDecision(root, id, action, kept));
+    const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
+    const v = selectVerdictId();
+    return keepingAddNoteDraft(id, () => submitDecision(root, id, v, (v === 'select' ? label : 'Selected: ' + label) + (kept ? '\n\n' + kept : ''), btn.dataset.optionId));
+  }
   const note = decisionCommentText(root, id) ||
-    (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(findCommentById(id)));
+    (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(c));
   if (action === 'accept' || action === 'reject') return submitDecision(root, id, action, note);
   if (action === 'comment' || action === 'changes') {
     if (!note) {
@@ -3200,6 +3500,7 @@ function needsPush(c) {
     if (!isAgentAuthor(r.author)) latest = Math.max(latest, new Date(r.ts).getTime());
   }
   if (c.decision && !isAgentAuthor(c.decision.by)) latest = Math.max(latest, new Date(c.decision.ts).getTime());
+  if ((c.replies || []).some(r => r.sent_at === null && !isAgentAuthor(r.author))) return true;
   if (!latest) return false;
   if (!c.flagged_for_session) return true;
   return latest > flaggedAt;
@@ -3308,10 +3609,10 @@ function renderSummaryInto(list, editable) {
     </div>`;
   };
   const commentRow = (c) => {
-    if (hasDecisionRequest(c)) return decisionRow(c);
+    if (hasDecisionRequest(c) && !strandedSay(c)) return decisionRow(c);
     const num = NUM_MAP[c.id];
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
-    const text = last ? last.text : c.text;
+    const text = strandedSay(c) ? sayDraft(c) : last ? last.text : c.text;
     return `<div class="sum-row"><div class="sum-main"><span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(firstLine(text))}</span></div></div>`;
   };
   const group = (label, n) => `<div class="sum-group">${label}${n == null ? '' : ` <span class="badge badge-sm badge-ghost">${n}</span>`}</div>`;
@@ -3406,6 +3707,9 @@ async function prepareDocCore() {
     let r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
+  }
+  for (const c of flattenAll(false).filter(strandedSay)) {
+    if (await apiReply(c.id, sayDraft(c))) clearSayDraft(c.id); else { ok = false; failed.push(c.id); }
   }
   const gf = gfDraft();
   if (gf) {
@@ -3710,6 +4014,17 @@ function wireBridge() {
       const ta = document.querySelector('#comment-list [data-decision-say-ta="' + cssEsc(data.commentId) + '"]');
       if (ta && ta !== document.activeElement) { ta.value = text; syncSayHint(ta); }
       updateSendState();
+    } else if (data.type === 'annotate:note') {
+      // A document card's note action; the rail's own code does the work.
+      if (!data.commentId || !findCommentById(data.commentId)) return;
+      const text = typeof data.text === 'string' ? data.text.trim() : '';
+      if (data.action === 'add') {
+        if (text) { setDraft('say:' + data.commentId, text); addNote(document, data.commentId); }
+      } else if (data.action === 'edit' && text) {
+        saveNote(document, data.commentId, String(data.key || ''), text).then(ok => postToFrame({ type: 'annotate:note-saved', commentId: data.commentId, key: data.key, ok }));
+      } else if (data.action === 'delete') {
+        deleteNote(data.commentId, String(data.key || ''));
+      }
     } else if (data.type === 'annotate:decision-posted') {
       // A body-inline decision strip (adapter.js) just resolved a decision.
       // Refresh immediately so the rail card's decision block and the pins
@@ -3790,6 +4105,13 @@ function sendCommentCountsToFrame() {
           // Feedback prototype: the answer as one phrase (C1) and the shared
           // comment-box draft (A1) for the body strip.
           answerText: decisionResolved ? answerLabel(c).text : null,
+          // Your choice and notes, as the rail card shows them (textContent only in the frame).
+          answer: decisionResolved && hasAddNoteBox(c) ? {
+            choice: choiceLabel(c),
+            choicePending: !!(c.decision.round_pending || c.decision.pending),
+            note: decisionNote(c),
+            notes: cardNotes(c).map(n => ({ key: n.key, text: n.text, pending: n.pending, deletable: !!n.deletable })),
+          } : null,
           sayDraft: DRAFTS['say:' + c.id] || '',
           // v2.19 round mode: verdict recorded but not yet sent.
           roundPending: isRoundPending(c),
@@ -4185,9 +4507,29 @@ function isEditing() {
     return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
   } catch { return false; }
 }
+// The shell itself never scrolls; only its panes do. iPad browsers still
+// scroll the page (toolbar collapse, the keyboard), and with body
+// overflow:hidden there is no way back: the header and Send are gone (Chang,
+// 2026-10-30, iPad Chrome). Put it back, except while the keyboard is up.
+function keepShellUnscrolled() {
+  const typing = el => !!(el && el.closest && el.closest('textarea,input,[contenteditable="true"]'));
+  const unscroll = () => {
+    if (!window.scrollY && !document.body.scrollTop) return;
+    let ae = document.activeElement;
+    try { if (ae && ae.tagName === 'IFRAME') ae = ae.contentDocument.activeElement; } catch {}
+    if (typing(ae)) return;
+    window.scrollTo(0, 0);
+    document.body.scrollTop = 0;
+  };
+  window.addEventListener('scroll', unscroll, { passive: true });
+  document.body.addEventListener('scroll', unscroll, { passive: true });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', unscroll); // keyboard closed
+  window.addEventListener('focusin', () => setTimeout(unscroll, 300));
+}
 let DOCS_LOADED_resolve;
 const DOCS_LOADED = new Promise(res => { DOCS_LOADED_resolve = res; });
 async function init() {
+  keepShellUnscrolled();
   if (!await startReviewerSession()) return;
 
   try {

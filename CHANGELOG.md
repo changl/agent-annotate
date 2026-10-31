@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+agent-annotate-hl3: on the Multi-Mac page, a 5,063 px command ran off the right edge of its 1,193 px block and had to be selected by hand.
+
+- Code and terminal blocks wrap long lines at every width and have a copy button in the top-right corner. It appears on hover or keyboard focus, is always shown on touch screens, and shows a check and "Copied" for 2 s. If the Clipboard API is unavailable, copying falls back to selecting the text.
+- Jumping to a card or evidence scrolls only the document. `scrollIntoView` also scrolled the shell's page whenever it could overflow. The shell uses `100dvh` and `overscroll-behavior: none`, so the header stays put on phones and during trackpad overscroll.
+- The shell's page scrolls back to the top on its own whenever the browser scrolls it, unless the keyboard is open. On iPad Chrome the header and Send had gone with no way to scroll back to them.
+- Text typed on a question that the agent then answers, withdraws or resolves is no longer lost. Its box disappeared once the reviewer tapped away. The card now keeps the text with a note, and Send posts it as a reply on that card.
+- Your own comments have Edit in their ⋯ menu. A saved edit goes to the agent with the next Send, and a closed comment re-opens.
+- An answered question card, in the document and in the rail, shows **Your choice** and **Your notes**, then an **Add a note** box. Before, a second worded answer replaced the first and only the last was sent; on FLD #2659 and #2671 the orchestrator never got the first.
+  - Adding a note never replaces another. Each note shows Pending or Sent and can be edited; a note that hasn't been sent can also be deleted.
+  - Change (Choose, if there is no choice yet) shows the options alone. Your notes stay, and the note that went with the old choice goes with the new one.
+  - Cancel and Save sit side by side, and Cancel no longer wraps onto its own line.
+- A Send carries every note added or edited on a card since the card was last sent. A round's answer text gains the notes, plus a `notes` list. A pushed card sends all its unsent notes, not just the latest reply.
+  - New reviewer replies carry `sent_at`, which is `null` until a Send delivers them.
+  - `PUT /api/comments/<id>/replies/<i>` (with `ts`) lets the author edit a note, which is then sent again. `DELETE` lets the author remove a note until it is sent (409 after).
+- A deferred answer (one waiting for Send) no longer marks its card as sent. Before, re-saving an answer made earlier notes look sent, and the round skipped them.
+- Your comments and answers show Pending until Send and Sent after it.
+- An unsent comment of yours has Delete in its ⋯ menu, after a confirm. The new `DELETE /api/comments/<id>` route refuses other people's comments (403). It also refuses comments that were sent, answered, replied to or carry a question (409); those are archived as before. Agents never saw the deleted comment, since only a Send reaches them.
+- A reviewer's text edit clears `flagged_for_session`, so the next Send carries it even when it lands within the same second as the last.
+- The Send summary is up to 960 px wide and fits the visible screen on iPad (`100dvh`).
+
 ## 2.27.7
 
 - Brings back the server half of 2.27.4 (PR #52), which the 2.27.4 revert removed although only the page half caused the jumping. `/api/history` is cached by the files it reads and rebuilt outside the lock that comment posts need. On the M5 under heavy load it took 7.1 s and held posts behind it. On a copy of FLD: history 0.32 s → 0.002 s; a post made while history builds 0.33 s → 0.045 s. No page code changes; in an Orca tab, 17 polls with 5 new comments left the scroll position where it was.
