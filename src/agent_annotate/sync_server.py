@@ -124,6 +124,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
+from .hooks.decision_state import is_set_aside as _is_set_aside
 from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
 from .updates import runtime_manifest
@@ -1372,6 +1373,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if route_path.startswith("/api/comments/") and route_path.endswith("/archive"):
                 cid = route_path[len("/api/comments/"):-len("/archive")]
                 return self._v2_post_archive(cid, parsed)
+            if route_path.startswith("/api/comments/") and route_path.endswith("/answer-later"):
+                cid = route_path[len("/api/comments/"):-len("/answer-later")]
+                return self._v2_post_answer_later(cid, parsed)
             if route_path.startswith("/api/comments/") and route_path.endswith("/accept"):
                 cid = route_path[len("/api/comments/"):-len("/accept")]
                 return self._v2_post_accept(cid, parsed)
@@ -2793,6 +2797,34 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                   f"from {reopened_from} (by {author})", flush=True)
         self._respond(200, json.dumps(found[1], ensure_ascii=False).encode(), "application/json")
 
+    def _v2_post_answer_later(self, comment_id: str, parsed):
+        """Set an unanswered question aside, or bring it back: {"on": bool}.
+
+        Page state only: no bus event and no edited_at, so Send and the agent
+        never see it (Chang, 2026-10-31). Answering the card clears it.
+        """
+        try:
+            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        except json.JSONDecodeError:
+            payload = None
+        if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
+            return self._respond(400, b'{"error":"expected {\"on\": true|false}"}')
+        author = self._author(parsed)
+        with _locked_store(self.artifact_dir):
+            store = self._v2_load()
+            c = next((c for items in store["anchors"].values() for c in items if c.get("id") == comment_id), None)
+            if c is None:
+                return self._respond(404, b'{"error":"not found"}')
+            if payload["on"]:
+                if not _is_set_aside({**c, "answer_later": True}) or c.get("status") in ("archived", "addressed_by_agent", "resolved_in_version"):
+                    return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
+                c["answer_later"] = {"ts": _now_iso(), "by": author}
+            elif c.pop("answer_later", None) is None:
+                return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+            self._v2_save(store)
+        print(f"  POST /api/comments/{comment_id}/answer-later → {payload['on']} by {author}", flush=True)
+        self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+
     def _v2_post_archive(self, comment_id: str, parsed):
         author = self._author(parsed)
         with _locked_store(self.artifact_dir):
@@ -3183,6 +3215,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c.setdefault("decision_history", []).append(prior_decision)
 
             latency_s = _decision_latency_s(c, now)
+            c.pop("answer_later", None)
             c["decision"] = {"id": uuid.uuid4().hex, "verdict": verdict, "text": text, "ts": now, "by": author}
             c["decision"]["catalog_eligible"] = identity["authenticated"]
             c["decision"]["evidence"] = evidence
@@ -3366,7 +3399,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             cleared_archived = True
                         continue
                     if (c.get("decision_request") and not self._is_answered(decision)
-                            and c.get("status") != "addressed_by_agent"):
+                            and c.get("status") != "addressed_by_agent" and not _is_set_aside(c)):
                         undecided_ids.append(c.get("id"))
                     if isinstance(decision, dict) and decision.get("round_pending") and decision.get("by") in reviewer_authors:
                         pending.append(c)

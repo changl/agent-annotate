@@ -83,6 +83,7 @@ from . import __version__
 from .categories import CATEGORIES as CATEGORY_IDS
 from .categories import comment_category as _comment_category
 from .hooks.decision_state import VERDICT_COLUMNS, is_live_card
+from .hooks.decision_state import is_set_aside as _is_set_aside
 from .hooks.decision_state import is_undecided as _is_undecided
 from .page_names import page_name, set_page_name, validate_name
 from .pagegen import add_parser as _add_new_parser
@@ -2101,7 +2102,7 @@ def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None
                 continue
             if (_comment_category({"anchor_id": anchor, **comment}) != "review"
                     or comment.get("version") == new_version or not _can_withdraw(comment)
-                    or anchor in anchors or comment.get("number") in numbers):
+                    or _is_set_aside(comment) or anchor in anchors or comment.get("number") in numbers):
                 continue
             _withdraw_decision(comment, f"not asked again in {new_version}", _resolve_author(None))
             done.append(comment["id"])
@@ -4846,6 +4847,7 @@ def _decision_cards(store: dict) -> list[dict]:
             "version": c.get("version") or "",
             "status": c.get("status") or "",
             "category": _comment_category({"anchor_id": anchor_id, **c}),
+            "answer_later": _is_set_aside(c),
             **{field: c[field] for field in ("doc", "finding", "fixed", "fixed_history", "reopened") if field in c},
         })
     return sorted(cards, key=lambda c: (
