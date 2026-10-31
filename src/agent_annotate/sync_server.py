@@ -1270,6 +1270,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return self._post_finding_reopen(cid)
         if route_path == "/api/comments":
             return self._v2_post_comments(parsed)
+        if route_path == "/api/plan-topics":
+            return self._post_plan_topics()
         if route_path == "/api/comments/batch":
             return self._v2_post_comments_batch(parsed)
         if route_path == "/api/rounds/submit":
@@ -3522,6 +3524,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _get_categories(self):
         from .categories import CATEGORIES, category_counts, comment_category, list_plans, load_categories
         from .copy_state import load_copy
+        from .plan_topics import file_plans
         from .project_state import linked_pages
         try:
             with _locked_store(self.artifact_dir, write=False):
@@ -3530,6 +3533,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 store = self._v2_load(read_only=True)
                 plans = list_plans(self.artifact_dir, store=store)
+                topics = file_plans(self.artifact_dir, plans)
                 counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans)
                 category_data = load_categories(self.artifact_dir)
                 try:
@@ -3549,7 +3553,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 for page in links:
                     page["url"] = redact_review_key(page["url"])
             result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
-                      "findings_sets": category_data["findings_sets"], "plans": plans,
+                      "findings_sets": category_data["findings_sets"], "plans": plans, "plan_topics": topics,
                       "library": {"groups": library.get("groups", []),
                                   **({"error": library["error"]} if "error" in library else {})},
                       "linked_pages": links, "read_only": self._moved() is not None}
@@ -3630,6 +3634,27 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b'{"error":"copy block or revision not found"}')
         except OSError:
             self._respond(500, b'{"error":"copy proposal could not be saved; retry with the same request id"}')
+
+    def _post_plan_topics(self):
+        """The reviewer's Move to…, rename or merge of a Plans topic (plan_topics.change)."""
+        from .categories import list_plans
+        from .plan_topics import change
+        payload = self._bounded_json_body()
+        if payload is None:
+            return
+        identity = self._identity()
+        if not identity["email"] or identity["email"].startswith("agent:"):
+            return self._respond(403, b'{"error":"reviewer identity required"}')
+        try:
+            with _locked_store(self.artifact_dir, write=False):
+                config = change(self.artifact_dir, list_plans(self.artifact_dir, store=self._v2_load(read_only=True)), payload)
+            self._respond(200, json.dumps(config, ensure_ascii=False).encode(), cache_control="no-store")
+        except KeyError as exc:
+            self._respond(404, json.dumps({"error": f"unknown plan or topic: {exc.args[0]}"}).encode())
+        except (ValueError, TypeError) as exc:
+            self._respond(400, json.dumps({"error": str(exc)}).encode())
+        except OSError:
+            self._respond(500, b'{"error":"topics could not be saved; retry"}')
 
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):

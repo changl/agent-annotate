@@ -53,6 +53,32 @@
 .view-hd-plan{margin-left:auto;width:auto;max-width:40%}
 .view-hd-plan[hidden]{display:none}
 .frame-area[hidden],.aa-view[hidden]{display:none}
+.view-hd-back{flex:none;margin:0 6px 0 -6px;gap:2px}
+.view-hd-back[hidden]{display:none}
+
+/* ── Plans index (cards #8, #9): Tracking, Unsorted, then topics ─────── */
+.frame-area.is-plans-index > :not(.view-hd):not(.plans-index){display:none !important}
+.plans-index[hidden]{display:none}
+.pi{max-width:880px;margin:0 auto;padding:16px 20px 80px}
+.pi-note{min-height:1.4em;margin:6px 2px;font-size:calc(11.5px * var(--aa-text, 1));color:var(--muted)}
+.pi-sec{border-top:1px solid var(--line);padding:2px 0}
+.pi-pin{border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100);padding:2px 10px;margin-bottom:12px}
+.pi-pin + .pi-sec{border-top:0}
+.pi-hd{display:flex;align-items:center;gap:8px}
+.pi-hd .sec-hdr,.pi-sub{min-height:44px}
+.pi-hd .pi-name{min-width:0;overflow-wrap:anywhere}
+.pi-body[hidden]{display:none}
+.pi-sub{padding-left:22px}
+.pi-list{list-style:none;margin:0;padding:0 0 4px 22px}
+.pi-row{display:flex;align-items:center;gap:8px;min-height:44px;border-bottom:1px solid color-mix(in oklab,var(--line) 50%,transparent)}
+.pi-row:last-child{border-bottom:0}
+.pi-open{flex:1;min-width:0;padding:8px 4px;color:var(--color-base-content);text-decoration:none;font-size:calc(13px * var(--aa-text, 1));line-height:1.4;overflow-wrap:anywhere}
+.pi-open:hover,.pi-open:focus-visible{text-decoration:underline}
+.pi-tag{flex:none}
+.pi-move,.pi-topic{flex:none;width:auto;max-width:9.5em;color:var(--muted)}
+/* Move to… sits on every row, so it is quiet: no border or fill, same tap target. */
+.pi-move,.pi-move:focus{border-color:transparent;background-color:transparent;box-shadow:none}
+.pi-move:focus-visible{outline:2px solid var(--color-primary);outline-offset:1px}
 
 /* ── Views of this page (Library, Findings) ──────────────────────────── */
 .aa-view{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--color-base-100)}
