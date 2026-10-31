@@ -63,9 +63,7 @@ let CURRENT_VERSION = null;
 let AUTHOR = null;
 let IDENTITY = null;
 let SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
-// v2.19 server capabilities, probed ONCE at init via GET ./api/capabilities.
-// null = legacy server (404) → every new behavior is off and the chrome acts
-// exactly as before: no defer_push, no round bar, no /api/rounds calls.
+// Page-specific read-only and sharing capabilities.
 let CAPS = null;
 // Feedback prototype: the chip filters, "All versions" and "Unread first" are
 // replaced by collapsible sections (B2) and the History tab (B3).
@@ -657,19 +655,6 @@ async function apiRestore(id) {
   return null;
 }
 
-async function apiPushSingle(id) {
-  try {
-    const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/push' + authorQuery()), { method: 'POST' });
-    if (r.ok) return await r.json();
-  } catch {}
-  return null;
-}
-
-// Returns { fallback: true } when the live server predates /decision (404/405)
-// so the caller can drop into the composite fallback path instead.
-// v2.19: in round mode the verdict is posted with defer_push so the server
-// parks it (decision.round_pending) instead of emitting a session_push per
-// click; POST /api/rounds/submit later sends the whole round at once.
 async function apiDecision(id, verdict, text, optionId) {
   try {
     const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/decision' + authorQuery()), {
@@ -683,19 +668,15 @@ async function apiDecision(id, verdict, text, optionId) {
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
-        ...(roundsEnabled() ? { defer_push: true } : {}),
+        defer_push: true,
       }),
     });
-    if (r.status === 404 || r.status === 405) return { fallback: true };
     if (r.ok) return await r.json();
   } catch {}
   return null;
 }
 
-// ── v2.19 capabilities + review rounds ───────────────────────────────
-// One probe per page load. A 404 (old server) or a network error leaves CAPS
-// null; nothing ever re-probes, so a legacy server sees exactly one extra
-// request and never a /api/rounds call.
+// ── Page capabilities + review rounds ───────────────────────────────
 async function loadCapabilities() {
   CAPS = null;
   try {
@@ -709,31 +690,8 @@ async function loadCapabilities() {
   return CAPS;
 }
 function pageReadOnly() { return !!(CAPS && CAPS.read_only); }
-function roundsEnabled() {
-  return !!(CAPS && CAPS.rounds);
-}
-// D2: true when the live server advertises the "changes" verdict. A legacy
-// server (no /api/capabilities, or one that predates D2) leaves this false
-// and every decision card keeps its pre-D2 "Comment" button.
-function changesEnabled() {
-  return !!(CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('changes') !== -1);
-}
-// The third verdict's id on THIS server: 'changes' where advertised,
-// 'comment' otherwise. Both spellings in a decision_request map onto it, so
-// an old cards.json saying "comment" shows "Request changes" on a new server
-// and a new one saying "changes" still works against an old server.
-function textVerdictId() {
-  return changesEnabled() ? 'changes' : 'comment';
-}
-// D3: the verdict a click on a custom option id posts. `select` where the
-// server advertises it, `comment` against anything older — which is what the
-// chrome always posted, so an old server behaves exactly as it did.
-function selectVerdictId() {
-  return (CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('select') !== -1)
-    ? 'select' : 'comment';
-}
 function canonicalOptionId(id) {
-  return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
+  return (id === 'comment' || id === 'changes') ? 'changes' : id;
 }
 async function apiRoundSubmit(note, send) {
   try {
@@ -765,23 +723,6 @@ function isRoundPending(c) {
 function hasDecisionRequest(c) {
   return !!(c && c.decision_request &&
     c.status !== 'archived' && c.status !== 'resolved_in_version');
-}
-
-// OLD-SERVER FALLBACK: composes the same outcome from routes that predate
-// /decision. decision_request stays unresolved server-side (no c.decision
-// field is ever set), so the card's buttons remain live after a refresh —
-// acceptable degraded behavior, documented in CHANGELOG.
-async function apiDecisionFallback(id, verdict, text) {
-  const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
-  const isText = verdict === 'comment' || verdict === 'changes';
-  let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
-    : verdict === 'comment' ? '💬 Answer in words: ' + text : verdictText[verdict];
-  if (!isText && text) replyText += '\n\n' + text;
-  const replied = await apiReply(id, replyText);
-  if (!replied) return null;
-  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open', changes: 'open' };
-  await apiPutComment(id, { status: statusMap[verdict] });
-  return await apiPushSingle(id);
 }
 
 async function apiPushAll(send) {
@@ -1063,21 +1004,17 @@ function sentRounds() {
     if (withReceipt.length) {
       const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
-      return { ts, version, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
+      return { ts, version, result: roundResult(items.length), items, send_id: withReceipt[0].send_id };
     }
     const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
-    return Object.assign(legacy, { version, result: roundResult(g, legacy.n) });
+    return Object.assign(legacy, { version, result: roundResult(legacy.n) });
   }).filter(r => r.items.length);
 }
 // UI-13: the delivery the server recorded on the round at Send, so a reload
 // keeps the result line the Send showed. Rounds recorded before that say
 // "Sent (N)".
-function roundResult(records, n) {
-  if (CAPS && CAPS.automatic_round_delivery) return 'Feedback saved (' + n + ')';
-  const how = records.map(r => r.delivery);
-  if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
-  if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
-  return 'Sent (' + n + ')';
+function roundResult(n) {
+  return 'Feedback saved (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -1097,11 +1034,6 @@ function legacyRound(r) {
 async function loadDelivery() {
   if (DOC !== VIEW_DOC) return;
   const node = document.getElementById('delivery-status');
-  if (!CAPS || !CAPS.automatic_round_delivery) {
-    node.hidden = !!CAPS;
-    if (!CAPS) node.textContent = 'This server predates Finish review and automatic delivery. Update its agent-annotate runtime.';
-    return;
-  }
   try {
     let data = SUMMARY_DELIVERY;
     if (!HAS_SUMMARY) {
@@ -1771,16 +1703,9 @@ const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes
 // same way.
 const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
 // Every option id this chrome knows how to render. "comment" and "changes"
-// are the same slot: which one a page shows is decided by the server's
-// advertised verdicts, never by both appearing at once.
+// are the same slot, shown as Request changes.
 const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
-// D2: the third verdict is "Request changes" (note required) on any server
-// that advertises it; a server that does not still gets the pre-D2 "Comment".
-const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
-const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
-// Default button labels/classes. accept/reject/comment are byte-identical to
-// the pre-2.19 markup so a legacy decision_request (string options, nothing
-// else) against a legacy server renders exactly as it always has.
+const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'changes'];
 const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // The same options without their glyphs, for the "Recommended: …" sentence.
@@ -1818,21 +1743,16 @@ function byContentOrder(a, b) {
 // Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
 const decisionSayOpen = {};
-// …and the same for the "Request changes" (pre-D2: "Comment") form, whose
+// …and the same for the "Request changes" form, whose
 // open state used to live in the DOM alone — so a re-render triggered while
 // the reviewer was typing closed it and lost the box.
 const decisionChangesOpen = {};
 
 // v2.19 schema: dr.options may be the legacy string list or
 // [{id, label, consequence, style}]; dr.consequences {accept, reject} is the
-// shortcut for string options. Returns a uniform list. A string option that is
-// not accept/reject/comment/changes is dropped (as before); an OBJECT option
-// with an unknown id is kept as a "custom" choice, which the chrome posts as
-// a `comment` verdict whose text names the selected option — unchanged by D2,
-// so a card with custom ids behaves exactly as it did.
+// shortcut for string options. Unknown ids are custom `select` choices.
 function decisionOptions(dr) {
-  const fallback = changesEnabled() ? DECISION_OPTIONS_DEFAULT_CHANGES : DECISION_OPTIONS_DEFAULT;
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : fallback;
+  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_DEFAULT;
   const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
   const out = [];
   for (const o of raw) {
@@ -2730,7 +2650,7 @@ async function submitDecision(root, id, verdict, text, optionId) {
   const c = storedComment(id);
   const was = c && { changing: decisionChanging[id], expanded: cardExpanded[id] };
   const optimistic = { verdict, text: text || undefined, option_id: optionId, by: IDENTITY ? IDENTITY.email : AUTHOR,
-    ts: new Date().toISOString(), round_pending: roundsEnabled(), pending: true };
+    ts: new Date().toISOString(), round_pending: true, pending: true };
   // The card it went on and what it replaced (a store read meanwhile puts
   // it on the fresh copy of the card).
   let holder = null, prior = null;
@@ -2744,8 +2664,7 @@ async function submitDecision(root, id, verdict, text, optionId) {
     sendCommentCountsToFrame();
     updateSendState();
   }
-  let result = await settlePending(apiDecision(id, verdict, text, optionId));
-  if (!result || result.fallback) result = await settlePending(apiDecisionFallback(id, verdict, text));
+  const result = await settlePending(apiDecision(id, verdict, text, optionId));
   pendingEdits.delete(optimistic);
   if (!result) {
     if (c) {
@@ -2807,8 +2726,7 @@ function pickOption(root, btn) {
       return submitDecision(root, id, action, note);
     }
     const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
-    const v = selectVerdictId();
-    return submitDecision(root, id, v, (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : ''), btn.dataset.optionId);
+    return submitDecision(root, id, 'select', label + (note ? '\n\n' + note : ''), btn.dataset.optionId);
   }
   const note = decisionCommentText(root, id) ||
     (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(c));
@@ -2831,11 +2749,10 @@ function pickOption(root, btn) {
     }
     return submitDecision(root, id, action, note);
   }
-  // custom option → `select` naming the choice (or pre-D3 `comment`)
+  // Custom option → `select` naming the choice.
   const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
-  const v = selectVerdictId();
-  const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
-  return submitDecision(root, id, v, text, btn.dataset.optionId);
+  const text = label + (note ? '\n\n' + note : '');
+  return submitDecision(root, id, 'select', text, btn.dataset.optionId);
 }
 
 function wireDecisionActions(root) {
@@ -3729,8 +3646,7 @@ async function prepareDocCore() {
   let ok = true;
   const failed = [];
   for (const c of flattenAll(false).filter(hasSayDraft)) {
-    let r = await apiDecision(c.id, 'comment', sayDraft(c));
-    if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
+    const r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(strandedSay)) {
@@ -3783,7 +3699,7 @@ async function submitPage(alsoPending, receipt) {
   let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
   let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
   await loadStore();
-  const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
+  const doRound = pageRoundPending() > 0 || alsoPending;
   // The round carries open comments with new activity (general feedback,
   // replies), so a Send wakes the owner once; push only when there is no round.
   let doPush = !doRound && flattenStore(false).some(needsPush);
@@ -3794,15 +3710,13 @@ async function submitPage(alsoPending, receipt) {
     const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
-    // A page server older than this chrome leaves comments out of the round:
-    // push what is still unsent rather than lose it.
+    // New activity arriving during the round still needs to be sent.
     doPush = !!j && flattenStore(false).some(needsPush);
   }
   if (doPush) {
     const j = await apiPushAll(receiptPayload(pushLines, sendId));
     if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; sent.push(...pushLines); } else failed.push(...pushLines);
   }
-  // Nothing needed a call (an old server answers each verdict as it is posted).
   if (!doRound && !doPush) sent.push(...roundLines);
   if (last) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
@@ -3813,8 +3727,7 @@ async function submitPage(alsoPending, receipt) {
   const order = (it) => lines.indexOf(it);
   sent.sort((a, b) => order(a) - order(b));
   failed.sort((a, b) => order(a) - order(b));
-  const automatic = !!(CAPS && CAPS.automatic_round_delivery);
-  if (automatic && last) {
+  if (last) {
     // Legacy monitor counts do not prove that Orca accepted the prompt.
     delivered = false;
     try {
@@ -3823,7 +3736,7 @@ async function submitPage(alsoPending, receipt) {
       delivered = data.latest?.id === last.delivery_id && ['accepted', 'started', 'acknowledged'].includes(data.latest.state);
     } catch {}
   }
-  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic, any: !!last, send_id: sendId };
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -4138,8 +4051,6 @@ function sendCommentCountsToFrame() {
             notes: cardNotes(c).map(n => ({ key: n.key, text: n.text, pending: n.pending, deletable: !!n.deletable })),
           } : null,
           sayDraft: DRAFTS['say:' + c.id] || '',
-          // v2.19 round mode: verdict recorded but not yet sent.
-          roundPending: isRoundPending(c),
         };
       })
       .sort((a, b) => a.n - b.n);
@@ -4166,7 +4077,7 @@ function sendCommentCountsToFrame() {
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
   const board = boardLink();
-  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select',
+  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates,
     board: board ? { url: board.url, prefix: PROJECT.board.prefix } : null });
 }
 
@@ -4745,7 +4656,6 @@ window.AnnotateDocs = {
   answerLabel,
   displayPrompt,
   decisionOptions,
-  selectVerdictId,
   ticketsHTML,
   authorLabel,
   whoName,

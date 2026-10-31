@@ -77,17 +77,6 @@ let latestCounts = {};
 // so pin #7 on the page == card #7 in the drawer). `target` is the optional
 // creation-time inner element/click offset used for granular pin placement.
 let latestPins = {};
-// v2.19: true when the shell said the server supports review rounds; strip
-// verdicts are then posted with defer_push (parked until "Finish review").
-let latestRounds = false;
-// D2: true when the shell said the server offers the "changes" verdict, so
-// the strip's third button is "Request changes" instead of "Comment". Absent
-// from an old shell's message → false → the pre-D2 strip, unchanged.
-let latestChanges = false;
-// D3: true when the shell said the server understands the `select` verdict,
-// which a click on a custom option id posts. Absent from an old shell's
-// message → false → those clicks post `comment`, exactly as before D3.
-let latestSelect = false;
 // {anchorId: {state: 'review'|'waiting'|'done', label}} for question cards.
 let latestCardStates = {};
 // When a text selection opened the composer, swallow the click that ends it.
@@ -786,37 +775,20 @@ const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes
 // sync_server.py's revision reply text use, for a consistent read).
 const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
 const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
-const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
-const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
-// D2: mirrors shell.js textVerdictId()/canonicalOptionId(). "comment" and
-// "changes" are one slot; which spelling this page uses follows the server.
-function stripTextVerdictId() {
-  return latestChanges ? 'changes' : 'comment';
-}
+const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'changes'];
 function stripCanonicalOptionId(id) {
-  return (id === 'comment' || id === 'changes') ? stripTextVerdictId() : id;
+  return (id === 'comment' || id === 'changes') ? 'changes' : id;
 }
 // Comment ids currently mid-flight (POST sent, no response yet): rendered
 // disabled with "Sending…" even across a rebuild triggered by an unrelated
 // counts message arriving before the response does.
 const pendingDecisionIds = new Set();
-// In-progress "Comment" text/open-state per comment id, so an 8s-poll-driven
-// rebuild never silently discards what the reviewer is mid-typing.
-const stripDraftText = {};
-const stripFormOpen = {};
 // T-verdict-reversal: comment ids currently showing the change-verdict form
 // on the BODY strip instead of their resolved chip. Mirrors shell.js's
 // decisionChanging map so a rebuild triggered by an unrelated
 // annotate:comment-counts message doesn't snap a mid-correction strip back
 // to the chip.
 const stripChanging = {};
-// v2.19 per-item UI state that must survive a rebuild: optional-note form
-// open, and the note draft text.
-const stripNoteOpen = {};
-const stripNoteText = {};
-// D3: the standing Comment form's open state and draft, kept across a
-// rebuild exactly like the note above.
-const stripSayOpen = {};
 const stripSayText = {};
 // Card layout: which excerpts are expanded past their 4-line clamp, whether
 // a card's "Evidence (n)" list is open, and which evidence previews are open.
@@ -833,10 +805,9 @@ const DECISION_IMPACTS = ['low', 'medium', 'high'];
 // Same normalization as shell.js decisionOptions(): legacy string options
 // keep their exact pre-2.19 labels; object options bring label/consequence/
 // style; an object option with an id outside accept/reject/comment is a
-// "custom" choice posted as a comment verdict naming the selection.
+// "custom" choice posted as a select verdict naming the selection.
 function stripDecisionOptions(dr) {
-  const fallback = latestChanges ? DECISION_OPTIONS_DEFAULT_CHANGES : DECISION_OPTIONS_DEFAULT;
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : fallback;
+  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_DEFAULT;
   const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
   const out = [];
   for (const o of raw) {
@@ -1249,91 +1220,17 @@ async function stripApiDecision(id, verdict, text, optionId) {
       headers: { 'Content-Type': 'application/json' },
       // v2.19 round mode: park the verdict instead of pushing per click.
       body: JSON.stringify({ verdict, text: text || undefined, option_id: optionId,
-        evidence: (META.evidence || {})[id], ...(latestRounds ? { defer_push: true } : {}) }),
+        evidence: (META.evidence || {})[id], defer_push: true }),
     });
-    if (r.status === 404 || r.status === 405) return { fallback: true };
     if (r.ok) return await r.json();
   } catch (e) { console.warn('[adapter] decision POST failed', e); }
   return null;
 }
-async function stripApiReply(id, text) {
-  try {
-    const r = await fetch('./api/comments/' + encodeURIComponent(id) + '/reply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-    if (r.ok) return await r.json();
-  } catch (e) { console.warn('[adapter] fallback reply failed', e); }
-  return null;
-}
-async function stripApiPutComment(id, patch) {
-  try {
-    const r = await fetch('./api/comments/' + encodeURIComponent(id), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (r.ok) return await r.json();
-  } catch (e) { console.warn('[adapter] fallback PUT failed', e); }
-  return null;
-}
-async function stripApiPushSingle(id) {
-  try {
-    const r = await fetch('./api/comments/' + encodeURIComponent(id) + '/push', { method: 'POST' });
-    if (r.ok) return await r.json();
-  } catch (e) { console.warn('[adapter] fallback push failed', e); }
-  return null;
-}
-// OLD-SERVER FALLBACK (server predates /decision, 404/405): same composite
-// the rail card falls back to — reply + status PUT + push. Mirrors
-// shell.js's apiDecisionFallback exactly so both surfaces degrade the same
-// way against an un-upgraded server.
-async function stripApiDecisionFallback(id, verdict, text) {
-  const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
-  const isText = verdict === 'comment' || verdict === 'changes';
-  let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
-    : verdict === 'comment' ? '💬 Answer in words: ' + text : verdictText[verdict];
-  if (!isText && text) replyText += '\n\n' + text;
-  const replied = await stripApiReply(id, replyText);
-  if (!replied) return null;
-  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open', changes: 'open' };
-  await stripApiPutComment(id, { status: statusMap[verdict] });
-  return await stripApiPushSingle(id);
-}
-
 function setStripItemDisabled(itemEl, disabled) {
   itemEl.querySelectorAll('button').forEach(b => { b.disabled = disabled; });
 }
 
-// v2.19: "Pending — not sent" chip + "Send now" for a verdict parked in the
-// current review round. Send now = the existing single-card push route; the
-// server clears round_pending and the shell refresh removes the chip.
-// Feedback prototype (A2/B2): no "Pending — not sent" chip and no "Send
-// now" — a pending verdict waits for the one Send in the shell header.
-function appendPendingControls(itemEl, id) {
-  return;
-  // eslint-disable-next-line no-unreachable
-  const pend = document.createElement('span');
-  pend.className = 'annotate-decision-pending';
-  pend.textContent = 'Pending — not sent';
-  pend.title = 'Recorded but not sent to the agent yet. Finish the review in the feedback rail to send every pending verdict at once.';
-  itemEl.appendChild(pend);
-  const send = makeStripBtn('Send now', 'annotate-decision-sendnow');
-  send.title = 'Send just this verdict now, outside the round';
-  send.addEventListener('click', async () => {
-    send.disabled = true;
-    send.textContent = 'Sending…';
-    const j = await stripApiPushSingle(id);
-    if (!j) { send.disabled = false; send.textContent = 'Send now'; return; }
-    pend.remove();
-    send.remove();
-    postToParent({ type: 'annotate:decision-posted', commentId: id });
-  });
-  itemEl.appendChild(send);
-}
-
-function swapStripItemToResolved(itemEl, verdict, deliveryMsg, pendingId) {
+function swapStripItemToResolved(itemEl, verdict, deliveryMsg) {
   // The question stays on screen above its verdict, as on a rebuilt strip.
   const promptEl = itemEl.querySelector(':scope > .annotate-decision-prompt');
   itemEl.innerHTML = '';
@@ -1343,7 +1240,6 @@ function swapStripItemToResolved(itemEl, verdict, deliveryMsg, pendingId) {
   chip.className = 'annotate-verdict-chip verdict-' + verdict;
   chip.textContent = DECISION_VERDICT_LABEL[verdict] || verdict;
   itemEl.appendChild(chip);
-  if (pendingId) appendPendingControls(itemEl, pendingId);
   if (deliveryMsg) {
     const note = document.createElement('span');
     note.className = 'annotate-decision-delivery';
@@ -1362,8 +1258,7 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   delete stripChanging[id];
   swapStripItemToResolved(itemEl, verdict, null);
 
-  let result = await stripApiDecision(id, verdict, text, optionId);
-  if (!result || result.fallback) result = await stripApiDecisionFallback(id, verdict, text);
+  const result = await stripApiDecision(id, verdict, text, optionId);
   pendingDecisionIds.delete(id);
   const live = document.querySelector('[data-strip-item="' + CSS.escape(id) + '"]') || itemEl;
 
@@ -1379,11 +1274,7 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   delete stripSayText[id];
   postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
 
-  delete stripDraftText[id];
-  delete stripFormOpen[id];
   delete stripChanging[id]; // resolved again (first vote or a correction) — drop back to the chip
-  delete stripNoteOpen[id];
-  delete stripNoteText[id];
   const deferred = result.delivery === 'deferred' || !!(result.decision && result.decision.round_pending);
   const delivered = result.delivery === 'active_monitor';
   // Optimistic in-place swap (don't wait for the counts message this
@@ -1392,7 +1283,7 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
   // Delivery note rides on the resolved strip briefly since the swap
   // destroys the feedback node.
   if (deferred) {
-    swapStripItemToResolved(live, verdict, null, id);
+    swapStripItemToResolved(live, verdict, null);
   } else {
     swapStripItemToResolved(live, verdict, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed');
   }
@@ -1817,7 +1708,6 @@ function buildDecisionItemEl(entry) {
       });
       item.appendChild(changeBtn);
     }
-    if (entry.roundPending) appendPendingControls(item, id);
     return item;
   }
 
@@ -1975,14 +1865,12 @@ function buildDecisionItemEl(entry) {
       });
       btnRow.appendChild(b);
     } else {
-      // custom option id → the `select` verdict naming the choice, or the
-      // pre-D3 `comment` text against a server that predates it.
+      // Custom option id → the `select` verdict naming the choice.
       const b = makeOptionBtn(o, 'annotate-decision-custom' + (o.style ? ' annotate-style-' + o.style : ''), isRec(o));
       b.addEventListener('click', () => {
         const n = noteText();
-        const v = latestSelect ? 'select' : 'comment';
-        const text = (v === 'select' ? o.label : 'Selected: ' + o.label) + (n ? '\n\n' + n : '');
-        submitStripDecision(id, v, text, item, o.id);
+        const text = o.label + (n ? '\n\n' + n : '');
+        submitStripDecision(id, 'select', text, item, o.id);
       });
       btnRow.appendChild(b);
     }
@@ -2717,9 +2605,6 @@ function wireBridge() {
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
-      latestRounds = data.rounds === true; // absent from an old shell → legacy posting
-      latestChanges = data.changes === true; // absent from an old shell → "Comment"
-      latestSelect = data.select === true;   // absent from an old shell → `comment`
       latestCardStates = data.cardStates || {};
       linkBoardIds(data.board);
       // Strips first: they can insert real sibling rows/elements that shift

@@ -510,9 +510,8 @@
     UI.wireSections(rail);
     rail.querySelectorAll('[data-q-opt]').forEach(b => b.addEventListener('click', async () => {
       const o = q.decision_request.options.find(x => x.id === b.dataset.qOpt);
-      const v = d.selectVerdictId();
-      const r = await d.decide(q.id, v, v === 'select' ? o.label : 'Selected: ' + o.label);
-      if (!r || r.fallback) { const f = $('#q-feedback'); if (f) { f.textContent = 'Failed to send — try again.'; f.classList.add('is-error'); } return; }
+      const r = await d.decide(q.id, 'select', o.label);
+      if (!r) { const f = $('#q-feedback'); if (f) { f.textContent = 'Failed to send — try again.'; f.classList.add('is-error'); } return; }
       await d.refreshStore();
     }));
     const ch = $('#q-change');
@@ -544,9 +543,8 @@
   function wireQ(rail, q) {
     rail.querySelectorAll('[data-q-opt]').forEach(b => b.addEventListener('click', async () => {
       const o = q.decision_request.options.find(x => x.id === b.dataset.qOpt);
-      const v = D().selectVerdictId();
-      const r = await D().decide(q.id, v, v === 'select' ? o.label : 'Selected: ' + o.label);
-      if (r && !r.fallback) await D().refreshStore();
+      const r = await D().decide(q.id, 'select', o.label);
+      if (r) await D().refreshStore();
     }));
   }
   function startComment(range) {

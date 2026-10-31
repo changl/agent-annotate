@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplification step 2: remove old-server browser fallbacks, unreachable Send now controls and unused inline-card state. A failed decision request keeps its draft without retrying through reply/status/push routes.
+
 - Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.
 - Faster long pages, measured on a copy of FLD (1,418 comments, 535 versions):
   - Opening History went from a 1.4 s freeze to none. Each version's counts used to scan every comment twice.

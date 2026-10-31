@@ -478,6 +478,35 @@ def test_an_answer_lost_on_the_way_back_is_not_posted_twice(tmp_path):
         assert not [k for k in _drafts(page) if k.startswith("sending:")]
 
 
+@pytest.mark.parametrize("surface", ["rail", "body", "send"])
+def test_lost_decision_response_never_retries_as_reply_put_push(tmp_path, surface):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, restart):
+        writes = []
+        page.on("request", lambda r: writes.append(r.url.split("/api/")[-1])
+                if "/api/" in r.url and r.method in ("POST", "PUT") else None)
+        if surface == "body":
+            frame = page.frame_locator("#content-frame")
+            frame.locator('textarea[data-strip-say="question-11"]').fill(SAY)
+            page.frames[1].evaluate(SLOW_POSTS, [r"/api/comments/question-11/decision", 200, "lose"])
+            frame.locator('[data-strip-item="question-11"] .annotate-decision-btns button').first.click()
+            frame.locator('[data-strip-item="question-11"] .annotate-decision-feedback.is-error').wait_for()
+        else:
+            _slow(page, r"/api/comments/question-11/decision", 200, "lose")
+            page.locator('[data-decision-say-ta="question-11"]').fill(SAY)
+            if surface == "rail":
+                page.locator('#comment-list [data-comment-id="question-11"] .decision-btn').first.click()
+                page.locator('#comment-list [data-comment-id="question-11"] .decision-feedback.is-error').wait_for()
+            else:
+                page.evaluate("() => window.AnnotateDocs.submitPage(false, [])")
+        card = _store(directory)["anchors"]["d:q11"][0]
+        assert SAY in card["decision"]["text"]
+        assert len(card["replies"]) == 1
+        assert [url.split("?")[0] for url in writes if "question-11" in url] == [
+            "comments/question-11/decision"]
+        assert _drafts(page)["say:question-11"] == SAY
+
+
 def test_a_reload_mid_post_gives_back_only_what_the_server_lacks(tmp_path):
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (page, base, restart):
