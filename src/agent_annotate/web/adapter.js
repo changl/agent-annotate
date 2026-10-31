@@ -1188,6 +1188,29 @@ function ensureStripStyle() {
     .annotate-decision-change:hover { background: var(--color-base-300) !important; text-decoration: none !important; }
     .annotate-decision-changing-note { background: var(--color-base-200) !important; color: var(--color-base-content) !important; border: 1px solid var(--line) !important; }
     .annotate-decision-cancel { color: var(--color-base-content) !important; }
+    /* Answered card: your choice, your notes, add a note (2026-10-30). Buttons
+       keep their words on one line; the note text takes the rest. */
+    .annotate-decision-cancel, .annotate-answer-change, .annotate-note-add, .annotate-note-cancel, .annotate-note-save {
+      white-space: nowrap !important; flex: 0 0 auto !important; width: auto !important; font-size: calc(11px * var(--aa-text, 1)) !important;
+    }
+    .annotate-answer-row { display: flex !important; align-items: center !important; flex-wrap: wrap !important; gap: 6px 8px !important; margin-top: 6px !important; }
+    .annotate-answer-lbl { font-size: calc(10px * var(--aa-text, 1)) !important; font-weight: 700 !important; text-transform: uppercase !important; letter-spacing: .03em !important; color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
+    .annotate-answer-choice { font-weight: 700 !important; font-size: calc(12px * var(--aa-text, 1)) !important; }
+    .annotate-answer-choice.is-none { font-weight: 400 !important; color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
+    .annotate-answer-change, .annotate-note-cancel { background: transparent !important; color: var(--link) !important; font-weight: 600 !important; padding: 4px 8px !important; border-radius: .25rem !important; }
+    .annotate-answer-notes { display: flex !important; flex-direction: column !important; gap: 6px !important; margin-top: 10px !important; }
+    .annotate-answer-note { display: flex !important; align-items: flex-start !important; gap: 8px !important; padding: 8px 10px !important; border-radius: .375rem !important; background: var(--color-base-200) !important; }
+    .annotate-answer-note.is-editing { flex-direction: column !important; align-items: stretch !important; }
+    .annotate-answer-note-txt { flex: 1 1 auto !important; min-width: 0 !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; font-size: calc(12px * var(--aa-text, 1)) !important; line-height: 1.45 !important; }
+    .annotate-note-actions { display: flex !important; align-items: center !important; justify-content: flex-end !important; gap: 4px !important; flex: 0 0 auto !important; }
+    .annotate-note-icon { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 28px !important; height: 28px !important; padding: 0 !important; background: transparent !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; border-radius: .25rem !important; }
+    .annotate-note-icon:hover { background: var(--color-base-300) !important; }
+    .annotate-note-save { background: var(--color-primary) !important; color: var(--color-primary-content) !important; font-weight: 600 !important; padding: 4px 12px !important; border-radius: .25rem !important; }
+    .annotate-send-state { display: inline-block !important; padding: 0 6px !important; border-radius: 999px !important; border: 1px solid var(--line) !important; font-size: calc(10px * var(--aa-text, 1)) !important; font-weight: 600 !important; line-height: 1.6 !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; white-space: nowrap !important; }
+    .annotate-send-state.is-pending { background: var(--color-warning) !important; border-color: var(--color-warning) !important; color: var(--color-warning-content) !important; }
+    .annotate-add-note { display: flex !important; align-items: flex-end !important; gap: 8px !important; margin-top: 10px !important; }
+    .annotate-add-note .annotate-decision-ta { flex: 1 1 auto !important; margin-top: 0 !important; }
+    .annotate-note-add { background: var(--color-base-300) !important; color: var(--color-base-content) !important; font-weight: 600 !important; padding: 6px 12px !important; border-radius: .25rem !important; min-height: 2.25rem !important; }
   `;
   document.head.appendChild(style);
 }
@@ -1347,8 +1370,11 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
     return;
   }
 
-  delete stripSayText[id];
-  postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
+  // A new choice on an answered card leaves its add-note box as it was.
+  if (!wasChanging) {
+    delete stripSayText[id];
+    postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
+  }
 
   delete stripDraftText[id];
   delete stripFormOpen[id];
@@ -1634,12 +1660,133 @@ function buildEvidenceEl(entry, ev) {
 
 // Builds ONE decision item (either the live accept/reject/comment controls,
 // or — once resolved — a compact verdict chip) for a single comment entry.
+// An answered card: your choice (Change keeps your notes), then your notes,
+// each with Pending/Sent, Edit and (while unsent) Delete, then "Add a note".
+// Adding never replaces an earlier note (Chang, 2026-10-30). The shell does
+// the posting; this only draws and forwards. Agent text via textContent only.
+const stripEditingNote = {};
+function stateTagEl(pending) {
+  const s = document.createElement('span');
+  s.className = 'annotate-send-state' + (pending ? ' is-pending' : '');
+  s.textContent = pending ? 'Pending' : 'Sent';
+  s.title = pending ? 'Saved here. Goes to the agent when you press Send.' : 'Sent to the agent';
+  return s;
+}
+function iconBtn(svg, label, cls) {
+  const b = makeStripBtn('', 'annotate-note-icon ' + (cls || ''));
+  b.innerHTML = svg; // static icon markup, no page data
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  return b;
+}
+const TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+function buildAnswerEl(entry, item) {
+  const id = entry.id;
+  const a = entry.answer;
+  item.classList.add('annotate-decision-resolved', 'annotate-answered');
+  if (entry.decisionRequest) item.appendChild(buildPromptEl(entry, entry.decisionRequest));
+
+  const row = document.createElement('div');
+  row.className = 'annotate-answer-row';
+  const lbl = document.createElement('span');
+  lbl.className = 'annotate-answer-lbl';
+  lbl.textContent = 'Your choice';
+  const val = document.createElement('span');
+  val.className = 'annotate-answer-choice' + (a.choice ? '' : ' is-none');
+  val.textContent = a.choice || 'None (answered in words)';
+  row.append(lbl, val);
+  if (a.choice) row.appendChild(stateTagEl(a.choicePending));
+  const change = makeStripBtn(a.choice ? 'Change' : 'Choose', 'annotate-answer-change');
+  change.addEventListener('click', () => { stripChanging[id] = true; renderDecisionStrips(); });
+  row.appendChild(change);
+  item.appendChild(row);
+
+  if (a.notes.length) {
+    const list = document.createElement('div');
+    list.className = 'annotate-answer-notes';
+    const nl = document.createElement('span');
+    nl.className = 'annotate-answer-lbl';
+    nl.textContent = 'Your notes';
+    list.appendChild(nl);
+    for (const n of a.notes) {
+      const k = id + '|' + n.key;
+      const note = document.createElement('div');
+      note.className = 'annotate-answer-note';
+      const actions = document.createElement('div');
+      actions.className = 'annotate-note-actions';
+      if (typeof stripEditingNote[k] === 'string') {
+        note.classList.add('is-editing');
+        const ta = document.createElement('textarea');
+        ta.className = 'annotate-decision-ta annotate-note-edit';
+        ta.rows = 3;
+        ta.value = stripEditingNote[k];
+        ta.setAttribute('aria-label', 'Edit your note');
+        ta.addEventListener('input', () => { stripEditingNote[k] = ta.value; });
+        const cancel = makeStripBtn('Cancel', 'annotate-note-cancel');
+        cancel.addEventListener('click', () => { delete stripEditingNote[k]; renderDecisionStrips(); });
+        const save = makeStripBtn('Save', 'annotate-note-save');
+        save.addEventListener('click', () => {
+          const text = ta.value.trim();
+          if (!text) return;
+          save.disabled = true;
+          postToParent({ type: 'annotate:note', action: 'edit', commentId: id, key: n.key, text });
+        });
+        actions.append(cancel, save);
+        note.append(ta, actions);
+      } else {
+        const txt = document.createElement('div');
+        txt.className = 'annotate-answer-note-txt';
+        txt.textContent = n.text;
+        actions.appendChild(stateTagEl(n.pending));
+        const edit = iconBtn('', 'Edit note', 'annotate-note-edit-btn');
+        edit.appendChild(pencilSvg());
+        edit.addEventListener('click', () => { stripEditingNote[k] = n.text; renderDecisionStrips(); });
+        actions.appendChild(edit);
+        if (n.deletable) {
+          const del = iconBtn(TRASH_SVG, 'Delete note', 'annotate-note-delete-btn');
+          del.addEventListener('click', () => postToParent({ type: 'annotate:note', action: 'delete', commentId: id, key: n.key }));
+          actions.appendChild(del);
+        }
+        note.append(txt, actions);
+      }
+      list.appendChild(note);
+    }
+    item.appendChild(list);
+  }
+
+  // Add a note: the same draft as the rail card's box, so Send carries it too.
+  const add = document.createElement('div');
+  add.className = 'annotate-add-note';
+  const ta = document.createElement('textarea');
+  ta.className = 'annotate-decision-ta annotate-decision-cmt';
+  ta.rows = 1;
+  ta.placeholder = 'Add a note…';
+  ta.setAttribute('aria-label', 'Add a note');
+  ta.dataset.stripSay = id;
+  ta.value = typeof stripSayText[id] === 'string' ? stripSayText[id] : (entry.sayDraft || '');
+  ta.addEventListener('input', () => {
+    stripSayText[id] = ta.value;
+    postToParent({ type: 'annotate:say-draft', commentId: id, text: ta.value });
+  });
+  const addBtn = makeStripBtn('Add note', 'annotate-note-add');
+  addBtn.addEventListener('click', () => {
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    addBtn.disabled = true;
+    postToParent({ type: 'annotate:note', action: 'add', commentId: id, text });
+  });
+  add.append(ta, addBtn);
+  item.appendChild(add);
+  return item;
+}
+
 function buildDecisionItemEl(entry) {
   const id = entry.id;
   const item = document.createElement('div');
   item.className = 'annotate-decision-item';
   item.dataset.stripItem = id;
 
+  if (entry.decisionVerdict && !stripChanging[id] && entry.answer) return buildAnswerEl(entry, item);
   if (entry.decisionVerdict && !stripChanging[id]) {
     item.classList.add('annotate-decision-resolved');
     // The strip replaces the generated card in the body, so the question
@@ -1711,7 +1858,7 @@ function buildDecisionItemEl(entry) {
     const note = document.createElement('div');
     note.className = 'annotate-decision-changing-note';
     const label = document.createElement('span');
-    label.textContent = 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
+    label.textContent = entry.answer ? 'Pick a new choice. Your notes stay.' : 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
       ? '☑ ' + entry.answerText
       : (DECISION_VERDICT_TEXT[entry.decisionVerdict] || entry.decisionVerdict));
     note.appendChild(label);
@@ -1732,9 +1879,12 @@ function buildDecisionItemEl(entry) {
     item.appendChild(ctxEl);
   }
 
-  const opts = stripDecisionOptions(dr);
+  // Changing the choice of an answered card: the options only, and the note
+  // that went with the old choice goes with the new one.
+  const changingAnswer = !!(stripChanging[id] && entry.answer);
+  const opts = stripDecisionOptions(dr).filter(o => !(changingAnswer && (o.id === 'comment' || o.id === 'changes')));
   // Every card offers "Answer in words" as its last choice, as the rail does.
-  if (!opts.some(o => o.id === 'comment')) {
+  if (!changingAnswer && !opts.some(o => o.id === 'comment')) {
     opts.push({ id: 'comment', label: DECISION_BTN_TEXT.comment, plain: DECISION_PLAIN_LABEL.comment, consequence: '', style: null, custom: false });
   }
   const hasCons = opts.some(o => !!o.consequence);
@@ -1795,6 +1945,7 @@ function buildDecisionItemEl(entry) {
   feedback.className = 'annotate-decision-feedback';
 
   const noteText = () => {
+    if (changingAnswer) return entry.answer.note || null;
     const t = (ta.value || '').trim();
     return t || null;
   };
@@ -1835,8 +1986,10 @@ function buildDecisionItemEl(entry) {
   }
 
   if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
-  item.appendChild(ta);
-  item.appendChild(hint);
+  if (!changingAnswer) {
+    item.appendChild(ta);
+    item.appendChild(hint);
+  }
   item.appendChild(feedback);
 
   if (pendingDecisionIds.has(id)) {
@@ -2192,6 +2345,14 @@ function revealAnchor(el) {
   return clicked;
 }
 
+// Scrolls this document only. scrollIntoView also scrolls every ancestor,
+// the shell's page included, which pushed the shell header out of view.
+function scrollInFrame(el, block) {
+  const r = el.getBoundingClientRect();
+  const top = block === 'start' ? r.top : r.top - (window.innerHeight - r.height) / 2;
+  window.scrollTo({ top: Math.max(0, window.scrollY + top), behavior: 'smooth' });
+}
+
 // `back` ({commentId, n, from: 'strip'|'rail'}) is set by an evidence "Go to":
 // the target then carries a "Back to #N" marker that returns to the card.
 function scrollToAnchor(anchorId, target, back) {
@@ -2241,9 +2402,9 @@ function scrollToAnchor(anchorId, target, back) {
     } else if (marker && marker.row !== marker.pill &&
                el.getBoundingClientRect().height > window.innerHeight * 0.6) {
       // Too tall to center with its marker in view: start at the marker.
-      marker.row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollInFrame(marker.row, 'start');
     } else {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollInFrame(el, 'center');
     }
     clearGotoHighlight();
     el.classList.add('active');
@@ -2352,7 +2513,7 @@ function goBackToCard(back) {
   if (!item) return;
   expandUnchangedAncestor(item);
   revealAnchor(item);
-  item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  scrollInFrame(item, 'center');
   flashEl(item);
 }
 
@@ -2542,6 +2703,8 @@ function wireBridge() {
       setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
+    } else if (data.type === 'annotate:note-saved') {
+      if (data.ok) { delete stripEditingNote[data.commentId + '|' + data.key]; renderDecisionStrips(); }
     } else if (data.type === 'annotate:say-draft-set') {
       // A1: the rail card's comment box changed; mirror it here.
       if (data.commentId) stripSayText[data.commentId] = typeof data.text === 'string' ? data.text : '';
@@ -2811,7 +2974,7 @@ function jumpToDiagramCluster(btn) {
   // semantic cluster. Without this first step the internal scroll could work
   // while the user remained several screens above it, making the button look
   // inert.
-  container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollInFrame(container, 'start');
   const cr = container.getBoundingClientRect();
   const tr = target.getBoundingClientRect();
   const left = container.scrollLeft + tr.left - cr.left - (container.clientWidth - tr.width) / 2;
@@ -2952,6 +3115,54 @@ function wrapScrollTables() {
   window.addEventListener('resize', () => document.querySelectorAll('.unified-table-scroll').forEach(markTableEdges));
   scheduleBadgeRefresh();
 }
+// Code and terminal blocks get a copy button, top right (GitHub, VitePress,
+// Docusaurus): it shows on hover or focus, always on touch, and turns into a
+// check with "Copied" for 2 s.
+const COPY_ICONS = '<svg class="aa-copy-i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>'
+  + '<svg class="aa-copied-i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg>';
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  // No Clipboard API (plain-http page, or blocked): the selection fallback.
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:-9999px;font-size:12pt';
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  return ok;
+}
+function wireCopyButtons() {
+  let live = document.getElementById('aa-copy-live');
+  if (!live) {
+    live = document.createElement('span');
+    live.id = 'aa-copy-live';
+    live.className = 'aa-sr';
+    live.setAttribute('role', 'status');
+    document.body.append(live);
+  }
+  document.querySelectorAll('pre').forEach(pre => {
+    if (pre.querySelector(':scope > .aa-copy') || pre.closest('[data-annotate-strip]')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'aa-copy';
+    btn.title = btn.ariaLabel = 'Copy';
+    btn.innerHTML = COPY_ICONS;
+    btn.addEventListener('click', async () => {
+      const src = pre.cloneNode(true);
+      src.querySelectorAll('.aa-copy').forEach(b => b.remove());
+      const ok = await copyText(src.textContent.replace(/\n$/, ''));
+      btn.classList.toggle('is-copied', ok);
+      btn.title = btn.ariaLabel = live.textContent = ok ? 'Copied' : 'Copy failed';
+      clearTimeout(btn._t);
+      btn._t = setTimeout(() => { btn.classList.remove('is-copied'); btn.title = btn.ariaLabel = 'Copy'; live.textContent = ''; }, 2000);
+    });
+    pre.classList.add('aa-copy-host');
+    pre.append(btn);
+  });
+}
 function markTableEdges(wrap) {
   const rest = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft;
   const wide = wrap.scrollWidth - wrap.clientWidth > 1;
@@ -2981,6 +3192,16 @@ function ensureAffordanceStyle() {
     .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;hyphens:none!important;min-width:0}
     @media (max-width:480px){.unified-table-scroll th,.unified-table-scroll td{padding-left:4px!important;padding-right:4px!important}}
     .unified-table-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:4px 0 14px 28px;color:var(--color-base-content)}
+    pre{white-space:pre-wrap!important;overflow-wrap:anywhere}
+    pre.aa-copy-host{position:relative;padding-right:44px!important}
+    .aa-copy{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:1px solid var(--color-base-300);border-radius:6px;background:var(--color-base-100);color:var(--color-base-content);cursor:pointer;opacity:0;transition:opacity .15s}
+    .aa-copy svg{width:15px;height:15px}
+    pre:hover>.aa-copy,.aa-copy:focus-visible,.aa-copy.is-copied{opacity:1}
+    @media (hover:none){.aa-copy{opacity:1}}
+    .aa-copy:focus-visible{outline:2px solid var(--color-primary);outline-offset:1px}
+    .aa-copy .aa-copied-i,.aa-copy.is-copied .aa-copy-i{display:none}
+    .aa-copy.is-copied .aa-copied-i{display:block;color:var(--color-success,currentColor)}
+    .aa-sr{position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   `;
   document.head.append(style);
 }
@@ -3329,6 +3550,7 @@ async function init() {
   wirePageLinks();
   ensureAffordanceStyle();
   wrapScrollTables();
+  wireCopyButtons();
   installBadgeMutObs();
   wireHoverLinking();
   // Before the first paint settles, so a later version opens compact.

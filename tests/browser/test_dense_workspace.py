@@ -60,12 +60,13 @@ def test_feedback_first_dense_workspace(tmp_path, width, theme):
         done = section(page, "done")
         assert done.locator(".citem").count() == 1
         assert done.locator(".citem").get_attribute("data-comment-id") == "answered-old"
+        card.locator('[data-action="open-card"]').click()
         card.locator('[data-decision-action="change"]').click()
-        card.locator(".decision-say-ta").fill("Wait for the copy review.")
         card.locator(".decision-btn").nth(1).click()
-        _wait_decision(page, directory, "select", "Ship later\n\nWait for the copy review.")
+        _wait_decision(page, directory, "select", "Ship later")
         section(page, "ready")
-        card.locator('[data-decision-action="change"]').click()
+        # Words are notes now (2026-10-30): typed text adds on, never replaces.
+        card.locator('[data-action="open-card"]').click()
         draft = "Please also check the tablet layout."
         card.locator(".decision-say-ta").fill(draft)
         page.wait_for_function(

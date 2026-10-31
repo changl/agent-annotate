@@ -317,8 +317,42 @@ def _iso_timestamp(value: Any) -> float:
         return 0.0
 
 
+# Replies the decision route writes itself; the reviewer's own notes are the rest.
+_GENERATED_REPLY = re.compile(r"^(💬 Answer in words: |☑ Selected: |↻ Changes requested: |✓ Accepted|✗ Rejected|↺ Changed to )")
+
+
+def _reviewer_notes(comment: dict) -> list[dict]:
+    return [r for r in (comment.get("replies") if isinstance(comment.get("replies"), list) else [])
+            if isinstance(r, dict) and not str(r.get("author", "")).startswith("agent:")
+            and not _GENERATED_REPLY.match(str(r.get("text", "")))]
+
+
+def _note_unsent(comment: dict, reply: dict) -> bool:
+    # New notes carry sent_at (None until a Send delivers them); older ones
+    # fall back to the card's last send time.
+    if "sent_at" in reply:
+        return not reply["sent_at"]
+    flagged = _iso_timestamp(comment.get("flagged_at")) if comment.get("flagged_at") else 0.0
+    return max(_iso_timestamp(reply.get("ts")), _iso_timestamp(reply.get("edited_at"))) > flagged
+
+
+def _unsent_notes(comment: dict) -> list[str]:
+    """The reviewer's notes added or edited since this card was last sent, in
+    order. Every one goes out: a second note never hides the first (Chang,
+    2026-10-30)."""
+    return [str(r.get("text", "")) + (" (edited)" if r.get("edited_at") else "")
+            for r in _reviewer_notes(comment) if _note_unsent(comment, r)]
+
+
+def _mark_notes_sent(comment: dict, now: str) -> None:
+    # Only notes that track it; older replies keep going by the card's send time.
+    for r in _reviewer_notes(comment):
+        if "sent_at" in r and not r["sent_at"]:
+            r["sent_at"] = now
+
+
 def _push_answers(comments: list[dict]) -> list[dict]:
-    """History answers for pushed comments: the latest human word on each."""
+    """History answers for pushed comments: every unsent human word on each."""
     from .categories import comment_category
     answers = []
     for comment in comments:
@@ -327,8 +361,11 @@ def _push_answers(comments: list[dict]) -> list[dict]:
         human_replies = [reply for reply in replies
                          if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")]
         reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
-        if _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
-            decision = {"verdict": "comment", "text": reply.get("text", ""), "by": reply.get("author")}
+        notes = _unsent_notes(comment)
+        if notes and comment.get("decision_request"):
+            decision = {"verdict": "comment", "text": "\n\n".join(notes), "by": reply.get("author")}
+        elif _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
+            decision = {"verdict": "comment", "text": "\n\n".join(notes) or reply.get("text", ""), "by": reply.get("author")}
         answers.append({"comment_id": comment["id"], "number": comment.get("number"),
             "category": comment_category(comment),
             "prompt": (comment.get("decision_request") if isinstance(comment.get("decision_request"), dict)
@@ -360,6 +397,8 @@ def _comment_needs_push(comment: dict) -> bool:
             latest = max(latest, _iso_timestamp(reply.get("ts")))
     if decision and not str(decision.get("by") or "").startswith("agent:"):
         latest = max(latest, _iso_timestamp(decision.get("ts")))
+    if any(r.get("sent_at", True) is None for r in _reviewer_notes(comment)):
+        return True
     return bool(latest) and (not comment.get("flagged_for_session") or latest > flagged_at)
 
 
@@ -1380,15 +1419,97 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
+        if self.v2_mode and route_path.startswith("/api/comments/") and "/replies/" in route_path:
+            return self._v2_reply_note(route_path, "PUT")
         if self.v2_mode and route_path.startswith("/api/comments/"):
             cid = route_path[len("/api/comments/"):]
             return self._v2_put_comment(cid, parsed)
         self._respond(404, b'{"error":"Not found"}')
 
+    def do_DELETE(self):
+        if not self._allow_request():
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        route_path = self._strip_base(parsed.path)
+        if self._refuse_moved_write(route_path):
+            return
+        if self.v2_mode and route_path.startswith("/api/comments/") and "/replies/" in route_path:
+            return self._v2_reply_note(route_path, "DELETE")
+        if self.v2_mode and route_path.startswith("/api/comments/"):
+            return self._v2_delete_comment(route_path[len("/api/comments/"):])
+        self._respond(404, b'{"error":"Not found"}')
+
+    def _v2_reply_note(self, route_path: str, method: str):
+        """A reviewer's note on a card (one of their replies), by position:
+        PUT edits it and it goes with the next Send; DELETE removes it while it
+        is unsent. `ts` must match, so a shifted list never hits another note."""
+        cid, _, rest = route_path[len("/api/comments/"):].partition("/replies/")
+        try:
+            index = int(rest)
+        except ValueError:
+            return self._respond(404, b'{"error":"Not found"}')
+        payload = {}
+        if method == "PUT":
+            payload, err = self._read_json_body()
+            if err:
+                return
+            if not isinstance(payload, dict):
+                return self._respond(400, b'{"error":"expected object"}')
+        ts = payload.get("ts") or urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("ts", [None])[0]
+        author = self._identity()["email"] or "anonymous"
+        with _locked_store(self.artifact_dir):
+            store = self._v2_load()
+            c = next((c for items in store["anchors"].values() for c in items if c.get("id") == cid), None)
+            replies = (c or {}).get("replies") or []
+            if c is None or not 0 <= index < len(replies) or replies[index].get("ts") != ts:
+                return self._respond(404, b'{"error":"note not found"}')
+            reply = replies[index]
+            if reply.get("author") != author:
+                return self._respond(403, b'{"error":"only your own notes can be changed"}')
+            if method == "PUT":
+                text = str(payload.get("text") or "").strip()
+                if not text:
+                    return self._respond(400, b'{"error":"text required"}')
+                reply["text"] = text
+                reply["edited_at"] = _now_iso()
+                reply["sent_at"] = None  # the edit goes with the next Send
+            else:
+                if not _note_unsent(c, reply):
+                    return self._respond(409, b'{"error":"a sent note is edited, not deleted"}')
+                replies.pop(index)
+            self._v2_save(store)
+        _bus_append(self.bus_dir, self.slug, {"event": "comment_reply_edited" if method == "PUT" else "comment_reply_deleted",
+                                              "comment_id": cid, "reply_ts": ts, "author": author, **self._session_fields()})
+        self._respond(200, json.dumps({"ok": True}).encode())
+
+    def _v2_delete_comment(self, comment_id: str):
+        """A reviewer deletes their own comment before it is sent. Anything the
+        agent has seen through a Send, or answered, is archived instead."""
+        author = self._identity()["email"] or "anonymous"
+        with _locked_store(self.artifact_dir):
+            store = self._v2_load()
+            found = next(((aid, c) for aid, items in store["anchors"].items() for c in items
+                          if c.get("id") == comment_id), None)
+            if not found:
+                return self._respond(404, b'{"error":"not found"}')
+            anchor_id, c = found
+            if c.get("author") != author:
+                return self._respond(403, b'{"error":"only your own comments can be deleted"}')
+            if (c.get("flagged_for_session") or c.get("replies") or c.get("response_text") or c.get("decision_request")
+                    or c.get("decision") or c.get("round_pending")):
+                return self._respond(409, b'{"error":"sent or answered comments are archived, not deleted"}')
+            store["anchors"][anchor_id].remove(c)
+            if not store["anchors"][anchor_id]:
+                del store["anchors"][anchor_id]
+            self._v2_save(store)
+        _bus_append(self.bus_dir, self.slug, {"event": "comment_deleted", "comment_id": comment_id,
+                                              "anchor_id": anchor_id, "author": author, **self._session_fields()})
+        self._respond(200, json.dumps({"deleted": comment_id}).encode())
+
     def do_OPTIONS(self):
         if not self._allow_request():
             return
-        self._respond(204, b"", extra_headers={"Allow": "GET, HEAD, POST, PUT, OPTIONS"})
+        self._respond(204, b"", extra_headers={"Allow": "GET, HEAD, POST, PUT, DELETE, OPTIONS"})
 
     def do_HEAD(self):
         self.do_GET()
@@ -2479,6 +2600,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c["response_text"] = payload["response_text"]
             if "text" in payload:
                 c["text"] = (payload["text"] or "").strip()
+                # A reviewer's edit goes with the next Send, even one made within
+                # the same second as the last (timestamps are whole seconds).
+                if not str(author).startswith("agent:"):
+                    c["flagged_for_session"] = False
             # Re-anchoring (manual re-pin or agent migration): a NEW granular
             # target and its provenance. The creation-time record fields are
             # never rewritten; these are additive facts with their own
@@ -2601,6 +2726,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "author_name": identity["name"] or (payload.get("author_name") if identity["authenticated"] else None),
             "text": text,
             "ts": _now_iso(),
+            **({} if author.startswith("agent:") else {"sent_at": None}),
         }
 
         with _locked_store(self.artifact_dir):
@@ -2846,7 +2972,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
                     if _comment_needs_push(c):
-                        feedback.append(dict(c))
+                        feedback.append(json.loads(json.dumps(c)))  # as delivered, before notes are marked sent
+                        _mark_notes_sent(c, now)
                         c["flagged_for_session"] = True
                         c["flagged_at"] = now
                         c["flagged_by"] = author
@@ -2882,6 +3009,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         decision = c.get("decision") or {}
                         if decision.get("round_pending") and decision.get("by") not in self._reviewer_authors(author):
                             return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
+                        _mark_notes_sent(c, _now_iso())
                         c["flagged_for_session"] = True
                         c["flagged_at"] = _now_iso()
                         c["flagged_by"] = author
@@ -3119,9 +3247,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             })
 
             c["status"] = self._DECISION_STATUS_MAP[verdict]
-            c["flagged_for_session"] = True
-            c["flagged_at"] = now
-            c["flagged_by"] = author
+            # A deferred answer is not sent yet: marking the card sent here
+            # made notes added before it look sent, and the round skipped them.
+            if not defer_push:
+                _mark_notes_sent(c, now)
+                c["flagged_for_session"] = True
+                c["flagged_at"] = now
+                c["flagged_by"] = author
             self._v2_save(store)
 
         revision_bus_fields = (
@@ -3296,7 +3428,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         "decision_id": c["decision"].get("id"),
                         "category": comment_category(c),
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
-                        "verdict": c["decision"]["verdict"], "text": c["decision"].get("text", ""),
+                        "verdict": c["decision"]["verdict"],
+                        # Notes added on the card after its answer go with it.
+                        "text": "\n\n".join([c["decision"].get("text") or ""] + _unsent_notes(c)).strip(),
+                        **({"notes": _unsent_notes(c)} if _unsent_notes(c) else {}),
                         "by": c["decision"].get("by"), "ts": c["decision"].get("ts"),
                         "evidence": c["decision"].get("evidence")} for c in pending]
             def unsent_reopen_text(c):
@@ -3328,11 +3463,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 promote(self.artifact_dir, store, c)
+                _mark_notes_sent(c, now)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in reopens:
                 c.pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in pushed:
+                _mark_notes_sent(c, now)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             if edits:
                 submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)

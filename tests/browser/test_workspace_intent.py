@@ -233,31 +233,32 @@ def test_reverse_answer_with_explanation_and_then_answer_in_words(tmp_path, widt
         section(page, "ready")
         if custom:
             playwright.expect(card.locator(".ans")).to_have_text("Ship now")
+        # Reverse the answer: open the card, Change shows the options only.
+        card.locator('[data-action="open-card"]').click()
         change.click()
-        if custom:
-            assert "Ship now" in card.locator(".decision-changing-note").inner_text()
-        explanation = "Wait until both reviewers have confirmed the wording."
-        note.fill(explanation)
+        assert "Your notes stay" in card.locator(".decision-changing-note").inner_text()
         choices.nth(1).click()
-        _wait_decision(
-            page,
-            directory,
-            "select" if custom else "reject",
-            "Ship later\n\n" + explanation if custom else explanation,
-        )
+        _wait_decision(page, directory, "select" if custom else "reject", "Ship later" if custom else None)
         section(page, "ready")
-        assert explanation in _stored(directory)["decision"]["text"]
-        change.click()
+        # Then explain in words: a note that goes with the next Send.
+        card.locator('[data-action="open-card"]').click()
         words = "Release after the copy review; exact time is flexible."
         note.fill(words)
         page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
         page.locator("#round-submit-btn").click()
-        _wait_decision(page, directory, "comment", words)
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
+        replies = [r["text"] for r in _stored(directory).get("replies") or []]
+        for _ in range(50):
+            if words in replies:
+                break
+            page.wait_for_timeout(100)
+            replies = [r["text"] for r in _stored(directory).get("replies") or []]
+        assert words in replies
         page.reload(wait_until="networkidle")
         ready(page)
         section(page, "waiting")
-        playwright.expect(card.locator(".ans")).to_have_text(words)
+        card.locator('[data-action="open-card"]').click()
+        playwright.expect(card.locator(".answer-note-txt")).to_have_text([words])
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")

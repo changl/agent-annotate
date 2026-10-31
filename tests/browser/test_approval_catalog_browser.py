@@ -184,6 +184,7 @@ def test_same_card_can_be_accepted_selected_and_accepted_again(tmp_path, reload)
                 if index > 1:
                     section(page, "done" if index == 2 else "waiting")
                     page.locator('.citem[data-comment-id="design-v1"] .change-btn').click()
+                    page.locator('.citem[data-comment-id="design-v1"] [data-decision-action="change"]').click()
                 page.locator('.citem[data-comment-id="design-v1"] ' + selector).click()
                 _send(page)
                 plan = page.request.get(base + "api/categories").json()["plans"][0]
