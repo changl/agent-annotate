@@ -151,3 +151,35 @@ def test_text_typed_on_a_replaced_card_stays_in_view_and_goes_with_send(tmp_path
             page.wait_for_timeout(100)
         assert any(r["text"] == FIRST for r in card.get("replies") or [])
         page.wait_for_function("() => !document.querySelector('#comment-list .decision-stranded')")
+
+
+def test_a_tap_never_adds_hover_feedback(tmp_path):
+    """iPad: a tap fires mouseover; a highlight then made iOS drop the click (two taps per choice)."""
+    import socket
+
+    from test_keep_drafts import _loaded, _start, _stop
+    directory = _directory(tmp_path)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = _start(tmp_path, directory, port)
+    try:
+        with playwright.sync_playwright() as runner:
+            try:
+                browser = runner.webkit.launch()
+            except Exception:
+                pytest.skip("Playwright WebKit is not installed")
+            page = browser.new_context(**dict(runner.devices["iPad Pro 11 landscape"])).new_page()
+            page.goto(f"http://127.0.0.1:{port}/#view=review", wait_until="networkidle")
+            _loaded(page)
+            frame = page.frame_locator("#content-frame")
+            # Record every class added during the tap: the answer redraws the card right after.
+            frame.locator("body").evaluate("""() => { window.__hover = [];
+                new MutationObserver(ms => ms.forEach(m => { if (/anchor-hl|commentable|annotation-hover|bpin-hl/.test(m.target.className)) window.__hover.push(m.target.className); }))
+                  .observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"] }); }""")
+            frame.locator('[data-strip-item="question-11"] .annotate-decision-btns button').first.tap()
+            page.wait_for_timeout(500)
+            assert frame.locator("body").evaluate("() => window.__hover") == []
+            browser.close()
+    finally:
+        _stop(server)

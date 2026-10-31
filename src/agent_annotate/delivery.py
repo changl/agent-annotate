@@ -152,6 +152,26 @@ def capture_target(session: str, agent: str) -> dict | None:
     return None
 
 
+def _target_exited(target: dict | None) -> bool:
+    """Only positive process-exit evidence authorizes automatic ownership transfer."""
+    if not isinstance(target, dict):
+        return False
+    try:
+        pid = int(target.get("pid", 0))
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return False
+    try:
+        process = _process(pid)
+        return bool(process and target.get("process_start") and process[0] != target["process_start"])
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _target_ready(target: dict) -> tuple[bool, str]:
     try:
         process = _process(int(target["pid"]))

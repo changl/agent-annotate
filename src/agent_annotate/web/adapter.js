@@ -739,9 +739,14 @@ function stripAnchorIdFromEl(el) {
   return strip ? strip.dataset.stripAnchor : null;
 }
 
+// Hover feedback is for a mouse only. A tap on iPad also fires mouseover; a
+// highlight added then makes iOS treat the tap as a hover and drop the click,
+// so every choice took two taps (Chang, 2026-10-31).
+const byMouse = e => e.pointerType === 'mouse';
 function wireHoverLinking() {
   ensureHoverStyle();
-  document.addEventListener('mouseover', (e) => {
+  document.addEventListener('pointerover', (e) => {
+    if (!byMouse(e)) return;
     const pin = e.target.closest('.bpin, .bpin-inline');
     if (pin && pin.dataset.pinAnchor) { highlightAnchor(pin.dataset.pinAnchor, true); return; }
     const stripAid = stripAnchorIdFromEl(e.target);
@@ -752,7 +757,8 @@ function wireHoverLinking() {
       if (aid && latestPins[aid] && latestPins[aid].length) highlightPinsFor(aid, true);
     }
   });
-  document.addEventListener('mouseout', (e) => {
+  document.addEventListener('pointerout', (e) => {
+    if (!byMouse(e)) return;
     const pin = e.target.closest('.bpin, .bpin-inline');
     if (pin && pin.dataset.pinAnchor) { highlightAnchor(pin.dataset.pinAnchor, false); return; }
     const stripAid = stripAnchorIdFromEl(e.target);
@@ -1370,11 +1376,8 @@ async function submitStripDecision(id, verdict, text, itemEl, optionId) {
     return;
   }
 
-  // A new choice on an answered card leaves its add-note box as it was.
-  if (!wasChanging) {
-    delete stripSayText[id];
-    postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
-  }
+  delete stripSayText[id];
+  postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
 
   delete stripDraftText[id];
   delete stripFormOpen[id];
@@ -1858,7 +1861,7 @@ function buildDecisionItemEl(entry) {
     const note = document.createElement('div');
     note.className = 'annotate-decision-changing-note';
     const label = document.createElement('span');
-    label.textContent = entry.answer ? 'Pick a new choice. Your notes stay.' : 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
+    label.textContent = entry.answer ? 'Pick a new answer. Your notes stay.' : 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
       ? '☑ ' + entry.answerText
       : (DECISION_VERDICT_TEXT[entry.decisionVerdict] || entry.decisionVerdict));
     note.appendChild(label);
@@ -1882,9 +1885,9 @@ function buildDecisionItemEl(entry) {
   // Changing the choice of an answered card: the options only, and the note
   // that went with the old choice goes with the new one.
   const changingAnswer = !!(stripChanging[id] && entry.answer);
-  const opts = stripDecisionOptions(dr).filter(o => !(changingAnswer && (o.id === 'comment' || o.id === 'changes')));
+  const opts = stripDecisionOptions(dr);
   // Every card offers "Answer in words" as its last choice, as the rail does.
-  if (!changingAnswer && !opts.some(o => o.id === 'comment')) {
+  if (!opts.some(o => o.id === 'comment')) {
     opts.push({ id: 'comment', label: DECISION_BTN_TEXT.comment, plain: DECISION_PLAIN_LABEL.comment, consequence: '', style: null, custom: false });
   }
   const hasCons = opts.some(o => !!o.consequence);
@@ -1945,8 +1948,8 @@ function buildDecisionItemEl(entry) {
   feedback.className = 'annotate-decision-feedback';
 
   const noteText = () => {
-    if (changingAnswer) return entry.answer.note || null;
-    const t = (ta.value || '').trim();
+    // Changing an answer: the note it had plus anything typed now.
+    const t = [changingAnswer ? entry.answer.note : '', (ta.value || '').trim()].filter(Boolean).join('\n\n');
     return t || null;
   };
 
@@ -1986,10 +1989,8 @@ function buildDecisionItemEl(entry) {
   }
 
   if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
-  if (!changingAnswer) {
-    item.appendChild(ta);
-    item.appendChild(hint);
-  }
+  item.appendChild(ta);
+  item.appendChild(hint);
   item.appendChild(feedback);
 
   if (pendingDecisionIds.has(id)) {
@@ -3073,14 +3074,16 @@ function setCardHover(anchorId, target) {
 }
 function wireCommentableHover() {
   let commentable = null;
-  document.addEventListener('mouseover', e => {
+  document.addEventListener('pointerover', e => {
+    if (!byMouse(e)) return;
     if (commentable) commentable.classList.remove('unified-commentable');
     commentable = null;
     if (e.target.closest(INTERACTIVE_SEL + ', [data-annotate-strip], .annotate-unchanged-bar, #badge-layer')) return;
     const a = findParentAnchor(e.target);
     if (a) { commentable = a; a.classList.add('unified-commentable'); }
   });
-  document.addEventListener('mouseout', e => {
+  document.addEventListener('pointerout', e => {
+    if (!byMouse(e)) return;
     if (commentable && !commentable.contains(e.relatedTarget)) {
       commentable.classList.remove('unified-commentable');
       commentable = null;

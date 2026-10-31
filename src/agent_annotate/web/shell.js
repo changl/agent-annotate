@@ -56,7 +56,7 @@ function docOf(c) {
 
 let STORE = { schema_version: 2, anchors: {}, archived: {} };
 let META = { current: null, history: [], content_stamps: {} };
-let SEEN = {}; // { version: {ts, whole_hash, section_hashes} }
+let SEEN = {}; // { version: {ts, whole_hash} }
 let READ = {}; // { commentId: {ts, sig} } — this viewer's per-comment read state
 let NUM_MAP = {}; // { commentId: n } — canonical item number shared by rail, body and pin
 let CURRENT_VERSION = null;
@@ -542,8 +542,28 @@ function refreshCountsSoon() {
   countsRefresh = setTimeout(async () => { if (await loadCategories() && window.AA) window.AA.changed(); }, 250);
 }
 
+// A copy of the one match only: copying the whole store per call made each
+// rail render O(n²) on long pages (1,418 comments on FLD).
+// While one render runs, lookups use an id index built once for it.
+let ID_INDEX = null;
+function withIdIndex(fn) {
+  if (ID_INDEX) return fn();
+  ID_INDEX = new Map();
+  for (const area of [STORE.anchors, STORE.archived]) {
+    for (const [aid, items] of Object.entries(area || {})) for (const c of items) if (!ID_INDEX.has(c.id)) ID_INDEX.set(c.id, [c, aid]);
+  }
+  try { return fn(); } finally { ID_INDEX = null; }
+}
 function findCommentById(id) {
-  for (const c of flattenStore(true)) if (c.id === id) return c;
+  if (ID_INDEX) {
+    const hit = ID_INDEX.get(id);
+    return hit ? Object.assign({}, hit[0], { anchor_id: hit[1] }) : null;
+  }
+  for (const area of [STORE.anchors, STORE.archived]) {
+    for (const [aid, items] of Object.entries(area || {})) {
+      for (const c of items) if (c.id === id) return Object.assign({}, c, { anchor_id: aid });
+    }
+  }
   return null;
 }
 
@@ -846,21 +866,6 @@ function withdrawnQuestions() {
   }));
 }
 
-function countsForVersion(version) {
-  // A card that follows the viewer is attributed to the version ON SCREEN
-  // (where it is actionable) rather than to its origin version, so the
-  // rail's red badge agrees with the drawer's "Needs my review" chip.
-  const all = flattenAll(false).filter(c => !version || (
-    followsViewer(c) ? version === CURRENT_VERSION : c.version === version));
-  let review = 0, waiting = 0, done = 0;
-  for (const c of all) {
-    const cls = classify(c);
-    if (cls === 'review') review++;
-    else if (cls === 'waiting') waiting++;
-    else done++;
-  }
-  return { review, waiting, done, total: all.length };
-}
 
 // ── ↑NEW detection ──────────────────────────────────────────────────
 function hasNewContent(version) {
@@ -1157,10 +1162,6 @@ function roundsByVersion(shown) {
   return out;
 }
 // What the agent did on a version's comments: resolved or addressed them.
-function agentDoneOn(version) {
-  return flattenAll(true).filter(c => c.version === version &&
-    (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent'));
-}
 function versionFolds(value) {
   const key = 'annotate:vfold:' + location.pathname + ':' + (DOC === 'plans' ? 'plan:' + PLAN_ID : DOC);
   try {
@@ -1205,14 +1206,27 @@ function renderVersionRail(shown) {
     return 0;
   }
   const folds = versionFolds();
+  // One pass over the comments for every version: per-version scans made
+  // History freeze for 2.2 s on FLD (535 versions × 1,418 comments).
+  const doneBy = {}, countsBy = {};
+  for (const c of flattenAll(true)) {
+    if (c.status === 'resolved_in_version' || c.status === 'addressed_by_agent') (doneBy[c.version] = doneBy[c.version] || []).push(c);
+  }
+  for (const c of flattenAll(false)) {
+    const v = followsViewer(c) ? CURRENT_VERSION : c.version;
+    const k = countsBy[v] = countsBy[v] || { review: 0, waiting: 0, done: 0, total: 0 };
+    const cls = classify(c);
+    k[cls === 'review' ? 'review' : cls === 'waiting' ? 'waiting' : 'done']++;
+    k.total++;
+  }
   body.innerHTML = history.map(h => {
     const rounds = byVersion[h.version] || [];
-    const done = sentOnly ? [] : agentDoneOn(h.version);
+    const done = sentOnly ? [] : (doneBy[h.version] || []);
     const activity = rounds.length || done.length;
     const next = activity ? publishedAfter(h, rounds) : null;
     const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION);
     const pid = 'vact-' + doc + '-' + h.version;
-    const counts = countsForVersion(h.version);
+    const counts = countsBy[h.version] || { review: 0, waiting: 0, done: 0, total: 0 };
     const isCur = h.version === CURRENT_VERSION;
     const isNew = !neverVisited(h.version) && hasNewContent(h.version);
     let dotHtml = '<span class="vrow-dot"></span>';
@@ -1561,7 +1575,8 @@ function renderCounts() {
   if (window.AA) window.AA.changed();
 }
 
-function renderDrawer() {
+function renderDrawer() { return withIdIndex(renderDrawerNow); }
+function renderDrawerNow() {
   if (DOC !== VIEW_DOC) return;
   renderCounts();
   const listEl = document.getElementById('comment-list');
@@ -1959,23 +1974,27 @@ function renderDecisionEvidence(c, dr) {
 // unrendered one (collapsed rail, closed preview) is judged by its length.
 function syncExcerptClamps(root) {
   if (!root) return;
+  // Every measurement first, then every change: interleaving them forced a
+  // layout per card (150 ms per render on FLD).
+  const writes = [];
   root.querySelectorAll('.decision-excerpt').forEach(box => {
     const t = box.querySelector('.decision-excerpt-text');
     const more = box.querySelector('.decision-excerpt-more');
     if (!t || !more) return;
-    if (box.classList.contains('is-open')) { more.hidden = false; return; }
+    if (box.classList.contains('is-open')) { writes.push([more, false]); return; }
     const text = t.textContent || '';
-    more.hidden = !(t.clientHeight > 0
+    writes.push([more, !(t.clientHeight > 0
       ? t.scrollHeight > t.clientHeight + 1
-      : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
+      : (text.length > 220 || (text.match(/\n/g) || []).length >= 4))]);
   });
   // UI-23: long comment text in a card.
   root.querySelectorAll('.citem-txt-more').forEach(more => {
     const t = document.getElementById(more.getAttribute('aria-controls'));
     if (!t) return;
-    if (t.classList.contains('is-open')) { more.hidden = false; return; }
-    more.hidden = !(t.clientHeight > 0 ? t.scrollHeight > t.clientHeight + 1 : true);
+    if (t.classList.contains('is-open')) { writes.push([more, false]); return; }
+    writes.push([more, !(t.clientHeight > 0 ? t.scrollHeight > t.clientHeight + 1 : true)]);
   });
+  for (const [el, hidden] of writes) el.hidden = hidden;
 }
 // A2: no per-card "Pending — not sent" chip or "Send now"; a pending verdict
 // sits in the "Ready to send" section until the one Send.
@@ -2032,7 +2051,8 @@ function renderDecisionBlock(c) {
   const changing = !!decisionChanging[c.id];
   if (decisionAnswer(c) && !changing) return answerBlockHtml(c);
   // Changing the choice: the options only; your notes stay as they are.
-  const opts = changing ? decisionOptions(dr) : withAnswerInWords(decisionOptions(dr));
+  // Changing keeps every way to answer, words included (Chang, 2026-10-31).
+  const opts = withAnswerInWords(decisionOptions(dr));
   const wantsChanges = opts.some(o => o.id === 'changes');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
@@ -2051,10 +2071,10 @@ function renderDecisionBlock(c) {
     btns += `<button class="btn decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head">${k}<span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   });
   const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
-      <span>Pick a new choice. Your notes stay.</span>
+      <span>Pick a new answer. Your notes stay.</span>
       <button type="button" class="btn btn-ghost btn-xs" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
     </div>` : '';
-  const cmtHtml = changing ? '' : `<div class="decision-cmt">
+  const cmtHtml = `<div class="decision-cmt">
       <div class="add-note">
         <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(decisionHint[c.id] ? decisionHint[c.id].ph : 'Add a note (optional)')}" rows="1" aria-label="Note on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
         <button type="button" class="btn btn-sm" data-note-action="add" data-id="${escAttr(c.id)}" title="Answer in words with this note">Add note</button>
@@ -2506,8 +2526,9 @@ function wireCardActions(root) {
       if (gotoVersionFor(c) !== CURRENT_VERSION || isGeneralAnchor(c.anchor_id)) return;
       postToFrame({ type: 'annotate:card-hover', anchorId: c.anchor_id, target: c.target || null, on });
     };
-    card.addEventListener('mouseenter', () => hover(true));
-    card.addEventListener('mouseleave', () => hover(false));
+    // Mouse only: on a tap the highlight made iPad drop the click (see adapter.js byMouse).
+    card.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') hover(true); });
+    card.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hover(false); });
   });
   // Whole-card click navigates (T1). On a one-line answered card (C1) it
   // also expands the card.
@@ -2778,12 +2799,16 @@ function pickOption(root, btn) {
   const c = findCommentById(id);
   // A new choice on an answered card keeps the note that went with the old
   // one (a word answer included); the add-note box is left as it is.
-  if (c && decisionAnswer(c) && !['comment', 'changes'].includes(action)) {
-    const kept = decisionNote(c) || null;
-    if (action === 'accept' || action === 'reject') return keepingAddNoteDraft(id, () => submitDecision(root, id, action, kept));
+  if (c && decisionAnswer(c)) {
+    const note = [decisionNote(c), decisionCommentText(root, id)].filter(Boolean).join('\n\n') || null;
+    if (action === 'accept' || action === 'reject') return submitDecision(root, id, action, note);
+    if (action === 'comment' || action === 'changes') {
+      if (!note) { setDecisionFeedback(root, id, 'Write your answer in the box, then pick it again.', false); return null; }
+      return submitDecision(root, id, action, note);
+    }
     const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
     const v = selectVerdictId();
-    return keepingAddNoteDraft(id, () => submitDecision(root, id, v, (v === 'select' ? label : 'Selected: ' + label) + (kept ? '\n\n' + kept : ''), btn.dataset.optionId));
+    return submitDecision(root, id, v, (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : ''), btn.dataset.optionId);
   }
   const note = decisionCommentText(root, id) ||
     (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(c));
