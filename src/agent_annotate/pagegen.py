@@ -1017,30 +1017,30 @@ def _scope_banner(meta: dict, version: str) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 # Build
 # ────────────────────────────────────────────────────────────────────────────
-def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
-    """Fill every `{{NAME}}` in the packaged template. Never one occurrence."""
-    template = (WEB_DIR / "template.html").read_text(encoding="utf-8")
+def build_html(meta: dict, canvas: str, registry: dict) -> str:
+    """Keep the document wrapper the server extracts; chrome comes from the shell."""
     # Escape all '<' so neither script-end tags nor HTML double-escaped
     # script states can alter parsing. JSON decoding restores exact labels.
     registry_js = json.dumps(registry, indent=1, ensure_ascii=False).replace("<", "\\u003c")
-    values = {
-        "{{TITLE}}": E(meta["title"]),
-        "{{SUBTITLE}}": E(meta.get("subtitle", "")),
-        "{{DATE}}": E(meta.get("date", "")),
-        # DOC_ID is the localStorage key and sits in a JS string literal.
-        "{{DOC_ID}}": re.sub(r"[^A-Za-z0-9._:-]", "-", meta["slug"]),
-        "{{VERSION}}": version,
-        "{{ANCHOR_REGISTRY}}": registry_js,
-        "{{LEGEND}}": (f'<div class="muted">{inline(meta["legend"])}</div>'
-                       if meta.get("legend") else ""),
-    }
-    for token, value in values.items():
-        template = template.replace(token, value)
-    leftover = sorted(set(re.findall(r"\{\{([A-Z_]+)\}\}", template)) - {"CANVAS"})
-    if leftover:
-        raise PageGenError(f"template placeholders left unfilled: {', '.join(leftover)}")
-    # Last, so a `{{TOKEN}}` the author typed in their markdown stays text.
-    return template.replace("{{CANVAS}}", canvas)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{E(meta["title"])}</title>
+<script src="diagram-plot.js"></script>
+</head>
+<body>
+<div id="canvas-wrapper">
+<!-- CANVAS CONTENT — injected by Claude ── -->
+{canvas}
+<!-- END CANVAS CONTENT ──────────────────── -->
+</div>
+<script>const ANCHOR_REGISTRY = {registry_js};
+</script>
+</body>
+</html>
+"""
 
 
 def render_plan(text: str, plan_id: str, *, title: str | None = None,
@@ -1066,7 +1066,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     if page_dir is not None:
         images.copy_into(page_dir)
     # The HTTP plan route supplies the actual version; no Review version is embedded.
-    return build_html(meta, canvas, registry, ""), meta["title"]
+    return build_html(meta, canvas, registry), meta["title"]
 
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
@@ -1138,7 +1138,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     for card in cards:
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
-    html_out = build_html(meta, canvas, registry, version)
+    html_out = build_html(meta, canvas, registry)
     from .page_names import page_name, set_page_name
     # Resolve legacy titles before an in-place regeneration replaces their HTML.
     initial_name = page_name(slug_dir, fallback=meta["title"])

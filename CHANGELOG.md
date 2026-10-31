@@ -7,6 +7,7 @@
   - Evidence inside document strips is built when "Evidence (n)" is opened. An open Evidence stays open and built when a poll redraws the strips. The document starts with 944 nodes instead of 1,079.
   - The Roboto fonts are WOFF2, converted once and losslessly from the bundled TTFs, which are no longer shipped: 478 KB instead of 1,019 KB. The document frame uses the same font URL as the shell and reads it from the browser cache.
 - Send review: General feedback has a text button, **Add general feedback** or **Edit** once there is some, instead of a bare + (Chang, 2026-10-31).
+- Simplification step 5: remove the downloaded-page offline interface and Export feedback. Review, Plans and archive documents keep the server-extracted wrapper; the shared shell supplies all live controls.
 
 - Simplification step 3: remove unused v1 comment-store readers, the migrate command, single-file server mode and the temporary 2.26 identity bridge. Existing v2 page data and baked-document rendering remain supported.
 

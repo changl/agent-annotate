@@ -26,7 +26,7 @@ from test_interactive_controls import _details_page
 playwright = pytest.importorskip("playwright.sync_api")
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-TEMPLATE = Path(__file__).parents[2] / "src" / "agent_annotate" / "web" / "template.html"
+
 
 CANVAS = """
 <div class="no" id="s:demo:prose">
@@ -52,18 +52,10 @@ def _free_port():
 
 def _bake(tmp_path):
     """Produce a slug containing only a baked artifact — no content/ dir."""
-    html = TEMPLATE.read_text(encoding="utf-8")
-    for token, value in {
-        "{{CANVAS}}": CANVAS,
-        "{{ANCHOR_REGISTRY}}": json.dumps(REGISTRY),
-        "{{DOC_ID}}": "baked-demo",
-        "{{VERSION}}": "v1",
-        "{{TITLE}}": "Baked demo",
-        "{{SUBTITLE}}": "extraction fixture",
-        "{{DATE}}": "2026-07-25",
-        "{{LEGEND}}": "",
-    }.items():
-        html = html.replace(token, value)
+    html = ("<!doctype html><html><head><title>Baked demo</title></head><body>"
+            '<header class="hdr" id="old-chrome">Historical controls</header><aside class="panel">Old feedback</aside><div id="popover">Old popover</div><div id="canvas-wrapper">'
+            '<!-- CANVAS CONTENT -->' + CANVAS + '<!-- END CANVAS CONTENT -->'
+            '</div><script>const ANCHOR_REGISTRY = ' + json.dumps(REGISTRY) + ';</script></body></html>')
 
     slug_dir = tmp_path / "baked"
     (slug_dir / "versions").mkdir(parents=True)
