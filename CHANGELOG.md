@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.
+- Faster long pages, measured on a copy of FLD (1,418 comments, 535 versions):
+  - Opening History went from a 1.4 s freeze to none. Each version's counts used to scan every comment twice.
+  - Tapping a card went from 1.85 s to 0.26 s, and opening Earlier feedback from 1.85 s to under 0.1 s. Comment lookups copied the whole store per card, and the "Show more" check forced a layout per card.
+  - `current.meta.json` no longer stores per-section content hashes that nothing reads. They were 3 of FLD's 3.5 MB, re-read by every poll. Old ones are dropped on the next write, as are the matching ones in `seen.json`.
+  - `GET /api/comments` keeps the shared store cache.
 - On iPad, a tap on a choice or card no longer needs a second tap. A tap also fires a mouse hover, and the page's hover highlight made iOS treat the tap as a hover and drop the click; that highlight was also the shift you saw. Hover feedback now reacts to a mouse only (document highlights, rail card hover, Library marks, diagram nodes).
 
 ## 2.27.8

@@ -783,32 +783,11 @@ def _sha256_short(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-_SECTION_RE = re.compile(
-    r'<section\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</section>|'
-    r'<div\b[^>]*\bdata-anchor-id="([^"]+)"[^>]*>(.*?)</div>',
-    re.DOTALL,
-)
-
-
 def compute_content_stamps(content_html: str) -> dict:
-    """Compute a whole-doc hash plus best-effort per-section hashes for a
-    chrome-free content document. Per-section hashes key off the same
-    id="..." / data-anchor-id="..." scheme adapter.js uses to resolve
-    anchors, so a shell can diff 'has this section's content changed since
-    my last visit' without re-fetching the full comment thread state.
-    Best-effort: nested tags of the same kind will just take the first
-    (outermost-ish) match per regex scan; good enough for a coarse
-    'something changed here' signal, not a structural diff.
-    """
-    whole = _sha256_short(content_html)
-    sections: dict[str, str] = {}
-    for m in _SECTION_RE.finditer(content_html):
-        anchor_id = m.group(1) or m.group(3)
-        body = m.group(2) or m.group(4) or ""
-        if anchor_id:
-            # keep the first occurrence; don't overwrite on nested/duplicate ids
-            sections.setdefault(anchor_id, _sha256_short(body))
-    return {"whole": whole, "sections": sections}
+    """The whole-document hash the shell compares for ↑NEW. Per-section
+    hashes were dropped: nothing read them, and on FLD they were 3 of the
+    3.5 MB current.meta.json every poll re-reads."""
+    return {"whole": _sha256_short(content_html)}
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1811,7 +1790,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         flt_status = (params.get("status") or [None])[0]
         flt_version = (params.get("version") or [None])[0]
         with _locked_store(self.artifact_dir, write=False):
-            store = self._v2_load()
+            store = self._v2_load(read_only=True)  # a read keeps the shared cache
         out = []
         for anchor_id, items in store.get("anchors", {}).items():
             for c in items:
@@ -1950,7 +1929,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             try:
                 fresh = self._read_meta()
-                fresh.setdefault("content_stamps", {})[version] = computed
+                stamps = fresh.setdefault("content_stamps", {})
+                for old in stamps.values():  # drop the unread per-section hashes older pages carry
+                    if isinstance(old, dict):
+                        old.pop("sections", None)
+                stamps[version] = computed
                 _atomic_write_json(path, fresh)
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
@@ -3753,7 +3736,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):
         """Return the requesting author's last_seen record: per-version
-        {ts, whole_hash, section_hashes}. Shell diffs this against the
+        {ts, whole_hash}. Shell diffs this against the
         current content stamps (from current.meta.json content_stamps) to
         decide which tabs get an ↑NEW indicator.
         """
@@ -3882,8 +3865,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             data[key][version] = {
                 "ts": _now_iso(),
                 "whole_hash": stamps.get("whole"),
-                "section_hashes": stamps.get("sections", {}),
             }
+            for versions in data.values():  # older records carry unread section hashes
+                for rec in versions.values() if isinstance(versions, dict) else ():
+                    if isinstance(rec, dict):
+                        rec.pop("section_hashes", None)
             _save_seen(self.artifact_dir, data)
 
         _bus_append(self.bus_dir, self.slug, {

@@ -241,7 +241,6 @@ def test_ui15_changing_the_option_keeps_the_earlier_comment(tmp_path):
         assert _comment(directory, "question-11")["decision"]["text"] == "Ship now\n\nBoth builds passed."
         card.locator('[data-action="open-card"]').click()
         card.locator('[data-decision-action="change"]').click()
-        assert card.locator(".decision-say-ta").count() == 0  # the options only; notes stay
         card.locator(".decision-btn").nth(1).click()
         section(page, "ready")
         playwright.expect(card.locator(".ans")).to_contain_text("Ship later")

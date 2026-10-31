@@ -112,11 +112,12 @@ def test_changing_the_choice_keeps_the_notes(tmp_path):
         item.locator(".annotate-decision-btns button").first.click()  # Ship now, with a note
         item.locator(".annotate-answer-change").click()
         assert "Your notes stay" in item.inner_text()
-        assert item.locator(".annotate-decision-btns button", has_text="Answer in words").count() == 0
+        # Changing keeps every way to answer, words included (2026-10-31).
+        assert item.locator(".annotate-decision-btns button", has_text="Answer in words").count() == 1
+        item.locator("textarea.annotate-decision-cmt").fill("Tell QA first")
         item.locator(".annotate-decision-btns button", has_text="Ship later").click()
         page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelector('.annotate-answer-choice')?.textContent === 'Ship later'")
-        assert item.locator(".annotate-answer-note-txt").all_inner_texts() == ["After the demo"]
-        assert _stored(directory, "question-11")["decision"]["text"] == "Ship later\n\nAfter the demo"
+        assert _stored(directory, "question-11")["decision"]["text"] == "Ship later\n\nAfter the demo\n\nTell QA first"
 
 
 def test_the_send_summary_uses_the_screen(tmp_path):
