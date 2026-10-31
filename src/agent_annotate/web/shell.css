@@ -278,6 +278,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .round-confirm-warn{font-size:calc(10.5px * var(--aa-text, 1));color:var(--warn-text);line-height:1.4}
 .sum-list{overflow-y:auto;min-height:0;flex:1;display:flex;flex-direction:column;gap:2px;margin:4px -6px}
 .sum-group{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:8px 6px 3px}
+.sum-rest-hdr{padding:8px 6px 3px;gap:6px}.sum-rest-hdr svg.i{width:12px;height:12px}.sum-rest-missing{text-transform:none;letter-spacing:0;color:var(--warn-text)}
 .sum-row{display:flex;flex-direction:column;gap:6px;padding:6px;border-radius:var(--radius-field)}
 .sum-row:hover{background:var(--soft)}
 .sum-main{display:flex;align-items:center;gap:8px;min-width:0}

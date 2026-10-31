@@ -3571,6 +3571,7 @@ function renderRoundBar() { updateSendState(); }
 // field (pencil to edit, + to add). Only the document on screen is edited
 // in place; another document's pencil opens that document's tab.
 let sumEditing = null; // card id or 'gf' being edited inside the summary
+const sumRestOpen = new Set(); // documents whose 'Not in this Send' group is open
 function summarySentence() {
   const s = roundStats();
   const plan = sendPlan();
@@ -3656,8 +3657,20 @@ function renderSummaryInto(list, editable) {
     </div>
     ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
   </div>`;
-  if (rest.length) html += group('Not in this Send') + rest.map(decisionRow).join('');
+  // Collapsed by default and built only when opened, like the rail
+  // sections (Chang 2026-10-31: "no need to constantly show this or even
+  // load it"). The header keeps unanswered ones discoverable.
+  if (rest.length) {
+    const open = sumRestOpen.has(doc) || rest.some(c => c.id === sumEditing);
+    const missing = rest.filter(c => !decisionAnswer(c) && !hasSayDraft(c)).length;
+    html += `<button type="button" class="sec-hdr sum-group sum-rest-hdr" data-sum-rest="${doc}" aria-expanded="${open ? 'true' : 'false'}">${ico('chevDown')}<span>Not in this Send</span><span class="badge badge-sm badge-ghost">${rest.length}</span>${missing ? `<span class="sum-rest-missing">· ${missing} not answered</span>` : ''}</button>`;
+    if (open) html += rest.map(decisionRow).join('');
+  }
   list.innerHTML = html;
+  list.querySelectorAll('[data-sum-rest]').forEach(btn => btn.addEventListener('click', () => {
+    if (!sumRestOpen.delete(btn.dataset.sumRest)) sumRestOpen.add(btn.dataset.sumRest);
+    renderSummary();
+  }));
 
   // Another document's rows: the pencil opens that document's tab, where
   // the same summary opens with that row in edit mode.
