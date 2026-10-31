@@ -196,22 +196,51 @@ def _save_index(page_dir: Path, index: dict) -> None:
     os.replace(tmp, path)
 
 
-def _first_dates(page_dir: Path, anchors: set[str]) -> str | None:
-    """The first day any of these topics was published, from source/vN.md and the version history."""
+def _local_day(ts: str) -> str:
+    """The publisher's own calendar day for a UTC timestamp (an 01:06Z publish is the evening before in PDT)."""
+    try:
+        return datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone().date().isoformat()
+    except ValueError:
+        return str(ts)[:10]
+
+
+def _since_dates(page_dir: Path, hashes: dict[str, str], version: str, today: str,
+                 limit: int = 300) -> dict[str, str]:
+    """{anchor: day its current content first went live}. Walks back through
+    versions/vN.html (newest first, once for all topics, at most `limit` files):
+    a topic's day moves back while an earlier version shows the same content, and
+    stops at the first version where it differs. A version without the topic is
+    skipped, so a topic that left and came back unchanged keeps its first day."""
     from .cli import _read_meta
-    from .pagegen import slugify
-    days = []
-    for entry in _read_meta(page_dir).get("history") or []:
-        if not isinstance(entry, dict) or not entry.get("ts"):
-            continue
+    days = {aid: today for aid in hashes}
+    open_ = set(hashes)
+    number = int(version[1:]) if re.fullmatch(r"v\d+", version) else None
+    entries = [h for h in _read_meta(page_dir).get("history") or [] if isinstance(h, dict)
+               and re.fullmatch(r"v\d+", str(h.get("version"))) and h.get("ts")
+               and (number is None or int(h["version"][1:]) < number)]
+    entries.sort(key=lambda h: int(h["version"][1:]), reverse=True)
+    for entry in entries[:limit]:
+        if not open_:
+            break
         try:
-            text = (page_dir / "source" / f"{entry.get('version')}.md").read_text(encoding="utf-8")
-        except (OSError, TypeError):
+            markup = (page_dir / "versions" / f"{entry['version']}.html").read_text(encoding="utf-8")
+        except OSError:
             continue
-        if any(f"s:{slugify(h)}" in anchors for h in re.findall(r"^##[ \t]+(.+?)\s*$", text, re.MULTILINE)):
-            days.append(str(entry["ts"])[:10])
-    # A republish moves its version's time, so the earliest day wins, not the first entry.
-    return min(days, default=None)
+        for aid in [a for a in open_ if f'data-anchor-id="{a}"' in markup]:
+            match = re.search(r'<section data-anchor-id="' + re.escape(aid) + r'"(?: [a-z-]+="[^"]*")*>(.*?)</section>',
+                              markup, re.DOTALL)
+            if match and body_hash(match.group(1)) == hashes[aid]:
+                days[aid] = min(days[aid], _local_day(entry["ts"]))
+            elif match:
+                open_.discard(aid)
+    return days
+
+
+def _short(title: str, limit: int = 40) -> str:
+    """A topic title for an archive's name, cut at a word with an ellipsis."""
+    if len(title) <= limit:
+        return title
+    return title[:limit + 1].rsplit(" ", 1)[0].rstrip(" ,:;·–-") + "…"
 
 
 def _span(start: str, end: str) -> str:
@@ -346,15 +375,18 @@ def arrange(canvas: str, cards: list[dict], registry: dict, unchanged: list[str]
         while plan_id in taken:
             plan_id, k = f"archive-{today}-{k}", k + 1
         topics = [{"anchor": aid, "title": _title(body), "hash": body_hash(body)} for aid, _, body in archive]
-        start = _first_dates(page_dir, {t["anchor"] for t in topics}) or today
-        names = [t["title"] if len(t["title"]) <= 40 else t["title"][:40].rsplit(" ", 1)[0].rstrip(",:;") + "…"
-                 for t in topics]
-        title = f"Archive {_span(min(start, today), today)} · {', '.join(names[:2])}" + (
+        # Computed once, here; kept in archive/index.json only.
+        since = _since_dates(page_dir, {t["anchor"]: t["hash"] for t in topics}, version, today)
+        for topic in topics:
+            topic["since"] = since[topic["anchor"]]
+        start, end = min(since.values()), max(since.values())
+        names = [_short(t["title"]) for t in topics]
+        title = f"Archive {_span(start, end)} · {', '.join(names[:2])}" + (
             f" +{len(names) - 2}" if len(names) > 2 else "")
         markup = _archive_html(meta, title[:200], [whole for _, whole, _ in archive], full_registry, page_dir)
         n, shots = size_of(markup)
         _publish_archive(page_dir, plan_id, title[:200], f"{len(topics)} finished topics from {version}", markup,
-                         {"from": min(start, today), "to": today, "sections": n, "screenshots": shots,
+                         {"from": start, "to": end, "sections": n, "screenshots": shots,
                           "topics": [t["title"] for t in topics], "version": version})
         index["archives"].append({"id": plan_id, "created": today, "version": version, "topics": topics})
         report["archived"] = [{"id": plan_id, "title": title[:200], "topics": len(topics)}]

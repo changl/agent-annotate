@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import re
+import time
 from pathlib import Path
 
 import pytest
@@ -130,6 +132,9 @@ def test_over_the_limit_every_finished_topic_moves_to_one_archive_and_republishi
     archives = [p for p in list_plans(slug) if is_archive_plan(p)]
     assert len(archives) == 1 and archives[0]["archive"]["sections"] == 44
     assert archives[0]["title"].startswith("Archive ") and "Topic 1, Topic 2 +42" in archives[0]["title"]
+    topics = json.loads((slug / "archive" / "index.json").read_text())["archives"][0]["topics"]
+    assert {t["since"] for t in topics} == {archives[0]["archive"]["from"]} == {archives[0]["archive"]["to"]}
+    assert "since" not in (slug / "current.meta.json").read_text()
     archive_html = (slug / "plans" / archives[0]["id"] / "versions" / "v1.html").read_text()
     assert 'data-anchor-id="s:topic-1"' in archive_html and 'data-anchor-id="s:topic-3"' not in archive_html
     cards_before = (slug / "cards.json").read_text()
@@ -159,3 +164,40 @@ def test_a_reopened_comment_brings_an_archived_topic_back(tmp_path, no_sips):
     result = generate(source(tmp_path, big_page(), version="v3"), slug)
     assert result["layout"]["returned"] == ["s:topic-7"]
     assert 'data-anchor-id="s:topic-7"' in canvas(slug, "v3")
+
+
+def test_archive_titles_cut_at_a_word():
+    assert long_pages._short("Location sharing: ask first, say it plainly, links that open") == \
+        "Location sharing: ask first, say it…"
+    assert long_pages._short("Phones") == "Phones"
+
+
+@pytest.fixture
+def pacific(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_days_are_the_publishers_local_day(pacific):
+    assert long_pages._local_day("2026-10-31T01:06:00Z") == "2026-10-30"
+    assert long_pages._local_day("2026-10-31T16:50:21Z") == "2026-10-31"
+
+
+def test_a_topic_is_dated_by_the_version_where_its_current_content_first_appeared(tmp_path, no_sips, pacific):
+    slug = tmp_path / "slug"
+    versions = {1: {"Alpha": "Same.", "Beta": "First draft.", "Gamma": "Same too."},
+                2: {"Alpha": "Same.", "Beta": "Second draft."},                       # Gamma left
+                3: {"Alpha": "Same.", "Beta": "Second draft.", "Gamma": "Same too."}}  # and came back
+    for n, parts in versions.items():
+        generate(source(tmp_path, parts, version=f"v{n}"), slug, version=f"v{n}")
+    meta = json.loads((slug / "current.meta.json").read_text())
+    meta["history"] = [{"version": f"v{n}", "ts": f"2026-10-{17 + n}T10:00:00Z", "label": ""} for n in versions]
+    (slug / "current.meta.json").write_text(json.dumps(meta))
+    html = canvas(slug, "v3")
+    hashes = {aid: long_pages.body_hash(body) for aid, body in
+              re.findall(r'<section data-anchor-id="(s:[a-z]+)"(?: [a-z-]+="[^"]*")*>(.*?)</section>', html, re.DOTALL)}
+    days = long_pages._since_dates(slug, hashes, "v4", "2026-10-31")
+    assert days == {"s:alpha": "2026-10-18", "s:beta": "2026-10-19", "s:gamma": "2026-10-18"}
