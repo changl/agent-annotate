@@ -232,6 +232,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .hist-lbl{font-size:calc(10px * var(--aa-text, 1));font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:6px 4px}
 .vrail-body{display:flex;flex-direction:column;gap:1px}
 .vrail-empty{padding:12px;font-size:calc(10px * var(--aa-text, 1));color:var(--faint)}
+.vrail-more{display:block;margin:6px 8px 10px}
 .vrow{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:calc(11px * var(--aa-text, 1));border-radius:var(--radius-field);cursor:pointer;color:var(--color-base-content);width:100%;border:0;background:transparent;font-family:"Roboto", sans-serif;text-align:left}
 .vrow:hover{background:var(--soft)}
 .vrow.current{background:color-mix(in oklab,var(--color-primary) 16%,transparent);font-weight:700}

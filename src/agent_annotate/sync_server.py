@@ -3622,8 +3622,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return result
 
     def _get_categories(self):
-        from .categories import (CATEGORIES, category_counts, comment_category, is_archive_plan, list_plans,
-                                 load_categories)
+        from .categories import CATEGORIES, category_counts, comment_category, list_plans, load_categories
         from .copy_state import load_copy
         from .project_state import linked_pages
         try:
@@ -3643,8 +3642,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 present = {comment_category(c) for items in store["anchors"].values() for c in items}
                 available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
                              "findings": bool(category_data["findings_sets"]) or "findings" in present,
-                             "plans": any(p["section"] != "hidden" and not is_archive_plan(p) for p in plans)
-                             or "plans" in present}
+                             "plans": any(p["section"] != "hidden" for p in plans) or "plans" in present}
                 record = self._registered_record()
                 links = linked_pages(record) if record else []
             if not self._identity()["authenticated"]:

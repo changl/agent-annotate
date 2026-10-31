@@ -157,12 +157,14 @@ def _open_anchors(page_dir: Path, cards: list[dict]) -> set[str] | None:
             status = c.get("status") or "open"
             request = c.get("decision_request")
             verdict = (c.get("decision") or {}).get("verdict") if isinstance(c.get("decision"), dict) else None
+            # As the rail classifies (shell.js classify): an unresolved question,
+            # or any other comment still open, needs someone; addressed is done.
             if isinstance(request, dict):
                 if verdict:
                     answered.update({anchor, c.get("number")} - {None})
-                elif status not in ("archived", "resolved_in_version"):
+                elif status not in ("archived", "resolved_in_version", "addressed_by_agent"):
                     result |= {anchor} | evidence(request)
-            elif not str(c.get("author") or "").startswith("agent:") and status in ("open", "addressed_by_agent"):
+            elif status == "open":
                 result.add(anchor)
     for card in cards:
         request = card.get("decision_request")
@@ -198,15 +200,18 @@ def _first_dates(page_dir: Path, anchors: set[str]) -> str | None:
     """The first day any of these topics was published, from source/vN.md and the version history."""
     from .cli import _read_meta
     from .pagegen import slugify
-    history = [h for h in (_read_meta(page_dir).get("history") or []) if isinstance(h, dict)]
-    for entry in history:
+    days = []
+    for entry in _read_meta(page_dir).get("history") or []:
+        if not isinstance(entry, dict) or not entry.get("ts"):
+            continue
         try:
             text = (page_dir / "source" / f"{entry.get('version')}.md").read_text(encoding="utf-8")
         except (OSError, TypeError):
             continue
         if any(f"s:{slugify(h)}" in anchors for h in re.findall(r"^##[ \t]+(.+?)\s*$", text, re.MULTILINE)):
-            return str(entry.get("ts") or "")[:10] or None
-    return None
+            days.append(str(entry["ts"])[:10])
+    # A republish moves its version's time, so the earliest day wins, not the first entry.
+    return min(days, default=None)
 
 
 def _span(start: str, end: str) -> str:
@@ -318,8 +323,8 @@ def arrange(canvas: str, cards: list[dict], registry: dict, unchanged: list[str]
     if sections_n > MAX_SECTIONS or shots_n > MAX_SCREENSHOTS:
         report["warnings"].append(
             f"page is over the size limit ({sections_n} sections, {shots_n} screenshots; limit "
-            f"{MAX_SECTIONS} / {MAX_SCREENSHOTS}) and no topic on it is finished yet; finished topics move to an "
-            "archive page on a later publish")
+            f"{MAX_SECTIONS} / {MAX_SCREENSHOTS}); every topic left on it is open or changed this round, "
+            "and each moves to an archive page once it is answered and unchanged")
 
     full_registry = registry
     if removed:
@@ -342,7 +347,8 @@ def arrange(canvas: str, cards: list[dict], registry: dict, unchanged: list[str]
             plan_id, k = f"archive-{today}-{k}", k + 1
         topics = [{"anchor": aid, "title": _title(body), "hash": body_hash(body)} for aid, _, body in archive]
         start = _first_dates(page_dir, {t["anchor"] for t in topics}) or today
-        names = [t["title"][:40] for t in topics]
+        names = [t["title"] if len(t["title"]) <= 40 else t["title"][:40].rsplit(" ", 1)[0].rstrip(",:;") + "…"
+                 for t in topics]
         title = f"Archive {_span(min(start, today), today)} · {', '.join(names[:2])}" + (
             f" +{len(names) - 2}" if len(names) > 2 else "")
         markup = _archive_html(meta, title[:200], [whole for _, whole, _ in archive], full_registry, page_dir)

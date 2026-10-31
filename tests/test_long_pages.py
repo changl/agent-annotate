@@ -68,7 +68,7 @@ def test_a_large_screenshot_gets_one_cached_preview_and_a_full_size_link(tmp_pat
     assert preview.suffix == ".jpg" and len(fake_sips) == 1 and "-Z" in fake_sips[0]
     assert f'src="assets/preview/{preview.name}" data-full="assets/' in html
     assert 'class="aa-full"' in html and "⤢ Full size" in html
-    assert html.count('loading="lazy" decoding="async"') == 2 and html.count("aa-full") == 1
+    assert html.count('loading="lazy" decoding="async"') == 2 and html.count('class="aa-full"') == 1
     generate(source(tmp_path, sections, version="v2"), slug)
     assert len(fake_sips) == 1                      # cached by content hash
     assert "data-unchanged-since" in canvas(slug, "v2")   # preview markup does not count as a change
@@ -79,7 +79,7 @@ def test_without_sips_the_original_is_used(tmp_path, no_sips):
     slug = tmp_path / "slug"
     generate(source(tmp_path, {"Board": "![Board](shots/wide.png)"}), slug)
     html = canvas(slug, "v1")
-    assert 'loading="lazy"' in html and "data-full" not in html and "aa-full" not in html
+    assert 'loading="lazy"' in html and 'data-full="' not in html and 'class="aa-full"' not in html
     assert not (slug / "assets" / "preview").exists()
 
 
@@ -87,7 +87,7 @@ def test_finished_topics_fold_in_page_order_and_open_ones_stay(tmp_path, no_sips
     slug = tmp_path / "slug"
     parts = {"Alpha": "Done.", "Beta": "Done too.", "Gamma": "Evidence for an open card.", "Delta": "Has a comment."}
     generate(source(tmp_path, parts, [card(1, "s:gamma")]), slug)
-    assert "aa-earlier" not in canvas(slug, "v1")    # nothing is unchanged on v1
+    assert '<details class="aa-earlier"' not in canvas(slug, "v1")    # nothing is unchanged on v1
     store(slug, {"s:delta:p1": [{"id": "c1", "author": "chang", "status": "open", "body": "Why?", "version": "v1"}]})
     changed = {**parts, "Beta": "Changed this round."}
     result = generate(source(tmp_path, changed, [card(1, "s:gamma")], "v2"), slug)
@@ -126,7 +126,7 @@ def test_over_the_limit_every_finished_topic_moves_to_one_archive_and_republishi
     assert second["layout"]["archived"][0]["id"] == f"archive-{today}"
     html = canvas(slug, "v2")
     assert 'data-anchor-id="s:topic-3"' in html and 'data-anchor-id="s:topic-1"' not in html
-    assert "aa-earlier" not in html and second["cards"] == 1
+    assert '<details class="aa-earlier"' not in html and second["cards"] == 1
     archives = [p for p in list_plans(slug) if is_archive_plan(p)]
     assert len(archives) == 1 and archives[0]["archive"]["sections"] == 44
     assert archives[0]["title"].startswith("Archive ") and "Topic 1, Topic 2 +42" in archives[0]["title"]
