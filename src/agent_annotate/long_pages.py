@@ -258,7 +258,7 @@ def _archive_html(meta: dict, title: str, bodies: list[str], registry: dict, pag
     keep = set(_ANCHOR.findall(sections))
     canvas = (CSS + "\n" + f'<div class="aa"><h1 class="aa-page-title">{E(title)}</h1>'
               + light_images(sections, page_dir) + "</div>")
-    return build_html({**meta, "title": title}, canvas, {k: v for k, v in registry.items() if k in keep}, "v1")
+    return build_html({**meta, "title": title}, canvas, {k: v for k, v in registry.items() if k in keep})
 
 
 def _publish_archive(page_dir: Path, plan_id: str, title: str, label: str, markup: str, extra: dict) -> None:

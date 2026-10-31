@@ -4967,7 +4967,7 @@ def cmd_doctor(args) -> int:
         ("state_dir", STATE_DIR.is_dir(), str(STATE_DIR)),
         ("bus_root", BUS_ROOT.is_dir(), str(BUS_ROOT)),
         ("web_assets", all((WEB_DIR / n).is_file() for n in
-                           ("shell.html", "shell.js", "shell.css", "adapter.js", "template.html")),
+                           ("shell.html", "shell.js", "shell.css", "adapter.js")),
          str(WEB_DIR)),
         ("hook_script", HOOK_SCRIPT.is_file(),
          str(HOOK_SCRIPT) + ("" if os.access(HOOK_SCRIPT, os.X_OK) else "   (not executable; publish fixes the mode)")),

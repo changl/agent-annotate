@@ -597,15 +597,14 @@ def test_the_previous_rendered_page_stands_in_for_a_missing_source(tmp_path):
 def test_a_hand_built_previous_page_marks_nothing(tmp_path):
     slug_dir, v2 = _two_versions(tmp_path, _V1_BODY)
     (slug_dir / "source" / "v1.md").unlink()
-    template = (pagegen.WEB_DIR / "template.html").read_text(encoding="utf-8")
-    (slug_dir / "versions" / "v1.html").write_text(template.replace(
-        "{{CANVAS}}", '<section data-anchor-id="s:scope"><h2>Scope</h2></section>'),
+    (slug_dir / "versions" / "v1.html").write_text(
+        '<html><body><section data-anchor-id="s:scope"><h2>Scope</h2></section></body></html>',
         encoding="utf-8")
     result = generate(v2, slug_dir)
     assert result["unchanged_sections"] == []
 
 
-def test_the_template_is_fully_filled_and_the_sentinels_survive(tmp_path):
+def test_the_document_wrapper_keeps_sentinels_without_offline_chrome(tmp_path):
     src = tmp_path / "page.md"
     src.write_text(EXAMPLE, encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
@@ -616,8 +615,8 @@ def test_the_template_is_fully_filled_and_the_sentinels_survive(tmp_path):
     assert "<!-- END CANVAS CONTENT ──────────────────── -->" in html
     assert "{{" not in html.split("<!-- CANVAS CONTENT")[0]
     assert html.count("<title>Items model review</title>") == 1
-    assert "Round 1 — column semantics" in html
-    assert "const DOC_ID = 'items-model-review';" in html
+    assert "exportFeedback" not in html
+    assert 'id="panel"' not in html
     # The stylesheet is the first thing in the canvas and the only CSS on it.
     canvas = html.split("<!-- CANVAS CONTENT", 1)[1].split("-->", 1)[1]
     assert canvas.lstrip().startswith('<style data-annotate-style="managed">')
