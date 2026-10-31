@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On iPad, a tap on a choice or card no longer needs a second tap. A tap also fires a mouse hover, and the page's hover highlight made iOS treat the tap as a hover and drop the click; that highlight was also the shift you saw. Hover feedback now reacts to a mouse only (document highlights, rail card hover, Library marks, diagram nodes).
+
 ## 2.27.8
 
 agent-annotate-hl3: on the Multi-Mac page, a 5,063 px command ran off the right edge of its 1,193 px block and had to be selected by hand.

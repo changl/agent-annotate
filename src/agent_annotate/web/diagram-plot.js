@@ -374,7 +374,8 @@
         }
 
         // Hover-highlight neighbor edges (edges are <path> under g[aria-label=link])
-        grp.addEventListener('mouseenter', () => {
+        grp.addEventListener('pointerenter', (e) => {
+          if (e.pointerType !== 'mouse') return; // a tap highlight makes iPad drop the click
           rect.setAttribute('stroke-width', '2.5');
           svg.querySelectorAll('g[aria-label="link"] path[data-anchor-id]').forEach((el) => {
             const a = el.getAttribute('data-anchor-id') || '';
@@ -388,7 +389,8 @@
             }
           });
         });
-        grp.addEventListener('mouseleave', () => {
+        grp.addEventListener('pointerleave', (e) => {
+          if (e.pointerType !== 'mouse') return;
           rect.setAttribute('stroke-width', '1.5');
           svg.querySelectorAll('g[aria-label="link"] path[data-anchor-id]').forEach((el) => {
             el.setAttribute('stroke', 'var(--line)');

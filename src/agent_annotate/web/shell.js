@@ -2506,8 +2506,9 @@ function wireCardActions(root) {
       if (gotoVersionFor(c) !== CURRENT_VERSION || isGeneralAnchor(c.anchor_id)) return;
       postToFrame({ type: 'annotate:card-hover', anchorId: c.anchor_id, target: c.target || null, on });
     };
-    card.addEventListener('mouseenter', () => hover(true));
-    card.addEventListener('mouseleave', () => hover(false));
+    // Mouse only: on a tap the highlight made iPad drop the click (see adapter.js byMouse).
+    card.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') hover(true); });
+    card.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hover(false); });
   });
   // Whole-card click navigates (T1). On a one-line answered card (C1) it
   // also expands the card.

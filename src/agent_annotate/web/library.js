@@ -518,8 +518,9 @@
     const ch = $('#q-change');
     if (ch) ch.addEventListener('click', () => { rail.querySelector('[data-q]').outerHTML = qCardOpen(q); wireQ(rail, q); });
     rail.querySelectorAll('[data-cid]').forEach(el => {
-      el.addEventListener('mouseenter', () => highlightComment(el.dataset.cid, false));
-      el.addEventListener('mouseleave', () => highlightComment(null, false));
+      // Mouse only: a highlight on tap makes iPad drop the click.
+      el.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') highlightComment(el.dataset.cid, false); });
+      el.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') highlightComment(null, false); });
       el.addEventListener('click', () => highlightComment(el.dataset.cid, false, true));
     });
     $('#sp-compose-toggle').addEventListener('click', () => { const box = $('#sp-compose-box'); box.hidden = !box.hidden; $('#sp-compose-toggle').setAttribute('aria-expanded', String(!box.hidden)); if (!box.hidden) $('#sp-compose-ta').focus(); });
