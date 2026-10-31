@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.27.8
+
 agent-annotate-hl3: on the Multi-Mac page, a 5,063 px command ran off the right edge of its 1,193 px block and had to be selected by hand.
 
 - Code and terminal blocks wrap long lines at every width and have a copy button in the top-right corner. It appears on hover or keyboard focus, is always shown on touch screens, and shows a check and "Copied" for 2 s. If the Clipboard API is unavailable, copying falls back to selecting the text.
