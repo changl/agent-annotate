@@ -65,6 +65,8 @@ V2 USAGE (directory layout, version-pivot, comment lifecycle)
       PUT  /api/comments/<id>               → set status / response_text / decision_request
       POST /api/comments/<id>/reply         → append a thread reply
       POST /api/comments/<id>/archive       → move comment to archived
+      POST /api/comments/<id>/answer-later  → {"on": bool}: set an unanswered question
+                                              aside (page state; no bus event)
       POST /api/comments/<id>/decision      → answer a posed decision_request
                                               (accept/reject/changes/comment/select);
                                               pushes to session.

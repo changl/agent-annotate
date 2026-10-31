@@ -6,7 +6,7 @@ from test_decision_api import _call, _card, _events, _store, server  # noqa: F40
 
 from agent_annotate.categories import category_counts
 from agent_annotate.cli import _decision_cards, _withdraw_unasked
-from agent_annotate.hooks.check_comment_bus import _decision_cards as hook_cards
+from agent_annotate.hooks.check_comment_bus import _load_cards as hook_cards
 from agent_annotate.hooks.decision_state import is_undecided
 from agent_annotate.hooks.session_start import waiting_count
 
@@ -68,7 +68,7 @@ def test_set_aside_is_never_undecided_or_needs_you(server):  # noqa: F811
     cards = {c["id"]: c for c in _decision_cards(store)}
     assert cards[later["id"]]["answer_later"] and not is_undecided(cards[later["id"]])
     assert is_undecided(cards[now["id"]])
-    hooked = hook_cards(store)
+    hooked = hook_cards(str(slug_dir))
     assert not is_undecided(hooked[later["id"]]) and is_undecided(hooked[now["id"]])
     counts = category_counts(slug_dir, store=store)["review"]
     assert counts["needs_you"] == 1 and counts["later"] == 1
