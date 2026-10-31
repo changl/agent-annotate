@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplification step 4: one question card. The document's cards are now built by the rail's builder (shell.js `renderDecisionBlock`, handed to adapter.js through `AnnotateDocs.stripCard`), with the same actions, drafts and notes code; each place keeps its own look. The document's own card builder, its decision posting and the four messages that synced the two copies are gone. Before/after shots on a copy of FLD match pixel for pixel in the rail and the document (iPad and desktop). A failed send now stays shown on the card until the next try.
+
 - Lighter page load (Chang, card #11, 2026-10-31), measured on a copy of FLD:
   - History is built when you open it, not while it is hidden. On load the page fetches only the latest round, which the header and Send read: 4 KB instead of 351 KB (`/api/history?latest=1`). The full list loads when History opens, about 0.2 s the first time. The shell starts with 902 nodes instead of 1,210 (iPad).
   - Evidence inside document strips is built when "Evidence (n)" is opened. An open Evidence stays open and built when a poll redraws the strips. The document starts with 944 nodes instead of 1,079.
