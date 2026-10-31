@@ -526,3 +526,40 @@ div.sd-head{cursor:default;padding-right:2px}
 #round-confirm[data-sd="b"] .sd-gf-lbl{margin-top:14px;padding-bottom:6px}
 #round-confirm[data-sd="b"] .sd-gf{margin-top:0}
 .sd-own{color:var(--muted)}
+
+/* ── Round 2 (?sd=d|e|f; branch changl/send-design-2, not for merge) ── */
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]){gap:10px}
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) .round-confirm-title{font-size:calc(17px * var(--aa-text, 1))}
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) :is(#round-discard-btn,.send-count){display:none}
+@media (pointer:coarse){#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) .sum-kbd{display:none}}
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) .round-confirm-ft{margin-top:0}
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) .sum-list{margin:4px 0}
+#round-confirm:is([data-sd="d"],[data-sd="e"],[data-sd="f"]) .round-confirm-ft .btn{min-height:44px;min-width:88px}
+#round-confirm-backdrop:has(#round-confirm:is([data-sd="d"],[data-sd="e"])){background:color-mix(in oklab,#000 62%,transparent)}
+#round-confirm[data-sd="d"]{width:min(720px, calc(100vw - 32px))}
+#round-confirm[data-sd="e"]{width:min(640px, calc(100vw - 32px))}
+.s2-note{width:100%;font-size:calc(14px * var(--aa-text, 1));line-height:1.45;resize:none;field-sizing:content;min-height:3.2em;max-height:30vh}
+#round-confirm[data-sd="e"] .s2-note{min-height:5.5em}
+.s2-row{border-top:1px solid var(--line)}
+.s2-row:first-child{border-top:0}
+.s2-head{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;padding:10px 2px;min-height:44px;background:none;border:0;color:inherit;font:inherit}
+button.s2-head{cursor:pointer}
+.s2-q{font-size:calc(12.5px * var(--aa-text, 1));line-height:1.4;color:var(--muted)}
+.s2-a{font-size:calc(14px * var(--aa-text, 1));font-weight:600;line-height:1.4;color:var(--color-base-content)}
+.s2-row .sum-edit{padding:0 2px 12px}
+.s2-empty{color:var(--muted);font-size:calc(13px * var(--aa-text, 1));padding:12px 2px}
+/* e, f: what goes reads as the quoted part of the message, one line per item */
+.s2-quote{border-left:3px solid var(--line);padding-left:12px;margin:14px 0 2px 2px}
+.s2-quote .s2-row{border:0}
+.s2-quote .s2-head{display:block;padding:5px 0;min-height:0;font-size:calc(13px * var(--aa-text, 1));line-height:1.45}
+.s2-quote .s2-q{font-size:inherit}
+.s2-quote .s2-q::after{content:'  →  ';white-space:pre}
+.s2-quote .s2-a{font-size:inherit}
+/* f: a popover from Send, page left undimmed; no title, no Back (tap outside or Esc) */
+#round-confirm-backdrop:has(#round-confirm[data-sd="f"]){background:transparent;align-items:flex-start;justify-content:flex-end;padding:60px 16px 0}
+#round-confirm[data-sd="f"]{width:min(440px, calc(100vw - 32px));max-height:min(640px, calc(100dvh - 90px));padding:14px 16px;border:1px solid var(--line);box-shadow:0 18px 48px color-mix(in oklab,#000 55%,transparent)}
+#round-confirm[data-sd="f"] :is(.round-confirm-title,#round-cancel-btn){display:none}
+#round-confirm[data-sd="f"] .s2-quote{margin-top:10px}
+@media (max-width: 1023px), (max-height: 480px){
+  #round-confirm-backdrop:has(#round-confirm[data-sd="f"]){align-items:flex-end;padding:0 10px 84px}
+}

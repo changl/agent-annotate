@@ -632,6 +632,9 @@
   // Send design prototypes (?sd=a|b|c, branch changl/send-design only).
   const sdView = (docs) => docs && docs.sendDesign && AA.isDoc(AA.view) && docs.docs.includes(AA.view) ? AA.view : null;
   function sdTitle(sd, total) {
+    if (sd === 'd') return 'Send to the agent';
+    if (sd === 'e') return 'To the agent';
+    if (sd === 'f') return 'Send';
     if (!total) return 'Nothing to send yet';
     if (sd === 'b') return 'Send ' + total + (total === 1 ? ' item' : ' items') + ' to the agent?';
     if (sd === 'c') return 'Send to the agent';
@@ -667,6 +670,19 @@
       ft.prepend(comp);
     }
     if (comp) comp.value = docs.gf();
+    // d: the note sits right above Back and Send, outside the scrolling list.
+    let note = $('#s2-note-ft');
+    if (sd === 'd' && !note) {
+      note = document.createElement('textarea');
+      note.id = 's2-note-ft';
+      note.className = 'textarea s2-note';
+      note.rows = 2;
+      note.placeholder = 'Anything else for the agent? (optional)';
+      note.setAttribute('aria-label', 'Note to the agent');
+      note.addEventListener('input', () => { docs.setGf(note.value); syncCounts(); });
+      ft.before(note);
+    }
+    if (note) note.value = docs.gf();
     list.scrollTop = scroll;
     syncCounts();
   }

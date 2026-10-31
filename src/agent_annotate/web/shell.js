@@ -3760,7 +3760,44 @@ function sdDisclosure(key, label, n, body, cls) {
   const open = sdOpen[key];
   return `<button type="button" class="sd-disc ${cls || ''}" data-sd-toggle="${key}" aria-expanded="${open}">${ico(open ? 'chevDown' : 'chevRight')}<span>${label}</span><span class="badge badge-sm badge-ghost">${n}</span></button>${open ? body() : ''}`;
 }
+// ── Round 2 (?sd=d|e|f, branch changl/send-design-2; not for merge).
+// Only what goes, as the items themselves; the note is a visible field;
+// no counts, no unanswered list, no Discard.
+function s2Item(c) {
+  const isQ = hasDecisionRequest(c) && !strandedSay(c);
+  if (isQ) return { q: displayPrompt(c), a: sdAnswer(c) };
+  const mine = (c.replies || []).filter(r => !isAgentAuthor(r.author));
+  if (strandedSay(c)) return { q: displayPrompt(c), a: '“' + firstLine(sayDraft(c)) + '”' };
+  return mine.length ? { q: firstLine(c.text), a: '“' + firstLine(mine[mine.length - 1].text) + '”' } : { q: '', a: '“' + firstLine(c.text) + '”' };
+}
+function s2Row(c) {
+  const { q, a } = s2Item(c);
+  const tap = SD === 'd' && hasDecisionRequest(c) && !strandedSay(c) && (canChangeAnswer(c) || hasSayDraft(c));
+  const open = tap && sumEditing === c.id;
+  const body = `${q ? `<span class="s2-q">${esc(q)}</span>` : ''}<span class="s2-a">${esc(a)}</span>`;
+  // d: tap the row to change in place, no pencil; e, f: read only.
+  return `<div class="s2-row${open ? ' is-open' : ''}" data-sum-id="${escAttr(c.id)}">${tap
+    ? `<button type="button" class="s2-head" data-sum-edit="${escAttr(c.id)}" aria-expanded="${open}" aria-label="Change: ${escAttr(q)}">${body}</button>`
+    : `<div class="s2-head">${body}</div>`}${open ? sdOptions(c) : ''}</div>`;
+}
+function renderSend2Into(list) {
+  const m = sendModel();
+  const rows = m.going.map(s2Row).join('');
+  const note = (ph) => `<textarea class="textarea s2-note" id="sum-gf-ta" rows="2" placeholder="${escAttr(ph)}" aria-label="Note to the agent"></textarea>`;
+  let html = '';
+  if (SD === 'd') {
+    // The note sits by Send (app.js), outside the scroll, so it is always in view.
+    html = rows || '<div class="s2-empty">Nothing yet. Answer on the page, or write a note below.</div>';
+  } else {
+    // e, f: the note first, as the message; what goes follows as plain lines.
+    html = note(SD === 'e' ? 'Write a note to the agent (optional)' : 'Add a note (optional)') +
+      (rows ? `<div class="s2-quote">${rows}</div>` : '');
+  }
+  list.innerHTML = html;
+  wireSummary(list, true);
+}
 function renderSendDesignInto(list) {
+  if (['d', 'e', 'f'].includes(SD)) return renderSend2Into(list);
   const m = sendModel();
   let html = '';
   if (SD === 'a') {
