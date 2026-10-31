@@ -8,7 +8,7 @@ and the page polls, then typing continues. Every keystroke must survive.
 import json
 
 import pytest
-from test_keep_drafts import _agent, _poll, _session, _directory
+from test_keep_drafts import _agent, _directory, _poll, _session
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -91,9 +91,10 @@ def test_the_agent_rewords_the_card_being_answered(tmp_path, where):
         frame = page.frame_locator("#content-frame")
         box = {"rail": page.locator('#comment-list [data-decision-say-ta="question-11"]'),
                "document": frame.locator('textarea[data-strip-say="question-11"]')}[where]
-        reword = lambda: _agent(base, "api/comments/question-11", {"decision_request": {
-            "prompt": "When should we release, given the new build?", "options": [{"id": "now", "label": "Ship now"}, {"id": "later", "label": "Ship later"}]}},
-            method="PUT")
+        def reword():
+            return _agent(base, "api/comments/question-11", {"decision_request": {
+                "prompt": "When should we release, given the new build?",
+                "options": [{"id": "now", "label": "Ship now"}, {"id": "later", "label": "Ship later"}]}}, method="PUT")
         assert _type_through(page, box, reword) == FIRST + MORE
 
 
