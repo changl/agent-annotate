@@ -157,7 +157,7 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 def _comments(page_dir):
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"), migrate=False)
+    return _load_v2_store(safe_path(page_dir, "comments.json"))
 
 
 def _finding(store: dict, identifier) -> dict:

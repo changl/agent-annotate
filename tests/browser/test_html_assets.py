@@ -37,7 +37,7 @@ def _asset_server(tmp_path, directory, https):
     """Record real server responses for local HTTP or sandboxed Funnel-style TLS."""
     key = review_access.ensure_key(directory) if https else None
     handler = make_handler(directory, public_base_path="/review" if https else "", slug="page",
-                           v2_mode=True, skill_dir=WEB_DIR,
+                           skill_dir=WEB_DIR,
                            local_author=None if https else "reviewer@example.com",
                            local_author_name=None if https else "Browser Reviewer")
     observed = []

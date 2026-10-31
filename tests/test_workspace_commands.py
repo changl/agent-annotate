@@ -247,7 +247,7 @@ def test_provider_author_change_preserves_canonical_decision_and_keeps_legacy_qu
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {}, "archived": {}}))
     (directory / "current.meta.json").write_text(json.dumps({"current": "v1", "history": [{"version": "v1"}]}))
     handler = make_handler(artifact_dir=directory, public_base_path="", slug="test", bus_dir=tmp_path / "bus",
-                           v2_mode=True, local_author="reviewer@example.test", local_author_name="Reviewer")
+                           local_author="reviewer@example.test", local_author_name="Reviewer")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

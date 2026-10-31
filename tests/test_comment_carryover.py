@@ -73,7 +73,6 @@ def server(tmp_path):
         public_base_path="",
         slug="review",
         bus_dir=bus_dir,
-        v2_mode=True,
         proxy_urls=("https://review.example.test",),
         trusted_access_origins=("https://review.example.test",),
     )

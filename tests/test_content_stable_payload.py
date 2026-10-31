@@ -36,7 +36,6 @@ class _CapturingHandler(sync_server.AnnotateHandler):
         self.slug = "demo"
         self.public_base_path = "/demo"
         self.bus_dir = None
-        self.v2_mode = True
         self._last_body = b""
 
     def _respond(self, code, body, content_type="application/json",

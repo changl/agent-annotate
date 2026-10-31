@@ -113,7 +113,7 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
     key = review_access.ensure_key(directory)
     bus = cli.BUS_ROOT / "test-funnel"
     bus.mkdir(parents=True, exist_ok=True)
-    handler = sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path="/page", v2_mode=True, skill_dir=sync_server.WEB_DIR)
+    handler = sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path="/page", skill_dir=sync_server.WEB_DIR)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     record = {"slug_dir": str(directory), "port": server.server_port, "transport": "funnel", "url": "https://host.ts.net/page/"}
     cli._save_state_for_project("test-funnel", {"project": "test-funnel", "slugs": {"page": record}})

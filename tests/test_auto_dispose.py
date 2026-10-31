@@ -42,7 +42,7 @@ def page(tmp_path, monkeypatch):
         [{"number": 3, "anchor_id": "d:q3", "decision_request": {"prompt": "Q3 again?", "evidence": [{"anchor": "s:plan"}]}}]))
     bus_dir = tmp_path / "bus" / "reviews"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="demo",
-                           bus_dir=bus_dir, v2_mode=True)
+                           bus_dir=bus_dir)
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

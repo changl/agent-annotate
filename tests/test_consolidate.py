@@ -291,7 +291,7 @@ def test_every_page_writer_refuses_a_frozen_page(estate, capsys):
 
 def _serve(directory, base, slug):
     handler = sync_server.make_handler(artifact_dir=directory, public_base_path=base, slug=slug,
-                                       bus_dir=directory.parent, v2_mode=True, skill_dir=sync_server.WEB_DIR,
+                                       bus_dir=directory.parent, skill_dir=sync_server.WEB_DIR,
                                        local_author="chang@example.test", local_author_name="Chang")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

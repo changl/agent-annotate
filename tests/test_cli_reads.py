@@ -273,7 +273,7 @@ def served(tmp_path, monkeypatch):
     (slug_dir / "versions" / "v2.html").write_text('<p data-anchor-id="s:a">A</p><p data-anchor-id="s:b">B</p>')
     bus_dir = tmp_path / "bus" / "proj"
     handler = make_handler(artifact_dir=slug_dir, public_base_path="", slug="live",
-                           bus_dir=bus_dir, v2_mode=True)
+                           bus_dir=bus_dir)
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
