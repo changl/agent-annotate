@@ -760,80 +760,21 @@ function wireHoverLinking() {
   });
 }
 
-// ── Inline body decision strips ──────────────────────────────────────
-// The rail card (shell.js renderDecisionBlock) is the drawer-side surface
-// for a decision_request. This is the same affordance rendered AT the
-// anchored element, inside this document, so a reviewer scanning the body
-// never has to open the drawer to answer. Rebuilt only when the shell sends
-// a fresh 'annotate:comment-counts' message (see wireBridge) — NOT on every
-// resize/scroll-driven badge refresh, so DOM insertion here can never
-// feed back into the MutationObserver above and loop.
-const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes: 'Changes requested', comment: 'Answered in words', select: 'Selected' };
-// Checkmark-prefixed variant for the plain-text "currently X" changing-note
-// (the resolved chip itself is color-coded so it doesn't need one; the note
-// has no color coding, so it gets the same symbol shell.js's rail card and
-// sync_server.py's revision reply text use, for a consistent read).
-const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
-const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
-const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'changes'];
-function stripCanonicalOptionId(id) {
-  return (id === 'comment' || id === 'changes') ? 'changes' : id;
+// ── Question cards in the body ───────────────────────────────────────
+// The rail card and the card drawn here, at the anchored element, are one
+// card: shell.js builds both (renderDecisionBlock; stripCard gives this
+// document its copy, with this document's classes, wired to the same actions),
+// so a reviewer scanning the body never has to open the drawer to answer.
+// Rebuilt only when the shell sends a fresh 'annotate:comment-counts' message
+// (see wireBridge) — NOT on every resize/scroll-driven badge refresh, so DOM
+// insertion here can never feed back into the MutationObserver above and loop.
+function cardApi() {
+  try { return PARENT_ORIGIN ? window.parent.AnnotateDocs : null; } catch { return null; }
 }
-// Comment ids currently mid-flight (POST sent, no response yet): rendered
-// disabled with "Sending…" even across a rebuild triggered by an unrelated
-// counts message arriving before the response does.
-const pendingDecisionIds = new Set();
-// T-verdict-reversal: comment ids currently showing the change-verdict form
-// on the BODY strip instead of their resolved chip. Mirrors shell.js's
-// decisionChanging map so a rebuild triggered by an unrelated
-// annotate:comment-counts message doesn't snap a mid-correction strip back
-// to the chip.
-const stripChanging = {};
-const stripSayText = {};
-// Card layout: which excerpts are expanded past their 4-line clamp, whether
-// a card's "Evidence (n)" list is open, and which evidence previews are open.
-// Keyed per card so an 8s-poll rebuild never snaps them shut.
-const stripExcerptOpen = {};
-const stripEvidenceOpen = {};
-const stripEvidenceItemOpen = {};
-const DECISION_BTN_TEXT = { accept: '✓ Accept', reject: '✗ Reject', comment: '💬 Answer in words', changes: '↻ Request changes' };
-// The same options without their glyphs, for the "Recommended: …" sentence.
-const DECISION_PLAIN_LABEL = { accept: 'Accept', reject: 'Reject', comment: 'Answer in words', changes: 'Request changes' };
-const DECISION_BTN_CLASS = { accept: 'annotate-decision-accept', reject: 'annotate-decision-reject', comment: 'annotate-decision-comment', changes: 'annotate-decision-changes' };
-const DECISION_IMPACTS = ['low', 'medium', 'high'];
-
-// Same normalization as shell.js decisionOptions(): legacy string options
-// keep their exact pre-2.19 labels; object options bring label/consequence/
-// style; an object option with an id outside accept/reject/comment is a
-// "custom" choice posted as a select verdict naming the selection.
-function stripDecisionOptions(dr) {
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_DEFAULT;
-  const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
-  const out = [];
-  for (const o of raw) {
-    if (typeof o === 'string') {
-      if (DECISION_OPTIONS_ALL.indexOf(o) === -1) {
-        out.push({id:o, label:o, plain:o, consequence:cons[o] || '', style:null, custom:true});
-        continue;
-      }
-      const sid = stripCanonicalOptionId(o);
-      const scq = typeof cons[o] === 'string' ? cons[o] : (typeof cons[sid] === 'string' ? cons[sid] : '');
-      out.push({ id: sid, label: DECISION_BTN_TEXT[sid], plain: DECISION_PLAIN_LABEL[sid], consequence: scq, style: null, custom: false });
-    } else if (o && typeof o === 'object' && typeof o.id === 'string' && o.id) {
-      const oid = stripCanonicalOptionId(o.id);
-      const known = DECISION_OPTIONS_ALL.indexOf(oid) !== -1;
-      const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : null;
-      out.push({
-        id: known ? oid : o.id,
-        label: label || (known ? DECISION_BTN_TEXT[oid] : o.id),
-        plain: label || (known ? DECISION_PLAIN_LABEL[oid] : o.id),
-        consequence: typeof o.consequence === 'string' ? o.consequence : (typeof cons[o.id] === 'string' ? cons[o.id] : ''),
-        style: (o.style === 'primary' || o.style === 'danger' || o.style === 'default') ? o.style : null,
-        custom: !known,
-      });
-    }
-  }
-  return out;
+// "Show more" under a quoted excerpt only when its clamp cuts the text off.
+function syncAllExcerptClamps(root) {
+  const api = cardApi();
+  if (api && api.syncClamps) api.syncClamps(root || document);
 }
 
 function ensureStripStyle() {
@@ -896,14 +837,13 @@ function ensureStripStyle() {
     .annotate-decision-btn:disabled { opacity: .55 !important; cursor: not-allowed !important; filter: none !important; }
     .annotate-decision-accept { background: var(--color-success) !important; }
     .annotate-decision-reject { background: var(--color-error) !important; }
-    .annotate-decision-comment, .annotate-decision-submit { background: var(--color-primary) !important; }
+    .annotate-decision-comment { background: var(--color-primary) !important; }
     /* D2 "Request changes": amber, deliberately not Reject's red. */
     .annotate-decision-changes { background: var(--warn-text) !important; }
     /* display is intentionally NOT set here: it's driven entirely by the
        inline style.setProperty(..., 'important') toggle in JS (open/closed),
        which an author-stylesheet !important rule here would permanently
        defeat. */
-    .annotate-decision-form { margin-top: 6px !important; flex-direction: column !important; gap: 5px !important; }
     .annotate-decision-ta {
       width: 100% !important; min-height: 40px !important; padding: 5px 7px !important;
       border: 1px solid var(--line) !important; border-radius: 5px !important; font-size: calc(11px * var(--aa-text, 1)) !important;
@@ -917,9 +857,6 @@ function ensureStripStyle() {
     }
     .annotate-decision-feedback.is-error { color: var(--color-error) !important; }
     .annotate-decision-feedback:empty { min-height: 0 !important; margin-top: 0 !important; }
-    .annotate-decision-delivery {
-      font-size: calc(11px * var(--aa-text, 1)) !important; color: var(--muted) !important; margin-left: 8px !important;
-    }
     .annotate-verdict-chip {
       display: inline-block !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
       padding: 4px 10px !important; border-radius: 10px !important;
@@ -928,11 +865,11 @@ function ensureStripStyle() {
     .annotate-verdict-chip.verdict-reject { background: var(--error-soft) !important; color: var(--color-error) !important; }
     .annotate-verdict-chip.verdict-comment { background: var(--primary-soft) !important; color: var(--link) !important; }
     .annotate-verdict-chip.verdict-changes { background: var(--warning-soft) !important; color: var(--warn-text) !important; }
-    .annotate-decision-change, .annotate-decision-cancel {
+    .annotate-decision-cancel {
       background: none !important; color: var(--link) !important; font-weight: 600 !important;
       padding: 4px 6px !important; margin-left: 6px !important; text-decoration: none !important;
     }
-    .annotate-decision-change:hover, .annotate-decision-cancel:hover { filter: none !important; text-decoration: underline !important; }
+    .annotate-decision-cancel:hover { filter: none !important; text-decoration: underline !important; }
     .annotate-decision-changing-note {
       display: flex !important; align-items: center !important; justify-content: space-between !important;
       gap: 8px !important; font-size: calc(11px * var(--aa-text, 1)) !important; font-weight: 600 !important; color: var(--link) !important;
@@ -1020,21 +957,6 @@ function ensureStripStyle() {
       text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
       border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
-    .annotate-decision-say-row {
-      display: flex !important; align-items: center !important; gap: 8px !important;
-      flex-wrap: wrap !important; margin-top: 8px !important;
-    }
-    .annotate-decision-say {
-      font-size: calc(11.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; padding: 5px 11px !important;
-      border-radius: 6px !important; border: 1px solid var(--line) !important; cursor: pointer !important;
-      background: var(--color-base-100) !important; color: var(--link) !important; font-family:"Inter", sans-serif !important;
-      max-width: 100% !important; text-align: left !important; line-height: 1.35 !important;
-      white-space: normal !important; overflow-wrap: anywhere !important;
-    }
-    .annotate-decision-say:hover { background: var(--primary-soft) !important; filter: none !important; }
-    .annotate-decision-say-hint { font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; }
-    .annotate-decision-commented { margin: 0 0 6px !important; }
-    .annotate-decision-commented-txt { font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; margin-left: 6px !important; }
     .annotate-decision-custom { background: var(--muted) !important; }
     .annotate-decision-custom.annotate-style-primary { background: var(--color-primary) !important; }
     .annotate-decision-custom.annotate-style-danger { background: var(--color-error) !important; }
@@ -1082,39 +1004,19 @@ function ensureStripStyle() {
     }
     .annotate-back-pill:hover { background: var(--color-primary) !important; }
     .annotate-back-abs { position: absolute !important; pointer-events: auto !important; z-index: 16 !important; }
-    .annotate-decision-note-toggle {
-      font-size: calc(10.5px * var(--aa-text, 1)) !important; color: var(--muted) !important; background: none !important;
-      border: none !important; padding: 2px 0 !important; cursor: pointer !important;
-      font-family:"Inter", sans-serif !important; margin-top: 6px !important; display: block !important;
-    }
-    .annotate-decision-note-toggle:hover { color: var(--link) !important; filter: none !important; }
-    .annotate-decision-note-form { margin-top: 4px !important; }
-    .annotate-decision-note-form[hidden] { display: none !important; }
-    .annotate-decision-pending {
-      display: inline-block !important; font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
-      padding: 2px 8px !important; border-radius: 8px !important; background: var(--warning-soft) !important;
-      color: var(--warn-text) !important; border: 1px dashed var(--color-warning) !important; text-transform: uppercase !important;
-      letter-spacing: .04em !important; margin-left: 8px !important; vertical-align: middle !important;
-    }
-    .annotate-decision-sendnow {
-      background: none !important; color: var(--link) !important; font-weight: 600 !important;
-      padding: 4px 6px !important; margin-left: 4px !important; font-size: calc(10.5px * var(--aa-text, 1)) !important;
-    }
-    .annotate-decision-sendnow:hover { filter: none !important; text-decoration: underline !important; }
     @media (max-width: 768px), (max-height: 480px) {
-      .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-decision-note-toggle,
-      .annotate-excerpt-more, .annotate-decision-sendnow { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
+      .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-excerpt-more { min-height: 44px !important; padding: 10px 4px !important; touch-action: manipulation !important; }
       .annotate-decision-evidence-goto, .annotate-back-pill { min-height: 44px !important; padding: 10px 16px !important; touch-action: manipulation !important; }
       /* The toggle's own 44px target already spaces it from the options. */
       .annotate-decision-evidence { margin-top: 0 !important; }
       /* Thumb-sized buttons, buttons free to wrap to their own row, and a
          16px textarea so iOS doesn't zoom the page in on focus. */
-      .annotate-decision-btn, .annotate-decision-say {
+      .annotate-decision-btn {
         min-height: 44px !important; padding: 10px 16px !important; font-size: calc(13px * var(--aa-text, 1)) !important;
         flex: 1 1 auto !important; touch-action: manipulation !important;
       }
       .annotate-decision-ta { font-size: calc(16px * var(--aa-text, 1)) !important; min-height: 48px !important; }
-      .annotate-decision-change, .annotate-decision-cancel { min-height: 44px !important; padding: 10px 12px !important; touch-action: manipulation !important; }
+      .annotate-decision-cancel { min-height: 44px !important; padding: 10px 12px !important; touch-action: manipulation !important; }
     }
     /* ── Feedback prototype (X1/E4): the strip follows the shell
        using stock daisyUI light/dark tokens. C2 keeps the question bold. */
@@ -1156,13 +1058,6 @@ function ensureStripStyle() {
     .annotate-verdict-chip.verdict-reject { background: color-mix(in oklab,var(--color-error) 15%,transparent) !important; color: var(--err-text) !important; }
     .annotate-verdict-chip.verdict-changes { background: color-mix(in oklab,var(--color-warning) 20%,transparent) !important; color: var(--warn-text) !important; }
     .annotate-verdict-chip.verdict-comment, .annotate-verdict-chip.verdict-select { background: color-mix(in oklab,var(--color-info) 15%,transparent) !important; color: var(--info-text) !important; }
-    .annotate-decision-change {
-      display: inline-flex !important; align-items: center !important; justify-content: center !important;
-      width: 26px !important; height: 26px !important; padding: 0 !important; margin-left: 6px !important;
-      background: transparent !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; border-radius: .25rem !important;
-      vertical-align: middle !important;
-    }
-    .annotate-decision-change:hover { background: var(--color-base-300) !important; text-decoration: none !important; }
     .annotate-decision-changing-note { background: var(--color-base-200) !important; color: var(--color-base-content) !important; border: 1px solid var(--line) !important; }
     .annotate-decision-cancel { color: var(--color-base-content) !important; }
     .annotate-decision-later {
@@ -1213,162 +1108,6 @@ function ensureStripLayer() {
     wrapper.appendChild(layer);
   }
   return layer;
-}
-
-// ── Body-inline decision API calls ───────────────────────────────────
-// The server resolves author identity from trusted OAuth/proxy headers, not
-// from the request body (see sync_server.py _identity()) — so unlike the
-// rail card's shell.js equivalents, these never need to pass author fields.
-async function stripApiDecision(id, verdict, text, optionId) {
-  try {
-    const r = await fetch('./api/comments/' + encodeURIComponent(id) + '/decision', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // v2.19 round mode: park the verdict instead of pushing per click.
-      body: JSON.stringify({ verdict, text: text || undefined, option_id: optionId,
-        evidence: (META.evidence || {})[id], defer_push: true }),
-    });
-    if (r.ok) return await r.json();
-  } catch (e) { console.warn('[adapter] decision POST failed', e); }
-  return null;
-}
-function setStripItemDisabled(itemEl, disabled) {
-  itemEl.querySelectorAll('button').forEach(b => { b.disabled = disabled; });
-}
-
-function swapStripItemToResolved(itemEl, verdict, deliveryMsg) {
-  // The question stays on screen above its verdict, as on a rebuilt strip.
-  const promptEl = itemEl.querySelector(':scope > .annotate-decision-prompt');
-  itemEl.innerHTML = '';
-  if (promptEl) itemEl.appendChild(promptEl);
-  itemEl.classList.add('annotate-decision-resolved');
-  const chip = document.createElement('span');
-  chip.className = 'annotate-verdict-chip verdict-' + verdict;
-  chip.textContent = DECISION_VERDICT_LABEL[verdict] || verdict;
-  itemEl.appendChild(chip);
-  if (deliveryMsg) {
-    const note = document.createElement('span');
-    note.className = 'annotate-decision-delivery';
-    note.textContent = deliveryMsg;
-    itemEl.appendChild(note);
-    setTimeout(() => { if (note.isConnected) note.remove(); }, 4000);
-  }
-}
-
-// v9o: the answer shows at once. The comment box's draft is cleared only
-// once the server has the answer; a failure rebuilds the strip as it was,
-// with the text back in its box and the error under it.
-async function submitStripDecision(id, verdict, text, itemEl, optionId) {
-  pendingDecisionIds.add(id);
-  const wasChanging = stripChanging[id];
-  delete stripChanging[id];
-  swapStripItemToResolved(itemEl, verdict, null);
-
-  const result = await stripApiDecision(id, verdict, text, optionId);
-  pendingDecisionIds.delete(id);
-  const live = document.querySelector('[data-strip-item="' + CSS.escape(id) + '"]') || itemEl;
-
-  if (!result) {
-    if (wasChanging) stripChanging[id] = true;
-    renderDecisionStrips();
-    renderBadges();
-    const again = document.querySelector('[data-strip-item="' + CSS.escape(id) + '"] .annotate-decision-feedback');
-    if (again) { again.classList.add('is-error'); again.textContent = 'Failed to send — try again.'; }
-    return;
-  }
-
-  delete stripSayText[id];
-  postToParent({ type: 'annotate:say-draft', commentId: id, text: '' });
-
-  delete stripChanging[id]; // resolved again (first vote or a correction) — drop back to the chip
-  const deferred = result.delivery === 'deferred' || !!(result.decision && result.decision.round_pending);
-  const delivered = result.delivery === 'active_monitor';
-  // Optimistic in-place swap (don't wait for the counts message this
-  // triggers below): the strip must not sit there looking answerable for
-  // however long the shell's refreshStore() round-trip takes.
-  // Delivery note rides on the resolved strip briefly since the swap
-  // destroys the feedback node.
-  if (deferred) {
-    swapStripItemToResolved(live, verdict, null);
-  } else {
-    swapStripItemToResolved(live, verdict, delivered ? '✅ Sent to active session' : '⏳ Queued — no monitor armed');
-  }
-  postToParent({ type: 'annotate:decision-posted', commentId: id });
-}
-
-// Lucide "pencil" (ISC License, (c) Lucide Icons and Contributors).
-function pencilSvg() {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', '14');
-  svg.setAttribute('height', '14');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  svg.setAttribute('aria-hidden', 'true');
-  ['M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z', 'm15 5 4 4'].forEach(d => {
-    const p = document.createElementNS(NS, 'path');
-    p.setAttribute('d', d);
-    svg.appendChild(p);
-  });
-  return svg;
-}
-
-function makeStripBtn(label, cls) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'annotate-decision-btn ' + cls;
-  b.textContent = label;
-  return b;
-}
-
-// One option row: its label, a Recommended badge when the agent recommends
-// it, and its consequence on the line under it — the whole row is the button,
-// so a click anywhere on it answers exactly as the old button did.
-function makeOptionBtn(o, cls, recommended) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'annotate-decision-btn annotate-opt-row ' + cls;
-  const head = document.createElement('span');
-  head.className = 'annotate-opt-head';
-  const label = document.createElement('span');
-  label.className = 'annotate-opt-label';
-  label.textContent = o.label; // textContent only — agent data
-  head.appendChild(label);
-  if (recommended) {
-    b.classList.add('is-recommended');
-    b.title = 'Recommended by the agent';
-    const badge = document.createElement('span');
-    badge.className = 'annotate-decision-rec';
-    badge.textContent = 'Recommended';
-    head.appendChild(badge);
-  }
-  b.appendChild(head);
-  if (o.consequence) {
-    const c = document.createElement('span');
-    c.className = 'annotate-decision-consequence';
-    c.textContent = o.consequence; // textContent only — agent data
-    b.appendChild(c);
-  }
-  return b;
-}
-
-function buildPromptEl(entry, dr) {
-  const el = document.createElement('div');
-  el.className = 'annotate-decision-prompt';
-  if (entry.n) {
-    const num = document.createElement('span');
-    num.className = 'annotate-decision-num';
-    num.textContent = '#' + entry.n;
-    el.appendChild(num);
-  }
-  // textContent only — decision_request.prompt is store/agent-controlled
-  // data and must never be interpreted as markup.
-  el.appendChild(document.createTextNode((dr && dr.prompt) || ''));
-  return el;
 }
 
 function evidenceOf(dr) {
@@ -1424,486 +1163,10 @@ function isStaticCard(el) {
   return !!(el && el.matches && el.matches('.aa .cards > .card'));
 }
 
-function domId(prefix, key) {
-  let h = 5381;
-  const s = String(key);
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  return prefix + '-' + h.toString(36);
-}
-
-// A quoted excerpt clamped to four lines, with a "Show more" disclosure that
-// appears only when the text is actually cut off.
-function buildExcerptEl(key, text, source) {
-  const box = document.createElement('figure');
-  box.className = 'annotate-excerpt' + (stripExcerptOpen[key] ? ' is-open' : '');
-  if (source) {
-    const cap = document.createElement('figcaption');
-    cap.className = 'annotate-excerpt-src';
-    cap.textContent = source;
-    box.appendChild(cap);
-  }
-  const quote = document.createElement('blockquote');
-  quote.className = 'annotate-excerpt-text';
-  quote.id = domId('annotate-x', key);
-  quote.textContent = text;
-  box.appendChild(quote);
-  const more = document.createElement('button');
-  more.type = 'button';
-  more.className = 'annotate-excerpt-more';
-  more.setAttribute('aria-controls', quote.id);
-  more.hidden = true;
-  more.addEventListener('click', () => {
-    stripExcerptOpen[key] = !stripExcerptOpen[key];
-    box.classList.toggle('is-open', !!stripExcerptOpen[key]);
-    syncExcerptClamp(box);
-  });
-  box.appendChild(more);
-  return box;
-}
-
-function syncExcerptClamp(box) {
-  const t = box && box.querySelector('.annotate-excerpt-text');
-  const more = box && box.querySelector('.annotate-excerpt-more');
-  if (!t || !more) return;
-  const open = box.classList.contains('is-open');
-  more.textContent = open ? 'Show less' : 'Show more';
-  more.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if (open) { more.hidden = false; return; }
-  const text = t.textContent || '';
-  // Unrendered (inside a collapsed container): judge by length instead.
-  more.hidden = !(t.clientHeight > 0
-    ? t.scrollHeight > t.clientHeight + 1
-    : (text.length > 220 || (text.match(/\n/g) || []).length >= 4));
-}
-function syncAllExcerptClamps(root) {
-  (root || document).querySelectorAll('.annotate-excerpt').forEach(syncExcerptClamp);
-}
-
-// "Evidence (n)": collapsed by default. Each item previews its target in
-// place; "Go to" scrolls there and leaves "Back to #N" on the target.
-function buildEvidenceEl(entry, ev) {
-  const id = entry.id;
-  const wrap = document.createElement('div');
-  wrap.className = 'annotate-decision-evidence';
-  const toggle = document.createElement('button');
-  toggle.type = 'button';
-  toggle.className = 'annotate-decision-evidence-toggle';
-  toggle.textContent = 'Evidence (' + ev.length + ')';
-  const list = document.createElement('div');
-  list.className = 'annotate-decision-evidence-list';
-  list.id = domId('annotate-evl', id);
-  toggle.setAttribute('aria-controls', list.id);
-  const syncList = () => {
-    const open = !!stripEvidenceOpen[id];
-    if (open && !list.firstChild) fillList();
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    list.hidden = !open;
-  };
-  toggle.addEventListener('click', () => {
-    stripEvidenceOpen[id] = !stripEvidenceOpen[id];
-    syncList();
-    if (stripEvidenceOpen[id]) syncAllExcerptClamps(list);
-  });
-  // Items and previews are built on first open (and on a redraw while open).
-  const fillList = () => ev.forEach((e, i) => {
-    const key = id + '\n' + e.anchor + '\n' + i;
-    const row = document.createElement('div');
-    row.className = 'annotate-decision-evidence-item';
-    const link = document.createElement('button');
-    link.type = 'button';
-    link.className = 'annotate-decision-evidence-link';
-    const linkLabel = document.createElement('span');
-    linkLabel.className = 'annotate-decision-evidence-label';
-    linkLabel.textContent = e.label || e.anchor;
-    link.appendChild(linkLabel);
-    link.title = 'Preview ' + e.anchor;
-    const preview = document.createElement('div');
-    preview.className = 'annotate-decision-evidence-preview';
-    preview.id = domId('annotate-evp', key);
-    link.setAttribute('aria-controls', preview.id);
-    const target = findAnchorEl(e.anchor);
-    const text = target ? excerptText(target) : '';
-    if (text) {
-      preview.appendChild(buildExcerptEl('ev\n' + key, text, excerptSource(e.anchor)));
-    } else {
-      const miss = document.createElement('div');
-      miss.className = 'annotate-decision-evidence-missing';
-      miss.textContent = target ? 'Nothing to quote here.' : 'Not on this version of the page.';
-      preview.appendChild(miss);
-    }
-    const go = document.createElement('button');
-    go.type = 'button';
-    go.className = 'annotate-decision-evidence-goto';
-    go.textContent = 'Go to ↓';
-    go.title = 'Scroll to ' + e.anchor + '; a "Back" marker there returns here';
-    go.disabled = !target;
-    go.addEventListener('click', () => scrollToAnchor(e.anchor, null, { commentId: id, n: entry.n || 0, from: 'strip' }));
-    preview.appendChild(go);
-    const syncItem = () => {
-      const open = !!stripEvidenceItemOpen[key];
-      link.setAttribute('aria-expanded', open ? 'true' : 'false');
-      preview.hidden = !open;
-    };
-    link.addEventListener('click', () => {
-      stripEvidenceItemOpen[key] = !stripEvidenceItemOpen[key];
-      syncItem();
-      if (stripEvidenceItemOpen[key]) syncAllExcerptClamps(preview);
-    });
-    syncItem();
-    row.appendChild(link);
-    row.appendChild(preview);
-    list.appendChild(row);
-  });
-  syncList();
-  wrap.appendChild(toggle);
-  wrap.appendChild(list);
-  return wrap;
-}
-
-// Builds ONE decision item (either the live accept/reject/comment controls,
-// or — once resolved — a compact verdict chip) for a single comment entry.
-// An answered card: your choice (Change keeps your notes), then your notes,
-// each with Pending/Sent, Edit and (while unsent) Delete, then "Add a note".
-// Adding never replaces an earlier note (Chang, 2026-10-30). The shell does
-// the posting; this only draws and forwards. Agent text via textContent only.
-const stripEditingNote = {};
-function stateTagEl(pending) {
-  const s = document.createElement('span');
-  s.className = 'annotate-send-state' + (pending ? ' is-pending' : '');
-  s.textContent = pending ? 'Pending' : 'Sent';
-  s.title = pending ? 'Saved here. Goes to the agent when you press Send.' : 'Sent to the agent';
-  return s;
-}
-function iconBtn(svg, label, cls) {
-  const b = makeStripBtn('', 'annotate-note-icon ' + (cls || ''));
-  b.innerHTML = svg; // static icon markup, no page data
-  b.setAttribute('aria-label', label);
-  b.title = label;
-  return b;
-}
-const TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-function buildAnswerEl(entry, item) {
-  const id = entry.id;
-  const a = entry.answer;
-  item.classList.add('annotate-decision-resolved', 'annotate-answered');
-  if (entry.decisionRequest) item.appendChild(buildPromptEl(entry, entry.decisionRequest));
-
-  const row = document.createElement('div');
-  row.className = 'annotate-answer-row';
-  const lbl = document.createElement('span');
-  lbl.className = 'annotate-answer-lbl';
-  lbl.textContent = 'Your choice';
-  const val = document.createElement('span');
-  val.className = 'annotate-answer-choice' + (a.choice ? '' : ' is-none');
-  val.textContent = a.choice || 'None (answered in words)';
-  row.append(lbl, val);
-  if (a.choice) row.appendChild(stateTagEl(a.choicePending));
-  const change = makeStripBtn(a.choice ? 'Change' : 'Choose', 'annotate-answer-change');
-  change.addEventListener('click', () => { stripChanging[id] = true; renderDecisionStrips(); });
-  row.appendChild(change);
-  item.appendChild(row);
-
-  if (a.notes.length) {
-    const list = document.createElement('div');
-    list.className = 'annotate-answer-notes';
-    const nl = document.createElement('span');
-    nl.className = 'annotate-answer-lbl';
-    nl.textContent = 'Your notes';
-    list.appendChild(nl);
-    for (const n of a.notes) {
-      const k = id + '|' + n.key;
-      const note = document.createElement('div');
-      note.className = 'annotate-answer-note';
-      const actions = document.createElement('div');
-      actions.className = 'annotate-note-actions';
-      if (typeof stripEditingNote[k] === 'string') {
-        note.classList.add('is-editing');
-        const ta = document.createElement('textarea');
-        ta.className = 'annotate-decision-ta annotate-note-edit';
-        ta.rows = 3;
-        ta.value = stripEditingNote[k];
-        ta.setAttribute('aria-label', 'Edit your note');
-        ta.addEventListener('input', () => { stripEditingNote[k] = ta.value; });
-        const cancel = makeStripBtn('Cancel', 'annotate-note-cancel');
-        cancel.addEventListener('click', () => { delete stripEditingNote[k]; renderDecisionStrips(); });
-        const save = makeStripBtn('Save', 'annotate-note-save');
-        save.addEventListener('click', () => {
-          const text = ta.value.trim();
-          if (!text) return;
-          save.disabled = true;
-          postToParent({ type: 'annotate:note', action: 'edit', commentId: id, key: n.key, text });
-        });
-        actions.append(cancel, save);
-        note.append(ta, actions);
-      } else {
-        const txt = document.createElement('div');
-        txt.className = 'annotate-answer-note-txt';
-        txt.textContent = n.text;
-        actions.appendChild(stateTagEl(n.pending));
-        const edit = iconBtn('', 'Edit note', 'annotate-note-edit-btn');
-        edit.appendChild(pencilSvg());
-        edit.addEventListener('click', () => { stripEditingNote[k] = n.text; renderDecisionStrips(); });
-        actions.appendChild(edit);
-        if (n.deletable) {
-          const del = iconBtn(TRASH_SVG, 'Delete note', 'annotate-note-delete-btn');
-          del.addEventListener('click', () => postToParent({ type: 'annotate:note', action: 'delete', commentId: id, key: n.key }));
-          actions.appendChild(del);
-        }
-        note.append(txt, actions);
-      }
-      list.appendChild(note);
-    }
-    item.appendChild(list);
-  }
-
-  // Add a note: the same draft as the rail card's box, so Send carries it too.
-  const add = document.createElement('div');
-  add.className = 'annotate-add-note';
-  const ta = document.createElement('textarea');
-  ta.className = 'annotate-decision-ta annotate-decision-cmt';
-  ta.rows = 1;
-  ta.placeholder = 'Add a note…';
-  ta.setAttribute('aria-label', 'Add a note');
-  ta.dataset.stripSay = id;
-  ta.value = typeof stripSayText[id] === 'string' ? stripSayText[id] : (entry.sayDraft || '');
-  ta.addEventListener('input', () => {
-    stripSayText[id] = ta.value;
-    postToParent({ type: 'annotate:say-draft', commentId: id, text: ta.value });
-  });
-  const addBtn = makeStripBtn('Add note', 'annotate-note-add');
-  addBtn.addEventListener('click', () => {
-    const text = ta.value.trim();
-    if (!text) { ta.focus(); return; }
-    addBtn.disabled = true;
-    postToParent({ type: 'annotate:note', action: 'add', commentId: id, text });
-  });
-  add.append(ta, addBtn);
-  item.appendChild(add);
-  return item;
-}
-
-function buildDecisionItemEl(entry) {
-  const id = entry.id;
-  const item = document.createElement('div');
-  item.className = 'annotate-decision-item';
-  item.dataset.stripItem = id;
-
-  if (entry.decisionVerdict && !stripChanging[id] && entry.answer) return buildAnswerEl(entry, item);
-  if (entry.decisionVerdict && !stripChanging[id]) {
-    item.classList.add('annotate-decision-resolved');
-    // The strip replaces the generated card in the body, so the question
-    // itself stays readable above its verdict.
-    if (entry.decisionRequest) item.appendChild(buildPromptEl(entry, entry.decisionRequest));
-    const chip = document.createElement('span');
-    chip.className = 'annotate-verdict-chip verdict-' + entry.decisionVerdict;
-    // C1: the answer itself ("Tonight at 11pm"), not just "Selected".
-    chip.textContent = entry.answerText || DECISION_VERDICT_LABEL[entry.decisionVerdict] || entry.decisionVerdict;
-    item.appendChild(chip);
-    // T-verdict-reversal: only offer "Change" when the shell still sent the
-    // original decisionRequest alongside decisionVerdict (new shell always
-    // does once resolved — see shell.js sendCommentCountsToFrame). An old
-    // shell that predates this fix never will, so this just quietly shows
-    // the plain chip against it instead of erroring.
-    if (entry.decisionRequest) {
-      // D1 (Chang): "the edit should be a pencil icon".
-      const changeBtn = makeStripBtn('', 'annotate-decision-change');
-      changeBtn.appendChild(pencilSvg());
-      changeBtn.setAttribute('aria-label', 'Change answer');
-      changeBtn.title = 'Change';
-      changeBtn.addEventListener('click', () => {
-        stripChanging[id] = true;
-        renderDecisionStrips();
-      });
-      item.appendChild(changeBtn);
-    }
-    return item;
-  }
-
-  // Card layout, the same on the rail: number and prompt, the card's own
-  // text when it says more than the prompt, chips, context in full,
-  // "Recommended: …", a quoted excerpt of the first evidence target, the
-  // options as rows, then a collapsed "Evidence (n)".
-  const dr = entry.decisionRequest || {};
-  item.appendChild(buildPromptEl(entry, dr));
-  const cardText = typeof entry.text === 'string' ? entry.text.trim() : '';
-  if (cardText && normText(cardText) !== normText(dr.prompt)) {
-    const textEl = document.createElement('div');
-    textEl.className = 'annotate-decision-text';
-    textEl.textContent = cardText; // textContent only — agent data
-    item.appendChild(textEl);
-  }
-  const ev = evidenceOf(dr);
-  // v2.19: impact / blocking chips
-  const hasImpact = typeof dr.impact === 'string' && DECISION_IMPACTS.indexOf(dr.impact) !== -1;
-  if (hasImpact || dr.blocking === true) {
-    const meta = document.createElement('div');
-    meta.className = 'annotate-decision-meta';
-    if (hasImpact) {
-      const s = document.createElement('span');
-      s.className = 'annotate-decision-chip annotate-chip-impact-' + dr.impact;
-      s.textContent = 'Impact: ' + dr.impact;
-      s.title = 'Impact if decided wrongly';
-      meta.appendChild(s);
-    }
-    if (dr.blocking === true) {
-      const s = document.createElement('span');
-      s.className = 'annotate-decision-chip annotate-chip-blocking';
-      s.textContent = 'Blocking';
-      s.title = 'The agent cannot proceed until this is decided';
-      meta.appendChild(s);
-    }
-    item.appendChild(meta);
-  }
-
-  if (entry.decisionVerdict && stripChanging[id]) {
-    const note = document.createElement('div');
-    note.className = 'annotate-decision-changing-note';
-    const label = document.createElement('span');
-    label.textContent = entry.answer ? 'Pick a new answer. Your notes stay.' : 'Changing verdict — currently ' + (entry.decisionVerdict === 'select'
-      ? '☑ ' + entry.answerText
-      : (DECISION_VERDICT_TEXT[entry.decisionVerdict] || entry.decisionVerdict));
-    note.appendChild(label);
-    const cancelBtn = makeStripBtn('Cancel', 'annotate-decision-cancel');
-    cancelBtn.addEventListener('click', () => {
-      delete stripChanging[id];
-      renderDecisionStrips();
-    });
-    note.appendChild(cancelBtn);
-    item.appendChild(note);
-  }
-
-  const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
-  if (ctx) {
-    const ctxEl = document.createElement('div');
-    ctxEl.className = 'annotate-decision-context';
-    ctxEl.textContent = ctx; // textContent only — agent data
-    item.appendChild(ctxEl);
-  }
-
-  // Changing the choice of an answered card: the options only, and the note
-  // that went with the old choice goes with the new one.
-  const changingAnswer = !!(stripChanging[id] && entry.answer);
-  const opts = stripDecisionOptions(dr);
-  // Every card offers "Answer in words" as its last choice, as the rail does.
-  if (!opts.some(o => o.id === 'comment')) {
-    opts.push({ id: 'comment', label: DECISION_BTN_TEXT.comment, plain: DECISION_PLAIN_LABEL.comment, consequence: '', style: null, custom: false });
-  }
-  const hasCons = opts.some(o => !!o.consequence);
-  const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
-  if (rec) {
-    const recId = stripCanonicalOptionId(rec);
-    const recOpt = opts.find(o => o.id === recId);
-    const recLine = document.createElement('div');
-    recLine.className = 'annotate-decision-reco-line';
-    recLine.appendChild(document.createTextNode('Recommended: '));
-    const recName = document.createElement('b');
-    recName.textContent = recOpt ? recOpt.plain : (DECISION_PLAIN_LABEL[recId] || rec);
-    recLine.appendChild(recName);
-    item.appendChild(recLine);
-  }
-
-  // The first evidence target, quoted. The strip's own anchor is the element
-  // right above it, so it is never quoted here (the rail card quotes it).
-  const firstTarget = ev.length ? findAnchorEl(ev[0].anchor) : null;
-  if (firstTarget) {
-    const text = excerptText(firstTarget);
-    if (text) item.appendChild(buildExcerptEl(id + '\nfirst', text, excerptSource(ev[0].anchor)));
-  }
-
-  const btnRow = document.createElement('div');
-  btnRow.className = 'annotate-decision-btns';
-  item.appendChild(btnRow);
-  if (hasCons) btnRow.classList.add('has-consequences');
-
-  // A1: one optional comment box under the options. It is the same draft as
-  // the rail card's box (shared through the shell), goes with whichever
-  // option is clicked, and with no option picked it is the answer at Send.
-  const ta = document.createElement('textarea');
-  ta.className = 'annotate-decision-ta annotate-decision-cmt';
-  ta.rows = 1;
-  ta.placeholder = 'Comment (optional)';
-  ta.setAttribute('aria-label', 'Comment (optional)');
-  ta.dataset.stripSay = id;
-  // The box's own last text wins over the shell's copy, which can trail it
-  // by a message when the strip is rebuilt.
-  ta.value = typeof stripSayText[id] === 'string' ? stripSayText[id] : typeof entry.sayDraft === 'string' ? entry.sayDraft : '';
-  const hint = document.createElement('div');
-  hint.className = 'annotate-decision-cmt-hint';
-  const syncHint = () => {
-    hint.textContent = (ta.value || '').trim()
-      ? 'Saved with your choice. With no choice picked, it counts as your answer when you send.'
-      : '';
-  };
-  syncHint();
-  ta.addEventListener('annotate-sync', syncHint);
-  ta.addEventListener('input', () => {
-    syncHint();
-    stripSayText[id] = ta.value;
-    postToParent({ type: 'annotate:say-draft', commentId: id, text: ta.value });
-  });
-
-  const feedback = document.createElement('div');
-  feedback.className = 'annotate-decision-feedback';
-
-  const noteText = () => {
-    // Changing an answer: the note it had plus anything typed now.
-    const t = [changingAnswer ? entry.answer.note : '', (ta.value || '').trim()].filter(Boolean).join('\n\n');
-    return t || null;
-  };
-
-  const isRec = o => !!rec && stripCanonicalOptionId(rec) === o.id;
-  for (const o of opts) {
-    if (o.id === 'accept' || o.id === 'reject') {
-      const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
-      b.addEventListener('click', () => { submitStripDecision(id, o.id, noteText(), item); });
-      btnRow.appendChild(b);
-    } else if (o.id === 'comment' || o.id === 'changes') {
-      // Request changes (pre-D2: Comment) still needs words.
-      const b = makeOptionBtn(o, DECISION_BTN_CLASS[o.id], isRec(o));
-      b.addEventListener('click', () => {
-        const n = noteText();
-        if (!n) {
-          ta.placeholder = o.id === 'changes' ? 'What needs to change…' : 'Answer in your own words…';
-          ta.focus();
-          feedback.classList.remove('is-error');
-          feedback.textContent = o.id === 'changes' ? 'Say what needs to change in the box, then pick it again.' : 'Write your answer in the box, then pick it again.';
-          return;
-        }
-        submitStripDecision(id, o.id, n, item);
-      });
-      btnRow.appendChild(b);
-    } else {
-      // Custom option id → the `select` verdict naming the choice.
-      const b = makeOptionBtn(o, 'annotate-decision-custom' + (o.style ? ' annotate-style-' + o.style : ''), isRec(o));
-      b.addEventListener('click', () => {
-        const n = noteText();
-        const text = o.label + (n ? '\n\n' + n : '');
-        submitStripDecision(id, 'select', text, item, o.id);
-      });
-      btnRow.appendChild(b);
-    }
-  }
-
-  // Answer later: the shell sets it aside on the server; the card stays here as it is.
-  if (!entry.decisionVerdict) {
-    const later = makeStripBtn(entry.answerLater ? 'Back to Needs you' : 'Answer later', 'annotate-decision-later');
-    later.addEventListener('click', () => postToParent({ type: 'annotate:answer-later', commentId: id, on: !entry.answerLater }));
-    item.appendChild(later);
-  }
-  if (ev.length) item.appendChild(buildEvidenceEl(entry, ev));
-  item.appendChild(ta);
-  item.appendChild(hint);
-  item.appendChild(feedback);
-
-  if (pendingDecisionIds.has(id)) {
-    setStripItemDisabled(item, true);
-    feedback.textContent = 'Sending…';
-  }
-
-  return item;
-}
-
-function buildStripEl(anchorId, items) {
+function buildStripEl(anchorId, items, x) {
+  const api = cardApi();
+  const cards = api ? items.map(e => e.decisionRequest ? api.stripCard(document, e.id, x) : api.stripVerdictChip(document, e.id)).filter(Boolean) : [];
+  if (!cards.length) return null;
   const wrap = document.createElement('div');
   wrap.className = 'annotate-decision-strip';
   wrap.dataset.annotateStrip = '1';
@@ -1924,7 +1187,7 @@ function buildStripEl(anchorId, items) {
     hdr.textContent = label; // textContent only — registry data, not markup
     wrap.appendChild(hdr);
   }
-  items.forEach(entry => wrap.appendChild(buildDecisionItemEl(entry)));
+  cards.forEach(card => wrap.appendChild(card));
   return wrap;
 }
 
@@ -2090,8 +1353,9 @@ function stripTarget(anchorId, items) {
 
 function renderDecisionStrips() {
   ensureStripStyle();
+  lastExcerpts = excerptMap();
   // v9o: a rebuild under the reviewer's typing keeps the box focused with
-  // its caret (its text is rebuilt from stripSayText).
+  // its caret (its text is the card's draft, kept by the shell).
   const ae = document.activeElement;
   const typing = ae && ae.matches && ae.matches('textarea[data-strip-say]')
     ? { id: ae.dataset.stripSay, start: ae.selectionStart, end: ae.selectionEnd, dir: ae.selectionDirection } : null;
@@ -2121,7 +1385,8 @@ function renderDecisionStrips() {
   placed.sort((a, b) => (a.items[0].n || 0) - (b.items[0].n || 0));
   const lastAt = new Map();
   placed.forEach(({ anchorId, items, el }) => {
-    const stripEl = buildStripEl(anchorId, items);
+    const stripEl = buildStripEl(anchorId, items, lastExcerpts);
+    if (!stripEl) return;
     const node = insertStripInFlow(el, lastAt.get(el) || el, stripEl);
     if (node) lastAt.set(el, node);
     else placeStripAbsolute(el, stripEl);
@@ -2527,7 +1792,7 @@ function openUnchangedSectionsForOpenCards() {
   };
   for (const [aid, entries] of Object.entries(latestPins)) {
     for (const e of entries || []) {
-      const open = e.decision === true || (e.decisionRequest && stripChanging[e.id]);
+      const open = e.decision === true || (e.decisionRequest && e.changing);
       if (!open) continue;
       note(aid);
       evidenceOf(e.decisionRequest).forEach(x => note(x.anchor));
@@ -2588,8 +1853,10 @@ function expandUnchangedAncestor(el) {
 // shell.js never reads this document; the rail card's quoted excerpt and
 // evidence previews arrive here, one message per change in what they say.
 let lastExcerptsJson = '';
-function postExcerpts() {
-  if (window.parent === window) return;
+let lastExcerpts = null; // read when the cards were last drawn
+// {anchorId: {text, name, card} | {missing: true}} for every anchor an open
+// question cites; the cards here quote it, and so does the rail.
+function excerptMap() {
   const out = {};
   const add = (aid) => {
     if (!aid || Object.prototype.hasOwnProperty.call(out, aid)) return;
@@ -2605,6 +1872,11 @@ function postExcerpts() {
       evidenceOf(e.decisionRequest).forEach(x => add(x.anchor));
     }
   }
+  return out;
+}
+function postExcerpts() {
+  if (window.parent === window) return;
+  const out = lastExcerpts || excerptMap();
   const anchorOrder = contentAnchorOrder();
   const json = JSON.stringify({ out, anchorOrder });
   if (json === lastExcerptsJson) return;
@@ -2645,16 +1917,6 @@ function wireBridge() {
       setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
-    } else if (data.type === 'annotate:note-saved') {
-      if (data.ok) { delete stripEditingNote[data.commentId + '|' + data.key]; renderDecisionStrips(); }
-    } else if (data.type === 'annotate:say-draft-set') {
-      // A1: the rail card's comment box changed; mirror it here.
-      if (data.commentId) stripSayText[data.commentId] = typeof data.text === 'string' ? data.text : '';
-      document.querySelectorAll('textarea[data-strip-say]').forEach(ta => {
-        if (ta.dataset.stripSay !== data.commentId || ta === document.activeElement) return;
-        ta.value = typeof data.text === 'string' ? data.text : '';
-        ta.dispatchEvent(new Event('annotate-sync'));
-      });
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
