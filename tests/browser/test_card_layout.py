@@ -368,18 +368,26 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             _wait(lambda: _in_view(frame.locator('[data-anchor-id="tbl:columns:row:status"]')), page)
             assert frame.locator('.card[data-anchor-id="d:q1"]').is_hidden()
             assert frame.locator(".annotate-decision-strip").count() >= 1
-            assert frame.locator('section[data-unchanged-since="v1"]').count() == 2
+            # The active question's unchanged section stays live and can still fold.
+            assert frame.locator('section[data-unchanged-since="v1"]').count() == 1
             columns = frame.locator('section[data-anchor-id="s:columns"]')
             assert "annotate-unchanged-collapsed" not in (columns.get_attribute("class") or "")
+            bar = columns.locator(".annotate-unchanged-toggle")
+            assert "Unchanged since v1" in bar.inner_text()
+            bar.click()
+            assert "annotate-unchanged-collapsed" in columns.get_attribute("class")
+            assert columns.count() == 1
+            bar.click()
+            # Finished Scope is built only when Earlier updates opens.
             scope = frame.locator('section[data-anchor-id="s:scope"]')
-            assert "annotate-unchanged-collapsed" in scope.get_attribute("class")
-            bar = scope.locator(".annotate-unchanged-toggle")
-            assert "Scope" in bar.inner_text()
-            assert not scope.locator(":scope > h2").is_visible()
-            bar.click()
-            assert frame.locator('[data-anchor-id="s:scope:li1"]').is_visible()
-            assert bar.get_attribute("aria-expanded") == "true"
-            bar.click()
+            earlier = frame.locator("details.aa-earlier")
+            assert scope.count() == 0
+            assert 'data-anchor-id="s:scope"' in earlier.locator("template").inner_html()
+            earlier.locator("summary").click()
+            playwright.expect(scope.locator(":scope > h2")).to_be_visible()
+            assert earlier.locator("template").count() == 0
+            assert scope.get_attribute("data-unchanged-since") is None
+            earlier.locator("summary").click()
             assert not frame.locator('[data-anchor-id="s:scope:li1"]').is_visible()
             back.click()
             playwright.expect(page.locator("body")).to_have_attribute("data-view", "review")
