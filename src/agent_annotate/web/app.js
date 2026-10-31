@@ -206,11 +206,12 @@
   // Plans sections in the server's order (Chang, 2026-10-25): what he asked to
   // track, approved plans, then agent reference. Hidden plans stay out unless
   // one is open (by link).
-  const PLAN_SECTIONS = [['tracking', 'Tracking'], ['approved', 'Approved plans'], ['reference', 'Agent reference'], ['hidden', 'Hidden']];
+  const PLAN_SECTIONS = [['tracking', 'Tracking'], ['approved', 'Approved plans'], ['reference', 'Agent reference'], ['hidden', 'Hidden'], ['archive', 'Archive pages']];
   function renderPlanPicker() {
     const pick = document.getElementById('view-hd-plan');
     const cur = DOCS() ? DOCS().planId() : null;
-    const plans = (DOCS() ? DOCS().plans() : []).filter(p => p.section !== 'hidden' || p.id === cur);
+    // Hidden plans and archive pages (Open project lists those) only while open.
+    const plans = (DOCS() ? DOCS().plans() : []).filter(p => (p.section !== 'hidden' && !DOCS().isArchivePlan(p)) || p.id === cur);
     pick.hidden = view !== 'plans' || plans.length < 2;
     if (pick.hidden) return;
     pick.innerHTML = PLAN_SECTIONS.map(([key, label]) => {

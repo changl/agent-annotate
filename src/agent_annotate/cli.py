@@ -2056,6 +2056,13 @@ def cmd_publish_version(args) -> int:
     # whatever the running server had cached into the file in between, so this
     # now goes through the same lock the server takes.
     added = []
+    # Open project shows the working page's size (long pages).
+    from .long_pages import size_of
+    try:
+        sections, screenshots = size_of(target.read_text(encoding="utf-8"))
+        size = {"sections": sections, "screenshots": screenshots}
+    except (OSError, UnicodeDecodeError):
+        size = {}
 
     def _mutate(meta: dict) -> None:
         meta["current"] = new_version
@@ -2065,12 +2072,14 @@ def cmd_publish_version(args) -> int:
                 if args.label:
                     h["label"] = args.label
                 h["ts"] = _now_iso()
+                h.update(size)
                 added.append(False)
                 return
         history.append({
             "version": new_version,
             "ts": _now_iso(),
             "label": args.label or "",
+            **size,
         })
         added.append(True)
 

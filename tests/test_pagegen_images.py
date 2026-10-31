@@ -110,7 +110,7 @@ def test_a_figure_is_copied_into_assets_and_carries_a_stable_anchor(tmp_path):
     assert len(copies) == 1 and copies[0].read_bytes() == shot.read_bytes()
     assert copies[0].name.endswith("-checkout.png")
     assert (f'<figure class="aa-figure" data-orient="portrait" data-anchor-id="fig:checkout-today">'
-            f'<img src="assets/{copies[0].name}" alt="Checkout today" width="390" height="844">'
+            f'<img src="assets/{copies[0].name}" alt="Checkout today" width="390" height="844" loading="lazy" decoding="async">'
             "<figcaption>Checkout today</figcaption></figure>") in canvas
     registry = json.loads((slug_dir / "versions" / "v1.html").read_text()
                           .split("const ANCHOR_REGISTRY = ", 1)[1].split(";\n", 1)[0])
@@ -162,7 +162,7 @@ def test_portrait_pair_renders_side_by_side_and_landscape_pair_stacks(tmp_path):
     assert 'data-layout="side" data-pairs="1" data-anchor-id="cmp:forced"' in canvas
     phone = canvas.split('data-anchor-id="cmp:phone">', 1)[1].split("</section>", 1)[0]
     assert phone.index('data-role="current">Current</span> Today') < phone.index('data-role="proposed">Proposed</span> New')
-    assert 'alt="Current: Today" width="390" height="844"' in phone
+    assert 'alt="Current: Today" width="390" height="844" loading="lazy" decoding="async"' in phone
     # Same file twice is copied once; four distinct files, four copies.
     assert len(list((slug_dir / "assets").iterdir())) == 4
 

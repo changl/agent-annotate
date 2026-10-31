@@ -863,6 +863,21 @@ function projectPages() {
   const listed = new Set(referenceTabs().map(t => t.slug));
   return items.concat(related.filter(p => !listed.has(p.slug)).map(page));
 }
+// Long pages: this page first, then its archive pages newest first, each with its size.
+function archivePagesHtml(archives) {
+  if (!archives.length) return '';
+  const size = (n, shots) => `${n} section${n === 1 ? '' : 's'}${shots ? ` · ${shots} screenshot${shots === 1 ? '' : 's'}` : ''}`;
+  const latest = (META.history || []).find(h => h.version === latestVersion()) || {};
+  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-primary badge-sm">this page</span></a>`
+    + (latest.sections != null ? `<span class="project-detail">Now · ${esc(size(latest.sections, latest.screenshots))}</span>` : '') + '</li>';
+  const sorted = archives.slice().sort((a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
+  const items = sorted.map(p => {
+    const a = p.archive || {};
+    return `<li><a href="#view=plans&plan=${encodeURIComponent(p.id)}">${esc(p.title || p.id)}</a>`
+      + (a.sections != null ? `<span class="project-detail">Finished · ${esc(size(a.sections, a.screenshots))}</span>` : '') + '</li>';
+  }).join('');
+  return `<section class="hist-section"><h3 class="hist-lbl">This project's pages</h3><ul class="doc-list">${here}${items}</ul></section>`;
+}
 // U-01 + F2: project branding wins, then the page's stable name.
 function updateProjectTitle() {
   const title = PROJECT.title || PROJECT.name || 'annotate';
@@ -882,15 +897,16 @@ function renderProject() {
   const rest = modules.filter(m => m.kind !== 'links');
   const pages = DOC === 'review' ? projectPages() : [];
   if (pages.length) links.unshift({ id: 'project-pages', title: 'Project pages', items: pages });
+  const archives = DOC === 'review' ? PLANS.filter(isArchivePlan) : [];
   // Documents tab
   const docTab = document.getElementById('tab-documents');
   const docBody = document.getElementById('documents-body');
   if (DOC !== VIEW_DOC) {
     // Only the document on screen fills the Documents tab.
-  } else if (links.length) {
+  } else if (links.length || archives.length) {
     docTab.hidden = false;
-    docTab.textContent = links.length === 1 && !pages.length ? links[0].title : 'Documents';
-    docBody.innerHTML = links.map(m => `<section class="hist-section">${links.length > 1 ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
+    docTab.textContent = links.length === 1 && !pages.length && !archives.length ? links[0].title : 'Documents';
+    docBody.innerHTML = archivePagesHtml(archives) + links.map(m => `<section class="hist-section">${links.length > 1 || archives.length ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
   } else {
     docTab.hidden = true;
     docBody.innerHTML = '';
@@ -1118,6 +1134,9 @@ function versionActivityHtml(h, next, rounds, done) {
     </div>` : '';
   return sent + agent;
 }
+// Long pages: History lists the latest 20 versions; Show 20 earlier adds more.
+const HISTORY_PAGE = 20;
+const historyLimit = {};
 function renderVersionRail(shown) {
   const body = document.getElementById('vrail-body-' + DOC);
   if (!body) return;
@@ -1132,7 +1151,10 @@ function renderVersionRail(shown) {
   const byVersion = roundsByVersion(HISTORY_SHOWN);
   // Library or Findings alone: only the versions their lines were sent on.
   const sentOnly = !!HISTORY_SHOWN && !HISTORY_SHOWN.includes(doc);
-  const history = (META.history || []).slice().reverse().filter(h => !sentOnly || byVersion[h.version]);
+  const allHistory = (META.history || []).slice().reverse().filter(h => !sentOnly || byVersion[h.version]);
+  // The version on screen is always listed, however far back.
+  const limit = Math.max(historyLimit[doc] || HISTORY_PAGE, allHistory.findIndex(h => h.version === CURRENT_VERSION) + 1);
+  const history = allHistory.slice(0, limit);
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
     return 0;
@@ -1182,7 +1204,15 @@ function renderVersionRail(shown) {
       </div>
       ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done)}</div>` : ''}
     </div>`;
-  }).join('');
+  }).join('') + (allHistory.length > limit
+    ? `<button type="button" class="btn btn-ghost btn-xs vrail-more">Show ${Math.min(HISTORY_PAGE, allHistory.length - limit)} earlier</button>` : '');
+  const more = body.querySelector('.vrail-more');
+  if (more) more.addEventListener('click', () => {
+    historyLimit[doc] = limit + HISTORY_PAGE;
+    withDoc(doc, () => renderVersionRail());
+    const rows = body.querySelectorAll('.vrow');
+    if (rows[limit]) rows[limit].focus();
+  });
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
     row.addEventListener('click', () => {
       if (doc !== VIEW_DOC) { if (window.AA) window.AA.go({ view: doc, v: row.dataset.version }); return; }
@@ -4356,12 +4386,18 @@ async function loadCategories() {
       if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
     }
     // Plans opens on the first plan in section order (tracking first); a
-    // hidden plan opens only by link.
-    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden') || {}).id || null;
+    // hidden plan opens only by link, an archive page from Open project.
+    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden' && !isArchivePlan(p)) || PLANS.find(isArchivePlan) || {}).id || null;
     DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
     if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
+    if (DOC === 'review') renderProject(); // Open project lists the archive pages
     return true;
   } catch { return false; }
+}
+// An archive page of finished Review topics (long_pages.py), stored as a plan:
+// out of the Plans picker, listed under Open project. categories.is_archive_plan mirrors it.
+function isArchivePlan(p) {
+  return !!p && p.section === 'archive';
 }
 // The Plans tab shows one plan; another plan starts from its latest revision.
 async function selectPlan(id) {
@@ -4369,6 +4405,7 @@ async function selectPlan(id) {
   await docQueue;
   if (DOC === 'plans') enterDoc('review');
   PLAN_ID = id;
+  if (!DOCS.includes('plans')) { DOCS = ['review', 'plans']; if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS; }
   delete DOC_STATE.plans;
   await loadDocState('plans');
   if (window.AA) window.AA.go({ view: 'plans', plan: id });
@@ -4636,6 +4673,7 @@ window.AnnotateDocs = {
   items: (doc) => withDoc(doc, sendItems),
   renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
   renderHistoryInto: (doc, shown) => withDoc(doc, () => renderVersionRail(shown)),
+  isArchivePlan,
   submitPage,
   discardPage,
   pageRoundPending,

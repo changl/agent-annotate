@@ -2246,6 +2246,7 @@ function scrollInFrame(el, block) {
 // the target then carries a "Back to #N" marker that returns to the card.
 function scrollToAnchor(anchorId, target, back) {
   ensureGotoHighlightStyle();
+  openEarlierFor(anchorId);
   const anchorEl = displayAnchorEl(anchorId);
   if (!anchorEl) {
     postToParent({ type: 'annotate:scroll-result', anchorId, found: false });
@@ -2524,6 +2525,44 @@ function openUnchangedSectionsForOpenCards() {
   });
 }
 
+// ── Earlier updates (long pages) ─────────────────────────────────────
+// publish folds finished topics into <details class="aa-earlier">; their HTML
+// waits in a <template>, so its screenshots load only when the bar is opened,
+// or when a jump (Open in document, an evidence link) lands inside it.
+function foldedAnchorEl(anchorId) {
+  for (const tpl of document.querySelectorAll('details.aa-earlier > template.aa-earlier-body')) {
+    const el = tpl.content.querySelector('[data-anchor-id="' + cssEsc(anchorId) + '"]');
+    if (el) return el;
+  }
+  return null;
+}
+
+function openEarlier(details) {
+  const tpl = details.querySelector(':scope > template.aa-earlier-body');
+  if (!tpl) return;
+  // Already folded once: no second "Unchanged since" fold inside this one.
+  tpl.content.querySelectorAll('section[data-unchanged-since]').forEach(sec => sec.removeAttribute('data-unchanged-since'));
+  tpl.replaceWith(tpl.content);
+  details.open = true;
+  wrapScrollTables();
+  wireCopyButtons();
+  renderDecisionStrips();
+  renderCardStates();
+  renderBadges();
+  postExcerpts();
+}
+
+function openEarlierFor(anchorId) {
+  const el = !findAnchorEl(anchorId) && foldedAnchorEl(anchorId);
+  if (el) openEarlier(document.querySelector('details.aa-earlier'));
+}
+
+function wireEarlier() {
+  document.querySelectorAll('details.aa-earlier').forEach(details => {
+    details.addEventListener('toggle', () => { if (details.open) openEarlier(details); });
+  });
+}
+
 function expandUnchangedAncestor(el) {
   const sec = el && el.closest ? el.closest('section[data-unchanged-since]') : null;
   if (!sec || !sec.classList.contains('annotate-unchanged-collapsed')) return false;
@@ -2540,7 +2579,7 @@ function postExcerpts() {
   const out = {};
   const add = (aid) => {
     if (!aid || Object.prototype.hasOwnProperty.call(out, aid)) return;
-    const el = findAnchorEl(aid);
+    const el = findAnchorEl(aid) || foldedAnchorEl(aid);
     out[aid] = el
       ? { text: excerptText(el), name: excerptSource(aid), card: isStaticCard(el) }
       : { missing: true };
@@ -3443,6 +3482,7 @@ async function init() {
   wireHoverLinking();
   // Before the first paint settles, so a later version opens compact.
   initUnchangedSections();
+  wireEarlier();
 
   window.addEventListener('resize', scheduleBadgeRefresh);
   window.addEventListener('resize', scheduleScrollLockRecheck);

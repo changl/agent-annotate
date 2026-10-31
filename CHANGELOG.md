@@ -13,6 +13,11 @@
   - Tapping a card went from 1.85 s to 0.26 s, and opening Earlier feedback from 1.85 s to under 0.1 s. Comment lookups copied the whole store per card, and the "Show more" check forced a layout per card.
   - `current.meta.json` no longer stores per-section content hashes that nothing reads. They were 3 of FLD's 3.5 MB, re-read by every poll. Old ones are dropped on the next write, as are the matching ones in `seen.json`.
   - `GET /api/comments` keeps the shared store cache.
+- Long pages stay light, by fixed rules applied at every publish with no agent step (Chang, v27 cards #3 and #4):
+  - Light screenshots: each screenshot over 1,200 px or 300 KB shows a reduced preview (`assets/preview/`, made once per image with macOS `sips`; the original elsewhere), loaded as you scroll to it. **⤢ Full size** opens the original. On a copy of FLD v536 the first screen loads 0.7 MB of images instead of 43.9 MB, and the whole page 16 MB instead of 44 MB. In iPad WebKit all 228 load, none broken.
+  - Earlier updates: finished topics fold into one bar at the bottom. A finished topic is a `##` section with no unanswered question, no open comment and no open card citing it, unchanged since the last version. Its content and screenshots load only when opened, or when a jump lands in it.
+  - Archive pages: over 40 sections or 60 screenshots, every finished topic moves to a dated archive page, listed under Open project with its size. Its dates run from the earliest to the latest day its topics' current content first went live (the publisher's local day), read once from earlier versions. Its name cuts long topic titles at a word. Republishing a full page.md leaves archived topics out; a topic that changed or reopened comes back to the page. Open questions never move, and answered cards stay answered.
+  - History lists the latest 20 versions, with Show 20 earlier.
 - On iPad, a tap on a choice or card no longer needs a second tap. A tap also fires a mouse hover, and the page's hover highlight made iOS treat the tap as a hover and drop the click; that highlight was also the shift you saw. Hover feedback now reacts to a mouse only (document highlights, rail card hover, Library marks, diagram nodes).
 
 ## 2.27.8
