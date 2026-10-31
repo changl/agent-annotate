@@ -629,10 +629,55 @@
   }
 
   // ── The summary ────────────────────────────────────────────────────────
+  // Send design prototypes (?sd=a|b|c, branch changl/send-design only).
+  const sdView = (docs) => docs && docs.sendDesign && AA.isDoc(AA.view) && docs.docs.includes(AA.view) ? AA.view : null;
+  function sdTitle(sd, total) {
+    if (!total) return 'Nothing to send yet';
+    if (sd === 'b') return 'Send ' + total + (total === 1 ? ' item' : ' items') + ' to the agent?';
+    if (sd === 'c') return 'Send to the agent';
+    return 'Send ' + total + ' to the agent';
+  }
+  function renderDesign(p, docs, vd) {
+    const sd = docs.sendDesign;
+    const list = $('#sum-list');
+    const scroll = list.scrollTop;
+    // Other tabs appear only when they carry something.
+    const others = p.tabs.filter(t => t.id !== vd && t.n);
+    list.innerHTML = `<div class="sum-tab-body" id="sum-body-${vd}"></div>` + others.map(t => `<section class="sum-tab" data-sum-tab="${t.id}">
+      <div class="sp-sum-cat">${esc(t.label)} <span class="badge badge-sm badge-ghost">${t.n}</span><a href="#view=${t.id}" data-sum-open="${t.id}">Open ${esc(t.label)}</a></div>
+      <div class="sum-tab-body" id="sum-body-${t.id}"></div></section>`).join('');
+    docs.renderSummaryInto(vd, document.getElementById('sum-body-' + vd));
+    others.forEach(t => {
+      const body = document.getElementById('sum-body-' + t.id);
+      if (AA.isDoc(t.id) && docs.docs.includes(t.id)) docs.renderSummaryInto(t.id, body);
+    });
+    list.querySelectorAll('[data-sum-open]').forEach(a => a.addEventListener('click', () => close()));
+    $('#round-confirm-sub').hidden = true;
+    $('#round-confirm-warn').style.display = 'none';
+    const ft = $('#round-confirm .round-confirm-ft');
+    let comp = $('#sd-composer');
+    if (sd === 'c' && !comp) {
+      comp = document.createElement('textarea');
+      comp.id = 'sd-composer';
+      comp.className = 'textarea sd-composer';
+      comp.rows = 1;
+      comp.placeholder = 'Add a note for the agent (optional)';
+      comp.setAttribute('aria-label', 'Note to the agent');
+      comp.addEventListener('input', () => { docs.setGf(comp.value); syncCounts(); });
+      ft.prepend(comp);
+    }
+    if (comp) comp.value = docs.gf();
+    list.scrollTop = scroll;
+    syncCounts();
+  }
   function render() {
     if (!open) return;
     const p = plan();
     const docs = window.AnnotateDocs;
+    const vd = sdView(docs);
+    $('#round-confirm').dataset.sd = vd ? docs.sendDesign : '';
+    if (vd) return renderDesign(p, docs, vd);
+    $('#round-confirm-sub').hidden = false;
     const list = $('#sum-list');
     const scroll = list.scrollTop;
     list.innerHTML = p.tabs.map(t => `<section class="sum-tab" data-sum-tab="${t.id}">
@@ -677,6 +722,12 @@
     p.tabs.forEach(t => { const b = document.querySelector(`[data-sum-tab="${t.id}"] .sp-sum-cat .badge`); if (b) b.textContent = String(t.n); });
     const pending = window.AnnotateDocs ? window.AnnotateDocs.pageRoundPending() : 0;
     $('#round-discard-btn').disabled = pending === 0 || sending;
+    const docs = window.AnnotateDocs;
+    if (sdView(docs)) {
+      $('#round-confirm-title').textContent = sdTitle(docs.sendDesign, p.total);
+      $('#round-discard-btn').textContent = 'Discard ' + pending + ' unsent answer' + (pending === 1 ? '' : 's');
+      $('#round-cancel-btn').textContent = docs.sendDesign === 'c' ? 'Close' : 'Back';
+    }
   }
   function openSummary() {
     if (open) { render(); return; }

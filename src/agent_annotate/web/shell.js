@@ -3590,6 +3590,7 @@ function summaryWarning() {
   return '';
 }
 function renderSummaryInto(list, editable) {
+  if (SD && editable) return renderSendDesignInto(list);
   const plan = sendPlan();
   const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
@@ -3666,7 +3667,9 @@ function renderSummaryInto(list, editable) {
     if (!sumRestOpen.delete(btn.dataset.sumRest)) sumRestOpen.add(btn.dataset.sumRest);
     renderSummary();
   }));
-
+  wireSummary(list, editable);
+}
+function wireSummary(list, editable) {
   // Another document's rows: the pencil opens that document's tab, where
   // the same summary opens with that row in edit mode.
   if (!editable) {
@@ -3686,7 +3689,7 @@ function renderSummaryInto(list, editable) {
       updateSendState();
       syncSummaryCounts();
     });
-    gta.focus();
+    if (sumEditing === 'gf') gta.focus();
   }
   list.querySelectorAll('[data-decision-say-ta]').forEach(ta => {
     ta.value = DRAFTS['say:' + ta.dataset.decisionSayTa] || '';
@@ -3705,6 +3708,93 @@ function renderSummaryInto(list, editable) {
     const r = await pickOption(list, btn);
     if (r) { sumEditing = null; renderSummary(); }
   }));
+}
+// ── Send design prototypes (branch changl/send-design; screenshots only,
+// not for merge). ?sd=a | b | c switches the dialog for the document on
+// screen; app.js draws the chrome around it.
+const SD = (new URLSearchParams(location.search).get('sd') || '').toLowerCase();
+const sdOpen = { later: false, going: false, seg: '' };
+function sendModel() {
+  const plan = sendPlan();
+  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+  const going = [...plan.round, ...plan.answers, ...plan.push].sort(byNum);
+  const inSend = new Set(going.map(c => c.id));
+  const open = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id) && !decisionAnswer(c)).sort(byNum);
+  const answers = going.filter(c => hasDecisionRequest(c) && !strandedSay(c)).length;
+  return { going, answers, comments: going.length - answers, missing: open.filter(c => !isSetAside(c)), later: open.filter(isSetAside), gf: gfDraft() };
+}
+function sdAnswer(c) {
+  if (hasSayDraft(c)) return '“' + firstLine(sayDraft(c)) + '”';
+  if (hasDecisionRequest(c) && !strandedSay(c)) return decisionAnswer(c) ? answerLabel(c).text : '';
+  const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
+  return '“' + firstLine(strandedSay(c) ? sayDraft(c) : last ? last.text : c.text) + '”';
+}
+function sdOptions(c) {
+  return `<div class="sum-edit"><div class="sum-opts">${decisionOptions(c.decision_request).map(o => {
+    const action = o.custom ? 'custom' : o.id;
+    const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
+    return `<button type="button" class="btn btn-sm decision-btn-sum" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}>${o.labelHtml}</button>`;
+  }).join('')}${sumEditing === c.id || hasSayDraft(c) ? '' : `<button type="button" class="btn btn-sm btn-ghost sd-own" data-sum-edit="${escAttr(c.id)}">In my own words…</button>`}</div>
+    ${sumEditing === c.id || hasSayDraft(c) ? `<textarea class="textarea textarea-sm sum-gf-ta" data-decision-say-ta="${escAttr(c.id)}" placeholder="Answer in your own words" rows="2"></textarea>` : ''}
+    <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div></div>`;
+}
+// kind: 'going' (tap to change), 'missing' (options shown), 'later' (tap to answer)
+function sdRow(c, kind) {
+  const num = NUM_MAP[c.id];
+  const isQ = hasDecisionRequest(c) && !strandedSay(c);
+  const open = kind === 'missing' || sumEditing === c.id;
+  const q = isQ ? displayPrompt(c) : (c.replies || []).some(r => !isAgentAuthor(r.author)) ? 'Your reply' : 'Your comment';
+  const a = kind === 'going' ? sdAnswer(c) : '';
+  const tap = isQ && kind !== 'missing' && (kind !== 'going' || canChangeAnswer(c) || hasSayDraft(c));
+  const head = `<span class="sd-q">${num ? `<span class="sd-num">#${num}</span>` : ''}${esc(q)}</span>${a ? `<span class="sd-a">${esc(a)}</span>` : ''}`;
+  return `<div class="sd-row sd-${kind}${open ? ' is-open' : ''}" data-sum-id="${escAttr(c.id)}">
+    ${tap ? `<button type="button" class="sd-head" data-sum-edit="${escAttr(c.id)}" aria-expanded="${open}">${head}<span class="sd-act">${kind === 'later' ? 'Answer' : 'Change'}</span></button>` : `<div class="sd-head">${head}</div>`}
+    ${open && isQ ? sdOptions(c) : ''}
+  </div>`;
+}
+const sdPlural = (n, one, many) => n + ' ' + (n === 1 ? one : many || one + 's');
+function sdGf(rows, placeholder) {
+  return `<textarea class="textarea sd-gf" id="sum-gf-ta" rows="${rows}" placeholder="${escAttr(placeholder)}" aria-label="General feedback"></textarea>`;
+}
+function sdDisclosure(key, label, n, body, cls) {
+  const open = sdOpen[key];
+  return `<button type="button" class="sd-disc ${cls || ''}" data-sd-toggle="${key}" aria-expanded="${open}">${ico(open ? 'chevDown' : 'chevRight')}<span>${label}</span><span class="badge badge-sm badge-ghost">${n}</span></button>${open ? body() : ''}`;
+}
+function renderSendDesignInto(list) {
+  const m = sendModel();
+  let html = '';
+  if (SD === 'a') {
+    // A · Checklist: what still needs you first, then the note, then what goes.
+    if (m.missing.length) {
+      html += `<section class="sd-gap"><div class="sd-h">${sdPlural(m.missing.length, 'question')} not answered <span class="sd-hint">Answer here, or send and the agent sees ${m.missing.length === 1 ? 'it' : 'them'} as unanswered.</span></div>${m.missing.map(c => sdRow(c, 'missing')).join('')}</section>`;
+    }
+    html += `<section class="sd-sec"><div class="sd-h">Note to the agent <span class="sd-hint">Optional. Anything not tied to one question.</span></div>${sdGf(2, 'e.g. Looks good overall; the iPad layout still wraps.')}</section>`;
+    html += `<section class="sd-sec"><div class="sd-h">Going to the agent <span class="badge badge-sm badge-ghost">${m.going.length + (m.gf ? 1 : 0)}</span></div>${m.going.length ? m.going.map(c => sdRow(c, 'going')).join('') : '<div class="sd-empty">No answers yet. Answer questions on the page, or add a note above.</div>'}</section>`;
+    if (m.later.length) html += sdDisclosure('later', 'Answer later', m.later.length, () => m.later.map(c => sdRow(c, 'later')).join(''), 'sd-later-disc');
+  } else if (SD === 'b') {
+    // B · Confirm: counts and the note; the list only on request.
+    const tile = (n, label) => `<div class="sd-tile${n ? '' : ' is-zero'}"><b>${n}</b><span>${label}</span></div>`;
+    html += `<div class="sd-tiles">${tile(m.answers, m.answers === 1 ? 'answer' : 'answers')}${tile(m.comments, m.comments === 1 ? 'comment' : 'comments')}${tile(m.gf ? 1 : 0, 'note')}</div>`;
+    html += `<label class="sd-h sd-gf-lbl" for="sum-gf-ta">Note to the agent <span class="sd-hint">Optional. Anything not tied to one question.</span></label>` + sdGf(3, 'e.g. Looks good overall; the iPad layout still wraps.');
+    if (m.missing.length || m.later.length) {
+      const bits = [m.missing.length ? `<b>${sdPlural(m.missing.length, 'question')} unanswered</b> — the agent sees ${m.missing.length === 1 ? 'it' : 'them'} as open` : '', m.later.length ? `${m.later.length} set aside for later` : ''].filter(Boolean);
+      html += `<div class="sd-gapline" role="status">${bits.join('. ')}.${m.missing.length ? ` <button type="button" class="btn btn-xs btn-ghost sd-link" data-sd-toggle="missing">${sdOpen.missing ? 'Hide' : 'Answer now'}</button>` : ''}</div>`;
+      if (sdOpen.missing) html += m.missing.map(c => sdRow(c, 'missing')).join('');
+    }
+    if (m.going.length) html += sdDisclosure('going', 'Show what goes', m.going.length, () => m.going.map(c => sdRow(c, 'going')).join(''), 'sd-going-disc');
+  } else {
+    // C · Composer: one list at a time; the note sits next to Send (app.js).
+    const segs = [['going', 'To send', m.going.length], ['missing', 'Unanswered', m.missing.length], ['later', 'Later', m.later.length]];
+    const seg = sdOpen.seg || 'going';
+    html += `<div class="sd-segs" role="tablist">${segs.map(([k, l, n]) => `<button type="button" role="tab" class="sd-seg${k === seg ? ' is-on' : ''}${k === 'missing' && n ? ' is-warn' : ''}" data-sd-seg="${k}" aria-selected="${k === seg}">${l} <span class="sd-seg-n">${n}</span></button>`).join('')}</div>`;
+    const rows = seg === 'going' ? m.going : seg === 'missing' ? m.missing : m.later;
+    const empty = { going: 'Nothing yet. Answer questions on the page, or type a note below.', missing: 'Every question has an answer.', later: 'Nothing set aside.' }[seg];
+    html += `<div class="sd-seglist">${rows.length ? rows.map(c => sdRow(c, seg)).join('') : `<div class="sd-empty">${empty}</div>`}</div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('[data-sd-toggle]').forEach(b => b.addEventListener('click', () => { sdOpen[b.dataset.sdToggle] = !sdOpen[b.dataset.sdToggle]; renderSummary(); }));
+  list.querySelectorAll('[data-sd-seg]').forEach(b => b.addEventListener('click', () => { sdOpen.seg = b.dataset.sdSeg; sumEditing = null; renderSummary(); }));
+  wireSummary(list, true);
 }
 function renderSummary() { if (window.AA) window.AA.send.render(); }
 function syncSummaryCounts() { if (window.AA) window.AA.send.syncCounts(); }
@@ -4723,6 +4813,15 @@ window.AnnotateDocs = {
   warning: (doc) => withDoc(doc, summaryWarning),
   items: (doc) => withDoc(doc, sendItems),
   renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
+  sendModel: (doc) => withDoc(doc, sendModel),
+  sendDesign: SD,
+  gf: () => withDoc(VIEW_DOC, () => DRAFTS.gf || ''),
+  setGf: (v) => withDoc(VIEW_DOC, () => {
+    setDraft('gf', v);
+    const box = document.getElementById('gf-ta');
+    if (box) box.value = v;
+    renderGeneralFeedback();
+  }),
   renderHistoryInto: (doc, shown) => withDoc(doc, () => renderVersionRail(shown)),
   isArchivePlan,
   submitPage,
