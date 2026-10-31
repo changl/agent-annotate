@@ -1341,9 +1341,9 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
         # Send wakes the owner's terminal. An owner whose process ended never
         # hears it, so the session publishing a version takes the page over
         # (Chang, 2026-10-31: three Sends waited on an owner gone since Oct 21).
-        from .delivery import _target_ready, capture_target
+        from .delivery import _target_exited, capture_target
         old = record.get("owner_target")
-        if not (isinstance(old, dict) and _target_ready(old)[0]) and capture_target(_session_id(), _session_agent()):
+        if _target_exited(old) and capture_target(_session_id(), _session_agent()):
             if cmd_claim(argparse.Namespace(slug=f"{project}/{slug}", project=None)) == 0:
                 record = _load_state_for_project(project)["slugs"].get(slug, record)
     report = _run_gate(record, args)
