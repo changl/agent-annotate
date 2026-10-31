@@ -1495,6 +1495,7 @@ function buildEvidenceEl(entry, ev) {
   toggle.setAttribute('aria-controls', list.id);
   const syncList = () => {
     const open = !!stripEvidenceOpen[id];
+    if (open && !list.firstChild) fillList();
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     list.hidden = !open;
   };
@@ -1503,7 +1504,8 @@ function buildEvidenceEl(entry, ev) {
     syncList();
     if (stripEvidenceOpen[id]) syncAllExcerptClamps(list);
   });
-  ev.forEach((e, i) => {
+  // Items and previews are built on first open (and on a redraw while open).
+  const fillList = () => ev.forEach((e, i) => {
     const key = id + '\n' + e.anchor + '\n' + i;
     const row = document.createElement('div');
     row.className = 'annotate-decision-evidence-item';

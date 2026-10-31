@@ -138,8 +138,8 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
         with request("") as response:
             assert 'id="drawer-tabs"' in response.read().decode()
         # The accepted shell's fonts are bootstrap chrome, like its CSS.
-        with request("RobotoVariable.ttf") as response:
-            assert response.headers["Content-Type"].startswith("font/ttf")
+        with request("RobotoVariable.woff2") as response:
+            assert response.headers["Content-Type"].startswith("font/woff2")
         with pytest.raises(urllib.error.HTTPError) as error:
             request("content")
         assert error.value.code == 403

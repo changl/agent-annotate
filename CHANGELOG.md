@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Lighter page load (Chang, card #11, 2026-10-31), measured on a copy of FLD:
+  - History is built when you open it, not while it is hidden. On load the page fetches only the latest round, which the header and Send read: 4 KB instead of 351 KB (`/api/history?latest=1`). The full list loads when History opens, about 0.2 s the first time. The shell starts with 902 nodes instead of 1,210 (iPad).
+  - Evidence inside document strips is built when "Evidence (n)" is opened. An open Evidence stays open and built when a poll redraws the strips. The document starts with 944 nodes instead of 1,079.
+  - The Roboto fonts are WOFF2, converted once and losslessly from the bundled TTFs, which are no longer shipped: 478 KB instead of 1,019 KB. The document frame uses the same font URL as the shell and reads it from the browser cache.
+- Send review: General feedback has a text button, **Add general feedback** or **Edit** once there is some, instead of a bare + (Chang, 2026-10-31).
+
 - Simplification step 3: remove unused v1 comment-store readers, the migrate command, single-file server mode and the temporary 2.26 identity bridge. Existing v2 page data and baked-document rendering remain supported.
 
 - Simplification step 2: remove old-server browser fallbacks, unreachable Send now controls and unused inline-card state. A failed decision request keeps its draft without retrying through reply/status/push routes.

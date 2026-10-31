@@ -124,3 +124,25 @@ def test_sent_plain_feedback_has_a_stable_historical_snapshot(server):
     assert history["rounds"][0]["answers"][0]["verdict"] == "comment"
     _call(httpd, "PUT", f"/api/comments/{comment['id']}", {"text": "Changed later"}, author="r@example.com")
     assert _call(httpd, "GET", "/api/history")[1] == history
+
+
+def test_latest_round_is_the_newest_send_with_content_and_its_paired_records():
+    from agent_annotate.review_history import latest_round
+    rounds = [{"id": "empty", "answers": []},
+              {"id": "push", "send_id": "s2", "kind": "push", "receipt": [{"label": "a"}]},
+              {"id": "older", "send_id": "s1", "answers": [{"verdict": "accept"}]},
+              {"id": "round", "send_id": "s2", "answers": [{"verdict": "accept"}]}]
+    assert [r["id"] for r in latest_round({"rounds": rounds})["rounds"]] == ["push", "round"]
+    assert latest_round({"rounds": [{"id": "empty"}]}) == {"rounds": []}
+
+
+def test_history_latest_query_serves_only_the_newest_round(server):
+    httpd, _, _ = server
+    _, card = _call(httpd, "POST", "/api/comments", _card(prompt="CHA-1: ship?"))
+    for text in ("first", "second"):
+        _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "comment", "text": text, "defer_push": True}, author="r@example.com")
+        _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")
+    full = _call(httpd, "GET", "/api/history")[1]
+    latest = _call(httpd, "GET", "/api/history?latest=1")[1]
+    assert len(full["rounds"]) == 2 and "versions" in full
+    assert latest == {"rounds": full["rounds"][:1]}

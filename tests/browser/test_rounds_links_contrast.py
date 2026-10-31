@@ -162,7 +162,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             page = browser.new_page(viewport={"width": width, "height": 960})
             page.set_default_timeout(5000)
             requests, errors = [], []
-            page.on("request", lambda r: requests.append(r) if r.url.endswith("/api/history") else None)
+            page.on("request", lambda r: requests.append(r.url.split("/api/history")[1]) if "/api/history" in r.url else None)
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(base + "#view=review", wait_until="networkidle")
             ready(page)
@@ -174,7 +174,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             card = page.locator('.citem[data-comment-id="question-11"]')
             draft = "Keep this explanation while reviewing past rounds."
             card.locator(".decision-say-ta").fill(draft)
-            assert len(requests) == 1, "One bootstrap receipt fetch, without history polling"
+            assert requests == ["?latest=1"], "One bootstrap fetch of the latest round, without history polling"
             link = card.locator(".decision-prompt .ticket-link")
             assert link.get_attribute("href") == ISSUE and link.get_attribute("rel") == "noopener noreferrer"
             assert card.locator(".decision-context .ticket-link").count() == 1
@@ -197,7 +197,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             history(page)
             sent(page)
             page.locator(ROUNDS).wait_for()
-            assert len(requests) == 1
+            assert requests == ["?latest=1", ""], "The full list loads once, when History opens"
             receipt = page.locator(ROUNDS).first
             assert "Keep the original wording for CHA-160." in receipt.inner_text()
             assert receipt.locator(".decision-btn,textarea").count() == 0
@@ -217,7 +217,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             feedback(page)
             assert card.locator(".decision-say-ta").input_value() == draft
             history(page)
-            assert len(requests) == 1
+            assert requests == ["?latest=1", ""]
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert not errors
             browser.close()
@@ -414,11 +414,14 @@ def test_a_send_shows_under_its_version_before_the_server_record_arrives(tmp_pat
             page.goto(base + "#view=review&v=v1", wait_until="networkidle")
             ready(page)
             page.wait_for_function("() => document.querySelector('#content-frame').src.includes('v=v1')")
+            # The full list loads when History is first opened.
+            with page.expect_response(lambda r: r.url.endswith("/api/history")):
+                history(page)
             feedback(page)
             page.locator('.citem[data-comment-id="question-11"] .decision-accept').click()
             section(page, "ready")
             # History cannot refetch: only this visit's Send is known.
-            page.route("**/api/history", lambda route: route.abort())
+            page.route("**/api/history*", lambda route: route.abort())
             page.locator("#send-btn:visible, #round-finish-btn:visible").first.click()
             page.locator("#round-submit-btn").click()
             page.locator("#round-confirm-backdrop").wait_for(state="hidden")

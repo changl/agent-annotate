@@ -971,17 +971,29 @@ function boardLink() {
 let HISTORY_DATA = null;
 let historyDirty = true;
 let historyLoading = false;
+// The header and Send read only the latest round; the full list loads once History is opened.
+let historyFull = false;
 async function loadHistory() {
   if ((HISTORY_DATA && !historyDirty) || historyLoading) return;
   historyLoading = true;
+  const full = historyFull;
   try {
-    const r = await fetch(apiUrl('./api/history'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    const r = await fetch(apiUrl('./api/history' + (full ? '' : '?latest=1')), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     const data = await r.json();
     if (!r.ok || !Array.isArray(data.rounds)) throw new Error('history');
     HISTORY_DATA = data;
-    historyDirty = false;
+    historyDirty = full !== historyFull;
     if (window.AA) window.AA.changed();
-  } catch { /* History keeps the last rounds it had */ } finally { historyLoading = false; }
+  } catch { /* History keeps the last rounds it had */ } finally {
+    historyLoading = false;
+    if (full !== historyFull) loadHistory();
+  }
+}
+function wantFullHistory() {
+  if (historyFull) return;
+  historyFull = true;
+  historyDirty = true;
+  loadHistory();
 }
 function roundItemText(answer) {
   const c = answer.comment_id ? findCommentById(answer.comment_id) : null;
@@ -1141,6 +1153,9 @@ function renderVersionRail(shown) {
   const body = document.getElementById('vrail-body-' + DOC);
   if (!body) return;
   if (shown !== undefined) HISTORY_SHOWN = shown;
+  // Built when History is opened, never while it is hidden.
+  if (body.closest('[hidden]')) { if (DOC === VIEW_DOC) renderVersionBanner(); return; }
+  wantFullHistory();
   const doc = DOC;
   const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vitem');
   const focusedVersion = focused ? focused.dataset.version : null;
@@ -3626,14 +3641,14 @@ function renderSummaryInto(list, editable) {
   const verdictRows = [...plan.round, ...plan.answers].sort(byNum);
   if (verdictRows.length) html += group('Verdicts', verdictRows.length) + verdictRows.map(decisionRow).join('');
   if (plan.push.length) html += group('Open comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
-  // General feedback: pencil to edit inline, or + to add (Chang, D1).
+  // General feedback: a text button says what it adds (Chang 2026-10-31: the bare + was unclear).
   const gf = gfDraft();
   const gfEditing = editable && sumEditing === 'gf';
   html += group('General feedback', gf ? 1 : 0);
   html += `<div class="sum-row" data-sum-id="${editable ? 'gf' : 'gf-' + doc}">
     <div class="sum-main">
       <span class="sum-q">${gf ? '“' + esc(firstLine(gf)) + '”' : '<span class="sum-none">None</span>'}</span>
-      <button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="${gf ? 'Edit general feedback' : 'Add general feedback'}" title="${gf ? 'Edit' : 'Add general feedback'}" aria-expanded="${gfEditing ? 'true' : 'false'}">${ico(gf ? 'pencil' : 'plus')}</button>
+      <button type="button" class="btn btn-xs" data-sum-edit="gf" data-sum-doc="${doc}"${gf ? ' aria-label="Edit general feedback"' : ''} aria-expanded="${gfEditing ? 'true' : 'false'}">${gf ? 'Edit' : 'Add general feedback'}</button>
     </div>
     ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
   </div>`;
