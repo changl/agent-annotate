@@ -1,4 +1,4 @@
-"""Plans opens on what the reviewer asked to track; agent reference comes last.
+"""Plans lists what the reviewer asked to track first; agent reference comes last.
 
 Chang, 2026-10-25, on FLD: the Plans tab opened on a one-off decision and listed
 70 filed answers before his Tester tracking plan.
@@ -34,9 +34,13 @@ def test_plans_picker_sections_and_default(tmp_path):
             pick = page.locator("#view-hd-plan")
             playwright.expect(pick).to_be_visible()
             assert pick.locator("optgroup").evaluate_all("els => els.map(e => e.label)") == ["Tracking", "Approved plans", "Agent reference"]
-            assert pick.locator("option").evaluate_all("els => els.map(e => e.value)") == ["tester-tracking", "route-central", "dns-records"]
-            assert pick.input_value() == "tester-tracking"
+            # Plans opens on the index (cards #8, #9); the dropdown stays, unselected.
+            assert pick.locator("option").evaluate_all("els => els.map(e => e.value)") == ["", "tester-tracking", "route-central", "dns-records"]
+            assert pick.input_value() == ""
+            assert page.locator("#plans-index .pi-sec").first.get_attribute("data-key") == "tracking"
+            pick.select_option("tester-tracking")
             playwright.expect(page.frame_locator("#content-frame").locator("h1")).to_have_text("Tester tracking")
+            assert pick.input_value() == "tester-tracking"
             browser.close()
     finally:
         process.terminate()

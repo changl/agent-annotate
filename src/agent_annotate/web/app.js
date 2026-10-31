@@ -200,22 +200,26 @@
   function docTitle(doc, text) {
     if (doc !== view) return;
     const sub = document.getElementById('view-hd-sub-doc');
-    if (sub) sub.textContent = text;
+    if (sub) sub.textContent = plansIndex ? '' : text;
     renderPlanPicker();
   }
   // Plans sections in the server's order (Chang, 2026-10-25): what he asked to
   // track, approved plans, then agent reference. Hidden plans stay out unless
   // one is open (by link).
   const PLAN_SECTIONS = [['tracking', 'Tracking'], ['approved', 'Approved plans'], ['reference', 'Agent reference'], ['hidden', 'Hidden']];
+  // Plans opens on the topic index (cards #8, #9); the dropdown stays as the
+  // quick way to any plan, from the index too.
+  let plansIndex = false;
   function renderPlanPicker() {
     const pick = document.getElementById('view-hd-plan');
     const cur = DOCS() ? DOCS().planId() : null;
-    const plans = (DOCS() ? DOCS().plans() : []).filter(p => p.section !== 'hidden' || p.id === cur);
+    const plans = (DOCS() ? DOCS().plans() : []).filter(p => p.section !== 'hidden' || (p.id === cur && !plansIndex));
+    document.getElementById('view-hd-index').hidden = view !== 'plans' || plansIndex;
     pick.hidden = view !== 'plans' || plans.length < 2;
     if (pick.hidden) return;
-    pick.innerHTML = PLAN_SECTIONS.map(([key, label]) => {
+    pick.innerHTML = (plansIndex ? '<option value="" selected disabled>Go to a plan…</option>' : '') + PLAN_SECTIONS.map(([key, label]) => {
       const items = plans.filter(p => p.section === key);
-      return items.length ? `<optgroup label="${label}">` + items.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('') + '</optgroup>' : '';
+      return items.length ? `<optgroup label="${label}">` + items.map(p => `<option value="${UI.esc(p.id)}"${p.id === cur && !plansIndex ? ' selected' : ''}>${UI.esc(p.title || p.id)}</option>`).join('') + '</optgroup>' : '';
     }).join('');
   }
   function setTitle(title) {
@@ -260,6 +264,10 @@
     setTitle();
     if (isDoc(next)) {
       document.getElementById('view-hd-name').textContent = tab(next).label;
+      plansIndex = next === 'plans' && !p.get('plan');
+      document.getElementById('frame-area').classList.toggle('is-plans-index', plansIndex);
+      AA.plansIndex.show(plansIndex);
+      renderPlanPicker();
       await DOCS().activate(next, p.get('v') || versions[next] || null);
       if (view !== next) return;
     } else {
@@ -293,7 +301,8 @@
   };
 
   async function start() {
-    document.getElementById('view-hd-plan').addEventListener('change', (e) => DOCS().selectPlan(e.target.value));
+    // From the index a pick always opens the plan, even the one last shown.
+    document.getElementById('view-hd-plan').addEventListener('change', (e) => go({ view: 'plans', plan: e.target.value }));
     window.addEventListener('hashchange', () => {
       if (new URLSearchParams(location.hash.slice(1)).has('review')) return; // the shell reloads for a review link
       route();
@@ -776,4 +785,132 @@
     open: openSummary, close, isOpen: () => open, submit, render, syncCounts, note: setNote, receipts, refresh, plan,
     justSent: () => !!(lastSend && lastSend.fresh),
   };
+})();
+
+// ── Plans index (cards #8 and #9, 2026-10-31) ───────────────────────────
+// Plans opens on an index: Tracking pinned, Unsorted (what no rule files),
+// then one collapsible section per topic: its plans (Approved or Reference),
+// then its Decisions folded with a count. The server files every item by
+// fixed keyword rules (plan_topics.py), never an agent; Move to… pins an item
+// and teaches the rule. A section's rows are built only when it opens, so a
+// project with hundreds of plans draws a short list of headers.
+(function () {
+  'use strict';
+  const AA = window.AA, UI = window.AAUI, esc = UI.esc;
+  const DOCS = () => window.AnnotateDocs;
+  const $ = (s) => document.getElementById(s);
+  const pane = $('plans-index'), body = $('pi-body'), note = $('pi-note'), search = $('pi-search');
+  const UNSORTED = 'Unsorted';
+  const open = UI.local.get('plans:open', {});
+  let shown = false, query = '', drawn = '';
+
+  // Hidden items and archive pages stay out (shortcut: archive mirrors
+  // categories.is_archive_plan from the long-pages branch).
+  const items = () => (DOCS() ? DOCS().plans() : []).filter(p => p.section !== 'hidden' && p.section !== 'archive');
+  const topics = () => ((DOCS() && DOCS().categories()) || {}).plan_topics || [];
+  const isDecision = (p) => !!p.managed;
+  const match = (p) => !query || String(p.title || p.id).toLowerCase().includes(query);
+
+  function row(p, movable) {
+    const tag = isDecision(p) || p.section === 'tracking' ? '' :
+      `<span class="badge badge-ghost badge-sm pi-tag">${p.section === 'approved' ? 'Approved' : 'Reference'}</span>`;
+    const move = movable ? `<select class="select select-ghost select-xs pi-move" data-move="${esc(p.id)}" aria-label="Move ${esc(p.title || p.id)} to another topic"><option value="" selected disabled>Move to…</option>${
+      topics().filter(t => t !== UNSORTED && t !== p.topic).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}<option value="+new">New topic…</option></select>` : '';
+    return `<li class="pi-row"><a class="pi-open" href="#view=plans&plan=${encodeURIComponent(p.id)}">${esc(p.title || p.id)}</a>${tag}${move}</li>`;
+  }
+  // A section: a disclosure button (APG) whose rows are built when it opens.
+  function section(key, label, count, opts) {
+    const on = !!query || (opts.pinned ? open[key] !== false : !!open[key]);
+    const id = 'pi-sec-' + encodeURIComponent(key).replace(/%/g, '_');
+    const tools = opts.tools && on && !query ? opts.tools : '';
+    return `<section class="pi-sec${opts.cls ? ' ' + opts.cls : ''}" data-key="${esc(key)}"><div class="pi-hd"><button type="button" class="sec-hdr pi-toggle" aria-expanded="${on}" aria-controls="${id}">${UI.ico('chevDown')}<span class="pi-name">${esc(label)}</span><span class="badge badge-sm badge-ghost">${count}</span></button>${tools}</div><div class="pi-body" id="${id}"${on ? '' : ' hidden'}>${on ? opts.rows() : ''}</div></section>`;
+  }
+  function topicRows(name, list) {
+    const plans = list.filter(p => !isDecision(p)), decisions = list.filter(isDecision);
+    const dKey = 'd:' + name;
+    const dOpen = !!query || !!open[dKey];
+    let html = plans.length ? '<ul class="pi-list">' + plans.map(p => row(p, true)).join('') + '</ul>' : '';
+    if (decisions.length) {
+      html += `<button type="button" class="sec-hdr pi-toggle pi-sub" data-key="${esc(dKey)}" aria-expanded="${dOpen}">${UI.ico('chevDown')}<span>Decisions</span><span class="badge badge-sm badge-ghost">${decisions.length}</span></button>`;
+      if (dOpen) html += '<ul class="pi-list">' + decisions.map(p => row(p, true)).join('') + '</ul>';
+    }
+    return html;
+  }
+  function render() {
+    if (!shown) return;
+    const all = items();
+    const sig = JSON.stringify([query, open, topics(), all.map(p => [p.id, p.title, p.section, p.topic])]);
+    if (sig === drawn) return;
+    drawn = sig;
+    const hits = all.filter(match);
+    const by = {};
+    hits.forEach(p => { if (p.section !== 'tracking') (by[p.topic || UNSORTED] = by[p.topic || UNSORTED] || []).push(p); });
+    const tracking = hits.filter(p => p.section === 'tracking');
+    let html = '';
+    if (tracking.length) html += section('tracking', 'Tracking · kept current for you', tracking.length, { pinned: true, cls: 'pi-pin', rows: () => '<ul class="pi-list">' + tracking.map(p => row(p, false)).join('') + '</ul>' });
+    const names = [UNSORTED, ...topics().filter(t => t !== UNSORTED)];
+    names.forEach(name => {
+      const list = by[name];
+      if (!list) return;
+      const tools = name === UNSORTED ? '' : `<select class="select select-ghost select-xs pi-topic" data-topic="${esc(name)}" aria-label="Rename or merge ${esc(name)}"><option value="" selected disabled>Topic…</option><option value="rename">Rename…</option>${
+        topics().filter(t => t !== UNSORTED && t !== name).map(t => `<option value="merge:${esc(t)}">Merge into ${esc(t)}</option>`).join('')}</select>`;
+      html += section(name, name, list.length, { pinned: name === UNSORTED, cls: name === UNSORTED ? 'pi-unsorted' : '', tools, rows: () => topicRows(name, list) });
+    });
+    body.innerHTML = html || `<p class="project-detail">${query ? 'Nothing matches “' + esc(search.value) + '”.' : 'No plans yet.'}</p>`;
+  }
+
+  async function post(change, done) {
+    note.textContent = '';
+    UI.local.set('plans:open', open);
+    try {
+      await UI.api('./api/plan-topics', change);
+      note.textContent = done;
+      await DOCS().reload();
+    } catch (e) { note.textContent = 'Not saved: ' + e.message; }
+  }
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('.pi-toggle');
+    if (!b) return;
+    const key = b.dataset.key || b.closest('.pi-sec').dataset.key;
+    const pinned = key === 'tracking' || key === UNSORTED; // open until closed
+    open[key] = b.getAttribute('aria-expanded') !== 'true' ? true : (pinned ? false : undefined);
+    if (open[key] === undefined) delete open[key];
+    UI.local.set('plans:open', open);
+    render();
+  });
+  body.addEventListener('change', (e) => {
+    const s = e.target;
+    if (s.dataset.move) {
+      const id = s.dataset.move, title = (items().find(p => p.id === s.dataset.move) || {}).title || id;
+      let topic = s.value;
+      const fresh = topic === '+new';
+      if (fresh) topic = (prompt('Name the new topic') || '').trim();
+      s.value = '';
+      if (!topic) return;
+      open[topic] = true;
+      post({ move: id, topic, ...(fresh ? { new: true } : {}) }, `Moved “${title}” to ${topic}. Items like it will go there too.`);
+    } else if (s.dataset.topic) {
+      const from = s.dataset.topic, act = s.value;
+      s.value = '';
+      if (act === 'rename') {
+        const to = (prompt('Rename the topic', from) || '').trim();
+        if (to && to !== from) { open[to] = open[from]; post({ rename: from, to }, `Renamed ${from} to ${to}.`); }
+      } else if (act.startsWith('merge:')) {
+        const into = act.slice(6);
+        open[into] = true;
+        post({ merge: from, into }, `Merged ${from} into ${into}.`);
+      }
+    }
+  });
+  search.addEventListener('input', () => { query = search.value.trim().toLowerCase(); render(); });
+
+  function show(on) {
+    shown = on;
+    pane.hidden = !on;
+    if (!on) note.textContent = '';
+    drawn = '';
+    render();
+  }
+  AA.onChange(render);
+  AA.plansIndex = { show, get shown() { return shown; } };
 })();

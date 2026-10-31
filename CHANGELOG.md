@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Plans opens on an index (Chang, cards #8 and #9, 2026-10-31): Tracking pinned at the top, Unsorted next, then one collapsible section per topic with its plans (tagged Approved or Reference) and its Decisions folded with a count, plus a search box. Hidden items and archive pages stay out; the dropdown stays as the quick way to any plan, and an open plan has "‹ All plans". Annotate files every item by fixed keyword rules (`plan-topics.json`), never an agent; a page without a topic list starts from its own titles. Move to… pins an item and remembers its lead words as a rule for the same kind of item; topics can be renamed or merged. A section's rows are built only when it opens.
 - Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.
 - Faster long pages, measured on a copy of FLD (1,418 comments, 535 versions):
   - Opening History went from a 1.4 s freeze to none. Each version's counts used to scan every comment twice.
