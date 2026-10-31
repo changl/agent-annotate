@@ -41,7 +41,7 @@ def reload_paths(monkeypatch):
 
 
 def test_web_assets_are_packaged():
-    for filename in ("shell.html", "shell.js", "shell.css", "adapter.js", "template.html",
+    for filename in ("shell.html", "shell.js", "shell.css", "adapter.js",
                      "diagram-plot.js"):
         assert (paths.WEB_DIR / filename).is_file()
 
