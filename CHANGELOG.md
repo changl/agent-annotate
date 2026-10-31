@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.27.9
+
 - Changing an answer offers every way to answer again, Answer in words and the note box included (Chang, 2026-10-31). The note it had, plus anything typed, goes with the new answer.
 - Faster long pages, measured on a copy of FLD (1,418 comments, 535 versions):
   - Opening History went from a 1.4 s freeze to none. Each version's counts used to scan every comment twice.
@@ -9,6 +11,7 @@
   - `current.meta.json` no longer stores per-section content hashes that nothing reads. They were 3 of FLD's 3.5 MB, re-read by every poll. Old ones are dropped on the next write, as are the matching ones in `seen.json`.
   - `GET /api/comments` keeps the shared store cache.
 - On iPad, a tap on a choice or card no longer needs a second tap. A tap also fires a mouse hover, and the page's hover highlight made iOS treat the tap as a hover and drop the click; that highlight was also the shift you saw. Hover feedback now reacts to a mouse only (document highlights, rail card hover, Library marks, diagram nodes).
+- Publishing to a page whose recorded owner process has ended claims it for the publishing session, so the next Send reaches a live owner. Automatic takeover requires a PID that no longer exists or a different process start time for a reused PID, plus a captured publisher target. Missing owner metadata, disconnected terminals and unverifiable process state preserve the owner and the canonical page scope.
 
 ## 2.27.8
 
