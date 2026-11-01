@@ -183,3 +183,30 @@ def test_a_tap_never_adds_hover_feedback(tmp_path):
             browser.close()
     finally:
         _stop(server)
+
+
+@pytest.mark.parametrize("where", ["rail", "document"])
+def test_withdrawn_question_keeps_typed_answer_and_its_send_count(tmp_path, where):
+    """agent-annotate-5uy: withdrawn at the next poll, focus still in the box."""
+    with _session(tmp_path, _directory(tmp_path)) as (page, base, _):
+        box = {"rail": page.locator('#comment-list [data-decision-say-ta="question-11"]'),
+               "document": page.frame_locator("#content-frame").locator('textarea[data-strip-say="question-11"]')}[where]
+        box.click()
+        page.keyboard.type(FIRST)
+        page.wait_for_timeout(300)
+        before = int(page.locator("#send-count").inner_text())
+        _agent(base, "api/comments/question-11", {"decision_request": None, "withdraw_reason": "not asked again in v2"}, method="PUT")
+        _poll(page, 2)
+        page.wait_for_timeout(1800)  # dw4 re-rendered 1.6 s after the reviewer paused
+        page.keyboard.type(MORE)
+        page.wait_for_timeout(300)
+        shown = page.evaluate("""() => [...document.querySelectorAll('textarea')].map(t => t.value).concat(
+            [...document.querySelector('#content-frame').contentDocument.querySelectorAll('textarea')].map(t => t.value))""")
+        assert FIRST + MORE in shown, shown
+        # Tapping away lets the held render run: the card keeps the text and Send still counts it.
+        from test_keep_drafts import _blur
+        _blur(page)
+        _poll(page, 2)
+        kept = page.locator('#comment-list .decision-stranded [data-decision-say-ta="question-11"]')
+        playwright.expect(kept).to_have_value(FIRST + MORE)
+        assert int(page.locator("#send-count").inner_text()) == before

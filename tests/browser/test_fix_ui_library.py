@@ -379,6 +379,7 @@ def test_restore_refused_with_409_shows_the_notice_and_keeps_unsaved_text(tmp_pa
             ),
         )
         history(page)
+        page.once("dialog", lambda dialog: dialog.accept())  # b0f: unsaved text asks first
         page.get_by_role("button", name="Restore the earlier text").click()
         playwright.expect(status(page)).to_have_text(STALE)
         assert editor(page).inner_text().strip() == "Unsaved words."
