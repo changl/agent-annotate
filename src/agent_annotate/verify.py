@@ -1,10 +1,10 @@
 """Prove a published page actually renders before anyone is handed its URL.
 
-Every stage asserts on RENDERED CONTENT, never on a status code. Behind
+Every successful stage requires RENDERED CONTENT. Behind
 Cloudflare Access an unauthenticated request to a healthy route and to a
 502-ing route both answer 302 to the login page, and an authenticated request
-to a dead origin answers 200 with Cloudflare's "Bad gateway" page. A status
-code carries no information here; the presence of the reviewer's anchors does.
+to a dead origin answers 200 with Cloudflare's "Bad gateway" page. A successful
+status alone proves nothing; the reviewer's anchors must be present too.
 
 Three stages, reported separately so a failure names the hop that broke:
 
