@@ -18,6 +18,7 @@
   const drafts = UI.local.get('lib:drafts', {}); // unsaved editor text, per item
   const draftBases = UI.local.get('lib:draft-base', {}); // the revision each draft started from
   const commentDrafts = UI.local.get('lib:comment-drafts', {}); // unsaved comment text, per item
+  const commentQuotes = UI.local.get('lib:comment-quotes', {}); // the phrase each unsaved comment quotes, per item
   const saveIntents = UI.local.get('lib:save-intent', {}); // one request id per save attempt, reused on retry
   let shown = false, loading = null;
   // The open editor: which item, which revision it started from, and whether
@@ -428,6 +429,7 @@
     setStatus(typed ? 'Saved · your newer typing is kept as a draft' : 'Saved · goes out with Send');
   }
   async function restore(it, revisionId) {
+    if (drafts[it.id] && !confirm('Restore this text? Your unsaved edits to it will be lost.')) return;
     // base_revision: the latest revision this browser has seen; the server
     // refuses a stale one with 409 (the notice; unsaved text stays).
     const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/restore', { revision_id: revisionId, base_revision: latestOf(it.id) || latestRev(it).id, request_id: crypto.randomUUID() });
@@ -495,6 +497,7 @@
     // The rail's own "+ General feedback" box (A3), for this item. Its
     // unsaved text is this item's draft (kept in this browser until Save).
     const typed = commentDrafts[it.id] || '';
+    if (!pendingQuote) pendingQuote = commentQuotes[it.id] || null;
     const open = !!(pendingQuote || typed);
     html = `<div class="gf" id="sp-compose">
       <button type="button" class="gf-row" id="sp-compose-toggle" aria-expanded="${open ? 'true' : 'false'}" aria-controls="sp-compose-box">${UI.ico('plus')}<span>Comment on this item</span></button>
@@ -526,13 +529,16 @@
     $('#sp-compose-cancel').addEventListener('click', () => {
       $('#sp-compose-box').hidden = true; $('#sp-compose-toggle').setAttribute('aria-expanded', 'false');
       if (pendingRange && quill) quill.formatText(pendingRange.index, pendingRange.length, 'cmark', false, 'silent');
-      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; setCommentDraft(it.id, ''); $('#sp-compose-quote').hidden = true;
+      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; setCommentDraft(it.id, ''); setCommentQuote(it.id, null); $('#sp-compose-quote').hidden = true;
     });
     $('#sp-compose-save').addEventListener('click', () => saveComment(it));
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
   }
   function setCommentDraft(id, text) {
     UI.local.entry('lib:comment-drafts', commentDrafts, id, text.trim() ? text : undefined);
+  }
+  function setCommentQuote(id, quote) {
+    UI.local.entry('lib:comment-quotes', commentQuotes, id, quote || undefined);
   }
   // "Change" on an answered question shows its options again.
   function qCardOpen(q) {
@@ -551,6 +557,7 @@
     if (!range || !range.length) return;
     pendingRange = { index: range.index, length: range.length };
     pendingQuote = quill.getText(range.index, range.length).trim();
+    setCommentQuote(editorItem, pendingQuote);
     quill.formatText(range.index, range.length, 'cmark', 'pending', 'silent');
     AA.rail.reveal();
     $('#sp-compose-box').hidden = false; $('#sp-compose-toggle').setAttribute('aria-expanded', 'true');
@@ -573,7 +580,8 @@
       const box = selected === it.id && $('#sp-compose-ta');
       if (box) box.value = '';
     }
-    pendingQuote = null; pendingRange = null;
+    setCommentQuote(it.id, null);
+    if (selected === it.id) { pendingQuote = null; pendingRange = null; }
     await D().refreshStore();
     // ⌘↵ leaves focus in the box, so the store refresh skips the rail.
     if (shown && selected === it.id) { renderList(); renderRail(); }
