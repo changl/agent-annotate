@@ -397,18 +397,22 @@ def test_submitted_round_note_is_printed_whole():
 
 def test_a_comment_on_an_image_carries_its_img_id_into_the_inbox_and_round():
     from agent_annotate.sync_server import _push_answers
-    target = {"schema": 1, "css": "img:nth-of-type(1)", "offset": {"dx": 0.2, "dy": 0.6}, "image": "F665"}
+    target = {"schema": 1, "css": "img:nth-of-type(1)", "offset": {"dx": 0.2, "dy": 0.6}, "image": "F665",
+              "image_src": "assets/f665a6bf0296-flow.png"}
     line = cli._inbox_line({"event": "comment_created", "comment_id": "c1", "target": target},
                            {"c1": ("This arrow skips the code step", "")})
-    assert "IMG F665 This arrow skips the code step" in line
+    assert "IMG F665 (assets/f665a6bf0296-flow.png) This arrow skips the code step" in line
     answers = _push_answers([{"id": "c1", "text": "This arrow skips the code step", "author": "r@example.com",
                               "target": target}])
-    assert answers[0]["image"] == "F665"
+    assert answers[0]["image"] == "F665" and answers[0]["image_src"] == "assets/f665a6bf0296-flow.png"
     lines = cli._round_lines({"event": "round_submitted", "answers": answers})
-    assert "IMG F665 " in lines[0] and "This arrow skips the code step" in lines[0]
+    assert "IMG F665 (assets/f665a6bf0296-flow.png) " in lines[0] and "This arrow skips the code step" in lines[0]
     plain = cli._inbox_line({"event": "comment_created", "comment_id": "c2", "target": {"image": "<b>"}},
                             {"c2": ("Words", "")})
     assert "IMG" not in plain
+    outside = cli._inbox_line({"event": "comment_created", "comment_id": "c3",
+                               "target": {"image": "F665", "image_src": "../secret.png"}}, {"c3": ("Words", "")})
+    assert "IMG F665 Words" in outside            # a path outside the page is not printed
 
 
 def test_deferred_verdict_is_labelled_unsent_in_inbox():

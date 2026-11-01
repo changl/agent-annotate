@@ -2159,9 +2159,15 @@ def _round_pending_ids(store: dict) -> set:
 
 
 def _image_tag(target) -> str:
-    """'IMG F665 ' for a comment placed on an image (long_pages.image_ids), else ''."""
+    """'IMG F665 (assets/f665…-flow.png) ' for a comment placed on an image
+    (long_pages.image_ids), the path relative to the page folder; else ''."""
     image = target.get("image") if isinstance(target, dict) else None
-    return f"IMG {image} " if isinstance(image, str) and re.fullmatch(r"[0-9A-F]{4,64}", image) else ""
+    if not (isinstance(image, str) and re.fullmatch(r"[0-9A-F]{4,64}", image)):
+        return ""
+    src = target.get("image_src")
+    where = (f" ({src})" if isinstance(src, str) and ".." not in src
+             and re.fullmatch(r"(?:assets|attachments)/[^\s()]+", src) else "")
+    return f"IMG {image}{where} "
 
 
 def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None) -> str:

@@ -355,7 +355,8 @@ def _push_answers(comments: list[dict]) -> list[dict]:
             decision = {"verdict": "comment", "text": "\n\n".join(notes) or reply.get("text", ""), "by": reply.get("author")}
         target = comment.get("target") if isinstance(comment.get("target"), dict) else {}
         answers.append({"comment_id": comment["id"], "number": comment.get("number"),
-            **({"image": target["image"]} if isinstance(target.get("image"), str) else {}),
+            **({key: target[key] for key in ("image", "image_src") if isinstance(target.get(key), str)}
+               if isinstance(target.get("image"), str) else {}),
             "category": comment_category(comment),
             "prompt": (comment.get("decision_request") if isinstance(comment.get("decision_request"), dict)
                        else {}).get("prompt", ""),
