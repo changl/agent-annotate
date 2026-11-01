@@ -1228,6 +1228,9 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         if len(access) < len(report.unavailable):
             print("  UNVERIFIED     could not reach the authenticated browser — the public")
             print("                 URL below is UNCONFIRMED, not known-good")
+            for stage in report.unavailable:
+                if stage not in access:
+                    print(f"                 {stage.name} browser check skipped: {redact_share_links(stage.detail)}")
 
     # The one URL to hand over. Pid, port, bus and state paths used to follow
     # it; `status` has them, and no round needed them from here.
