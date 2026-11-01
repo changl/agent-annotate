@@ -1288,8 +1288,9 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     """
     wanted = getattr(args, "transport", None) or _project_config(project).get("transport")
     if wanted == "funnel" and record.get("transport") != "funnel":
+        from .pagegen import slugify
         previous = dict(record)
-        mount = f"/annotate/{project}/{slug}"
+        mount = f"/annotate/{slugify(project)}/{slug}"
         needs_mount = mount != record.get("public_base_path")
         remounted = False
         from .review_access import ensure_key

@@ -52,6 +52,8 @@ _BROWSER_PROBE_JS = """(() => {
   const body = d ? d.body : document.body;
   return JSON.stringify({
     title: document.title || '',
+    url: location.href,
+    httpStatus: (doc.defaultView.performance.getEntriesByType('navigation')[0] || {}).responseStatus || 0,
     hasFrame: !!f,
     contentLen: body ? body.innerHTML.length : 0,
     anchors: doc ? doc.querySelectorAll('[data-anchor-id]').length : 0,
@@ -239,7 +241,6 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
     try:
         deadline = time.monotonic() + timeout
         last = "page never reported content"
-        rendered = False
         while True:
             try:
                 res = _orca(["eval", "--page", page_id, "--expression",
@@ -250,17 +251,18 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
                     raise ValueError("browser probe returned no DOM result")
                 anchors = int(data.get("anchors") or 0)
                 content_len = int(data.get("contentLen") or 0)
-                rendered = True
-                blob = f"{data.get('title', '')} {data.get('text', '')}"
+                blob = f"{data.get('url', '')} {data.get('title', '')} {data.get('text', '')}"
                 if _is_access_login(blob):
                     return StageResult(
                         name, url, FAIL,
                         "Cloudflare Access login page — this browser profile is "
-                        "not signed in; the public page did not render.",
-                        reason=ACCESS_LOGIN)
+                        "not signed in; the public page did not render.")
+                status = int(data.get("httpStatus") or 0)
+                if status >= 400:
+                    return StageResult(name, url, FAIL, f"browser loaded HTTP {status}")
                 diagnosis = _diagnose_html(blob)
                 if diagnosis:
-                    last = diagnosis
+                    return StageResult(name, url, FAIL, diagnosis)
                 elif anchors > 0 and content_len > 0:
                     return StageResult(
                         name, url, PASS,
@@ -272,9 +274,8 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
                             f"(title {data.get('title', '')!r})")
             except (OSError, RuntimeError, ValueError,
                     subprocess.SubprocessError) as e:
-                if not rendered:
-                    return StageResult(name, url, UNAVAILABLE,
-                                       f"could not read the browser tab: {e}", reason=NO_BROWSER)
+                return StageResult(name, url, UNAVAILABLE,
+                                   f"could not read the browser tab: {e}", reason=NO_BROWSER)
             if time.monotonic() >= deadline:
                 return StageResult(name, url, FAIL, last)
             time.sleep(poll_interval)
