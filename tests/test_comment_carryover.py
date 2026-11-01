@@ -208,6 +208,7 @@ def _answer_in_words_then_carry(httpd):
                     {"verdict": "comment", "text": "Which session is that?"},
                     author="reviewer@example.com")
     assert code == 200
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")  # sent
     code, _ = _call(httpd, "PUT", f"/api/comments/{card['id']}", {
         "carry_forward": {"version": "v2", "anchor_id": "s:new"},
     })
