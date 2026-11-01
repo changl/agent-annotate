@@ -300,6 +300,80 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .round-confirm-ft{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
 .sum-ft-gap{flex:1}
 .sum-discard{color:var(--err-text);padding-left:0}
+#sum-gf-host:empty{display:none}
+/* ── Prototype: Send dialog visual treatments (?sv=1|2), not for merge ──
+   Shared: one type scale (17 title / 13.5 answer / 12.5 question / 11.5 label),
+   answers full length under their question, counts as plain numerals,
+   general feedback an open box, Discard quiet, the warning a muted line. */
+body.sv #round-confirm-backdrop{background:color-mix(in oklab,var(--color-neutral) 72%,transparent)}
+body.sv #round-confirm{width:min(calc(780px * var(--aa-text, 1)),calc(100vw - 32px));padding:22px 24px 16px;gap:4px}
+body.sv .round-confirm-title{font-size:calc(17px * var(--aa-text, 1));font-weight:600}
+body.sv .round-confirm-sub{font-size:calc(12.5px * var(--aa-text, 1))}
+body.sv .round-confirm-warn{order:1;color:var(--muted);font-size:calc(11.5px * var(--aa-text, 1));padding:10px 0 0}
+body.sv #sum-gf-host{order:2}
+body.sv .round-confirm-ft{order:3;border-top:1px solid var(--line);padding-top:12px;margin-top:10px}
+body.sv .sum-list{margin:10px -8px 0;gap:0}
+body.sv .sp-sum-cat{font-size:calc(13px * var(--aa-text, 1));font-weight:600;padding:16px 8px 2px}
+body.sv .sum-tab:first-child .sp-sum-cat{padding-top:2px}
+body.sv .sp-sum-cat .badge,body.sv .sum-group .badge{background:none;border:0;padding:0;height:auto;color:var(--muted);font-weight:500;font-size:inherit;font-variant-numeric:tabular-nums}
+body.sv .sp-sum-note{font-size:calc(12px * var(--aa-text, 1));padding:2px 8px 2px}
+body.sv .sum-tab.is-empty .sp-sum-cat{color:var(--muted);font-weight:500}
+body.sv .sum-tab.is-empty .sp-sum-cat .badge{display:none}
+body.sv .sum-group{text-transform:none;letter-spacing:0;font-size:calc(11.5px * var(--aa-text, 1));font-weight:600;color:var(--muted);padding:16px 8px 6px}
+body.sv .sum-rest-hdr{padding:14px 8px 8px;border-top:1px solid var(--line);border-radius:0}
+body.sv .sum-rest-missing{color:var(--muted);font-weight:500}
+body.sv .sum-row:hover{background:transparent}
+@media (hover:hover){body.sv .sv-row:hover{background:color-mix(in oklab,var(--soft) 60%,transparent)}}
+body.sv .sv-row{display:grid;column-gap:12px;row-gap:1px;padding:8px 8px 9px;border-radius:0;border-top:1px solid var(--line);align-items:start}
+body.sv .sv-num{font-size:calc(11px * var(--aa-text, 1));line-height:calc(18px * var(--aa-text, 1));color:var(--faint);font-weight:500;font-variant-numeric:tabular-nums}
+body.sv .sv-q{font-size:calc(12.5px * var(--aa-text, 1));line-height:1.45;color:var(--muted)}
+body.sv .sv-a{font-size:calc(13.5px * var(--aa-text, 1));line-height:1.5;color:var(--color-base-content);min-width:0}
+body.sv .sv-label{display:block;font-weight:600}
+body.sv .sv-note{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+body.sv .sv-label + .sv-note{margin-top:3px}
+body.sv .sv-none{color:var(--muted);font-style:italic}
+body.sv .sv-sent{font-size:calc(11px * var(--aa-text, 1));color:var(--faint);margin-left:6px}
+body.sv .sv-row.is-sent .sv-a{color:var(--muted)}
+body.sv .sv-row.is-sent .sv-label{font-weight:500;display:inline}
+body.sv .sv-row [data-sum-edit]{color:var(--faint)}
+body.sv1 .sv-row > [data-sum-edit]{opacity:.5}body.sv1 .sv-row > [data-sum-edit] svg.i{width:14px;height:14px}
+@media (hover:hover){body.sv1 .sv-row:hover > [data-sum-edit]{opacity:1}}
+body.sv .sv-gf{display:flex;flex-direction:column;gap:6px}
+body.sv .sv-gf-lbl{font-size:calc(11.5px * var(--aa-text, 1));font-weight:600;color:var(--muted)}
+body.sv .sv-gf-ta{width:100%;min-height:0;resize:none;font-size:calc(13.5px * var(--aa-text, 1));line-height:1.5;padding:9px 12px}
+body.sv .sum-discard{color:var(--muted);text-decoration:none;font-weight:500}
+@media (hover:hover){body.sv .sum-discard:hover{color:var(--err-text)}}
+body.sv #round-cancel-btn{background:transparent;border-color:var(--line);box-shadow:none}
+body.sv #round-submit-btn{padding-inline:18px}
+@media (pointer:coarse){body.sv .sum-kbd{display:none}}
+body.sv #round-submit-btn .send-count{background:transparent;border:0;padding:0;color:inherit;opacity:.72;font-weight:500}
+/* sv=1 Reading list: number in a gutter, question then answer on one left edge; note box pinned above the buttons. */
+body.sv1 .sv-row{grid-template-columns:calc(46px * var(--aa-text, 1)) minmax(0,1fr) auto}
+body.sv1 .sv-k{display:contents}
+body.sv1 .sv-num{grid-column:1;grid-row:1 / span 2}
+body.sv1 .sv-q{grid-column:2;grid-row:1}
+body.sv1 .sv-a{grid-column:2;grid-row:2}
+body.sv1 .sv-row > .btn{grid-column:3;grid-row:1 / span 2}
+body.sv1 .sv-row > .sum-edit{grid-column:2 / -1;grid-row:3;padding-top:6px}
+body.sv1 .sv-gf-ta{max-height:calc(104px * var(--aa-text, 1))}
+@media (max-height:900px){body.sv1 .sv-gf-ta{max-height:calc(78px * var(--aa-text, 1))}}
+body.sv1 #sum-gf-host:not(:empty){padding-top:12px;margin-top:4px;border-top:1px solid var(--line)}
+/* sv=2 Check your answers: a question column and an answer column, a "Change" link per row; note box in the list after the items. */
+body.sv2 .sv-row{grid-template-columns:minmax(0,36%) minmax(0,1fr) auto}
+body.sv2 .sv-k{grid-column:1}
+body.sv2 .sv-num{margin-right:6px}
+body.sv2 .sv-q{font-size:calc(12.5px * var(--aa-text, 1))}
+body.sv2 .sv-a{grid-column:2}
+body.sv2 .sv-change{grid-column:3;color:var(--muted);text-decoration:none;font-weight:500;opacity:.85;font-size:calc(12px * var(--aa-text, 1));height:auto;min-height:calc(28px * var(--aa-text, 1));padding:0 4px;margin-top:-5px}
+body.sv2 .sv-row > span.btn{grid-column:3;width:0;min-width:0;padding:0}
+body.sv2 .sv-row > .sum-edit{grid-column:1 / -1;padding-top:6px}
+body.sv2 .sv-gf-row{padding:16px 8px 8px;border-top:1px solid var(--line)}
+@media (max-width:640px){
+  body.sv2 .sv-row{grid-template-columns:minmax(0,1fr) auto}
+  body.sv2 .sv-k{grid-column:1 / -1}
+  body.sv2 .sv-a{grid-column:1}
+  body.sv2 .sv-change{grid-column:2}
+}
 .sum-kbd{margin-left:4px;background:color-mix(in oklab,var(--color-primary) 62%,var(--color-neutral));color:var(--color-primary-content);border-color:transparent}
 
 /* ── Popovers ───────────────────────────────────────── */
