@@ -1,5 +1,6 @@
 """Images and the current-vs-proposed block (decision #16): parsing, orientation, copies."""
 
+import hashlib
 import json
 import struct
 import subprocess
@@ -110,7 +111,7 @@ def test_a_figure_is_copied_into_assets_and_carries_a_stable_anchor(tmp_path):
     assert len(copies) == 1 and copies[0].read_bytes() == shot.read_bytes()
     assert copies[0].name.endswith("-checkout.png")
     assert (f'<figure class="aa-figure" data-orient="portrait" data-anchor-id="fig:checkout-today">'
-            f'<img src="assets/{copies[0].name}" alt="Checkout today" width="390" height="844" loading="lazy" decoding="async">'
+            f'<img src="assets/{copies[0].name}" data-img="{copies[0].name[:4].upper()}" alt="Checkout today" width="390" height="844" loading="lazy" decoding="async">'
             "<figcaption>Checkout today</figcaption></figure>") in canvas
     registry = json.loads((slug_dir / "versions" / "v1.html").read_text()
                           .split("const ANCHOR_REGISTRY = ", 1)[1].split(";\n", 1)[0])
@@ -124,7 +125,8 @@ def test_an_image_already_in_the_page_assets_is_used_in_place(tmp_path):
     src = page(tmp_path, "![](assets/wide.png)")
     generate(src, slug_dir)
     assert sorted(p.name for p in (slug_dir / "assets").iterdir()) == ["wide.png"]
-    assert ('data-orient="landscape" data-anchor-id="fig:wide"><img src="assets/wide.png" alt="wide.png"'
+    image = hashlib.sha256((slug_dir / "assets" / "wide.png").read_bytes()).hexdigest()[:4].upper()
+    assert (f'data-orient="landscape" data-anchor-id="fig:wide"><img src="assets/wide.png" data-img="{image}" alt="wide.png"'
             in canvas_of(slug_dir))
 
 

@@ -1122,7 +1122,7 @@ function evidenceOf(dr) {
 // cells are joined with " | ", and everything this file injected (strips,
 // pins, markers, state chips) is left out.
 const EXCERPT_MAX = 1200;
-const EXCERPT_SKIP_SEL = '[data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
+const EXCERPT_SKIP_SEL = '.aa-img-zoom, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
 const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
 
 function excerptText(el) {
@@ -1823,6 +1823,7 @@ function openEarlier(details) {
   tpl.content.querySelectorAll('section[data-unchanged-since]').forEach(sec => sec.removeAttribute('data-unchanged-since'));
   tpl.replaceWith(tpl.content);
   details.open = true;
+  labelImages();
   wrapScrollTables();
   wireCopyButtons();
   renderDecisionStrips();
@@ -1916,6 +1917,7 @@ function wireBridge() {
     } else if (data.type === 'annotate:card-hover') {
       setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
+      closeViewer();
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
@@ -1928,6 +1930,7 @@ function wireBridge() {
       openUnchangedSectionsForOpenCards();
       renderCardStates();
       renderBadges();
+      viewerPins();
       postExcerpts();
     }
   });
@@ -2742,6 +2745,171 @@ function ownAuthorStyles() {
   });
 }
 
+// ── Images: the IMG id label and the scale view ─────────────────────
+// An image's id is the start of its content hash: publish writes it as
+// data-img (long_pages.image_ids); an older page falls back to the same hash
+// at the front of a staged asset's file name (assets/<sha256[:12]>-name).
+// Under each image: its id and 25/50/75/100%, which open it at that share of
+// its real pixel size (Chang, 2026-10-31). A tap on the image itself is
+// unchanged: it comments, as everywhere else.
+function imageId(img) {
+  if (/^[0-9A-F]{4,64}$/.test(img.dataset.img || '')) return img.dataset.img;
+  const m = /(?:^|\/)([0-9a-f]{12})-[^/]*$/.exec(img.getAttribute('data-full') || img.getAttribute('src') || '');
+  return m ? m[1].slice(0, 4).toUpperCase() : '';
+}
+
+function viewableImage(img) {
+  return !img.closest('a[href], .aa-viewer, #badge-layer, [data-annotate-strip]') && findParentAnchor(img) ? img : null;
+}
+
+const SCALES = [25, 50, 75, 100];
+const MAGNIFIER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>';
+function scaleButtons(label, current) {
+  return `<span class="aa-img-zoom" role="group" aria-label="${label}"><span class="aa-img-zoom-icon">${MAGNIFIER}</span>` +
+    SCALES.map(p => `<button type="button" data-aa-scale="${p}" aria-pressed="${p === current}">${p}%</button>`).join('') + '</span>';
+}
+
+const labelled = new WeakSet();
+function labelImages() {
+  document.querySelectorAll('img').forEach(img => {
+    if (labelled.has(img) || !viewableImage(img)) return;
+    labelled.add(img);
+    const id = imageId(img);
+    const bar = document.createElement('span');
+    bar.className = 'aa-img-bar';
+    bar.innerHTML = (id ? `<span class="aa-img-id">IMG ${id}</span>` : '') +
+      scaleButtons(`View ${id ? 'IMG ' + id : 'the image'} larger at`, 0);
+    bar.querySelectorAll('[data-aa-scale]').forEach(b => b.addEventListener('click', () => openViewer(img, +b.dataset.aaScale)));
+    img.after(bar);
+  });
+}
+
+// The image's real pixels: publish writes the original's width and height,
+// also when the page shows a 1,200 px preview.
+function imagePixels(img, big) {
+  const w = +img.getAttribute('width'), h = +img.getAttribute('height');
+  if (w > 0 && h > 0) return [w, h];
+  return big && big.naturalWidth ? [big.naturalWidth, big.naturalHeight] : null;
+}
+
+// The preview while it holds every pixel this scale draws on this screen, else the original.
+function scaleSource(img, pct) {
+  const shown = img.currentSrc || img.src, full = img.getAttribute('data-full');
+  const px = imagePixels(img);
+  if (!full) return shown;
+  return px && img.naturalWidth >= px[0] * pct / 100 * (window.devicePixelRatio || 1) ? shown : full;
+}
+
+let viewer = null; // {box, img, big, aid, id, css, stage, frame, pins, pct, scrollY}
+
+function viewerPins() {
+  if (!viewer) return;
+  const { pins, aid, id, css } = viewer;
+  pins.querySelectorAll('.bpin').forEach(p => p.remove());
+  (latestPins[aid] || []).forEach(en => {
+    const t = en.target;
+    if (!t || !t.offset || !(id ? t.image === id : t.css === css)) return;
+    const b = makePin(aid, [en], false);
+    b.classList.add('bpin', 'aa-viewer-pin');
+    b.style.left = clamp01(t.offset.dx, 0.5) * 100 + '%';
+    b.style.top = clamp01(t.offset.dy, 0.5) * 100 + '%';
+    pins.append(b);
+  });
+}
+
+// Show the image at pct of its pixels. A new view starts at the image's top
+// left; a change of scale keeps the spot in the middle of the view there.
+function viewerScale(pct, fresh) {
+  const v = viewer;
+  const px = imagePixels(v.img, v.big);
+  if (!px) return;
+  const { stage, frame } = v;
+  const st = stage.getBoundingClientRect(), before = frame.getBoundingClientRect();
+  const mid = [st.left + stage.clientWidth / 2, st.top + stage.clientHeight / 2];
+  const at = fresh || !before.width ? [0, 0] : [(mid[0] - before.left) / before.width, (mid[1] - before.top) / before.height];
+  v.pct = pct;
+  frame.style.width = Math.round(px[0] * pct / 100) + 'px';
+  frame.style.height = Math.round(px[1] * pct / 100) + 'px';
+  if (v.big.getAttribute('src') !== v.img.getAttribute('data-full')) v.big.src = scaleSource(v.img, pct); // once on the original, stay
+  v.box.querySelectorAll('[data-aa-scale]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.aaScale === pct)));
+  const after = frame.getBoundingClientRect();
+  if (fresh) { stage.scrollLeft = 0; stage.scrollTop = 0; return; }
+  stage.scrollLeft += after.left + at[0] * after.width - mid[0];
+  stage.scrollTop += after.top + at[1] * after.height - mid[1];
+}
+
+function closeViewer() {
+  if (!viewer) return;
+  const { box, scrollY } = viewer;
+  viewer = null;
+  box.remove();
+  document.documentElement.classList.remove('aa-viewer-open');
+  window.scrollTo(window.scrollX, scrollY);
+}
+
+function openViewer(img, pct) {
+  closeViewer();
+  const anchorEl = findParentAnchor(img);
+  const aid = getAnchorIdFromEl(anchorEl);
+  const id = imageId(img);
+  const box = document.createElement('div');
+  box.className = 'aa-viewer';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.innerHTML = `<div class="aa-viewer-bar"><span class="aa-viewer-title"></span>
+    ${scaleButtons('Scale', pct)}
+    <span class="aa-viewer-hint">Tap the image to comment on that spot</span>
+    <button type="button" class="aa-viewer-close" aria-label="Close the image">✕</button></div>
+    <div class="aa-viewer-stage"><div class="aa-viewer-frame"><img alt=""><div class="aa-viewer-pins"></div></div></div>`;
+  const title = (id ? 'IMG ' + id + ' · ' : '') + (img.getAttribute('alt') || anchorName(aid));
+  box.querySelector('.aa-viewer-title').textContent = title;
+  box.setAttribute('aria-label', title);
+  const big = box.querySelector('.aa-viewer-frame img');
+  big.alt = img.getAttribute('alt') || '';
+  viewer = { box, img, big, aid, id, css: cssPathFrom(anchorEl, img) || '', scrollY: window.scrollY, pct,
+             stage: box.querySelector('.aa-viewer-stage'), frame: box.querySelector('.aa-viewer-frame'),
+             pins: box.querySelector('.aa-viewer-pins') };
+  big.src = scaleSource(img, pct);
+  document.documentElement.classList.add('aa-viewer-open');
+  document.body.append(box);
+  viewerScale(pct, true);
+  // A page without the original's size learns it from the file.
+  big.addEventListener('load', () => { if (viewer && viewer.big === big && !imagePixels(img)) viewerScale(viewer.pct); });
+  viewerPins();
+  box.querySelectorAll('[data-aa-scale]').forEach(b => b.addEventListener('click', () => viewerScale(+b.dataset.aaScale)));
+  box.querySelector('.aa-viewer-close').addEventListener('click', closeViewer);
+  big.addEventListener('click', viewerComment);
+  box.querySelector('.aa-viewer-close').focus();
+}
+
+// A tap on the image: the same create message a click on the page sends,
+// with the point on the image, so the page pin lands on that spot too.
+function viewerComment(e) {
+  const v = viewer;
+  const r = v.big.getBoundingClientRect();
+  const dx = (e.clientX - r.left) / r.width, dy = (e.clientY - r.top) / r.height;
+  if (!(dx >= 0 && dx <= 1 && dy >= 0 && dy <= 1)) return;
+  const target = { schema: 1, tag: 'img', offset: { dx: Math.round(dx * 1000) / 1000, dy: Math.round(dy * 1000) / 1000 } };
+  if (v.css) target.css = v.css;
+  if (v.id) target.image = v.id;
+  target.image_src = v.img.getAttribute('data-full') || v.img.getAttribute('src') || '';
+  v.pins.querySelectorAll('.aa-viewer-new').forEach(p => p.remove());
+  const mark = document.createElement('div');
+  mark.className = 'aa-viewer-pin aa-viewer-new';
+  mark.style.left = dx * 100 + '%';
+  mark.style.top = dy * 100 + '%';
+  v.pins.append(mark);
+  postToParent({ type: 'annotate:pin-click', anchorId: v.aid, anchorLabel: anchorName(v.aid), target, x: e.clientX, y: e.clientY });
+}
+
+function wireViewerKeys() {
+  window.addEventListener('keydown', e => {
+    if (!viewer || e.key !== 'Escape') return;
+    e.stopImmediatePropagation();
+    closeViewer();
+  }, true);
+}
+
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
   try { ownAuthorStyles(); } catch (e) { console.warn('[adapter] could not apply annotate styling', e); }
@@ -2759,6 +2927,8 @@ async function init() {
   // Before the first paint settles, so a later version opens compact.
   initUnchangedSections();
   wireEarlier();
+  labelImages();
+  wireViewerKeys();
 
   window.addEventListener('resize', scheduleBadgeRefresh);
   window.addEventListener('resize', scheduleScrollLockRecheck);

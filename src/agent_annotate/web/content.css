@@ -75,6 +75,35 @@
 /* Long pages: a screenshot shows a light preview; this link opens the original. */
 .aa-full{display:inline-block;margin:4px 0 0;font-size:calc(10.5px * var(--aa-text, 1));color:var(--link);text-decoration:none}
 @media (hover:hover){.aa-full:hover{text-decoration:underline}}
+/* Images: under each one its IMG id (what reviewer and agent both quote) and
+   25/50/75/100%, which open it at that share of its real pixels
+   (adapter.js openViewer). */
+.aa-img-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:6px 0 2px}
+.aa-img-id{font-size:calc(9.5px * var(--aa-text, 1));font-variant-numeric:tabular-nums;letter-spacing:.04em;color:var(--muted);user-select:text;-webkit-user-select:text}
+.aa-img-zoom{display:inline-flex;flex-wrap:wrap;max-width:100%;align-items:stretch;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--color-base-100);color:var(--color-base-content)}
+.aa-img-zoom-icon{display:flex;align-items:center;padding:0 6px 0 8px}
+.aa-img-zoom-icon svg{width:14px;height:14px}
+.aa-img-zoom button{font:inherit;font-size:calc(10.5px * var(--aa-text, 1));font-weight:600;font-variant-numeric:tabular-nums;color:inherit;background:none;border:0;border-left:1px solid var(--line);padding:5px 9px;min-height:30px;cursor:pointer;touch-action:manipulation}
+.aa-img-zoom button[aria-pressed="true"]{background:var(--primary-soft);color:var(--link)}
+.aa-img-zoom button:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
+@media (hover:hover){.aa-img-zoom button:hover{background:var(--color-base-200)}}
+@media (pointer:coarse){.aa-img-zoom button{min-height:36px;min-width:44px}}
+.aa-viewer-open,.aa-viewer-open body{overflow:hidden}
+.aa-viewer{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;background:var(--color-base-300);font-family:"Roboto",sans-serif}
+.aa-viewer-bar{display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;background:var(--color-base-100);color:var(--color-base-content);border-bottom:1px solid var(--line);font-size:calc(11px * var(--aa-text, 1))}
+.aa-viewer-bar .aa-img-zoom button{font-size:calc(11px * var(--aa-text, 1))}
+.aa-viewer-title{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aa-viewer-hint{flex:1;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aa-viewer-close{flex:none;min-width:44px;min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--color-base-100);color:var(--color-base-content);font-size:16px;cursor:pointer;touch-action:manipulation}
+.aa-viewer-close:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+/* The image at its scale; bigger than the screen, the stage scrolls. */
+.aa-viewer-stage{flex:1;display:flex;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.aa-viewer-frame{position:relative;flex:none;margin:auto;cursor:crosshair}
+.aa-viewer-frame img{display:block;width:100%;height:100%;max-width:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;-webkit-touch-callout:none}
+.aa-viewer-pins{position:absolute;inset:0;pointer-events:none}
+.aa-viewer-pin{position:absolute;pointer-events:auto;transform:translate(-50%,-50%)}
+.aa-viewer-new{width:18px;height:18px;border-radius:50%;background:var(--color-primary);box-shadow:0 0 0 3px var(--color-base-100);pointer-events:none}
+@media (max-width:760px){.aa-viewer-hint{display:none}}
 /* Earlier updates: finished topics wait in a <template> until opened (adapter.js openEarlier). */
 .aa .aa-earlier{border:1px solid var(--line);border-radius:10px;background:var(--color-base-200);margin:34px 0 16px}
 .aa .aa-earlier>summary{display:block;list-style:none;position:relative;cursor:pointer;padding:14px 96px 14px 36px;font-size:calc(13px * var(--aa-text, 1));line-height:1.45;touch-action:manipulation}
