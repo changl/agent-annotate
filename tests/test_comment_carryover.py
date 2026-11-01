@@ -109,7 +109,9 @@ def _create_card(httpd, status="open"):
 
 def test_addressed_cannot_demote_a_reviewer_confirmed_card(server):
     httpd, slug_dir, _ = server
-    card = _create_card(httpd, status="user_confirmed")
+    card = _create_card(httpd)
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "accept"}, author="reviewer@example.com")
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
 
     code, error = _call(
         httpd,

@@ -291,6 +291,8 @@ def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str)
             raise PermissionError("another reviewer owns the pending reopen")
         if not comment.get("fixed"):
             raise ValueError("only a fixed finding can be reopened")
+        from .submitted import remember
+        remember(comment, by)
         comment.setdefault("fixed_history", []).append(comment.pop("fixed"))
         comment.update(status="open", round_pending=True)
         comment.pop("resolved_in_version", None)
@@ -459,10 +461,10 @@ def comment_section(comment: dict) -> str | None:
             if isinstance(option, dict) and option.get("label") == choice:
                 choice = option.get("id")
         return "done" if choice in {"keep", "no"} or decision.get("verdict") == "reject" else "waiting"
-    if status != "open":
-        return "done"
     from .sync_server import _comment_needs_push
-    return "ready" if _comment_needs_push(comment) else "waiting"
+    if _comment_needs_push(comment):
+        return "ready"
+    return "done" if status != "open" else "waiting"
 
 
 def comment_sig(comment: dict) -> str:
@@ -542,7 +544,7 @@ def block_can_be_unread(block: dict) -> bool:
 
 
 def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
-                    store: dict | None = None, plans: list | None = None) -> dict:
+                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False) -> dict:
     from .consolidate import marker
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "later", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
@@ -576,6 +578,9 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         blocks = load_copy(page_dir)["blocks"]
     except ValueError:
         blocks = []  # an invalid copy.json is reported by /api/categories
+    if submitted_only:
+        from .submitted import copy_view
+        blocks = copy_view({"blocks": blocks})["blocks"]
     for block in blocks:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
         latest = block["revisions"][-1]

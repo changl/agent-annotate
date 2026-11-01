@@ -1034,17 +1034,25 @@ function sentRounds() {
     if (withReceipt.length) {
       const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
-      return { ts, version, result: roundResult(items.length), items, send_id: withReceipt[0].send_id };
+      return { ts, version, result: roundResult(items.length, g.map(r => r.id)), delivery_ids: g.map(r => r.id), items, send_id: withReceipt[0].send_id };
     }
     const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
-    return Object.assign(legacy, { version, result: roundResult(legacy.n) });
+    return Object.assign(legacy, { version, result: roundResult(legacy.n, g.map(r => r.id)), delivery_ids: g.map(r => r.id) });
   }).filter(r => r.items.length);
 }
-// UI-13: the delivery the server recorded on the round at Send, so a reload
-// keeps the result line the Send showed. Rounds recorded before that say
-// "Sent (N)".
-function roundResult(n) {
-  return 'Feedback saved (' + n + ')';
+// Only a matching owner receipt proves delivery, including after reload.
+function deliveryLabel(id) {
+  if (Array.isArray(id)) return id.length && id.every(value => deliveryLabel(value) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending';
+  const data = SUMMARY_DELIVERY || {};
+  const receipt = (data.deliveries || []).find(r => r.id === id) || (data.latest?.id === id ? data.latest : null);
+  return receipt?.delivered ? 'Sent' : 'In inbox · owner delivery pending';
+}
+function deliveryHtml(id) {
+  const ids = Array.isArray(id) ? id : [id];
+  return `<span data-delivery-ids="${escAttr(ids.filter(Boolean).join(','))}">${esc(deliveryLabel(id))}</span>`;
+}
+function roundResult(n, ids) {
+  return (ids?.length && ids.every(id => deliveryLabel(id) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending') + ' (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -1058,23 +1066,31 @@ function legacyRound(r) {
     (r.edits || []).forEach(e => items.push({ cat: 'library', label: e.label || e.block_id, answer: 'Edited', block: e.block_id }));
     if (r.note) items.push({ cat: 'review', label: 'General feedback', answer: r.note });
     const n = (r.answers || []).length + (r.edits || []).length;
-    return { ts: r.ts, result: 'Sent (' + n + ')', items, n };
+    return { ts: r.ts, result: roundResult(n, [r.id]), items, n };
   }
 }
 async function loadDelivery() {
-  if (DOC !== VIEW_DOC) return;
   const node = document.getElementById('delivery-status');
   try {
     let data = SUMMARY_DELIVERY;
-    if (!HAS_SUMMARY) {
+    if (!HAS_SUMMARY || DOC !== VIEW_DOC || DOC !== 'review' || docBusy) {
       const got = await pollJson('./api/delivery');
       if (!got.ok || got.same) return;
       data = got.data;
     }
+    data = data || {};
+    SUMMARY_DELIVERY = data;
     node.hidden = !data.latest;
     if (data.latest) {
-      const labels = {acknowledged: 'Owner read this feedback round; project work is tracked separately', pending: 'Feedback saved; owner wake-up pending', accepted: 'Owner prompt accepted by Orca; agent response pending', started: 'Owner turn started; agent response pending', uncertain: 'Feedback saved; prompt delivery unproven', superseded: 'Page owner changed before this round was delivered'};
-      node.textContent = (labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state) + (data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? '. ' + data.latest.detail : '');
+      const labels = {acknowledged: 'Owner read this feedback round; project work is tracked separately', pending: 'Submitted; owner delivery pending — waiting in the inbox', accepted: 'Submitted; owner delivery unconfirmed — waiting in the inbox', started: 'Owner turn started; agent response pending', uncertain: 'Submitted; owner delivery unconfirmed — waiting in the inbox', superseded: 'Page owner changed before this round was delivered'};
+      node.textContent = ((data.latest.delivered && data.latest.state === 'accepted' ? 'Sent to owner session; agent response pending' : labels[data.latest.state]) || 'Feedback delivery: ' + data.latest.state) + (data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? '. ' + data.latest.detail : '');
+    }
+    window.AA?.send?.delivery(data.deliveries || []);
+    for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {
+      root?.querySelectorAll('[data-delivery-ids]').forEach(label => {
+        const text = deliveryLabel(label.dataset.deliveryIds.split(',').filter(Boolean));
+        if (label.textContent !== text) label.textContent = text;
+      });
     }
   } catch {}
 }
@@ -1134,7 +1150,7 @@ function versionFolds(value) {
 function versionActivityHtml(h, next, rounds, done) {
   const tag = (cat) => cat !== DOC && window.AA && window.AA.rail ? window.AA.rail.tagHtml(cat) + ' ' : '';
   const sent = rounds.map(r => `<div class="vact-block">
-      <div class="vact-head">Sent · ${esc(r.result)} · ${esc(fmtTs(r.ts))}</div>
+      <div class="vact-head">Feedback · ${r.delivery_ids ? deliveryHtml(r.delivery_ids) + ' (' + (r.n ?? r.items.length) + ')' : esc(r.result)} · ${esc(fmtTs(r.ts))}</div>
       <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul>
     </div>`).join('');
   const lines = done.map(c => {
@@ -1486,7 +1502,7 @@ function setSectionOpen(k, open) {
 }
 // A reviewer's own comment or reply that has not gone to the agent yet.
 function userNeedsSend(c) {
-  return c.status === 'open' && classify(c) === 'waiting' && needsPush(c);
+  return needsPush(c);
 }
 // A1: text typed in an unanswered card's comment box, with no option
 // picked, is that card's answer once Send is pressed.
@@ -2274,11 +2290,11 @@ function cardNotes(c) {
   const notes = [];
   const d = decisionAnswer(c);
   const dn = decisionNote(c);
-  if (dn && isMine(d.by)) notes.push({ key: 'decision', text: dn, pending: !!(d.round_pending || d.pending) });
+  if (dn && isMine(d.by)) notes.push({ key: 'decision', text: dn, delivery_id: d.delivery_id, pending: !!(d.round_pending || d.pending) });
   (c.replies || []).forEach((r, i) => {
     if (!isMine(r.author) || r.pending || GENERATED_REPLY.test(r.text || '')) return;
     const pending = noteUnsent(c, r);
-    notes.push({ key: 'r' + i, idx: i, ts: r.ts, text: r.text, pending, deletable: pending });
+    notes.push({ key: 'r' + i, idx: i, ts: r.ts, text: r.text, delivery_id: r.delivery_id, pending, deletable: pending });
   });
   return notes;
 }
@@ -2286,10 +2302,10 @@ function cardNotes(c) {
 function hasAddNoteBox(c) {
   return !pageReadOnly() && !!c.decision_request && !!decisionAnswer(c) && c.status !== 'archived' && c.status !== 'resolved_in_version';
 }
-function stateTag(pending) {
+function stateTag(pending, c) {
   const cls = k('send-state', 'annotate-send-state');
   return pending ? `<span class="${cls} is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>`
-    : `<span class="${cls}" title="Sent to the agent">Sent</span>`;
+    : `<span class="${cls}" title="Owner session delivery">${deliveryHtml(c && c.delivery_id)}</span>`;
 }
 function noteHtml(c, n) {
   const id = escAttr(c.id), key = escAttr(n.key);
@@ -2302,7 +2318,7 @@ function noteHtml(c, n) {
     ` aria-label="${label}" title="${k(label.split(' ')[0], label)}"`) + icon(name) + '</button>';
   return `<div class="${k('answer-note', 'annotate-answer-note')}">
       <div class="${k('answer-note-txt', 'annotate-answer-note-txt')}">${agentText(n.text)}</div>
-      <div class="${k('note-actions', 'annotate-note-actions')}">${stateTag(n.pending)}${iconBtn('edit', 'pencil', 'Edit note', 'annotate-note-edit-btn')}${n.deletable ? iconBtn('delete', 'trash', 'Delete note', 'annotate-note-delete-btn') : ''}</div>
+      <div class="${k('note-actions', 'annotate-note-actions')}">${stateTag(n.pending, n)}${iconBtn('edit', 'pencil', 'Edit note', 'annotate-note-edit-btn')}${n.deletable ? iconBtn('delete', 'trash', 'Delete note', 'annotate-note-delete-btn') : ''}</div>
     </div>`;
 }
 function addNoteHtml(c) {
@@ -2324,7 +2340,7 @@ function answerBlockHtml(c) {
     : `<span class="answer-choice">${choice ? esc(choice) : '<span class="answer-none">None (answered in words)</span>'}</span>`;
   return `<div class="${k('decision-block decision-answered', 'annotate-decision-item annotate-decision-resolved annotate-answered')}"${docItemAttr(c)}>
       ${promptHtml(c)}
-      <div class="${k('answer-row', 'annotate-answer-row')}"><span class="${lbl}">Your choice</span>${choiceHtml}${choice ? stateTag(!!(d.round_pending || d.pending)) : ''}${canChangeAnswer(c) ? `<button type="button" class="${k('btn btn-ghost btn-xs', 'annotate-decision-btn annotate-answer-change')}" data-decision-action="change" data-id="${escAttr(c.id)}">${choice ? 'Change' : 'Choose'}</button>` : ''}</div>
+      <div class="${k('answer-row', 'annotate-answer-row')}"><span class="${lbl}">Your choice</span>${choiceHtml}${choice ? stateTag(!!(d.round_pending || d.pending), d) : ''}${canChangeAnswer(c) ? `<button type="button" class="${k('btn btn-ghost btn-xs', 'annotate-decision-btn annotate-answer-change')}" data-decision-action="change" data-id="${escAttr(c.id)}">${choice ? 'Change' : 'Choose'}</button>` : ''}</div>
       ${notes.length ? `<div class="${k('answer-notes', 'annotate-answer-notes')}"><span class="${lbl}">Your notes</span>${notes.map(n => noteHtml(c, n)).join('')}</div>` : ''}
       ${addNoteHtml(c)}
       ${feedbackHtml(c)}
@@ -2452,7 +2468,7 @@ async function docNoteAction(btn, scope, id, key, action) {
 function sendStateHtml(c) {
   if (!isMine(c.author) && !(c.decision && isMine(c.decision.by))) return '';
   if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
-  if (c.flagged_for_session || (c.decision && !c.decision.round_pending)) return '<span class="send-state" title="Sent to the agent">Sent</span>';
+  if (c.flagged_for_session || (c.decision && !c.decision.round_pending)) return stateTag(false, c);
   return '';
 }
 function cardMenuHtml(c, cls) {
@@ -3682,7 +3698,8 @@ function wireHeader() {
 // than its last push (2.20 rule, kept).
 function needsPush(c) {
   // The server's _comment_needs_push: a pending reopen goes with the round.
-  if (c.status !== 'open' || c.round_pending || (c.decision && c.decision.round_pending)) return false;
+  if (c.round_pending || (c.decision && c.decision.round_pending)) return false;
+  if (c.status !== 'open' && !(c.status === 'user_confirmed' && (c.replies || []).some(r => !isAgentAuthor(r.author) && noteUnsent(c, r)))) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
   let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
   if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
@@ -3803,7 +3820,7 @@ function renderSummaryInto(list, editable) {
       const label = d.verdict === 'select' ? (cut === -1 ? t : t.slice(0, cut)) : '';
       const note = d.verdict === 'select' ? (cut === -1 ? '' : t.slice(cut + 2).trim()) : t;
       ans = (label ? `<span class="rl-label">${esc(label)}</span>` : '') + (note ? `<p class="rl-note">${esc(note)}</p>` : '');
-      if (sent) ans += '<span class="rl-sent">sent</span>';
+      if (sent) ans += `<span class="rl-sent">${deliveryHtml(c.delivery_id)}</span>`;
     }
     return `<div class="sum-row rl-row${missing ? ' is-missing' : ''}${sent ? ' is-sent' : ''}" data-sum-id="${escAttr(c.id)}">
       <div class="rl-k">${num ? `<span class="rl-num">#${num}</span>` : '<span class="rl-num"></span>'}<span class="rl-q">${esc(displayPrompt(c))}</span></div>
@@ -3998,8 +4015,8 @@ async function submitPage(alsoPending, receipt) {
     const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
-    // New activity arriving during the round still needs to be sent.
-    doPush = !!j && flattenStore(false).some(needsPush);
+    // Activity arriving during this Send waits for the next manual Send.
+    doPush = false;
   }
   if (doPush) {
     const j = await apiPushAll(receiptPayload(pushLines, sendId));
@@ -4021,10 +4038,11 @@ async function submitPage(alsoPending, receipt) {
     try {
       const response = await fetch(apiUrl('./api/delivery'), { cache: 'no-store' });
       const data = await response.json();
-      delivered = data.latest?.id === last.delivery_id && ['accepted', 'started', 'acknowledged'].includes(data.latest.state);
+      SUMMARY_DELIVERY = data;
+      delivered = data.latest?.id === last.delivery_id && data.latest.delivered === true;
     } catch {}
   }
-  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId };
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId, delivery_id: last?.delivery_id };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -4347,8 +4365,7 @@ function onShellKey(e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       const t = e.target;
       if (isRoundConfirmOpen()) {
-        e.preventDefault();
-        submitRound();
+        e.preventDefault(); // Only the Send button submits the round.
       } else if (document.getElementById('popover').classList.contains('vis')) {
         savePopover();
       } else if (t.dataset && t.dataset.submit) {
@@ -4800,7 +4817,8 @@ async function init() {
       loadBoard();
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
-      if (onDoc) { await loadMeta(); loadDelivery(); }
+      if (onDoc) await loadMeta();
+      loadDelivery();
       changed = pollChanged;
       if (changed || held) {
         held = false;
@@ -4874,6 +4892,7 @@ window.AnnotateDocs = {
   planId: () => PLAN_ID,
   selectPlan,
   sentRounds,
+  sentRoundsRaw: () => HISTORY_DATA?.rounds || [],
   withdrawnQuestions,
   store: () => STORE,
   comments: (includeArchived) => flattenStore(includeArchived),
@@ -4888,6 +4907,8 @@ window.AnnotateDocs = {
   isRoundPending,
   isReopenPending,
   needsPush,
+  deliveryLabel,
+  deliveryHtml,
   decisionAnswer,
   answerLabel,
   displayPrompt,

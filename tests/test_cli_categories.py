@@ -70,8 +70,8 @@ def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, 
     assert cli.cmd_cards(SimpleNamespace(**options)) == 0
     cards_output = capsys.readouterr().out
     assert "3 decision card(s)" in cards_output
-    assert f"{verdict} (unsent)" in cards_output
-    assert "undecided: d:q9; unsent: d:q10" in cards_output
+    assert "(unsent)" not in cards_output
+    assert "undecided: d:q9, d:q10" in cards_output
     assert f"1 {verdict}" in cards_output
     assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
     inbox_output = capsys.readouterr().out
@@ -82,12 +82,12 @@ def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, 
     assert inbox["decisions"][verdict] == 1
     assert sum(inbox["decisions"].values()) == 1
     assert inbox["card_count"] == 3
-    assert inbox["undecided"] == ["d:q9"] and inbox["unsent"] == ["d:q10"]
+    assert inbox["undecided"] == ["d:q9", "d:q10"] and inbox["unsent"] == []
     cards = hook._load_cards(str(page.directory))
     assert set(cards) == {"9", "10", "11"}
     notice = hook._slug_line("project", "main", 1,
                              [{"event": "comment_reply", "comment_id": "10"}], cards, True)
-    assert "undecided: 1 of 3 cards; unsent: 1" in notice
+    assert "undecided: 2 of 3 cards" in notice
     assert f"10 {verdict}" not in notice
 
 
@@ -102,17 +102,18 @@ def test_inbox_labels_a_deferred_verdict_unsent_only_until_its_round_is_submitte
                               "author": "reviewer@example.com", "decision": "accept", "deferred": True}) + "\n")
     options = dict(slug="project/main", project=None, category=None, json=False, unread=False, all_events=False)
 
-    def updated_line():
+    def inbox_text():
         assert cli.cmd_inbox(SimpleNamespace(**options)) == 0
-        return next(line for line in capsys.readouterr().out.splitlines() if "comment_updated" in line)
+        return capsys.readouterr().out
 
-    assert "accept (unsent)" in updated_line()
+    assert "comment_updated" not in inbox_text()
     card["decision"].pop("round_pending")
     store_path.write_text(json.dumps(store))
     with page.bus.open("a") as bus:
         bus.write(json.dumps({"event": "round_submitted", "by": "reviewer@example.com", "answers": []}) + "\n")
-    line = updated_line()
-    assert "accept" in line and "(unsent)" not in line
+    output = inbox_text()
+    assert "round_submitted" in output and "comment_updated" not in output
+    assert "1 accept" in output and "(unsent)" not in output
 
 
 def tool(name):

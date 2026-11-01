@@ -148,7 +148,6 @@ BOOKKEEPING_EVENTS = frozenset({
     "bulk_overwrite",
     "monitor_armed",
     "monitor_exited",
-    "round_submitted",
     "round_discarded",
     "session_push",
     # D7: `annotate close` archived stale unanswered cards. Bookkeeping by
@@ -237,7 +236,7 @@ def is_reviewer_event(e):
     system did to itself."""
     if e.get("event") in BOOKKEEPING_EVENTS:
         return False
-    author = e.get("author")
+    author = e.get("author") or e.get("by")
     return bool(author) and not is_agent(author)
 
 
@@ -292,6 +291,7 @@ def load_registry():
 
 
 def load_bus(project, slug):
+    from .submitted import draft_event
     path = os.path.join(BUS_DIR, project, slug + ".ndjson")
     events = []
     if not os.path.exists(path):
@@ -304,6 +304,8 @@ def load_bus(project, slug):
             try:
                 e = json.loads(line)
             except Exception:
+                continue
+            if not isinstance(e, dict) or draft_event(e):
                 continue
             e["_ts"] = parse_ts(e.get("ts"))
             events.append(e)
@@ -377,6 +379,9 @@ def collect_slugs():
                     meta = json.load(open(mj, encoding="utf-8"))
                 except Exception:
                     meta = None
+        if isinstance(store, dict):
+            from .submitted import store_view
+            store = store_view(store)
         info["store"] = {} if store is not None else None
         info["meta"] = meta
         info["comments"] = [c for c, _a in iter_comments(store)] if store else []

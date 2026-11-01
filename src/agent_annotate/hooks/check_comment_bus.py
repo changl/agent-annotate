@@ -262,6 +262,8 @@ def _load_cards(slug_dir: str) -> dict:
             store = json.load(fh)
     except (OSError, ValueError):
         return cards
+    from agent_annotate.submitted import store_view
+    store = store_view(store)
     anchors = store.get("anchors", store) if isinstance(store, dict) else None
     if not isinstance(anchors, dict):
         return cards
@@ -291,6 +293,9 @@ def _is_reviewer_event(ev: dict) -> bool:
     new bookkeeping event added later cannot silently start inflating counts
     just because nobody remembered to list it above.
     """
+    from agent_annotate.submitted import draft_event
+    if draft_event(ev):
+        return False
     name = ev.get("event")
     if not name or name in BOOKKEEPING_EVENTS or ev.get("deferred"):
         return False
@@ -348,9 +353,6 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
                      + (f", +{more} more" if more > 0 else ""))
     if total_cards:
         parts.append("; undecided: %d of %d cards" % (undecided, total_cards))
-        unsent = sum(bool(c.get("pending")) for c in cards.values())
-        if unsent:
-            parts.append("; unsent: %d" % unsent)
     parts.append(". Read: %s inbox %s/%s --unread" % (_invocation(), project, slug))
     line = "".join(parts)
     if round_submitted:

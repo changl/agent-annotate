@@ -60,7 +60,7 @@ def test_clone_worktree_orca_and_nested_repo_paths_match(estate):
     nested.mkdir(parents=True)
     for directory in (estate.repo, clone, worktree, nested):
         assert workspace.workspace_data(directory)["workspace"]["slug"] == "project/main"
-        assert "1 waiting on you" in session_start.notice(directory)
+        assert "2 waiting on you" in session_start.notice(directory)
 
 
 def test_select_adds_second_repo_and_folder_without_losing_legacy_membership(estate, monkeypatch, capsys):
@@ -109,7 +109,7 @@ def test_withdrawn_cards_do_not_count_as_waiting(estate):
     store["anchors"]["d:q1"].append({"status": "open", "decision_request": {"prompt": "Withdrawn?"},
                                       "withdrawn": {"why": "No longer asked"}})
     path.write_text(json.dumps(store))
-    assert session_start.notice(estate.repo).endswith(" · 1 waiting on you")
+    assert session_start.notice(estate.repo).endswith(" · 2 waiting on you")
 
 
 def test_two_pages_use_most_recent_activity_not_registry_order(estate):
@@ -160,7 +160,7 @@ def test_hook_outputs_one_visible_line_with_full_share_url_and_silence_elsewhere
     assert len(output.splitlines()) == 1
     result = json.loads(output)
     line = result["systemMessage"]
-    assert line == f"annotate: this project's page Project workspace https://reviews.example/project/#review={key} · 1 waiting on you"
+    assert line == f"annotate: this project's page Project workspace https://reviews.example/project/#review={key} · 2 waiting on you"
     assert result["hookSpecificOutput"] == {"hookEventName": "SessionStart", "additionalContext": line}
     assert run(estate.root / "unlisted") == ""
     assert run(estate.root, "malformed") == ""

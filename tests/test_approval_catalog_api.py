@@ -34,6 +34,8 @@ def vote(httpd, comment, evidence, verdict="accept", **extra):
     status, result = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
                           {"verdict": verdict, "evidence": evidence, **extra}, author="chang@example.com")
     assert status == 200
+    if not extra.get("defer_push"):
+        assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[0] == 200
     return result
 
 
@@ -129,6 +131,8 @@ def test_crash_after_round_receipt_recovers_catalog_once(server, monkeypatch):
     assert _call(httpd, "POST", "/api/rounds/submit", {}, author="chang@example.com")[1]["delivery"] == "noop"
     assert len(plans(httpd)[0]["history"]) == 1
     assert len(_events(bus, "session_push")) == 1
+    received = _call(httpd, "GET", "/api/comments")[1][0]
+    assert received["decision"]["verdict"] == "accept" and "agent_snapshot" not in received
 
 
 def test_token_cannot_file_another_items_evidence(server):
