@@ -163,10 +163,21 @@ function stepTextSize(dir) {
 // a closed tab right after typing kept nothing under the old 400 ms
 // debounce), and a draft is cleared only when its post succeeds.
 let DRAFTS = {};
+// hnc: each drafts object keeps the key it was loaded from, so a plan switch
+// or a withdrawn plan (PLAN_ID changes) never files it under another plan.
+const DRAFTS_KEY = new WeakMap();
+// The drafts the visible composers were filled from: what the reviewer types
+// goes there even while another document is entered to load.
+let VIEW_DRAFTS = null;
 function draftsKey(doc) {
   return 'annotate:drafts:' + location.pathname + ':' + (doc === 'plans' ? 'plan:' + PLAN_ID : doc);
 }
 function loadDrafts(doc) {
+  const drafts = readDrafts(doc);
+  DRAFTS_KEY.set(drafts, draftsKey(doc));
+  return drafts;
+}
+function readDrafts(doc) {
   let drafts;
   try { drafts = JSON.parse(localStorage.getItem(draftsKey(doc)) || '{}') || {}; } catch { return {}; }
   // General feedback used to be kept per version ('gf:<version>'), so a new
@@ -186,16 +197,20 @@ function loadDrafts(doc) {
 }
 // Two tabs on one page share the key: a write changes only its own entry in
 // what is stored, so one tab never erases what the other typed.
-function setDraft(key, value) {
-  if ((DRAFTS[key] || '') === (value || '')) return;
-  if (value) DRAFTS[key] = value;
-  else delete DRAFTS[key];
+function setDraft(key, value, drafts = DRAFTS) {
+  if ((drafts[key] || '') === (value || '')) return;
+  if (value) drafts[key] = value;
+  else delete drafts[key];
   try {
-    const k = draftsKey(DOC);
+    const k = DRAFTS_KEY.get(drafts) || draftsKey(DOC);
     const stored = JSON.parse(localStorage.getItem(k) || '{}') || {};
     if (value) stored[key] = value; else delete stored[key];
     localStorage.setItem(k, JSON.stringify(stored));
   } catch {}
+}
+// A draft the reviewer typed or cleared in a visible box.
+function typeDraft(key, value) {
+  setDraft(key, value, VIEW_DRAFTS || DRAFTS);
 }
 
 // ── Compact layout detection ─────────────────────────────────────────
@@ -2397,7 +2412,7 @@ function wireNoteActions(root, scope = root) {
       if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
       return;
     }
-    if (action === 'cancel') { delete editingNote[k]; setDraft('note:' + k, ''); return renderDrawer(); }
+    if (action === 'cancel') { delete editingNote[k]; typeDraft('note:' + k, ''); return renderDrawer(); }
     if (action === 'save') {
       const ta = root.querySelector('[data-note-edit="' + cssEsc(id) + '"][data-key="' + cssEsc(key) + '"]');
       const text = (ta && ta.value || '').trim();
@@ -2416,7 +2431,7 @@ function wireNoteActions(root, scope = root) {
   root.querySelectorAll('[data-note-edit]').forEach(ta => ta.addEventListener('input', () => {
     const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
     if (surfaceOf(ta).doc) DOC_CARD.editing[k] = ta.value;
-    else setDraft('note:' + k, ta.value);
+    else typeDraft('note:' + k, ta.value);
   }));
   root.querySelectorAll('[data-action="open-card"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2763,11 +2778,11 @@ function wireCardActions(root) {
       await refreshStore();
     }
   })));
-  root.querySelectorAll('.edit-ta').forEach(ta => ta.addEventListener('input', () => setDraft('edit:' + ta.dataset.editFor, ta.value)));
+  root.querySelectorAll('.edit-ta').forEach(ta => ta.addEventListener('input', () => typeDraft('edit:' + ta.dataset.editFor, ta.value)));
   root.querySelectorAll('[data-action="edit-cancel"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     delete editingComment[btn.dataset.id];
-    setDraft('edit:' + btn.dataset.id, '');
+    typeDraft('edit:' + btn.dataset.id, '');
     renderDrawer();
   }));
   root.querySelectorAll('[data-action="edit-save"]').forEach(btn => btn.addEventListener('click', async (e) => {
@@ -2804,8 +2819,9 @@ function wireCardActions(root) {
     const reply = { text, author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email, ts: new Date().toISOString(), pending: true };
     const unpost = () => [c, storedComment(id)].forEach(cur => { const i = cur ? (cur.replies || []).indexOf(reply) : -1; if (i !== -1) cur.replies.splice(i, 1); });
     addPendingEdit(reply, () => { const cur = storedComment(id); if (cur && !(cur.replies || []).includes(reply)) (cur.replies = cur.replies || []).push(reply); });
-    setDraft('sending:' + id, text);
-    setDraft(id, '');
+    const drafts = VIEW_DRAFTS || DRAFTS; // the box's document, even if another is entered by the answer
+    setDraft('sending:' + id, text, drafts);
+    setDraft(id, '', drafts);
     ta.value = '';
     delete replyError[id];
     renderDrawer();
@@ -2814,10 +2830,10 @@ function wireCardActions(root) {
     unpost();
     // An answer lost on the way back: the server may have the reply anyway.
     if (!posted && await loadStore()) posted = sentLanded(id, text);
-    setDraft('sending:' + id, '');
+    setDraft('sending:' + id, '', drafts);
     if (!posted) {
-      const merged = mergeDraft(DRAFTS[id], text);
-      setDraft(id, merged);
+      const merged = mergeDraft(drafts[id], text);
+      setDraft(id, merged, drafts);
       const box = document.querySelector('#comment-list [data-reply-for="' + cssEsc(id) + '"]');
       if (box) box.value = merged;
       replyError[id] = 'Reply not sent — the server did not answer. Your text is still in the box; try again.';
@@ -3022,7 +3038,7 @@ function wireDecisionActions(root, scope = root) {
     else goToEvidence(btn.dataset.anchor, id);
   }));
   root.querySelectorAll('[data-decision-say-ta]').forEach(ta => ta.addEventListener('input', () => {
-    setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+    typeDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     syncSayHint(ta);
     mirrorSay(ta.dataset.decisionSayTa, ta);
     updateSendState();
@@ -3125,10 +3141,10 @@ function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
 }
 function keepPopDraft() {
   const text = document.getElementById('pop-ta').value;
-  setDraft('pop', pendingAnchor && text.trim() ? Object.assign({}, pendingAnchor, { text }) : '');
+  typeDraft('pop', pendingAnchor && text.trim() ? Object.assign({}, pendingAnchor, { text }) : '');
 }
 function discardPopover() {
-  setDraft('pop', '');
+  typeDraft('pop', '');
   closePopover();
 }
 // After a reload or a restart the composer that held unsent text is open
@@ -3177,8 +3193,9 @@ async function savePopover() {
   if (!text || !pendingAnchor) return;
   const at = pendingAnchor;
   const sent = Object.assign({}, at, { text });
-  setDraft('sending:pop', sent);
-  setDraft('pop', '');
+  const drafts = VIEW_DRAFTS || DRAFTS;
+  setDraft('sending:pop', sent, drafts);
+  setDraft('pop', '', drafts);
   closePopover();
   const temp = addPendingComment(at.anchorId, {
     anchor_label: at.anchorLabel, text, version: at.version || CURRENT_VERSION, target: at.target || null,
@@ -3190,9 +3207,9 @@ async function savePopover() {
   dropPendingComment(temp);
   // An answer lost on the way back: the server may have the comment anyway.
   if (!created && await loadStore()) created = sentLanded('pop', sent);
-  setDraft('sending:pop', '');
+  setDraft('sending:pop', '', drafts);
   if (!created) {
-    setDraft('pop', mergeDraft(DRAFTS.pop, sent));
+    setDraft('pop', mergeDraft(drafts.pop, sent), drafts);
     closePopover();
     renderAll();
     openPopoverForCreate(at.anchorId, at.anchorLabel, window.innerWidth / 2, window.innerHeight / 3, at.target);
@@ -3477,13 +3494,13 @@ function wireGeneralFeedback() {
   document.getElementById('gf-done').addEventListener('click', () => setGeneralFeedbackOpen(false));
   document.getElementById('gf-cancel').addEventListener('click', () => {
     document.getElementById('gf-ta').value = '';
-    setDraft('gf', '');
+    typeDraft('gf', '');
     setGeneralFeedbackOpen(false);
     updateSendState();
   });
   // T11: the general-feedback draft persists (one per document, v9o)
   document.getElementById('gf-ta').addEventListener('input', (e) => {
-    setDraft('gf', e.target.value || '');
+    typeDraft('gf', e.target.value || '');
     updateSendState();
   });
   renderGeneralFeedback();
@@ -3874,7 +3891,7 @@ function renderSummaryInto(list, editable) {
   if (gta) {
     gta.value = DRAFTS.gf || '';
     gta.addEventListener('input', () => {
-      setDraft('gf', gta.value || '');
+      typeDraft('gf', gta.value || '');
       const box = document.getElementById('gf-ta');
       if (box) box.value = gta.value;
       renderGeneralFeedback();
@@ -3889,7 +3906,7 @@ function renderSummaryInto(list, editable) {
   list.querySelectorAll('[data-decision-say-ta]').forEach(ta => {
     ta.value = DRAFTS['say:' + ta.dataset.decisionSayTa] || '';
     ta.addEventListener('input', () => {
-      setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+      typeDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
       mirrorSay(ta.dataset.decisionSayTa, ta);
       updateSendState();
     });
@@ -4454,6 +4471,12 @@ function enterDoc(doc) {
   DOC_STATE[DOC] = captureDocState();
   installDocState(DOC_STATE[doc] || freshDocState(doc));
   DOC = doc;
+  ownDrafts();
+}
+// The plan changed under a kept state (withdrawn): its drafts stay filed
+// under that plan; this one's are read.
+function ownDrafts() {
+  if (DRAFTS_KEY.get(DRAFTS) !== draftsKey(DOC)) DRAFTS = loadDrafts(DOC);
 }
 // A synchronous read of another document (counts, summary rows).
 function withDoc(doc, fn) {
@@ -4510,7 +4533,9 @@ async function activateDoc(doc, version) {
   await docQueue;
   if (!DOCS.includes(doc)) doc = 'review';
   if (DOC !== doc) enterDoc(doc);
+  ownDrafts();
   VIEW_DOC = doc;
+  VIEW_DRAFTS = DRAFTS;
   if (!CURRENT_VERSION) {
     await loadMeta();
     CURRENT_VERSION = latestVersion();
@@ -4589,6 +4614,8 @@ async function selectPlan(id) {
   if (!PLANS.some(p => p.id === id) || id === PLAN_ID) return;
   await docQueue;
   if (DOC === 'plans') enterDoc('review');
+  // Nothing renders the next plan into the boxes still on screen until it shows.
+  if (VIEW_DOC === 'plans') parkDoc();
   PLAN_ID = id;
   if (!DOCS.includes('plans')) { DOCS = ['review', 'plans']; if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS; }
   delete DOC_STATE.plans;
@@ -4711,7 +4738,7 @@ async function init() {
   // store, so even a reload (not just a re-render/version switch) keeps it.
   document.getElementById('comment-list').addEventListener('input', (e) => {
     if (e.target && e.target.classList && e.target.classList.contains('reply-ta')) {
-      setDraft(e.target.dataset.replyFor, e.target.value || '');
+      typeDraft(e.target.dataset.replyFor, e.target.value || '');
     }
   });
   // UI-23: "Show more" / "Show less" under a long comment.
