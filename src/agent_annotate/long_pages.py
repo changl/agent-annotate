@@ -46,14 +46,32 @@ _LAZY = ' loading="lazy" decoding="async"'
 _PNG = b"\x89PNG\r\n\x1a\n"
 
 
-# ── previews ─────────────────────────────────────────────────────────────
-def _preview(page_dir: Path, src: str) -> str | None:
-    """assets/preview/<hash>.jpg for a large page image, made once; None keeps the original."""
-    if not src.startswith(("assets/", "attachments/")) or src.startswith("assets/preview/") or ".." in src:
+# ── image ids and previews ───────────────────────────────────────────────
+def _image_bytes(page_dir: Path | None, src: str) -> bytes | None:
+    if not page_dir or not src.startswith(("assets/", "attachments/")) or ".." in src:
         return None
     try:
-        data = (page_dir / src).read_bytes()
+        return (page_dir / src).read_bytes()
     except OSError:
+        return None
+
+
+def image_ids(digests: dict[str, str | None]) -> dict[str, str]:
+    """src → its IMG id: the first 4 hex of the file's sha256, the same hash a staged
+    asset's name starts with; 6, 8… only where two different images on the page share 4."""
+    ids = {}
+    for src, digest in digests.items():
+        if digest:
+            n = 4
+            while any(other != digest and other[:n] == digest[:n] for other in digests.values() if other):
+                n += 2
+            ids[src] = digest[:n].upper()
+    return ids
+
+
+def _preview(page_dir: Path, src: str, data: bytes | None) -> str | None:
+    """assets/preview/<hash>.jpg for a large page image, made once; None keeps the original."""
+    if data is None or src.startswith("assets/preview/"):
         return None
     size = image_size(data)
     if not size or data[:4] == b"GIF8" or (max(size) <= PREVIEW_EDGE and len(data) <= PREVIEW_MIN_BYTES):
@@ -84,19 +102,22 @@ def _preview(page_dir: Path, src: str) -> str | None:
 
 
 def light_images(markup: str, page_dir: Path | None) -> str:
-    """Lazy images; a large one shows its preview and links ⤢ Full size to the original."""
-    cache: dict[str, str | None] = {}
+    """Lazy images with their IMG id; a large one shows its preview and links ⤢ Full size to the original."""
+    todo = {html.unescape(m.group(1)) for m in _IMG.finditer(markup)
+            if "data-full=" not in m.group(2) and "loading=" not in m.group(2)}
+    data = {raw: _image_bytes(page_dir, raw) for raw in todo}
+    ids = image_ids({raw: hashlib.sha256(b).hexdigest() if b else None for raw, b in data.items()})
+    previews = {raw: _preview(page_dir, raw, data[raw]) if page_dir else None for raw in todo}
 
     def swap(match: re.Match) -> str:
         src, rest = match.group(1), match.group(2)
-        if "data-full=" in rest or "loading=" in rest:
-            return match.group(0)
         raw = html.unescape(src)
-        if raw not in cache:
-            cache[raw] = _preview(page_dir, raw) if page_dir else None
-        if not cache[raw]:
-            return f'<img src="{src}"{rest}{_LAZY}>'
-        return (f'<img src="{E(cache[raw], quote=True)}" data-full="{src}"{rest}{_LAZY}>'
+        if raw not in todo or "data-full=" in rest or "loading=" in rest:
+            return match.group(0)
+        tag = f' data-img="{ids[raw]}"' if raw in ids else ""
+        if not previews[raw]:
+            return f'<img src="{src}"{tag}{rest}{_LAZY}>'
+        return (f'<img src="{E(previews[raw], quote=True)}" data-full="{src}"{tag}{rest}{_LAZY}>'
                 f'<a class="aa-full" href="{src}" target="_blank" rel="noopener">⤢ Full size</a>')
     return _IMG.sub(swap, markup)
 
@@ -104,6 +125,7 @@ def light_images(markup: str, page_dir: Path | None) -> str:
 def plain_images(markup: str) -> str:
     """Undo light_images, so a section compares equal across the change."""
     markup = re.sub(r'<a class="aa-full" [^>]*>[^<]*</a>', "", markup)
+    markup = re.sub(r'(<img [^>]*?) data-img="[0-9A-F]+"', r"\1", markup)
     markup = re.sub(r'<img src="[^"]*" data-full="([^"]*)"', r'<img src="\1"', markup)
     return markup.replace(_LAZY, "")
 

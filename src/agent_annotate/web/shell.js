@@ -1373,6 +1373,11 @@ function fmtTs(iso) {
 function anchorLabel(c) {
   return (c.anchor_label && c.anchor_label !== c.anchor_id) ? c.anchor_label : '';
 }
+// The IMG id of the image a comment was placed on (adapter.js viewerComment).
+function imageTag(target) {
+  const id = target && target.image;
+  return typeof id === 'string' && /^[0-9A-F]{4,64}$/.test(id) ? 'IMG ' + id : '';
+}
 
 // Drawer scope: null = every version ("All versions" toggle on), else the
 // version currently shown in the iframe.
@@ -2587,7 +2592,7 @@ function renderCItem(c) {
   return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
       ${unreadDotHtml(c)}
-      <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
+      <span class="citem-node-name">${numHtml}${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
       ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
@@ -3109,7 +3114,7 @@ function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
   const node = document.getElementById('pop-node-name');
   const quote = target && target.selected_quote;
   node.classList.toggle('unified-selection-title', !!quote);
-  node.textContent = quote ? '“' + quote + '”' : (anchorLabel || anchorId);
+  node.textContent = quote ? '“' + quote + '”' : [imageTag(target), anchorLabel || anchorId].filter(Boolean).join(' · ');
   node.title = node.textContent;
   ta.value = kept ? kept.text : '';
   document.getElementById('pop-err').textContent = '';

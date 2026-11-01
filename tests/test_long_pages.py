@@ -201,3 +201,28 @@ def test_a_topic_is_dated_by_the_version_where_its_current_content_first_appeare
               re.findall(r'<section data-anchor-id="(s:[a-z]+)"(?: [a-z-]+="[^"]*")*>(.*?)</section>', html, re.DOTALL)}
     days = long_pages._since_dates(slug, hashes, "v4", "2026-10-31")
     assert days == {"s:alpha": "2026-10-18", "s:beta": "2026-10-19", "s:gamma": "2026-10-18"}
+
+
+def test_every_image_carries_its_content_hash_id_across_versions(tmp_path, no_sips):
+    write(tmp_path / "shots" / "a.png", png(300, 200, (200, 10, 10)))
+    write(tmp_path / "shots" / "b.png", png(300, 200, (10, 200, 10)))
+    sections = {"Board": "![A](shots/a.png)\n\n![B](shots/b.png)\n\n![A again](shots/a.png)"}
+    slug = tmp_path / "slug"
+    generate(source(tmp_path, sections), slug)
+    found = re.findall(r'<img src="assets/([0-9a-f]{12})-[^"]*" data-img="([0-9A-F]+)"', canvas(slug, "v1"))
+    assert len(found) == 3 and found[0] == found[2]
+    for prefix, image in found:                     # the id is the start of the hash the asset is named by
+        assert image == prefix[:4].upper()
+    generate(source(tmp_path, sections, version="v2"), slug)
+    assert re.findall(r'data-img="([0-9A-F]+)"', canvas(slug, "v2")) == [image for _, image in found]
+    assert "data-unchanged-since" in canvas(slug, "v2")   # the id does not count as a change
+    write(tmp_path / "shots" / "a.png", png(300, 200, (10, 10, 200)))
+    generate(source(tmp_path, sections, version="v3"), slug)
+    assert re.findall(r'data-img="([0-9A-F]+)"', canvas(slug, "v3"))[0] != found[0][1]
+
+
+def test_image_ids_lengthen_only_where_two_images_share_four_hex():
+    ids = long_pages.image_ids({"a.png": "abcd12" + "0" * 58, "b.png": "abcd34" + "0" * 58,
+                                "c.png": "ffff00" + "0" * 58, "d.png": None})
+    assert ids == {"a.png": "ABCD12", "b.png": "ABCD34", "c.png": "FFFF"}
+    assert long_pages.plain_images('<img src="x.png" data-img="ABCD" alt="">') == '<img src="x.png" alt="">'
