@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Document: a question you have answered or set aside folds to one line at its place: number, prompt cut to one line, your choice (or `Answer later`) and Sent or Pending (Chang, 2026-11-01; agent-annotate-7lj, agent-annotate-2ed). A tap opens the full card, with Change, notes, Back to Needs you, evidence and Send as before. It folds on load, on Send, and when you pick an answer or tap Answer later, never on a poll; editing a note keeps it open, and a card with unsent typed text never folds. On a copy of FLD (iPad Pro 11 portrait), the scroll from the first to the last question you can answer now: 4,836 px → 3,649 px.
 - Sandbox servers refuse ports registered to other page directories, and automatic port selection skips reserved page ports.
 - Card numbers are allocated under the page's store lock across authors and documents; conflicting explicit numbers name the occupied card and next free number. Older duplicates use suffixed labels (such as #41·2) without reserving new plain numbers or migrating the store; live/current cards keep the base label in CLI and browser lookups.
 - Publish (`agent-annotate-ilm`): an unavailable Orca browser now skips the public check with its reason, prints the page URL and continues `--ask` after the origin and Tailscale checks pass. A rendered login, HTTP error or page without anchors still fails verification.
