@@ -126,17 +126,29 @@ SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server 
 # ────────────────────────────────────────────────────────────────────────────
 # Free port discovery
 # ────────────────────────────────────────────────────────────────────────────
-def find_free_port(start: int) -> int:
+def _reserved_ports(slug_dir: Path | None = None) -> dict[int, str]:
+    from .cli import _registry_entries
+    return {int(record["port"]): str(record.get("slug_dir") or "unknown page")
+            for _, _, record in _registry_entries() if record.get("port")
+            and not (slug_dir is not None and record.get("slug_dir")
+                     and Path(record["slug_dir"]).resolve() == slug_dir.resolve())}
+
+
+def find_free_port(start: int, slug_dir: Path | None = None) -> int:
     """Try ports starting at `start`, return the first free one."""
     port = start
+    reserved = _reserved_ports(slug_dir)
     while port < start + 20:
+        if port in reserved:
+            port += 1
+            continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             # Match HTTPServer.allow_reuse_address so a coordinated same-port
             # restart is not mistaken for a collision while old connections
             # remain in TIME_WAIT. An active listener still makes bind fail.
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                s.bind(("", port))
+                s.bind(("localhost", port))
                 return port
             except OSError:
                 port += 1
@@ -438,6 +450,35 @@ def _normalize_item_number(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise DecisionRequestError("number must be a positive integer")
     return value
+
+
+def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
+    """Reserve labels under the store lock, including archived/legacy labels."""
+    from .cli import _item_numbers, _iter_comments
+    numbers = _item_numbers(store)
+    next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
+    if not existing and comment["id"] in numbers:
+        raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
+    if existing and number is not None and number == comment.get("number"):
+        return
+    if number is None:
+        previous = comment.get("number") or numbers.get(comment["id"])
+        comment["number"] = previous if type(previous) is int and previous > 0 else next_number
+        return
+    for _, other in _iter_comments(store):
+        same_question = (other.get("anchor_id") == comment.get("anchor_id")
+                         and other.get("doc") == comment.get("doc")
+                         and other.get("status") in ("archived", "resolved_in_version"))
+        if (other.get("id") != comment["id"] and not same_question
+                and (numbers.get(other.get("id")) == number or other.get("number") == number)):
+            raise DecisionRequestError(f"card number {number} is already used by {other['id']} on {other.get('version', '?')}; use #{next_number}", 409)
+    archived = store.get("archived") or {}
+    values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
+    for value in values:
+        for other in [value] if isinstance(value, dict) else value if isinstance(value, list) else []:
+            if isinstance(other, dict) and (numbers.get(other.get("id")) == number or other.get("number") == number):
+                raise DecisionRequestError(f"card number {number} is reserved by archived comment {other.get('id')} on {other.get('version', '?')}; use #{next_number}", 409)
+    comment["number"] = number
 
 
 def _decision_request_changed(old: Any, new: Any) -> bool:
@@ -1513,7 +1554,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
-            signature = self._store_signature()
+            current_version = self._read_meta().get("current")
+            signature = (self._store_signature(), current_version)
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
@@ -1524,7 +1566,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if poll:
                     # Carry provenance remains on disk and in full comments.json;
                     # the shell does not render it. Decision history is rendered.
-                    store = {**store, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
+                    store = {**store, "current_version": current_version, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
                                                         for comment in items]
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
@@ -2065,6 +2107,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 meta = self._read_meta()
                 store = self._v2_load()
                 comment = self._new_comment_from_payload(payload, identity, meta, store)
+                _assign_item_number(store, comment, comment.get("number"))
                 store["anchors"].setdefault(anchor_id, []).append(comment)
                 self._v2_save(store)
         except DecisionRequestError as exc:
@@ -2227,6 +2270,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 existing = c
                                 break
                     if existing is not None:
+                        _assign_item_number(store, existing, fresh.get("number"), existing=True)
                         existing.setdefault("origin_id", existing["id"])
                         # A card carried into a newer version and then asked
                         # a different question is a new question: its old
@@ -2271,11 +2315,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             lineage = [c for c in store["anchors"].get(aid, [])
                                        if c.get("decision_request") and c.get("author") == author
                                        and c.get("doc") == fresh.get("doc")
-                                       and c.get("number") == fresh.get("number")]
+                                       and (it.get("number") is None or c.get("number") == fresh.get("number"))]
                             roots = {c.get("origin_id") or c["id"] for c in lineage}
                             if len(roots) == 1:
+                                from .approval_catalog import item_id
                                 prior = lineage[-1]
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
+                                fresh["origin_item_id"] = item_id(prior)
+                        _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
                         ids.append(fresh["id"])
@@ -2410,6 +2457,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     or ("text" in payload and c.get("author") != author)):
                 self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
                 return
+            if item_number is not None:
+                try:
+                    _assign_item_number(store, c, item_number, existing=True)
+                except DecisionRequestError as exc:
+                    return self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             if new_status == "resolved_in_version":
                 own_resolution = False
                 if payload.get("resolve_own_anchor") is True and resolution_anchor == c.get("anchor_id"):
@@ -4084,7 +4136,10 @@ def main():
     slug = args.slug or slug_dir.name
     bus_dir = Path(args.bus_dir).resolve() if args.bus_dir else BUS_ROOT / "default"
     skill_dir = WEB_DIR
-    port = find_free_port(args.port)
+    reserved = _reserved_ports(slug_dir)
+    if args.port in reserved:
+        parser.error(f"port {args.port} is registered to {reserved[args.port]}; --slug-dir must be that page's directory")
+    port = find_free_port(args.port, slug_dir)
     if args.strict_port and port != args.port:
         parser.error(f"requested port {args.port} is unavailable; no alternate port selected")
     handler = make_handler(

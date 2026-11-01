@@ -42,7 +42,7 @@ def estate(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "_start_server", _start)
     monkeypatch.setattr(cli, "_wait_listening", lambda port, pid, seconds=8.0, **kw: True)
-    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None: p)
+    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None, **kw: p)
     monkeypatch.setattr(cli, "_running_servers", lambda: {})
     monkeypatch.setattr(cli, "_live_tailnet_host", lambda: None)
     return SimpleNamespace(slug_dir=slug_dir, started=started, tmp=tmp_path)
@@ -86,7 +86,7 @@ def test_a_routed_page_on_a_busy_port_is_skipped_not_moved(estate, monkeypatch, 
     state = cli._load_state_for_project("reviews")
     state["slugs"]["demo"]["transport"] = "cloudflare_tailscale"
     cli._save_state_for_project("reviews", state)
-    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None: p + 1)
+    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None, **kw: p + 1)
     assert cli.cmd_revive(_args()) == 0
     assert estate.started == []
     assert "port 8899 is in use" in capsys.readouterr().out
@@ -94,7 +94,7 @@ def test_a_routed_page_on_a_busy_port_is_skipped_not_moved(estate, monkeypatch, 
 
 def test_a_local_page_on_a_busy_port_moves(estate, monkeypatch):
     """Nothing routes to a local page, so its port may change."""
-    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None: p + 1)
+    monkeypatch.setattr(cli, "_find_free_port_after", lambda p, registered_pid=None, **kw: p + 1)
     assert cli.cmd_revive(_args()) == 0
     assert estate.started == [(str(estate.slug_dir), 8900, "")]
     assert _record()["port"] == 8900

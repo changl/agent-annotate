@@ -282,6 +282,7 @@ def test_provider_author_change_preserves_canonical_decision_and_keeps_legacy_qu
         second_item = json.loads(json.dumps(item))
         if not canonical:
             second_item["text"] = second_item["decision_request"]["prompt"] = "A different legacy question?"
+            second_item["number"] = 2
         second = request("/api/comments/batch", {"items": [second_item], "idempotency": "anchor"}, "agent:codex")
         cards = json.loads((directory / "comments.json").read_text())["anchors"][anchor]
 

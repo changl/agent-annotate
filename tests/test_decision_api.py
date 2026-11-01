@@ -136,6 +136,72 @@ def test_create_preserves_explicit_item_number(server):
     assert _store(slug_dir)["anchors"]["s:a"][0]["number"] == 14
 
 
+def test_card_numbers_cannot_collide_across_authors_or_documents(server):
+    httpd, slug_dir, _ = server
+    assert _call(httpd, "POST", "/api/comments", {**_card(), "number": 41})[0] == 201
+    before = (slug_dir / "comments.json").read_bytes()
+    code, error = _call(httpd, "POST", "/api/comments/batch", {"items": [
+        {**_card("s:other"), "number": 41}], "idempotency": "anchor"}, author="agent:other")
+    assert code == 409 and "41" in error["error"]
+    assert "on v1; use #42" in error["error"]
+    assert (slug_dir / "comments.json").read_bytes() == before
+
+
+def test_implicit_numbers_are_allocated_under_the_store_lock(server):
+    httpd, slug_dir, _ = server
+    status, first = _call(httpd, "POST", "/api/comments", _card())
+    assert status == 201 and first.get("number") == 1
+    code, result = _call(httpd, "POST", "/api/comments/batch", {"items": [_card("s:b"), _card("s:c")]})
+    assert code == 200
+    assert sorted(c["number"] for items in _store(slug_dir)["anchors"].values() for c in items) == [1, 2, 3]
+
+
+def test_batch_number_collision_is_atomic_and_put_cannot_steal_a_number(server):
+    httpd, slug_dir, _ = server
+    _, first = _call(httpd, "POST", "/api/comments", {**_card(), "number": 10})
+    before = (slug_dir / "comments.json").read_bytes()
+    assert _call(httpd, "POST", "/api/comments/batch", {"items": [
+        {**_card("s:b"), "number": 12}, {**_card("s:c"), "number": 12}]})[0] == 409
+    assert (slug_dir / "comments.json").read_bytes() == before
+    _, second = _call(httpd, "POST", "/api/comments", _card("s:b"))
+    before = (slug_dir / "comments.json").read_bytes()
+    assert _call(httpd, "PUT", f"/api/comments/{second['id']}", {"number": 10})[0] == 409
+    assert (slug_dir / "comments.json").read_bytes() == before
+    assert _call(httpd, "PUT", f"/api/comments/{first['id']}", {"number": 10})[0] == 200
+    before = (slug_dir / "comments.json").read_bytes()
+    assert _call(httpd, "POST", "/api/comments", {**_card("s:duplicate-id"), "id": first["id"], "number": 10})[0] == 409
+    assert (slug_dir / "comments.json").read_bytes() == before
+
+
+def test_store_response_tracks_current_version_without_persisting_it(server):
+    httpd, slug_dir, _ = server
+    path = slug_dir / "comments.json"
+    before = path.read_bytes()
+    assert _call(httpd, "GET", "/comments.json?view=poll")[1]["current_version"] == "v1"
+    (slug_dir / "current.meta.json").write_text(json.dumps({"current": "v2"}))
+    assert _call(httpd, "GET", "/comments.json?view=poll")[1]["current_version"] == "v2"
+    assert _call(httpd, "GET", "/comments.json")[1] == json.loads(before)
+    assert path.read_bytes() == before
+
+
+def test_old_duplicate_labels_do_not_reserve_a_new_real_number(server, monkeypatch):
+    from agent_annotate import cli
+    from agent_annotate.cli import _item_numbers
+    httpd, slug_dir, _ = server
+    _, current = _call(httpd, "POST", "/api/comments", {**_card(), "number": 41})
+    store = _store(slug_dir)
+    store["anchors"]["s:a"].insert(0, {**current, "id": "old", "version": "v0", "status": "resolved_in_version"})
+    (slug_dir / "comments.json").write_text(json.dumps(store))
+    code, new = _call(httpd, "POST", "/api/comments", {**_card("s:new"), "number": 42})
+    assert code == 201 and new["number"] == 42
+    assert _item_numbers(_store(slug_dir)) == {current["id"]: 41, "old": "41·2", new["id"]: 42}
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *a: ("p", "review", {"slug_dir": str(slug_dir)}))
+    selected = []
+    monkeypatch.setattr(cli, "_comment_call", lambda args, *a, **kw: selected.append(args.comment_id) or 0)
+    assert cli.cmd_resolve(cli.build_parser().parse_args(["resolve", "p/review", "41"])) == 0
+    assert selected == [current["id"]]
+
+
 @pytest.mark.parametrize("number", [0, -1, True, "14"])
 def test_create_rejects_invalid_item_number(server, number):
     httpd, slug_dir, _ = server

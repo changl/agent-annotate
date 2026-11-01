@@ -490,7 +490,7 @@ function makePin(anchorId, entries, isCluster) {
 // between stacked/nudged pins than the desktop 18px one to avoid overlap.
 function PIN_SPACING() { return PIN_SIZE() + 2; }
 function pinSpecsFor(anchorId) {
-  const entries = (latestPins[anchorId] || []).slice().sort((a, b) => a.n - b.n);
+  const entries = (latestPins[anchorId] || []).slice().sort((a, b) => parseInt(a.n, 10) - parseInt(b.n, 10));
   if (!entries.length) {
     // Shell predates pins payload (or race before first counts message):
     // degrade to a count cluster so the badge never vanishes. Empty
@@ -1378,11 +1378,11 @@ function renderDecisionStrips() {
     if (!items.length) continue;
     const el = stripTarget(anchorId, items);
     if (!el || !inActivePanel(el)) continue;
-    items.sort((a, b) => (a.n || 0) - (b.n || 0));
+    items.sort((a, b) => (parseInt(a.n, 10) || 0) - (parseInt(b.n, 10) || 0));
     placed.push({ anchorId, items, el });
   }
   // Questions sharing a target keep their numbers' order under it.
-  placed.sort((a, b) => (a.items[0].n || 0) - (b.items[0].n || 0));
+  placed.sort((a, b) => (parseInt(a.items[0].n, 10) || 0) - (parseInt(b.items[0].n, 10) || 0));
   const lastAt = new Map();
   placed.forEach(({ anchorId, items, el }) => {
     const stripEl = buildStripEl(anchorId, items, lastExcerpts);
