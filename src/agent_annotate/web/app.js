@@ -747,7 +747,7 @@
     }
     const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' :
-      'In inbox · owner delivery pending (' + n + ')';
+      'Waiting for the agent (' + n + ')';
     // The Review version on screen, as the round records it, so History
     // places this Send right before the server's record arrives.
     lastSend = { ts: new Date().toISOString(), version: docs.version('review') || '', result, items: sent, fresh: true, send_id: r.send_id, delivery_id: r.delivery_id };

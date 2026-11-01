@@ -1134,7 +1134,7 @@ function evidenceOf(dr) {
 // cells are joined with " | ", and everything this file injected (strips,
 // pins, markers, state chips) is left out.
 const EXCERPT_MAX = 1200;
-const EXCERPT_SKIP_SEL = '.aa-img-zoom, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
+const EXCERPT_SKIP_SEL = '.aa-img-bar, .aa-img-zoom, .aa-full, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
 const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
 
 function excerptText(el) {
@@ -1218,7 +1218,9 @@ function ensureCardStateStyle() {
   style.id = 'annotate-card-state-style';
   style.textContent = `
     .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
-    .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
+    /* Published pages still carry "Answer it on the card, then press Finish review." (2026-11-01):
+       a live card is answered in its own box, and a card with no live one has nothing to answer. */
+    .card > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
       font: 700 calc(9.5px * var(--aa-text, 1)) "Inter", sans-serif; letter-spacing: .02em; }
     .annotate-card-state.review { background: var(--error-soft); color: var(--color-error); }

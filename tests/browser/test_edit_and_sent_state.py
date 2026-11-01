@@ -34,7 +34,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         card.wait_for()
         assert card.locator(".send-state").inner_text() == "Pending"
         _send(page)
-        playwright.expect(_card(page, "Build note, first take").locator(".send-state")).to_have_text("In inbox · owner delivery pending")
+        playwright.expect(_card(page, "Build note, first take").locator(".send-state")).to_have_text("Waiting for the agent")
         card = _card(page, "Build note, first take")
 
         card.locator('[data-action="menu"]').click()
@@ -50,7 +50,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         cid = card.get_attribute("data-comment-id")
         assert _stored(directory, cid)["text"] == "Build note, corrected"
         _send(page)
-        page.wait_for_function("id => document.querySelector(`#comment-list [data-comment-id='${id}'] .send-state`)?.textContent === 'In inbox · owner delivery pending'", arg=cid)
+        page.wait_for_function("id => document.querySelector(`#comment-list [data-comment-id='${id}'] .send-state`)?.textContent === 'Waiting for the agent'", arg=cid)
 
 
 def _round_answers(directory):
@@ -152,7 +152,7 @@ def test_delete_an_unsent_comment_but_not_a_sent_one(tmp_path):
         assert "Typed by accident" not in texts and "Meant this one" in texts
         _send(page)
         card = _card(page, "Meant this one")
-        playwright.expect(card.locator(".send-state")).to_have_text("In inbox · owner delivery pending")
+        playwright.expect(card.locator(".send-state")).to_have_text("Waiting for the agent")
         card.locator('[data-action="menu"]').click()
         assert card.locator('[data-action="delete"]').count() == 0
         assert card.locator('[data-action="edit"]').count() == 1

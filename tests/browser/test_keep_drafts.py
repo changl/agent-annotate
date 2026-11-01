@@ -147,7 +147,7 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _poll(page)
         assert len(responses) == 1 and responses[0].status == 200
         assert responses[0].json()["delivery_status"]["latest"]["state"] == "acknowledged"
-        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
+        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
         responses.clear()
         _poll(page)
         assert responses and all(response.status == 304 for response in responses)
@@ -160,7 +160,7 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _loaded(page)
         assert responses and responses[0].status == 200
         assert "if-none-match" not in responses[0].request.headers
-        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
+        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
 
 
 def _blur(page):

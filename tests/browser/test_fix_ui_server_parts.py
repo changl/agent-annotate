@@ -11,7 +11,7 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 
-QUEUED = "In inbox · owner delivery pending (1)"
+QUEUED = "Waiting for the agent (1)"
 
 
 def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path, workspace):  # noqa: F811
@@ -34,5 +34,5 @@ def test_ui13_saved_feedback_survives_reload_without_claiming_delivery(tmp_path,
         # The round sits under the page version it was sent on.
         summary = page.locator(f'#vrail-body-review .vitem[data-version="{rounds[0]["version"]}"] .vact-head').first
         summary.wait_for()
-        assert summary.inner_text().startswith("Feedback · In inbox · owner delivery pending (1)"), summary.inner_text()
-        playwright.expect(page.locator("#send-note")).to_contain_text("In inbox · owner delivery pending (1)")
+        assert summary.inner_text().startswith("Feedback · Waiting for the agent (1)"), summary.inner_text()
+        playwright.expect(page.locator("#send-note")).to_contain_text("Waiting for the agent (1)")

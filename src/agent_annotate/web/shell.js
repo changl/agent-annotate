@@ -1131,18 +1131,19 @@ function sentRounds() {
   }).filter(r => r.items.length);
 }
 // Only a matching owner receipt proves delivery, including after reload.
+const WAITING_LABEL = 'Waiting for the agent';
 function deliveryLabel(id) {
-  if (Array.isArray(id)) return id.length && id.every(value => deliveryLabel(value) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending';
+  if (Array.isArray(id)) return id.length && id.every(value => deliveryLabel(value) === 'Sent') ? 'Sent' : WAITING_LABEL;
   const data = SUMMARY_DELIVERY || {};
   const receipt = (data.deliveries || []).find(r => r.id === id) || (data.latest?.id === id ? data.latest : null);
-  return receipt?.delivered ? 'Sent' : 'In inbox · owner delivery pending';
+  return receipt?.delivered ? 'Sent' : WAITING_LABEL;
 }
 function deliveryHtml(id) {
   const ids = Array.isArray(id) ? id : [id];
   return `<span data-delivery-ids="${escAttr(ids.filter(Boolean).join(','))}">${esc(deliveryLabel(id))}</span>`;
 }
 function roundResult(n, ids) {
-  return (ids?.length && ids.every(id => deliveryLabel(id) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending') + ' (' + n + ')';
+  return (ids?.length && ids.every(id => deliveryLabel(id) === 'Sent') ? 'Sent' : WAITING_LABEL) + ' (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -1172,8 +1173,12 @@ async function loadDelivery() {
     SUMMARY_DELIVERY = data;
     node.hidden = !data.latest;
     if (data.latest) {
-      const labels = {acknowledged: 'Owner read this feedback round; project work is tracked separately', pending: 'Submitted; owner delivery pending — waiting in the inbox', accepted: 'Submitted; owner delivery unconfirmed — waiting in the inbox', started: 'Owner turn started; agent response pending', uncertain: 'Submitted; owner delivery unconfirmed — waiting in the inbox', superseded: 'Page owner changed before this round was delivered'};
-      node.textContent = ((data.latest.delivered && data.latest.state === 'accepted' ? 'Sent to owner session; agent response pending' : labels[data.latest.state]) || 'Feedback delivery: ' + data.latest.state) + (data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? '. ' + data.latest.detail : '');
+      // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
+      const unconfirmed = 'Saved; not yet confirmed that the agent got it';
+      const labels = {acknowledged: 'The agent has read your last Send', pending: 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
+      node.textContent = labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state;
+      // The technical reason stays on hover, out of the sentence he reads.
+      node.title = data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '';
     }
     window.AA?.send?.delivery(data.deliveries || []);
     for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {

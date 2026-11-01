@@ -53,7 +53,7 @@ def test_history_is_built_and_fully_fetched_only_when_opened(tmp_path):
     _rounds(directory)
     with _ipad(tmp_path, directory) as (page, _, history, _fonts):
         # The header's receipt comes from the latest round alone; the hidden list is not built.
-        page.wait_for_function("() => document.getElementById('send-note').textContent.includes('In inbox · owner delivery pending (1)')")
+        page.wait_for_function("() => document.getElementById('send-note').textContent.includes('Waiting for the agent (1)')")
         assert history == ["?latest=1"]
         assert page.locator("#vrail-body-review .vrow").count() == 0
 
