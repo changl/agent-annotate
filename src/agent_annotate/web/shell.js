@@ -2254,8 +2254,7 @@ function normText(s) {
 }
 // The hint under the comment box says what typed text will do.
 function syncSayHint(ta) {
-  const id = ta.dataset.decisionSayTa;
-  const hint = ta.ownerDocument.querySelector('[data-say-hint="' + cssEsc(id) + '"]');
+  const hint = ta.closest('.decision-block, .annotate-decision-item')?.querySelector('[data-say-hint]');
   if (!hint) return;
   hint.textContent = (ta.value || '').trim()
     ? 'Saved with your choice. With no choice picked, it counts as your answer when you send.'
