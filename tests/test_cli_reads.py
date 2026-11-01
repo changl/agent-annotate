@@ -317,6 +317,23 @@ def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
     assert len(seeded) == 2
 
 
+def test_ask_number_collision_names_next_free_number_and_preserves_source(served, tmp_path, capsys):
+    code, first = cli._api(served.record, "POST", "/api/comments",
+                           {"anchor_id": "s:a", "number": 10, "text": "Existing card"}, "agent:other")
+    assert code == 201
+    cards = tmp_path / "cards.json"
+    cards.write_text(json.dumps([{"number": 10, "anchor_id": "s:b", "decision_request": {
+        "prompt": "Another card?", "evidence": [{"anchor": "s:b"}]}}]))
+    source = cards.read_bytes()
+    before = (served.slug_dir / "comments.json").read_bytes()
+    args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
+                           author="agent:test", json=False)
+    assert cli.cmd_ask(args) == 2
+    error = capsys.readouterr().err
+    assert first["id"] in error and "on v2; use #11" in error
+    assert cards.read_bytes() == source and (served.slug_dir / "comments.json").read_bytes() == before
+
+
 def test_ask_rejects_a_card_without_anchor(served, tmp_path, capsys):
     cards = tmp_path / "cards.json"
     cards.write_text(json.dumps([{"text": "no anchor"}]))
@@ -334,7 +351,7 @@ def test_addressed_goes_through_the_api_with_session_header(served, monkeypatch,
     args = SimpleNamespace(slug="proj/live", project=None, comment_id=comment["id"],
                            response="done", author="agent:test")
     assert cli.cmd_addressed(args) == 0
-    assert _last_line(capsys) == f"addressed {comment['id']}"
+    assert _last_line(capsys) == f"addressed {comment['id']} #1"
     store = json.loads((served.slug_dir / "comments.json").read_text())
     updated = store["anchors"]["s:z"][0]
     assert updated["status"] == "addressed_by_agent" and updated["response_text"] == "done"
@@ -379,7 +396,7 @@ def test_resolving_into_a_missing_anchor_names_the_closest_ones(served, capsys):
 
     args.anchor = "s:scope:p1"
     assert cli.cmd_resolve(args) == 0
-    assert _last_line(capsys) == f"resolved {cid} → v2 s:scope:p1"
+    assert _last_line(capsys) == f"resolved {cid} #1 → v2 s:scope:p1"
 
 
 def test_resolving_into_an_ungenerated_version_says_so(served, capsys):
@@ -442,7 +459,7 @@ def test_short_resolve_uses_item_number_current_version_and_own_anchor(served, c
     assert cid in capsys.readouterr().out
 
 
-def test_short_resolve_refuses_ambiguous_numbers_and_missing_current_page(served, capsys):
+def test_short_resolve_disambiguates_legacy_numbers_and_refuses_missing_current_page(served, capsys):
     first = _posted(served, anchor="s:a")
     second = _posted(served, anchor="s:b")
     path = served.slug_dir / "comments.json"
@@ -451,12 +468,33 @@ def test_short_resolve_refuses_ambiguous_numbers_and_missing_current_page(served
         for item in items:
             item["number"] = 1
     path.write_text(json.dumps(store))
+    expected = next(cid for cid, number in cli._item_numbers(store).items() if number == 2)
+    args = cli.build_parser().parse_args(["resolve", "proj/live", "2"])
+    assert cli.cmd_resolve(args) == 0
+    assert args.comment_id == expected
+    assert " #2 " in _last_line(capsys)
     before = path.read_bytes()
-    args = cli.build_parser().parse_args(["resolve", "proj/live", "1"])
-    assert cli.cmd_resolve(args) == 2 and "ambiguous" in capsys.readouterr().err
-    assert path.read_bytes() == before
     (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v9"}))
     args = cli.build_parser().parse_args(["resolve", "proj/live", first])
     assert cli.cmd_resolve(args) == 2 and "has no page" in capsys.readouterr().err
     assert path.read_bytes() == before
     assert second != first
+
+
+def test_republishing_stable_card_number_keeps_one_card_and_resolves(served):
+    item = {"anchor_id": "d:q10", "number": 10, "text": "Keep this question?",
+            "version": "v1", "decision_request": {"prompt": "Keep this question?"}}
+    (served.slug_dir / "versions/v1.html").write_text('<p data-anchor-id="d:q10">Question</p>')
+    (served.slug_dir / "versions/v2.html").write_text('<p data-anchor-id="d:q10">Question</p>')
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v1"}))
+    code, first = cli._api(served.record, "POST", "/api/comments/batch",
+                           {"items": [item], "idempotency": "anchor"}, "agent:first")
+    assert code == 200 and first["created"] == 1
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v2"}))
+    code, second = cli._api(served.record, "POST", "/api/comments/batch",
+                            {"items": [{**item, "version": "v2"}], "idempotency": "anchor"}, "agent:second")
+    assert code == 200 and second["ids"] == first["ids"] and second["updated"] == 1
+    cards = cli._decision_cards(cli._load_store(served.record))
+    assert [(c["id"], c["number"], c["version"]) for c in cards] == [(first["ids"][0], 10, "v2")]
+    args = cli.build_parser().parse_args(["resolve", "proj/live", "10"])
+    assert cli.cmd_resolve(args) == 0 and args.comment_id == first["ids"][0]

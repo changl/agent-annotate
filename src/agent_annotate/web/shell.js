@@ -392,26 +392,30 @@ async function loadStore() {
 function computeNumbers() {
   NUM_MAP = {};
   const all = flattenStore(true);
+  // Live/current cards keep canonical labels when old stores contain collisions.
+  const versionNumber = c => Number((String(c.version || '').match(/^v(\d+)$/) || [0, 0])[1]);
+  const inactive = c => ['archived', 'resolved_in_version'].includes(c.status) || !!c.withdrawn;
+  all.sort((a, b) => Number(inactive(a)) - Number(inactive(b)) ||
+    (STORE.current_version ? Number(a.version !== STORE.current_version) - Number(b.version !== STORE.current_version) : 0) ||
+    versionNumber(b) - versionNumber(a) || String(a.created_at || '').localeCompare(String(b.created_at || '')) ||
+    String(a.id).localeCompare(String(b.id)));
   const used = new Set();
+  const reserved = new Set();
   for (const c of all) {
-    if (Number.isInteger(c.number) && c.number > 0 && !NUM_MAP[c.id]) {
-      NUM_MAP[c.id] = c.number;
-      used.add(c.number);
-    }
-  }
-  for (const c of all) {
-    if (NUM_MAP[c.id]) continue;
     const prompt = c.decision_request && c.decision_request.prompt;
     const match = typeof prompt === 'string' ? prompt.match(/^Q(\d+)(?![0-9A-Za-z])/i) : null;
-    const n = match ? Number(match[1]) : 0;
+    const n = Number.isInteger(c.number) && c.number > 0 ? c.number : match ? Number(match[1]) : 0;
     if (n > 0) {
-      NUM_MAP[c.id] = n;
-      used.add(n);
+      reserved.add(n);
+      if (!NUM_MAP[c.id] && !used.has(n)) {
+        NUM_MAP[c.id] = n;
+        used.add(n);
+      }
     }
   }
-  let next = used.size ? Math.max(...used) + 1 : 1;
+  let next = reserved.size ? Math.max(...reserved) + 1 : 1;
   all.sort((a, b) =>
-    new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
+    String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)));
   for (const c of all) {
     if (NUM_MAP[c.id]) continue;
     while (used.has(next)) next++;

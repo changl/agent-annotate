@@ -22,6 +22,42 @@ TABLE = """
 """
 
 
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
+    from agent_annotate.cli import _item_numbers
+
+    directory = _page(tmp_path)
+    def card(cid, version="v1", **extra):
+        return {"id": cid, "anchor_id": "s:coverage", "number": 10, "version": version,
+                "created_at": "2026-10-31T09:00:00Z", "status": "open", "text": cid,
+                "decision_request": {"prompt": cid}, **extra}
+    store = {"schema_version": 2, "anchors": {"s:coverage": [
+        card("old", "v0", status="resolved_in_version"), card("current"),
+        card("staged", "v2"), card("plan", doc="plan:repair")]}, "archived": {}}
+    path = directory / "comments.json"
+    path.write_text(json.dumps(store))
+    before = path.read_bytes()
+    expected = _item_numbers({**store, "current_version": "v1"})
+    assert expected["current"] == 10 and len(set(expected.values())) == 4
+    process, base = _serve(tmp_path, directory, port=18740)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(base + "#view=review", wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('current') === 10")
+                assert page.evaluate("ids => Object.fromEntries(ids.map(id => [id, window.AnnotateDocs.number(id)]))", list(expected)) == expected
+                page.reload(wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('current') === 10")
+                assert path.read_bytes() == before
+            finally:
+                browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def _document(version="v1", cards=None, title=TITLE):
     body = TABLE
     if cards:

@@ -160,10 +160,11 @@ def _page(tmp_path, migration="Two statements and two weeks of dual writes."):
     return slug_dir
 
 
-def _serve(tmp_path, slug_dir):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+def _serve(tmp_path, slug_dir, *, port=None):
+    if port is None:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
     env = os.environ.copy()
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(

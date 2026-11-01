@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Sandbox servers refuse ports registered to other page directories, and automatic port selection skips reserved page ports.
+- Card numbers are allocated under the page's store lock across authors and documents; conflicting explicit numbers fail with a clear error. Older stores with duplicate labels remain readable without migration, with distinct display numbers and live/current cards taking priority in CLI and browser lookups.
+
 ## 2.28.0
 
 - Images (Chang, 2026-10-31): every image shows a small id, e.g. `IMG F665`: the first hex of the image file's sha256, the same hash a staged asset's name starts with (`assets/f665a6bf0296-flow.png`), so it stays the same while the image does. Publish writes it as `data-img`; older versions read it from the file name. Next to the id, a magnifier button group (25% 50% 75% 100%) at the image's bottom edge opens the image at exactly that share of its real pixels (one image pixel per screen point at 100%), from the original file when the 1,200 px preview lacks the pixels, scrolling when it is bigger than the screen; the same choices switch scale there, and ✕ or Esc returns to the same place. A tap on the image there comments on that spot through the normal composer; the comment stores `target.image`, `image_src` and the point, and its pin shows there and on the page image. A tap on an image in the page still comments, as before. The rail card and composer show the id; the `annotate inbox` line and round answers show it with the image path, e.g. `IMG F665 (assets/f665a6bf0296-flow.png)`.

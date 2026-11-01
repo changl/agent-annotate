@@ -17,10 +17,48 @@ http.server.HTTPServer does — so it reuses TIME_WAIT and is still refused by a
 live listener.
 """
 
+import json
 import socket
+import subprocess
+import sys
 import threading
 
-from agent_annotate import cli
+from agent_annotate import cli, sync_server
+
+
+def test_automatic_pickers_skip_registered_ports(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("p", "live", {"port": 18730, "slug_dir": str(tmp_path)})])
+    assert sync_server.find_free_port(18730) != 18730
+    assert cli._find_free_port_after(18730) != 18730
+    assert sync_server.find_free_port(18730, tmp_path) == 18730
+    assert cli._find_free_port_after(18730, slug_dir=tmp_path) == 18730
+
+
+def test_server_refuses_another_pages_registered_port(tmp_path):
+    import os
+    state = tmp_path / "state"
+    state.mkdir()
+    page = tmp_path / "sandbox"
+    page.mkdir()
+    (state / "p.json").write_text(json.dumps({"project": "p", "slugs": {
+        "live": {"port": 18731, "slug_dir": str(tmp_path / "live")}}}))
+    result = subprocess.Popen([sys.executable, "-m", "agent_annotate.sync_server", "--slug-dir", str(page),
+                               "--port", "18731", "--strict-port"],
+                              env={**os.environ, "ANNOTATE_STATE_DIR": str(state)},
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        try:
+            _, err = result.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            result.terminate()
+            result.communicate(timeout=3)
+            raise AssertionError("sandbox server accepted another page's registered port") from None
+        assert result.returncode != 0
+        assert "registered" in err and str(tmp_path / "live") in err
+    finally:
+        if result.poll() is None:
+            result.terminate()
+            result.wait(timeout=3)
 
 
 def _listener(port_hint: int = 0):

@@ -167,9 +167,11 @@ def _comments(page_dir):
     return _load_v2_store(safe_path(page_dir, "comments.json"))
 
 
-def _finding(store: dict, identifier) -> dict:
+def _finding(store: dict, identifier, current_version=None) -> dict:
+    from .cli import _item_numbers
+    numbers = _item_numbers(store, current_version)
     matches = [c for items in store["anchors"].values() for c in items
-               if c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier))]
+               if c.get("id") == identifier or (str(identifier).isdigit() and str(numbers.get(c.get("id"))) == str(identifier))]
     matches = [c for c in matches if comment_category(c) == "findings"]
     if not matches:
         raise KeyError(identifier)
@@ -268,7 +270,7 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
     proof = validate_proof(page_dir, proof)
     with _locked_store(page_dir):
         store = _comments(page_dir)
-        comment = _finding(store, number_or_id)
+        comment = _finding(store, number_or_id, _json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
         now = datetime.now(timezone.utc).isoformat()
         if comment.get("fixed"):
             comment.setdefault("fixed_history", []).append(comment["fixed"])

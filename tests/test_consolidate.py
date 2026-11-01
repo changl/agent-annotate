@@ -383,7 +383,7 @@ def test_review_versions_are_not_blocked_by_other_tabs(tmp_path):
     assert [b["id"] for b in blockers] == ["r1"]
 
 
-def test_reasking_a_review_card_never_rewrites_a_plan_card_on_the_same_anchor(tmp_path, monkeypatch):
+def test_reasking_a_review_card_cannot_reuse_a_plan_cards_number(tmp_path, monkeypatch):
     directory = _page(tmp_path, "main")
     plan_card = {**_card("p1", 5, anchor="d:q5", category="plans", doc="plan:rollout")}
     _store(directory, [copy.deepcopy(plan_card)])
@@ -394,8 +394,10 @@ def test_reasking_a_review_card_never_rewrites_a_plan_card_on_the_same_anchor(tm
         request = urllib.request.Request(f"http://localhost:{server.server_port}/api/comments/batch", method="POST",
                                          data=json.dumps({"items": [item], "idempotency": "anchor"}).encode(),
                                          headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:claude"})
-        with urllib.request.urlopen(request, timeout=5) as response:
-            assert json.loads(response.read())["created"] == 1
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=5)
+        assert error.value.code == 409
+        assert b"number 5" in error.value.read()
     finally:
         server.shutdown()
         server.server_close()
