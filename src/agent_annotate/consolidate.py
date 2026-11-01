@@ -329,7 +329,7 @@ def build(target_dir: Path, target: tuple[str, str], sources: list[Source], *, n
             originals.append(original)
             comment = json.loads(json.dumps(original))
             if not (isinstance(comment.get("number"), int) and not isinstance(comment.get("number"), bool)
-                    and comment["number"] > 0) and numbers.get(identifier):
+                    and comment["number"] > 0) and type(numbers.get(identifier)) is int:
                 comment["number"] = numbers[identifier]
             # The store key is where the page showed the comment.
             if source.tab != "review":

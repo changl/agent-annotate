@@ -32,13 +32,13 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
                 "created_at": "2026-10-31T09:00:00Z", "status": "open", "text": cid,
                 "decision_request": {"prompt": cid}, **extra}
     store = {"schema_version": 2, "anchors": {"s:coverage": [
-        card("old", "v0", status="resolved_in_version"), card("current"),
+        card("old", "v0", status="resolved_in_version"), card("current"), card("duplicate"),
         card("staged", "v2"), card("plan", doc="plan:repair")]}, "archived": {}}
     path = directory / "comments.json"
     path.write_text(json.dumps(store))
     before = path.read_bytes()
     expected = _item_numbers({**store, "current_version": "v1"})
-    assert expected["current"] == 10 and len(set(expected.values())) == 4
+    assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 5
     process, base = _serve(tmp_path, directory, port=18740)
     try:
         with playwright.sync_playwright() as runner:
@@ -48,6 +48,7 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
                 page.goto(base + "#view=review", wait_until="networkidle")
                 page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('current') === 10")
                 assert page.evaluate("ids => Object.fromEntries(ids.map(id => [id, window.AnnotateDocs.number(id)]))", list(expected)) == expected
+                assert page.locator('.citem[data-comment-id="duplicate"] .citem-num').inner_text() == "#10·2"
                 page.reload(wait_until="networkidle")
                 page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('current') === 10")
                 assert path.read_bytes() == before

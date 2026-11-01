@@ -468,11 +468,11 @@ def test_short_resolve_disambiguates_legacy_numbers_and_refuses_missing_current_
         for item in items:
             item["number"] = 1
     path.write_text(json.dumps(store))
-    expected = next(cid for cid, number in cli._item_numbers(store).items() if number == 2)
-    args = cli.build_parser().parse_args(["resolve", "proj/live", "2"])
+    expected = next(cid for cid, number in cli._item_numbers(store).items() if number == "1·2")
+    args = cli.build_parser().parse_args(["resolve", "proj/live", "1·2"])
     assert cli.cmd_resolve(args) == 0
     assert args.comment_id == expected
-    assert " #2 " in _last_line(capsys)
+    assert " #1·2 " in _last_line(capsys)
     before = path.read_bytes()
     (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v9"}))
     args = cli.build_parser().parse_args(["resolve", "proj/live", first])

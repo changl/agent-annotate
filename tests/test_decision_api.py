@@ -184,6 +184,24 @@ def test_store_response_tracks_current_version_without_persisting_it(server):
     assert path.read_bytes() == before
 
 
+def test_old_duplicate_labels_do_not_reserve_a_new_real_number(server, monkeypatch):
+    from agent_annotate import cli
+    from agent_annotate.cli import _item_numbers
+    httpd, slug_dir, _ = server
+    _, current = _call(httpd, "POST", "/api/comments", {**_card(), "number": 41})
+    store = _store(slug_dir)
+    store["anchors"]["s:a"].insert(0, {**current, "id": "old", "version": "v0", "status": "resolved_in_version"})
+    (slug_dir / "comments.json").write_text(json.dumps(store))
+    code, new = _call(httpd, "POST", "/api/comments", {**_card("s:new"), "number": 42})
+    assert code == 201 and new["number"] == 42
+    assert _item_numbers(_store(slug_dir)) == {current["id"]: 41, "old": "41·2", new["id"]: 42}
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *a: ("p", "review", {"slug_dir": str(slug_dir)}))
+    selected = []
+    monkeypatch.setattr(cli, "_comment_call", lambda args, *a, **kw: selected.append(args.comment_id) or 0)
+    assert cli.cmd_resolve(cli.build_parser().parse_args(["resolve", "p/review", "41"])) == 0
+    assert selected == [current["id"]]
+
+
 @pytest.mark.parametrize("number", [0, -1, True, "14"])
 def test_create_rejects_invalid_item_number(server, number):
     httpd, slug_dir, _ = server

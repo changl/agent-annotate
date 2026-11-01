@@ -401,15 +401,22 @@ function computeNumbers() {
     String(a.id).localeCompare(String(b.id)));
   const used = new Set();
   const reserved = new Set();
+  const duplicates = new Map();
   for (const c of all) {
     const prompt = c.decision_request && c.decision_request.prompt;
     const match = typeof prompt === 'string' ? prompt.match(/^Q(\d+)(?![0-9A-Za-z])/i) : null;
     const n = Number.isInteger(c.number) && c.number > 0 ? c.number : match ? Number(match[1]) : 0;
     if (n > 0) {
       reserved.add(n);
-      if (!NUM_MAP[c.id] && !used.has(n)) {
-        NUM_MAP[c.id] = n;
-        used.add(n);
+      if (!NUM_MAP[c.id]) {
+        if (used.has(n)) {
+          const suffix = (duplicates.get(n) || 1) + 1;
+          duplicates.set(n, suffix);
+          NUM_MAP[c.id] = n + '·' + suffix;
+        } else {
+          NUM_MAP[c.id] = n;
+          used.add(n);
+        }
       }
     }
   }
@@ -1818,7 +1825,7 @@ let EXCERPTS_VERSION = null;
 let ANCHOR_ORDER = {};
 function byContentOrder(a, b) {
   return (ANCHOR_ORDER[a.anchor_id] ?? Infinity) - (ANCHOR_ORDER[b.anchor_id] ?? Infinity) ||
-    (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+    (parseInt(NUM_MAP[a.id], 10) || 0) - (parseInt(NUM_MAP[b.id], 10) || 0);
 }
 // Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
@@ -3356,7 +3363,7 @@ function openPinPopover(anchorId, anchorIds, commentIds, anchorLabelText, x, y) 
   });
   const comments = Object.values(byId);
   if (!comments.length) return;
-  comments.sort((a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0));
+  comments.sort((a, b) => (parseInt(NUM_MAP[a.id], 10) || 0) - (parseInt(NUM_MAP[b.id], 10) || 0));
   markRead(comments); // viewing the thread in the popover = reading it
   pinPopoverCtx = { anchorId, anchorLabel: anchorLabelText || comments[0].anchor_label || anchorId, x, y };
 
@@ -3764,7 +3771,7 @@ function summaryWarning() {
 }
 function renderSummaryInto(list, editable) {
   const plan = sendPlan();
-  const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
+  const byNum = (a, b) => (parseInt(NUM_MAP[a.id], 10) || 0) - (parseInt(NUM_MAP[b.id], 10) || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
   // Not in this Send: newest first, by when it was sent or answered; card number when neither (Chang 2026-10-31).
   const restTs = c => Math.max(Date.parse(c.flagged_at) || 0, Date.parse(c.decision && c.decision.ts) || 0);

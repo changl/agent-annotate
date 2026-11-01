@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Sandbox servers refuse ports registered to other page directories, and automatic port selection skips reserved page ports.
-- Card numbers are allocated under the page's store lock across authors and documents; conflicting explicit numbers fail with a clear error. Older stores with duplicate labels remain readable without migration, with distinct display numbers and live/current cards taking priority in CLI and browser lookups.
+- Card numbers are allocated under the page's store lock across authors and documents; conflicting explicit numbers name the occupied card and next free number. Older duplicates use suffixed labels (such as #41·2) without reserving new plain numbers or migrating the store; live/current cards keep the base label in CLI and browser lookups.
 
 ## 2.28.0
 

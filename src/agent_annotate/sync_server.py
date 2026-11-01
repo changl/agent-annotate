@@ -456,13 +456,14 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
     """Reserve labels under the store lock, including archived/legacy labels."""
     from .cli import _item_numbers, _iter_comments
     numbers = _item_numbers(store)
-    next_number = max(numbers.values(), default=0) + 1
+    next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
     if not existing and comment["id"] in numbers:
         raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
     if existing and number is not None and number == comment.get("number"):
         return
     if number is None:
-        comment["number"] = numbers.get(comment["id"]) or next_number
+        previous = comment.get("number") or numbers.get(comment["id"])
+        comment["number"] = previous if type(previous) is int and previous > 0 else next_number
         return
     for _, other in _iter_comments(store):
         same_question = (other.get("anchor_id") == comment.get("anchor_id")

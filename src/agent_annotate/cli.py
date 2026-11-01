@@ -2447,7 +2447,7 @@ def cmd_cards(args) -> int:
         verdict = c["verdict"] or ("pending" if c["pending"] else "—")
         if c["pending"]:
             verdict += " (unsent)"
-        item_number = f"#{c['number']}" if isinstance(c.get("number"), int) else "—"
+        item_number = f"#{c['number']}" if c.get("number") is not None else "—"
         line = "  %-6s %-12s %-20s %-6s %-9s %s" % (
             item_number, c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
             verdict, _clip(c["prompt"], 64))
@@ -3704,13 +3704,10 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
     # Validate the target and all ordinary inputs before copying attachments.
     # A number is the one `cards` shows, allocated or stored.
     store = _load_store(record)
+    numbers = _item_numbers(store)
     matches = [c.get("id") for anchor, c in _iter_comments(store)
                if _comment_category({"anchor_id": anchor, **c}) == "findings" and
-               (c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier)))]
-    if str(identifier).isdigit():
-        matches = list(dict.fromkeys(matches + [
-            card["id"] for card in _decision_cards(store)
-            if card["category"] == "findings" and str(card.get("number")) == str(identifier)]))
+               (c.get("id") == identifier or str(numbers.get(c.get("id"))) == str(identifier))]
     if not matches:
         raise LookupError(f"finding {identifier} not found")
     if len(matches) != 1:
@@ -4703,7 +4700,7 @@ def _iter_comments(store: dict):
                     yield anchor_id, c
 
 
-def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int]:
+def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int | str]:
     """{comment id: the number the page shows}, as shell.js computeNumbers."""
     current_version = current_version or store.get("current_version")
     comments = list(_iter_comments(store))
@@ -4720,9 +4717,10 @@ def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, 
                 c.get("version") != current_version if current_version else False,
                 -int(version[1]) if version else 0, c.get("created_at") or "", c.get("id") or "")
     allocation.sort(key=priority)
-    numbers: dict[str, int] = {}
+    numbers: dict[str, int | str] = {}
     used: set[int] = set()
     reserved: set[int] = set()
+    duplicates: dict[int, int] = {}
     for _anchor_id, comment in allocation:
         number = comment.get("number")
         cid = comment.get("id")
@@ -4732,9 +4730,13 @@ def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, 
             number = int(match.group(1)) if match else 0
         if number > 0:
             reserved.add(number)
-            if cid and cid not in numbers and number not in used:
-                numbers[cid] = number
-                used.add(number)
+            if cid and cid not in numbers:
+                if number in used:
+                    duplicates[number] = duplicates.get(number, 1) + 1
+                    numbers[cid] = f"{number}·{duplicates[number]}"
+                else:
+                    numbers[cid] = number
+                    used.add(number)
     next_number = max(reserved, default=0) + 1
     for _anchor_id, comment in sorted(
             allocation,
@@ -4780,7 +4782,8 @@ def _decision_cards(store: dict) -> list[dict]:
             **{field: c[field] for field in ("doc", "finding", "fixed", "fixed_history", "reopened") if field in c},
         })
     return sorted(cards, key=lambda c: (
-        c["number"] if isinstance(c.get("number"), int) else 10**9,
+        int(str(c["number"]).split("·")[0]) if c.get("number") is not None else 10**9,
+        str(c.get("number") or ""),
         c["anchor_id"],
         c["id"],
     ))

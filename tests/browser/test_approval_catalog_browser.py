@@ -128,8 +128,7 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             assert len(page.request.get(base + "api/plans/" + identifier).json()["history"]) == 2
             page.screenshot(path=str(output / "plans-after-changes.png"), full_page=True)
             selection = _card("v3")
-            selection.update(id="rollout-v3", anchor_id="d:q2", text="When should routing roll out?")
-            selection.pop("number")
+            selection.update(id="rollout-v3", anchor_id="d:q2", number=2, text="When should routing roll out?")
             selection["decision_request"] = {"prompt": "When should routing roll out?", "evidence": [{"anchor": "s:design"}], "catalog": True,
                 "options": [{"id": "later", "label": "Next month", "consequence": "Defer the rollout"}]}
             response = page.request.post(base + "api/comments", data=selection, headers={"X-Annotate-Agent": "agent:test"})

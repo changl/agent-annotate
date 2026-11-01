@@ -171,7 +171,7 @@ def _finding(store: dict, identifier, current_version=None) -> dict:
     from .cli import _item_numbers
     numbers = _item_numbers(store, current_version)
     matches = [c for items in store["anchors"].values() for c in items
-               if c.get("id") == identifier or (str(identifier).isdigit() and str(numbers.get(c.get("id"))) == str(identifier))]
+               if c.get("id") == identifier or str(numbers.get(c.get("id"))) == str(identifier)]
     matches = [c for c in matches if comment_category(c) == "findings"]
     if not matches:
         raise KeyError(identifier)
