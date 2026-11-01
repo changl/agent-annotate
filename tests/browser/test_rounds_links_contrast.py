@@ -185,8 +185,12 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
                 "https://linear.app/**",
                 lambda r: r.fulfill(body="<title>Linear</title>", content_type="text/html"),
             )
+            # srw: the new tab takes the foreground and headless Chrome throttles the opener
+            # behind it, so the opener answers Playwright's post-click round trips (hit-target
+            # stop, Page.enable) only when its own next timer wakes it: 0.2 s to over 30 s.
+            # The popup opening on ISSUE proves the click landed on the link.
             with page.expect_popup() as info:
-                link.click()
+                link.click(no_wait_after=True)
             popup = info.value
             popup.wait_for_load_state()
             assert popup.url == ISSUE

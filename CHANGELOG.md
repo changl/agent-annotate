@@ -1,5 +1,11 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Drafts stay with the document they were typed in (agent-annotate-hnc). Text typed while another plan was loading, or in a plan that was then withdrawn, was saved under the other plan, so it showed on the wrong plan and was missing where it was typed. Each document's drafts now keep the key they were loaded from, typing goes to the drafts of the boxes on screen, and switching plans keeps the boxes on screen untouched until the next plan shows.
+- Library: Restore over unsaved edits asks first, the same confirm the page uses before deleting unsent work; Cancel keeps the edits (agent-annotate-b0f). A comment started on a selected phrase keeps its quote after a reload or a switch to another item, and Save posts it with the quote.
+- Tests: the ticket-link checks no longer time out about one run in four (agent-annotate-srw). The cause was in Chrome, not the Send dialog: the new tab takes the foreground, and headless Chrome throttles the page behind it, which answered Playwright's after-click checks only when its own next timer fired (0.2 s to over 30 s). The tests now stop waiting on that page once the link is clicked and still require the new tab to open on the ticket. 40 runs in a row passed.
+
 ## 2.28.0
 
 - Images (Chang, 2026-10-31): every image shows a small id, e.g. `IMG F665`: the first hex of the image file's sha256, the same hash a staged asset's name starts with (`assets/f665a6bf0296-flow.png`), so it stays the same while the image does. Publish writes it as `data-img`; older versions read it from the file name. Next to the id, a magnifier button group (25% 50% 75% 100%) at the image's bottom edge opens the image at exactly that share of its real pixels (one image pixel per screen point at 100%), from the original file when the 1,200 px preview lacks the pixels, scrolling when it is bigger than the screen; the same choices switch scale there, and ✕ or Esc returns to the same place. A tap on the image there comments on that spot through the normal composer; the comment stores `target.image`, `image_src` and the point, and its pin shows there and on the page image. A tap on an image in the page still comments, as before. The rail card and composer show the id; the `annotate inbox` line and round answers show it with the image path, e.g. `IMG F665 (assets/f665a6bf0296-flow.png)`.

@@ -166,9 +166,10 @@ let DRAFTS = {};
 // hnc: each drafts object keeps the key it was loaded from, so a plan switch
 // or a withdrawn plan (PLAN_ID changes) never files it under another plan.
 const DRAFTS_KEY = new WeakMap();
-// The drafts the visible composers were filled from: what the reviewer types
-// goes there even while another document is entered to load.
-let VIEW_DRAFTS = null;
+// The drafts the boxes on screen were filled from, so what the reviewer types
+// goes there even while another document is entered to load: the document's
+// own boxes (general feedback, composer) and the cards drawn in the rail.
+let VIEW_DRAFTS = null, CARD_DRAFTS = null;
 function draftsKey(doc) {
   return 'annotate:drafts:' + location.pathname + ':' + (doc === 'plans' ? 'plan:' + PLAN_ID : doc);
 }
@@ -208,9 +209,12 @@ function setDraft(key, value, drafts = DRAFTS) {
     localStorage.setItem(k, JSON.stringify(stored));
   } catch {}
 }
-// A draft the reviewer typed or cleared in a visible box.
+// A draft the reviewer typed or cleared in a box on screen.
 function typeDraft(key, value) {
-  setDraft(key, value, VIEW_DRAFTS || DRAFTS);
+  setDraft(key, value, typedDrafts(key));
+}
+function typedDrafts(key) {
+  return ((key === 'gf' || key === 'pop' || key === 'sending:pop') ? VIEW_DRAFTS : CARD_DRAFTS) || DRAFTS;
 }
 
 // ── Compact layout detection ─────────────────────────────────────────
@@ -1614,25 +1618,29 @@ function renderDrawerNow() {
   let focusedTa = null;
   const unifiedCaret = document.activeElement && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd, document.activeElement.selectionDirection] : null;
   listEl.querySelectorAll('.reply-ta').forEach(ta => {
-    setDraft(ta.dataset.replyFor, ta.value || '');
+    typeDraft(ta.dataset.replyFor, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-reply-for="' + cssEsc(ta.dataset.replyFor) + '"]';
   });
   listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
-    setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
+    typeDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-decision-say-ta="' + cssEsc(ta.dataset.decisionSayTa) + '"]';
   });
   listEl.querySelectorAll('.note-edit-ta').forEach(ta => {
     const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
     if (!editingNote[k]) return;
-    setDraft('note:' + k, ta.value || '');
+    typeDraft('note:' + k, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-note-edit="' + cssEsc(ta.dataset.noteEdit) + '"][data-key="' + cssEsc(ta.dataset.key) + '"]';
   });
-  for (const k of Object.keys(DRAFTS)) if (k.startsWith('note:') && DRAFTS[k]) editingNote[k.slice(5)] = true;
   listEl.querySelectorAll('.edit-ta').forEach(ta => {
     if (!editingComment[ta.dataset.editFor]) return; // just saved or cancelled
-    setDraft('edit:' + ta.dataset.editFor, ta.value || '');
+    typeDraft('edit:' + ta.dataset.editFor, ta.value || '');
     if (ta === document.activeElement) focusedTa = '[data-edit-for="' + cssEsc(ta.dataset.editFor) + '"]';
   });
+  // The boxes kept above went to the drafts they were drawn from; the cards
+  // drawn now are this document's (its plan's, if the one shown was withdrawn).
+  ownDrafts();
+  CARD_DRAFTS = DRAFTS;
+  for (const k of Object.keys(DRAFTS)) if (k.startsWith('note:') && DRAFTS[k]) editingNote[k.slice(5)] = true;
   // An edit left open survives a reload: its draft reopens the editor.
   for (const k of Object.keys(DRAFTS)) if (k.startsWith('edit:') && DRAFTS[k]) editingComment[k.slice(5)] = true;
 
@@ -2819,7 +2827,7 @@ function wireCardActions(root) {
     const reply = { text, author: AUTHOR, author_name: IDENTITY && IDENTITY.name, author_email: IDENTITY && IDENTITY.email, ts: new Date().toISOString(), pending: true };
     const unpost = () => [c, storedComment(id)].forEach(cur => { const i = cur ? (cur.replies || []).indexOf(reply) : -1; if (i !== -1) cur.replies.splice(i, 1); });
     addPendingEdit(reply, () => { const cur = storedComment(id); if (cur && !(cur.replies || []).includes(reply)) (cur.replies = cur.replies || []).push(reply); });
-    const drafts = VIEW_DRAFTS || DRAFTS; // the box's document, even if another is entered by the answer
+    const drafts = typedDrafts(id); // the box's document, even if another is entered by the answer
     setDraft('sending:' + id, text, drafts);
     setDraft(id, '', drafts);
     ta.value = '';
@@ -3193,7 +3201,7 @@ async function savePopover() {
   if (!text || !pendingAnchor) return;
   const at = pendingAnchor;
   const sent = Object.assign({}, at, { text });
-  const drafts = VIEW_DRAFTS || DRAFTS;
+  const drafts = typedDrafts('pop'); // the composer's document, even if another is entered by the answer
   setDraft('sending:pop', sent, drafts);
   setDraft('pop', '', drafts);
   closePopover();

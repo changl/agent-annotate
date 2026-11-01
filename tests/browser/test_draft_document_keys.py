@@ -102,3 +102,22 @@ def test_draft_in_a_withdrawn_plan_stays_with_that_plan(tmp_path):
         assert "gf" not in _drafts(page, "beta")
 
     _session(tmp_path, slug_dir, body)
+
+
+def test_review_card_text_is_not_copied_into_a_plan_on_tab_switch(tmp_path):
+    slug_dir = _open(tmp_path)
+
+    def body(page):
+        page.evaluate("() => window.AA.go({view: 'review'})")
+        feedback(page)
+        box = page.locator("#comment-list .decision-say-ta").first
+        card = box.get_attribute("data-decision-say-ta")
+        box.fill("Review answer")
+        page.evaluate("() => window.AA.go({view: 'plans', plan: 'alpha'})")
+        playwright.expect(page.frame_locator("#content-frame").locator("h1")).to_have_text("Alpha")
+        ready(page)
+        review = page.evaluate("() => JSON.parse(localStorage.getItem('annotate:drafts:/:review') || '{}')")
+        assert review.get("say:" + card) == "Review answer"
+        assert "say:" + card not in _drafts(page, "alpha")
+
+    _session(tmp_path, slug_dir, body)

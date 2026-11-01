@@ -345,7 +345,7 @@ def test_extra_page_is_listed_in_documents(tmp_path):
             resource, lambda route: route.fulfill(body="<p>Reference content</p>", content_type="text/html")
         )
         with page.expect_popup() as popup_info:
-            link.click()
+            link.click(no_wait_after=True)  # srw: see test_rounds_links_contrast
         popup_info.value.close()
         feedback(page)
         assert (
