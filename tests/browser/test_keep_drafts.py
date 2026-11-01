@@ -229,6 +229,10 @@ def test_rail_composers_keep_text_through_polls_changes_versions_restarts_and_re
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Another note from the agent.", "version": "v1"}]})
         _agent(base, "api/comments/reply-card", {"status": "addressed_by_agent", "response_text": "Fixed in the next build."}, method="PUT")
         _poll(page)
+        # The page waits for the reviewer (dw4): the banner says what came.
+        assert page.evaluate("() => window.AnnotateDocs.comments().length") == before
+        _expect_all(page, "after the agent commented and resolved the card, not shown yet")
+        page.locator("#unified-version-banner button").click()
         page.wait_for_function("n => window.AnnotateDocs.comments().length > n", arg=before)
         page.wait_for_timeout(300)
         _expect_all(page, "after the agent commented and resolved the card")
@@ -533,5 +537,6 @@ def test_polls_read_the_poll_view_of_the_store(tmp_path):
         page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the poll view.", "version": "v1"}]})
         _poll(page)
+        page.locator("#unified-version-banner button").click()  # dw4: shown when the reviewer asks
         page.locator("#comment-list .citem", has_text="Seen through the poll view.").wait_for()
         assert urls and all(u.endswith("/comments.json?view=poll") for u in urls)
