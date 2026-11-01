@@ -1089,6 +1089,18 @@ function ensureStripStyle() {
     .annotate-add-note { display: flex !important; align-items: flex-end !important; gap: 8px !important; margin-top: 10px !important; }
     .annotate-add-note .annotate-decision-ta { flex: 1 1 auto !important; margin-top: 0 !important; }
     .annotate-note-add { background: var(--color-base-300) !important; color: var(--color-base-content) !important; font-weight: 600 !important; padding: 6px 12px !important; border-radius: .25rem !important; min-height: 2.25rem !important; }
+    /* Answered or Answer later: one line at its place; a tap opens it (2026-11-01). */
+    .annotate-folded-row {
+      display: flex !important; align-items: center !important; gap: 8px !important; width: 100% !important; min-height: 32px !important;
+      margin: 0 !important; padding: 2px 0 !important; border: 0 !important; background: transparent !important; color: inherit !important;
+      font: inherit !important; font-size: calc(11px * var(--aa-text, 1)) !important; text-align: left !important; cursor: pointer !important;
+    }
+    @media (pointer: coarse) { .annotate-folded-row { min-height: 44px !important; touch-action: manipulation !important; } }
+    .annotate-folded-row .annotate-decision-num { flex: 0 0 auto !important; margin: 0 !important; }
+    .annotate-folded-prompt { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; font-weight: 600 !important; }
+    .annotate-folded-what { flex: 0 1 auto !important; max-width: 40% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; font-weight: 700 !important; }
+    .annotate-folded:not(.annotate-answered) .annotate-folded-what { font-weight: 600 !important; color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
+    .annotate-decision-strip:has(> .annotate-folded:only-child) { padding-top: 2px !important; padding-bottom: 2px !important; }
   `;
   document.head.appendChild(style);
 }

@@ -69,6 +69,7 @@ def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
         item = frame.locator('[data-strip-item="question-11"]')
         item.locator("textarea").fill("Change the time to 10:30")
         item.locator(".annotate-decision-btns button").last.click()  # Answer in words
+        item.locator(".annotate-folded-row").click()  # an answered card folds; a tap opens it
         item.locator(".annotate-add-note textarea").wait_for()
         for text in ("Send the reminder at 8:30AM", "Typo, ignore this"):
             item.locator(".annotate-add-note textarea").fill(text)
@@ -92,6 +93,7 @@ def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
         assert "roll-out time blank" in answer["text"] and "Send the reminder at 8:30AM" in answer["text"]
         assert "Typo" not in answer["text"]
         # A note added after Send goes with the next one, alone.
+        item.locator(".annotate-folded-row").click()
         item.locator(".annotate-add-note textarea").fill("One more thing: tell QA")
         item.locator(".annotate-note-add").click()
         page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelectorAll('.annotate-send-state.is-pending').length === 1")
@@ -110,13 +112,14 @@ def test_changing_the_choice_keeps_the_notes(tmp_path):
         item = page.frame_locator("#content-frame").locator('[data-strip-item="question-11"]')
         item.locator("textarea").fill("After the demo")
         item.locator(".annotate-decision-btns button").first.click()  # Ship now, with a note
+        item.locator(".annotate-folded-row").click()
         item.locator(".annotate-answer-change").click()
         assert "Your notes stay" in item.inner_text()
         # Changing keeps every way to answer, words included (2026-10-31).
         assert item.locator(".annotate-decision-btns button", has_text="Answer in words").count() == 1
         item.locator("textarea.annotate-decision-cmt").fill("Tell QA first")
         item.locator(".annotate-decision-btns button", has_text="Ship later").click()
-        page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelector('.annotate-answer-choice')?.textContent === 'Ship later'")
+        page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelector('.annotate-folded-what')?.textContent === 'Ship later'")
         assert _stored(directory, "question-11")["decision"]["text"] == "Ship later\n\nAfter the demo\n\nTell QA first"
 
 
