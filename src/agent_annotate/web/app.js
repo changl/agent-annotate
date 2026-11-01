@@ -635,11 +635,12 @@
     const docs = window.AnnotateDocs;
     const list = $('#sum-list');
     const scroll = list.scrollTop;
-    list.innerHTML = p.tabs.map(t => `<section class="sum-tab" data-sum-tab="${t.id}">
+    $('#sum-gf-host').innerHTML = '';
+    list.innerHTML = p.tabs.map(t => `<section class="sum-tab${t.n ? '' : ' is-empty'}" data-sum-tab="${t.id}">
       <div class="sp-sum-cat">${esc(t.label)} <span class="badge badge-sm badge-ghost">${t.n}</span>${t.id !== AA.view ? `<a href="#view=${t.id}" data-sum-open="${t.id}">Open ${esc(t.label)}</a>` : ''}</div>
       <div class="sp-sum-note" data-sum-sub="${t.id}"></div>
       <div class="sum-tab-body" id="sum-body-${t.id}"></div></section>`).join('');
-    const warns = [];
+    const phrases = [];
     p.tabs.forEach(t => {
       const body = document.getElementById('sum-body-' + t.id);
       const sub = list.querySelector(`[data-sum-sub="${t.id}"]`);
@@ -649,24 +650,31 @@
       } else if (AA.isDoc(t.id)) {
         if (!docs.docs.includes(t.id)) { sub.textContent = 'Nothing to send yet.'; return; }
         docs.renderSummaryInto(t.id, body);
-        sub.textContent = docs.sentence(t.id);
+        // The tab's phrase goes into the dialog's one line.
+        const phrase = docs.sentence(t.id);
+        if (phrase) phrases.push([t.label, phrase]);
+        else sub.textContent = 'Nothing to send yet.';
+        // The unanswered line sits just above 'Not in this Send', which lists them.
         const w = docs.warning(t.id);
-        if (w) warns.push(t.label + ': ' + w);
+        if (w) {
+          const el = document.createElement('div');
+          el.className = 'sum-warn';
+          el.textContent = w;
+          body.insertBefore(el, body.querySelector('.sum-rest-hdr'));
+        }
       } else {
         const pr = AA.providers[t.id];
         const items = pr && pr.pending ? pr.pending() : [];
         sub.textContent = items.length ? '' : 'Nothing to send yet.';
-        body.innerHTML = items.map(it => `<div class="sum-row"><div class="sum-main"><span class="sum-q">${esc(it.label)}</span><span class="sum-a">${esc(it.answer || '')}</span></div></div>`).join('');
+        if (items.length) phrases.push([t.label, items.length + (items.length === 1 ? ' change' : ' changes')]);
+        body.innerHTML = items.map(it => `<div class="sum-row rl-row"><div class="rl-k"><span class="rl-num"></span><span class="rl-q">${esc(it.label)}</span></div><div class="rl-a"><p class="rl-note">${esc(it.answer || '')}</p></div></div>`).join('');
       }
       if (!sub.textContent) sub.hidden = true;
     });
     list.querySelectorAll('[data-sum-open]').forEach(a => a.addEventListener('click', () => close()));
-    $('#round-confirm-sub').textContent = p.total
-      ? p.total + (p.total === 1 ? ' item' : ' items') + ' will be sent to the agent as one review round, from every tab.'
+    $('#round-confirm-sub').textContent = phrases.length
+      ? 'Going to the agent: ' + (phrases.length === 1 ? phrases[0][1] : phrases.map(([l, s]) => l + ', ' + s).join('; ')) + '.'
       : 'Nothing to send yet.';
-    const warn = $('#round-confirm-warn');
-    warn.textContent = warns.join(' ');
-    warn.style.display = warns.length ? '' : 'none';
     list.scrollTop = scroll;
     syncCounts();
   }

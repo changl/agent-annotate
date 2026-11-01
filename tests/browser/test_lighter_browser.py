@@ -1,5 +1,5 @@
-"""Lighter load (2026-10-31): History and strip Evidence are built when opened, fonts are woff2 fetched once,
-and Send's General feedback row has a text button. WebKit with the iPad Pro 11 profile."""
+"""Lighter load (2026-10-31): History and strip Evidence are built when opened and fonts are woff2
+fetched once (Send's general feedback box: test_send_dialog_parts). WebKit with the iPad Pro 11 profile."""
 
 import json
 import socket
@@ -113,28 +113,3 @@ def test_fonts_are_woff2_and_fetched_once_across_shell_and_document(tmp_path):
         # The document frame asks for the same URL and gets it from the cache.
         assert len(sizes) == 2 and sum(1 for n in sizes if n > 0) == 1, sizes
         assert frame.evaluate("() => document.fonts.check('12px Roboto')")
-
-
-def test_general_feedback_row_has_add_and_edit_text_buttons(tmp_path):
-    directory = _directory(tmp_path)
-    with _ipad(tmp_path, directory) as (page, _, _history, _fonts):
-        page.evaluate("window.AA.send.open()")
-        row = page.locator('#round-confirm-backdrop [data-sum-id="gf"]')
-        button = row.locator('[data-sum-edit="gf"]')
-        button.wait_for()
-        assert button.inner_text() == "Add general feedback"
-        assert button.locator("svg").count() == 0
-
-        button.tap()
-        box = row.locator("#sum-gf-ta")
-        box.wait_for()
-        box.fill("Overall this reads well")
-        button.tap()
-        page.wait_for_function("""() => document.querySelector('#round-confirm-backdrop [data-sum-id="gf"] [data-sum-edit="gf"]')
-          .textContent === 'Edit'""")
-        assert "Overall this reads well" in row.inner_text()
-        assert button.get_attribute("aria-label") == "Edit general feedback"
-
-        button.tap()
-        box.wait_for()
-        assert box.input_value() == "Overall this reads well"

@@ -3739,24 +3739,22 @@ function renderRoundBar() { updateSendState(); }
 let sumEditing = null; // card id or 'gf' being edited inside the summary
 const sumRestOpen = new Set(); // documents whose 'Not in this Send' group is open
 function summarySentence() {
-  const s = roundStats();
   const plan = sendPlan();
   const q = sendables();
-  // 2.20's own sentences, counted over exactly what this Send sends.
+  // One plain phrase per document; app.js joins them into the dialog's one line.
   const roundN = plan.round.length + plan.answers.length;
-  if (roundN > 0) {
-    return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
-      (s.decided + plan.answers.filter(c => !decisionAnswer(c)).length) + ' of ' + s.total + ' cards decided).';
-  }
-  return q.total === 0 ? 'Nothing to send yet.' : '';
+  const parts = [];
+  if (roundN) parts.push(roundN + (roundN === 1 ? ' answer' : ' answers'));
+  if (plan.push.length) parts.push(plan.push.length + (plan.push.length === 1 ? ' comment' : ' comments'));
+  if (q.gf) parts.push('general feedback');
+  return parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : (parts[0] || '');
 }
 function summaryWarning() {
   const plan = sendPlan();
   const roundN = plan.round.length + plan.answers.length;
   const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c) && !isSetAside(c)).length;
   if (undecided > 0 && roundN > 0) {
-    return undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
-      ' still undecided — the round will report ' + (undecided === 1 ? 'it' : 'them') + ' as undecided.';
+    return undecided + (undecided === 1 ? ' question is' : ' questions are') + ' still unanswered; the agent will see ' + (undecided === 1 ? 'it' : 'them') + ' as open.';
   }
   return '';
 }
@@ -3764,7 +3762,10 @@ function renderSummaryInto(list, editable) {
   const plan = sendPlan();
   const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
-  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id)).sort(byNum);
+  // Not in this Send: newest first, by when it was sent or answered; card number when neither (Chang 2026-10-31).
+  const restTs = c => Math.max(Date.parse(c.flagged_at) || 0, Date.parse(c.decision && c.decision.ts) || 0);
+  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id))
+    .sort((a, b) => restTs(b) - restTs(a) || byNum(b, a));
   const doc = DOC;
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
@@ -3772,7 +3773,6 @@ function renderSummaryInto(list, editable) {
     const draft = hasSayDraft(c);
     const missing = !answered && !draft;
     const editing = editable && sumEditing === c.id;
-    const ansText = draft ? '“' + firstLine(sayDraft(c)) + '”' : answered ? answerLabel(c).text : 'Not answered';
     const sent = answered && !draft && !isRoundPending(c);
     const editLabel = missing ? 'Answer' : 'Change';
     let edit = '';
@@ -3791,12 +3791,24 @@ function renderSummaryInto(list, editable) {
     const pencil = (canChangeAnswer(c) || !answered)
       ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="${escAttr(c.id)}" data-sum-doc="${doc}" aria-label="${editLabel} #${num || ''}" title="${editLabel}" aria-expanded="${editing ? 'true' : 'false'}">${ico('pencil')}</button>`
       : '<span class="btn btn-xs btn-square btn-ghost" aria-hidden="true" style="visibility:hidden"></span>';
-    return `<div class="sum-row${missing ? ' is-missing' : ''}" data-sum-id="${escAttr(c.id)}">
-      <div class="sum-main">
-        <span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(displayPrompt(c))}</span>
-        <span class="sum-a${sent ? ' is-sent' : ''}">${esc(ansText)}${sent ? ' · sent' : ''}</span>
-        ${pencil}
-      </div>
+    // The answer under its question, full length; a picked option and
+    // the note typed with it read as label + paragraph.
+    let ans;
+    if (draft) ans = `<p class="rl-note">${esc(sayDraft(c))}</p>`;
+    else if (!answered) ans = '<span class="rl-none">Not answered</span>';
+    else {
+      const t = answerLabel(c).text;
+      const d = decisionAnswer(c);
+      const cut = t.indexOf('\n\n');
+      const label = d.verdict === 'select' ? (cut === -1 ? t : t.slice(0, cut)) : '';
+      const note = d.verdict === 'select' ? (cut === -1 ? '' : t.slice(cut + 2).trim()) : t;
+      ans = (label ? `<span class="rl-label">${esc(label)}</span>` : '') + (note ? `<p class="rl-note">${esc(note)}</p>` : '');
+      if (sent) ans += '<span class="rl-sent">sent</span>';
+    }
+    return `<div class="sum-row rl-row${missing ? ' is-missing' : ''}${sent ? ' is-sent' : ''}" data-sum-id="${escAttr(c.id)}">
+      <div class="rl-k">${num ? `<span class="rl-num">#${num}</span>` : '<span class="rl-num"></span>'}<span class="rl-q">${esc(displayPrompt(c))}</span></div>
+      <div class="rl-a">${ans}</div>
+      ${pencil}
       ${edit}
     </div>`;
   };
@@ -3805,24 +3817,34 @@ function renderSummaryInto(list, editable) {
     const num = NUM_MAP[c.id];
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
     const text = strandedSay(c) ? sayDraft(c) : last ? last.text : c.text;
-    return `<div class="sum-row"><div class="sum-main"><span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(firstLine(text))}</span></div></div>`;
+    const key = strandedSay(c) || last ? (isAgentAuthor(c.author) ? firstLine(c.text) : 'Reply') : 'Comment';
+    return `<div class="sum-row rl-row" data-sum-id="${escAttr(c.id)}">
+      <div class="rl-k"><span class="rl-num">${num ? '#' + num : ''}</span><span class="rl-q">${esc(key)}</span></div>
+      <div class="rl-a"><p class="rl-note">${esc(text)}</p></div>
+    </div>`;
   };
   const group = (label, n) => `<div class="sum-group">${label}${n == null ? '' : ` <span class="badge badge-sm badge-ghost">${n}</span>`}</div>`;
   let html = '';
   const verdictRows = [...plan.round, ...plan.answers].sort(byNum);
-  if (verdictRows.length) html += group('Verdicts', verdictRows.length) + verdictRows.map(decisionRow).join('');
-  if (plan.push.length) html += group('Open comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
-  // General feedback: a text button says what it adds (Chang 2026-10-31: the bare + was unclear).
+  if (verdictRows.length) html += group('Answers', verdictRows.length) + verdictRows.map(decisionRow).join('');
+  if (plan.push.length) html += group('Comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
+  // General feedback for the document on screen is an open box at the top
+  // of the dialog, no button to reveal it (Chang 2026-10-31). Another
+  // document's stays a row whose Edit opens that document's tab.
   const gf = gfDraft();
-  const gfEditing = editable && sumEditing === 'gf';
-  html += group('General feedback', gf ? 1 : 0);
-  html += `<div class="sum-row" data-sum-id="${editable ? 'gf' : 'gf-' + doc}">
-    <div class="sum-main">
-      <span class="sum-q">${gf ? '“' + esc(firstLine(gf)) + '”' : '<span class="sum-none">None</span>'}</span>
-      <button type="button" class="btn btn-xs" data-sum-edit="gf" data-sum-doc="${doc}"${gf ? ' aria-label="Edit general feedback"' : ''} aria-expanded="${gfEditing ? 'true' : 'false'}">${gf ? 'Edit' : 'Add general feedback'}</button>
-    </div>
-    ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
-  </div>`;
+  const gfHost = editable ? document.getElementById('sum-gf-host') : null;
+  if (gfHost) {
+    gfHost.innerHTML = `<label class="rl-gf"><span class="rl-gf-lbl">General feedback</span>
+      <textarea class="textarea sum-gf-ta rl-gf-ta" id="sum-gf-ta" rows="2" placeholder="Anything else for the agent? (optional)"></textarea></label>`;
+  } else if (gf) {
+    html += group('General feedback', 1);
+    html += `<div class="sum-row" data-sum-id="gf-${doc}">
+      <div class="sum-main">
+        <span class="sum-q">“${esc(firstLine(gf))}”</span>
+        <button type="button" class="btn btn-xs" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="Edit general feedback">Edit</button>
+      </div>
+    </div>`;
+  }
   // Collapsed by default and built only when opened, like the rail
   // sections (Chang 2026-10-31: "no need to constantly show this or even
   // load it"). The header keeps unanswered ones discoverable.
@@ -3846,7 +3868,9 @@ function renderSummaryInto(list, editable) {
     }));
     return;
   }
-  const gta = list.querySelector('#sum-gf-ta');
+  const gta = gfHost.querySelector('#sum-gf-ta');
+  // The open box grows with its text up to its CSS max-height, then scrolls.
+  const grow = () => { gta.style.height = 'auto'; gta.style.height = (gta.scrollHeight + 2) + 'px'; };
   if (gta) {
     gta.value = DRAFTS.gf || '';
     gta.addEventListener('input', () => {
@@ -3856,8 +3880,11 @@ function renderSummaryInto(list, editable) {
       renderGeneralFeedback();
       updateSendState();
       syncSummaryCounts();
+      grow();
     });
-    gta.focus();
+    // Not focused on open: that would raise the iPad keyboard.
+    requestAnimationFrame(grow);
+    if (sumEditing === 'gf') gta.focus(); // Edit from another tab
   }
   list.querySelectorAll('[data-decision-say-ta]').forEach(ta => {
     ta.value = DRAFTS['say:' + ta.dataset.decisionSayTa] || '';
@@ -3870,7 +3897,6 @@ function renderSummaryInto(list, editable) {
   list.querySelectorAll('[data-sum-edit]').forEach(btn => btn.addEventListener('click', () => {
     sumEditing = sumEditing === btn.dataset.sumEdit ? null : btn.dataset.sumEdit;
     renderSummary();
-    if (sumEditing === 'gf') renderGeneralFeedback();
   }));
   list.querySelectorAll('.decision-btn-sum').forEach(btn => btn.addEventListener('click', async () => {
     const r = await pickOption(list, btn);

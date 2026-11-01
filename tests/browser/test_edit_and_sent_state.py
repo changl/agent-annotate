@@ -126,7 +126,8 @@ def test_the_send_summary_uses_the_screen(tmp_path):
         page.locator('#comment-list [data-decision-say-ta="question-11"]').fill("Ship now")
         page.locator("#send-btn").click()
         box = page.locator("#round-confirm").bounding_box()
-        assert box["width"] >= 900
+        # The reading list's full 780 px measure (Chang approved send-final, 2026-10-31), not a cramped box.
+        assert box["width"] >= 780
         assert box["y"] >= 0 and box["y"] + box["height"] <= page.viewport_size["height"]
 
 

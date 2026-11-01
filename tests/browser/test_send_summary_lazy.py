@@ -40,7 +40,8 @@ def test_not_in_this_send_is_collapsed_and_built_on_open(tmp_path):
             row.locator(".decision-btn-sum").first.tap()
             # Answered now: it moves into this Send's verdicts and the group empties.
             page.wait_for_function("() => !document.querySelector('.sum-rest-hdr')")
-            assert "· sent" not in page.locator('#round-confirm-backdrop [data-sum-id="question-11"]').inner_text()
+            moved = page.locator('#round-confirm-backdrop [data-sum-id="question-11"]')
+            assert moved.locator(".rl-sent").count() == 0 and "is-sent" not in moved.get_attribute("class")
             browser.close()
     finally:
         _stop(server)
