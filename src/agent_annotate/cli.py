@@ -1518,7 +1518,8 @@ def _publish(args) -> int:
             # Transport: publish (insert public route)
             transport_name = args.transport or cfg.get("transport", "local")
             hostname = args.hostname or cfg.get("hostname")
-            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{project}/{slug}" if transport_name == "funnel" else f"/{slug}")
+            from .pagegen import slugify
+            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{slugify(project)}/{slug}" if transport_name == "funnel" else f"/{slug}")
             if path_prefix and not path_prefix.startswith("/"):
                 path_prefix = "/" + path_prefix
             path_prefix = path_prefix.rstrip("/")
