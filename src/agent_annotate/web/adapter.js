@@ -300,6 +300,16 @@ function wireClicks() {
       return;
     }
 
+    // A tap on an image opens it large; comments on it are placed there.
+    // Alt/Option-click still comments on the image's block directly.
+    const img = !e.altKey && viewableImage(e.target);
+    if (img) {
+      e.stopPropagation();
+      e.preventDefault();
+      openViewer(img);
+      return;
+    }
+
     // Inline decision strips (see "Inline body decision strips" below) wire
     // their own click handlers directly on their buttons/textarea. A click on
     // any other part of a strip (prompt text, padding) must never fall
@@ -1823,6 +1833,7 @@ function openEarlier(details) {
   tpl.content.querySelectorAll('section[data-unchanged-since]').forEach(sec => sec.removeAttribute('data-unchanged-since'));
   tpl.replaceWith(tpl.content);
   details.open = true;
+  labelImages();
   wrapScrollTables();
   wireCopyButtons();
   renderDecisionStrips();
@@ -1916,6 +1927,7 @@ function wireBridge() {
     } else if (data.type === 'annotate:card-hover') {
       setCardHover(data.on ? data.anchorId : null, data.target || null);
     } else if (data.type === 'annotate:scroll-to') {
+      closeViewer();
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:comment-counts') {
       latestCounts = data.counts || {};
@@ -1928,6 +1940,7 @@ function wireBridge() {
       openUnchangedSectionsForOpenCards();
       renderCardStates();
       renderBadges();
+      viewerPins();
       postExcerpts();
     }
   });
@@ -2278,7 +2291,7 @@ function wireCommentableHover() {
     if (!byMouse(e)) return;
     if (commentable) commentable.classList.remove('unified-commentable');
     commentable = null;
-    if (e.target.closest(INTERACTIVE_SEL + ', [data-annotate-strip], .annotate-unchanged-bar, #badge-layer')) return;
+    if (e.target.closest(INTERACTIVE_SEL + ', [data-annotate-strip], .annotate-unchanged-bar, #badge-layer') || viewableImage(e.target)) return;
     const a = findParentAnchor(e.target);
     if (a) { commentable = a; a.classList.add('unified-commentable'); }
   });
@@ -2742,6 +2755,200 @@ function ownAuthorStyles() {
   });
 }
 
+// ── Images: the IMG id label and the large viewer ───────────────────
+// An image's id is the start of its content hash: publish writes it as
+// data-img (long_pages.image_ids); an older page falls back to the same hash
+// at the front of a staged asset's file name (assets/<sha256[:12]>-name).
+function imageId(img) {
+  if (/^[0-9A-F]{4,64}$/.test(img.dataset.img || '')) return img.dataset.img;
+  const m = /(?:^|\/)([0-9a-f]{12})-[^/]*$/.exec(img.getAttribute('data-full') || img.getAttribute('src') || '');
+  return m ? m[1].slice(0, 4).toUpperCase() : '';
+}
+
+function viewableImage(el) {
+  const img = el && el.closest ? el.closest('img') : null;
+  if (!img || img.closest('a[href], .aa-viewer, #badge-layer, [data-annotate-strip]')) return null;
+  return findParentAnchor(img) ? img : null;
+}
+
+const labelled = new WeakSet();
+function labelImages() {
+  document.querySelectorAll('img').forEach(img => {
+    if (labelled.has(img) || !viewableImage(img)) return;
+    labelled.add(img);
+    // iOS sends a tap's click only to an element that listens for one; wireClicks opens the viewer.
+    img.addEventListener('click', () => {});
+    const id = imageId(img);
+    if (!id) return;
+    const label = document.createElement('span');
+    label.className = 'aa-img-id';
+    label.textContent = 'IMG ' + id;
+    // A figure's caption under the image carries it; elsewhere it sits under the image.
+    const cap = img.nextElementSibling && img.nextElementSibling.tagName === 'FIGCAPTION' ? img.nextElementSibling : null;
+    if (cap) cap.prepend(label); else img.after(label);
+  });
+}
+
+let viewer = null; // {box, img, anchorEl, aid, id, css, frame, pins, s, tx, ty, scrollY}
+
+function viewerPins() {
+  if (!viewer) return;
+  const { pins, aid, id, css } = viewer;
+  pins.innerHTML = '';
+  (latestPins[aid] || []).forEach(en => {
+    const t = en.target;
+    if (!t || !t.offset || !(id ? t.image === id : t.css === css)) return;
+    const b = makePin(aid, [en], false);
+    b.classList.add('bpin', 'aa-viewer-pin');
+    b.style.left = clamp01(t.offset.dx, 0.5) * 100 + '%';
+    b.style.top = clamp01(t.offset.dy, 0.5) * 100 + '%';
+    pins.append(b);
+  });
+}
+
+function viewerApply() {
+  const v = viewer;
+  v.frame.style.transform = `translate(${v.tx}px,${v.ty}px) scale(${v.s})`;
+  v.frame.style.setProperty('--s', v.s);
+}
+
+// Zoom to s about a point of the stage, keeping that point still.
+function viewerZoom(s, px, py) {
+  const v = viewer;
+  s = Math.max(1, Math.min(8, s));
+  v.tx = px - (px - v.tx) * s / v.s;
+  v.ty = py - (py - v.ty) * s / v.s;
+  v.s = s;
+  if (s === 1) viewerFit();
+  viewerApply();
+}
+
+function viewerFit() {
+  const v = viewer;
+  const stage = v.box.querySelector('.aa-viewer-stage').getBoundingClientRect();
+  const nw = v.big.naturalWidth || v.img.naturalWidth || 1, nh = v.big.naturalHeight || v.img.naturalHeight || 1;
+  const k = Math.min(stage.width / nw, stage.height / nh);
+  v.frame.style.width = nw * k + 'px';
+  v.frame.style.height = nh * k + 'px';
+  v.s = 1;
+  v.tx = (stage.width - nw * k) / 2;
+  v.ty = (stage.height - nh * k) / 2;
+  viewerApply();
+}
+
+function closeViewer() {
+  if (!viewer) return;
+  const { box, scrollY } = viewer;
+  viewer = null;
+  box.remove();
+  document.documentElement.classList.remove('aa-viewer-open');
+  window.scrollTo(window.scrollX, scrollY);
+}
+
+function openViewer(img) {
+  closeViewer();
+  const anchorEl = findParentAnchor(img);
+  const aid = getAnchorIdFromEl(anchorEl);
+  const id = imageId(img);
+  const box = document.createElement('div');
+  box.className = 'aa-viewer';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.innerHTML = `<div class="aa-viewer-bar"><span class="aa-viewer-title"></span>
+    <span class="aa-viewer-hint">Tap the image to comment on that spot · pinch to zoom</span>
+    <button type="button" class="aa-viewer-close" aria-label="Close the image">✕</button></div>
+    <div class="aa-viewer-stage"><div class="aa-viewer-frame"><img alt=""><div class="aa-viewer-pins"></div></div></div>`;
+  const title = (id ? 'IMG ' + id + ' · ' : '') + (img.getAttribute('alt') || anchorName(aid));
+  box.querySelector('.aa-viewer-title').textContent = title;
+  box.setAttribute('aria-label', title);
+  const big = box.querySelector('.aa-viewer-frame img');
+  big.alt = img.getAttribute('alt') || '';
+  viewer = { box, img, big, anchorEl, aid, id, css: cssPathFrom(anchorEl, img) || '', scrollY: window.scrollY,
+             frame: box.querySelector('.aa-viewer-frame'), pins: box.querySelector('.aa-viewer-pins'), s: 1, tx: 0, ty: 0 };
+  big.src = img.getAttribute('data-full') || img.currentSrc || img.src;
+  document.documentElement.classList.add('aa-viewer-open');
+  document.body.append(box);
+  viewerFit();
+  big.addEventListener('load', () => { if (viewer && viewer.big === big) viewerFit(); });
+  viewerPins();
+  box.querySelector('.aa-viewer-close').addEventListener('click', closeViewer);
+  box.querySelector('.aa-viewer-close').focus();
+  wireViewerGestures(box.querySelector('.aa-viewer-stage'));
+}
+
+function wireViewerGestures(stage) {
+  const pts = new Map();
+  let pinch = null, start = null;
+  const local = e => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.closest('.bpin')) return;
+    try { stage.setPointerCapture(e.pointerId); } catch {}
+    pts.set(e.pointerId, local(e));
+    if (pts.size === 1) start = { x: e.clientX, y: e.clientY, t: performance.now(), tx: viewer.tx, ty: viewer.ty, moved: false };
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, s: viewer.s };
+      start.moved = true;
+    }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!viewer || !pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, local(e));
+    if (pinch && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      viewerZoom(pinch.s * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    } else if (start && !pinch) {
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (Math.hypot(dx, dy) > 6) start.moved = true;
+      if (start.moved && viewer.s > 1) { viewer.tx = start.tx + dx; viewer.ty = start.ty + dy; viewerApply(); }
+    }
+  });
+  const end = e => {
+    if (!pts.delete(e.pointerId)) return;
+    if (pts.size < 2) pinch = null;
+    if (pts.size || !start) return;
+    const tap = !start.moved && performance.now() - start.t < 600 && e.type === 'pointerup';
+    start = null;
+    if (tap && viewer) viewerComment(e);
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+  stage.addEventListener('wheel', e => {
+    e.preventDefault();
+    const [x, y] = local(e);
+    viewerZoom(viewer.s * Math.exp(-e.deltaY / (e.ctrlKey ? 100 : 300)), x, y);
+  }, { passive: false });
+}
+
+// A tap on the image: the same create message a click on the page sends,
+// with the point on the image, so the page pin lands on that spot too.
+function viewerComment(e) {
+  const v = viewer;
+  const r = v.big.getBoundingClientRect();
+  const dx = (e.clientX - r.left) / r.width, dy = (e.clientY - r.top) / r.height;
+  if (!(dx >= 0 && dx <= 1 && dy >= 0 && dy <= 1)) return;
+  const target = { schema: 1, tag: 'img', offset: { dx: Math.round(dx * 1000) / 1000, dy: Math.round(dy * 1000) / 1000 } };
+  if (v.css) target.css = v.css;
+  if (v.id) target.image = v.id;
+  target.image_src = v.img.getAttribute('data-full') || v.img.getAttribute('src') || '';
+  v.pins.querySelectorAll('.aa-viewer-new').forEach(p => p.remove());
+  const mark = document.createElement('div');
+  mark.className = 'aa-viewer-pin aa-viewer-new';
+  mark.style.left = dx * 100 + '%';
+  mark.style.top = dy * 100 + '%';
+  v.pins.append(mark);
+  postToParent({ type: 'annotate:pin-click', anchorId: v.aid, anchorLabel: anchorName(v.aid), target, x: e.clientX, y: e.clientY });
+}
+
+function wireViewerKeys() {
+  window.addEventListener('keydown', e => {
+    if (!viewer || e.key !== 'Escape') return;
+    e.stopImmediatePropagation();
+    closeViewer();
+  }, true);
+  window.addEventListener('resize', () => { if (viewer) viewerFit(); });
+}
+
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
   try { ownAuthorStyles(); } catch (e) { console.warn('[adapter] could not apply annotate styling', e); }
@@ -2759,6 +2966,8 @@ async function init() {
   // Before the first paint settles, so a later version opens compact.
   initUnchangedSections();
   wireEarlier();
+  labelImages();
+  wireViewerKeys();
 
   window.addEventListener('resize', scheduleBadgeRefresh);
   window.addEventListener('resize', scheduleScrollLockRecheck);

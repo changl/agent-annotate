@@ -2158,6 +2158,12 @@ def _round_pending_ids(store: dict) -> set:
             if isinstance(c.get("decision"), dict) and c["decision"].get("round_pending")}
 
 
+def _image_tag(target) -> str:
+    """'IMG F665 ' for a comment placed on an image (long_pages.image_ids), else ''."""
+    image = target.get("image") if isinstance(target, dict) else None
+    return f"IMG {image} " if isinstance(image, str) and re.fullmatch(r"[0-9A-F]{4,64}", image) else ""
+
+
 def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None) -> str:
     """ts  event  comment_id  anchor  author  verdict/status  text[:120]
 
@@ -2176,6 +2182,7 @@ def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None)
                           (ev.get("event") == "round_submitted" and ev.get("note")))
     shown = text if full_reviewer_text and not author.startswith("agent:") \
         else _clip(text, 120)
+    shown = _image_tag(ev.get("target")) + shown
     return "  %-20s %-17s %-10s %-18s %-24s %-9s %s" % (
         ev.get("ts") or "",
         (ev.get("event") or "")[:17],
@@ -2213,7 +2220,8 @@ def _round_lines(ev: dict) -> list[str]:
         words = str(answer.get("text") or "")
         lines.append(row % ("", "  answer", str(answer.get("comment_id") or "")[:10],
                             f"#{number}" if isinstance(number, int) else "", str(answer.get("by") or "")[:24],
-                            str(answer.get("verdict") or "")[:9], f"{prompt} → {words}" if words else prompt))
+                            str(answer.get("verdict") or "")[:9],
+                            _image_tag(answer) + (f"{prompt} → {words}" if words else prompt)))
     for edit in ev.get("edits") or []:
         if not isinstance(edit, dict):
             continue

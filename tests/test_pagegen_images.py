@@ -110,7 +110,7 @@ def test_a_figure_is_copied_into_assets_and_carries_a_stable_anchor(tmp_path):
     assert len(copies) == 1 and copies[0].read_bytes() == shot.read_bytes()
     assert copies[0].name.endswith("-checkout.png")
     assert (f'<figure class="aa-figure" data-orient="portrait" data-anchor-id="fig:checkout-today">'
-            f'<img src="assets/{copies[0].name}" alt="Checkout today" width="390" height="844" loading="lazy" decoding="async">'
+            f'<img src="assets/{copies[0].name}" data-img="{copies[0].name[:4].upper()}" alt="Checkout today" width="390" height="844" loading="lazy" decoding="async">'
             "<figcaption>Checkout today</figcaption></figure>") in canvas
     registry = json.loads((slug_dir / "versions" / "v1.html").read_text()
                           .split("const ANCHOR_REGISTRY = ", 1)[1].split(";\n", 1)[0])

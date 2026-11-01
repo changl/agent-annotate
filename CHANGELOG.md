@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Images (Chang, 2026-10-31): every image shows a small id, e.g. `IMG F665`: the first hex of the image file's sha256, the same hash a staged asset's name starts with (`assets/f665a6bf0296-flow.png`), so it stays the same while the image does. Publish writes it as `data-img`; older versions read it from the file name. A tap on an image now opens it large instead of starting a comment: pinch or wheel to zoom, drag to pan, ✕ or Esc to close back to the same place. A tap on the image there comments on that spot through the normal composer; the comment stores `target.image`, `image_src` and the point, its pin shows in the viewer and on the page image, and the rail card, composer, `annotate inbox` line and round answers show the id. Option/Alt-click and the caption still comment on the image's block directly.
+
 - Simplification step 4: one question card. The document's cards are now built by the rail's builder (shell.js `renderDecisionBlock`, handed to adapter.js through `AnnotateDocs.stripCard`), with the same actions, drafts and notes code; each place keeps its own look. The document's own card builder, its decision posting and the four messages that synced the two copies are gone. Before/after shots on a copy of FLD match pixel for pixel in the rail and the document (iPad and desktop). A failed send now stays shown on the card until the next try.
 
 - Lighter page load (Chang, card #11, 2026-10-31), measured on a copy of FLD:

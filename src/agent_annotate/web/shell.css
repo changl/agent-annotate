@@ -135,6 +135,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem-node{font-size:calc(11px * var(--aa-text, 1));font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px;min-height:22px}
 .citem-node-name{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .citem-num{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;color:var(--color-base-content);background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:0 6px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.citem-img-id{flex-shrink:0;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--color-base-content)}
 .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--color-error);flex-shrink:0}
 .unread-dot.new-reply{background:var(--color-secondary)}
 .citem-kbd{display:inline-flex;gap:2px;flex-shrink:0}
