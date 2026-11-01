@@ -3757,7 +3757,10 @@ function renderSummaryInto(list, editable) {
   const plan = sendPlan();
   const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
-  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id)).sort(byNum);
+  // Not in this Send: newest first, by when it was sent or answered; card number when neither (Chang 2026-10-31).
+  const restTs = c => Math.max(Date.parse(c.flagged_at) || 0, Date.parse(c.decision && c.decision.ts) || 0);
+  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id))
+    .sort((a, b) => restTs(b) - restTs(a) || byNum(b, a));
   const doc = DOC;
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
