@@ -190,7 +190,7 @@
     ],
     "writer_audit": {
       "server": "All v2 mutations and legacy-store conversion use atomic helpers under _locked_store.",
-      "cli": "publish/withdraw and finding changes use shared helpers or the API; migrate/close fixed here; claim and names write metadata, not comments.",
+      "cli": "publish/withdraw and finding changes use shared helpers or the API; close fixed here; claim and names write metadata, not comments.",
       "backfill": "Apply and restore use _atomic_bytes under the page store lock.",
       "hooks_mcp": "Hooks only read comments; MCP writes delegate to the local API or shared CLI helpers.",
       "staging": "Consolidation writes into a private staging directory installed by rename; benchmark in-place writes affect private test copies only.",

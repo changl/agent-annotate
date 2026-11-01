@@ -25,7 +25,6 @@ Subcommands:
     doctor [--versions [--json]]          validate the installation; --versions exits 1
                                           when launcher/skills/plugin/pages differ from
                                           the installed release
-    migrate <legacy.html>                 one-shot v1→v2 migration
     inbox <slug> [--unread] [--json]      read this session's unseen bus events
     cards <slug>                          list decision cards and their verdicts
     ask <slug> --from cards.json          create/refresh decision cards in one call
@@ -83,6 +82,7 @@ from . import __version__
 from .categories import CATEGORIES as CATEGORY_IDS
 from .categories import comment_category as _comment_category
 from .hooks.decision_state import VERDICT_COLUMNS, is_live_card
+from .hooks.decision_state import is_set_aside as _is_set_aside
 from .hooks.decision_state import is_undecided as _is_undecided
 from .page_names import page_name, set_page_name, validate_name
 from .pagegen import add_parser as _add_new_parser
@@ -539,12 +539,6 @@ def _server_capabilities(port: int, base_path: str = "", *, timeout: float = 1.0
             if response.status != 200:
                 raise ValueError(f"capabilities returned HTTP {response.status}")
             payload = json.loads(response.read(1024 * 1024 + 1))
-        # One-release upgrade bridge: old servers ignore the identity header.
-        # Deployment still requires exactly one candidate and a fresh exact ps match.
-        identity_fields = {"pid", "slug_dir", "port", "public_base_path"}
-        if (isinstance(payload, dict) and not identity_fields.intersection(payload)
-                and isinstance(payload.get("version"), str) and isinstance(payload.get("runtime"), dict)):
-            return payload
         if (not isinstance(payload, dict) or type(payload.get("pid")) is not int or payload["pid"] <= 0
                 or not isinstance(payload.get("slug_dir"), str) or not Path(payload["slug_dir"]).is_absolute()
                 or payload.get("port") != port or payload.get("public_base_path") != base_path):
@@ -1896,101 +1890,6 @@ def _print_retired_count() -> None:
         print(f"\n  {n} retired entries (`{_inv()} status --retired` to list)")
 
 
-def cmd_migrate(args) -> int:
-    """One-shot legacy-HTML → v2 directory layout.
-
-    Steps:
-      1. Resolve <legacy.html> path.
-      2. Create <slug>/ in the same parent directory.
-      3. Move HTML to versions/v1.html; symlink current.html → versions/v1.html.
-      4. Write current.meta.json.
-      5. Migrate any sibling *.comments.json into <slug>/comments.json (v2).
-    """
-    legacy_path = Path(args.legacy_html).resolve()
-    if not legacy_path.exists() or not legacy_path.is_file():
-        print(f"ERROR: legacy HTML not found: {legacy_path}", file=sys.stderr)
-        return 2
-
-    slug = args.slug or legacy_path.stem
-    parent = legacy_path.parent
-    slug_dir = parent / slug
-    versions_dir = slug_dir / "versions"
-    archive_dir = slug_dir / "archive"
-    slug_dir.mkdir(exist_ok=True)
-    versions_dir.mkdir(exist_ok=True)
-    archive_dir.mkdir(exist_ok=True)
-
-    initial_version = args.version or "v1"
-    target_html = versions_dir / f"{initial_version}.html"
-
-    if args.copy:
-        target_html.write_bytes(legacy_path.read_bytes())
-        action = "copied"
-    else:
-        os.replace(legacy_path, target_html)
-        action = "moved"
-
-    current_symlink = slug_dir / "current.html"
-    if current_symlink.exists() or current_symlink.is_symlink():
-        current_symlink.unlink()
-    current_symlink.symlink_to(Path("versions") / f"{initial_version}.html")
-
-    meta = {
-        "current": initial_version,
-        "history": [
-            {"version": initial_version, "ts": _now_iso(), "label": args.label or "initial"}
-        ],
-    }
-    (slug_dir / "current.meta.json").write_text(
-        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-    # Migrate comments
-    legacy_stem = legacy_path.stem
-    legacy_comments_candidates = [
-        parent / f"{legacy_stem}.comments.json",
-        parent / "comments.json",
-    ]
-    src_comments = None
-    for cand in legacy_comments_candidates:
-        if cand.exists():
-            src_comments = cand
-            break
-
-    from .sync_server import _atomic_write_json, _coerce_v2, _locked_store
-    with _locked_store(slug_dir):
-        if src_comments:
-            try:
-                raw = json.loads(src_comments.read_text(encoding="utf-8"))
-            except Exception as e:
-                print(f"WARN: could not parse {src_comments}: {e}", file=sys.stderr)
-                raw = []
-
-            store = _coerce_v2(raw)
-            # Stamp version on every comment
-            for items in store["anchors"].values():
-                for c in items:
-                    c.setdefault("version", initial_version)
-            _atomic_write_json(slug_dir / "comments.json", store)
-            # Back up original comments
-            if args.copy:
-                backup = slug_dir / f"comments.{legacy_stem}.v1.bak.json"
-                backup.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
-            else:
-                os.replace(src_comments, slug_dir / f"comments.{legacy_stem}.v1.bak.json")
-        else:
-            _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
-
-    print(f"  Migrated {legacy_path} → {slug_dir}/")
-    print(f"    HTML:          {action} → versions/{initial_version}.html")
-    print(f"    current.html:  symlink → versions/{initial_version}.html")
-    print("    meta:          current.meta.json")
-    print(f"    comments:      comments.json (from {src_comments or 'fresh'})")
-    print()
-    print(f"  Next: {_inv()} publish {slug_dir}")
-    return 0
-
-
 def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     """Return prior-round comments that lack a complete disposition.
 
@@ -2013,9 +1912,9 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
             "reason": str(exc),
         }]
 
-    from .sync_server import _coerce_v2, _version_has_anchor
+    from .sync_server import _validate_store, _version_has_anchor
 
-    store = _coerce_v2(raw)
+    store = _validate_store(raw)
     meta = _read_meta(slug_dir)
     history = [
         item.get("version")
@@ -2101,7 +2000,7 @@ def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None
                 continue
             if (_comment_category({"anchor_id": anchor, **comment}) != "review"
                     or comment.get("version") == new_version or not _can_withdraw(comment)
-                    or anchor in anchors or comment.get("number") in numbers):
+                    or _is_set_aside(comment) or anchor in anchors or comment.get("number") in numbers):
                 continue
             _withdraw_decision(comment, f"not asked again in {new_version}", _resolve_author(None))
             done.append(comment["id"])
@@ -2111,8 +2010,8 @@ def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None
 
 
 def _coerce_store_file(slug_dir: Path) -> dict:
-    from .sync_server import _coerce_v2
-    return _coerce_v2(json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
+    from .sync_server import _validate_store
+    return _validate_store(json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
 
 
 def _moved_page(slug_dir) -> bool:
@@ -2158,6 +2057,13 @@ def cmd_publish_version(args) -> int:
     # whatever the running server had cached into the file in between, so this
     # now goes through the same lock the server takes.
     added = []
+    # Open project shows the working page's size (long pages).
+    from .long_pages import size_of
+    try:
+        sections, screenshots = size_of(target.read_text(encoding="utf-8"))
+        size = {"sections": sections, "screenshots": screenshots}
+    except (OSError, UnicodeDecodeError):
+        size = {}
 
     def _mutate(meta: dict) -> None:
         meta["current"] = new_version
@@ -2167,12 +2073,14 @@ def cmd_publish_version(args) -> int:
                 if args.label:
                     h["label"] = args.label
                 h["ts"] = _now_iso()
+                h.update(size)
                 added.append(False)
                 return
         history.append({
             "version": new_version,
             "ts": _now_iso(),
             "label": args.label or "",
+            **size,
         })
         added.append(True)
 
@@ -2250,6 +2158,18 @@ def _round_pending_ids(store: dict) -> set:
             if isinstance(c.get("decision"), dict) and c["decision"].get("round_pending")}
 
 
+def _image_tag(target) -> str:
+    """'IMG F665 (assets/f665…-flow.png) ' for a comment placed on an image
+    (long_pages.image_ids), the path relative to the page folder; else ''."""
+    image = target.get("image") if isinstance(target, dict) else None
+    if not (isinstance(image, str) and re.fullmatch(r"[0-9A-F]{4,64}", image)):
+        return ""
+    src = target.get("image_src")
+    where = (f" ({src})" if isinstance(src, str) and ".." not in src
+             and re.fullmatch(r"(?:assets|attachments)/[^\s()]+", src) else "")
+    return f"IMG {image}{where} "
+
+
 def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None) -> str:
     """ts  event  comment_id  anchor  author  verdict/status  text[:120]
 
@@ -2268,6 +2188,7 @@ def _inbox_line(ev: dict, texts: dict | None = None, pending: set | None = None)
                           (ev.get("event") == "round_submitted" and ev.get("note")))
     shown = text if full_reviewer_text and not author.startswith("agent:") \
         else _clip(text, 120)
+    shown = _image_tag(ev.get("target")) + shown
     return "  %-20s %-17s %-10s %-18s %-24s %-9s %s" % (
         ev.get("ts") or "",
         (ev.get("event") or "")[:17],
@@ -2305,7 +2226,8 @@ def _round_lines(ev: dict) -> list[str]:
         words = str(answer.get("text") or "")
         lines.append(row % ("", "  answer", str(answer.get("comment_id") or "")[:10],
                             f"#{number}" if isinstance(number, int) else "", str(answer.get("by") or "")[:24],
-                            str(answer.get("verdict") or "")[:9], f"{prompt} → {words}" if words else prompt))
+                            str(answer.get("verdict") or "")[:9],
+                            _image_tag(answer) + (f"{prompt} → {words}" if words else prompt)))
     for edit in ev.get("edits") or []:
         if not isinstance(edit, dict):
             continue
@@ -3049,9 +2971,7 @@ def _read_store_file(path: Path) -> dict:
     except Exception:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     if not isinstance(data, dict) or not isinstance(data.get("anchors"), dict):
-        # v1 store: {anchor_id: [comment, …]} at the top level.
-        anchors = {k: v for k, v in (data or {}).items() if isinstance(v, list)}
-        return {"schema_version": 2, "anchors": anchors, "archived": {}}
+        raise ValueError("expected a v2 comment store with anchors")
     data.setdefault("anchors", {})
     if not isinstance(data.get("archived"), (dict, list)):
         data["archived"] = {}
@@ -3953,7 +3873,7 @@ def cmd_archive(args) -> int:
     """Freeze or restore a page without stopping its server or changing its URL."""
     from .categories import category_counts
     from .consolidate import ARCHIVE_MARKER, MARKER, _all_comments, comment_counts
-    from .sync_server import _coerce_v2, _locked_store
+    from .sync_server import _locked_store, _validate_store
     resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
@@ -3967,7 +3887,7 @@ def cmd_archive(args) -> int:
     try:
         if restore and (directory / MARKER).exists() and not (directory / ARCHIVE_MARKER).exists():
             raise ValueError("this page was consolidated; standalone unarchive cannot undo consolidation")
-        store = _coerce_v2(json.loads((directory / "comments.json").read_text(encoding="utf-8")))
+        store = _validate_store(json.loads((directory / "comments.json").read_text(encoding="utf-8")))
         if not (directory / "current.meta.json").is_file():
             raise ValueError("not a page directory: current.meta.json is missing")
         archived = (directory / ARCHIVE_MARKER).exists()
@@ -4763,8 +4683,7 @@ def _load_store(record: dict) -> dict:
         return {"anchors": {}, "archived": []}
     anchors = data.get("anchors")
     if not isinstance(anchors, dict):
-        # v1 store: {anchor_id: [comment, …]} at the top level.
-        anchors = {k: v for k, v in data.items() if isinstance(v, list)}
+        anchors = {}
     archived = data.get("archived")
     return {"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else []}
 
@@ -4846,6 +4765,7 @@ def _decision_cards(store: dict) -> list[dict]:
             "version": c.get("version") or "",
             "status": c.get("status") or "",
             "category": _comment_category({"anchor_id": anchor_id, **c}),
+            "answer_later": _is_set_aside(c),
             **{field: c[field] for field in ("doc", "finding", "fixed", "fixed_history", "reopened") if field in c},
         })
     return sorted(cards, key=lambda c: (
@@ -5061,7 +4981,7 @@ def cmd_doctor(args) -> int:
         ("state_dir", STATE_DIR.is_dir(), str(STATE_DIR)),
         ("bus_root", BUS_ROOT.is_dir(), str(BUS_ROOT)),
         ("web_assets", all((WEB_DIR / n).is_file() for n in
-                           ("shell.html", "shell.js", "shell.css", "adapter.js", "template.html")),
+                           ("shell.html", "shell.js", "shell.css", "adapter.js")),
          str(WEB_DIR)),
         ("hook_script", HOOK_SCRIPT.is_file(),
          str(HOOK_SCRIPT) + ("" if os.access(HOOK_SCRIPT, os.X_OK) else "   (not executable; publish fixes the mode)")),
@@ -5422,14 +5342,6 @@ def build_parser(*, all_commands=False):
     sp_st.add_argument("--retired", action="store_true",
                        help="list retired registry entries instead")
     sp_st.set_defaults(func=cmd_status)
-
-    sp_mig = sub.add_parser("migrate", help="legacy HTML → v2 layout")
-    sp_mig.add_argument("legacy_html")
-    sp_mig.add_argument("--slug", default=None)
-    sp_mig.add_argument("--version", default="v1")
-    sp_mig.add_argument("--label", default=None)
-    sp_mig.add_argument("--copy", action="store_true", help="copy instead of move")
-    sp_mig.set_defaults(func=cmd_migrate)
 
     sp_pv = sub.add_parser("publish-version", help="add new version + swap symlink")
     sp_pv.add_argument("slug_dir")

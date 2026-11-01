@@ -63,15 +63,13 @@ let CURRENT_VERSION = null;
 let AUTHOR = null;
 let IDENTITY = null;
 let SESSION_MONITOR = { active: false, monitor_count: 0, delivery: 'queued' };
-// v2.19 server capabilities, probed ONCE at init via GET ./api/capabilities.
-// null = legacy server (404) → every new behavior is off and the chrome acts
-// exactly as before: no defer_push, no round bar, no /api/rounds calls.
+// Page-specific read-only and sharing capabilities.
 let CAPS = null;
 // Feedback prototype: the chip filters, "All versions" and "Unread first" are
 // replaced by collapsible sections (B2) and the History tab (B3).
 // SECTION_OPEN[key] overrides the default open state of a section.
 let SECTION_OPEN = {};
-const SECTION_DEFAULT_OPEN = { needs: true, ready: true, waiting: true, done: false, earlier: false, archived: false };
+const SECTION_DEFAULT_OPEN = { later: false, needs: true, ready: true, waiting: true, done: false, earlier: false, archived: false };
 let activeTab = 'feedback';
 const cardExpanded = {};   // C1: answered cards shown in full instead of one line
 const earlierOpen = {};    // B3: "n earlier replies" expanded
@@ -657,22 +655,11 @@ async function apiRestore(id) {
   return null;
 }
 
-async function apiPushSingle(id) {
+// `win`: the window of the document the card is in, which sends it (a card in
+// the document posts from the document, as it always has).
+async function apiDecision(id, verdict, text, optionId, win = window) {
   try {
-    const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/push' + authorQuery()), { method: 'POST' });
-    if (r.ok) return await r.json();
-  } catch {}
-  return null;
-}
-
-// Returns { fallback: true } when the live server predates /decision (404/405)
-// so the caller can drop into the composite fallback path instead.
-// v2.19: in round mode the verdict is posted with defer_push so the server
-// parks it (decision.round_pending) instead of emitting a session_push per
-// click; POST /api/rounds/submit later sends the whole round at once.
-async function apiDecision(id, verdict, text, optionId) {
-  try {
-    const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/decision' + authorQuery()), {
+    const r = await win.fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/decision' + authorQuery()), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -683,19 +670,15 @@ async function apiDecision(id, verdict, text, optionId) {
         author: AUTHOR,
         author_name: IDENTITY && IDENTITY.name,
         author_email: IDENTITY && IDENTITY.email,
-        ...(roundsEnabled() ? { defer_push: true } : {}),
+        defer_push: true,
       }),
     });
-    if (r.status === 404 || r.status === 405) return { fallback: true };
     if (r.ok) return await r.json();
   } catch {}
   return null;
 }
 
-// ── v2.19 capabilities + review rounds ───────────────────────────────
-// One probe per page load. A 404 (old server) or a network error leaves CAPS
-// null; nothing ever re-probes, so a legacy server sees exactly one extra
-// request and never a /api/rounds call.
+// ── Page capabilities + review rounds ───────────────────────────────
 async function loadCapabilities() {
   CAPS = null;
   try {
@@ -709,31 +692,8 @@ async function loadCapabilities() {
   return CAPS;
 }
 function pageReadOnly() { return !!(CAPS && CAPS.read_only); }
-function roundsEnabled() {
-  return !!(CAPS && CAPS.rounds);
-}
-// D2: true when the live server advertises the "changes" verdict. A legacy
-// server (no /api/capabilities, or one that predates D2) leaves this false
-// and every decision card keeps its pre-D2 "Comment" button.
-function changesEnabled() {
-  return !!(CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('changes') !== -1);
-}
-// The third verdict's id on THIS server: 'changes' where advertised,
-// 'comment' otherwise. Both spellings in a decision_request map onto it, so
-// an old cards.json saying "comment" shows "Request changes" on a new server
-// and a new one saying "changes" still works against an old server.
-function textVerdictId() {
-  return changesEnabled() ? 'changes' : 'comment';
-}
-// D3: the verdict a click on a custom option id posts. `select` where the
-// server advertises it, `comment` against anything older — which is what the
-// chrome always posted, so an old server behaves exactly as it did.
-function selectVerdictId() {
-  return (CAPS && Array.isArray(CAPS.verdicts) && CAPS.verdicts.indexOf('select') !== -1)
-    ? 'select' : 'comment';
-}
 function canonicalOptionId(id) {
-  return (id === 'comment' || id === 'changes') ? textVerdictId() : id;
+  return (id === 'comment' || id === 'changes') ? 'changes' : id;
 }
 async function apiRoundSubmit(note, send) {
   try {
@@ -765,23 +725,6 @@ function isRoundPending(c) {
 function hasDecisionRequest(c) {
   return !!(c && c.decision_request &&
     c.status !== 'archived' && c.status !== 'resolved_in_version');
-}
-
-// OLD-SERVER FALLBACK: composes the same outcome from routes that predate
-// /decision. decision_request stays unresolved server-side (no c.decision
-// field is ever set), so the card's buttons remain live after a refresh —
-// acceptable degraded behavior, documented in CHANGELOG.
-async function apiDecisionFallback(id, verdict, text) {
-  const verdictText = { accept: '✓ Accepted', reject: '✗ Rejected' };
-  const isText = verdict === 'comment' || verdict === 'changes';
-  let replyText = verdict === 'changes' ? '↻ Changes requested: ' + text
-    : verdict === 'comment' ? '💬 Answer in words: ' + text : verdictText[verdict];
-  if (!isText && text) replyText += '\n\n' + text;
-  const replied = await apiReply(id, replyText);
-  if (!replied) return null;
-  const statusMap = { accept: 'user_confirmed', reject: 'open', comment: 'open', changes: 'open' };
-  await apiPutComment(id, { status: statusMap[verdict] });
-  return await apiPushSingle(id);
 }
 
 async function apiPushAll(send) {
@@ -922,6 +865,21 @@ function projectPages() {
   const listed = new Set(referenceTabs().map(t => t.slug));
   return items.concat(related.filter(p => !listed.has(p.slug)).map(page));
 }
+// Long pages: this page first, then its archive pages newest first, each with its size.
+function archivePagesHtml(archives) {
+  if (!archives.length) return '';
+  const size = (n, shots) => `${n} section${n === 1 ? '' : 's'}${shots ? ` · ${shots} screenshot${shots === 1 ? '' : 's'}` : ''}`;
+  const latest = (META.history || []).find(h => h.version === latestVersion()) || {};
+  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-primary badge-sm">this page</span></a>`
+    + (latest.sections != null ? `<span class="project-detail">Now · ${esc(size(latest.sections, latest.screenshots))}</span>` : '') + '</li>';
+  const sorted = archives.slice().sort((a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
+  const items = sorted.map(p => {
+    const a = p.archive || {};
+    return `<li><a href="#view=plans&plan=${encodeURIComponent(p.id)}">${esc(p.title || p.id)}</a>`
+      + (a.sections != null ? `<span class="project-detail">Finished · ${esc(size(a.sections, a.screenshots))}</span>` : '') + '</li>';
+  }).join('');
+  return `<section class="hist-section"><h3 class="hist-lbl">This project's pages</h3><ul class="doc-list">${here}${items}</ul></section>`;
+}
 // U-01 + F2: project branding wins, then the page's stable name.
 function updateProjectTitle() {
   const title = PROJECT.title || PROJECT.name || 'annotate';
@@ -941,15 +899,16 @@ function renderProject() {
   const rest = modules.filter(m => m.kind !== 'links');
   const pages = DOC === 'review' ? projectPages() : [];
   if (pages.length) links.unshift({ id: 'project-pages', title: 'Project pages', items: pages });
+  const archives = DOC === 'review' ? PLANS.filter(isArchivePlan) : [];
   // Documents tab
   const docTab = document.getElementById('tab-documents');
   const docBody = document.getElementById('documents-body');
   if (DOC !== VIEW_DOC) {
     // Only the document on screen fills the Documents tab.
-  } else if (links.length) {
+  } else if (links.length || archives.length) {
     docTab.hidden = false;
-    docTab.textContent = links.length === 1 && !pages.length ? links[0].title : 'Documents';
-    docBody.innerHTML = links.map(m => `<section class="hist-section">${links.length > 1 ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
+    docTab.textContent = links.length === 1 && !pages.length && !archives.length ? links[0].title : 'Documents';
+    docBody.innerHTML = archivePagesHtml(archives) + links.map(m => `<section class="hist-section">${links.length > 1 || archives.length ? `<h3 class="hist-lbl">${esc(m.title)}</h3>` : ''}<ul class="doc-list">${projectLinkItems(m)}</ul></section>`).join('');
   } else {
     docTab.hidden = true;
     docBody.innerHTML = '';
@@ -1014,17 +973,29 @@ function boardLink() {
 let HISTORY_DATA = null;
 let historyDirty = true;
 let historyLoading = false;
+// The header and Send read only the latest round; the full list loads once History is opened.
+let historyFull = false;
 async function loadHistory() {
   if ((HISTORY_DATA && !historyDirty) || historyLoading) return;
   historyLoading = true;
+  const full = historyFull;
   try {
-    const r = await fetch(apiUrl('./api/history'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    const r = await fetch(apiUrl('./api/history' + (full ? '' : '?latest=1')), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     const data = await r.json();
     if (!r.ok || !Array.isArray(data.rounds)) throw new Error('history');
     HISTORY_DATA = data;
-    historyDirty = false;
+    historyDirty = full !== historyFull;
     if (window.AA) window.AA.changed();
-  } catch { /* History keeps the last rounds it had */ } finally { historyLoading = false; }
+  } catch { /* History keeps the last rounds it had */ } finally {
+    historyLoading = false;
+    if (full !== historyFull) loadHistory();
+  }
+}
+function wantFullHistory() {
+  if (historyFull) return;
+  historyFull = true;
+  historyDirty = true;
+  loadHistory();
 }
 function roundItemText(answer) {
   const c = answer.comment_id ? findCommentById(answer.comment_id) : null;
@@ -1063,21 +1034,17 @@ function sentRounds() {
     if (withReceipt.length) {
       const items = [].concat(...withReceipt.map(r => r.receipt)).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc }))
         .map((it, i) => [it, i]).sort((a, b) => (tabOrder.indexOf(a[0].cat) - tabOrder.indexOf(b[0].cat)) || (a[1] - b[1])).map(x => x[0]);
-      return { ts, version, result: roundResult(g, items.length), items, send_id: withReceipt[0].send_id };
+      return { ts, version, result: roundResult(items.length), items, send_id: withReceipt[0].send_id };
     }
     const legacy = legacyRound(g.find(r => r.kind !== 'push') || g[0]);
-    return Object.assign(legacy, { version, result: roundResult(g, legacy.n) });
+    return Object.assign(legacy, { version, result: roundResult(legacy.n) });
   }).filter(r => r.items.length);
 }
 // UI-13: the delivery the server recorded on the round at Send, so a reload
 // keeps the result line the Send showed. Rounds recorded before that say
 // "Sent (N)".
-function roundResult(records, n) {
-  if (CAPS && CAPS.automatic_round_delivery) return 'Feedback saved (' + n + ')';
-  const how = records.map(r => r.delivery);
-  if (how.includes('active_monitor')) return '✅ Sent to session (' + n + ')';
-  if (how.includes('queued')) return '⏳ Queued — no session listening (' + n + ')';
-  return 'Sent (' + n + ')';
+function roundResult(n) {
+  return 'Feedback saved (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -1097,11 +1064,6 @@ function legacyRound(r) {
 async function loadDelivery() {
   if (DOC !== VIEW_DOC) return;
   const node = document.getElementById('delivery-status');
-  if (!CAPS || !CAPS.automatic_round_delivery) {
-    node.hidden = !!CAPS;
-    if (!CAPS) node.textContent = 'This server predates Finish review and automatic delivery. Update its agent-annotate runtime.';
-    return;
-  }
   try {
     let data = SUMMARY_DELIVERY;
     if (!HAS_SUMMARY) {
@@ -1186,10 +1148,16 @@ function versionActivityHtml(h, next, rounds, done) {
     </div>` : '';
   return sent + agent;
 }
+// Long pages: History lists the latest 20 versions; Show 20 earlier adds more.
+const HISTORY_PAGE = 20;
+const historyLimit = {};
 function renderVersionRail(shown) {
   const body = document.getElementById('vrail-body-' + DOC);
   if (!body) return;
   if (shown !== undefined) HISTORY_SHOWN = shown;
+  // Built when History is opened, never while it is hidden.
+  if (body.closest('[hidden]')) { if (DOC === VIEW_DOC) renderVersionBanner(); return; }
+  wantFullHistory();
   const doc = DOC;
   const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vitem');
   const focusedVersion = focused ? focused.dataset.version : null;
@@ -1200,7 +1168,10 @@ function renderVersionRail(shown) {
   const byVersion = roundsByVersion(HISTORY_SHOWN);
   // Library or Findings alone: only the versions their lines were sent on.
   const sentOnly = !!HISTORY_SHOWN && !HISTORY_SHOWN.includes(doc);
-  const history = (META.history || []).slice().reverse().filter(h => !sentOnly || byVersion[h.version]);
+  const allHistory = (META.history || []).slice().reverse().filter(h => !sentOnly || byVersion[h.version]);
+  // The version on screen is always listed, however far back.
+  const limit = Math.max(historyLimit[doc] || HISTORY_PAGE, allHistory.findIndex(h => h.version === CURRENT_VERSION) + 1);
+  const history = allHistory.slice(0, limit);
   if (!history.length) {
     body.innerHTML = '<div class="vrail-empty">No versions found</div>';
     return 0;
@@ -1250,7 +1221,15 @@ function renderVersionRail(shown) {
       </div>
       ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done)}</div>` : ''}
     </div>`;
-  }).join('');
+  }).join('') + (allHistory.length > limit
+    ? `<button type="button" class="btn btn-ghost btn-xs vrail-more">Show ${Math.min(HISTORY_PAGE, allHistory.length - limit)} earlier</button>` : '');
+  const more = body.querySelector('.vrail-more');
+  if (more) more.addEventListener('click', () => {
+    historyLimit[doc] = limit + HISTORY_PAGE;
+    withDoc(doc, () => renderVersionRail());
+    const rows = body.querySelectorAll('.vrow');
+    if (rows[limit]) rows[limit].focus();
+  });
   Array.from(body.querySelectorAll('.vrow')).forEach(row => {
     row.addEventListener('click', () => {
       if (doc !== VIEW_DOC) { if (window.AA) window.AA.go({ view: doc, v: row.dataset.version }); return; }
@@ -1394,6 +1373,11 @@ function fmtTs(iso) {
 function anchorLabel(c) {
   return (c.anchor_label && c.anchor_label !== c.anchor_id) ? c.anchor_label : '';
 }
+// The IMG id of the image a comment was placed on (adapter.js viewerComment).
+function imageTag(target) {
+  const id = target && target.image;
+  return typeof id === 'string' && /^[0-9A-F]{4,64}$/.test(id) ? 'IMG ' + id : '';
+}
 
 // Drawer scope: null = every version ("All versions" toggle on), else the
 // version currently shown in the iframe.
@@ -1416,6 +1400,32 @@ function decisionAnswer(c) {
 // options?". Such cards are always listed (origin version chip still shown)
 // and always get a pin/strip on the version being viewed. Resolved and plain
 // comments keep the normal per-version scope.
+// Answer later: the server remembers it (comments.json); answering clears it.
+function isSetAside(c) {
+  return !!(c && c.answer_later) && isUnresolvedDecision(c);
+}
+async function setAnswerLater(id, on) {
+  if (!storedComment(id)) return;
+  const was = storedComment(id).answer_later;
+  const key = 'later:' + id;
+  addPendingEdit(key, () => { const c = storedComment(id); if (c) c.answer_later = on ? { ts: new Date().toISOString() } : undefined; });
+  renderAll();
+  let ok = false;
+  await settlePending((async () => {
+    try {
+      const r = await fetch(apiUrl('./api/comments/' + encodeURIComponent(id) + '/answer-later' + authorQuery()), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !!on }) });
+      ok = r.ok;
+    } catch {}
+  })());
+  pendingEdits.delete(key);
+  if (!ok) {
+    const c = storedComment(id);
+    if (c) c.answer_later = was;
+    setSendNote(on ? 'Could not set this question aside. Try again.' : 'Could not move this question back. Try again.', 'is-error', 4000);
+  }
+  refreshStore();
+}
 function isUnresolvedDecision(c) {
   return !!(c && c.decision_request && !decisionAnswer(c) &&
     c.status !== 'archived' && c.status !== 'resolved_in_version' &&
@@ -1465,8 +1475,8 @@ function isNewerThanViewed(c) {
 // Four sections replace the chip filters, "Mark all read" and the per-card
 // status pill: Needs you · Ready to send · Waiting on agent · Done (plus
 // Archived at the bottom when there is any).
-const SECTION_ORDER = ['needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
-const SECTION_LABEL = { needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
+const SECTION_ORDER = ['later', 'needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
+const SECTION_LABEL = { later: 'Answer later', needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
 function sectionOpen(k) {
   return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
 }
@@ -1488,7 +1498,7 @@ function sayDraft(c) {
 function clearSayDraft(id) {
   setDraft('say:' + id, '');
   document.querySelectorAll('[data-decision-say-ta="' + cssEsc(id) + '"]').forEach(ta => { ta.value = ''; });
-  syncStripSayDraft(id);
+  mirrorSay(id);
 }
 // P1: text typed while an answered card's Change is open (on the card or in
 // the Send summary) is that card's new answer at Send, as on an open card.
@@ -1523,6 +1533,7 @@ function sectionOf(c) {
   if (pageReadOnly()) return 'archived';
   if (c.status === 'archived') return 'archived';
   if (isRoundPending(c) || userNeedsSend(c) || strandedSay(c)) return 'ready';
+  if (isSetAside(c)) return 'later';
   const cls = classify(c);
   return cls === 'review' ? 'needs' : cls === 'waiting' ? 'waiting' : 'done';
 }
@@ -1617,7 +1628,7 @@ function renderDrawerNow() {
     cardExpanded[c.id] = true;
   }
 
-  const groups = { needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
+  const groups = { later: [], needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
   // Feedback given on earlier versions stays listed, collapsed under
   // "Earlier feedback", instead of vanishing when a version is published.
   const earlier = (c) => !inScope(c) && !isNewerThanViewed(c);
@@ -1648,7 +1659,7 @@ function renderDrawerNow() {
   listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
-    const badgeCls = k === 'needs' ? 'badge-error' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
+    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
       <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
       <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
@@ -1771,16 +1782,9 @@ const DECISION_VERDICT_LABEL = { accept: 'Accepted', reject: 'Rejected', changes
 // same way.
 const DECISION_VERDICT_TEXT = { accept: '✓ Accepted', reject: '✗ Rejected', changes: '↻ Changes requested', comment: 'Answered in words', select: '☑ Selected' };
 // Every option id this chrome knows how to render. "comment" and "changes"
-// are the same slot: which one a page shows is decided by the server's
-// advertised verdicts, never by both appearing at once.
+// are the same slot, shown as Request changes.
 const DECISION_OPTIONS_ALL = ['accept', 'reject', 'comment', 'changes'];
-// D2: the third verdict is "Request changes" (note required) on any server
-// that advertises it; a server that does not still gets the pre-D2 "Comment".
-const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'comment'];
-const DECISION_OPTIONS_DEFAULT_CHANGES = ['accept', 'reject', 'changes'];
-// Default button labels/classes. accept/reject/comment are byte-identical to
-// the pre-2.19 markup so a legacy decision_request (string options, nothing
-// else) against a legacy server renders exactly as it always has.
+const DECISION_OPTIONS_DEFAULT = ['accept', 'reject', 'changes'];
 const DECISION_BTN_LABEL = { accept: '&#10003; Accept', reject: '&#10007; Reject', comment: '&#128172; Answer in words', changes: '&#8635; Request changes' };
 const DECISION_BTN_CLASS = { accept: 'decision-accept', reject: 'decision-reject', comment: 'decision-comment', changes: 'decision-changes' };
 // The same options without their glyphs, for the "Recommended: …" sentence.
@@ -1793,12 +1797,9 @@ const DECISION_IMPACTS = ['low', 'medium', 'high'];
 // state) so the 8s poll's re-render doesn't silently snap the card back to
 // the chip mid-correction; cleared on submit or explicit Cancel.
 const decisionChanging = {};
-// Request-changes hint per card (placeholder + message), until it is answered.
+// Request-changes hint or a failed send per card ({ph, msg, error}), shown in
+// both places until it is answered.
 const decisionHint = {};
-// v2.19 per-card UI state that must survive the 8s re-render: whether the
-// optional "Add a note" form is open. Note TEXT lives in DRAFTS under
-// 'note:<id>' (same store as replies).
-const decisionNoteOpen = {};
 // Card layout state, kept across re-renders the same way: the "Evidence (n)"
 // list per card, each evidence preview, and each excerpt expanded past its
 // four-line clamp.
@@ -1818,21 +1819,16 @@ function byContentOrder(a, b) {
 // Whether the standing "Answer in words" form is open. Its text lives in DRAFTS
 // under 'say:<id>', the same store as replies and verdict notes.
 const decisionSayOpen = {};
-// …and the same for the "Request changes" (pre-D2: "Comment") form, whose
+// …and the same for the "Request changes" form, whose
 // open state used to live in the DOM alone — so a re-render triggered while
 // the reviewer was typing closed it and lost the box.
 const decisionChangesOpen = {};
 
 // v2.19 schema: dr.options may be the legacy string list or
 // [{id, label, consequence, style}]; dr.consequences {accept, reject} is the
-// shortcut for string options. Returns a uniform list. A string option that is
-// not accept/reject/comment/changes is dropped (as before); an OBJECT option
-// with an unknown id is kept as a "custom" choice, which the chrome posts as
-// a `comment` verdict whose text names the selected option — unchanged by D2,
-// so a card with custom ids behaves exactly as it did.
+// shortcut for string options. Unknown ids are custom `select` choices.
 function decisionOptions(dr) {
-  const fallback = changesEnabled() ? DECISION_OPTIONS_DEFAULT_CHANGES : DECISION_OPTIONS_DEFAULT;
-  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : fallback;
+  const raw = (Array.isArray(dr.options) && dr.options.length) ? dr.options : DECISION_OPTIONS_DEFAULT;
   const cons = (dr.consequences && typeof dr.consequences === 'object') ? dr.consequences : {};
   const out = [];
   for (const o of raw) {
@@ -1874,7 +1870,7 @@ function withAnswerInWords(opts) {
 // shown in full (NN/g: never hide what the decision depends on).
 function renderDecisionContext(dr) {
   const ctx = typeof dr.context === 'string' ? dr.context.trim() : '';
-  return ctx ? `<div class="decision-context">${ticketsHTML(ctx)}</div>` : '';
+  return ctx ? `<div class="${k('decision-context', 'annotate-decision-context')}">${agentText(ctx)}</div>` : '';
 }
 // "Recommended: <option>" — the MADR "chosen option" line, stated once.
 function renderDecisionReco(opts, dr) {
@@ -1883,7 +1879,7 @@ function renderDecisionReco(opts, dr) {
   const id = canonicalOptionId(rec);
   const o = opts.find(x => x.id === id);
   const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
-  return `<div class="decision-reco-line">Recommended: <b>${esc(label)}</b></div>`;
+  return `<div class="${k('decision-reco-line', 'annotate-decision-reco-line')}">Recommended: <b>${esc(label)}</b></div>`;
 }
 
 function idFor(key) {
@@ -1900,75 +1896,83 @@ function evidenceList(dr) {
 // Excerpts describe the document on screen; a card that belongs to another
 // version gets none rather than text from the wrong page.
 function excerptsFor(c) {
+  if (S.doc) return S.x; // read by adapter.js from the document it draws the card in
   return (EXCERPTS_VERSION === CURRENT_VERSION && gotoVersionFor(c) === CURRENT_VERSION) ? EXCERPTS : null;
 }
 // A quoted excerpt clamped to four lines; "Show more" appears only when the
 // text is cut off (see syncExcerptClamps).
 function renderExcerptBox(key, text, source, footExtra) {
-  const open = !!decisionExcerptOpen[key];
+  const open = !!S.excerptOpen[key];
   const qid = idFor('q|' + key);
-  return `<figure class="decision-excerpt${open ? ' is-open' : ''}">
-      ${source ? `<figcaption class="decision-excerpt-src">${esc(source)}</figcaption>` : ''}
-      <blockquote class="decision-excerpt-text" id="${qid}">${esc(text)}</blockquote>
-      <div class="decision-excerpt-ft">
-        <button type="button" class="decision-excerpt-more" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>
-        ${footExtra || ''}
-      </div>
+  const more = `<button type="button" class="${k('decision-excerpt-more', 'annotate-excerpt-more')}" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
+  return `<figure class="${k('decision-excerpt', 'annotate-excerpt')}${open ? ' is-open' : ''}">
+      ${source ? `<figcaption class="${k('decision-excerpt-src', 'annotate-excerpt-src')}">${esc(source)}</figcaption>` : ''}
+      <blockquote class="${k('decision-excerpt-text', 'annotate-excerpt-text')}" id="${qid}">${esc(text)}</blockquote>
+      ${S.doc ? more : `<div class="decision-excerpt-ft">${more}${footExtra || ''}</div>`}
     </figure>`;
 }
 // The element the card is about, quoted inside the card: the first evidence
 // anchor, else the card's own anchor when that is not the card itself.
-// C2: the quote carries "Open in document" (the card's own location).
+// C2: the quote carries "Open in document" (the card's own location). In the
+// document the card stands right after its own anchor, so only evidence is quoted.
 function renderDecisionExcerpt(c, dr) {
   const x = excerptsFor(c);
   if (!x) return '';
-  const link = isGeneralAnchor(c.anchor_id) || gotoUnavailable[c.id] ? '' : openDocBtn(c, ' data-excerpt-goto="1"');
+  const link = S.doc || isGeneralAnchor(c.anchor_id) || gotoUnavailable[c.id] ? '' : openDocBtn(c, ' data-excerpt-goto="1"');
   const ev = evidenceList(dr);
   const first = ev.length ? x[ev[0].anchor] : null;
   if (first && first.text) return renderExcerptBox(c.id + '|first', first.text, first.name, link);
-  const own = x[c.anchor_id];
+  const own = !S.doc && x[c.anchor_id];
   if (own && own.text && !own.card) return renderExcerptBox(c.id + '|own', own.text, own.name, link);
   return '';
 }
 function renderDecisionMeta(dr) {
   let h = '';
   if (typeof dr.impact === 'string' && DECISION_IMPACTS.indexOf(dr.impact) !== -1) {
-    h += `<span class="decision-chip decision-chip-impact-${dr.impact}" title="Impact if decided wrongly">Impact: ${dr.impact}</span>`;
+    h += `<span class="${k('decision-chip decision-chip-impact-', 'annotate-decision-chip annotate-chip-impact-')}${dr.impact}" title="Impact if decided wrongly">Impact: ${dr.impact}</span>`;
   }
   if (dr.blocking === true) {
-    h += '<span class="decision-chip decision-chip-blocking" title="The agent cannot proceed until this is decided">Blocking</span>';
+    h += `<span class="${k('decision-chip decision-chip-blocking', 'annotate-decision-chip annotate-chip-blocking')}" title="The agent cannot proceed until this is decided">Blocking</span>`;
   }
-  return h ? `<div class="decision-meta">${h}</div>` : '';
+  return h ? `<div class="${k('decision-meta', 'annotate-decision-meta')}">${h}</div>` : '';
 }
 // "Evidence (n)", collapsed. Each item opens a preview of its target inside
 // the card (Wikipedia's reference previews); "Go to" scrolls the document
-// there and leaves a "Back to #N" marker that returns to this card.
+// there and leaves a "Back to #N" marker that returns to this card. The
+// items are built when the list is first opened (evidenceItemsHtml).
 function renderDecisionEvidence(c, dr) {
   const ev = evidenceList(dr);
   if (!ev.length) return '';
-  const x = excerptsFor(c);
-  const open = !!decisionEvidenceOpen[c.id];
+  const open = !!S.evOpen[c.id];
   const listId = idFor('evl|' + c.id);
-  const items = ev.map((e, i) => {
+  const list = S.doc ? 'div' : 'ul';
+  return `<div class="${k('decision-evidence', 'annotate-decision-evidence')}">
+      <button type="button" class="${k('decision-evidence-toggle', 'annotate-decision-evidence-toggle')}" data-decision-action="evidence-toggle" data-id="${escAttr(c.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${listId}">Evidence (${ev.length})</button>
+      <${list} class="${k('decision-evidence-list', 'annotate-decision-evidence-list')}" id="${listId}"${open ? '' : ' hidden'}>${open ? evidenceItemsHtml(c, ev) : ''}</${list}>
+    </div>`;
+}
+function evidenceItemsHtml(c, ev) {
+  const x = excerptsFor(c);
+  const item = S.doc ? 'div' : 'li';
+  return ev.map((e, i) => {
     const key = c.id + '|' + e.anchor + '|' + i;
-    const itemOpen = !!decisionEvidenceItemOpen[key];
+    const itemOpen = !!S.evItemOpen[key];
     const pid = idFor('evp|' + key);
     const hit = x ? x[e.anchor] : null;
     const preview = hit && hit.text
       ? renderExcerptBox('ev|' + key, hit.text, hit.name)
-      : `<div class="decision-evidence-missing">${hit && hit.missing ? 'Not on this version of the page.' : 'No preview for this version.'}</div>`;
-    return `<li class="decision-evidence-item">
-        <button type="button" class="decision-evidence-link" data-decision-action="evidence-preview" data-key="${escAttr(key)}" aria-expanded="${itemOpen ? 'true' : 'false'}" aria-controls="${pid}" title="Preview ${escAttr(e.anchor)}"><span class="decision-evidence-label">${esc(e.label || e.anchor)}</span></button>
-        <div class="decision-evidence-preview" id="${pid}"${itemOpen ? '' : ' hidden'}>
+      : `<div class="${k('decision-evidence-missing', 'annotate-decision-evidence-missing')}">${hit && hit.missing ? 'Not on this version of the page.' : S.doc ? 'Nothing to quote here.' : 'No preview for this version.'}</div>`;
+    const go = S.doc
+      ? `<button type="button" class="annotate-decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll to ${escAttr(e.anchor)}; a &quot;Back&quot; marker there returns here"${hit && hit.missing ? ' disabled' : ''}>Go to ↓</button>`
+      : `<button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll the document to ${escAttr(e.anchor)}; a Back marker there returns here">Go to &rarr;</button>`;
+    return `<${item} class="${k('decision-evidence-item', 'annotate-decision-evidence-item')}">
+        <button type="button" class="${k('decision-evidence-link', 'annotate-decision-evidence-link')}" data-decision-action="evidence-preview" data-key="${escAttr(key)}" aria-expanded="${itemOpen ? 'true' : 'false'}" aria-controls="${pid}" title="Preview ${escAttr(e.anchor)}"><span class="${k('decision-evidence-label', 'annotate-decision-evidence-label')}">${esc(e.label || e.anchor)}</span></button>
+        <div class="${k('decision-evidence-preview', 'annotate-decision-evidence-preview')}" id="${pid}"${itemOpen ? '' : ' hidden'}>
           ${preview}
-          <button type="button" class="decision-evidence-goto" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" data-id="${escAttr(c.id)}" title="Scroll the document to ${escAttr(e.anchor)}; a Back marker there returns here">Go to &rarr;</button>
+          ${go}
         </div>
-      </li>`;
+      </${item}>`;
   }).join('');
-  return `<div class="decision-evidence">
-      <button type="button" class="decision-evidence-toggle" data-decision-action="evidence-toggle" data-id="${escAttr(c.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${listId}">Evidence (${ev.length})</button>
-      <ul class="decision-evidence-list" id="${listId}"${open ? '' : ' hidden'}>${items}</ul>
-    </div>`;
 }
 // Show "Show more" only under an excerpt the clamp actually cuts off. An
 // unrendered one (collapsed rail, closed preview) is judged by its length.
@@ -1977,9 +1981,9 @@ function syncExcerptClamps(root) {
   // Every measurement first, then every change: interleaving them forced a
   // layout per card (150 ms per render on FLD).
   const writes = [];
-  root.querySelectorAll('.decision-excerpt').forEach(box => {
-    const t = box.querySelector('.decision-excerpt-text');
-    const more = box.querySelector('.decision-excerpt-more');
+  root.querySelectorAll('.decision-excerpt, .annotate-excerpt').forEach(box => {
+    const t = box.querySelector('.decision-excerpt-text, .annotate-excerpt-text');
+    const more = box.querySelector('.decision-excerpt-more, .annotate-excerpt-more');
     if (!t || !more) return;
     if (box.classList.contains('is-open')) { writes.push([more, false]); return; }
     const text = t.textContent || '';
@@ -2048,7 +2052,7 @@ function renderDecisionBlock(c) {
       <span class="badge badge-soft badge-ghost decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
     </div>`;
   }
-  const changing = !!decisionChanging[c.id];
+  const changing = !!S.changing[c.id];
   if (decisionAnswer(c) && !changing) return answerBlockHtml(c);
   // Changing the choice: the options only; your notes stay as they are.
   // Changing keeps every way to answer, words included (Chang, 2026-10-31).
@@ -2056,49 +2060,78 @@ function renderDecisionBlock(c) {
   const wantsChanges = opts.some(o => o.id === 'changes');
   const hasCons = opts.some(o => !!o.consequence);
   const rec = typeof dr.recommendation === 'string' ? dr.recommendation : null;
-  const kbd = showKbd(c);
+  const kbd = !S.doc && showKbd(c);
+  const id = escAttr(c.id);
   let btns = '';
   opts.forEach((o, i) => {
     const isRec = !!rec && canonicalOptionId(rec) === o.id;
     const cls = o.custom
-      ? ('decision-custom' + (o.style ? ' decision-style-' + o.style : ''))
-      : DECISION_BTN_CLASS[o.id];
+      ? k('decision-custom', 'annotate-decision-custom') + (o.style ? k(' decision-style-', ' annotate-style-') + o.style : '')
+      : k('', 'annotate-') + DECISION_BTN_CLASS[o.id];
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
-    const badge = isRec ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : '';
-    const cons = o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : '';
-    const k = kbd && i < 9 ? `<kbd class="kbd kbd-xs">${i + 1}</kbd>` : '';
-    btns += `<button class="btn decision-btn ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${escAttr(c.id)}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head">${k}<span class="decision-opt-label">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
+    const badge = isRec ? k('<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>', '<span class="annotate-decision-rec">Recommended</span>') : '';
+    const cons = o.consequence ? `<span class="${k('decision-consequence', 'annotate-decision-consequence')}">${esc(o.consequence)}</span>` : '';
+    const key = kbd && i < 9 ? `<kbd class="kbd kbd-xs">${i + 1}</kbd>` : '';
+    btns += `<button type="button" class="${k('btn decision-btn', 'annotate-decision-btn annotate-opt-row')} ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${id}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="${k('decision-opt-head', 'annotate-opt-head')}">${key}<span class="${k('decision-opt-label', 'annotate-opt-label')}">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
   });
-  const changingNote = (c.decision && changing) ? `<div class="decision-changing-note">
+  const changingNote = (c.decision && changing) ? `<div class="${k('decision-changing-note', 'annotate-decision-changing-note')}">
       <span>Pick a new answer. Your notes stay.</span>
-      <button type="button" class="btn btn-ghost btn-xs" data-decision-action="cancel-change" data-id="${escAttr(c.id)}">Cancel</button>
+      <button type="button" class="${k('btn btn-ghost btn-xs', 'annotate-decision-btn annotate-decision-cancel')}" data-decision-action="cancel-change" data-id="${id}">Cancel</button>
     </div>` : '';
-  const cmtHtml = `<div class="decision-cmt">
+  const hint = decisionHint[c.id];
+  // A1: one optional box under the options; it goes with whichever option is
+  // picked, and with none picked it is the answer at Send.
+  const cmtHtml = S.doc
+    ? `<textarea class="annotate-decision-ta annotate-decision-cmt" data-decision-say-ta="${id}" data-strip-say="${id}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(hint && hint.ph ? hint.ph : 'Comment (optional)')}" rows="1" aria-label="Comment (optional)"></textarea>
+    <div class="annotate-decision-cmt-hint" data-say-hint="${id}"></div>`
+    : `<div class="decision-cmt">
       <div class="add-note">
-        <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(decisionHint[c.id] ? decisionHint[c.id].ph : 'Add a note (optional)')}" rows="1" aria-label="Note on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
-        <button type="button" class="btn btn-sm" data-note-action="add" data-id="${escAttr(c.id)}" title="Answer in words with this note">Add note</button>
+        <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${id}" data-wants-changes="${wantsChanges ? '1' : ''}" placeholder="${escAttr(hint && hint.ph ? hint.ph : 'Add a note (optional)')}" rows="1" aria-label="Note on #${NUM_MAP[c.id] || ''} (optional)"></textarea>
+        <button type="button" class="btn btn-sm" data-note-action="add" data-id="${id}" title="Answer in words with this note">Add note</button>
       </div>
       ${kbd ? '<kbd class="kbd kbd-xs">C</kbd>' : ''}
-      <div class="decision-cmt-hint" data-say-hint="${escAttr(c.id)}"></div>
+      <div class="decision-cmt-hint" data-say-hint="${id}"></div>
     </div>`;
-  return `<div class="decision-block">
-    ${changingNote}
-    <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
+  // The document's card replaces the generated one, so it keeps the card's own
+  // text when that says more than the prompt (the rail shows it above).
+  const text = S.doc && typeof c.text === 'string' ? c.text.trim() : '';
+  const textHtml = text && normText(text) !== normText(displayPrompt(c)) ? `<div class="annotate-decision-text">${esc(text)}</div>` : '';
+  return `<div class="${k('decision-block', 'annotate-decision-item')}"${docItemAttr(c)}>
+    ${S.doc ? '' : changingNote}
+    ${promptHtml(c)}
+    ${textHtml}
     ${renderDecisionMeta(dr)}
+    ${S.doc ? changingNote : ''}
     ${renderDecisionContext(dr)}
     ${renderDecisionReco(opts, dr)}
     ${renderDecisionExcerpt(c, dr)}
-    <div class="decision-btns${hasCons ? ' has-consequences' : ''}">${btns}</div>
+    <div class="${k('decision-btns', 'annotate-decision-btns')}${hasCons ? ' has-consequences' : ''}" data-options>${btns}</div>
+    ${decisionAnswer(c) ? '' : `<button type="button" class="${k('btn btn-ghost btn-sm decision-later', 'annotate-decision-btn annotate-decision-later')}" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${id}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
     ${renderDecisionEvidence(c, dr)}
     ${cmtHtml}
-    <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}">${decisionHint[c.id] ? esc(decisionHint[c.id].msg) : ''}</div>
+    ${feedbackHtml(c)}
   </div>`;
+}
+function promptHtml(c) {
+  if (!S.doc) return `<div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>`;
+  const n = NUM_MAP[c.id];
+  return `<div class="annotate-decision-prompt">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}${esc(displayPrompt(c))}</div>`;
+}
+function docItemAttr(c) {
+  return S.doc ? ` data-strip-item="${escAttr(c.id)}"` : '';
+}
+function feedbackHtml(c) {
+  const h = decisionHint[c.id];
+  return `<div class="${k('decision-feedback', 'annotate-decision-feedback')}${h && h.error ? ' is-error' : ''}" data-decision-feedback="${escAttr(c.id)}">${h && h.msg ? esc(h.msg) : ''}</div>`;
+}
+function normText(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim();
 }
 // The hint under the comment box says what typed text will do.
 function syncSayHint(ta) {
   const id = ta.dataset.decisionSayTa;
-  const hint = document.querySelector('[data-say-hint="' + cssEsc(id) + '"]');
+  const hint = ta.ownerDocument.querySelector('[data-say-hint="' + cssEsc(id) + '"]');
   if (!hint) return;
   hint.textContent = (ta.value || '').trim()
     ? 'Saved with your choice. With no choice picked, it counts as your answer when you send.'
@@ -2160,6 +2193,61 @@ function editBoxHtml(c) {
 // The first note lives in the decision; later ones are your replies.
 const GENERATED_REPLY = /^(💬 Answer in words: |☑ Selected: |↻ Changes requested: |✓ Accepted|✗ Rejected|↺ Changed to )/;
 const editingNote = {}; // 'id|key' while that note's editor is open
+
+// ── One question card in two places ──────────────────────────────────
+// The rail and the document draw a question card with this one builder
+// (renderDecisionBlock and the helpers it calls). adapter.js asks for the
+// document's copy through stripCard below, so both copies share every rule and
+// action. Each place keeps its own classes (the rail's daisyUI + shell.css, the
+// document's adapter.js styles), and its own open, changing and editing state.
+const RAIL_CARD = { doc: false, changing: decisionChanging, editing: editingNote,
+  evOpen: decisionEvidenceOpen, evItemOpen: decisionEvidenceItemOpen, excerptOpen: decisionExcerptOpen };
+const DOC_CARD = { doc: true, changing: {}, editing: {}, evOpen: {}, evItemOpen: {}, excerptOpen: {}, x: null };
+let S = RAIL_CARD; // the place being drawn
+const k = (rail, doc) => S.doc ? doc : rail;
+const surfaceOf = el => el.closest('[data-strip-item]') ? DOC_CARD : RAIL_CARD;
+// Agent text: issue ids link in the rail; the document links its own (linkBoardIds).
+const agentText = s => S.doc ? esc(s) : ticketsHTML(s);
+const icon = name => S.doc ? ico(name).replace('<svg class="i" ', '<svg width="14" height="14" ') : ico(name);
+// Redraw the place an action came from. The document's card is replaced at
+// once, as the click lands; the counts message then brings the frame in line.
+function redrawCard(el) {
+  if (!surfaceOf(el).doc) return renderDrawer();
+  const item = el.closest('[data-strip-item]');
+  const fresh = item && stripCard(item.ownerDocument, item.dataset.stripItem, DOC_CARD.x);
+  if (fresh) item.replaceWith(fresh);
+  sendCommentCountsToFrame();
+}
+function withSurface(s, fn) {
+  const was = S;
+  S = s;
+  try { return fn(); } finally { S = was; }
+}
+// The document's card for one question, wired to the same actions as the
+// rail's; adapter.js places it. `x` is that document's excerpts.
+function stripCard(doc, id, x) {
+  const c = findCommentById(id);
+  if (!c || !c.decision_request) return null;
+  DOC_CARD.x = x || {};
+  const t = doc.createElement('template');
+  t.innerHTML = withSurface(DOC_CARD, () => renderDecisionBlock(c));
+  const el = t.content.firstElementChild;
+  if (!el) return null;
+  el.querySelectorAll('[data-decision-say-ta]').forEach(ta => { ta.value = DRAFTS['say:' + id] || ''; syncSayHint(ta); });
+  el.querySelectorAll('[data-note-edit]').forEach(ta => { ta.value = DOC_CARD.editing[id + '|' + ta.dataset.key] || ''; });
+  wireDecisionActions(el, doc);
+  wireNoteActions(el, doc);
+  return el;
+}
+// A read-only page has no questions to answer, only their answers.
+function stripVerdictChip(doc, id) {
+  const c = findCommentById(id);
+  const d = c && decisionAnswer(c);
+  if (!d) return null;
+  const t = doc.createElement('template');
+  t.innerHTML = `<div class="annotate-decision-item annotate-decision-resolved" data-strip-item="${escAttr(id)}"><span class="annotate-verdict-chip verdict-${escAttr(d.verdict)}">${esc(answerLabel(c).text)}</span></div>`;
+  return t.content.firstElementChild;
+}
 function choiceLabel(c) {
   const d = decisionAnswer(c);
   if (!d || d.verdict === 'comment' || d.verdict === 'changes') return '';
@@ -2199,38 +2287,49 @@ function hasAddNoteBox(c) {
   return !pageReadOnly() && !!c.decision_request && !!decisionAnswer(c) && c.status !== 'archived' && c.status !== 'resolved_in_version';
 }
 function stateTag(pending) {
-  return pending ? '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>'
-    : '<span class="send-state" title="Sent to the agent">Sent</span>';
+  const cls = k('send-state', 'annotate-send-state');
+  return pending ? `<span class="${cls} is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>`
+    : `<span class="${cls}" title="Sent to the agent">Sent</span>`;
 }
 function noteHtml(c, n) {
   const id = escAttr(c.id), key = escAttr(n.key);
-  if (editingNote[c.id + '|' + n.key]) return `<div class="answer-note is-editing">
-      <textarea class="textarea textarea-sm note-edit-ta" data-note-edit="${id}" data-key="${key}" rows="3" aria-label="Edit your note"></textarea>
-      <div class="note-actions"><button type="button" class="btn btn-ghost btn-xs" data-note-action="cancel" data-id="${id}" data-key="${key}">Cancel</button><button type="button" class="btn btn-primary btn-xs" data-note-action="save" data-id="${id}" data-key="${key}">Save</button></div>
+  const btn = (action, rail, doc, label) => `<button type="button" class="${k(rail, 'annotate-decision-btn ' + doc)}" data-note-action="${action}" data-id="${id}" data-key="${key}"${label || ''}>`;
+  if (S.editing[c.id + '|' + n.key] !== undefined) return `<div class="${k('answer-note', 'annotate-answer-note')} is-editing">
+      <textarea class="${k('textarea textarea-sm note-edit-ta', 'annotate-decision-ta annotate-note-edit')}" data-note-edit="${id}" data-key="${key}" rows="3" aria-label="Edit your note"></textarea>
+      <div class="${k('note-actions', 'annotate-note-actions')}">${btn('cancel', 'btn btn-ghost btn-xs', 'annotate-note-cancel')}Cancel</button>${btn('save', 'btn btn-primary btn-xs', 'annotate-note-save')}Save</button></div>
     </div>`;
-  return `<div class="answer-note">
-      <div class="answer-note-txt">${ticketsHTML(n.text)}</div>
-      <div class="note-actions">${stateTag(n.pending)}<button type="button" class="btn btn-ghost btn-xs btn-square" data-note-action="edit" data-id="${id}" data-key="${key}" aria-label="Edit note" title="Edit">${ico('pencil')}</button>${n.deletable ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-note-action="delete" data-id="${id}" data-key="${key}" aria-label="Delete note" title="Delete">${ico('trash')}</button>` : ''}</div>
+  const iconBtn = (action, name, label, cls) => btn(action, 'btn btn-ghost btn-xs btn-square', 'annotate-note-icon ' + cls,
+    ` aria-label="${label}" title="${k(label.split(' ')[0], label)}"`) + icon(name) + '</button>';
+  return `<div class="${k('answer-note', 'annotate-answer-note')}">
+      <div class="${k('answer-note-txt', 'annotate-answer-note-txt')}">${agentText(n.text)}</div>
+      <div class="${k('note-actions', 'annotate-note-actions')}">${stateTag(n.pending)}${iconBtn('edit', 'pencil', 'Edit note', 'annotate-note-edit-btn')}${n.deletable ? iconBtn('delete', 'trash', 'Delete note', 'annotate-note-delete-btn') : ''}</div>
     </div>`;
 }
 function addNoteHtml(c) {
-  return `<div class="add-note">
-      <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" rows="1" placeholder="Add a note…" aria-label="Add a note to #${NUM_MAP[c.id] || ''}"></textarea>
-      <button type="button" class="btn btn-sm" data-note-action="add" data-id="${escAttr(c.id)}">Add note</button>
+  const id = escAttr(c.id);
+  return `<div class="${k('add-note', 'annotate-add-note')}">
+      <textarea class="${k('textarea textarea-sm decision-say-ta', 'annotate-decision-ta annotate-decision-cmt')}" data-decision-say-ta="${id}"${S.doc ? ` data-strip-say="${id}"` : ''} rows="1" placeholder="Add a note…" aria-label="${S.doc ? 'Add a note' : 'Add a note to #' + (NUM_MAP[c.id] || '')}"></textarea>
+      <button type="button" class="${k('btn btn-sm', 'annotate-decision-btn annotate-note-add')}" data-note-action="add" data-id="${id}">Add note</button>
     </div>`;
 }
+// An answered card: your choice (Change keeps your notes), then your notes,
+// each with Pending/Sent, Edit and (while unsent) Delete, then "Add a note".
 function answerBlockHtml(c) {
   const choice = choiceLabel(c);
   const notes = cardNotes(c);
   const d = decisionAnswer(c);
-  return `<div class="decision-block decision-answered">
-      <div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>
-      <div class="answer-row"><span class="answer-lbl">Your choice</span><span class="answer-choice">${choice ? esc(choice) : '<span class="answer-none">None (answered in words)</span>'}</span>${choice ? stateTag(!!(d.round_pending || d.pending)) : ''}${canChangeAnswer(c) ? `<button type="button" class="btn btn-ghost btn-xs" data-decision-action="change" data-id="${escAttr(c.id)}">${choice ? 'Change' : 'Choose'}</button>` : ''}</div>
-      ${notes.length ? `<div class="answer-notes"><span class="answer-lbl">Your notes</span>${notes.map(n => noteHtml(c, n)).join('')}</div>` : ''}
+  const lbl = k('answer-lbl', 'annotate-answer-lbl');
+  const choiceHtml = S.doc
+    ? `<span class="annotate-answer-choice${choice ? '' : ' is-none'}">${esc(choice || 'None (answered in words)')}</span>`
+    : `<span class="answer-choice">${choice ? esc(choice) : '<span class="answer-none">None (answered in words)</span>'}</span>`;
+  return `<div class="${k('decision-block decision-answered', 'annotate-decision-item annotate-decision-resolved annotate-answered')}"${docItemAttr(c)}>
+      ${promptHtml(c)}
+      <div class="${k('answer-row', 'annotate-answer-row')}"><span class="${lbl}">Your choice</span>${choiceHtml}${choice ? stateTag(!!(d.round_pending || d.pending)) : ''}${canChangeAnswer(c) ? `<button type="button" class="${k('btn btn-ghost btn-xs', 'annotate-decision-btn annotate-answer-change')}" data-decision-action="change" data-id="${escAttr(c.id)}">${choice ? 'Change' : 'Choose'}</button>` : ''}</div>
+      ${notes.length ? `<div class="${k('answer-notes', 'annotate-answer-notes')}"><span class="${lbl}">Your notes</span>${notes.map(n => noteHtml(c, n)).join('')}</div>` : ''}
       ${addNoteHtml(c)}
-      <div class="decision-feedback" data-decision-feedback="${escAttr(c.id)}"></div>
-      ${c.catalog_plan ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
-      ${c.decision?.catalog_conflict ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
+      ${feedbackHtml(c)}
+      ${c.catalog_plan && !S.doc ? `<a href="#view=plans&plan=${encodeURIComponent(c.catalog_plan)}">Filed in Plans</a>` : ''}
+      ${c.decision?.catalog_conflict && !S.doc ? '<p>A newer decision is current in Plans; this vote is preserved in history.</p>' : ''}
     </div>`;
 }
 async function apiReplyNote(id, idx, ts, text) {
@@ -2246,7 +2345,7 @@ async function apiReplyNote(id, idx, ts, text) {
 async function keepingAddNoteDraft(id, fn) {
   const keep = DRAFTS['say:' + id] || '';
   const r = await fn();
-  if (keep && !DRAFTS['say:' + id]) { setDraft('say:' + id, keep); syncStripSayDraft(id); renderDrawer(); }
+  if (keep && !DRAFTS['say:' + id]) { setDraft('say:' + id, keep); mirrorSay(id); renderDrawer(); }
   return r;
 }
 async function addNote(root, id) {
@@ -2281,14 +2380,16 @@ async function deleteNote(id, key) {
   if (await apiReplyNote(id, n.idx, n.ts, null)) await refreshStore();
   else { alert('Could not delete the note; it may have just been sent. Edit it instead.'); await refreshStore(); }
 }
-function wireNoteActions(root) {
+// `scope` is where the card's boxes live: the rail list, or the document.
+function wireNoteActions(root, scope = root) {
   root.querySelectorAll('[data-note-action]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const { id, key } = btn.dataset;
     const k = id + '|' + key;
     const action = btn.dataset.noteAction;
-    if (action === 'add') return addNote(root, id);
+    if (action === 'add') return addNote(scope, id);
     if (action === 'delete') return deleteNote(id, key);
+    if (surfaceOf(btn).doc) return docNoteAction(btn, scope, id, key, action);
     if (action === 'edit') {
       editingNote[k] = true;
       renderDrawer();
@@ -2312,7 +2413,11 @@ function wireNoteActions(root) {
       }
     }
   }));
-  root.querySelectorAll('.note-edit-ta').forEach(ta => ta.addEventListener('input', () => setDraft('note:' + ta.dataset.noteEdit + '|' + ta.dataset.key, ta.value)));
+  root.querySelectorAll('[data-note-edit]').forEach(ta => ta.addEventListener('input', () => {
+    const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
+    if (surfaceOf(ta).doc) DOC_CARD.editing[k] = ta.value;
+    else setDraft('note:' + k, ta.value);
+  }));
   root.querySelectorAll('[data-action="open-card"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     cardExpanded[btn.dataset.id] = true;
@@ -2320,6 +2425,28 @@ function wireNoteActions(root) {
     const ta = document.querySelector('#comment-list [data-decision-say-ta="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.focus();
   }));
+}
+// A note action on the document's card: its editor state is the document's own.
+async function docNoteAction(btn, scope, id, key, action) {
+  const k = id + '|' + key;
+  if (action === 'edit') {
+    const n = cardNotes(findCommentById(id) || {}).find(n => n.key === key);
+    DOC_CARD.editing[k] = n ? n.text : '';
+  } else if (action === 'cancel') {
+    delete DOC_CARD.editing[k];
+  } else if (action === 'save') {
+    const ta = btn.closest('[data-strip-item]').querySelector('[data-note-edit][data-key="' + cssEsc(key) + '"]');
+    const text = (ta && ta.value || '').trim();
+    if (!text) return;
+    btn.disabled = true;
+    if (!(await saveNote(scope, id, key, text))) {
+      btn.disabled = false;
+      setDecisionFeedback(scope, id, 'Could not save the note. Your text is still here; try again.', true);
+      return;
+    }
+    delete DOC_CARD.editing[k];
+  }
+  redrawCard(btn);
 }
 // Pending: saved here, not sent to the agent yet. Sent: in a Send (or round).
 function sendStateHtml(c) {
@@ -2465,7 +2592,7 @@ function renderCItem(c) {
   return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
       ${unreadDotHtml(c)}
-      <span class="citem-node-name">${numHtml}${esc(anchorLabel(c))}</span>
+      <span class="citem-node-name">${numHtml}${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
       ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
@@ -2710,7 +2837,7 @@ function setDecisionFeedback(root, id, msg, isError) {
   el.classList.toggle('is-error', !!isError);
 }
 function setDecisionButtonsDisabled(root, id, disabled) {
-  root.querySelectorAll('.decision-btn[data-id="' + cssEsc(id) + '"]').forEach(b => { b.disabled = disabled; });
+  root.querySelectorAll('[data-options] > [data-id="' + cssEsc(id) + '"]').forEach(b => { b.disabled = disabled; });
 }
 
 // A1: the one comment box under the options. Its text goes with whichever
@@ -2728,9 +2855,9 @@ async function submitDecision(root, id, verdict, text, optionId) {
   setDecisionButtonsDisabled(root, id, true);
   setDecisionFeedback(root, id, 'Sending…', false);
   const c = storedComment(id);
-  const was = c && { changing: decisionChanging[id], expanded: cardExpanded[id] };
+  const was = c && { changing: decisionChanging[id], docChanging: DOC_CARD.changing[id], expanded: cardExpanded[id] };
   const optimistic = { verdict, text: text || undefined, option_id: optionId, by: IDENTITY ? IDENTITY.email : AUTHOR,
-    ts: new Date().toISOString(), round_pending: roundsEnabled(), pending: true };
+    ts: new Date().toISOString(), round_pending: true, pending: true };
   // The card it went on and what it replaced (a store read meanwhile puts
   // it on the fresh copy of the card).
   let holder = null, prior = null;
@@ -2740,18 +2867,22 @@ async function submitDecision(root, id, verdict, text, optionId) {
       if (cur && cur.decision !== optimistic) { holder = cur; prior = cur.decision; cur.decision = optimistic; }
     });
     delete decisionChanging[id];
+    delete DOC_CARD.changing[id];
+    delete decisionHint[id];
     renderDrawer();
     sendCommentCountsToFrame();
     updateSendState();
   }
-  let result = await settlePending(apiDecision(id, verdict, text, optionId));
-  if (!result || result.fallback) result = await settlePending(apiDecisionFallback(id, verdict, text));
+  const result = await settlePending(apiDecision(id, verdict, text, optionId, (root.ownerDocument || root).defaultView || window));
   pendingEdits.delete(optimistic);
   if (!result) {
     if (c) {
       if (holder && holder.decision === optimistic) holder.decision = prior;
       if (was.changing) decisionChanging[id] = true;
+      if (was.docChanging) DOC_CARD.changing[id] = true;
       if (was.expanded) cardExpanded[id] = true;
+      // Kept as state: the document redraws its card after this returns.
+      decisionHint[id] = { msg: 'Failed to send — try again.', error: true };
       renderDrawer();
       sendCommentCountsToFrame();
       updateSendState();
@@ -2761,6 +2892,7 @@ async function submitDecision(root, id, verdict, text, optionId) {
     return null;
   }
   delete decisionChanging[id];
+  delete DOC_CARD.changing[id];
   delete cardExpanded[id];
   delete decisionHint[id];
   clearSayDraft(id);
@@ -2807,8 +2939,7 @@ function pickOption(root, btn) {
       return submitDecision(root, id, action, note);
     }
     const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
-    const v = selectVerdictId();
-    return submitDecision(root, id, v, (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : ''), btn.dataset.optionId);
+    return submitDecision(root, id, 'select', label + (note ? '\n\n' + note : ''), btn.dataset.optionId);
   }
   const note = decisionCommentText(root, id) ||
     (action === 'comment' || action === 'changes' ? null : earlierAnswerComment(c));
@@ -2831,43 +2962,54 @@ function pickOption(root, btn) {
     }
     return submitDecision(root, id, action, note);
   }
-  // custom option → `select` naming the choice (or pre-D3 `comment`)
+  // Custom option → `select` naming the choice.
   const label = btn.dataset.optionLabel || btn.dataset.optionId || 'option';
-  const v = selectVerdictId();
-  const text = (v === 'select' ? label : 'Selected: ' + label) + (note ? '\n\n' + note : '');
-  return submitDecision(root, id, v, text, btn.dataset.optionId);
+  const text = label + (note ? '\n\n' + note : '');
+  return submitDecision(root, id, 'select', text, btn.dataset.optionId);
 }
 
-function wireDecisionActions(root) {
-  root.querySelectorAll('.decision-btn[data-decision-action]').forEach(btn => btn.addEventListener('click', (e) => {
+// `scope` is where the card's boxes and messages live: the rail list, or the
+// document the card is drawn in.
+function wireDecisionActions(root, scope = root) {
+  root.querySelectorAll('[data-options] > [data-decision-action]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    pickOption(root, btn);
+    pickOption(scope, btn);
   }));
   const toggleRegion = (btn, open) => {
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    const region = document.getElementById(btn.getAttribute('aria-controls'));
+    const region = btn.ownerDocument.getElementById(btn.getAttribute('aria-controls'));
     if (region) region.hidden = !open;
     return region;
   };
   root.querySelectorAll('[data-decision-action="evidence-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const open = !decisionEvidenceOpen[btn.dataset.id];
-    decisionEvidenceOpen[btn.dataset.id] = open;
+    const s = surfaceOf(btn);
+    const id = btn.dataset.id;
+    const open = !s.evOpen[id];
+    s.evOpen[id] = open;
     const region = toggleRegion(btn, open);
+    // Evidence is built when it is first opened.
+    if (open && region && !region.firstElementChild) {
+      const c = findCommentById(id);
+      region.innerHTML = c ? withSurface(s, () => evidenceItemsHtml(c, evidenceList(c.decision_request || {}))) : '';
+      wireDecisionActions(region, scope);
+    }
     if (open) syncExcerptClamps(region);
   }));
   root.querySelectorAll('[data-decision-action="evidence-preview"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const open = !decisionEvidenceItemOpen[btn.dataset.key];
-    decisionEvidenceItemOpen[btn.dataset.key] = open;
+    const s = surfaceOf(btn);
+    const open = !s.evItemOpen[btn.dataset.key];
+    s.evItemOpen[btn.dataset.key] = open;
     const region = toggleRegion(btn, open);
     if (open) syncExcerptClamps(region);
   }));
   root.querySelectorAll('[data-decision-action="excerpt-more"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const open = !decisionExcerptOpen[btn.dataset.key];
-    decisionExcerptOpen[btn.dataset.key] = open;
-    const box = btn.closest('.decision-excerpt');
+    const s = surfaceOf(btn);
+    const open = !s.excerptOpen[btn.dataset.key];
+    s.excerptOpen[btn.dataset.key] = open;
+    const box = btn.closest('.decision-excerpt, .annotate-excerpt');
     if (box) box.classList.toggle('is-open', open);
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     btn.textContent = open ? 'Show less' : 'Show more';
@@ -2875,16 +3017,19 @@ function wireDecisionActions(root) {
   }));
   root.querySelectorAll('[data-decision-action="evidence"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    goToEvidence(btn.dataset.anchor, btn.dataset.id);
+    const id = btn.dataset.id;
+    if (surfaceOf(btn).doc) scrollToAnchorInFrame(btn.dataset.anchor, null, { commentId: id, n: NUM_MAP[id] || 0, from: 'strip' });
+    else goToEvidence(btn.dataset.anchor, id);
   }));
-  root.querySelectorAll('.decision-say-ta').forEach(ta => ta.addEventListener('input', () => {
+  root.querySelectorAll('[data-decision-say-ta]').forEach(ta => ta.addEventListener('input', () => {
     setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
     syncSayHint(ta);
-    syncStripSayDraft(ta.dataset.decisionSayTa);
+    mirrorSay(ta.dataset.decisionSayTa, ta);
     updateSendState();
   }));
   root.querySelectorAll('[data-decision-action="change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (surfaceOf(btn).doc) { DOC_CARD.changing[btn.dataset.id] = true; return redrawCard(btn); }
     decisionChanging[btn.dataset.id] = true;
     highlightedCommentId = btn.dataset.id;
     renderDrawer();
@@ -2892,13 +3037,33 @@ function wireDecisionActions(root) {
     const ta = document.querySelector('#comment-list [data-comment-id="' + cssEsc(btn.dataset.id) + '"]');
     if (ta) ta.scrollIntoView({ block: 'nearest' });
   }));
+  root.querySelectorAll('[data-decision-action="later"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setAnswerLater(btn.dataset.id, btn.dataset.later === '1');
+  }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    delete decisionChanging[btn.dataset.id];
+    delete surfaceOf(btn).changing[btn.dataset.id];
     delete decisionHint[btn.dataset.id];
-    renderDrawer();
+    redrawCard(btn);
     updateSendState();
   }));
+}
+// A card's box shows the same draft in the rail, the Send summary and the
+// document; typing in one fills the others (never the box being typed in).
+function frameDoc() {
+  try { return document.getElementById('content-frame').contentDocument; } catch { return null; }
+}
+function mirrorSay(id, from) {
+  const text = DRAFTS['say:' + id] || '';
+  for (const doc of [document, frameDoc()]) {
+    if (!doc) continue;
+    doc.querySelectorAll('[data-decision-say-ta="' + cssEsc(id) + '"]').forEach(ta => {
+      if (ta === from || ta === doc.activeElement || ta.value === text) return;
+      ta.value = text;
+      syncSayHint(ta);
+    });
+  }
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
 
@@ -2949,7 +3114,7 @@ function openPopoverForCreate(anchorId, anchorLabel, x, y, target) {
   const node = document.getElementById('pop-node-name');
   const quote = target && target.selected_quote;
   node.classList.toggle('unified-selection-title', !!quote);
-  node.textContent = quote ? '“' + quote + '”' : (anchorLabel || anchorId);
+  node.textContent = quote ? '“' + quote + '”' : [imageTag(target), anchorLabel || anchorId].filter(Boolean).join(' · ');
   node.title = node.textContent;
   ta.value = kept ? kept.text : '';
   document.getElementById('pop-err').textContent = '';
@@ -3543,6 +3708,7 @@ function roundStats() {
   for (const c of flattenAll(false)) {
     if (!inScope(c)) continue;
     if (sectionOf(c) === 'needs') { total++; undecided++; }
+    else if (isSetAside(c) && hasSayDraft(c)) total++; // answered in words at this Send
     else if (answersNeed(c)) { total++; decided++; }
     if (isRoundPending(c)) pending++;
   }
@@ -3571,25 +3737,24 @@ function renderRoundBar() { updateSendState(); }
 // field (pencil to edit, + to add). Only the document on screen is edited
 // in place; another document's pencil opens that document's tab.
 let sumEditing = null; // card id or 'gf' being edited inside the summary
+const sumRestOpen = new Set(); // documents whose 'Not in this Send' group is open
 function summarySentence() {
-  const s = roundStats();
   const plan = sendPlan();
   const q = sendables();
-  // 2.20's own sentences, counted over exactly what this Send sends.
+  // One plain phrase per document; app.js joins them into the dialog's one line.
   const roundN = plan.round.length + plan.answers.length;
-  if (roundN > 0) {
-    return roundN + ' pending verdict' + (roundN === 1 ? '' : 's') + ' will be sent to the agent as one review round (' +
-      (s.decided + plan.answers.filter(c => !decisionAnswer(c)).length) + ' of ' + s.total + ' cards decided).';
-  }
-  return q.total === 0 ? 'Nothing to send yet.' : '';
+  const parts = [];
+  if (roundN) parts.push(roundN + (roundN === 1 ? ' answer' : ' answers'));
+  if (plan.push.length) parts.push(plan.push.length + (plan.push.length === 1 ? ' comment' : ' comments'));
+  if (q.gf) parts.push('general feedback');
+  return parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : (parts[0] || '');
 }
 function summaryWarning() {
   const plan = sendPlan();
   const roundN = plan.round.length + plan.answers.length;
-  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c)).length;
+  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c) && !isSetAside(c)).length;
   if (undecided > 0 && roundN > 0) {
-    return undecided + ' card' + (undecided === 1 ? ' is' : 's are') +
-      ' still undecided — the round will report ' + (undecided === 1 ? 'it' : 'them') + ' as undecided.';
+    return undecided + (undecided === 1 ? ' question is' : ' questions are') + ' still unanswered; the agent will see ' + (undecided === 1 ? 'it' : 'them') + ' as open.';
   }
   return '';
 }
@@ -3597,7 +3762,10 @@ function renderSummaryInto(list, editable) {
   const plan = sendPlan();
   const byNum = (a, b) => (NUM_MAP[a.id] || 0) - (NUM_MAP[b.id] || 0);
   const inSend = new Set([...plan.round, ...plan.answers, ...plan.push].map(c => c.id));
-  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id)).sort(byNum);
+  // Not in this Send: newest first, by when it was sent or answered; card number when neither (Chang 2026-10-31).
+  const restTs = c => Math.max(Date.parse(c.flagged_at) || 0, Date.parse(c.decision && c.decision.ts) || 0);
+  const rest = flattenAll(false).filter(c => hasDecisionRequest(c) && !inSend.has(c.id))
+    .sort((a, b) => restTs(b) - restTs(a) || byNum(b, a));
   const doc = DOC;
   const decisionRow = (c) => {
     const num = NUM_MAP[c.id];
@@ -3605,7 +3773,6 @@ function renderSummaryInto(list, editable) {
     const draft = hasSayDraft(c);
     const missing = !answered && !draft;
     const editing = editable && sumEditing === c.id;
-    const ansText = draft ? '“' + firstLine(sayDraft(c)) + '”' : answered ? answerLabel(c).text : 'Not answered';
     const sent = answered && !draft && !isRoundPending(c);
     const editLabel = missing ? 'Answer' : 'Change';
     let edit = '';
@@ -3624,12 +3791,24 @@ function renderSummaryInto(list, editable) {
     const pencil = (canChangeAnswer(c) || !answered)
       ? `<button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="${escAttr(c.id)}" data-sum-doc="${doc}" aria-label="${editLabel} #${num || ''}" title="${editLabel}" aria-expanded="${editing ? 'true' : 'false'}">${ico('pencil')}</button>`
       : '<span class="btn btn-xs btn-square btn-ghost" aria-hidden="true" style="visibility:hidden"></span>';
-    return `<div class="sum-row${missing ? ' is-missing' : ''}" data-sum-id="${escAttr(c.id)}">
-      <div class="sum-main">
-        <span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(displayPrompt(c))}</span>
-        <span class="sum-a${sent ? ' is-sent' : ''}">${esc(ansText)}${sent ? ' · sent' : ''}</span>
-        ${pencil}
-      </div>
+    // The answer under its question, full length; a picked option and
+    // the note typed with it read as label + paragraph.
+    let ans;
+    if (draft) ans = `<p class="rl-note">${esc(sayDraft(c))}</p>`;
+    else if (!answered) ans = '<span class="rl-none">Not answered</span>';
+    else {
+      const t = answerLabel(c).text;
+      const d = decisionAnswer(c);
+      const cut = t.indexOf('\n\n');
+      const label = d.verdict === 'select' ? (cut === -1 ? t : t.slice(0, cut)) : '';
+      const note = d.verdict === 'select' ? (cut === -1 ? '' : t.slice(cut + 2).trim()) : t;
+      ans = (label ? `<span class="rl-label">${esc(label)}</span>` : '') + (note ? `<p class="rl-note">${esc(note)}</p>` : '');
+      if (sent) ans += '<span class="rl-sent">sent</span>';
+    }
+    return `<div class="sum-row rl-row${missing ? ' is-missing' : ''}${sent ? ' is-sent' : ''}" data-sum-id="${escAttr(c.id)}">
+      <div class="rl-k">${num ? `<span class="rl-num">#${num}</span>` : '<span class="rl-num"></span>'}<span class="rl-q">${esc(displayPrompt(c))}</span></div>
+      <div class="rl-a">${ans}</div>
+      ${pencil}
       ${edit}
     </div>`;
   };
@@ -3638,26 +3817,48 @@ function renderSummaryInto(list, editable) {
     const num = NUM_MAP[c.id];
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
     const text = strandedSay(c) ? sayDraft(c) : last ? last.text : c.text;
-    return `<div class="sum-row"><div class="sum-main"><span class="sum-q">${num ? `<span class="citem-num">#${num}</span>` : ''}${esc(firstLine(text))}</span></div></div>`;
+    const key = strandedSay(c) || last ? (isAgentAuthor(c.author) ? firstLine(c.text) : 'Reply') : 'Comment';
+    return `<div class="sum-row rl-row" data-sum-id="${escAttr(c.id)}">
+      <div class="rl-k"><span class="rl-num">${num ? '#' + num : ''}</span><span class="rl-q">${esc(key)}</span></div>
+      <div class="rl-a"><p class="rl-note">${esc(text)}</p></div>
+    </div>`;
   };
   const group = (label, n) => `<div class="sum-group">${label}${n == null ? '' : ` <span class="badge badge-sm badge-ghost">${n}</span>`}</div>`;
   let html = '';
   const verdictRows = [...plan.round, ...plan.answers].sort(byNum);
-  if (verdictRows.length) html += group('Verdicts', verdictRows.length) + verdictRows.map(decisionRow).join('');
-  if (plan.push.length) html += group('Open comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
-  // General feedback: pencil to edit inline, or + to add (Chang, D1).
+  if (verdictRows.length) html += group('Answers', verdictRows.length) + verdictRows.map(decisionRow).join('');
+  if (plan.push.length) html += group('Comments', plan.push.length) + plan.push.slice().sort(byNum).map(commentRow).join('');
+  // General feedback for the document on screen is an open box at the top
+  // of the dialog, no button to reveal it (Chang 2026-10-31). Another
+  // document's stays a row whose Edit opens that document's tab.
   const gf = gfDraft();
-  const gfEditing = editable && sumEditing === 'gf';
-  html += group('General feedback', gf ? 1 : 0);
-  html += `<div class="sum-row" data-sum-id="${editable ? 'gf' : 'gf-' + doc}">
-    <div class="sum-main">
-      <span class="sum-q">${gf ? '“' + esc(firstLine(gf)) + '”' : '<span class="sum-none">None</span>'}</span>
-      <button type="button" class="btn btn-ghost btn-xs btn-square" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="${gf ? 'Edit general feedback' : 'Add general feedback'}" title="${gf ? 'Edit' : 'Add general feedback'}" aria-expanded="${gfEditing ? 'true' : 'false'}">${ico(gf ? 'pencil' : 'plus')}</button>
-    </div>
-    ${gfEditing ? `<div class="sum-edit"><textarea class="textarea textarea-sm sum-gf-ta" id="sum-gf-ta" placeholder="Feedback not tied to a specific section&hellip;" rows="3"></textarea></div>` : ''}
-  </div>`;
-  if (rest.length) html += group('Not in this Send') + rest.map(decisionRow).join('');
+  const gfHost = editable ? document.getElementById('sum-gf-host') : null;
+  if (gfHost) {
+    gfHost.innerHTML = `<label class="rl-gf"><span class="rl-gf-lbl">General feedback</span>
+      <textarea class="textarea sum-gf-ta rl-gf-ta" id="sum-gf-ta" rows="2" placeholder="Anything else for the agent? (optional)"></textarea></label>`;
+  } else if (gf) {
+    html += group('General feedback', 1);
+    html += `<div class="sum-row" data-sum-id="gf-${doc}">
+      <div class="sum-main">
+        <span class="sum-q">“${esc(firstLine(gf))}”</span>
+        <button type="button" class="btn btn-xs" data-sum-edit="gf" data-sum-doc="${doc}" aria-label="Edit general feedback">Edit</button>
+      </div>
+    </div>`;
+  }
+  // Collapsed by default and built only when opened, like the rail
+  // sections (Chang 2026-10-31: "no need to constantly show this or even
+  // load it"). The header keeps unanswered ones discoverable.
+  if (rest.length) {
+    const open = sumRestOpen.has(doc) || rest.some(c => c.id === sumEditing);
+    const missing = rest.filter(c => !decisionAnswer(c) && !hasSayDraft(c)).length;
+    html += `<button type="button" class="sec-hdr sum-group sum-rest-hdr" data-sum-rest="${doc}" aria-expanded="${open ? 'true' : 'false'}">${ico('chevDown')}<span>Not in this Send</span><span class="badge badge-sm badge-ghost">${rest.length}</span>${missing ? `<span class="sum-rest-missing">· ${missing} not answered</span>` : ''}</button>`;
+    if (open) html += rest.map(decisionRow).join('');
+  }
   list.innerHTML = html;
+  list.querySelectorAll('[data-sum-rest]').forEach(btn => btn.addEventListener('click', () => {
+    if (!sumRestOpen.delete(btn.dataset.sumRest)) sumRestOpen.add(btn.dataset.sumRest);
+    renderSummary();
+  }));
 
   // Another document's rows: the pencil opens that document's tab, where
   // the same summary opens with that row in edit mode.
@@ -3667,7 +3868,9 @@ function renderSummaryInto(list, editable) {
     }));
     return;
   }
-  const gta = list.querySelector('#sum-gf-ta');
+  const gta = gfHost.querySelector('#sum-gf-ta');
+  // The open box grows with its text up to its CSS max-height, then scrolls.
+  const grow = () => { gta.style.height = 'auto'; gta.style.height = (gta.scrollHeight + 2) + 'px'; };
   if (gta) {
     gta.value = DRAFTS.gf || '';
     gta.addEventListener('input', () => {
@@ -3677,21 +3880,23 @@ function renderSummaryInto(list, editable) {
       renderGeneralFeedback();
       updateSendState();
       syncSummaryCounts();
+      grow();
     });
-    gta.focus();
+    // Not focused on open: that would raise the iPad keyboard.
+    requestAnimationFrame(grow);
+    if (sumEditing === 'gf') gta.focus(); // Edit from another tab
   }
   list.querySelectorAll('[data-decision-say-ta]').forEach(ta => {
     ta.value = DRAFTS['say:' + ta.dataset.decisionSayTa] || '';
     ta.addEventListener('input', () => {
       setDraft('say:' + ta.dataset.decisionSayTa, ta.value || '');
-      syncStripSayDraft(ta.dataset.decisionSayTa);
+      mirrorSay(ta.dataset.decisionSayTa, ta);
       updateSendState();
     });
   });
   list.querySelectorAll('[data-sum-edit]').forEach(btn => btn.addEventListener('click', () => {
     sumEditing = sumEditing === btn.dataset.sumEdit ? null : btn.dataset.sumEdit;
     renderSummary();
-    if (sumEditing === 'gf') renderGeneralFeedback();
   }));
   list.querySelectorAll('.decision-btn-sum').forEach(btn => btn.addEventListener('click', async () => {
     const r = await pickOption(list, btn);
@@ -3729,8 +3934,7 @@ async function prepareDocCore() {
   let ok = true;
   const failed = [];
   for (const c of flattenAll(false).filter(hasSayDraft)) {
-    let r = await apiDecision(c.id, 'comment', sayDraft(c));
-    if (!r || r.fallback) r = await apiDecisionFallback(c.id, 'comment', sayDraft(c));
+    const r = await apiDecision(c.id, 'comment', sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(strandedSay)) {
@@ -3783,7 +3987,7 @@ async function submitPage(alsoPending, receipt) {
   let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
   let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
   await loadStore();
-  const doRound = roundsEnabled() && (pageRoundPending() > 0 || alsoPending);
+  const doRound = pageRoundPending() > 0 || alsoPending;
   // The round carries open comments with new activity (general feedback,
   // replies), so a Send wakes the owner once; push only when there is no round.
   let doPush = !doRound && flattenStore(false).some(needsPush);
@@ -3794,15 +3998,13 @@ async function submitPage(alsoPending, receipt) {
     const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
     await loadStore();
-    // A page server older than this chrome leaves comments out of the round:
-    // push what is still unsent rather than lose it.
+    // New activity arriving during the round still needs to be sent.
     doPush = !!j && flattenStore(false).some(needsPush);
   }
   if (doPush) {
     const j = await apiPushAll(receiptPayload(pushLines, sendId));
     if (j) { last = j; sentCount += j.flagged_count || 0; delivered = delivered || j.delivery === 'active_monitor'; sent.push(...pushLines); } else failed.push(...pushLines);
   }
-  // Nothing needed a call (an old server answers each verdict as it is posted).
   if (!doRound && !doPush) sent.push(...roundLines);
   if (last) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
@@ -3813,8 +4015,7 @@ async function submitPage(alsoPending, receipt) {
   const order = (it) => lines.indexOf(it);
   sent.sort((a, b) => order(a) - order(b));
   failed.sort((a, b) => order(a) - order(b));
-  const automatic = !!(CAPS && CAPS.automatic_round_delivery);
-  if (automatic && last) {
+  if (last) {
     // Legacy monitor counts do not prove that Orca accepted the prompt.
     delivered = false;
     try {
@@ -3823,7 +4024,7 @@ async function submitPage(alsoPending, receipt) {
       delivered = data.latest?.id === last.delivery_id && ['accepted', 'started', 'acknowledged'].includes(data.latest.state);
     } catch {}
   }
-  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic, any: !!last, send_id: sendId };
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -3909,20 +4110,14 @@ function renderOwnerChip() {
 //                   {type:'annotate:pin-open', anchorId, anchorLabel, commentIds, x, y}  (pin clicked → reverse lookup)
 //                   {type:'annotate:ready', version}
 //                   {type:'annotate:scroll-result', anchorId, found}
-//                   {type:'annotate:decision-posted', commentId}  (body-inline decision strip resolved)
 //                   {type:'annotate:excerpts', version, excerpts: {anchorId: {text, name, card} | {missing}}}
 //                   {type:'annotate:back-to-card', commentId}  ("Back to #N" clicked on an evidence target)
 // Shell -> content: {type:'annotate:scroll-to', anchorId, target, back: {commentId, n, from} | null}
 //                   {type:'annotate:comment-counts', counts: {anchorId: n},
 //                    pins: {anchorId: [{id, n, unread, target, decision,
-//                                        decisionRequest, decisionVerdict}]}}
-// decisionRequest is sent whenever c.decision_request exists — UNRESOLVED
-// (decision boolean/decisionVerdict null) OR RESOLVED (decisionVerdict set).
-// adapter.js reads "decisionRequest + decisionVerdict both present" as
-// resolved-but-changeable, so its body-inline strip can offer the same
-// "↺ Change" affordance the rail card does (see buildDecisionItemEl). An
-// older adapter.js that predates this simply ignores the extra field on a
-// resolved entry and shows the plain chip — graceful, not broken.
+//                                        decisionRequest: {evidence}, decisionVerdict, changing}]}}
+// A pin with decisionRequest gets a question card in the document, built by
+// stripCard (the rail's builder); its actions run here, not in the frame.
 //
 // Click coordinates arriving from the iframe are iframe-viewport-relative;
 // translate them into shell-viewport coordinates before positioning popovers.
@@ -4030,31 +4225,6 @@ function wireBridge() {
     } else if (data.type === 'annotate:key') {
       onShellKey({ key: String(data.key || ''), metaKey: !!data.meta, ctrlKey: !!data.ctrl, shiftKey: !!data.shift, altKey: false,
         target: document.body, preventDefault() {} });
-    } else if (data.type === 'annotate:say-draft') {
-      // A1: the body strip's comment box and the rail card's box are the
-      // same draft, so either one can carry the card's comment to Send.
-      if (!data.commentId) return;
-      const text = typeof data.text === 'string' ? data.text : '';
-      setDraft('say:' + data.commentId, text);
-      const ta = document.querySelector('#comment-list [data-decision-say-ta="' + cssEsc(data.commentId) + '"]');
-      if (ta && ta !== document.activeElement) { ta.value = text; syncSayHint(ta); }
-      updateSendState();
-    } else if (data.type === 'annotate:note') {
-      // A document card's note action; the rail's own code does the work.
-      if (!data.commentId || !findCommentById(data.commentId)) return;
-      const text = typeof data.text === 'string' ? data.text.trim() : '';
-      if (data.action === 'add') {
-        if (text) { setDraft('say:' + data.commentId, text); addNote(document, data.commentId); }
-      } else if (data.action === 'edit' && text) {
-        saveNote(document, data.commentId, String(data.key || ''), text).then(ok => postToFrame({ type: 'annotate:note-saved', commentId: data.commentId, key: data.key, ok }));
-      } else if (data.action === 'delete') {
-        deleteNote(data.commentId, String(data.key || ''));
-      }
-    } else if (data.type === 'annotate:decision-posted') {
-      // A body-inline decision strip (adapter.js) just resolved a decision.
-      // Refresh immediately so the rail card's decision block and the pins
-      // payload sync now, not on the 8s poll.
-      refreshStore().then(() => markReadAfterAction(data.commentId));
     } else if (data.type === 'annotate:scroll-result') {
       // adapter.js reports whether the requested anchor actually resolved to
       // a DOM node. Only act on it when it belongs to the comment we just
@@ -4098,7 +4268,6 @@ function sendCommentCountsToFrame() {
           c.status !== 'archived' && c.status !== 'resolved_in_version');
         return {
           id: c.id,
-          section: sectionOf(c),
           n: NUM_MAP[c.id] || 0,
           unread: readStateOf(c) !== 'read',
           // Creation-time granular target. Older comments without one remain
@@ -4106,40 +4275,13 @@ function sendCommentCountsToFrame() {
           // the exact clicked element/offset inside that anchor.
           target: c.target || null,
           decision: decisionPending,
-          // Body-inline decision strips (adapter.js): raw prompt/options text.
-          // Sent whenever the decision_request still exists — including after
-          // resolution — so the strip can offer "↺ Change" the same way the
-          // rail card does. adapter.js assigns this via textContent only,
-          // never innerHTML.
-          // The card's own text: the body strip shows it under the prompt
-          // when it says more, since the strip replaces the generated card.
-          text: hasDecisionRequest && typeof c.text === 'string' ? c.text : null,
-          decisionRequest: hasDecisionRequest && !pageReadOnly() ? {
-            prompt: displayPrompt(c),
-            options: Array.isArray(c.decision_request.options) ? c.decision_request.options : null,
-            // v2.19 fields (absent on a legacy request → undefined → adapter
-            // renders exactly the old strip).
-            context: typeof c.decision_request.context === 'string' ? c.decision_request.context : null,
-            recommendation: typeof c.decision_request.recommendation === 'string' ? c.decision_request.recommendation : null,
-            consequences: (c.decision_request.consequences && typeof c.decision_request.consequences === 'object') ? c.decision_request.consequences : null,
-            evidence: Array.isArray(c.decision_request.evidence) ? c.decision_request.evidence : null,
-            impact: typeof c.decision_request.impact === 'string' ? c.decision_request.impact : null,
-            blocking: c.decision_request.blocking === true,
-          } : null,
+          // The document draws a card for these (stripCard builds it); the
+          // evidence says where it goes. Sent after the answer too, so the
+          // card keeps its place with your choice and notes on it.
+          decisionRequest: hasDecisionRequest && !pageReadOnly()
+            ? { evidence: Array.isArray(c.decision_request.evidence) ? c.decision_request.evidence : null } : null,
           decisionVerdict: decisionResolved ? c.decision.verdict : null,
-          // Feedback prototype: the answer as one phrase (C1) and the shared
-          // comment-box draft (A1) for the body strip.
-          answerText: decisionResolved ? answerLabel(c).text : null,
-          // Your choice and notes, as the rail card shows them (textContent only in the frame).
-          answer: decisionResolved && hasAddNoteBox(c) ? {
-            choice: choiceLabel(c),
-            choicePending: !!(c.decision.round_pending || c.decision.pending),
-            note: decisionNote(c),
-            notes: cardNotes(c).map(n => ({ key: n.key, text: n.text, pending: n.pending, deletable: !!n.deletable })),
-          } : null,
-          sayDraft: DRAFTS['say:' + c.id] || '',
-          // v2.19 round mode: verdict recorded but not yet sent.
-          roundPending: isRoundPending(c),
+          changing: !!DOC_CARD.changing[c.id],
         };
       })
       .sort((a, b) => a.n - b.n);
@@ -4166,13 +4308,10 @@ function sendCommentCountsToFrame() {
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
   const board = boardLink();
-  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates, rounds: roundsEnabled(), changes: changesEnabled(), select: selectVerdictId() === 'select',
+  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates,
     board: board ? { url: board.url, prefix: PROJECT.board.prefix } : null });
 }
 
-function syncStripSayDraft(commentId) {
-  postToFrame({ type: 'annotate:say-draft-set', commentId, text: DRAFTS['say:' + commentId] || '' });
-}
 
 function scrollToAnchorInFrame(anchorId, target, back) {
   postToFrame({ type: 'annotate:scroll-to', anchorId, target: target || null, back: back || null });
@@ -4432,12 +4571,18 @@ async function loadCategories() {
       if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
     }
     // Plans opens on the first plan in section order (tracking first); a
-    // hidden plan opens only by link.
-    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden') || {}).id || null;
+    // hidden plan opens only by link, an archive page from Open project.
+    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden' && !isArchivePlan(p)) || PLANS.find(isArchivePlan) || {}).id || null;
     DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
     if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
+    if (DOC === 'review') renderProject(); // Open project lists the archive pages
     return true;
   } catch { return false; }
+}
+// An archive page of finished Review topics (long_pages.py), stored as a plan:
+// out of the Plans picker, listed under Open project. categories.is_archive_plan mirrors it.
+function isArchivePlan(p) {
+  return !!p && p.section === 'archive';
 }
 // The Plans tab shows one plan; another plan starts from its latest revision.
 async function selectPlan(id) {
@@ -4445,6 +4590,7 @@ async function selectPlan(id) {
   await docQueue;
   if (DOC === 'plans') enterDoc('review');
   PLAN_ID = id;
+  if (!DOCS.includes('plans')) { DOCS = ['review', 'plans']; if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS; }
   delete DOC_STATE.plans;
   await loadDocState('plans');
   if (window.AA) window.AA.go({ view: 'plans', plan: id });
@@ -4712,6 +4858,7 @@ window.AnnotateDocs = {
   items: (doc) => withDoc(doc, sendItems),
   renderSummaryInto: (doc, el) => withDoc(doc, () => renderSummaryInto(el, doc === VIEW_DOC)),
   renderHistoryInto: (doc, shown) => withDoc(doc, () => renderVersionRail(shown)),
+  isArchivePlan,
   submitPage,
   discardPage,
   pageRoundPending,
@@ -4745,7 +4892,6 @@ window.AnnotateDocs = {
   answerLabel,
   displayPrompt,
   decisionOptions,
-  selectVerdictId,
   ticketsHTML,
   authorLabel,
   whoName,
@@ -4753,6 +4899,10 @@ window.AnnotateDocs = {
   decide: apiDecision,
   refreshStore: reloadPage,
   ico,
+  // adapter.js draws the document's question cards with the rail's builder.
+  stripCard,
+  stripVerdictChip,
+  syncClamps: syncExcerptClamps,
 };
 
 document.addEventListener('DOMContentLoaded', init);

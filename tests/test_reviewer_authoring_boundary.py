@@ -36,7 +36,7 @@ def reviewer_page(tmp_path, monkeypatch):
     bus = cli.BUS_ROOT / project
     bus.mkdir(parents=True, exist_ok=True)
     handler = sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path="/page",
-                                       v2_mode=True, skill_dir=sync_server.WEB_DIR)
+                                       skill_dir=sync_server.WEB_DIR)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
         "slug_dir": str(directory), "port": server.server_port, "transport": "funnel",
@@ -320,3 +320,12 @@ def test_alias_read_bookkeeping_merges_latest_items_without_writes_or_foreign_st
     status, _, guest = page.call("GET", route, cookie=page.cookie)
     assert status == 200 and guest["author"] == page.identity and guest[field] == data[page.identity]
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("payload", [{}, {"s:new": []}, {"schema_version": 1, "anchors": {}}])
+def test_removed_local_store_formats_cannot_replace_current_data(reviewer_page, payload):
+    page = reviewer_page
+    before = (page.directory / "comments.json").read_bytes()
+    status, _, _ = page.call("POST", "api/comments", payload, public=False, browser=False)
+    assert status == 400
+    assert (page.directory / "comments.json").read_bytes() == before

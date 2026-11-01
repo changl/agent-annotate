@@ -295,6 +295,8 @@ def _closed(page, size):
     assert frame_box["x"] + frame_box["width"] <= strip["x"], "the document runs under the strip"
     page.frame_locator("#content-frame").locator(".unified-table-frame").first.wait_for()
     doc = page.locator("#content-frame").element_handle().content_frame()
+    # Below the fold a lazy image never loads; load them all so every box has its final size.
+    doc.evaluate("() => document.querySelectorAll('img[loading=lazy]').forEach(i => { i.loading = 'eager'; })")
     _wait(lambda: doc.evaluate("() => [...document.images].every(i => i.complete)"), page)
     return doc
 

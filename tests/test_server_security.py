@@ -1,7 +1,5 @@
 import http.client
 import http.server
-import io
-import json
 import stat
 import threading
 import urllib.parse
@@ -12,11 +10,10 @@ from agent_annotate import cli
 from agent_annotate.sync_server import AnnotateHandler, _atomic_write_json, _version_file, make_handler
 
 
-def _handler(directory, *, v2=True):
+def _handler(directory):
     handler = AnnotateHandler.__new__(AnnotateHandler)
     handler.artifact_dir = directory
-    handler.artifact_file = "current.html" if v2 else "review.html"
-    handler.v2_mode = v2
+    handler.artifact_file = "current.html"
     handler.skill_dir = None
     handler.public_base_path = ""
     handler.slug = "review"
@@ -69,61 +66,8 @@ def test_valid_content_and_current_version_symlink_still_work(tmp_path):
     assert b"PUBLIC_INERT_CONTENT" in handler.responses[-1][1]
 
 
-@pytest.mark.parametrize("doc", ["../outside", "/outside", "..", "review/other"])
-@pytest.mark.parametrize("method", ["get", "post"])
-def test_legacy_doc_traversal_never_reads_or_writes(tmp_path, doc, method):
-    artifact = tmp_path / "review"
-    artifact.mkdir()
-    outside = tmp_path / "outside.comments.json"
-    outside.write_text('{"PRIVATE_INERT_MARKER":[]}')
-    handler = _handler(artifact, v2=False)
-    handler.headers = {"Content-Length": "2"}
-    handler.rfile = io.BytesIO(b"{}")
-    getattr(handler, f"_v1_{method}_comments")(urllib.parse.urlparse("/api/comments?" + urllib.parse.urlencode({"doc": doc})))
-    assert handler.responses[-1][0] == 400
-    assert outside.read_text() == '{"PRIVATE_INERT_MARKER":[]}'
-    assert b"PRIVATE_INERT_MARKER" not in handler.responses[-1][1]
-
-
-def test_legacy_comment_symlink_and_predictable_temp_symlink_are_safe(tmp_path):
-    outside = tmp_path / "outside.json"
-    outside.write_text("PRIVATE_INERT_MARKER")
-    artifact = tmp_path / "review"
-    artifact.mkdir()
-    comments = artifact / "review.comments.json"
-    comments.symlink_to(outside)
-    handler = _handler(artifact, v2=False)
-    handler.headers = {"Content-Length": "2"}
-    handler.rfile = io.BytesIO(b"{}")
-    handler._v1_post_comments(urllib.parse.urlparse("/api/comments?doc=review"))
-    assert handler.responses[-1][0] == 403
-    comments.unlink()
-    (artifact / "review.comments.json.tmp").symlink_to(outside)
-    handler.rfile = io.BytesIO(b"{}")
-    handler._v1_post_comments(urllib.parse.urlparse("/api/comments?doc=review"))
-    assert handler.responses[-1][0] == 200
-    assert json.loads(comments.read_text()) == {}
-    assert outside.read_text() == "PRIVATE_INERT_MARKER"
-
-
-@pytest.mark.parametrize("doc", ["review draft", "审阅计划", "a" * 129])
-def test_legacy_valid_basenames_keep_read_write_support(tmp_path, doc):
-    handler = _handler(tmp_path, v2=False)
-    payload = {"anchor": [{"text": "inert feedback"}]}
-    body = json.dumps(payload).encode()
-    handler.headers = {"Content-Length": str(len(body))}
-    handler.rfile = io.BytesIO(body)
-    parsed = urllib.parse.urlparse("/api/comments?" + urllib.parse.urlencode({"doc": doc}))
-    handler._v1_post_comments(parsed)
-    assert handler.responses[-1][0] == 200
-    assert json.loads((tmp_path / (doc + ".comments.json")).read_text()) == payload
-    handler._v1_get_comments(parsed)
-    assert handler.responses[-1][0] == 200
-    assert json.loads(handler.responses[-1][1]) == payload
-
-
 def test_mounted_root_redirect_preserves_query_and_keeps_mount_boundary(tmp_path):
-    handler = make_handler(artifact_dir=tmp_path, public_base_path="/review", slug="review", v2_mode=True)
+    handler = make_handler(artifact_dir=tmp_path, public_base_path="/review", slug="review")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

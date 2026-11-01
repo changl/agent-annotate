@@ -7,7 +7,6 @@ import mmap
 import os
 import threading
 import time
-from types import SimpleNamespace
 
 import pytest
 
@@ -34,7 +33,7 @@ def server(tmp_path, monkeypatch):
     (root / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"s:test": [comment]}, "archived": {}}))
     (root / "current.meta.json").write_text('{"current":"v1","history":[{"version":"v1"}]}')
     publish_plan_revision(root, "test", "<html><body>Plan</body></html>", title="Test")
-    handler = sync_server.make_handler(root, v2_mode=True, slug="page", bus_dir=root / "project", local_author="reviewer@example.test")
+    handler = sync_server.make_handler(root, slug="page", bus_dir=root / "project", local_author="reviewer@example.test")
     httpd = sync_server.ReviewHTTPServer(("127.0.0.1", 0), handler)
     record = {"slug_dir": str(root), "port": httpd.server_port, "owner_session": "test-owner",
               "owner_target": {"handle": "term_fake"}, "workspace_primary": True,
@@ -164,17 +163,9 @@ def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(ser
     assert request(httpd, "/comments.json?view=poll", headers={"If-None-Match": headers["ETag"]})[0] == 200
 
 
-def test_failed_write_cannot_poison_cached_snapshot_and_legacy_get_still_migrates_on_write(server, monkeypatch):
+def test_failed_write_cannot_poison_cached_snapshot(server, monkeypatch):
     httpd, root, _, _ = server
     path = root / "comments.json"
-    original = json.loads(path.read_text())
-    legacy = original["anchors"]
-    path.write_text(json.dumps(legacy))
-    assert request(httpd, "/comments.json")[0] == 200
-    backup = path.with_suffix(".json.v1.bak")
-    assert not backup.exists()
-    assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Committed"})[0] == 201
-    assert json.loads(backup.read_text()) == legacy
     before = path.read_bytes()
     status, headers, _ = request(httpd, "/comments.json")
     assert status == 200
@@ -395,33 +386,12 @@ def test_non_object_meta_keeps_live_summaries(server, raw):
     assert request(httpd, "/current.meta.json", headers={"If-None-Match": headers["ETag"]})[0] == 304
 
 
-def test_legacy_migration_atomically_replaces_locked_store_and_invalidates_poll(server, monkeypatch):
-    from agent_annotate import cli
-
-    httpd, root, _, _ = server
-    path = root / "comments.json"
+@pytest.mark.parametrize("raw", [{"s:test": [{"text": "Old map"}]}, [{"sectionId": "s:test", "text": "Old list"}]])
+def test_removed_store_formats_are_refused_without_changing_the_file(tmp_path, raw):
+    path = tmp_path / "comments.json"
+    path.write_text(json.dumps(raw))
     before = path.read_bytes()
-    cached = request(httpd, "/comments.json")[1]
-    legacy = root.parent / "legacy.html"
-    legacy.write_text("<html><body>Legacy</body></html>")
-    incoming = json.loads(before)
-    incoming["anchors"]["s:test"][0]["text"] = "Migrated"
-    legacy.with_suffix(".comments.json").write_text(json.dumps(incoming))
-    replaced = []
-    original = os.replace
-
-    def replace(source, target):
-        if os.fspath(target) == str(path):
-            assert root / ".comments.json.lock" in sync_server._STORE_LOCAL.held
-            assert path.read_bytes() == before
-            replaced.append(True)
-        return original(source, target)
-
-    monkeypatch.setattr(os, "replace", replace)
-    with path.open("rb") as old:
-        assert cli.cmd_migrate(SimpleNamespace(legacy_html=str(legacy), slug=root.name,
-                                              version="v1", label="Migrated", copy=True)) == 0
-        assert replaced and old.read() == before
-        assert path.stat().st_ino != os.fstat(old.fileno()).st_ino
-    status, _, body = request(httpd, "/comments.json", headers={"If-None-Match": cached["ETag"]})
-    assert status == 200 and json.loads(body)["anchors"]["s:test"][0]["text"] == "Migrated"
+    with pytest.raises(ValueError, match="schema_version 2"):
+        sync_server._load_v2_store(path)
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]

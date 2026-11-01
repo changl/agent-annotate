@@ -291,10 +291,9 @@
     rail.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', async () => {
       const o = optionOf(f, b.dataset.opt);
       busy = true;
-      const v = D().selectVerdictId();
-      const r = await D().decide(f.id, v, v === 'select' ? o.label : 'Selected: ' + o.label);
+      const r = await D().decide(f.id, 'select', o.label);
       busy = false;
-      if (!r || r.fallback) { fail('Failed to send — try again.'); return; }
+      if (!r) { fail('Failed to send — try again.'); return; }
       changing = false;
       await D().refreshStore();
     }));
@@ -309,7 +308,7 @@
       busy = true;
       const r = await D().decide(f.id, 'comment', t);
       busy = false;
-      if (!r || r.fallback) { fail('Failed to send — try again.'); return; }
+      if (!r) { fail('Failed to send — try again.'); return; }
       clearSent($('#f-compose'), 'compose', f.id, t);
       changing = false;
       await D().refreshStore();

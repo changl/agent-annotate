@@ -58,7 +58,15 @@
   <!-- Review and Plans: a document in the frame (the accepted shell) -->
   <div class="frame-area" id="frame-area" role="main" aria-label="Document" tabindex="-1">
     <div class="unified-version-banner" id="unified-version-banner" hidden></div>
-    <div class="view-hd"><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
+    <div class="view-hd"><a class="btn btn-ghost btn-xs view-hd-back" id="view-hd-index" href="#view=plans" hidden><svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"/></svg>All plans</a><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
+    <!-- Plans opens on this index (cards #8, #9): Tracking, Unsorted, then one section per topic -->
+    <div class="aa-scroll plans-index" id="plans-index" hidden>
+      <div class="pi">
+        <input type="search" class="input input-sm w-full pi-search" id="pi-search" placeholder="Find a plan or decision…" aria-label="Find a plan or decision" autocomplete="off">
+        <p class="pi-note" id="pi-note" role="status" aria-live="polite"></p>
+        <div id="pi-body"></div>
+      </div>
+    </div>
     <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>
@@ -210,7 +218,7 @@
   <div id="round-confirm" role="dialog" aria-modal="true" aria-labelledby="round-confirm-title">
     <div class="round-confirm-title" id="round-confirm-title">Send</div>
     <div class="round-confirm-sub" id="round-confirm-sub"></div>
-    <div class="round-confirm-warn" id="round-confirm-warn" style="display:none"></div>
+    <div id="sum-gf-host"></div>
     <div class="sum-list" id="sum-list"></div>
     <div class="round-confirm-ft">
       <button type="button" class="btn btn-link btn-sm sum-discard" id="round-discard-btn" title="Clear the pending verdicts without sending them as a round (each card keeps its recorded verdict)">Discard pending</button>

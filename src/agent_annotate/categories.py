@@ -13,13 +13,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .copy_state import _link, _text, load_copy
+from .hooks.decision_state import is_set_aside
 
 CATEGORIES = ("review", "library", "findings", "plans")
 MAX_PROOF_BYTES = 10 * 1024 * 1024
 MAX_PLAN_BYTES = 4 * 1024 * 1024
 # Plans sections in picker order. A plan folder without one is reference; a
 # plan filed from a decision is approved; hidden leaves the picker.
-PLAN_SECTIONS = ("tracking", "approved", "reference", "hidden")
+PLAN_SECTIONS = ("tracking", "approved", "reference", "hidden", "archive")
 # Proof files are served from the review origin, so only inert types are taken.
 PROOF_SUFFIXES = ("png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "log", "json", "csv")
 _PLAN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
@@ -31,6 +32,12 @@ def comment_category(comment: dict) -> str:
     if category in CATEGORIES:
         return category
     return "library" if str(comment.get("anchor_id", "")).startswith("copy:") else "review"
+
+
+def is_archive_plan(plan: dict) -> bool:
+    """An archive page of finished Review topics (long_pages), not a plan: kept
+    out of the Plans picker and listed under Open project. shell.js isArchivePlan mirrors it."""
+    return plan.get("section") == "archive"
 
 
 def validate_plan_id(plan_id: str) -> str:
@@ -157,7 +164,7 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 def _comments(page_dir):
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"), migrate=False)
+    return _load_v2_store(safe_path(page_dir, "comments.json"))
 
 
 def _finding(store: dict, identifier) -> dict:
@@ -415,7 +422,7 @@ def comment_needs_reviewer(comment: dict) -> bool:
     status = comment.get("status", "open")
     decision = _mapping(comment.get("decision"))
     if status == "archived" or comment.get("withdrawn") or comment.get("round_pending") or (
-            decision.get("round_pending") and status != "resolved_in_version"):
+            decision.get("round_pending") and status != "resolved_in_version") or is_set_aside(comment):
         return False
     if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):
         return not (comment.get("fixed") or decision.get("verdict") or
@@ -436,6 +443,8 @@ def comment_section(comment: dict) -> str | None:
         return "ready"
     if comment_needs_reviewer(comment):
         return "needs_you"
+    if is_set_aside(comment) and status not in {"addressed_by_agent", "resolved_in_version"}:
+        return "later"
     # A finding (not a reviewer's comment on one) keeps agreed work waiting.
     if comment_category(comment) == "findings" and (comment.get("finding") or comment.get("decision_request")):
         if comment.get("fixed"):
@@ -536,7 +545,7 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
                     store: dict | None = None, plans: list | None = None) -> dict:
     from .consolidate import marker
     from .sync_server import _author_key
-    counts = {c: dict.fromkeys(("needs_you", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
+    counts = {c: dict.fromkeys(("needs_you", "later", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
     if marker(page_dir) is not None:
         return counts
     read = (read_state if read_state is not None else

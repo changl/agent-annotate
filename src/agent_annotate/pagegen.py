@@ -980,7 +980,8 @@ def _previous_sections(slug_dir: Path, version: str, title: str) -> tuple[str, d
                 return None
             if '<div class="aa">' not in canvas:
                 return None
-            return prev, section_bodies(canvas)
+            from .long_pages import plain_images
+            return prev, section_bodies(plain_images(canvas))
     except (OSError, UnicodeDecodeError, PageGenError, ValueError):
         return None
     return None
@@ -1016,30 +1017,30 @@ def _scope_banner(meta: dict, version: str) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 # Build
 # ────────────────────────────────────────────────────────────────────────────
-def build_html(meta: dict, canvas: str, registry: dict, version: str) -> str:
-    """Fill every `{{NAME}}` in the packaged template. Never one occurrence."""
-    template = (WEB_DIR / "template.html").read_text(encoding="utf-8")
+def build_html(meta: dict, canvas: str, registry: dict) -> str:
+    """Keep the document wrapper the server extracts; chrome comes from the shell."""
     # Escape all '<' so neither script-end tags nor HTML double-escaped
     # script states can alter parsing. JSON decoding restores exact labels.
     registry_js = json.dumps(registry, indent=1, ensure_ascii=False).replace("<", "\\u003c")
-    values = {
-        "{{TITLE}}": E(meta["title"]),
-        "{{SUBTITLE}}": E(meta.get("subtitle", "")),
-        "{{DATE}}": E(meta.get("date", "")),
-        # DOC_ID is the localStorage key and sits in a JS string literal.
-        "{{DOC_ID}}": re.sub(r"[^A-Za-z0-9._:-]", "-", meta["slug"]),
-        "{{VERSION}}": version,
-        "{{ANCHOR_REGISTRY}}": registry_js,
-        "{{LEGEND}}": (f'<div class="muted">{inline(meta["legend"])}</div>'
-                       if meta.get("legend") else ""),
-    }
-    for token, value in values.items():
-        template = template.replace(token, value)
-    leftover = sorted(set(re.findall(r"\{\{([A-Z_]+)\}\}", template)) - {"CANVAS"})
-    if leftover:
-        raise PageGenError(f"template placeholders left unfilled: {', '.join(leftover)}")
-    # Last, so a `{{TOKEN}}` the author typed in their markdown stays text.
-    return template.replace("{{CANVAS}}", canvas)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{E(meta["title"])}</title>
+<script src="diagram-plot.js"></script>
+</head>
+<body>
+<div id="canvas-wrapper">
+<!-- CANVAS CONTENT — injected by Claude ── -->
+{canvas}
+<!-- END CANVAS CONTENT ──────────────────── -->
+</div>
+<script>const ANCHOR_REGISTRY = {registry_js};
+</script>
+</body>
+</html>
+"""
 
 
 def render_plan(text: str, plan_id: str, *, title: str | None = None,
@@ -1065,7 +1066,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     if page_dir is not None:
         images.copy_into(page_dir)
     # The HTTP plan route supplies the actual version; no Review version is embedded.
-    return build_html(meta, canvas, registry, ""), meta["title"]
+    return build_html(meta, canvas, registry), meta["title"]
 
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
@@ -1121,21 +1122,28 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     previous = _previous_sections(slug_dir, version, meta["title"])
     if previous:
         canvas, unchanged = mark_unchanged_sections(canvas, *previous)
+    # Long pages: finished topics fold or move to an archive page; big screenshots get previews.
+    from .long_pages import arrange, light_images
+    images.copy_into(slug_dir)
+    canvas, cards, registry, layout = arrange(canvas, cards, registry, unchanged, slug_dir, meta, version)
+    canvas = light_images(canvas, slug_dir)
+    warnings_layout = layout.pop("warnings")
 
     banner = _scope_banner(meta, version)
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
     warnings = _full_plan_warnings(slug_dir, version, blocks) if "full_plan" in meta else []
+    warnings += warnings_layout
     from .decision_quality import decision_warnings
     for card in cards:
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
 
-    html_out = build_html(meta, canvas, registry, version)
+    html_out = build_html(meta, canvas, registry)
     from .page_names import page_name, set_page_name
     # Resolve legacy titles before an in-place regeneration replaces their HTML.
     initial_name = page_name(slug_dir, fallback=meta["title"])
-    images.copy_into(slug_dir)
-    prior = _write_files(slug_dir, version, label, source, text, html_out, cards)
+    prior = _write_files(slug_dir, version, label, source, text, html_out, cards,
+                         {"sections": layout["sections"], "screenshots": layout["screenshots"]})
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1152,6 +1160,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "cards": len(cards),
         "warnings": warnings,
         "unchanged_sections": unchanged,
+        "layout": layout,
         "prior_versions": prior,
         "html": slug_dir / "versions" / f"{version}.html",
         "cards_json": slug_dir / "cards.json",
@@ -1167,7 +1176,7 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _write_files(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict]) -> list[str]:
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None) -> list[str]:
     # Lazy: cli.py imports this module, and the server takes the same lock on
     # current.meta.json that _write_meta_locked does.
     from .cli import _read_meta, _write_meta_locked
@@ -1197,9 +1206,9 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
             history = meta.setdefault("history", [])
             for entry in history:
                 if isinstance(entry, dict) and entry.get("version") == version:
-                    entry["label"] = label
+                    entry.update(label=label, **(stats or {}))
                     return                  # idempotent by version, never appended twice
-            history.append({"version": version, "ts": _now_iso(), "label": label})
+            history.append({"version": version, "ts": _now_iso(), "label": label, **(stats or {})})
 
         _write_meta_locked(slug_dir, _mutate)
     # Reports can have no decision cards, so the server may never write this
@@ -1295,6 +1304,15 @@ def cmd_new(args) -> int:
     print(f"  version        {version} ({result['label']})"
           + (f"; earlier: {', '.join(result['prior_versions'])}"
              if result["prior_versions"] else ""))
+    layout = result.get("layout") or {}
+    if layout.get("folded"):
+        print(f"  earlier        {len(layout['folded'])} finished topics folded into Earlier updates")
+    for archive in layout.get("archived") or []:
+        print(f"  archived       {archive['topics']} finished topics → {archive['id']} ({archive['title']})")
+    if layout.get("already_archived"):
+        print(f"  archived       {len(layout['already_archived'])} topics already in an archive page left out")
+    if layout.get("returned"):
+        print(f"  returned       {len(layout['returned'])} archived topics changed and are back on the page")
     for warning in result.get("warnings") or []:
         print(f"  WARN           {warning}")
 

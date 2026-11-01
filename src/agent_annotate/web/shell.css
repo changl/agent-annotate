@@ -135,6 +135,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem-node{font-size:calc(11px * var(--aa-text, 1));font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px;min-height:22px}
 .citem-node-name{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .citem-num{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;color:var(--color-base-content);background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:0 6px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.citem-img-id{flex-shrink:0;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--color-base-content)}
 .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--color-error);flex-shrink:0}
 .unread-dot.new-reply{background:var(--color-secondary)}
 .citem-kbd{display:inline-flex;gap:2px;flex-shrink:0}
@@ -216,6 +217,8 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .decision-evidence-preview .decision-excerpt{margin:0 0 6px}
 .decision-evidence-missing{font-style:italic;color:var(--faint);margin-bottom:6px}
 /* A1: one comment box per card */
+.decision-later{display:inline-flex;margin-top:8px;padding-inline:4px;height:auto;min-height:28px;font-weight:600;color:color-mix(in oklab,var(--color-base-content) 70%,transparent)}
+.decision-later+.decision-evidence{margin-top:0}
 .decision-cmt{margin-top:8px;position:relative}
 .decision-say-ta{width:100%;min-height:2.4rem;font-size:calc(11px * var(--aa-text, 1));line-height:1.4;padding-right:34px}
 .decision-cmt .kbd{position:absolute;right:8px;top:8px}
@@ -232,6 +235,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .hist-lbl{font-size:calc(10px * var(--aa-text, 1));font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:6px 4px}
 .vrail-body{display:flex;flex-direction:column;gap:1px}
 .vrail-empty{padding:12px;font-size:calc(10px * var(--aa-text, 1));color:var(--faint)}
+.vrail-more{display:block;margin:6px 8px 10px}
 .vrow{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:calc(11px * var(--aa-text, 1));border-radius:var(--radius-field);cursor:pointer;color:var(--color-base-content);width:100%;border:0;background:transparent;font-family:"Roboto", sans-serif;text-align:left}
 .vrow:hover{background:var(--soft)}
 .vrow.current{background:color-mix(in oklab,var(--color-primary) 16%,transparent);font-weight:700}
@@ -270,32 +274,71 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 #documents-body .doc-list svg.i{display:inline-block;width:12px;height:12px;margin-left:5px;vertical-align:-1px}
 
 /* ── Send summary (D1) ──────────────────────────────── */
-#round-confirm-backdrop{position:fixed;inset:0;background:color-mix(in oklab,var(--color-neutral) 50%,transparent);z-index:2100;display:none;align-items:center;justify-content:center}
+/* A reading list: general feedback an open box at the top; each answer in
+   full under its question; one type scale (17 title / 13.5 answer /
+   12.5 question / 11.5 label); counts as plain numerals; the unanswered
+   line and Discard quiet. Scoped to #round-confirm to beat daisyUI and
+   app.css. */
+#round-confirm-backdrop{position:fixed;inset:0;background:color-mix(in oklab,var(--color-neutral) 72%,transparent);z-index:2100;display:none;align-items:center;justify-content:center}
 #round-confirm-backdrop.vis{display:flex}
-#round-confirm{background:var(--color-base-100);border-radius:var(--radius-box);padding:18px 20px;width:min(960px, calc(100vw - 32px));max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);box-shadow:0 20px 50px color-mix(in oklab,var(--color-neutral) 35%,transparent);display:flex;flex-direction:column;gap:8px}
-.round-confirm-title{font-size:calc(14px * var(--aa-text, 1));font-weight:700}
-.round-confirm-sub{font-size:calc(11px * var(--aa-text, 1));color:var(--muted);line-height:1.5}
-.round-confirm-warn{font-size:calc(10.5px * var(--aa-text, 1));color:var(--warn-text);line-height:1.4}
-.sum-list{overflow-y:auto;min-height:0;flex:1;display:flex;flex-direction:column;gap:2px;margin:4px -6px}
-.sum-group{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:8px 6px 3px}
-.sum-row{display:flex;flex-direction:column;gap:6px;padding:6px;border-radius:var(--radius-field)}
-.sum-row:hover{background:var(--soft)}
+#round-confirm{background:var(--color-base-100);border-radius:var(--radius-box);padding:22px 24px 16px;width:min(calc(780px * var(--aa-text, 1)),calc(100vw - 32px));max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);box-shadow:0 20px 50px color-mix(in oklab,var(--color-neutral) 35%,transparent);display:flex;flex-direction:column;gap:4px}
+.round-confirm-title{font-size:calc(17px * var(--aa-text, 1));font-weight:600}
+.round-confirm-sub{font-size:calc(12.5px * var(--aa-text, 1));color:var(--muted);line-height:1.5}
+#sum-gf-host:empty{display:none}
+#sum-gf-host{padding-top:10px}
+.rl-gf{display:flex;flex-direction:column;gap:6px}
+.rl-gf-lbl{font-size:calc(11.5px * var(--aa-text, 1));font-weight:600;color:var(--muted)}
+#round-confirm .rl-gf-ta{width:100%;min-height:0;resize:none;font-size:calc(13.5px * var(--aa-text, 1));line-height:1.5;padding:9px 12px;max-height:calc(104px * var(--aa-text, 1))}
+@media (max-height:900px){#round-confirm .rl-gf-ta{max-height:calc(78px * var(--aa-text, 1))}}
+.sum-list{overflow-y:auto;min-height:0;flex:1;display:flex;flex-direction:column;gap:0;margin:12px -8px 0;border-top:1px solid var(--line)}
+#round-confirm .sp-sum-cat{font-size:calc(13px * var(--aa-text, 1));font-weight:600;padding:16px 8px 2px;border-top:none;margin-top:0}
+#round-confirm .sum-tab:first-child .sp-sum-cat{padding-top:12px}
+#round-confirm .sp-sum-cat .badge,#round-confirm .sum-group .badge{background:none;border:0;padding:0;height:auto;color:var(--muted);font-weight:500;font-size:inherit;font-variant-numeric:tabular-nums}
+#round-confirm .sp-sum-note{font-size:calc(12px * var(--aa-text, 1));padding:2px 8px 2px}
+#round-confirm .sum-tab + .sum-tab{border-top:1px solid var(--line);margin-top:12px}
+#round-confirm .sum-tab.is-empty .sp-sum-cat{color:var(--muted);font-weight:500}
+#round-confirm .sum-tab.is-empty .sp-sum-cat .badge{display:none}
+#round-confirm .sum-group{text-transform:none;letter-spacing:0;font-size:calc(11.5px * var(--aa-text, 1));font-weight:600;color:var(--muted);padding:16px 8px 6px}
+.sum-warn{font-size:calc(11.5px * var(--aa-text, 1));color:var(--muted);line-height:1.45;padding:12px 8px 0;border-top:1px solid var(--line)}
+#round-confirm .sum-rest-hdr{padding:14px 8px 8px;gap:6px;border-top:1px solid var(--line);border-radius:0}
+.sum-warn + .sum-rest-hdr{border-top:none}
+.sum-rest-hdr svg.i{width:12px;height:12px}
+.sum-rest-missing{color:var(--muted);font-weight:500}
+.sum-row{display:flex;flex-direction:column;gap:6px;padding:6px 8px}
 .sum-main{display:flex;align-items:center;gap:8px;min-width:0}
-.sum-q{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-size:calc(11px * var(--aa-text, 1));line-height:1.4}
-.sum-none{opacity:.75}
-.sum-q .citem-num{margin-right:6px}
-.sum-a{white-space:nowrap;font-size:calc(11px * var(--aa-text, 1));font-weight:700;max-width:45%;overflow:hidden;text-overflow:ellipsis}
-.sum-a.is-sent{font-weight:600;color:var(--muted)}
-.sum-row.is-missing .sum-a,.sum-row.is-missing .sum-q{color:var(--warn-text)}
-.sum-row.is-missing .sum-a{font-weight:600}
+.sum-q{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-size:calc(12.5px * var(--aa-text, 1));line-height:1.4}
+/* Rows: number in a gutter, question then answer on one left edge. */
+#round-confirm .rl-row{display:grid;grid-template-columns:calc(46px * var(--aa-text, 1)) minmax(0,1fr) auto;column-gap:12px;row-gap:1px;padding:8px 8px 9px;border-top:1px solid var(--line);align-items:start}
+@media (hover:hover){#round-confirm .rl-row:hover{background:color-mix(in oklab,var(--soft) 60%,transparent)}}
+.rl-k{display:contents}
+.rl-num{grid-column:1;grid-row:1 / span 2;font-size:calc(11px * var(--aa-text, 1));line-height:calc(18px * var(--aa-text, 1));color:var(--faint);font-weight:500;font-variant-numeric:tabular-nums}
+.rl-q{grid-column:2;grid-row:1;font-size:calc(12.5px * var(--aa-text, 1));line-height:1.45;color:var(--muted)}
+.rl-a{grid-column:2;grid-row:2;font-size:calc(13.5px * var(--aa-text, 1));line-height:1.5;color:var(--color-base-content);min-width:0}
+.rl-label{display:block;font-weight:600}
+.rl-note{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.rl-label + .rl-note{margin-top:3px}
+.rl-none{color:var(--muted);font-style:italic}
+.rl-sent{font-size:calc(11px * var(--aa-text, 1));color:var(--faint);margin-left:6px}
+.rl-row.is-sent .rl-a{color:var(--muted)}
+.rl-row.is-sent .rl-label{font-weight:500;display:inline}
+#round-confirm .rl-row > .btn{grid-column:3;grid-row:1 / span 2}
+#round-confirm .rl-row > [data-sum-edit]{color:var(--faint);opacity:.5}
+#round-confirm .rl-row > [data-sum-edit] svg.i{width:14px;height:14px}
+@media (hover:hover){#round-confirm .rl-row:hover > [data-sum-edit]{opacity:1}}
+.rl-row > .sum-edit{grid-column:2 / -1;grid-row:3;padding-top:6px}
 .sum-edit{display:flex;flex-direction:column;gap:6px;padding:0 0 4px 0}
 .sum-edit[hidden]{display:none}
 .sum-opts{display:flex;flex-wrap:wrap;gap:6px}
 .sum-opts .btn{height:auto;min-height:1.75rem;white-space:normal;text-align:left}
 .sum-gf-ta{width:100%;min-height:64px;font-size:calc(12px * var(--aa-text, 1))}
-.round-confirm-ft{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.round-confirm-ft{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:12px;margin-top:10px}
 .sum-ft-gap{flex:1}
-.sum-discard{color:var(--err-text);padding-left:0}
+#round-confirm .sum-discard{color:var(--muted);text-decoration:none;font-weight:500;padding-left:0}
+@media (hover:hover){#round-confirm .sum-discard:hover{color:var(--err-text)}}
+#round-confirm #round-cancel-btn{background:transparent;border-color:var(--line);box-shadow:none}
+#round-confirm #round-submit-btn{padding-inline:18px}
+#round-confirm #round-submit-btn .send-count{background:transparent;border:0;padding:0;color:inherit;opacity:.72;font-weight:500}
+@media (pointer:coarse){.sum-kbd{display:none}}
 .sum-kbd{margin-left:4px;background:color-mix(in oklab,var(--color-primary) 62%,var(--color-neutral));color:var(--color-primary-content);border-color:transparent}
 
 /* ── Popovers ───────────────────────────────────────── */
@@ -411,6 +454,8 @@ body.has-summary #send-btn{visibility:hidden}
   /* ≥44px targets + 16px inputs (no iOS zoom-on-focus) */
   .decision-btn{min-height:44px;padding:10px 14px;font-size:calc(13px * var(--aa-text, 1))}
   .decision-btns{gap:8px}
+  .decision-later{position:relative;touch-action:manipulation}
+  .decision-later::before{content:"";position:absolute;inset:-8px 0}
   .decision-evidence-toggle,.decision-evidence-link,.decision-excerpt-more,.open-doc,.earlier-toggle{min-height:44px;padding:10px 4px;touch-action:manipulation}
   .citem-menu-btn,.collapse-btn,.change-btn,.rail-collapse{min-width:44px;min-height:44px}
   .citem-menu button{min-height:44px}

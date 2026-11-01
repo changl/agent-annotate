@@ -16,12 +16,12 @@ def server(tmp_path):
     web = tmp_path / "web"
     web.mkdir()
     (web / "shell.js").write_bytes(b"const message = 'hello';\n" * 300)
-    (web / "daisyui.css").write_text("@font-face {src:url(RobotoVariable.ttf)}")
-    (web / "RobotoVariable.ttf").write_bytes(b"font version one")
+    (web / "daisyui.css").write_text("@font-face {src:url(RobotoVariable.woff2)}")
+    (web / "RobotoVariable.woff2").write_bytes(b"font version one")
     (tmp_path / "comments.json").write_text('{"schema_version":2,"anchors":{},"archived":{}}')
     (tmp_path / "current.meta.json").write_text('{"current":"v1","history":[]}')
     (tmp_path / "current.html").write_text("<html><body>Review</body></html>")
-    handler = make_handler(tmp_path, v2_mode=True, skill_dir=web, public_base_path="/review", slug="review")
+    handler = make_handler(tmp_path, skill_dir=web, public_base_path="/review", slug="review")
     httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -81,13 +81,13 @@ def test_css_fonts_have_independent_validated_hashes(server):
     with connection(server) as conn:
         response, data = request(conn, f"/review/assets/{stamp}/daisyui.css")
         assert response.status == 200
-        font_stamp = _mtime_stamp(web / "RobotoVariable.ttf")
-        assert f"url(../{font_stamp}/RobotoVariable.ttf)".encode() in data
+        font_stamp = _mtime_stamp(web / "RobotoVariable.woff2")
+        assert f"url(../{font_stamp}/RobotoVariable.woff2)".encode() in data
         assert data == _asset_bytes(css)
-        font, body = request(conn, f"/review/assets/{font_stamp}/RobotoVariable.ttf")
+        font, body = request(conn, f"/review/assets/{font_stamp}/RobotoVariable.woff2")
         assert font.status == 200 and body == b"font version one"
         assert "immutable" in font.getheader("Cache-Control")
-        (web / "RobotoVariable.ttf").write_bytes(b"font version two")
+        (web / "RobotoVariable.woff2").write_bytes(b"font version two")
         assert _mtime_stamp(css) != stamp
         assert request(conn, f"/review/assets/{stamp}/daisyui.css")[0].status == 404
 

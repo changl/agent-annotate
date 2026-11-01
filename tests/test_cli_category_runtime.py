@@ -28,7 +28,7 @@ def test_cli_category_lifecycle_over_real_http(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "STATE_DIR", state)
     monkeypatch.setattr(sync_server, "STATE_DIR", state)
     handler = sync_server.make_handler(artifact_dir=directory, public_base_path="", slug="main", bus_dir=bus,
-                                       v2_mode=True, local_author="reviewer@example.test", local_author_name="Reviewer")
+                                       local_author="reviewer@example.test", local_author_name="Reviewer")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     base = f"http://localhost:{server.server_port}"
     record.update(port=server.server_port, local_url=base + "/", url=base + "/")

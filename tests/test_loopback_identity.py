@@ -26,7 +26,6 @@ def identity_server(tmp_path):
         public_base_path="/review",
         slug="review",
         bus_dir=tmp_path / "bus",
-        v2_mode=True,
         local_author="chang@leadory.com",
         local_author_name="Chang Lee",
         proxy_urls=("https://connelly.leadory.net/review/", "https://macbook-pro.tail2b8ab9.ts.net:8454/review/",

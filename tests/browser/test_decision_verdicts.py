@@ -1,11 +1,4 @@
-"""D2: the third verdict button follows the server's advertised capabilities.
-
-A server that advertises `verdicts: [..., "changes"]` gets "Request changes",
-whose note is mandatory. A server that does not — anything older, including a
-baked archive copy still being served — gets the pre-D2 "Comment" button
-untouched. Both are checked in a real Chrome because the branch lives in the
-chrome's render path, not in anything Python can assert.
-"""
+"""Decision verdicts on the page shipped with its server."""
 
 import json
 import os
@@ -77,11 +70,6 @@ RESOLVED_PRIOR_CARD = dict(
     resolved_by="agent:test",
 )
 
-LEGACY_CAPS = json.dumps(
-    {"version": "2.19", "batch": True, "rounds": True, "decision_schema": 2, "decision_request_cap": 8192}
-)
-
-
 def _free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -137,18 +125,11 @@ def _serve(tmp_path, card=None, anchor="s:overview"):
     return process, base, slug_dir
 
 
-def _open(runner, base, legacy=False):
+def _open(runner, base):
     browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
     page = browser.new_page(
         viewport={"width": 1280, "height": 800},
     )
-    if legacy:
-        # Answer the one capabilities probe with a pre-D2 body. Everything
-        # else still hits the real server.
-        page.route(
-            "**/api/capabilities",
-            lambda route: route.fulfill(status=200, content_type="application/json", body=LEGACY_CAPS),
-        )
     page.set_default_timeout(5_000)
     page.goto(base, wait_until="networkidle")
     ready(page)
@@ -161,7 +142,7 @@ def test_a_d2_server_shows_request_changes(tmp_path):
     process, base, slug_dir = _serve(tmp_path)
     try:
         with playwright.sync_playwright() as runner:
-            browser, page = _open(runner, base, legacy=False)
+            browser, page = _open(runner, base)
             btn = page.locator(".decision-btn.decision-changes")
             btn.wait_for(state="visible")
             btn.click()
@@ -178,35 +159,6 @@ def test_a_d2_server_shows_request_changes(tmp_path):
                 "decision"
             ]
             assert decision["verdict"] == "changes" and decision["text"] == "name the columns first"
-            assert decision["round_pending"]
-            browser.close()
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-
-@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
-def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
-    process, base, slug_dir = _serve(tmp_path)
-    try:
-        with playwright.sync_playwright() as runner:
-            browser, page = _open(runner, base, legacy=True)
-            btn = page.locator(".decision-btn.decision-comment")
-            btn.wait_for(state="visible")
-            btn.click()
-            assert page.locator(".decision-say-ta").evaluate("el => el === document.activeElement")
-            assert (
-                "decision"
-                not in json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0]
-            )
-            page.locator(".decision-say-ta").fill("just a remark")
-            btn.click()
-            section(page, "ready")
-            playwright.expect(page.locator(".ans")).to_have_text("just a remark")
-            decision = json.loads((slug_dir / "comments.json").read_text())["anchors"]["s:overview"][0][
-                "decision"
-            ]
-            assert decision["verdict"] == "comment" and decision["text"] == "just a remark"
             assert decision["round_pending"]
             browser.close()
     finally:
