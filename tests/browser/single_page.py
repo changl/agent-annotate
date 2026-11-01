@@ -59,7 +59,7 @@ def section(page, key, root="#comment-list"):
 
 
 @contextmanager
-def browser_page(tmp_path, directory, width=1440, height=960):
+def browser_page(tmp_path, directory, width=1440, height=960, ipad=False):
     from test_card_layout import _serve
 
     process, base = _serve(tmp_path, directory)
@@ -71,8 +71,15 @@ def browser_page(tmp_path, directory, width=1440, height=960):
         registry.write_text(json.dumps(data))
     try:
         with playwright.sync_playwright() as runner:
-            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
-            page = browser.new_page(viewport={"width": width, "height": height})
+            if ipad:
+                try:
+                    browser = runner.webkit.launch()
+                except playwright.Error:
+                    pytest.skip("Playwright WebKit is not installed")
+                page = browser.new_context(**runner.devices["iPad Pro 11 landscape"]).new_page()
+            else:
+                browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+                page = browser.new_page(viewport={"width": width, "height": height})
             page.set_default_timeout(5000)
             page.set_default_navigation_timeout(15_000)
             page.goto(base + "#view=review", wait_until="networkidle")

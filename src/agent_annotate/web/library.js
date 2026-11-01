@@ -425,7 +425,13 @@
     forgetDraft(it.id);
     setData(r.data);
     if (typed) keepDraft(it.id, typed, latestOf(it.id));
-    renderAll();
+    // The editor stays mounted: rebuilding it drops the keys still being typed.
+    if (quill && editorItem === it.id) {
+      editorBase = latestOf(it.id); staleSeen = null; baseline = content;
+      const c = editorChanged();
+      save.disabled = !c; save.classList.toggle('btn-primary', c); $('#sp-discard').disabled = !c;
+    }
+    renderList(); renderRail(); AA.changed();
     setStatus(typed ? 'Saved · your newer typing is kept as a draft' : 'Saved · goes out with Send');
   }
   async function restore(it, revisionId) {
