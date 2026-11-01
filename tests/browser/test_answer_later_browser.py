@@ -67,7 +67,12 @@ def test_one_tap_sets_aside_and_one_tap_answers(tmp_path):
             page.locator('[data-section-toggle="later"]').tap()
             page.locator(CARD + " .decision-btn").first.tap()
             page.locator('[data-section-toggle="later"]').wait_for(state="detached")
-            stored = json.loads((directory / "comments.json").read_text())["anchors"]["d:q11"][0]
+            # The rail moves the card at once; the server's write can land a moment later under load.
+            for _ in range(50):
+                stored = json.loads((directory / "comments.json").read_text())["anchors"]["d:q11"][0]
+                if stored.get("decision"):
+                    break
+                page.wait_for_timeout(100)
             assert stored["decision"]["verdict"] and "answer_later" not in stored
             browser.close()
     finally:
