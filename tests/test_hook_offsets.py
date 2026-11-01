@@ -85,14 +85,14 @@ def test_two_sessions_do_not_consume_each_other(tmp_path):
     bus_root, state, bus = _estate(tmp_path)
 
     out_a = _run(bus_root, state, "sess-A")
-    assert "[annotate] Demo workspace: 2 reviewer event(s)" in out_a, out_a
+    assert "[annotate] Demo workspace: 1 reviewer event(s)" in out_a, out_a
     assert "aaaaaaaaaaaa accept" in out_a
     assert "undecided: 1 of 2 cards" in out_a
     assert "inbox proj/demo --unread" in out_a
 
     # A's notice advanced only A's cursor. B still sees the same delta.
     out_b = _run(bus_root, state, "sess-B")
-    assert "2 reviewer event(s)" in out_b, out_b
+    assert "1 reviewer event(s)" in out_b, out_b
 
     assert _hook_cursor(state, "sess-A").exists()
     assert _hook_cursor(state, "sess-B").exists()
@@ -115,8 +115,8 @@ def test_a_new_session_is_seeded_from_the_legacy_cursor(tmp_path):
     # Nothing after the legacy cursor: silence, and no history replayed.
     assert _run(bus_root, state, "sess-new").strip() == ""
     with bus.open("a") as fh:
-        fh.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "comment_reply", "slug": "demo",
-                             "comment_id": "bbbbbbbbbbbb", "anchor_id": "s:b", "author": "r@x"}) + "\n")
+        fh.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "session_push", "slug": "demo",
+                             "comment_ids": ["bbbbbbbbbbbb"], "comment_id": "bbbbbbbbbbbb", "anchor_id": "s:b", "author": "r@x"}) + "\n")
     out = _run(bus_root, state, "sess-new")
     assert "1 reviewer event(s)" in out, out
     assert int(_hook_cursor(state, "sess-new").read_text()) >= bus.stat().st_size - 1
@@ -190,16 +190,16 @@ def test_the_shell_wrapper_runs_the_same_hook(tmp_path):
     proc = subprocess.run(["bash", str(sh)], input=json.dumps({"session_id": "sess-sh"}),
                           capture_output=True, text=True, env=env, timeout=20)
     assert proc.returncode == 0
-    assert "2 reviewer event(s)" in proc.stdout
+    assert "1 reviewer event(s)" in proc.stdout
 
 
 def test_the_bare_script_form_matches_the_module_form(tmp_path):
     bus_root, state, _ = _estate(tmp_path)
-    assert "2 reviewer event(s)" in _run(bus_root, state, "sess-A", {"PYTHONPATH": ""}, as_script=True)
+    assert "1 reviewer event(s)" in _run(bus_root, state, "sess-A", {"PYTHONPATH": ""}, as_script=True)
 
 
 def test_notice_identifies_verdict_without_copying_reviewer_prose(tmp_path):
-    bus_root, state, bus = _estate(tmp_path)
+    bus_root, state, bus = _estate(tmp_path, owner="sess-changes")
     store = json.loads((Path(state) / "proj.json").read_text())
     slug_dir = Path(store["slugs"]["demo"]["slug_dir"])
     comments = json.loads((slug_dir / "comments.json").read_text())
@@ -208,7 +208,7 @@ def test_notice_identifies_verdict_without_copying_reviewer_prose(tmp_path):
         "ts": "2026-09-17T11:00:00Z", "by": "r@x"}
     (slug_dir / "comments.json").write_text(json.dumps(comments))
     with bus.open("a") as fh:
-        fh.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "comment_updated",
+        fh.write(json.dumps({"ts": "2026-09-17T11:00:00Z", "event": "round_submitted", "comment_ids": ["bbbbbbbbbbbb"],
                              "slug": "demo", "comment_id": "bbbbbbbbbbbb", "anchor_id": "s:b",
                              "author": "r@x", "decision": "changes"}) + "\n")
 
@@ -306,7 +306,7 @@ def test_immediate_decision_push_does_not_repeat_a_notice_across_scans(tmp_path)
     bus_root, state, bus = _estate(tmp_path, owner="sess-owner")
     bus.write_text(json.dumps({"event": "comment_updated", "author": "r@x",
                                "comment_id": "aaaaaaaaaaaa", "decision": "accept"}) + "\n")
-    assert "1 reviewer event(s)" in _run(bus_root, state, "sess-owner")
+    assert _run(bus_root, state, "sess-owner").strip() == ""
     # The server appends the mirror separately; the hook may run between writes.
     with bus.open("a") as stream:
         stream.write(json.dumps({"event": "session_push", "author": "r@x", "decision": "accept",

@@ -41,7 +41,7 @@ def registry(tmp_path, monkeypatch):
         {"ts": "2026-09-17T09:00:00Z", "event": "comment_created", "slug": "demo",
          "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "agent:test", "version": "v1"},
         {"ts": "2026-09-17T09:00:01Z", "event": "seen_updated", "slug": "demo", "author": "r@x"},
-        {"ts": "2026-09-17T10:00:00Z", "event": "comment_updated", "slug": "demo",
+        {"ts": "2026-09-17T10:00:00Z", "event": "round_submitted", "slug": "demo",
          "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "r@x", "decision": "accept",
          "old_status": "open", "new_status": "user_confirmed"},
     ]
@@ -66,7 +66,7 @@ def test_inbox_is_compact_and_hides_bookkeeping(registry, capsys):
     assert len(lines) == 3  # two events + summary; seen_updated hidden
     assert "seen_updated" not in out
     assert "comment_created" in lines[0] and "aaaaaaaaaa" in lines[0] and "Rename status?" in lines[0]
-    assert "comment_updated" in lines[1] and "accept" in lines[1]
+    assert "round_submitted" in lines[1] and "accept" in lines[1]
     assert lines[2].strip() == (
         "decisions: 1 accept, 0 reject, 0 changes, 0 select, 0 comment; undecided: s:b")
 
@@ -90,7 +90,7 @@ def test_unread_cursor_is_per_session(registry, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
     cli.cmd_inbox(_inbox(unread=True))
     first = capsys.readouterr().out
-    assert "comment_updated" in first
+    assert "round_submitted" in first
     cursor = cli.BUS_OFFSET_ROOT / "sess-one" / "proj" / "demo.offset"
     assert cursor.exists()
 
@@ -100,7 +100,7 @@ def test_unread_cursor_is_per_session(registry, monkeypatch, capsys):
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-two")
     cli.cmd_inbox(_inbox(unread=True))
-    assert "comment_updated" in capsys.readouterr().out
+    assert "round_submitted" in capsys.readouterr().out
 
 
 def test_a_round_arriving_during_inbox_reporting_stays_unread(registry, monkeypatch, capsys):
@@ -128,7 +128,7 @@ def test_owner_replays_the_backlog_and_a_bystander_starts_at_the_legacy_cursor(r
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-owner")
     cli.cmd_inbox(_inbox(unread=True))
-    assert "comment_updated" in capsys.readouterr().out
+    assert "round_submitted" in capsys.readouterr().out
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-bystander")
     cli.cmd_inbox(_inbox(unread=True))
@@ -230,7 +230,7 @@ def test_inbox_hides_this_sessions_own_echo(registry, monkeypatch, capsys):
     cli.cmd_inbox(_inbox())
     out = capsys.readouterr().out
     assert "comment_resolved" not in out and "version_published" not in out
-    assert "comment_updated" in out
+    assert "round_submitted" in out
 
 
 def test_inbox_prints_a_reviewers_answer_whole(registry, capsys):
@@ -239,7 +239,7 @@ def test_inbox_prints_a_reviewers_answer_whole(registry, capsys):
     store["anchors"]["s:a"][0]["decision"] = {"verdict": "comment", "text": words, "by": "r@x"}
     (registry.slug_dir / "comments.json").write_text(json.dumps(store))
     with registry.bus.open("a") as f:
-        f.write(json.dumps({"ts": "2026-09-17T12:00:00Z", "event": "comment_updated",
+        f.write(json.dumps({"ts": "2026-09-17T12:00:00Z", "event": "round_submitted",
                             "comment_id": "aaaaaaaaaaaa", "author": "r@x",
                             "decision": "comment"}) + "\n")
     cli.cmd_inbox(_inbox())

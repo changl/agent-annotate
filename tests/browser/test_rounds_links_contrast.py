@@ -294,7 +294,7 @@ def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_
                 playwright.expect(panel).to_be_visible()
                 round_ = panel.locator(".vact-block:not(.vact-agent)")
                 playwright.expect(round_).to_have_count(1)
-                assert round_.locator(".vact-head").inner_text().startswith("Sent · Feedback saved (1) · ")
+                assert round_.locator(".vact-head").inner_text().startswith("Feedback · In inbox · owner delivery pending (1) · ")
                 assert "Keep the original wording for CHA-160." in round_.inner_text()
                 # Then what the agent did: it published v2.
                 playwright.expect(panel.locator(".vact-agent .vact-head")).to_contain_text("Agent · Published v2 · Current layout")
@@ -356,7 +356,7 @@ def test_each_sent_round_sits_under_the_version_it_was_sent_on(tmp_path):
                 for version in ("v1", "v2"):
                     item = page.locator(f'#vrail-body-review .vitem[data-version="{version}"]')
                     playwright.expect(item.locator(".vact-block:not(.vact-agent)")).to_have_count(1)
-                    assert item.locator(".vact-head").first.inner_text().startswith(("Sent · Feedback saved (", "Sent · Sent ("))
+                    assert item.locator(".vact-head").first.inner_text().startswith(("Feedback · In inbox · owner delivery pending (", "Feedback · Sent ("))
                 page.evaluate("() => localStorage.clear()")
                 page.close()
             browser.close()

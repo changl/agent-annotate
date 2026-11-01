@@ -1964,9 +1964,9 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
             "reason": str(exc),
         }]
 
+    from .submitted import store_view
     from .sync_server import _validate_store, _version_has_anchor
-
-    store = _validate_store(raw)
+    store = store_view(_validate_store(raw))
     meta = _read_meta(slug_dir)
     history = [
         item.get("version")
@@ -2175,7 +2175,8 @@ def _inbox_visible(ev: dict, session_id: str) -> bool:
     posed and every item it had just resolved, ahead of the verdicts it was
     waiting for.
     """
-    if ev.get("event") in _INBOX_HIDDEN:
+    from .submitted import draft_event
+    if draft_event(ev) or ev.get("event") in _INBOX_HIDDEN:
         return False
     # A reopen click is a draft until the reviewer's Send, whose round carries
     # the reopen's words; the bare click invited a re-fix before them.
@@ -2339,7 +2340,7 @@ def _category_counts(record: dict) -> dict | None:
     reviewer's unread), so the CLI and the UI agree."""
     from .categories import category_counts
     try:
-        return category_counts(record["slug_dir"]) if record.get("slug_dir") else None
+        return category_counts(record["slug_dir"], store=_load_store(record), submitted_only=True) if record.get("slug_dir") else None
     except (OSError, ValueError, LookupError, TypeError):
         return None
 
@@ -2401,6 +2402,8 @@ def cmd_inbox(args) -> int:
                     events.append(ev)
             new_offset = f.tell()
 
+    from .submitted import draft_event
+    events = [e for e in events if not draft_event(e)]
     shown = events if getattr(args, "all_events", False) else [
         e for e in events if _inbox_visible(e, session_id)]
     store = _load_store(record)
@@ -3877,7 +3880,8 @@ def cmd_copy(args) -> int:
             else:
                 print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
         else:
-            document = load_copy(directory)
+            from .submitted import copy_view
+            document = copy_view(load_copy(directory))
             if block_id:
                 blocks = [block for block in document["blocks"] if block["id"] == block_id]
                 if not blocks:
@@ -4228,6 +4232,7 @@ def cmd_sync_skills(args) -> int:
 
 
 def cmd_watch(args) -> int:
+    from .submitted import draft_event
     slug = args.slug
     record = None
     for sf in _all_state_files():
@@ -4251,7 +4256,12 @@ def cmd_watch(args) -> int:
                 if not line:
                     time.sleep(0.5)
                     continue
-                print(line.rstrip())
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and not draft_event(event):
+                    print(line.rstrip())
         except KeyboardInterrupt:
             print()
             return 0
@@ -4738,8 +4748,9 @@ def _load_store(record: dict) -> dict:
     if not isinstance(anchors, dict):
         anchors = {}
     archived = data.get("archived")
-    return {"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else [],
-            "current_version": _read_meta(Path(slug_dir)).get("current")}
+    from .submitted import store_view
+    return store_view({"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else [],
+                       "current_version": _read_meta(Path(slug_dir)).get("current")})
 
 
 def _iter_comments(store: dict):
@@ -4807,6 +4818,8 @@ def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, 
 
 def _decision_cards(store: dict) -> list[dict]:
     """Every live decision card, flattened for printing."""
+    from .submitted import store_view
+    store = store_view(store)
     comments = list(_iter_comments(store))
     numbers = _item_numbers(store)
     cards = []

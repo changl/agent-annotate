@@ -248,7 +248,7 @@
       <div class="sp-editor-card">
         <div class="sp-toolbar" id="sp-toolbar" role="toolbar" aria-label="Formatting">${toolbarHtml()}</div>
         <div class="sp-editor" id="sp-editor"></div>
-        <div class="sp-edit-ft"><span class="gf-hint" id="sp-edit-status" role="status">${edited ? 'Your edit · ' + esc(UI.fmtTs(mine.created_at)) + (mine.round_pending ? ' · goes out with Send' : ' · sent') : 'Goes out with Send'}</span><button type="button" class="btn btn-sm" id="sp-discard" disabled>Cancel</button><button type="button" class="btn btn-sm" id="sp-save" disabled>Save</button></div>
+        <div class="sp-edit-ft"><span class="gf-hint" id="sp-edit-status" role="status">${edited ? 'Your edit · ' + esc(UI.fmtTs(mine.created_at)) + (mine.round_pending ? ' · goes out with Send' : ' · ' + D().deliveryHtml(revisionDeliveryId(mine))) : 'Goes out with Send'}</span><button type="button" class="btn btn-sm" id="sp-discard" disabled>Cancel</button><button type="button" class="btn btn-sm" id="sp-save" disabled>Save</button></div>
       </div>
       ${alts.length ? `<details class="aa-details" id="sp-alts"><summary>Earlier alternatives from the agent (${alts.length})</summary><div class="wrap"><table><thead><tr><th></th><th>Text</th><th></th></tr></thead><tbody>${alts.map((a, i) => `<tr><td>${esc(a.label)}</td><td>${esc(a.text)}</td><td>${a.text && !/^— none/.test(a.text) ? `<button type="button" class="btn btn-ghost btn-xs" data-use="${i}">Use this</button>` : ''}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
       </section>`;
@@ -585,6 +585,9 @@
     if (cid && scrollRail) { AA.rail.setTab('feedback'); const el = document.querySelector('#rail-library [data-cid="' + CSS.escape(cid) + '"]'); if (el) el.scrollIntoView({ block: 'nearest' }); }
     if (cid && scrollDoc) { const m = document.querySelector('mark.sp-cmark[data-c="' + CSS.escape(cid) + '"]'); if (m) m.scrollIntoView({ block: 'center' }); }
   }
+  function revisionDeliveryId(revision) {
+    return (D().sentRoundsRaw().find(round => (round.edits || []).some(edit => edit.revision_id === revision.id)) || {}).id;
+  }
   function renderHistory(el) {
     const it = BY_ID[selected];
     if (!it || !el) { if (el) el.innerHTML = ''; return; }
@@ -593,13 +596,13 @@
     seedHistory(it).forEach(h => entries.push(h));
     const q = question(it);
     // A discarded answer (UI-14) never went out; History leaves it out.
-    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
+    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', delivery_id: x.delivery_id, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
     it.revisions.forEach((r, i) => {
       if (r.status !== 'proposed') return;
       const prev = it.revisions[i - 1];
-      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
+      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', delivery_id: revisionDeliveryId(r), text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
     });
-    storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
+    storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', delivery_id: c.comment.delivery_id, text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
     entries.sort((a, b) => (a.ts < b.ts ? 1 : -1));
     const seed = it.revisions.find(r => r.status !== 'proposed');
     const row = (h) => {
@@ -608,9 +611,9 @@
       else if (h.kind === 'changed') { head = `<b>${esc(h.who)}</b> · ${esc(h.version)}: ${esc((h.changed || []).join(', '))} changed`; body = esc(h.status || ''); }
       else if (h.kind === 'decision') { head = `<b>${esc(h.who)}</b> · answered copy card #${esc(h.card)}`; body = esc(h.text) + (h.prompt ? `<div class="project-detail">${esc(h.prompt)}</div>` : ''); }
       else if (h.kind === 'response') { head = `<b>${esc(h.who)}</b> · agent response`; body = esc(h.text); }
-      else if (h.kind === 'edit') { head = `<b>${esc(h.who)}</b> · edited · ${h.sent ? 'sent' : 'not sent yet'}`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
-      else if (h.kind === 'comment') { head = `<b>${esc(h.who)}</b> · comment · ${h.sent ? 'sent' : 'not sent yet'}`; body = (h.quote ? '“' + esc(h.quote) + '” ' : '') + esc(h.text); }
-      else if (h.kind === 'q') { head = `<b>${esc(h.who)}</b> · answered #${esc(h.n || '')} · ${h.sent ? 'sent' : 'not sent yet'}`; body = esc(h.text) + `<div class="project-detail">${esc(h.prompt)}</div>`; }
+      else if (h.kind === 'edit') { head = `<b>${esc(h.who)}</b> · edited · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
+      else if (h.kind === 'comment') { head = `<b>${esc(h.who)}</b> · comment · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = (h.quote ? '“' + esc(h.quote) + '” ' : '') + esc(h.text); }
+      else if (h.kind === 'q') { head = `<b>${esc(h.who)}</b> · answered #${esc(h.n || '')} · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = esc(h.text) + `<div class="project-detail">${esc(h.prompt)}</div>`; }
       return `<div class="hist-item"><div class="hist-head">${head}<span>· ${esc(UI.fmtTs(h.ts))}</span></div><div class="hist-text">${body}</div>${actions ? `<div class="hist-actions">${actions}</div>` : ''}</div>`;
     };
     el.innerHTML = `<p class="project-detail hist-sub">${esc(labelOf(it))}</p>${entries.map(row).join('')}`;

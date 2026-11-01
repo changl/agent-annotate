@@ -325,14 +325,21 @@ def delivery_status(project: str, slug: str) -> dict:
         rows = list(json.loads(path.read_text()).get("deliveries", {}).values())
         if not rows:
             return {"latest": None}
-        latest = {k: v for k, v in rows[-1].items()
-                  if k in ("id", "state", "detail", "created_at", "updated_at")}
+        deliveries = []
+        for row in rows:
+            public = {k: v for k, v in row.items()
+                      if k in ("id", "state", "detail", "created_at", "updated_at")}
+            stages = (row.get("receipt") or {}).get("prompt", {}).get("stages", [])
+            public["delivered"] = row.get("state") in ("started", "acknowledged") or (
+                row.get("state") == "accepted" and "input_accepted" in stages)
+            deliveries.append(public)
+        latest = deliveries[-1]
         target = rows[-1].get("target") or {}
         if latest.get("state") in ("accepted", "started") and target.get("pid"):
             process = _process(int(target["pid"]))
             if not process or process[0] != target.get("process_start"):
-                latest.update(state="pending", detail="Current agent must claim the workspace")
-        return {"latest": latest}
+                latest.update(state="pending", delivered=False, detail="Current agent must claim the workspace")
+        return {"latest": latest, "deliveries": deliveries}
     except (OSError, ValueError):
         return {"latest": None}
 

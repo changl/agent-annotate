@@ -26,7 +26,7 @@ def _comment_rows(slug: str, include_archived: bool = False, category: str | Non
     store_path = Path(record["slug_dir"]) / "comments.json"
     if not store_path.exists():
         return []
-    store = json.loads(store_path.read_text(encoding="utf-8"))
+    store = cli._load_store(record)
     rows: list[dict[str, Any]] = []
     for anchor_id, comments in store.get("anchors", {}).items():
         for comment in comments:

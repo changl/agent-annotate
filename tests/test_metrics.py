@@ -96,7 +96,9 @@ def test_reviewer_decisions_and_recorded_publish_outcomes(estate):
          _event("session_push", author="reviewer@example.com", decision="accept"),
          _event("page_published"), _event("version_published"), _event("page_publish_failed"))
     metrics = _collect(estate)["global"]
-    assert metrics["reviewer_decisions"] == 2
+    assert metrics["reviewer_decisions"] == 0
+    _bus(bus, _event("round_submitted", round_id="explicit-send", answers=[{"verdict": "select"}, {"verdict": "accept"}]))
+    assert _collect(estate)["global"]["reviewer_decisions"] == 2
     assert metrics["publish_successes"] == 2
     assert metrics["publish_failures"] == 1
     assert metrics["submitted_rounds"] == 0

@@ -11,6 +11,7 @@ from typing import Iterator
 
 from .decision_quality import decision_warnings
 from .paths import BUS_ROOT, STATE_DIR
+from .submitted import draft_event, store_view
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_.-]+\Z")
 _DELIVERY_STATES = ("started", "accepted", "pending", "uncertain", "superseded", "acknowledged")
@@ -82,7 +83,7 @@ def _empty() -> dict:
 def _quality(slug_dir: object, aggregate: dict) -> None:
     if not isinstance(slug_dir, str) or not slug_dir:
         return
-    anchors = _read_object(Path(slug_dir) / "comments.json").get("anchors")
+    anchors = store_view(_read_object(Path(slug_dir) / "comments.json")).get("anchors")
     if not isinstance(anchors, dict):
         return
     seen = set()
@@ -119,20 +120,18 @@ def _rounds(path: Path, aggregate: dict, since: datetime, until: datetime) -> di
         return key
 
     for event, timestamp in _events(path):
+        if draft_event(event):
+            continue
         in_window = since <= timestamp < until
         kind = event.get("event")
         if in_window:
             aggregate["events"] += 1
             if kind == "decision_requested":
                 aggregate["decision_requests"] += 1
-            elif kind == "comment_updated":
-                author = event.get("author")
-                decision = event.get("decision")
-                if isinstance(decision, dict):
-                    decision = decision.get("verdict")
-                if (isinstance(author, str) and author and not author.startswith("agent:")
-                        and isinstance(decision, str) and decision):
-                    aggregate["reviewer_decisions"] += 1
+            elif kind == "round_submitted":
+                aggregate["reviewer_decisions"] += sum(
+                    isinstance(answer, dict) and answer.get("verdict") in ("accept", "reject", "changes", "comment", "select")
+                    for answer in event.get("answers") or [])
             elif kind in ("page_published", "version_published"):
                 aggregate["publish_successes"] += 1
             elif kind == "page_publish_failed":

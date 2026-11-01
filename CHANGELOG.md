@@ -7,6 +7,7 @@
 - Publish (`agent-annotate-ilm`): an unavailable Orca browser now skips the public check with its reason, prints the page URL and continues `--ask` after the origin and Tailscale checks pass. A rendered login, HTTP error or page without anchors still fails verification.
 - Connection investigation (`agent-annotate-52s`): verified existing lazy images/previews and the 64-connection backlog on 2.28.0 with a disposable FLD copy in iPad WebKit and desktop Chrome; all 154 images loaded without HTTP errors. Bare `/annotate/` paths belong to the shared root handler, outside the page's exact Funnel route; no shared route was changed.
 - Spaced projects (`agent-annotate-d8q`): default Funnel paths use a slugified project segment, while project keys and explicit path overrides stay intact. Server discovery, restart and teardown read exact process arguments so spaced paths retain their identity.
+- Reviewer drafts stay private from inboxes, MCP, hooks and agent counts until the reviewer presses Send. Delivery labels require an owner-session receipt; pending or failed delivery stays plainly queued in the inbox.
 
 ## 2.28.0
 

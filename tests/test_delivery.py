@@ -201,6 +201,17 @@ def test_busy_terminal_acceptance_is_recorded_without_resending(estate):
     assert len(_sends(estate)) == 1
 
 
+@pytest.mark.parametrize("stages, received", [([], False), (["queued"], False),
+                                             (["input_accepted"], True), (["turn_started"], True)])
+def test_delivery_status_requires_owner_receipt_not_enqueue_acceptance(estate, stages, received):
+    estate["receipt"]["prompt"]["stages"] = stages
+    _append(estate, _round())
+    _dispatch(estate)
+    status = delivery.delivery_status(_PROJECT, _SLUG)
+    assert status["latest"]["delivered"] is received
+    assert status["deliveries"][0]["delivered"] is received
+
+
 def test_concurrent_watchdog_passes_accept_round_once(estate):
     _append(estate, _round())
     barrier = Barrier(2)

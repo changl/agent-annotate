@@ -360,14 +360,17 @@ def test_discard_clears_pending_without_a_push(server):
     assert "round_pending" not in stored["decision"]
 
 
-def test_an_immediate_verdict_still_pushes_as_before(server):
-    """Legacy chrome never sends defer_push; its behaviour is unchanged."""
+def test_a_reviewer_verdict_without_defer_is_still_private_until_send(server):
+    """An old client cannot turn a saved choice into an automatic Send."""
     httpd, _, bus = server
     _, comment = _call(httpd, "POST", "/api/comments", _card())
     status, resp = _call(httpd, "POST", f"/api/comments/{comment['id']}/decision",
                          {"verdict": "accept"}, author="reviewer@example.com")
     assert status == 200
-    assert resp["delivery"] == "queued"
+    assert resp["delivery"] == "deferred"
+    assert resp["decision"]["round_pending"] is True
+    assert _events(bus, "session_push") == []
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
     pushes = _events(bus, "session_push")
     assert len(pushes) == 1 and pushes[0]["comment_ids"] == [comment["id"]]
 
@@ -410,7 +413,9 @@ def test_request_changes_records_the_verdict_and_keeps_the_card_open(server):
     updated = _events(bus, "comment_updated")
     assert updated[-1]["decision"] == "changes"
     assert updated[-1]["new_status"] == "open"
-    assert _events(bus, "session_push")[-1]["decision"] == "changes"
+    assert _events(bus, "session_push") == []
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert _events(bus, "round_submitted")[-1]["answers"][0]["verdict"] == "changes"
 
 
 def test_request_changes_without_text_is_a_400_and_writes_nothing(server):
