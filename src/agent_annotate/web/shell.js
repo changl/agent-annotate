@@ -370,18 +370,77 @@ async function pollJson(url, quiet) {
 // `view=poll` (servers from v9o on) leaves out each comment's carry_history, which
 // nothing in the browser shows (megabytes on long-lived pages); an older
 // server ignores the query and sends the whole store, which works the same.
-async function loadStore() {
+// STORE is what the page shows; LIVE is the store as the server last sent it.
+// Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
+let LIVE = null;
+async function pollStore() {
   try {
     const got = await pollJson('./comments.json?view=poll');
     if (!got.ok) return false;
-    if (got.same) return true;
-    const store = got.data;
-    STORE = store && store.schema_version === 2 ? store : { schema_version: 2, anchors: {}, archived: {} };
-    // Posts still on their way stay on screen (v9o).
-    for (const apply of pendingEdits.values()) apply();
-    computeNumbers();
+    if (!got.same || !LIVE) LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
     return true;
   } catch { return false; }
+}
+function applyLive() {
+  if (!LIVE || LIVE === STORE) return;
+  waiting = null;
+  STORE = LIVE;
+  // Posts still on their way stay on screen (v9o).
+  for (const apply of pendingEdits.values()) apply();
+  computeNumbers();
+}
+// Read the store and show all of it: on load, refresh, Send and a version switch.
+async function loadStore() {
+  if (!await pollStore()) return false;
+  applyLive();
+  return true;
+}
+// After the reviewer's own action on a card: that card as the server has it
+// now; every other card stays as shown.
+function adoptLive(id) {
+  if (!LIVE || LIVE === STORE) return;
+  waiting = null;
+  const find = (store) => {
+    for (const area of ['anchors', 'archived']) {
+      for (const [aid, items] of Object.entries(store[area] || {})) {
+        const i = items.findIndex(c => c.id === id);
+        if (i !== -1) return { area, aid, i };
+      }
+    }
+    return null;
+  };
+  const was = find(STORE), now = find(LIVE);
+  const c = now && LIVE[now.area][now.aid][now.i];
+  if (was && now && was.area === now.area && was.aid === now.aid) STORE[was.area][was.aid][was.i] = c;
+  else {
+    if (was) {
+      const list = STORE[was.area][was.aid];
+      list.splice(was.i, 1);
+      if (!list.length) delete STORE[was.area][was.aid];
+    }
+    if (now) ((STORE[now.area] = STORE[now.area] || {})[now.aid] = STORE[now.area][now.aid] || []).push(c);
+  }
+  for (const apply of pendingEdits.values()) apply();
+  computeNumbers();
+}
+// What the banner says is waiting in LIVE for the document on screen
+// (worked out once per store read: it writes out every comment).
+let waiting = null;
+function waitingChanges() {
+  const out = { questions: 0, cards: 0 };
+  if (!LIVE || LIVE === STORE) return out;
+  if (waiting && waiting.live === LIVE && waiting.doc === DOC) return waiting.out;
+  waiting = { live: LIVE, doc: DOC, out };
+  const all = (store) => { const s = STORE; STORE = store; try { return flattenStore(true).filter(c => docOf(c) === DOC); } finally { STORE = s; } };
+  const shown = new Map(all(STORE).filter(c => !c.pending).map(c => [c.id, JSON.stringify(c)]));
+  for (const c of all(LIVE)) {
+    const was = shown.get(c.id);
+    shown.delete(c.id);
+    if (was === undefined) { if (c.decision_request) out.questions++; else out.cards++; }
+    else if (was !== JSON.stringify(c)) out.cards++;
+  }
+  out.cards += shown.size; // gone from the server
+  return out;
 }
 
 // ── Stable page-wide item numbering ─────────────────────────────────
@@ -1278,20 +1337,33 @@ function renderVersionRail(shown) {
   if (doc === VIEW_DOC) renderVersionBanner();
   return rows.length;
 }
-// U-10: an older version on screen says so, with the way back.
+// U-10: an older version on screen says so, with the way back. It also says
+// what a poll brought that is not shown yet; one tap shows it all.
 function renderVersionBanner() {
   const banner = document.getElementById('unified-version-banner');
   const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
-  banner.hidden = !latest || CURRENT_VERSION === latest;
+  const older = !!latest && CURRENT_VERSION !== latest;
+  const w = waitingChanges();
+  const parts = [];
+  if (older) parts.push('Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest));
+  if (w.questions) parts.push(w.questions + (w.questions === 1 ? ' new question' : ' new questions'));
+  if (w.cards) parts.push(w.cards + (w.cards === 1 ? ' card changed' : ' cards changed'));
+  banner.hidden = !parts.length;
   if (banner.hidden) return;
-  banner.innerHTML = 'Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest) + ' — <button type="button" class="btn btn-link btn-sm">back to latest</button>';
-  banner.querySelector('button').onclick = () => switchVersion(latest);
+  banner.innerHTML = parts.join(' · ') + ' — <button type="button" class="btn btn-link btn-sm">' + (older ? 'back to latest' : 'show') + '</button>';
+  banner.querySelector('button').onclick = () => {
+    if (older) return switchVersion(latest);
+    applyLive();
+    renderAll();
+    document.dispatchEvent(new CustomEvent('annotate:store'));
+  };
 }
 // (The phone header's version <select> is gone: History is the one version
 // picker on every layout — B3.)
 
 function switchVersion(v) {
   if (!v || v === CURRENT_VERSION) return;
+  applyLive(); // picking a version shows everything the polls brought
   CURRENT_VERSION = v;
   loadIframe(v);
   // final/: the version is part of the page's hash (#view=plans&v=v5), since
@@ -1304,6 +1376,7 @@ function switchVersion(v) {
   if (gf) gf.value = DRAFTS.gf || '';
   renderGeneralFeedback();
   updateSendState();
+  document.dispatchEvent(new CustomEvent('annotate:store'));
 }
 
 function loadIframe(v) {
@@ -1424,7 +1497,7 @@ async function setAnswerLater(id, on) {
     if (c) c.answer_later = was;
     setSendNote(on ? 'Could not set this question aside. Try again.' : 'Could not move this question back. Try again.', 'is-error', 4000);
   }
-  refreshStore();
+  refreshStore(id);
 }
 function isUnresolvedDecision(c) {
   return !!(c && c.decision_request && !decisionAnswer(c) &&
@@ -1633,7 +1706,8 @@ function renderDrawerNow() {
   // "Earlier feedback", instead of vanishing when a version is published.
   const earlier = (c) => !inScope(c) && !isNewerThanViewed(c);
   for (const c of flattenAll(false)) {
-    if (inScope(c)) groups[sectionOf(c)].push(c);
+    // Unsent text stays in view after a version switch, not in Earlier feedback.
+    if (inScope(c) || hasUnsentText(c)) groups[sectionOf(c)].push(c);
     else if (earlier(c)) groups.earlier.push(c);
   }
   for (const [aid, items] of Object.entries(STORE.archived || {})) {
@@ -1687,7 +1761,7 @@ function renderDrawerNow() {
   if (focusedTa) {
     const ta = listEl.querySelector(focusedTa);
     if (ta) {
-      ta.focus();
+      ta.focus({ preventScroll: true }); // the rail stays where the reviewer left it
       if (unifiedCaret) ta.setSelectionRange(...unifiedCaret); else ta.selectionStart = ta.selectionEnd = ta.value.length;
     }
   }
@@ -1707,7 +1781,7 @@ function renderDrawerNow() {
   wireDecisionActions(listEl);
   wireNoteActions(listEl);
   syncExcerptClamps(listEl);
-  if (drawerBodyEl && !focusedTa) drawerBodyEl.scrollTop = savedScrollTop;
+  if (drawerBodyEl) drawerBodyEl.scrollTop = savedScrollTop;
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -2356,7 +2430,7 @@ async function addNote(root, id) {
   if (!decisionAnswer(c)) return submitDecision(root, id, 'comment', text);
   if (await apiReply(id, text)) {
     clearSayDraft(id);
-    await refreshStore();
+    await refreshStore(id);
     markReadAfterAction(id);
   } else setDecisionFeedback(root, id, 'Could not add the note. Your text is still in the box; try again.', true);
 }
@@ -2371,14 +2445,14 @@ async function saveNote(root, id, key, text) {
   }
   const n = cardNotes(c).find(n => n.key === key);
   const ok = n && await apiReplyNote(id, n.idx, n.ts, text);
-  if (ok) { await refreshStore(); markReadAfterAction(id); }
+  if (ok) { await refreshStore(id); markReadAfterAction(id); }
   return !!ok;
 }
 async function deleteNote(id, key) {
   const n = cardNotes(findCommentById(id) || {}).find(n => n.key === key);
   if (!n || !n.deletable || !confirm('Delete this note? It has not been sent.')) return;
-  if (await apiReplyNote(id, n.idx, n.ts, null)) await refreshStore();
-  else { alert('Could not delete the note; it may have just been sent. Edit it instead.'); await refreshStore(); }
+  if (await apiReplyNote(id, n.idx, n.ts, null)) await refreshStore(id);
+  else { alert('Could not delete the note; it may have just been sent. Edit it instead.'); await refreshStore(id); }
 }
 // `scope` is where the card's boxes live: the rail list, or the document.
 function wireNoteActions(root, scope = root) {
@@ -2721,20 +2795,20 @@ function wireCardActions(root) {
   }));
   root.querySelectorAll('[data-action="accept"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiAccept(b.dataset.id);
-    await refreshStore();
+    await refreshStore(b.dataset.id);
   })));
   root.querySelectorAll('[data-action="archive"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiArchive(b.dataset.id);
-    await refreshStore();
+    await refreshStore(b.dataset.id);
   })));
   root.querySelectorAll('[data-action="restore"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiRestore(b.dataset.id);
-    await refreshStore();
+    await refreshStore(b.dataset.id);
     markReadAfterAction(b.dataset.id);
   })));
   root.querySelectorAll('[data-action="reopen"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
     await apiPutComment(b.dataset.id, { status: 'open' });
-    await refreshStore();
+    await refreshStore(b.dataset.id);
     markReadAfterAction(b.dataset.id);
   })));
   root.querySelectorAll('[data-action="resolution"]').forEach(btn => btn.addEventListener('click', closeMenuThen(async (b) => {
@@ -2757,10 +2831,10 @@ function wireCardActions(root) {
     if (await apiDelete(b.dataset.id)) {
       delete editingComment[b.dataset.id];
       setDraft('edit:' + b.dataset.id, '');
-      await refreshStore();
+      await refreshStore(b.dataset.id);
     } else {
       alert('Could not delete this comment; it may have just been sent. Archive it instead.');
-      await refreshStore();
+      await refreshStore(b.dataset.id);
     }
   })));
   root.querySelectorAll('.edit-ta').forEach(ta => ta.addEventListener('input', () => setDraft('edit:' + ta.dataset.editFor, ta.value)));
@@ -2783,7 +2857,7 @@ function wireCardActions(root) {
     if (await apiPutComment(id, patch)) {
       delete editingComment[id];
       setDraft('edit:' + id, '');
-      await refreshStore();
+      await refreshStore(id);
       markReadAfterAction(id);
     } else {
       btn.disabled = false;
@@ -2813,7 +2887,7 @@ function wireCardActions(root) {
     pendingEdits.delete(reply);
     unpost();
     // An answer lost on the way back: the server may have the reply anyway.
-    if (!posted && await loadStore()) posted = sentLanded(id, text);
+    if (!posted && await pollStore()) posted = sentLanded(id, text, LIVE);
     setDraft('sending:' + id, '');
     if (!posted) {
       const merged = mergeDraft(DRAFTS[id], text);
@@ -2824,8 +2898,12 @@ function wireCardActions(root) {
       renderDrawer();
       return;
     }
-    await refreshStore();
+    const stored = findCommentById(id);
+    if (stored && posted.id === id) keepConfirmed(stored.anchor_id, posted);
+    else adoptLive(id); // the answer was lost; the server's copy has the reply
     markReadAfterAction(id);
+    renderVersionRail();
+    document.dispatchEvent(new CustomEvent('annotate:store'));
   }));
 }
 
@@ -2896,7 +2974,7 @@ async function submitDecision(root, id, verdict, text, optionId) {
   delete cardExpanded[id];
   delete decisionHint[id];
   clearSayDraft(id);
-  await refreshStore();
+  await refreshStore(id);
   markReadAfterAction(id);
   updateSendState();
   return result;
@@ -3067,9 +3145,11 @@ function mirrorSay(id, from) {
 }
 function cssEsc(s) { return String(s).replace(/(["\\\[\]\(\)])/g, '\\$1'); }
 
-// After an action: the store and the server's counts, then every tab.
-async function refreshStore() {
-  await Promise.all([loadStore(), loadCategories()]);
+// After an action on card `id`: that card and the server's counts, then
+// every tab. Without an id the whole store shows.
+async function refreshStore(id) {
+  await Promise.all([pollStore(), loadCategories()]);
+  if (id) adoptLive(id); else applyLive();
   renderAll();
   document.dispatchEvent(new CustomEvent('annotate:store'));
 }
@@ -3189,7 +3269,7 @@ async function savePopover() {
   let created = await settlePending(apiCreateComment(at.anchorId, at.anchorLabel, text, at.version || CURRENT_VERSION, at.target));
   dropPendingComment(temp);
   // An answer lost on the way back: the server may have the comment anyway.
-  if (!created && await loadStore()) created = sentLanded('pop', sent);
+  if (!created && await pollStore()) created = sentLanded('pop', sent, LIVE);
   setDraft('sending:pop', '');
   if (!created) {
     setDraft('pop', mergeDraft(DRAFTS.pop, sent));
@@ -3199,11 +3279,13 @@ async function savePopover() {
     document.getElementById('pop-err').textContent = 'Not saved — the server did not answer. Your text is still here; try again.';
     return;
   }
-  await refreshStore();
+  keepConfirmed(at.anchorId, created);
   // The author has obviously "read" their own new comment.
-  markReadAfterAction(created.id);
+  markRead([findCommentById(created.id)]);
   setActiveTab('feedback');
+  renderVersionRail();
   focusSidebarCard(created.id);
+  document.dispatchEvent(new CustomEvent('annotate:store'));
 }
 
 // ── Optimistic posts (v9o) ──────────────────────────────────────────
@@ -3242,16 +3324,37 @@ function addPendingComment(anchorId, fields) {
 }
 // A post whose text waits as a 'sending:' draft ('sending:pop' for the
 // composer, 'sending:<comment id>' for a reply): what the server has of it.
-function sentLanded(key, sent) {
+function sentLanded(key, sent, store) {
   const same = x => !x.pending && String(x.text || '').trim() === String(key === 'pop' ? sent.text : sent).trim();
-  if (key === 'pop') return (STORE.anchors[sent.anchorId] || []).find(same) || null;
-  const c = findCommentById(key);
-  return (c && (c.replies || []).find(same)) || null;
+  const s = STORE;
+  if (store) STORE = store;
+  try {
+    if (key === 'pop') return (STORE.anchors[sent.anchorId] || []).find(same) || null;
+    const c = findCommentById(key);
+    return (c && (c.replies || []).find(same)) || null;
+  } finally { STORE = s; }
 }
 // Text that did not reach the server goes back ahead of what was typed since.
 function mergeDraft(now, sent) {
   if (typeof sent === 'object') return now && (now.text || '').trim() ? Object.assign({}, sent, { text: sent.text + '\n\n' + now.text }) : sent;
   return now && now.trim() ? sent + '\n\n' + now : sent;
+}
+// kbv: the server answers a post with the comment as stored. It goes into
+// the store as the poll would bring it, instead of rereading the whole store
+// (megabytes on FLD) and rendering three times; the next poll brings the rest.
+function keepConfirmed(anchorId, comment) {
+  const c = Object.assign({}, comment);
+  delete c.carry_history;
+  waiting = null;
+  for (const store of new Set([STORE, LIVE])) {
+    if (!store) continue;
+    const list = store.anchors[anchorId] || [];
+    const i = list.findIndex(x => x.id === c.id);
+    if (i !== -1) list[i] = c;
+    else if (!(store === STORE && storedComment(c.id))) (store.anchors[anchorId] = list).push(c);
+  }
+  for (const apply of pendingEdits.values()) apply();
+  computeNumbers();
 }
 function dropPendingComment(c) {
   pendingEdits.delete(c);
@@ -3303,7 +3406,7 @@ async function completeRepin(anchorId, anchorLabel, target) {
       by: AUTHOR,
     },
   });
-  await refreshStore();
+  await refreshStore(id);
   if (updated) {
     markReadAfterAction(id);
     goToCommentLocation(anchorId, updated.version, id); // show the new spot
@@ -3976,6 +4079,8 @@ async function submitPage(alsoPending, receipt) {
   const lines = Array.isArray(receipt) ? receipt : [];
   const sendId = lines.length ? newSendId() : null;
   const failedIds = new Set();
+  // Text typed on a card the agent has since withdrawn goes as a reply to it.
+  await loadStore();
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
     (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
@@ -4434,7 +4539,6 @@ function renderAll() {
 // other document's is kept in DOC_STATE. The comment store, read state,
 // numbering and project are page-wide and never swapped.
 const DOC_STATE = {};
-const lastSnap = {};
 let docBusy = 0;
 let frameReady = { doc: null, version: null };
 let frameWaiters = [];
@@ -4486,7 +4590,6 @@ async function loadDocState(doc) {
     const want = window.AA ? window.AA.versionFor(doc) : null;
     if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : latestVersion();
     await loadSeen();
-    lastSnap[doc] = JSON.stringify(STORE) + JSON.stringify(META) + JSON.stringify(READ);
   });
 }
 // Re-read the page from the server (after a Send); renders the document on
@@ -4509,6 +4612,7 @@ async function activateDoc(doc, version) {
   await DOCS_LOADED;
   await docQueue;
   if (!DOCS.includes(doc)) doc = 'review';
+  if (VIEW_DOC !== doc) applyLive(); // opening a tab shows what the polls brought
   if (DOC !== doc) enterDoc(doc);
   VIEW_DOC = doc;
   if (!CURRENT_VERSION) {
@@ -4536,6 +4640,7 @@ async function activateDoc(doc, version) {
 }
 const popReopened = new Set();
 function parkDoc() {
+  if (VIEW_DOC) applyLive();
   VIEW_DOC = null;
 }
 
@@ -4562,12 +4667,8 @@ async function loadCategories() {
         if (saved.CURRENT_VERSION === previousPlan.current) saved.CURRENT_VERSION = nextPlan.current;
         saved.META = { ...saved.META, current: nextPlan.current, history: nextPlan.history };
       }
-      // v9o: never under a box being typed in or an open composer; the
-      // "Latest is …" banner offers the new revision instead.
-      if (DOC === 'plans' && CURRENT_VERSION === previousPlan.current && !isEditing() && !document.getElementById('popover').classList.contains('vis')) {
-        CURRENT_VERSION = nextPlan.current;
-        loadIframe(CURRENT_VERSION);
-      }
+      // The plan on screen never follows by itself (Chang, 2026-11-01): the
+      // "Latest is …" banner offers the new revision.
       if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
     }
     // Plans opens on the first plan in section order (tracking first); a
@@ -4667,17 +4768,6 @@ function openLinkedCard() {
   cardExpanded[c.id] = true;
   focusSidebarCard(c.id);
 }
-// True while the reviewer is typing in the rail or the document. A render
-// never rebuilds the composer or the general-feedback box, so typing there
-// holds nothing back (v9o); every box's text is a draft either way.
-function isEditing() {
-  const ae = document.activeElement;
-  if (ae && ae.closest('textarea,input,[contenteditable="true"]') && !ae.closest('#popover, #general-feedback-box')) return true;
-  try {
-    const inner = document.getElementById('content-frame').contentDocument.activeElement;
-    return !!(inner && inner.closest('textarea,input,[contenteditable="true"]'));
-  } catch { return false; }
-}
 // The shell itself never scrolls; only its panes do. iPad browsers still
 // scroll the page (toolbar collapse, the keyboard), and with body
 // overflow:hidden there is no way back: the header and Send are gone (Chang,
@@ -4772,14 +4862,15 @@ async function init() {
   // v9o: a poll that brings nothing new (every read a 304 or the same body)
   // does no other work. Every 8 s while things change or the reviewer is
   // active; after a quiet minute every 15 s, after two every 30 s; any key,
-  // click or return to the tab brings 8 s back. A render the reviewer's
-  // typing held back runs on the next poll even if nothing else changed.
+  // click or return to the tab brings 8 s back.
+  // Chang (2026-11-01): the page must not change under the reviewer. A poll
+  // reads the store into LIVE and updates only History and the banner at the
+  // top, which says what is waiting; the cards, the document and typed text
+  // change when he taps it, picks a version, or acts on a card.
   let refreshing = false;
   let refreshTimer;
   let nextAt = 0;
   let idlePolls = 0;
-  let held = false;
-  let lastStoreSig = JSON.stringify(STORE) + JSON.stringify(READ) + pageReadOnly();
   const pollDelay = () => idlePolls < 8 ? 8000 : idlePolls < 16 ? 15000 : 30000;
   function schedule(ms) {
     clearTimeout(refreshTimer);
@@ -4795,26 +4886,15 @@ async function init() {
     let changed = false;
     try {
       pollChanged = false;
-      await Promise.all([loadStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
+      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
       if (historyDirty) loadHistory();
       loadBoard();
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
       if (onDoc) { await loadMeta(); loadDelivery(); }
       changed = pollChanged;
-      if (changed || held) {
-        held = false;
-        // The store is written out once per poll (megabytes on FLD).
-        const storeJson = JSON.stringify(STORE), readJson = JSON.stringify(READ);
-        const storeSig = storeJson + readJson + pageReadOnly();
-        if (storeSig !== lastStoreSig) {
-          if (isEditing()) held = true;
-          else { lastStoreSig = storeSig; document.dispatchEvent(new CustomEvent('annotate:store')); }
-        }
-        if (onDoc && !docBusy) {
-          const snap = storeJson + JSON.stringify(META) + readJson + pageReadOnly();
-          if (snap !== lastSnap[doc]) { if (isEditing()) held = true; else { lastSnap[doc] = snap; renderAll(); } } else updateSendState();
-        }
+      if (changed) {
+        if (onDoc) renderVersionRail();
         if (window.AA) window.AA.changed();
       }
     } finally {
