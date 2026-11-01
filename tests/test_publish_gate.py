@@ -302,7 +302,13 @@ def test_funnel_publish_with_vanished_browser_still_asks(published, monkeypatch,
     monkeypatch.setattr(pagegen, "_call_publish", lambda directory, args: cli.cmd_publish(
         _args(directory, transport="funnel", verify_timeout=0)))
     asked = []
-    monkeypatch.setattr(pagegen, "_call_ask", lambda *args: asked.append(args) or 0)
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("reviews", "demo", published.saved["demo"]))
+
+    def api(record, method, path, body, author):
+        asked.append((method, path, body))
+        return 200, {"ids": ["q1", "q2", "q3"], "created": 3, "updated": 0}
+
+    monkeypatch.setattr(cli, "_api", api)
     args = SimpleNamespace(slug_dir=str(published.slug_dir), from_file=str(source),
                            version="v1", label=None, project="reviews", publish=True, ask=True)
     assert pagegen.cmd_new(args) == 0
@@ -311,5 +317,7 @@ def test_funnel_publish_with_vanished_browser_still_asks(published, monkeypatch,
     assert PUBLIC_URL in out
     assert "public browser check skipped" in out
     assert "browser_tab_not_found" in out
-    assert asked and json.loads(asked[0][1].read_text())
+    assert asked[0][:2] == ("POST", "/api/comments/batch")
+    assert len(asked[0][2]["items"]) == 3
+    assert all(item["version"] == "v1" for item in asked[0][2]["items"])
     assert published.saved["demo"]["verified"] is False
