@@ -806,10 +806,11 @@ async function apiRoundDiscard() {
   } catch {}
   return null;
 }
+// A card the agent resolved keeps the reviewer's unsent pick until Send.
 function isRoundPending(c) {
   return !!(c && c.decision && c.decision.round_pending &&
     IDENTITY && (IDENTITY.reviewer_authors || [IDENTITY.email]).includes(c.decision.by) &&
-    c.status !== 'archived' && c.status !== 'resolved_in_version');
+    c.status !== 'archived');
 }
 function hasDecisionRequest(c) {
   return !!(c && c.decision_request &&

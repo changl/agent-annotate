@@ -208,6 +208,7 @@ def _answer_in_words_then_carry(httpd):
                     {"verdict": "comment", "text": "Which session is that?"},
                     author="reviewer@example.com")
     assert code == 200
+    _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")  # sent
     code, _ = _call(httpd, "PUT", f"/api/comments/{card['id']}", {
         "carry_forward": {"version": "v2", "anchor_id": "s:new"},
     })
@@ -233,6 +234,45 @@ def test_reposing_a_carried_card_clears_the_answer_to_the_old_question(server):
     assert card["reposed_at"]
     assert card["decision_history"][-1]["verdict"] == "comment"
     assert card["decision_history"][-1]["text"] == "Which session is that?"
+
+
+def test_reposing_a_carried_card_keeps_the_reviewers_unsent_pick(server):
+    """An unsent pick stays on the card, sendable, whatever the agent asks next."""
+    httpd, slug_dir, _ = server
+    card = _create_card(httpd)
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision",
+          {"verdict": "comment", "text": "Which session is that?", "defer_push": True},
+          author="reviewer@example.com")
+    _call(httpd, "PUT", f"/api/comments/{card['id']}", {"carry_forward": {"version": "v2", "anchor_id": "s:new"}})
+
+    code, _ = _ask(httpd, "Should the Windmill pilot session own it?")
+
+    assert code == 200
+    stored = _stored(slug_dir)
+    assert stored["decision"]["text"] == "Which session is that?"
+    assert stored["decision"]["round_pending"] is True
+    assert not stored.get("decision_history")
+    code, submitted = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert code == 200 and submitted["comment_ids"] == [card["id"]]
+
+
+def test_resolving_a_card_keeps_the_reviewers_unsent_pick_for_send(server):
+    httpd, slug_dir, bus = server
+    card = _create_card(httpd)
+    _call(httpd, "POST", f"/api/comments/{card['id']}/decision",
+          {"verdict": "accept", "defer_push": True}, author="reviewer@example.com")
+
+    code, _ = _call(httpd, "PUT", f"/api/comments/{card['id']}", {
+        "status": "resolved_in_version", "resolved_in_version": "v2", "resolution_anchor_id": "s:new"})
+
+    assert code == 200
+    assert _stored(slug_dir, "s:old")["decision"]["round_pending"] is True
+    code, submitted = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert code == 200
+    assert submitted["comment_ids"] == [card["id"]]
+    assert submitted["verdict_counts"]["accept"] == 1
+    assert submitted["undecided_ids"] == []
+    assert "round_pending" not in _stored(slug_dir, "s:old")["decision"]
 
 
 def test_rerunning_ask_with_the_same_question_keeps_the_verdict(server):

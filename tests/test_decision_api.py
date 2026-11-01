@@ -469,7 +469,7 @@ def test_an_answer_in_words_rides_the_round_and_counts_as_answered(server):
     assert "round_pending" not in stored["decision"]
 
 
-def test_resolved_comment_card_is_excluded_from_round_and_undecided_ids(server):
+def test_resolved_card_sends_its_unsent_answer_and_is_never_undecided(server):
     httpd, slug_dir, bus = server
     _, comment = _call(httpd, "POST", "/api/comments", _card())
     _call(
@@ -499,14 +499,21 @@ def test_resolved_comment_card_is_excluded_from_round_and_undecided_ids(server):
     )
 
     assert status == 200
-    assert submitted["comment_count"] == 0
+    assert submitted["comment_ids"] == [comment["id"]]
     assert submitted["undecided_ids"] == []
     assert submitted["verdict_counts"] == {
-        "accept": 0, "reject": 0, "changes": 0, "comment": 0, "select": 0,
+        "accept": 0, "reject": 0, "changes": 0, "comment": 1, "select": 0,
     }
-    assert submitted["delivery"] == "noop"
-    assert _events(bus, "session_push") == []
+    assert len(_events(bus, "session_push")) == 1
     assert "round_pending" not in _store(slug_dir)["anchors"]["s:a"][0]["decision"]
+
+    # A resolved card the reviewer never answered is not waiting on him.
+    _, other = _call(httpd, "POST", "/api/comments", _card("s:b"))
+    store = _store(slug_dir)
+    store["anchors"]["s:b"][0].update(status="resolved_in_version", resolved_in_version="v2", resolution_anchor_id="s:new")
+    (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
+    _, submitted = _call(httpd, "POST", "/api/rounds/submit", {}, author="reviewer@example.com")
+    assert submitted["undecided_ids"] == []
 
 
 def test_a_comment_without_text_is_a_400(server):

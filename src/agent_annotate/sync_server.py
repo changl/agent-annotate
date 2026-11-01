@@ -2303,9 +2303,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         # decision_history and put the card back in front of
                         # the reviewer. Re-running `ask` with the same
                         # question (requested_at aside) leaves verdicts alone.
+                        # An unsent pick is the reviewer's current choice: it
+                        # stays on the card until Send or Discard.
                         prior = existing.get("decision")
                         reposed = (
                             isinstance(prior, dict)
+                            and not prior.get("round_pending")
                             and existing.get("carried_at")
                             and existing["carried_at"] >= (prior.get("ts") or "")
                             and _decision_request_changed(existing.get("decision_request"),
@@ -2532,9 +2535,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c["resolution_anchor_id"] = resolution_anchor
                 c["resolved_at"] = _now_iso()
                 c["resolved_by"] = author
-                decision = c.get("decision")
-                if isinstance(decision, dict):
-                    decision.pop("round_pending", None)
+                # An unsent pick keeps round_pending: it still goes with Send.
             if "response_text" in payload:
                 c["response_text"] = payload["response_text"]
             if "text" in payload:
@@ -3375,13 +3376,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for items in store.get("anchors", {}).values():
                 for c in items:
                     decision = c.get("decision")
-                    if c.get("status") in ("archived", "resolved_in_version"):
+                    if c.get("status") == "archived":
                         if isinstance(decision, dict) and decision.get("by") in reviewer_authors and decision.get("round_pending"):
                             decision.pop("round_pending", None)
                             cleared_archived = True
                         continue
+                    # A resolved card is no longer asked, but the reviewer's
+                    # unsent pick on it still goes out.
                     if (c.get("decision_request") and not self._is_answered(decision)
-                            and c.get("status") != "addressed_by_agent" and not _is_set_aside(c)):
+                            and c.get("status") not in ("addressed_by_agent", "resolved_in_version")
+                            and not _is_set_aside(c)):
                         undecided_ids.append(c.get("id"))
                     if isinstance(decision, dict) and decision.get("round_pending") and decision.get("by") in reviewer_authors:
                         pending.append(c)

@@ -443,7 +443,7 @@ def comment_section(comment: dict) -> str | None:
     if status == "archived" or comment.get("withdrawn"):
         return None
     decision = _mapping(comment.get("decision"))
-    if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
+    if comment.get("round_pending") or decision.get("round_pending"):
         return "ready"
     if comment_needs_reviewer(comment):
         return "needs_you"

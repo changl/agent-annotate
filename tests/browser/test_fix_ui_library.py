@@ -425,6 +425,28 @@ def test_typing_while_a_save_or_comment_is_on_its_way_is_kept(tmp_path, lib_site
         assert page.locator("#sp-compose-ta").input_value() == "First note and more"
 
 
+@pytest.mark.parametrize("ipad", [False, True], ids=["chrome", "ipad"])
+def test_keys_typed_as_the_save_answers_all_land(tmp_path, lib_site, ipad):
+    """The save's answer arrives mid-word; the editor must not be rebuilt under the caret."""
+    from test_keep_drafts import SLOW_POSTS
+
+    with browser_page(tmp_path, lib_site, ipad=ipad) as (page, _):
+        go(page, "library", item="row-14")
+        editor(page).fill("Saved text.")
+        page.evaluate(SLOW_POSTS, [r"/api/copy/row-14/revisions", 1000, "ok"])
+        page.locator("#sp-save").click()
+        page.wait_for_timeout(300)
+        editor(page).press("End")
+        page.keyboard.type(" Typed later.", delay=100)
+        playwright.expect(editor(page)).to_have_text("Saved text. Typed later.")
+        assert [op["insert"] for op in revisions(lib_site)[-1]["delta"]["ops"]] == ["Saved text.\n"]
+        assert page.locator("#sp-save").is_enabled()
+        page.locator("#sp-save").click()
+        playwright.expect(status(page)).to_have_text(SAVED)
+        assert [op["insert"] for op in revisions(lib_site)[-1]["delta"]["ops"]] == ["Saved text. Typed later.\n"]
+        assert page.locator("#sp-save").is_disabled()
+
+
 def test_another_tabs_library_drafts_survive_typing_here(tmp_path, lib_site):
     with browser_page(tmp_path, lib_site) as (page, _):
         go(page, "library", item="row-14")

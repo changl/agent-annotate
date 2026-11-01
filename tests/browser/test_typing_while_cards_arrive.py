@@ -153,6 +153,32 @@ def test_text_typed_on_a_replaced_card_stays_in_view_and_goes_with_send(tmp_path
         page.wait_for_function("() => !document.querySelector('#comment-list .decision-stranded')")
 
 
+@pytest.mark.parametrize("ipad", [False, True], ids=["chrome", "ipad"])
+def test_an_unsent_pick_on_a_card_the_agent_resolves_stays_and_goes_with_send(tmp_path, ipad):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory, ipad=ipad) as (page, base, _):
+        pick = page.locator('#comment-list [data-comment-id="question-11"] .decision-btn').first
+        label = pick.locator(".decision-opt-label").inner_text() if pick.locator(".decision-opt-label").count() else pick.inner_text()
+        pick.click()
+        page.wait_for_function("() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision?.round_pending")
+        before = int(page.locator("#send-count").inner_text())
+        _agent(base, "api/comments/question-11", {"status": "resolved_in_version", "resolved_in_version": "v1",
+                                                  "resolution_anchor_id": "s:checks"}, method="PUT")
+        _poll(page, 2)
+        playwright.expect(page.locator('#comment-list [data-comment-id="question-11"]')).to_contain_text(label.strip())
+        assert int(page.locator("#send-count").inner_text()) == before
+        page.locator("#send-btn").click()
+        page.locator("#round-submit-btn").click()
+        page.wait_for_function("() => !document.querySelector('#round-confirm-backdrop.vis')")
+        for _ in range(50):
+            card = next(c for items in json.loads((directory / "comments.json").read_text())["anchors"].values()
+                        for c in items if c["id"] == "question-11")
+            if card.get("flagged_for_session"):
+                break
+            page.wait_for_timeout(100)
+        assert card["decision"]["verdict"] and "round_pending" not in card["decision"] and card.get("flagged_for_session")
+
+
 def test_a_tap_never_adds_hover_feedback(tmp_path):
     """iPad: a tap fires mouseover; a highlight then made iOS drop the click (two taps per choice)."""
     import socket
