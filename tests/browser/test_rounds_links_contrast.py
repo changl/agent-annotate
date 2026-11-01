@@ -185,12 +185,16 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
                 "https://linear.app/**",
                 lambda r: r.fulfill(body="<title>Linear</title>", content_type="text/html"),
             )
-            # srw: the new tab takes the foreground and headless Chrome throttles the opener
-            # behind it, so the opener answers Playwright's post-click round trips (hit-target
-            # stop, Page.enable) only when its own next timer wakes it: 0.2 s to over 30 s.
-            # The popup opening on ISSUE proves the click landed on the link.
+            # srw: once the new tab takes the foreground, headless Chrome holds every answer
+            # the page behind it owes Playwright (mouse-up ack, hit-target check, evaluate)
+            # until that page's own next timer: 0.2 s to over 30 s. So the press is checked
+            # first (clickable, focus leaves the box), and the link is clicked from a timer
+            # inside the page, after this call has returned; the Playwright call's user
+            # gesture lets that click open the tab.
+            link.click(trial=True)
+            link.focus()
             with page.expect_popup() as info:
-                link.click(no_wait_after=True)
+                link.evaluate("a => setTimeout(() => a.click())")
             popup = info.value
             popup.wait_for_load_state()
             assert popup.url == ISSUE

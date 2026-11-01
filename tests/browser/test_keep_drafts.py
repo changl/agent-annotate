@@ -379,13 +379,16 @@ def test_two_tabs_on_one_page_never_erase_each_others_drafts(tmp_path):
         other.bring_to_front()
         other.locator("#general-feedback-toggle").click()
         other.locator("#gf-ta").fill(GF)
-        # Chrome propagates localStorage changes to the other tab asynchronously.
+        # Read from the first tab once it is in front again: headless Chrome holds a background
+        # tab's answers to Playwright, so waiting on it from behind `other` timed out under
+        # load while the draft was already stored (agent-annotate-srw). Chrome propagates
+        # localStorage changes to the other tab asynchronously.
+        page.bring_to_front()
         page.wait_for_function("""expected => {
             const key = Object.keys(localStorage).find(k => k.startsWith('annotate:drafts:') && k.endsWith(':review'));
             return key && JSON.parse(localStorage.getItem(key)).gf === expected;
         }""", arg=GF)
         assert _drafts(page) == {"reply-card": REPLY, "gf": GF}
-        page.bring_to_front()
         page.reload(wait_until="networkidle")
         _loaded(page)
         assert _reply(page).input_value() == REPLY
