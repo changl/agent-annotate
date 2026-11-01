@@ -93,6 +93,31 @@ def test_fresh_publish_stored_and_printed_url_reaches_exact_served_mount(publish
         thread.join(timeout=2)
 
 
+@pytest.mark.parametrize("project,override,expected", [
+    ("Human By Intent", None, "/annotate/human-by-intent/canary"),
+    ("Evo Padel", None, "/annotate/evo-padel/canary"),
+    ("Human By Intent", "/custom/path", "/custom/path"),
+])
+def test_funnel_default_project_segment_is_route_safe(published, monkeypatch, project, override, expected):
+    routes = []
+
+    def publish(slug, port, **opts):
+        routes.append(slug)
+        return {"url": f"https://host.ts.net/{slug}/", "details": {"transport": "funnel"}}
+
+    monkeypatch.setattr(transports, "load", lambda name: SimpleNamespace(publish=publish))
+    args = SimpleNamespace(slug_dir=str(published.page), project=project, port=18701,
+                           transport="funnel", hostname=None, path_prefix=override, skip_js_lint=True,
+                           no_verify=True, public=False)
+    assert cli.cmd_publish(args) == 0
+    assert routes == [expected.lstrip("/")]
+    record = cli._load_state_for_project(project)["slugs"]["canary"]
+    assert record["project"] == project
+    assert record["public_base_path"] == expected
+    assert record["url"] == f"https://host.ts.net{expected}/"
+    assert published.starts[0][-1] == expected
+
+
 def test_legacy_root_url_is_correct_in_status_handoff_inventory_and_mcp(published, monkeypatch, capsys):
     record = {"project": "reviews", "slug": "canary", "slug_dir": str(published.page), "pid": 999999,
               "port": 8900, "url": "https://page.example:8447/", "local_url": "http://localhost:8900/",

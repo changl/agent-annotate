@@ -4,6 +4,9 @@
 
 - Sandbox servers refuse ports registered to other page directories, and automatic port selection skips reserved page ports.
 - Card numbers are allocated under the page's store lock across authors and documents; conflicting explicit numbers name the occupied card and next free number. Older duplicates use suffixed labels (such as #41·2) without reserving new plain numbers or migrating the store; live/current cards keep the base label in CLI and browser lookups.
+- Publish (`agent-annotate-ilm`): an unavailable Orca browser now skips the public check with its reason, prints the page URL and continues `--ask` after the origin and Tailscale checks pass. A rendered login, HTTP error or page without anchors still fails verification.
+- Connection investigation (`agent-annotate-52s`): verified existing lazy images/previews and the 64-connection backlog on 2.28.0 with a disposable FLD copy in iPad WebKit and desktop Chrome; all 154 images loaded without HTTP errors. Bare `/annotate/` paths belong to the shared root handler, outside the page's exact Funnel route; no shared route was changed.
+- Spaced projects (`agent-annotate-d8q`): default Funnel paths use a slugified project segment, while project keys and explicit path overrides stay intact. Server discovery, restart and teardown read exact process arguments so spaced paths retain their identity.
 
 ## 2.28.0
 

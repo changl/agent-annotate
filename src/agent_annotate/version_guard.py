@@ -313,8 +313,9 @@ def _restart_fix(release: dict, project: str, slug: str) -> str:
 def _unregistered_servers(records: list[dict]) -> list[dict]:
     """Running page servers on this estate's bus that no registry record
     knows, e.g. a legacy skill-directory sync_server.py. Servers of another
-    estate (a sandbox or preview with its own bus root) are not ours. Read
-    from `ps`; full check only."""
+    estate (a sandbox or preview with its own bus root) are not ours. Found
+    with `ps`, read from each one's exact argv; full check only."""
+    from .cli import _process_argv
     try:
         out = subprocess.run(["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, cwd=Path.home()).stdout
     except (OSError, subprocess.SubprocessError):
@@ -327,9 +328,11 @@ def _unregistered_servers(records: list[dict]) -> list[dict]:
     for line in out.splitlines():
         if "sync_server" not in line or "--slug-dir" not in line:
             continue
-        pid, _, rest = line.strip().partition(" ")
+        pid = line.split()[0]
         try:
-            argv = shlex.split(rest)
+            argv = _process_argv(int(pid))
+            if not argv:
+                continue
             start = next(i for i, arg in enumerate(argv)
                          if arg == "agent_annotate.sync_server" or Path(arg).name == "sync_server.py") + 1
             tail = argv[start:]
@@ -339,9 +342,9 @@ def _unregistered_servers(records: list[dict]) -> list[dict]:
             ours = (os.path.realpath(flags["--bus-dir"]) + os.sep).startswith(bus_root)
         except (ValueError, StopIteration, KeyError):
             continue
-        # `ps` output is not shell-quoted: a path with a space parses wrong, so
-        # anything a record could own (pid, port, directory) or an unparsable
-        # directory is never offered as a kill target.
+        # An unreadable argv was skipped above; anything a record could own
+        # (pid, port, directory) or a missing directory is never offered as a
+        # kill target.
         if (ours and os.path.isdir(directory) and directory not in registered and int(pid) not in pids
                 and port not in ports and 0 < port < 65536):
             servers.append({"pid": int(pid), "port": port, "slug_dir": directory, "tail": tail,

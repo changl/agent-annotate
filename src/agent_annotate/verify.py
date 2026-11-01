@@ -1,10 +1,10 @@
 """Prove a published page actually renders before anyone is handed its URL.
 
-Every stage asserts on RENDERED CONTENT, never on a status code. Behind
+Every successful stage requires RENDERED CONTENT. Behind
 Cloudflare Access an unauthenticated request to a healthy route and to a
 502-ing route both answer 302 to the login page, and an authenticated request
-to a dead origin answers 200 with Cloudflare's "Bad gateway" page. A status
-code carries no information here; the presence of the reviewer's anchors does.
+to a dead origin answers 200 with Cloudflare's "Bad gateway" page. A successful
+status alone proves nothing; the reviewer's anchors must be present too.
 
 Three stages, reported separately so a failure names the hop that broke:
 
@@ -32,7 +32,7 @@ PASS = "pass"
 FAIL = "fail"
 UNAVAILABLE = "unavailable"
 
-# Why a stage came back UNAVAILABLE. "access_login" means the probe met
+# Why a stage could not verify the page. An HTTP "access_login" means the probe met
 # Cloudflare Access's login page: this session cannot see the page, which says
 # nothing at all about whether the page renders. Reporting that as FAIL is what
 # printed "NOT PUBLISHED — the page does not render" over five live pages and
@@ -52,6 +52,8 @@ _BROWSER_PROBE_JS = """(() => {
   const body = d ? d.body : document.body;
   return JSON.stringify({
     title: document.title || '',
+    url: location.href,
+    httpStatus: (doc.defaultView.performance.getEntriesByType('navigation')[0] || {}).responseStatus || 0,
     hasFrame: !!f,
     contentLen: body ? body.innerHTML.length : 0,
     anchors: doc ? doc.querySelectorAll('[data-anchor-id]').length : 0,
@@ -227,7 +229,7 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
         page_id = (created.get("result") or {}).get("browserPageId")
         if not page_id:
             return StageResult(name, url, UNAVAILABLE,
-                               f"orca tab create returned no page id: {created}")
+                               f"orca tab create returned no page id: {created}", reason=NO_BROWSER)
     except FileNotFoundError:
         return StageResult(name, url, UNAVAILABLE,
                            "`orca` is not on PATH — the authenticated browser could "
@@ -245,19 +247,22 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
                              _BROWSER_PROBE_JS, "--json"])
                 payload = (res.get("result") or {}).get("result")
                 data = json.loads(payload) if isinstance(payload, str) else (payload or {})
+                if not isinstance(data, dict) or not {"anchors", "contentLen"} <= data.keys():
+                    raise ValueError("browser probe returned no DOM result")
                 anchors = int(data.get("anchors") or 0)
                 content_len = int(data.get("contentLen") or 0)
-                blob = f"{data.get('title', '')} {data.get('text', '')}"
+                blob = f"{data.get('url', '')} {data.get('title', '')} {data.get('text', '')}"
                 if _is_access_login(blob):
                     return StageResult(
-                        name, url, UNAVAILABLE,
+                        name, url, FAIL,
                         "Cloudflare Access login page — this browser profile is "
-                        "not signed in, so the page could not be verified from "
-                        "this session. It is not evidence of a broken page.",
-                        reason=ACCESS_LOGIN)
+                        "not signed in; the public page did not render.")
+                status = int(data.get("httpStatus") or 0)
+                if status >= 400:
+                    return StageResult(name, url, FAIL, f"browser loaded HTTP {status}")
                 diagnosis = _diagnose_html(blob)
                 if diagnosis:
-                    last = diagnosis
+                    return StageResult(name, url, FAIL, diagnosis)
                 elif anchors > 0 and content_len > 0:
                     return StageResult(
                         name, url, PASS,
@@ -267,9 +272,10 @@ def probe_browser(name: str, url: str, timeout: float = 45.0,
                 else:
                     last = (f"rendered {content_len} bytes with {anchors} anchors "
                             f"(title {data.get('title', '')!r})")
-            except (RuntimeError, json.JSONDecodeError, ValueError,
+            except (OSError, RuntimeError, ValueError,
                     subprocess.SubprocessError) as e:
-                last = f"could not read the page: {e}"
+                return StageResult(name, url, UNAVAILABLE,
+                                   f"could not read the browser tab: {e}", reason=NO_BROWSER)
             if time.monotonic() >= deadline:
                 return StageResult(name, url, FAIL, last)
             time.sleep(poll_interval)

@@ -224,6 +224,65 @@ def test_browser_probe_fails_on_a_rendered_502(monkeypatch):
     assert "502" in result.detail
 
 
+@pytest.mark.parametrize("failure", ["create", "missing_id", "vanished", "eval_timeout"])
+def test_browser_harness_failure_is_unavailable(monkeypatch, failure):
+    closed = []
+
+    def fake(argv, timeout=60.0):
+        if argv[:2] == ["tab", "create"]:
+            if failure == "create":
+                raise RuntimeError("browser unavailable")
+            return {"result": {} if failure == "missing_id" else {"browserPageId": "gone"}}
+        if argv[0] == "eval":
+            if failure == "eval_timeout":
+                raise verify.subprocess.TimeoutExpired("orca eval", timeout)
+            raise RuntimeError("browser_tab_not_found")
+        closed.append(argv)
+        return {}
+
+    monkeypatch.setattr(verify, "_orca", fake)
+    result = verify.probe_browser("public", "https://example.test/x/", timeout=0, poll_interval=0)
+    assert result.status == verify.UNAVAILABLE
+    assert result.reason == verify.NO_BROWSER
+    assert result.detail
+    assert bool(closed) == (failure in {"vanished", "eval_timeout"})
+
+
+@pytest.mark.parametrize("data", [
+    {"title": "Review", "contentLen": 100, "anchors": 0},
+    {"title": "Access", "text": "/cdn-cgi/access/login", "contentLen": 100, "anchors": 0},
+    {"title": "404 Not Found", "text": "HTTP 404", "contentLen": 100, "anchors": 0},
+    {"title": "Review", "httpStatus": 500, "contentLen": 100, "anchors": 3},
+    {"title": "Sign in", "url": "https://example.cloudflareaccess.com/", "contentLen": 100, "anchors": 0},
+])
+def test_browser_that_renders_a_failure_still_fails(monkeypatch, data):
+    def fake(argv, timeout=60.0):
+        if argv[:2] == ["tab", "create"]:
+            return {"result": {"browserPageId": "p1"}}
+        return {"result": {"result": data}} if argv[0] == "eval" else {}
+
+    monkeypatch.setattr(verify, "_orca", fake)
+    result = verify.probe_browser("public", "https://example.test/x/", timeout=0, poll_interval=0)
+    assert result.status == verify.FAIL
+
+
+def test_browser_vanishing_while_the_iframe_loads_is_unavailable(monkeypatch):
+    calls = []
+
+    def fake(argv, timeout=60.0):
+        if argv[:2] == ["tab", "create"]:
+            return {"result": {"browserPageId": "p1"}}
+        if argv[0] == "eval":
+            calls.append(argv)
+            if len(calls) == 1:
+                return {"result": {"result": {"contentLen": 0, "anchors": 0}}}
+            raise RuntimeError("browser_tab_not_found")
+        return {}
+
+    monkeypatch.setattr(verify, "_orca", fake)
+    assert verify.probe_browser("public", "https://example.test/x/", poll_interval=0).status == verify.UNAVAILABLE
+
+
 @pytest.mark.parametrize("status", [verify.PASS, verify.FAIL, verify.UNAVAILABLE])
 def test_format_report_renders_every_status(status):
     lines = verify.format_report(verify.VerifyReport([_stage("origin", status)]))

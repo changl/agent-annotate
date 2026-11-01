@@ -1,0 +1,204 @@
+{
+  "base": "064b1d5 (2.28.0)",
+  "branch": "changl/fix-publish",
+  "target": "changl/fixes",
+  "beads_left_open": true,
+  "beads": {
+    "agent-annotate-ilm": {
+      "reproduced": true,
+      "before": "A stubbed Orca tab creation returned an id, then eval raised browser_tab_not_found: publish returned 1 and new --publish --ask never called ask despite passing origin and Tailscale probes.",
+      "root_cause": "Evaluation errors from the browser harness were retried into a render FAIL, unlike errors during tab creation.",
+      "fix": "Missing Orca, failed creation, missing page id, missing DOM result and unreadable/vanished tabs report UNAVAILABLE with a skip reason. Publish retains verified=false, prints the URL and continues ask. Rendered Access login, HTTP errors, gateway pages and missing anchors remain failures.",
+      "tests": [
+        "tests/test_publish_verification.py",
+        "tests/test_publish_gate.py::test_funnel_publish_with_vanished_browser_still_asks"
+      ],
+      "commits": [
+        "8143c80",
+        "b91013c",
+        "abb02b0",
+        "fde3bdf"
+      ]
+    },
+    "agent-annotate-52s": {
+      "image_failure_reproduced": false,
+      "bare_paths": "Baseline mounted page returns 404 outside published page mount for /, /annotate/ and /annotate/reviews/. Its full page path loads correctly. The historical raw JSON not_found body is not in this package.",
+      "edge_ownership": "Coordinator checked read-only: the shared Funnel / handler points at 127.0.0.1:8790, with no listener there; bare paths fall through to that shared handler, outside annotate's exact page routes. Coordinator instructed no root route change.",
+      "existing_mitigations": "2.28.0 already generates lazy image previews and uses request_queue_size=64.",
+      "browser_proof": "cold_load below: baseline source extracted with git archive, FLD v583 copied into a temporary directory, explicit loopback port 18762 and full /annotate/reviews/fld-stack-round8/ mount; separate fresh browser contexts.",
+      "limitation": "No live Funnel or M5 experiment was performed. The copied full page route was tested at its loopback origin, so this does not certify a public Funnel transport that was not exercised.",
+      "product_change": "None: existing mitigations passed; shared root routing is outside scope. Changelog records the investigation."
+    },
+    "agent-annotate-d8q": {
+      "reproduced": true,
+      "before": "Default publish sent annotate/Human By Intent/canary and annotate/Evo Padel/canary to the transport; migration also sent the raw spaced project. A baseline fake ps row for page with spaces was registered as its page prefix instead.",
+      "fix": "Fresh Funnel publish and live-page transport migration reuse pagegen.slugify for the default project segment; raw project keys and explicit publish path overrides remain unchanged. Exact process argv is read by discovery, deployment identity and unregistered-server detection; unreadable argv fails closed.",
+      "cherry_pick_only": [
+        {
+          "source": "db223871a29e8649d775050be858a87c6354b086",
+          "result": "3bb1d81"
+        },
+        {
+          "source": "973b61d9dcb571e9c14294a8ff1f0d9035344412",
+          "result": "28fd6a1"
+        }
+      ],
+      "conflict_resolution": "Kept 2.28.0's deletion of tests/test_verified_install.py and removed legacy-restart test block, whose product bridge had already been removed in 747ec82; retained all applicable exact-argv tests and fixture portability changes. No pilot branch merge.",
+      "tests": [
+        "tests/test_published_urls.py::test_funnel_default_project_segment_is_route_safe",
+        "tests/test_funnel_migration.py",
+        "tests/test_port_identity.py",
+        "tests/test_deployment.py",
+        "tests/test_project_state.py",
+        "tests/test_unpublish_scope.py",
+        "tests/test_version_guard.py"
+      ],
+      "commits": [
+        "3bb1d81",
+        "28fd6a1",
+        "4853378",
+        "b91013c"
+      ]
+    }
+  },
+  "cold_load": {
+    "base": "064b1d5 (2.28.0)",
+    "transport": "loopback mounted origin; no live Funnel changes",
+    "browsers": [
+      {
+        "browser": "webkit-ipad",
+        "images": 154,
+        "lazy": 154,
+        "first_screen_requests": 1,
+        "image_requests": 101,
+        "loaded": 154,
+        "broken": [],
+        "http_errors": []
+      },
+      {
+        "browser": "desktop-chrome",
+        "images": 154,
+        "lazy": 154,
+        "first_screen_requests": 1,
+        "image_requests": 101,
+        "loaded": 154,
+        "broken": [],
+        "http_errors": []
+      }
+    ],
+    "bare_paths": [
+      {
+        "path": "/",
+        "status": 404,
+        "body": "{\"error\":\"outside published page mount\"}"
+      },
+      {
+        "path": "/annotate/",
+        "status": 404,
+        "body": "{\"error\":\"outside published page mount\"}"
+      },
+      {
+        "path": "/annotate/reviews/",
+        "status": 404,
+        "body": "{\"error\":\"outside published page mount\"}"
+      }
+    ],
+    "document_version": "v583",
+    "document_sha256": "39df93069b751076adf5d72e9eae4441aadf6569d188be1a7ed67b8636992f58"
+  },
+  "full_suite": {
+    "non_browser_G_P": {
+      "passed": 631,
+      "skipped": 0,
+      "seconds": 98.73
+    },
+    "non_browser_Q_Z_plus_monitor": {
+      "passed": 380,
+      "skipped": 0,
+      "seconds": 33.63
+    },
+    "browser_A_F": {
+      "passed": 101,
+      "failed": 2,
+      "seconds": 1395.92,
+      "failures": [
+        {
+          "test": "test_fix_ui_library.py::test_typing_while_a_save_or_comment_is_on_its_way_is_kept",
+          "detail": "Final period typed during an in-flight save was lost."
+        },
+        {
+          "test": "test_fix_ui_shell.py::test_outside_link_opens_in_a_new_tab_not_in_the_frame",
+          "detail": "Click action succeeded but timed out waiting for scheduled navigation to an intentionally blocked outside URL."
+        }
+      ],
+      "isolated_branch_rerun": {
+        "passed": 2,
+        "failed": 0,
+        "seconds": 26.2
+      },
+      "isolated_baseline_rerun": {
+        "passed": 2,
+        "failed": 0,
+        "seconds": 24.71,
+        "source": "git-archive of 064b1d5"
+      },
+      "baseline_library_defect": {
+        "reproduced": true,
+        "source": "064b1d5 (2.28.0)",
+        "mechanism": "Delay save POST 1000ms; start typing after 300ms with 100ms key delays so the save response arrives mid-typing.",
+        "expected": "Saved text. Typed later.",
+        "actual": "Saved text. Typed ",
+        "result": "1 failed in 15.16s",
+        "repro": "/tmp/test_aa_library_inflight_repro.py",
+        "ownership": "Escalated to coordinator; outside the three assigned beads and unchanged by this branch.",
+        "reproducer_source": "import conftest  # noqa: F401\nfrom test_fix_ui_library import browser_page, editor, go, lib_site, playwright, status  # noqa: F401\nfrom test_keep_drafts import SLOW_POSTS\n\npytest_plugins = [\"conftest\"]\n\n\ndef test_typing_across_a_save_response(tmp_path, lib_site):\n    with browser_page(tmp_path, lib_site) as (page, _):\n        go(page, \"library\", item=\"row-14\")\n        editor(page).fill(\"Saved text.\")\n        page.evaluate(SLOW_POSTS, [r\"/api/copy/row-14/revisions\", 1000, \"ok\"])\n        page.locator(\"#sp-save\").click()\n        page.wait_for_timeout(300)\n        editor(page).press(\"End\")\n        page.keyboard.type(\" Typed later.\", delay=100)\n        playwright.expect(editor(page)).to_contain_text(\"Saved text. Typed later.\")\n"
+      }
+    },
+    "browser_G_P": {
+      "passed": 46,
+      "failed": 0,
+      "seconds": 382.64
+    },
+    "browser_Q_Z": {
+      "passed": 88,
+      "failed": 4,
+      "seconds": 990.23,
+      "failure_type": "Playwright popup link click timed out during performing click action, after locator was visible/enabled/stable; all target links and rel attributes were correct.",
+      "failures": [
+        "test_rounds_links_contrast.py::test_rounds_are_readonly_and_ticket_links_preserve_current_drafts[dark-1440]",
+        "test_rounds_links_contrast.py::test_rounds_are_readonly_and_ticket_links_preserve_current_drafts[dark-390]",
+        "test_rounds_links_contrast.py::test_rounds_are_readonly_and_ticket_links_preserve_current_drafts[light-1440]",
+        "test_workspace_intent.py::test_extra_page_is_listed_in_documents"
+      ],
+      "isolated_baseline_rerun": {
+        "passed": 3,
+        "failed": 1,
+        "seconds": 54.64,
+        "source": "git-archive of 064b1d5",
+        "failed_test": "test_rounds_links_contrast.py::test_rounds_are_readonly_and_ticket_links_preserve_current_drafts[dark-1440]",
+        "detail": "Click action completed; Playwright timed out waiting for scheduled navigation after popup opened."
+      }
+    },
+    "non_browser_A_F": {
+      "passed": 710,
+      "failed": 0,
+      "skipped": 2,
+      "seconds": 112.81,
+      "skip_reason": "Two opt-in tests/test_backend_review_fixes.py Chromium checks require REVIEW_BROWSER=1; dedicated browser chunks were run separately."
+    }
+  },
+  "checks": {
+    "ruff": "passed: src tests scripts/ci.py scripts/release.py",
+    "node_check": "passed: all seven src/agent_annotate/web/*.js files",
+    "git_diff_check": "passed",
+    "browser_serving_sources_unchanged": "git diff --quiet 064b1d5 -- src/agent_annotate/web src/agent_annotate/sync_server.py src/agent_annotate/pagegen.py passed"
+  },
+  "cleanup": "Cold-load server and both browsers stopped in finally blocks; live pages, routes, installs, skills and M5 were untouched.",
+  "implementation_revision": "fde3bdf0eb8699a37f2a7a1b9f0e7abf243e1ef8",
+  "full_suite_totals": {
+    "passed": 1956,
+    "failed": 6,
+    "skipped": 2,
+    "disposition": "All six requested chunks executed; raw browser suite is not green. Original A-F failures passed isolated on branch and baseline; a deterministic existing baseline library text-loss defect and a baseline popup navigation timeout were confirmed and escalated to the coordinator, outside these three beads."
+  }
+}

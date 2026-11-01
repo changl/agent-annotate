@@ -1,7 +1,6 @@
 """Cleanup needs an exact page scope and a corroborated process/route."""
 
 import copy
-import shlex
 import signal
 import sys
 from pathlib import Path
@@ -47,9 +46,8 @@ def estate(tmp_path, monkeypatch):
             result.setdefault(p["directory"], []).append({"pid": p["pid"], "port": p["port"]})
         return result
 
-    def run(argv, **kwargs):
-        assert argv[:2] == ["ps", "-ww"]
-        return SimpleNamespace(stdout=shlex.join(processes[int(argv[argv.index("-p") + 1])]["argv"]))
+    def argv_of(pid):
+        return list(processes[pid]["argv"])
 
     def kill(pid, sig):
         assert pid in processes, "never signal the stored PID without ownership"
@@ -75,7 +73,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_session_id", lambda: "mine")
     monkeypatch.setattr(cli.time, "sleep", lambda _: None)
     monkeypatch.setattr(cli.os, "kill", kill)
-    monkeypatch.setattr(deployment.subprocess, "run", run)
+    monkeypatch.setattr(cli, "_process_argv", argv_of)
     monkeypatch.setattr(transports, "load", lambda name: SimpleNamespace(unpublish=remove))
     return SimpleNamespace(add=add, processes=processes, signals=signals, routes=routes,
                            foreign=foreign, behavior=behavior)

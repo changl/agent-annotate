@@ -371,10 +371,10 @@ def test_board_ready_count_is_cached_and_never_waits_for_bd(tmp_path, monkeypatc
 def test_board_ready_count_runs_bd_ready_in_the_board_directory(tmp_path, monkeypatch):
     from agent_annotate import board as board_module
     fake = tmp_path / "bd"
-    fake.write_text('#!/bin/sh\necho "$@" > "$(dirname "$0")/args"\necho \'[{"id":"x-1"},{"id":"x-2"}]\'\n')
+    fake.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$(dirname "$0")/args"\necho \'[{"id":"x-1"},{"id":"x-2"}]\'\n')
     fake.chmod(0o755)
     monkeypatch.setenv("ANNOTATE_BD", str(fake))
     assert board_module.ready_count({"project": "x", "dir": str(tmp_path)}) == 2
-    assert (tmp_path / "args").read_text().split() == ["-C", str(tmp_path), "ready", "--json", "--brief", "-n", "0", "--exclude-type", "epic", "--readonly"]
+    assert (tmp_path / "args").read_text().splitlines() == ["-C", str(tmp_path), "ready", "--json", "--brief", "-n", "0", "--exclude-type", "epic", "--readonly"]
     # No directory and no reachable board API: no count, no error.
     assert board_module.board_status({"url": "https://h/p", "project": "nowhere", "prefix": "nowhere"})["ready"] is None
