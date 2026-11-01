@@ -187,7 +187,7 @@ def test_a_tap_never_adds_hover_feedback(tmp_path):
 
 @pytest.mark.parametrize("where", ["rail", "document"])
 def test_withdrawn_question_keeps_typed_answer_and_its_send_count(tmp_path, where):
-    """agent-annotate-5uy: withdrawn at the next poll, focus still in the box."""
+    """agent-annotate-5uy: keep the draft before and after showing a withdrawal."""
     with _session(tmp_path, _directory(tmp_path)) as (page, base, _):
         box = {"rail": page.locator('#comment-list [data-decision-say-ta="question-11"]'),
                "document": page.frame_locator("#content-frame").locator('textarea[data-strip-say="question-11"]')}[where]
@@ -203,10 +203,15 @@ def test_withdrawn_question_keeps_typed_answer_and_its_send_count(tmp_path, wher
         shown = page.evaluate("""() => [...document.querySelectorAll('textarea')].map(t => t.value).concat(
             [...document.querySelector('#content-frame').contentDocument.querySelectorAll('textarea')].map(t => t.value))""")
         assert FIRST + MORE in shown, shown
-        # Tapping away lets the held render run: the card keeps the text and Send still counts it.
+        # Blur and polls leave the shown card alone; only the banner applies the withdrawal.
         from test_keep_drafts import _blur
         _blur(page)
         _poll(page, 2)
+        playwright.expect(box).to_have_value(FIRST + MORE)
+        playwright.expect(page.locator('#comment-list .decision-stranded')).to_have_count(0)
+        banner = page.locator('#unified-version-banner')
+        playwright.expect(banner).to_contain_text('1 card changed')
+        banner.locator('button').click()
         kept = page.locator('#comment-list .decision-stranded [data-decision-say-ta="question-11"]')
         playwright.expect(kept).to_have_value(FIRST + MORE)
         assert int(page.locator("#send-count").inner_text()) == before
