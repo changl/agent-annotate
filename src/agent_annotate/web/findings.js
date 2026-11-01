@@ -91,7 +91,7 @@
   // register, the rail and the header count always agree.
   function statusOf(f) {
     const d = f.decision || {};
-    if (f.round_pending || (d.round_pending && f.status !== 'resolved_in_version')) return 'ready';
+    if (f.round_pending || d.round_pending) return 'ready';
     if (f.fixed) return 'done';
     if (!d.verdict) return f.reopened && f.reopened.length || f.response_text ? 'waiting' : 'needs';
     let choice = d.option_id || d.option;

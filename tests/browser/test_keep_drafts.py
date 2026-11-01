@@ -82,7 +82,7 @@ def _directory(tmp_path):
 
 
 @contextmanager
-def _session(tmp_path, directory):
+def _session(tmp_path, directory, ipad=False):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -90,9 +90,17 @@ def _session(tmp_path, directory):
     base = f"http://127.0.0.1:{port}/"
     try:
         with playwright.sync_playwright() as runner:
-            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            if ipad:
+                try:
+                    browser = runner.webkit.launch()
+                except playwright.Error:
+                    pytest.skip("Playwright WebKit is not installed")
+                context = browser.new_context(**runner.devices["iPad Pro 11 landscape"])
+            else:
+                browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+                context = browser.new_context(viewport={"width": 1440, "height": 960})
             # A context of its own, so a test can open a second tab on it.
-            page = browser.new_context(viewport={"width": 1440, "height": 960}).new_page()
+            page = context.new_page()
             page.set_default_timeout(8000)
             page.goto(base + "#view=review", wait_until="networkidle")
             _loaded(page)
