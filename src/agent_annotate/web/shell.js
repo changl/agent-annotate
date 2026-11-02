@@ -468,6 +468,7 @@ function waitingChanges() {
 // creation order over live + archived history. One map drives rail, pin and
 // body order, so a response item never has three competing labels.
 function computeNumbers() {
+  // The server pins legacy fallback numbers before inserting or renumbering cards.
   NUM_MAP = {};
   const all = flattenStore(true);
   // Live/current cards keep canonical labels when old stores contain collisions.

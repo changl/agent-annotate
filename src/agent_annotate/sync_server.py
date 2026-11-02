@@ -467,6 +467,13 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
     """Reserve labels under the store lock, including archived/legacy labels."""
     from .cli import _item_numbers, _iter_comments
     numbers = _item_numbers(store)
+    # Pin legacy labels before a new maximum can move their fallback numbers.
+    for _, other in _iter_comments(store, include_archived=True):
+        shown = numbers.get(other.get("id"))
+        if type(shown) is int and not (type(other.get("number")) is int and other["number"] > 0):
+            other["number"] = shown
+            if isinstance(other.get("agent_snapshot"), dict):
+                other["agent_snapshot"]["number"] = shown
     next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
     if not existing and comment["id"] in numbers:
         raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
