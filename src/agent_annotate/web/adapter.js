@@ -1540,10 +1540,47 @@ function revealAnchor(el) {
 
 // Scrolls this document only. scrollIntoView also scrolls every ancestor,
 // the shell's page included, which pushed the shell header out of view.
-function scrollInFrame(el, block) {
-  const r = el.getBoundingClientRect();
-  const top = block === 'start' ? r.top : r.top - (window.innerHeight - r.height) / 2;
-  window.scrollTo({ top: Math.max(0, window.scrollY + top), behavior: 'smooth' });
+// A jump lands at once and holds its target there while the page above it
+// settles: pictures without a reserved size load and grow, sections open.
+// A smooth scroll aimed once took Chang two or more clicks to arrive
+// (2026-11-02, agent-annotate-1yy). His own scroll, tap or key lets go.
+const JUMP_TOP = 12;
+let heldJump = null;
+function scrollInFrame(el, block, find) {
+  releaseJump();
+  const target = () => (el.isConnected ? el : (el = (find && find()) || el));
+  const aim = () => {
+    const t = target();
+    if (!t.isConnected || !t.getClientRects().length) return 0;
+    const r = t.getBoundingClientRect();
+    return block === 'start' ? r.top - JUMP_TOP : r.top - (window.innerHeight - r.height) / 2;
+  };
+  const go = () => {
+    const d = aim();
+    if (Math.abs(d) >= 1) window.scrollTo({ top: Math.max(0, window.scrollY + d), behavior: 'auto' });
+  };
+  go();
+  let idle = 0;
+  const settle = () => { clearTimeout(idle); idle = setTimeout(releaseJump, 3000); };
+  const ro = new ResizeObserver(() => { go(); settle(); });
+  ro.observe(document.querySelector('.aa') || document.body);
+  const onResize = () => { go(); settle(); };
+  const letGo = () => releaseJump();
+  const inputs = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+  inputs.forEach(t => window.addEventListener(t, letGo, { passive: true, capture: true }));
+  window.addEventListener('resize', onResize);
+  const cap = setTimeout(releaseJump, 20000);
+  heldJump = () => {
+    ro.disconnect();
+    clearTimeout(idle);
+    clearTimeout(cap);
+    inputs.forEach(t => window.removeEventListener(t, letGo, { capture: true }));
+    window.removeEventListener('resize', onResize);
+  };
+  settle();
+}
+function releaseJump() {
+  if (heldJump) { const h = heldJump; heldJump = null; h(); }
 }
 
 // `back` ({commentId, n, from: 'strip'|'rail'}) is set by an evidence "Go to":
@@ -1597,8 +1634,12 @@ function scrollToAnchor(anchorId, target, back) {
                el.getBoundingClientRect().height > window.innerHeight * 0.6) {
       // Too tall to center with its marker in view: start at the marker.
       scrollInFrame(marker.row, 'start');
-    } else {
+    } else if (marker) {
       scrollInFrame(el, 'center');
+    } else {
+      // A card in the rail: its place at the top of the view. The strip is
+      // redrawn whenever the cards are; the jump follows the new one.
+      scrollInFrame(el, 'start', inner ? null : () => displayAnchorEl(anchorId));
     }
     clearGotoHighlight();
     el.classList.add('active');
