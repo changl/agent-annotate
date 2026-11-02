@@ -4753,24 +4753,25 @@ def _load_store(record: dict) -> dict:
                        "current_version": _read_meta(Path(slug_dir)).get("current")})
 
 
-def _iter_comments(store: dict):
+def _iter_comments(store: dict, *, include_archived=False):
     for anchor_id, items in (store.get("anchors") or {}).items():
         if isinstance(items, list):
             for c in items:
                 if isinstance(c, dict):
                     yield anchor_id, c
+    if include_archived:
+        archived = store.get("archived") or {}
+        values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
+        for value in values:
+            for c in [value] if isinstance(value, dict) else value if isinstance(value, list) else []:
+                if isinstance(c, dict):
+                    yield c.get("anchor_id"), c
 
 
 def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int | str]:
     """{comment id: the number the page shows}, as shell.js computeNumbers."""
     current_version = current_version or store.get("current_version")
-    comments = list(_iter_comments(store))
-    historical = []
-    archived = store.get("archived") or {}
-    values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
-    for value in values:
-        historical.extend([value] if isinstance(value, dict) else value if isinstance(value, list) else [])
-    allocation = comments + [(c.get("anchor_id"), c) for c in historical if isinstance(c, dict)]
+    allocation = list(_iter_comments(store, include_archived=True))
     def priority(item):
         c = item[1]
         version = re.fullmatch(r"v(\d+)", c.get("version") or "")

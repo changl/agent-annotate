@@ -59,6 +59,46 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
         process.wait(timeout=5)
 
 
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_legacy_figure_numbers_match_cli_after_batch_and_reload(tmp_path):
+    from agent_annotate.cli import _item_numbers
+
+    directory = _page(tmp_path)
+    legacy = [{"id": f"figure-{n}", "anchor_id": "s:coverage", "version": "v1", "status": "open",
+               "text": "Figure comment", "author": "agent:test", "created_at": f"2026-11-01T00:00:0{n}Z"}
+              for n in range(5)]
+    store = {"schema_version": 2, "anchors": {"s:coverage": legacy}, "archived": {}}
+    path = directory / "comments.json"
+    path.write_text(json.dumps(store))
+    expected = _item_numbers(store)
+    process, base = _serve(tmp_path, directory, port=18763)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(base + "#view=review", wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('figure-0') === 1")
+                read_numbers = "ids => Object.fromEntries(ids.map(id => [id, window.AnnotateDocs.number(id)]))"
+                assert page.evaluate(read_numbers, list(expected)) == expected
+                items = [{"anchor_id": f"d:q{n}", "number": n, "text": "Regression question",
+                          "decision_request": {"prompt": "Regression question"}} for n in range(48, 56)]
+                request = urllib.request.Request(base + "api/comments/batch", json.dumps({"items": items}).encode(),
+                                                 {"Content-Type": "application/json", "X-Annotate-Agent": "agent:test"})
+                with urllib.request.urlopen(request) as response:
+                    assert response.status == 200
+                page.reload(wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('figure-0') === 1")
+                assert page.evaluate(read_numbers, list(expected)) == expected
+                stored = _item_numbers(json.loads(path.read_text()))
+                assert page.evaluate(read_numbers, list(stored)) == stored
+            finally:
+                browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def _document(version="v1", cards=None, title=TITLE):
     body = TABLE
     if cards:

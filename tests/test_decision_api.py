@@ -156,6 +156,56 @@ def test_implicit_numbers_are_allocated_under_the_store_lock(server):
     assert sorted(c["number"] for items in _store(slug_dir)["anchors"].values() for c in items) == [1, 2, 3]
 
 
+@pytest.mark.parametrize("operation", ["batch", "create", "renumber"])
+def test_legacy_comment_numbers_stay_fixed_when_cards_are_added_or_renumbered(server, operation):
+    from agent_annotate.cli import _item_numbers
+
+    httpd, slug_dir, _ = server
+    legacy = [{"id": f"figure-{n}", "anchor_id": "fig:diagram", "version": "v0",
+               "text": "Figure comment", "created_at": f"2026-11-01T00:00:0{n}Z"} for n in range(5)]
+    store = {"schema_version": 2, "anchors": {"fig:diagram": legacy, "d:q41": [
+        {"id": "existing", "anchor_id": "d:q41", "number": 41, "version": "v1"}]}, "archived": {}}
+    (slug_dir / "comments.json").write_text(json.dumps(store))
+    before = _item_numbers(store)
+    if operation == "batch":
+        items = [{**_card(f"d:q{n}"), "number": n} for n in range(48, 56)]
+        assert _call(httpd, "POST", "/api/comments/batch", {"items": items})[0] == 200
+    elif operation == "create":
+        assert _call(httpd, "POST", "/api/comments", {**_card(), "number": 90})[0] == 201
+    else:
+        assert _call(httpd, "PUT", "/api/comments/existing", {"number": 90})[0] == 200
+    after = _item_numbers(_store(slug_dir))
+    assert {c["id"]: after[c["id"]] for c in legacy} == {c["id"]: before[c["id"]] for c in legacy}
+    # A later request must load the pinned labels from disk, not an in-memory map.
+    assert _call(httpd, "POST", "/api/comments", {**_card("s:later"), "number": 100})[0] == 201
+    assert all(_item_numbers(_store(slug_dir))[c["id"]] == before[c["id"]] for c in legacy)
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_legacy_number_conflict_hint_works_on_retry_without_partial_migration(server, archived):
+    import re
+
+    from agent_annotate.cli import _item_numbers
+
+    httpd, slug_dir, _ = server
+    legacy = {"id": "figure", "anchor_id": "fig:diagram", "version": "v0", "text": "Figure comment"}
+    store = {"schema_version": 2, "anchors": {}, "archived": {}}
+    store["archived" if archived else "anchors"] = {"fig:diagram": [legacy]}
+    path = slug_dir / "comments.json"
+    path.write_text(json.dumps(store))
+    original = path.read_bytes()
+    before = _item_numbers(store)
+    code, error = _call(httpd, "POST", "/api/comments/batch", {"items": [
+        {**_card("s:new"), "number": before["figure"]}]})
+    assert code == 409
+    assert path.read_bytes() == original
+    suggested = int(re.search(r"use #(\d+)", error["error"])[1])
+    code, result = _call(httpd, "POST", "/api/comments/batch", {"items": [
+        {**_card(f"d:q{n}"), "number": n} for n in range(suggested, suggested + 8)]})
+    assert code == 200, result
+    assert _item_numbers(_store(slug_dir))["figure"] == before["figure"]
+
+
 def test_batch_number_collision_is_atomic_and_put_cannot_steal_a_number(server):
     httpd, slug_dir, _ = server
     _, first = _call(httpd, "POST", "/api/comments", {**_card(), "number": 10})
@@ -171,6 +221,23 @@ def test_batch_number_collision_is_atomic_and_put_cannot_steal_a_number(server):
     before = (slug_dir / "comments.json").read_bytes()
     assert _call(httpd, "POST", "/api/comments", {**_card("s:duplicate-id"), "id": first["id"], "number": 10})[0] == 409
     assert (slug_dir / "comments.json").read_bytes() == before
+
+
+def test_poll_labels_do_not_report_legacy_pinning_as_a_content_change(server):
+    httpd, slug_dir, _ = server
+    legacy = {"id": "figure", "anchor_id": "fig:diagram", "version": "v1", "text": "Figure comment"}
+    legacy["agent_snapshot"] = legacy.copy()
+    path = slug_dir / "comments.json"
+    path.write_text(json.dumps({"schema_version": 2, "anchors": {"fig:diagram": [legacy]}, "archived": {}}))
+    original = path.read_bytes()
+    before = _call(httpd, "GET", "/comments.json?view=poll", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0]
+    assert before["number"] == before["agent_snapshot"]["number"] == 1
+    assert path.read_bytes() == original
+    # The cached raw store and full-store response remain untouched too.
+    assert _call(httpd, "GET", "/comments.json", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0] == legacy
+    assert _call(httpd, "POST", "/api/comments", {**_card(), "number": 48})[0] == 201
+    after = _call(httpd, "GET", "/comments.json?view=poll", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0]
+    assert after == before
 
 
 def test_store_response_tracks_current_version_without_persisting_it(server):
