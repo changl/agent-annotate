@@ -64,7 +64,7 @@ allowed_skips = [
   "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
   "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img",
 ]
-artifacts = ["junit.xml"]
+artifacts = ["junit.xml", "ruff.log", "js.log", "runtime.log", "browser-1.log", "browser-2.log", "browser-3.log"]
 
 [profiles.browser]
 # Real Chrome, headless. Page-behaviour changes still need a check in an Orca

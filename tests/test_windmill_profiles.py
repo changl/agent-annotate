@@ -22,7 +22,8 @@ def test_steps_and_profiles_are_argv_lists_with_limits():
         assert _argv(profile["command"]), name
         assert 0 < profile["timeout_s"] <= 3600, name
         assert profile["capacity"] in {"heavy", "light"}, name
-        assert profile["artifacts"] == ["junit.xml"], name
+        expected = ["junit.xml"] + (["ruff.log", "js.log", "runtime.log", "browser-1.log", "browser-2.log", "browser-3.log"] if name == "full" else [])
+        assert profile["artifacts"] == expected, name
         # Every path the command names exists at this revision.
         for part in profile["command"][1:]:
             if part.startswith(("scripts/", "tests/")):

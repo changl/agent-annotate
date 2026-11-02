@@ -35,7 +35,7 @@ os.environ["ANNOTATE_VERSION_GUARD"] = "0"
 os.environ["ANNOTATE_BOARD_API"] = "http://127.0.0.1:9"
 os.environ.pop("ANNOTATE_BD", None)
 (_SANDBOX / "config").mkdir(parents=True)
-(_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\n')
+(_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\nport_base = 18700\n')
 os.environ.pop("ANNOTATE_STATE_ROOT", None)
 os.environ.pop("ANNOTATE_PROJECTS_TOML", None)
 # A real session id would make the CLI stamp this developer's session into
@@ -50,17 +50,37 @@ import pytest  # noqa: E402
 from agent_annotate import paths  # noqa: E402
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _stop_test_servers(tmp_path_factory):
+    """Publish integration tests may detach servers; reap only this suite's estate."""
+    roots = (tmp_path_factory.getbasetemp().resolve(), _SANDBOX.resolve())
+    yield
+    from agent_annotate import cli
+    for directory, servers in cli._running_servers(strict=True).items():
+        if any(Path(directory).resolve().is_relative_to(root) for root in roots):
+            for server in servers:
+                cli._stop_server(server["pid"])
+
+
 @pytest.fixture(autouse=True)
 def _assert_sandboxed(monkeypatch):
     """Fail loudly if a reload or a test ever points the package at $HOME."""
     from agent_annotate import delivery
     monkeypatch.setattr(delivery, "_parent_handle", lambda expected: None)
     original_run = subprocess.run
+    original_popen = subprocess.Popen
+    def safe_popen(command, *args, **kwargs):
+        if (isinstance(command, (list, tuple)) and "agent_annotate.sync_server" in command
+                and "--port" in command):
+            port = int(command[command.index("--port") + 1])
+            assert not 8800 <= port < 8900, f"test server port is in the live range: {port}"
+        return original_popen(command, *args, **kwargs)
     def safe_run(command, *args, **kwargs):
         if isinstance(command, (list, tuple)) and command and Path(str(command[0])).name.lower() == "tailscale":
             raise FileNotFoundError("Tests must mock Tailscale; live routes are off limits")
         return original_run(command, *args, **kwargs)
     monkeypatch.setattr(subprocess, "run", safe_run)
+    monkeypatch.setattr(subprocess, "Popen", safe_popen)
     yield
     for name in ("STATE_DIR", "BUS_ROOT", "SETTINGS_JSON", "SHIM_PATH"):
         value = str(getattr(paths, name))

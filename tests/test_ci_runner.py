@@ -2,6 +2,7 @@
 
 import importlib.util
 import subprocess
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -45,6 +46,8 @@ def test_real_pytest_chunks_merge_pass_fail_skip_and_keep_logs(tmp_path, monkeyp
     assert len(root.findall(".//testcase")) == 5  # four tests and lint
     assert ("AssertionError" in (report.parent / "browser-2.log").read_text()) == failing
     assert len(list(report.parent.glob("browser-*.xml"))) == 3
+    profile = tomllib.loads((ci.ROOT / ".windmill/test-profiles.toml").read_text())["profiles"]["full"]
+    assert all((report.parent / name).is_file() for name in profile["artifacts"])
 
 
 def test_missing_xml_and_tool_failures_cannot_report_a_pass(tmp_path, monkeypatch, capsys):
@@ -98,3 +101,24 @@ def test_subprocess_launch_failure_still_writes_receipt(tmp_path, monkeypatch, c
     assert ci.run_full(1, tmp_path / "junit.xml", tmp_path) == 1
     assert "runtime::pytest-process" in capsys.readouterr().out
     assert "fixture missing executable" in (tmp_path / "runtime.log").read_text()
+
+
+def test_runtime_cleanup_completes_before_browser_pool_starts(tmp_path, monkeypatch):
+    runtime_done = []
+    original_pool = ci.concurrent.futures.ThreadPoolExecutor
+
+    def pool(*args, **kwargs):
+        assert runtime_done == [True]
+        return original_pool(*args, **kwargs)
+
+    def run(argv, **kwargs):
+        if "pytest" in argv:
+            assert "--ignore=tests/browser" in argv
+            runtime_done.append(True)
+            xml = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml="))
+            Path(xml).write_text('<testsuites><testsuite><testcase name="runtime"/></testsuite></testsuites>')
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(ci.concurrent.futures, "ThreadPoolExecutor", pool)
+    monkeypatch.setattr(ci.subprocess, "run", run)
+    assert ci.run_full(4, tmp_path / "junit.xml", tmp_path) == 0

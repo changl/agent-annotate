@@ -94,11 +94,12 @@ def steps(monkeypatch):
     return calls
 
 
-def test_routed_full_runs_only_wm_test(monkeypatch, steps):
+def test_routed_full_runs_only_wm_test(monkeypatch, steps, capsys):
     monkeypatch.setattr(ci, "full_route", lambda: ["wm-test", "agent-annotate", "full", "--sha", "a" * 40])
     with pytest.raises(SystemExit) as exit_info:
         ci.main(["--full", "--work-item", "agent-annotate-4zw"])
     assert exit_info.value.code == 0
+    assert capsys.readouterr().out == ""  # the native client owns the one-line receipt
     assert steps == [["wm-test", "agent-annotate", "full", "--sha", "a" * 40, "--work-item", "agent-annotate-4zw"]]
 
 

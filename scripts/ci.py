@@ -169,11 +169,15 @@ def run_full(workers, junit, root=ROOT):
                 if code:
                     ET.SubElement(case, "failure", message=f"exit {code}; see {name}.log")
 
+    chunks = full_chunks(root)
+    # Runtime tests exercise port allocation and detached publishers; finish cleanup first.
+    documents = [run_chunk(chunks[0])]
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for name, document in pool.map(run_chunk, full_chunks(root)):
-            chunk_suite = ET.SubElement(suites, "testsuite", name=name)
-            for case in document.findall(".//testcase"):
-                chunk_suite.append(case)
+        documents.extend(pool.map(run_chunk, chunks[1:]))
+    for name, document in documents:
+        chunk_suite = ET.SubElement(suites, "testsuite", name=name)
+        for case in document.findall(".//testcase"):
+            chunk_suite.append(case)
 
     for suite in suites:
         cases = list(suite)
@@ -208,7 +212,6 @@ def main(argv=None):
     args = parser.parse_args(argv)
     route = full_route() if args.full and not args.local else None
     if route:
-        print("ci.py --full: running on the M1 through " + " ".join(route[1:5]), flush=True)
         work_item = ["--work-item", args.work_item] if args.work_item else []
         sys.exit(subprocess.run(route + work_item).returncode)
     if args.full:
