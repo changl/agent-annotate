@@ -1173,7 +1173,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "layout": layout,
         "prior_versions": prior,
         "html": slug_dir / "versions" / f"{version}.html",
-        "cards_json": slug_dir / "cards.json",
+        "cards_json": slug_dir / "versions" / f"{version}.cards.json",
         "source_copy": slug_dir / "source" / f"{version}.md",
     }
 

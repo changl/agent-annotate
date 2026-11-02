@@ -323,3 +323,15 @@ def test_checks_cannot_recreate_a_draft_after_a_peer_has_published(round_server,
             argparse.Namespace(candidate_version='v2', verify_timeout=1))
     assert not draft_path(directory, 'v2').exists()
     assert _http(httpd, 'GET', '/content?v=v2')[0] == 200
+
+
+def test_a_later_draft_cannot_replace_the_cards_of_the_round_being_published(tmp_path):
+    directory = _page(tmp_path)
+    first, _ = _stage_round(directory, tmp_path)
+    source = tmp_path / 'later.md'
+    later = _card()
+    later['text'] = later['decision_request']['prompt'] = 'A later question?'
+    source.write_text('---\ntitle: Later\n---\n\n## Evidence\n\nReady.\n\n```cards\n' + json.dumps([later]) + '\n```\n')
+    pagegen.generate(source, directory, 'v3')
+    assert json.loads(first['cards_json'].read_text())[0]['decision_request']['prompt'] == 'Ship?'
+    assert json.loads((directory / 'cards.json').read_text())[0]['decision_request']['prompt'] == 'A later question?'

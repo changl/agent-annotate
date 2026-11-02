@@ -31,6 +31,10 @@ def _workspace(tmp_path):
     store["anchors"]["d:q1"] = [answered]
     # Open questions from previous versions remain actionable in this workspace.
     store["anchors"]["d:q11"][0]["version"] = "v0"
+    meta_path = directory / "current.meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["history"].insert(0, {"version": "v0", "label": "Earlier published review"})
+    meta_path.write_text(json.dumps(meta))
     (directory / "comments.json").write_text(json.dumps(store))
     return directory
 
