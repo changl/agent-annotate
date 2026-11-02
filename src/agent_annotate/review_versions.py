@@ -85,3 +85,22 @@ def preview_version(directory, route):
         except (OSError, ValueError, KeyError):
             pass
     return None
+
+
+def visible_store(directory, store, meta):
+    """Keep unpublished Review items out of reviewer responses and counts."""
+    from .categories import comment_category
+    published = {h.get('version') for h in meta.get('history') or [] if isinstance(h, dict)}
+    published.add(meta.get('current'))
+    published.discard(None)
+    pending = {p.stem for p in (Path(directory) / '.review-drafts').glob('v*.json')} if not published else set()
+
+    def visible(comment):
+        version = comment.get('version')
+        if not version or comment.get('doc') or comment_category(comment) != 'review':
+            return True
+        return version in published if published else version not in pending
+
+    return {**store, **{area: {anchor: [c for c in items if visible(c)]
+                              for anchor, items in store.get(area, {}).items()}
+                       for area in ('anchors', 'archived')}}

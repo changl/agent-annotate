@@ -370,7 +370,7 @@ def test_unnumbered_carry_and_new_comment_reask_preserve_lineage(server):
 
 
 def test_unnumbered_reask_does_not_merge_ambiguous_shared_anchor_cards(server):
-    httpd, _, _ = server
+    httpd, directory, _ = server
     first = _call(httpd, "POST", "/api/comments", _card("s:shared", prompt="First?"))[1]
     second = _call(httpd, "POST", "/api/comments", _card("s:shared", prompt="Second?"))[1]
     for comment in (first, second):
@@ -378,6 +378,7 @@ def test_unnumbered_reask_does_not_merge_ambiguous_shared_anchor_cards(server):
     status, _ = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
         {**_card("s:shared", prompt="Another?"), "version": "v2"}]})
     assert status == 200
+    (directory / "current.meta.json").write_text(json.dumps({"current": "v2", "history": [{"version": "v1"}, {"version": "v2"}]}))
     comments = _call(httpd, "GET", "/api/comments")[1]
     third = next(c for c in comments if c["text"] == "Another?")
     assert item_id(third) not in {item_id(first), item_id(second)}

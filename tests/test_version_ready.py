@@ -250,3 +250,36 @@ def test_old_servers_are_refused_before_any_card_is_posted(round_server, tmp_pat
     assert calls == [('GET', '/api/capabilities')]
     assert 'no cards were posted' in capsys.readouterr().err
     assert cli._read_meta(directory)['current'] == 'v1'
+
+
+def test_unpublished_review_items_are_hidden_from_api_and_badge_counts(round_server, tmp_path):
+    directory, httpd = round_server
+    _stage_round(directory, tmp_path)
+    old = {**_card(9), 'id': 'old', 'version': 'v1', 'author': 'agent:test', 'status': 'open'}
+    staged = {**_card(), 'id': 'staged', 'author': 'agent:test', 'status': 'open'}
+    store = {'schema_version': 2, 'anchors': {'d:q9': [old], 'd:q1': [staged]}, 'archived': {}}
+    (directory / 'comments.json').write_text(json.dumps(store))
+    before = (directory / 'comments.json').read_bytes()
+    for route in ('/comments.json', '/comments.json?view=poll'):
+        body = _http(httpd, 'GET', route)[1]
+        assert [c['id'] for items in body['anchors'].values() for c in items] == ['old']
+    assert [c['id'] for c in _http(httpd, 'GET', '/api/comments')[1]] == ['old']
+    categories = _http(httpd, 'GET', '/api/categories')[1]['categories']
+    assert next(c for c in categories if c['id'] == 'review')['counts']['needs_you'] == 1
+    assert (directory / 'comments.json').read_bytes() == before
+    from agent_annotate.review_versions import activate
+    activate(directory, 'v2')
+    body = _http(httpd, 'GET', '/comments.json?view=poll')[1]
+    assert {c['id'] for items in body['anchors'].values() for c in items} == {'old', 'staged'}
+
+
+def test_an_interrupted_initial_round_is_hidden_without_published_metadata(tmp_path):
+    from agent_annotate.review_versions import stage, visible_store
+    stage(tmp_path, 'v1', 'Initial', None, {})
+    item = {**_card(), 'version': 'v1'}
+    plan = {**item, 'category': 'plans', 'doc': 'plan:rollout'}
+    store = {'anchors': {'draft': [item], 'plan': [plan]}, 'archived': {}}
+    result = visible_store(tmp_path, store, {})
+    assert result['anchors']['draft'] == []
+    assert result['anchors']['plan'] == [plan]
+    assert store['anchors']['draft'] == [item]

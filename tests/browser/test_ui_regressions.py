@@ -40,7 +40,9 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
     path.write_text(json.dumps(store))
     before = path.read_bytes()
     expected = _item_numbers({**store, "current_version": "v1"})
-    assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 5
+    # Only published Review versions reach the reviewer; raw history stays intact.
+    expected = {cid: number for cid, number in expected.items() if cid not in ("old", "staged")}
+    assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 3
     process, base = _serve(tmp_path, directory)
     try:
         with playwright.sync_playwright() as runner:

@@ -1603,15 +1603,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
-            current_version = self._read_meta().get("current")
-            signature = (self._store_signature(), current_version)
+            meta = self._read_meta()
+            current_version = meta.get("current")
+            try:
+                draft_stamp = (self.artifact_dir / ".review-drafts").stat().st_mtime_ns
+            except FileNotFoundError:
+                draft_stamp = None
+            published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
+            signature = (self._store_signature(), current_version, published, draft_stamp)
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
             key = (poll, compressed, self._agent_reader())
             if key not in cache:
-                store = self._v2_load(read_only=True)
+                from .review_versions import visible_store
+                store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
                 if self._agent_reader():
                     store = store_view(store)
                 if poll:
@@ -1759,7 +1766,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         flt_status = (params.get("status") or [None])[0]
         flt_version = (params.get("version") or [None])[0]
         with _locked_store(self.artifact_dir, write=False):
-            store = self._v2_load(read_only=True)  # a read keeps the shared cache
+            from .review_versions import visible_store
+            store = visible_store(self.artifact_dir, self._v2_load(read_only=True), self._read_meta())
             if self._agent_reader():
                 store = store_view(store)
         out = []
@@ -3776,7 +3784,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 author = self._author()
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
-                store = self._v2_load(read_only=True)
+                from .review_versions import visible_store
+                store = visible_store(self.artifact_dir, self._v2_load(read_only=True), self._read_meta())
                 if self._agent_reader():
                     store = store_view(store)
                 plans = list_plans(self.artifact_dir, store=store)
