@@ -69,7 +69,8 @@ def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
         item = frame.locator('[data-strip-item="question-11"]')
         item.locator("textarea").fill("Change the time to 10:30")
         item.locator(".annotate-decision-btns button").last.click()  # Answer in words
-        item.locator(".annotate-folded-row").click()  # an answered card folds; a tap opens it
+        frame.locator(".annotate-sfold-bar button").click()  # its section folds with it; a tap opens it
+        item.locator(".annotate-folded-row").click()  # then the card
         item.locator(".annotate-add-note textarea").wait_for()
         for text in ("Send the reminder at 8:30AM", "Typo, ignore this"):
             item.locator(".annotate-add-note textarea").fill(text)
@@ -112,6 +113,7 @@ def test_changing_the_choice_keeps_the_notes(tmp_path):
         item = page.frame_locator("#content-frame").locator('[data-strip-item="question-11"]')
         item.locator("textarea").fill("After the demo")
         item.locator(".annotate-decision-btns button").first.click()  # Ship now, with a note
+        page.frame_locator("#content-frame").locator(".annotate-sfold-bar button").click()
         item.locator(".annotate-folded-row").click()
         item.locator(".annotate-answer-change").click()
         assert "Your notes stay" in item.inner_text()

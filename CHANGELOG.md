@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Document: a section whose questions are all answered or set to Answer later folds to one line, its heading plus each question's state, e.g. `Old Twilio key · #2902 Revoked, Sent` (Chang, 2026-11-02; agent-annotate-8il). The section is the smallest heading block holding the question and what it cites: a `###`, or the `##` when the question cites several `###` blocks. A `##` also folds when every `###` in it folds, or when it is unchanged since the last version. A section with an open question stays open, with answered cards folded to one line inside it as before. A tap opens the whole section until the page reloads; Back to Needs you or Change opens it for good. Folding happens on load, on Send and on your own actions, never on a poll, and the card or line you acted on stays where it is on screen (iPad included). Folded sections in a row read as one list. On a copy of FLD (iPad Pro 11 portrait), the document goes from 35,368 px to 12,126 px, and the scroll to the first question you can answer now from 24,514 px to 1,393 px.
+
 ## 2.28.1
 
 - Annotate guide, step 3 "Ask at the evidence" (Chang approved card #28, 2026-11-02): "Write for a reader who has not followed the history: name things in words, not by card numbers, ids, codes, row numbers or times; say first what is being decided." The same sentence is in the Claude, Codex and plugin copies.
