@@ -185,8 +185,16 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
                 "https://linear.app/**",
                 lambda r: r.fulfill(body="<title>Linear</title>", content_type="text/html"),
             )
+            # srw: once the new tab takes the foreground, headless Chrome holds every answer
+            # the page behind it owes Playwright (mouse-up ack, hit-target check, evaluate)
+            # until that page's own next timer: 0.2 s to over 30 s. So the press is checked
+            # first (clickable, focus leaves the box), and the link is clicked from a timer
+            # inside the page, after this call has returned; the Playwright call's user
+            # gesture lets that click open the tab.
+            link.click(trial=True)
+            link.focus()
             with page.expect_popup() as info:
-                link.click()
+                link.evaluate("a => setTimeout(() => a.click())")
             popup = info.value
             popup.wait_for_load_state()
             assert popup.url == ISSUE
@@ -294,7 +302,7 @@ def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_
                 playwright.expect(panel).to_be_visible()
                 round_ = panel.locator(".vact-block:not(.vact-agent)")
                 playwright.expect(round_).to_have_count(1)
-                assert round_.locator(".vact-head").inner_text().startswith("Sent · Feedback saved (1) · ")
+                assert round_.locator(".vact-head").inner_text().startswith("Feedback · Waiting for the agent (1) · ")
                 assert "Keep the original wording for CHA-160." in round_.inner_text()
                 # Then what the agent did: it published v2.
                 playwright.expect(panel.locator(".vact-agent .vact-head")).to_contain_text("Agent · Published v2 · Current layout")
@@ -356,7 +364,7 @@ def test_each_sent_round_sits_under_the_version_it_was_sent_on(tmp_path):
                 for version in ("v1", "v2"):
                     item = page.locator(f'#vrail-body-review .vitem[data-version="{version}"]')
                     playwright.expect(item.locator(".vact-block:not(.vact-agent)")).to_have_count(1)
-                    assert item.locator(".vact-head").first.inner_text().startswith(("Sent · Feedback saved (", "Sent · Sent ("))
+                    assert item.locator(".vact-head").first.inner_text().startswith(("Feedback · Waiting for the agent (", "Feedback · Sent ("))
                 page.evaluate("() => localStorage.clear()")
                 page.close()
             browser.close()

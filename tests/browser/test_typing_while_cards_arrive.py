@@ -153,6 +153,32 @@ def test_text_typed_on_a_replaced_card_stays_in_view_and_goes_with_send(tmp_path
         page.wait_for_function("() => !document.querySelector('#comment-list .decision-stranded')")
 
 
+@pytest.mark.parametrize("ipad", [False, True], ids=["chrome", "ipad"])
+def test_an_unsent_pick_on_a_card_the_agent_resolves_stays_and_goes_with_send(tmp_path, ipad):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory, ipad=ipad) as (page, base, _):
+        pick = page.locator('#comment-list [data-comment-id="question-11"] .decision-btn').first
+        label = pick.locator(".decision-opt-label").inner_text() if pick.locator(".decision-opt-label").count() else pick.inner_text()
+        pick.click()
+        page.wait_for_function("() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision?.round_pending")
+        before = int(page.locator("#send-count").inner_text())
+        _agent(base, "api/comments/question-11", {"status": "resolved_in_version", "resolved_in_version": "v1",
+                                                  "resolution_anchor_id": "s:checks"}, method="PUT")
+        _poll(page, 2)
+        playwright.expect(page.locator('#comment-list [data-comment-id="question-11"]')).to_contain_text(label.strip())
+        assert int(page.locator("#send-count").inner_text()) == before
+        page.locator("#send-btn").click()
+        page.locator("#round-submit-btn").click()
+        page.wait_for_function("() => !document.querySelector('#round-confirm-backdrop.vis')")
+        for _ in range(50):
+            card = next(c for items in json.loads((directory / "comments.json").read_text())["anchors"].values()
+                        for c in items if c["id"] == "question-11")
+            if card.get("flagged_for_session"):
+                break
+            page.wait_for_timeout(100)
+        assert card["decision"]["verdict"] and "round_pending" not in card["decision"] and card.get("flagged_for_session")
+
+
 def test_a_tap_never_adds_hover_feedback(tmp_path):
     """iPad: a tap fires mouseover; a highlight then made iOS drop the click (two taps per choice)."""
     import socket
@@ -183,3 +209,35 @@ def test_a_tap_never_adds_hover_feedback(tmp_path):
             browser.close()
     finally:
         _stop(server)
+
+
+@pytest.mark.parametrize("where", ["rail", "document"])
+def test_withdrawn_question_keeps_typed_answer_and_its_send_count(tmp_path, where):
+    """agent-annotate-5uy: keep the draft before and after showing a withdrawal."""
+    with _session(tmp_path, _directory(tmp_path)) as (page, base, _):
+        box = {"rail": page.locator('#comment-list [data-decision-say-ta="question-11"]'),
+               "document": page.frame_locator("#content-frame").locator('textarea[data-strip-say="question-11"]')}[where]
+        box.click()
+        page.keyboard.type(FIRST)
+        page.wait_for_timeout(300)
+        before = int(page.locator("#send-count").inner_text())
+        _agent(base, "api/comments/question-11", {"decision_request": None, "withdraw_reason": "not asked again in v2"}, method="PUT")
+        _poll(page, 2)
+        page.wait_for_timeout(1800)  # dw4 re-rendered 1.6 s after the reviewer paused
+        page.keyboard.type(MORE)
+        page.wait_for_timeout(300)
+        shown = page.evaluate("""() => [...document.querySelectorAll('textarea')].map(t => t.value).concat(
+            [...document.querySelector('#content-frame').contentDocument.querySelectorAll('textarea')].map(t => t.value))""")
+        assert FIRST + MORE in shown, shown
+        # Blur and polls leave the shown card alone; only the banner applies the withdrawal.
+        from test_keep_drafts import _blur
+        _blur(page)
+        _poll(page, 2)
+        playwright.expect(box).to_have_value(FIRST + MORE)
+        playwright.expect(page.locator('#comment-list .decision-stranded')).to_have_count(0)
+        banner = page.locator('#unified-version-banner')
+        playwright.expect(banner).to_contain_text('1 card changed')
+        banner.locator('button').click()
+        kept = page.locator('#comment-list .decision-stranded [data-decision-say-ta="question-11"]')
+        playwright.expect(kept).to_have_value(FIRST + MORE)
+        assert int(page.locator("#send-count").inner_text()) == before

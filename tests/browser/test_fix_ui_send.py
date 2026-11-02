@@ -91,7 +91,7 @@ def test_ui2_the_round_carries_the_comment_so_a_send_wakes_the_owner_once(tmp_pa
         assert len(rounds) == 1
         labels = [line["label"] for line in rounds[0]["receipt"]]
         assert "#11 · When should we release?" in labels and any("Check the build date." in label for label in labels)
-        playwright.expect(page.locator("#send-note")).to_have_text("Feedback saved (2)")
+        playwright.expect(page.locator("#send-note")).to_have_text("Waiting for the agent (2)")
 
 
 def test_ui2_push_failure_keeps_the_comment_pending_and_a_retry_sends_it(tmp_path, workspace):  # noqa: F811

@@ -25,6 +25,7 @@ TESTS = (
     "tests/test_review_access.py",
     "tests/test_reviewer_authoring_boundary.py",
     "tests/test_delivery.py",
+    "tests/test_explicit_send.py",
     "tests/test_updates.py",
     "tests/test_funnel.py",
     "tests/test_published_urls.py",

@@ -113,6 +113,7 @@ from .extract import ExtractionError, build_content_document, has_canvas_sentine
 from .hooks.decision_state import is_set_aside as _is_set_aside
 from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
+from .submitted import comment_view, commit, copy_view, draft_event, human, remember, store_view
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
@@ -126,17 +127,29 @@ SKILL_STATE_DIR = STATE_DIR  # compatibility name retained for the v2.11 server 
 # ────────────────────────────────────────────────────────────────────────────
 # Free port discovery
 # ────────────────────────────────────────────────────────────────────────────
-def find_free_port(start: int) -> int:
+def _reserved_ports(slug_dir: Path | None = None) -> dict[int, str]:
+    from .cli import _registry_entries
+    return {int(record["port"]): str(record.get("slug_dir") or "unknown page")
+            for _, _, record in _registry_entries() if record.get("port")
+            and not (slug_dir is not None and record.get("slug_dir")
+                     and Path(record["slug_dir"]).resolve() == slug_dir.resolve())}
+
+
+def find_free_port(start: int, slug_dir: Path | None = None) -> int:
     """Try ports starting at `start`, return the first free one."""
     port = start
+    reserved = _reserved_ports(slug_dir)
     while port < start + 20:
+        if port in reserved:
+            port += 1
+            continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             # Match HTTPServer.allow_reuse_address so a coordinated same-port
             # restart is not mistaken for a collision while old connections
             # remain in TIME_WAIT. An active listener still makes bind fail.
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                s.bind(("", port))
+                s.bind(("localhost", port))
                 return port
             except OSError:
                 port += 1
@@ -323,22 +336,27 @@ def _note_unsent(comment: dict, reply: dict) -> bool:
     return max(_iso_timestamp(reply.get("ts")), _iso_timestamp(reply.get("edited_at"))) > flagged
 
 
-def _unsent_notes(comment: dict) -> list[str]:
+def _unsent_notes(comment: dict, authors: set[str] | None = None) -> list[str]:
     """The reviewer's notes added or edited since this card was last sent, in
     order. Every one goes out: a second note never hides the first (Chang,
     2026-10-30)."""
+    notes = _reviewer_notes(comment)
+    decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
+    answer = next((r for r in notes if decision.get("via") == "reply" and decision.get("round_pending")
+                   and r.get("author") == decision.get("by") and r.get("ts") == decision.get("ts")
+                   and r.get("text") == decision.get("text")), None)
     return [str(r.get("text", "")) + (" (edited)" if r.get("edited_at") else "")
-            for r in _reviewer_notes(comment) if _note_unsent(comment, r)]
+            for r in notes if r is not answer and _note_unsent(comment, r) and (authors is None or r.get("author") in authors)]
 
 
-def _mark_notes_sent(comment: dict, now: str) -> None:
+def _mark_notes_sent(comment: dict, now: str, authors: set[str] | None = None) -> None:
     # Only notes that track it; older replies keep going by the card's send time.
-    for r in _reviewer_notes(comment):
-        if "sent_at" in r and not r["sent_at"]:
+    for r in comment.get("replies") or []:
+        if isinstance(r, dict) and human(r.get("author")) and "sent_at" in r and not r["sent_at"] and (authors is None or r.get("author") in authors):
             r["sent_at"] = now
 
 
-def _push_answers(comments: list[dict]) -> list[dict]:
+def _push_answers(comments: list[dict], authors: set[str] | None = None) -> list[dict]:
     """History answers for pushed comments: every unsent human word on each."""
     from .categories import comment_category
     answers = []
@@ -346,9 +364,10 @@ def _push_answers(comments: list[dict]) -> list[dict]:
         decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
         replies = comment.get("replies") if isinstance(comment.get("replies"), list) else []
         human_replies = [reply for reply in replies
-                         if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")]
+                         if isinstance(reply, dict) and not str(reply.get("author", "")).startswith("agent:")
+                         and (authors is None or reply.get("author") in authors)]
         reply = max(human_replies, key=lambda r: _iso_timestamp(r.get("ts")), default={})
-        notes = _unsent_notes(comment)
+        notes = _unsent_notes(comment, authors)
         if notes and comment.get("decision_request"):
             decision = {"verdict": "comment", "text": "\n\n".join(notes), "by": reply.get("author")}
         elif _iso_timestamp(reply.get("ts")) > _iso_timestamp(decision.get("ts")):
@@ -366,7 +385,7 @@ def _push_answers(comments: list[dict]) -> list[dict]:
     return answers
 
 
-def _comment_needs_push(comment: dict) -> bool:
+def _comment_needs_push(comment: dict, authors: set[str] | None = None) -> bool:
     """Server-side mirror of shell.js needsPush().
 
     The toolbar badge promises to send only open comments with activity newer
@@ -374,20 +393,24 @@ def _comment_needs_push(comment: dict) -> bool:
     active session is not repeatedly notified about every older open comment.
     """
     decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
-    if comment.get("status") != "open" or comment.get("round_pending") or decision.get("round_pending"):
+    if comment.get("round_pending") or decision.get("round_pending"):
+        return False
+    if comment.get("status") != "open" and not (comment.get("status") == "user_confirmed" and _unsent_notes(comment, authors)):
+        return False
+    if authors is not None and human(comment.get("author")) and comment.get("author") not in authors and not comment.get("flagged_for_session"):
         return False
     flagged_at = _iso_timestamp(comment.get("flagged_at"))
     latest = 0.0
-    if not str(comment.get("author") or "").startswith("agent:"):
+    if not str(comment.get("author") or "").startswith("agent:") and (authors is None or comment.get("author") in authors):
         latest = _iso_timestamp(comment.get("created_at"))
-    if not str(comment.get("edited_by") or comment.get("author") or "").startswith("agent:"):
+    if not str(comment.get("edited_by") or comment.get("author") or "").startswith("agent:") and (authors is None or (comment.get("edited_by") or comment.get("author")) in authors):
         latest = max(latest, _iso_timestamp(comment.get("edited_at")))
     for reply in comment.get("replies") if isinstance(comment.get("replies"), list) else []:
-        if isinstance(reply, dict) and not str(reply.get("author") or "").startswith("agent:"):
+        if isinstance(reply, dict) and not str(reply.get("author") or "").startswith("agent:") and (authors is None or reply.get("author") in authors):
             latest = max(latest, _iso_timestamp(reply.get("ts")))
-    if decision and not str(decision.get("by") or "").startswith("agent:"):
+    if decision and not str(decision.get("by") or "").startswith("agent:") and (authors is None or decision.get("by") in authors):
         latest = max(latest, _iso_timestamp(decision.get("ts")))
-    if any(r.get("sent_at", True) is None for r in _reviewer_notes(comment)):
+    if _unsent_notes(comment, authors):
         return True
     return bool(latest) and (not comment.get("flagged_for_session") or latest > flagged_at)
 
@@ -438,6 +461,35 @@ def _normalize_item_number(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise DecisionRequestError("number must be a positive integer")
     return value
+
+
+def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
+    """Reserve labels under the store lock, including archived/legacy labels."""
+    from .cli import _item_numbers, _iter_comments
+    numbers = _item_numbers(store)
+    next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
+    if not existing and comment["id"] in numbers:
+        raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
+    if existing and number is not None and number == comment.get("number"):
+        return
+    if number is None:
+        previous = comment.get("number") or numbers.get(comment["id"])
+        comment["number"] = previous if type(previous) is int and previous > 0 else next_number
+        return
+    for _, other in _iter_comments(store):
+        same_question = (other.get("anchor_id") == comment.get("anchor_id")
+                         and other.get("doc") == comment.get("doc")
+                         and other.get("status") in ("archived", "resolved_in_version"))
+        if (other.get("id") != comment["id"] and not same_question
+                and (numbers.get(other.get("id")) == number or other.get("number") == number)):
+            raise DecisionRequestError(f"card number {number} is already used by {other['id']} on {other.get('version', '?')}; use #{next_number}", 409)
+    archived = store.get("archived") or {}
+    values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
+    for value in values:
+        for other in [value] if isinstance(value, dict) else value if isinstance(value, list) else []:
+            if isinstance(other, dict) and (numbers.get(other.get("id")) == number or other.get("number") == number):
+                raise DecisionRequestError(f"card number {number} is reserved by archived comment {other.get('id')} on {other.get('version', '?')}; use #{next_number}", 409)
+    comment["number"] = number
 
 
 def _decision_request_changed(old: Any, new: Any) -> bool:
@@ -725,6 +777,8 @@ def _bus_append(bus_dir: Path | None, slug: str, event: dict) -> None:
     bus_dir.mkdir(parents=True, exist_ok=True)
     f = bus_dir / f"{slug}.ndjson"
     event = dict(event)
+    if draft_event(event):
+        event["deferred"] = True
     event.setdefault("ts", _now_iso())
     event.setdefault("slug", slug)
     line = json.dumps(event, ensure_ascii=False) + "\n"
@@ -1065,6 +1119,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "authenticated": bool(email) and not email.startswith("agent:"),
         }
 
+    def _agent_reader(self) -> bool:
+        return str(self._identity()["email"] or "").startswith("agent:") or (
+            self._is_direct_loopback_request() and not self.local_author
+            and not self.headers.get("Origin") and not self.headers.get("Sec-Fetch-Site"))
+
     def _author(self, parsed=None) -> str:
         return self._identity()["email"] or "anonymous"
 
@@ -1214,7 +1273,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if route_path == "/api/copy":
             from .copy_state import load_copy
             try:
-                return self._respond(200, json.dumps(load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
+                return self._respond(200, json.dumps(copy_view(load_copy(self.artifact_dir)) if self._agent_reader() else load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
             except (OSError, ValueError) as exc:
                 return self._respond(500, json.dumps({"error": str(exc)}).encode())
         if route_path == "/api/categories":
@@ -1365,6 +1424,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             reply = replies[index]
             if reply.get("author") != author:
                 return self._respond(403, b'{"error":"only your own notes can be changed"}')
+            remember(c, author)
             if method == "PUT":
                 text = str(payload.get("text") or "").strip()
                 if not text:
@@ -1513,18 +1573,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
-            signature = self._store_signature()
+            current_version = self._read_meta().get("current")
+            signature = (self._store_signature(), current_version)
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
-            key = (poll, compressed)
+            key = (poll, compressed, self._agent_reader())
             if key not in cache:
                 store = self._v2_load(read_only=True)
+                if self._agent_reader():
+                    store = store_view(store)
                 if poll:
                     # Carry provenance remains on disk and in full comments.json;
                     # the shell does not render it. Decision history is rendered.
-                    store = {**store, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
+                    store = {**store, "current_version": current_version, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
                                                         for comment in items]
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
@@ -1665,6 +1728,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         flt_version = (params.get("version") or [None])[0]
         with _locked_store(self.artifact_dir, write=False):
             store = self._v2_load(read_only=True)  # a read keeps the shared cache
+            if self._agent_reader():
+                store = store_view(store)
         out = []
         for anchor_id, items in store.get("anchors", {}).items():
             for c in items:
@@ -2065,6 +2130,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 meta = self._read_meta()
                 store = self._v2_load()
                 comment = self._new_comment_from_payload(payload, identity, meta, store)
+                _assign_item_number(store, comment, comment.get("number"))
                 store["anchors"].setdefault(anchor_id, []).append(comment)
                 self._v2_save(store)
         except DecisionRequestError as exc:
@@ -2152,6 +2218,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # comment (previously a mandatory second PUT). Same validation as PUT.
         if payload.get("decision_request") is not None:
             comment["decision_request"] = _normalize_decision_request(payload["decision_request"])
+        if human(author):
+            comment["agent_snapshot"] = None
         return comment
 
     def _v2_post_comments_batch(self, parsed):
@@ -2227,6 +2295,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 existing = c
                                 break
                     if existing is not None:
+                        _assign_item_number(store, existing, fresh.get("number"), existing=True)
                         existing.setdefault("origin_id", existing["id"])
                         # A card carried into a newer version and then asked
                         # a different question is a new question: its old
@@ -2234,9 +2303,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         # decision_history and put the card back in front of
                         # the reviewer. Re-running `ask` with the same
                         # question (requested_at aside) leaves verdicts alone.
+                        # An unsent pick is the reviewer's current choice: it
+                        # stays on the card until Send or Discard.
                         prior = existing.get("decision")
                         reposed = (
                             isinstance(prior, dict)
+                            and not prior.get("round_pending")
                             and existing.get("carried_at")
                             and existing["carried_at"] >= (prior.get("ts") or "")
                             and _decision_request_changed(existing.get("decision_request"),
@@ -2271,11 +2343,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             lineage = [c for c in store["anchors"].get(aid, [])
                                        if c.get("decision_request") and c.get("author") == author
                                        and c.get("doc") == fresh.get("doc")
-                                       and c.get("number") == fresh.get("number")]
+                                       and (it.get("number") is None or c.get("number") == fresh.get("number"))]
                             roots = {c.get("origin_id") or c["id"] for c in lineage}
                             if len(roots) == 1:
+                                from .approval_catalog import item_id
                                 prior = lineage[-1]
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
+                                fresh["origin_item_id"] = item_id(prior)
+                        _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
                         ids.append(fresh["id"])
@@ -2410,6 +2485,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     or ("text" in payload and c.get("author") != author)):
                 self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
                 return
+            if item_number is not None:
+                try:
+                    _assign_item_number(store, c, item_number, existing=True)
+                except DecisionRequestError as exc:
+                    return self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             if new_status == "resolved_in_version":
                 own_resolution = False
                 if payload.get("resolve_own_anchor") is True and resolution_anchor == c.get("anchor_id"):
@@ -2425,14 +2505,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c.update(self._comment_category_fields(payload))
             except DecisionRequestError as exc:
                 return self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
+            remember(c, author)
             old_status = c.get("status")
-            if new_status == "addressed_by_agent" and old_status == "user_confirmed":
+            submitted_status = (comment_view(c) or {}).get("status") if not human(author) else old_status
+            if new_status == "addressed_by_agent" and submitted_status == "user_confirmed":
                 self._respond(
                     409,
                     b'{"error":"addressed_by_agent cannot demote user_confirmed"}',
                 )
                 return
-            if carry_forward is not None and old_status == "user_confirmed":
+            if carry_forward is not None and submitted_status == "user_confirmed":
                 self._respond(
                     409,
                     b'{"error":"carry_forward cannot demote user_confirmed"}',
@@ -2453,9 +2535,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c["resolution_anchor_id"] = resolution_anchor
                 c["resolved_at"] = _now_iso()
                 c["resolved_by"] = author
-                decision = c.get("decision")
-                if isinstance(decision, dict):
-                    decision.pop("round_pending", None)
+                # An unsent pick keeps round_pending: it still goes with Send.
             if "response_text" in payload:
                 c["response_text"] = payload["response_text"]
             if "text" in payload:
@@ -2526,6 +2606,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             c["edited_by"] = author
             c["edited_by_email"] = identity["email"]
             c["edited_by_name"] = identity["name"] or (payload.get("author_name") if identity["authenticated"] else None)
+            if not human(author) and isinstance(c.get("agent_snapshot"), dict) and old_status != c.get("status"):
+                c["agent_snapshot"]["status"] = c.get("status")
             self._v2_save(store)
 
         session = self._session_fields()
@@ -2598,6 +2680,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in store["anchors"].items():
                 for c in items:
                     if c.get("id") == comment_id:
+                        remember(c, author)
                         c.setdefault("replies", []).append(reply)
                         # T9: a USER reply on an agent-addressed comment is
                         # itself the reopen signal — the user shouldn't need
@@ -2625,7 +2708,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             if prior is not None:
                                 c.setdefault("decision_history", []).append(prior)
                             c["decision"] = {"verdict": "comment", "text": text,
-                                             "ts": reply["ts"], "by": author, "via": "reply"}
+                                             "ts": reply["ts"], "by": author, "via": "reply", "round_pending": True}
                             latency_s = _decision_latency_s(c, reply["ts"])
                             if latency_s is not None:
                                 c["decision"]["latency_s"] = latency_s
@@ -2707,7 +2790,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in list(store["anchors"].items()):
                 for c in list(items):
                     if c.get("id") == comment_id:
+                        remember(c, author)
                         c["status"] = "archived"
+                        if not human(author) and isinstance(c.get("agent_snapshot"), dict):
+                            c["agent_snapshot"]["status"] = "archived"
                         c["archived_at"] = _now_iso()
                         c["archived_by"] = author
                         archived.setdefault(anchor_id, []).append(c)
@@ -2746,7 +2832,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in list(store["anchors"].items()):
                 for c in list(items):
                     if c.get("id") == comment_id:
+                        remember(c, author)
                         c["status"] = "archived"
+                        if not human(author) and isinstance(c.get("agent_snapshot"), dict):
+                            c["agent_snapshot"]["status"] = "archived"
                         c["accepted_at"] = now
                         c["accepted_by"] = author
                         c["archived_at"] = now
@@ -2783,7 +2872,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in list(archived.items()):
                 for c in list(items):
                     if c.get("id") == comment_id:
+                        remember(c, author)
                         c["status"] = "open"
+                        if not human(author) and isinstance(c.get("agent_snapshot"), dict):
+                            c["agent_snapshot"]["status"] = "open"
                         c.pop("archived_at", None)
                         c.pop("archived_by", None)
                         c["restored_at"] = _now_iso()
@@ -2859,9 +2951,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             now = _now_iso()
             for anchor_id, items in store.get("anchors", {}).items():
                 for c in items:
-                    if _comment_needs_push(c):
+                    if _comment_needs_push(c, self._reviewer_authors(author)):
                         feedback.append(json.loads(json.dumps(c)))  # as delivered, before notes are marked sent
-                        _mark_notes_sent(c, now)
                         c["flagged_for_session"] = True
                         c["flagged_at"] = now
                         c["flagged_by"] = author
@@ -2872,6 +2963,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # History merges this record with the Send's
                 # round by send_id and lists the Send summary's lines.
                 self._queue_feedback_delivery(delivery, feedback, author, send=send)
+                for items in store["anchors"].values():
+                    for c in items:
+                        if c.get("id") in flagged_ids:
+                            commit(c, delivery["delivery_id"])
+                            _mark_notes_sent(c, now, self._reviewer_authors(author))
                 self._v2_save(store)
             else:
                 delivery["delivery"] = "noop"
@@ -2895,9 +2991,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 for c in items:
                     if c.get("id") == comment_id:
                         decision = c.get("decision") or {}
+                        if human(c.get("author")) and c.get("author") not in self._reviewer_authors(author) and not c.get("flagged_for_session"):
+                            return self._respond(403, b'{"error":"another reviewer owns this unsent comment"}')
                         if decision.get("round_pending") and decision.get("by") not in self._reviewer_authors(author):
                             return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
-                        _mark_notes_sent(c, _now_iso())
                         c["flagged_for_session"] = True
                         c["flagged_at"] = _now_iso()
                         c["flagged_by"] = author
@@ -2918,6 +3015,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 promote(self.artifact_dir, store, found[1])
             delivery = self._compute_delivery()
             self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
+            commit(found[1], delivery["delivery_id"])
+            _mark_notes_sent(found[1], found[1]["flagged_at"], self._reviewer_authors(author))
             self._v2_save(store)
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
@@ -2939,6 +3038,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         delivery["delivery_id"] = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:24]
         comment_ids = [c["id"] for c in comments]
         _bus_append(self.bus_dir, self.slug, {
+            "event": "round_submitted", "by": author, "round_id": delivery["delivery_id"],
+            "comment_ids": comment_ids, "answers": _push_answers(comments, self._reviewer_authors(author)),
+        })
+        _bus_append(self.bus_dir, self.slug, {
             "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
             "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
             "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
@@ -2946,7 +3049,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
-                                      "answers": _push_answers(comments), "edits": [], "snapshot": True,
+                                      "answers": _push_answers(comments, self._reviewer_authors(author)), "edits": [], "snapshot": True,
                                       "delivery": delivery["delivery"], **(send or {})})
 
     def _wake_feedback_owner(self):
@@ -3043,7 +3146,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # the verdict is parked with decision.round_pending=true until
         # POST /api/rounds/submit (one push for the whole round) or a
         # per-card POST /api/comments/<id>/push ("Send now").
-        defer_push = bool(payload.get("defer_push"))
+        defer_push = human(self._author(parsed)) or bool(payload.get("defer_push"))
 
         identity = self._identity()
         author = identity["email"] or "anonymous"
@@ -3065,6 +3168,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             now = _now_iso()
             old_status = c.get("status")
 
+            remember(c, author)
             prior_decision = c.get("decision")
             if (isinstance(prior_decision, dict) and prior_decision.get("round_pending")
                     and prior_decision.get("by") not in self._reviewer_authors(author)):
@@ -3074,7 +3178,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             prior_evidence = (prior_decision or {}).get("evidence") or {}
             incoming_revision = evidence.get("view_revision") or (
                 payload.get("evidence", {}).get("revision") if isinstance(payload.get("evidence"), dict) else None)
-            if (not defer_push and verdict in {"accept", "select"} and prior_decision
+            if (verdict in {"accept", "select"} and prior_decision
                     and not prior_decision.get("round_pending") and prior_decision.get("by") == author
                     and prior_decision.get("verdict") == verdict and prior_decision.get("text") == text
                     and prior_decision.get("option_id") == payload.get("option_id")
@@ -3133,13 +3237,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 "author_name": identity["name"] or (payload.get("author_name") if identity["authenticated"] else None),
                 "text": reply_text,
                 "ts": now,
+                **({"sent_at": None} if defer_push else {"sent_at": now}),
             })
 
             c["status"] = self._DECISION_STATUS_MAP[verdict]
             # A deferred answer is not sent yet: marking the card sent here
             # made notes added before it look sent, and the round skipped them.
             if not defer_push:
-                _mark_notes_sent(c, now)
+                _mark_notes_sent(c, now, self._reviewer_authors(author))
                 c["flagged_for_session"] = True
                 c["flagged_at"] = now
                 c["flagged_by"] = author
@@ -3217,7 +3322,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # A persisted round is the receipt if a process died between the
             # copy/comment writes. Clear only its exact activities on retry.
             receipts = list(_events(self.artifact_dir / "rounds.ndjson"))
-            submitted_answers = {(a.get("comment_id"), a.get("by"), a.get("ts"), a.get("verdict"), a.get("decision_id")): r.get("ts")
+            submitted_answers = {(a.get("comment_id"), a.get("by"), a.get("ts"), a.get("verdict"), a.get("decision_id")): (r.get("ts"), r.get("id"))
                                  for r in receipts for a in r.get("answers", []) if a.get("ts")}
             submitted_edits = {e.get("revision_id") for r in receipts for e in r.get("edits", [])
                                if e.get("by") in reviewer_authors}
@@ -3238,15 +3343,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
                     if (d.get("round_pending") and d.get("by") in reviewer_authors
                             and (c["id"], d.get("by"), d.get("ts"), d.get("verdict"), d.get("id")) in submitted_answers):
+                        sent_at, delivery_id = submitted_answers[(c["id"], d.get("by"), d.get("ts"), d.get("verdict"), d.get("id"))]
+                        commit(c, delivery_id)
                         d.pop("round_pending", None)
                         promote(self.artifact_dir, store, c)
-                        c.update(flagged_for_session=True, flagged_at=submitted_answers[(c["id"], d.get("by"), d.get("ts"), d.get("verdict"), d.get("id"))], flagged_by=author)
+                        _mark_notes_sent(c, sent_at, reviewer_authors)
+                        c.update(flagged_for_session=True, flagged_at=sent_at, flagged_by=author)
                         recovered = True
                     reopen = (c.get("reopened") or [{}])[-1]
                     if (c.get("round_pending") and reopen.get("by") in reviewer_authors
                             and (c["id"], reopen.get("by"), reopen.get("ts"), "reopen", None) in submitted_answers):
+                        sent_at, delivery_id = submitted_answers[(c["id"], reopen.get("by"), reopen.get("ts"), "reopen", None)]
+                        commit(c, delivery_id)
                         c.pop("round_pending", None)
-                        c.update(flagged_for_session=True, flagged_at=submitted_answers[(c["id"], reopen.get("by"), reopen.get("ts"), "reopen", None)], flagged_by=author)
+                        c.update(flagged_for_session=True, flagged_at=sent_at, flagged_by=author)
                         recovered = True
             if recovered:
                 self._v2_save(store)
@@ -3266,13 +3376,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for items in store.get("anchors", {}).values():
                 for c in items:
                     decision = c.get("decision")
-                    if c.get("status") in ("archived", "resolved_in_version"):
+                    if c.get("status") == "archived":
                         if isinstance(decision, dict) and decision.get("by") in reviewer_authors and decision.get("round_pending"):
                             decision.pop("round_pending", None)
                             cleared_archived = True
                         continue
+                    # A resolved card is no longer asked, but the reviewer's
+                    # unsent pick on it still goes out.
                     if (c.get("decision_request") and not self._is_answered(decision)
-                            and c.get("status") != "addressed_by_agent" and not _is_set_aside(c)):
+                            and c.get("status") not in ("addressed_by_agent", "resolved_in_version")
+                            and not _is_set_aside(c)):
                         undecided_ids.append(c.get("id"))
                     if isinstance(decision, dict) and decision.get("round_pending") and decision.get("by") in reviewer_authors:
                         pending.append(c)
@@ -3287,7 +3400,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # chrome skips its push when it sends a round, so they go even
             # when nothing else is pending here.
             pushed = [c for items in store.get("anchors", {}).values() for c in items
-                      if _comment_needs_push(c) and c["id"] not in comment_ids]
+                      if _comment_needs_push(c, reviewer_authors) and c["id"] not in comment_ids]
             comment_ids += [c["id"] for c in pushed]
             if not comment_ids and not edits and not note:
                 if cleared_archived:
@@ -3319,8 +3432,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         "prompt": (c.get("decision_request") or {}).get("prompt", c.get("text", "")),
                         "verdict": c["decision"]["verdict"],
                         # Notes added on the card after its answer go with it.
-                        "text": "\n\n".join([c["decision"].get("text") or ""] + _unsent_notes(c)).strip(),
-                        **({"notes": _unsent_notes(c)} if _unsent_notes(c) else {}),
+                        "text": "\n\n".join([c["decision"].get("text") or ""] + _unsent_notes(c, reviewer_authors)).strip(),
+                        **({"notes": _unsent_notes(c, reviewer_authors)} if _unsent_notes(c, reviewer_authors) else {}),
                         "by": c["decision"].get("by"), "ts": c["decision"].get("ts"),
                         "evidence": c["decision"].get("evidence")} for c in pending]
             def unsent_reopen_text(c):
@@ -3337,7 +3450,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                          "prompt": (c.get("finding") or {}).get("title", c.get("text", "")),
                          "verdict": "reopen", "text": unsent_reopen_text(c),
                          "by": c["reopened"][-1]["by"], "ts": c["reopened"][-1]["ts"]} for c in reopens]
-            answers += _push_answers(pushed)
+            answers += _push_answers(pushed, reviewer_authors)
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
             _bus_append(self.bus_dir, self.slug, {
@@ -3349,16 +3462,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
                                           "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True,
                                           "delivery": delivery["delivery"], **send})
+            for c in pending + reopens + pushed:
+                commit(c, delivery["delivery_id"])
             for c in pending:
                 c["decision"].pop("round_pending", None)
                 promote(self.artifact_dir, store, c)
-                _mark_notes_sent(c, now)
+                _mark_notes_sent(c, now, self._reviewer_authors(author))
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in reopens:
                 c.pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             for c in pushed:
-                _mark_notes_sent(c, now)
+                _mark_notes_sent(c, now, self._reviewer_authors(author))
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
             if edits:
                 submit_revisions(self.artifact_dir, {edit["revision_id"] for edit in edits}, reviewer_authors)
@@ -3538,9 +3653,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 store = self._v2_load(read_only=True)
+                if self._agent_reader():
+                    store = store_view(store)
                 plans = list_plans(self.artifact_dir, store=store)
                 topics = file_plans(self.artifact_dir, plans)
-                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans)
+                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans, submitted_only=self._agent_reader())
                 category_data = load_categories(self.artifact_dir)
                 try:
                     library = load_copy(self.artifact_dir)
@@ -3920,6 +4037,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                  cache_control: str = "no-cache", conditional: bool = False, extra_headers: dict | None = None,
                  representation: tuple[bytes, bool] | None = None):
         route = self._strip_base(urllib.parse.urlsplit(self.path).path)
+        # Agent writes can race a reviewer draft too: their returned card is
+        # subject to the same privacy boundary as an agent GET.
+        if (self.command in ("POST", "PUT") and 200 <= code < 300
+                and route.startswith("/api/comments") and self._agent_reader()):
+            payload = json.loads(body)
+            if isinstance(payload, dict) and "anchor_id" in payload and "id" in payload:
+                body = json.dumps(comment_view(payload), ensure_ascii=False).encode()
         poll = self.command in ("GET", "HEAD") and code == 200 and (
             route in {"/comments.json", "/api/read-state", "/api/session-monitor", "/api/categories",
                       "/api/board", "/current.meta.json", "/api/delivery", "/api/history", "/api/project"}
@@ -4084,7 +4208,10 @@ def main():
     slug = args.slug or slug_dir.name
     bus_dir = Path(args.bus_dir).resolve() if args.bus_dir else BUS_ROOT / "default"
     skill_dir = WEB_DIR
-    port = find_free_port(args.port)
+    reserved = _reserved_ports(slug_dir)
+    if args.port in reserved:
+        parser.error(f"port {args.port} is registered to {reserved[args.port]}; --slug-dir must be that page's directory")
+    port = find_free_port(args.port, slug_dir)
     if args.strict_port and port != args.port:
         parser.error(f"requested port {args.port} is unavailable; no alternate port selected")
     handler = make_handler(

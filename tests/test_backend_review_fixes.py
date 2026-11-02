@@ -198,7 +198,7 @@ def test_be2_draft_reopen_event_is_not_in_the_agent_inbox(tmp_path, monkeypatch,
     assert cli.cmd_inbox(_args(json=False, category=None, unread=True, all_events=False)) == 0
     assert "finding_reopened" not in capsys.readouterr().out
     assert cli.cmd_inbox(_args(json=False, category=None, unread=False, all_events=True)) == 0
-    assert "finding_reopened" in capsys.readouterr().out
+    assert "finding_reopened" not in capsys.readouterr().out
 
 
 # ── BE-3: compact inbox and cards show what to act on ───────────────────────

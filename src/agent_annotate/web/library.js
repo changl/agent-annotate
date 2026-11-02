@@ -18,6 +18,7 @@
   const drafts = UI.local.get('lib:drafts', {}); // unsaved editor text, per item
   const draftBases = UI.local.get('lib:draft-base', {}); // the revision each draft started from
   const commentDrafts = UI.local.get('lib:comment-drafts', {}); // unsaved comment text, per item
+  const commentQuotes = UI.local.get('lib:comment-quotes', {}); // the phrase each unsaved comment quotes, per item
   const saveIntents = UI.local.get('lib:save-intent', {}); // one request id per save attempt, reused on retry
   let shown = false, loading = null;
   // The open editor: which item, which revision it started from, and whether
@@ -248,7 +249,7 @@
       <div class="sp-editor-card">
         <div class="sp-toolbar" id="sp-toolbar" role="toolbar" aria-label="Formatting">${toolbarHtml()}</div>
         <div class="sp-editor" id="sp-editor"></div>
-        <div class="sp-edit-ft"><span class="gf-hint" id="sp-edit-status" role="status">${edited ? 'Your edit · ' + esc(UI.fmtTs(mine.created_at)) + (mine.round_pending ? ' · goes out with Send' : ' · sent') : 'Goes out with Send'}</span><button type="button" class="btn btn-sm" id="sp-discard" disabled>Cancel</button><button type="button" class="btn btn-sm" id="sp-save" disabled>Save</button></div>
+        <div class="sp-edit-ft"><span class="gf-hint" id="sp-edit-status" role="status">${edited ? 'Your edit · ' + esc(UI.fmtTs(mine.created_at)) + (mine.round_pending ? ' · goes out with Send' : ' · ' + D().deliveryHtml(revisionDeliveryId(mine))) : 'Goes out with Send'}</span><button type="button" class="btn btn-sm" id="sp-discard" disabled>Cancel</button><button type="button" class="btn btn-sm" id="sp-save" disabled>Save</button></div>
       </div>
       ${alts.length ? `<details class="aa-details" id="sp-alts"><summary>Earlier alternatives from the agent (${alts.length})</summary><div class="wrap"><table><thead><tr><th></th><th>Text</th><th></th></tr></thead><tbody>${alts.map((a, i) => `<tr><td>${esc(a.label)}</td><td>${esc(a.text)}</td><td>${a.text && !/^— none/.test(a.text) ? `<button type="button" class="btn btn-ghost btn-xs" data-use="${i}">Use this</button>` : ''}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
       </section>`;
@@ -424,10 +425,17 @@
     forgetDraft(it.id);
     setData(r.data);
     if (typed) keepDraft(it.id, typed, latestOf(it.id));
-    renderAll();
+    // The editor stays mounted: rebuilding it drops the keys still being typed.
+    if (quill && editorItem === it.id) {
+      editorBase = latestOf(it.id); staleSeen = null; baseline = content;
+      const c = editorChanged();
+      save.disabled = !c; save.classList.toggle('btn-primary', c); $('#sp-discard').disabled = !c;
+    }
+    renderList(); renderRail(); AA.changed();
     setStatus(typed ? 'Saved · your newer typing is kept as a draft' : 'Saved · goes out with Send');
   }
   async function restore(it, revisionId) {
+    if (drafts[it.id] && !confirm('Restore this text? Your unsaved edits to it will be lost.')) return;
     // base_revision: the latest revision this browser has seen; the server
     // refuses a stale one with 409 (the notice; unsaved text stays).
     const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/restore', { revision_id: revisionId, base_revision: latestOf(it.id) || latestRev(it).id, request_id: crypto.randomUUID() });
@@ -495,6 +503,7 @@
     // The rail's own "+ General feedback" box (A3), for this item. Its
     // unsaved text is this item's draft (kept in this browser until Save).
     const typed = commentDrafts[it.id] || '';
+    if (!pendingQuote) pendingQuote = commentQuotes[it.id] || null;
     const open = !!(pendingQuote || typed);
     html = `<div class="gf" id="sp-compose">
       <button type="button" class="gf-row" id="sp-compose-toggle" aria-expanded="${open ? 'true' : 'false'}" aria-controls="sp-compose-box">${UI.ico('plus')}<span>Comment on this item</span></button>
@@ -526,13 +535,16 @@
     $('#sp-compose-cancel').addEventListener('click', () => {
       $('#sp-compose-box').hidden = true; $('#sp-compose-toggle').setAttribute('aria-expanded', 'false');
       if (pendingRange && quill) quill.formatText(pendingRange.index, pendingRange.length, 'cmark', false, 'silent');
-      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; setCommentDraft(it.id, ''); $('#sp-compose-quote').hidden = true;
+      pendingQuote = null; pendingRange = null; $('#sp-compose-ta').value = ''; setCommentDraft(it.id, ''); setCommentQuote(it.id, null); $('#sp-compose-quote').hidden = true;
     });
     $('#sp-compose-save').addEventListener('click', () => saveComment(it));
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
   }
   function setCommentDraft(id, text) {
     UI.local.entry('lib:comment-drafts', commentDrafts, id, text.trim() ? text : undefined);
+  }
+  function setCommentQuote(id, quote) {
+    UI.local.entry('lib:comment-quotes', commentQuotes, id, quote || undefined);
   }
   // "Change" on an answered question shows its options again.
   function qCardOpen(q) {
@@ -551,6 +563,7 @@
     if (!range || !range.length) return;
     pendingRange = { index: range.index, length: range.length };
     pendingQuote = quill.getText(range.index, range.length).trim();
+    setCommentQuote(editorItem, pendingQuote);
     quill.formatText(range.index, range.length, 'cmark', 'pending', 'silent');
     AA.rail.reveal();
     $('#sp-compose-box').hidden = false; $('#sp-compose-toggle').setAttribute('aria-expanded', 'true');
@@ -573,7 +586,8 @@
       const box = selected === it.id && $('#sp-compose-ta');
       if (box) box.value = '';
     }
-    pendingQuote = null; pendingRange = null;
+    setCommentQuote(it.id, null);
+    if (selected === it.id) { pendingQuote = null; pendingRange = null; }
     await D().refreshStore();
     // ⌘↵ leaves focus in the box, so the store refresh skips the rail.
     if (shown && selected === it.id) { renderList(); renderRail(); }
@@ -585,6 +599,9 @@
     if (cid && scrollRail) { AA.rail.setTab('feedback'); const el = document.querySelector('#rail-library [data-cid="' + CSS.escape(cid) + '"]'); if (el) el.scrollIntoView({ block: 'nearest' }); }
     if (cid && scrollDoc) { const m = document.querySelector('mark.sp-cmark[data-c="' + CSS.escape(cid) + '"]'); if (m) m.scrollIntoView({ block: 'center' }); }
   }
+  function revisionDeliveryId(revision) {
+    return (D().sentRoundsRaw().find(round => (round.edits || []).some(edit => edit.revision_id === revision.id)) || {}).id;
+  }
   function renderHistory(el) {
     const it = BY_ID[selected];
     if (!it || !el) { if (el) el.innerHTML = ''; return; }
@@ -593,13 +610,13 @@
     seedHistory(it).forEach(h => entries.push(h));
     const q = question(it);
     // A discarded answer (UI-14) never went out; History leaves it out.
-    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
+    if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', delivery_id: x.delivery_id, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
     it.revisions.forEach((r, i) => {
       if (r.status !== 'proposed') return;
       const prev = it.revisions[i - 1];
-      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
+      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', delivery_id: revisionDeliveryId(r), text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
     });
-    storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
+    storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', delivery_id: c.comment.delivery_id, text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
     entries.sort((a, b) => (a.ts < b.ts ? 1 : -1));
     const seed = it.revisions.find(r => r.status !== 'proposed');
     const row = (h) => {
@@ -608,9 +625,9 @@
       else if (h.kind === 'changed') { head = `<b>${esc(h.who)}</b> · ${esc(h.version)}: ${esc((h.changed || []).join(', '))} changed`; body = esc(h.status || ''); }
       else if (h.kind === 'decision') { head = `<b>${esc(h.who)}</b> · answered copy card #${esc(h.card)}`; body = esc(h.text) + (h.prompt ? `<div class="project-detail">${esc(h.prompt)}</div>` : ''); }
       else if (h.kind === 'response') { head = `<b>${esc(h.who)}</b> · agent response`; body = esc(h.text); }
-      else if (h.kind === 'edit') { head = `<b>${esc(h.who)}</b> · edited · ${h.sent ? 'sent' : 'not sent yet'}`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
-      else if (h.kind === 'comment') { head = `<b>${esc(h.who)}</b> · comment · ${h.sent ? 'sent' : 'not sent yet'}`; body = (h.quote ? '“' + esc(h.quote) + '” ' : '') + esc(h.text); }
-      else if (h.kind === 'q') { head = `<b>${esc(h.who)}</b> · answered #${esc(h.n || '')} · ${h.sent ? 'sent' : 'not sent yet'}`; body = esc(h.text) + `<div class="project-detail">${esc(h.prompt)}</div>`; }
+      else if (h.kind === 'edit') { head = `<b>${esc(h.who)}</b> · edited · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
+      else if (h.kind === 'comment') { head = `<b>${esc(h.who)}</b> · comment · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = (h.quote ? '“' + esc(h.quote) + '” ' : '') + esc(h.text); }
+      else if (h.kind === 'q') { head = `<b>${esc(h.who)}</b> · answered #${esc(h.n || '')} · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = esc(h.text) + `<div class="project-detail">${esc(h.prompt)}</div>`; }
       return `<div class="hist-item"><div class="hist-head">${head}<span>· ${esc(UI.fmtTs(h.ts))}</span></div><div class="hist-text">${body}</div>${actions ? `<div class="hist-actions">${actions}</div>` : ''}</div>`;
     };
     el.innerHTML = `<p class="project-detail hist-sub">${esc(labelOf(it))}</p>${entries.map(row).join('')}`;

@@ -167,9 +167,11 @@ def _comments(page_dir):
     return _load_v2_store(safe_path(page_dir, "comments.json"))
 
 
-def _finding(store: dict, identifier) -> dict:
+def _finding(store: dict, identifier, current_version=None) -> dict:
+    from .cli import _item_numbers
+    numbers = _item_numbers(store, current_version)
     matches = [c for items in store["anchors"].values() for c in items
-               if c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier))]
+               if c.get("id") == identifier or str(numbers.get(c.get("id"))) == str(identifier)]
     matches = [c for c in matches if comment_category(c) == "findings"]
     if not matches:
         raise KeyError(identifier)
@@ -268,7 +270,7 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
     proof = validate_proof(page_dir, proof)
     with _locked_store(page_dir):
         store = _comments(page_dir)
-        comment = _finding(store, number_or_id)
+        comment = _finding(store, number_or_id, _json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
         now = datetime.now(timezone.utc).isoformat()
         if comment.get("fixed"):
             comment.setdefault("fixed_history", []).append(comment["fixed"])
@@ -291,6 +293,8 @@ def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str)
             raise PermissionError("another reviewer owns the pending reopen")
         if not comment.get("fixed"):
             raise ValueError("only a fixed finding can be reopened")
+        from .submitted import remember
+        remember(comment, by)
         comment.setdefault("fixed_history", []).append(comment.pop("fixed"))
         comment.update(status="open", round_pending=True)
         comment.pop("resolved_in_version", None)
@@ -439,7 +443,7 @@ def comment_section(comment: dict) -> str | None:
     if status == "archived" or comment.get("withdrawn"):
         return None
     decision = _mapping(comment.get("decision"))
-    if comment.get("round_pending") or (decision.get("round_pending") and status != "resolved_in_version"):
+    if comment.get("round_pending") or decision.get("round_pending"):
         return "ready"
     if comment_needs_reviewer(comment):
         return "needs_you"
@@ -459,10 +463,10 @@ def comment_section(comment: dict) -> str | None:
             if isinstance(option, dict) and option.get("label") == choice:
                 choice = option.get("id")
         return "done" if choice in {"keep", "no"} or decision.get("verdict") == "reject" else "waiting"
-    if status != "open":
-        return "done"
     from .sync_server import _comment_needs_push
-    return "ready" if _comment_needs_push(comment) else "waiting"
+    if _comment_needs_push(comment):
+        return "ready"
+    return "done" if status != "open" else "waiting"
 
 
 def comment_sig(comment: dict) -> str:
@@ -542,7 +546,7 @@ def block_can_be_unread(block: dict) -> bool:
 
 
 def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
-                    store: dict | None = None, plans: list | None = None) -> dict:
+                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False) -> dict:
     from .consolidate import marker
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "later", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
@@ -576,6 +580,9 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         blocks = load_copy(page_dir)["blocks"]
     except ValueError:
         blocks = []  # an invalid copy.json is reported by /api/categories
+    if submitted_only:
+        from .submitted import copy_view
+        blocks = copy_view({"blocks": blocks})["blocks"]
     for block in blocks:
         pending = [r for r in block["revisions"] if r.get("round_pending")]
         latest = block["revisions"][-1]

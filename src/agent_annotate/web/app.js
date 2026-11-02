@@ -564,6 +564,14 @@
     if (i !== -1) return server.map((r, j) => j === i ? Object.assign({}, r, { result: lastSend.result }) : r);
     return [lastSend].concat(server);
   }
+  function delivery(receipts) {
+    if (!lastSend?.delivery_id || !receipts.some(r => r.id === lastSend.delivery_id && r.delivered)) return;
+    const result = '✅ Sent to session (' + lastSend.items.length + ')';
+    if (lastSend.result === result) return;
+    if (note?.text === lastSend.result) { note.text = result; note.cls = 'is-success'; }
+    lastSend.result = result;
+    refresh();
+  }
   // What each tab would send now.
   function plan() {
     const out = [];
@@ -739,10 +747,10 @@
     }
     const n = sent.length;
     const result = r.delivered ? '✅ Sent to session (' + n + ')' :
-      (r.automatic ? 'Feedback saved (' + n + ')' : '⏳ Queued — no session listening (' + n + ')');
+      'Waiting for the agent (' + n + ')';
     // The Review version on screen, as the round records it, so History
     // places this Send right before the server's record arrives.
-    lastSend = { ts: new Date().toISOString(), version: docs.version('review') || '', result, items: sent, fresh: true, send_id: r.send_id };
+    lastSend = { ts: new Date().toISOString(), version: docs.version('review') || '', result, items: sent, fresh: true, send_id: r.send_id, delivery_id: r.delivery_id };
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
       setNote(result, r.delivered ? 'is-success' : 'is-queued');
@@ -790,7 +798,7 @@
 
   AA.onChange(refresh);
   AA.send = {
-    open: openSummary, close, isOpen: () => open, submit, render, syncCounts, note: setNote, receipts, refresh, plan,
+    open: openSummary, close, isOpen: () => open, submit, render, syncCounts, note: setNote, receipts, refresh, plan, delivery,
     justSent: () => !!(lastSend && lastSend.fresh),
   };
 })();

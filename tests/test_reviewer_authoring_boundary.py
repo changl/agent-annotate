@@ -148,9 +148,8 @@ def test_public_batch_cannot_impersonate_agent_or_idempotently_repose_agent_card
         "decision_request": {"prompt": "A replacement question", "options": ["accept", "reject"]}}]}, cookie=page.cookie)
     store = json.loads((page.directory / "comments.json").read_text())
     assert store["anchors"]["d:q1"][0] == before
-    if status != 403:
-        assert status == 200 and result["updated"] == 0 and result["created"] == 1
-        assert store["anchors"]["d:q1"][1]["author"] == page.identity
+    assert status in (403, 409), result
+    assert store["anchors"]["d:q1"] == [before]
 
 
 @pytest.mark.parametrize("payload", [

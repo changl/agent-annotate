@@ -48,7 +48,7 @@ def _estate(tmp_path):
          "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "agent:test", "version": "v1"},
         {"ts": "2026-09-10T00:00:00Z", "event": "comment_created", "slug": "demo",
          "comment_id": "bbbbbbbbbbbb", "anchor_id": "s:b", "author": "agent:test", "version": "v1"},
-        {"ts": "2026-09-10T00:10:00Z", "event": "comment_updated", "slug": "demo",
+        {"ts": "2026-09-10T00:10:00Z", "event": "round_submitted", "slug": "demo",
          "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "r@x", "decision": "accept"},
         {"ts": "2026-09-10T00:10:00Z", "event": "session_push", "slug": "demo",
          "comment_ids": ["aaaaaaaaaaaa"], "author": "r@x", "delivery": "queued"},

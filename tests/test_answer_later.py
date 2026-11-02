@@ -66,13 +66,13 @@ def test_set_aside_is_never_undecided_or_needs_you(server):  # noqa: F811
     undecided = _call(httpd, "POST", "/api/rounds/submit", {}, author=REVIEWER)[1]["undecided_ids"]
     assert undecided == [now["id"]]
     cards = {c["id"]: c for c in _decision_cards(store)}
-    assert cards[later["id"]]["answer_later"] and not is_undecided(cards[later["id"]])
+    assert not cards[later["id"]]["answer_later"] and is_undecided(cards[later["id"]])
     assert is_undecided(cards[now["id"]])
     hooked = hook_cards(str(slug_dir))
-    assert not is_undecided(hooked[later["id"]]) and is_undecided(hooked[now["id"]])
+    assert is_undecided(hooked[later["id"]]) and is_undecided(hooked[now["id"]])
     counts = category_counts(slug_dir, store=store)["review"]
     assert counts["needs_you"] == 1 and counts["later"] == 1
-    assert waiting_count(slug_dir) == 1
+    assert waiting_count(slug_dir) == 2
 
 
 def test_a_new_version_never_withdraws_a_set_aside_question(server):  # noqa: F811

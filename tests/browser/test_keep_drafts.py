@@ -82,7 +82,7 @@ def _directory(tmp_path):
 
 
 @contextmanager
-def _session(tmp_path, directory):
+def _session(tmp_path, directory, ipad=False):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -90,9 +90,17 @@ def _session(tmp_path, directory):
     base = f"http://127.0.0.1:{port}/"
     try:
         with playwright.sync_playwright() as runner:
-            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            if ipad:
+                try:
+                    browser = runner.webkit.launch()
+                except playwright.Error:
+                    pytest.skip("Playwright WebKit is not installed")
+                context = browser.new_context(**runner.devices["iPad Pro 11 landscape"])
+            else:
+                browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+                context = browser.new_context(viewport={"width": 1440, "height": 960})
             # A context of its own, so a test can open a second tab on it.
-            page = browser.new_context(viewport={"width": 1440, "height": 960}).new_page()
+            page = context.new_page()
             page.set_default_timeout(8000)
             page.goto(base + "#view=review", wait_until="networkidle")
             _loaded(page)
@@ -139,7 +147,7 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _poll(page)
         assert len(responses) == 1 and responses[0].status == 200
         assert responses[0].json()["delivery_status"]["latest"]["state"] == "acknowledged"
-        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
+        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
         responses.clear()
         _poll(page)
         assert responses and all(response.status == 304 for response in responses)
@@ -152,7 +160,7 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _loaded(page)
         assert responses and responses[0].status == 200
         assert "if-none-match" not in responses[0].request.headers
-        assert "Owner read this feedback round" in page.locator("#delivery-status").inner_text()
+        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
 
 
 def _blur(page):
@@ -229,6 +237,10 @@ def test_rail_composers_keep_text_through_polls_changes_versions_restarts_and_re
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Another note from the agent.", "version": "v1"}]})
         _agent(base, "api/comments/reply-card", {"status": "addressed_by_agent", "response_text": "Fixed in the next build."}, method="PUT")
         _poll(page)
+        # The page waits for the reviewer (dw4): the banner says what came.
+        assert page.evaluate("() => window.AnnotateDocs.comments().length") == before
+        _expect_all(page, "after the agent commented and resolved the card, not shown yet")
+        page.locator("#unified-version-banner button").click()
         page.wait_for_function("n => window.AnnotateDocs.comments().length > n", arg=before)
         page.wait_for_timeout(300)
         _expect_all(page, "after the agent commented and resolved the card")
@@ -379,13 +391,16 @@ def test_two_tabs_on_one_page_never_erase_each_others_drafts(tmp_path):
         other.bring_to_front()
         other.locator("#general-feedback-toggle").click()
         other.locator("#gf-ta").fill(GF)
-        # Chrome propagates localStorage changes to the other tab asynchronously.
+        # Read from the first tab once it is in front again: headless Chrome holds a background
+        # tab's answers to Playwright, so waiting on it from behind `other` timed out under
+        # load while the draft was already stored (agent-annotate-srw). Chrome propagates
+        # localStorage changes to the other tab asynchronously.
+        page.bring_to_front()
         page.wait_for_function("""expected => {
             const key = Object.keys(localStorage).find(k => k.startsWith('annotate:drafts:') && k.endsWith(':review'));
             return key && JSON.parse(localStorage.getItem(key)).gf === expected;
         }""", arg=GF)
         assert _drafts(page) == {"reply-card": REPLY, "gf": GF}
-        page.bring_to_front()
         page.reload(wait_until="networkidle")
         _loaded(page)
         assert _reply(page).input_value() == REPLY
@@ -533,5 +548,6 @@ def test_polls_read_the_poll_view_of_the_store(tmp_path):
         page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the poll view.", "version": "v1"}]})
         _poll(page)
+        page.locator("#unified-version-banner button").click()  # dw4: shown when the reviewer asks
         page.locator("#comment-list .citem", has_text="Seen through the poll view.").wait_for()
         assert urls and all(u.endswith("/comments.json?view=poll") for u in urls)

@@ -490,7 +490,7 @@ function makePin(anchorId, entries, isCluster) {
 // between stacked/nudged pins than the desktop 18px one to avoid overlap.
 function PIN_SPACING() { return PIN_SIZE() + 2; }
 function pinSpecsFor(anchorId) {
-  const entries = (latestPins[anchorId] || []).slice().sort((a, b) => a.n - b.n);
+  const entries = (latestPins[anchorId] || []).slice().sort((a, b) => parseInt(a.n, 10) - parseInt(b.n, 10));
   if (!entries.length) {
     // Shell predates pins payload (or race before first counts message):
     // degrade to a count cluster so the badge never vanishes. Empty
@@ -1089,6 +1089,18 @@ function ensureStripStyle() {
     .annotate-add-note { display: flex !important; align-items: flex-end !important; gap: 8px !important; margin-top: 10px !important; }
     .annotate-add-note .annotate-decision-ta { flex: 1 1 auto !important; margin-top: 0 !important; }
     .annotate-note-add { background: var(--color-base-300) !important; color: var(--color-base-content) !important; font-weight: 600 !important; padding: 6px 12px !important; border-radius: .25rem !important; min-height: 2.25rem !important; }
+    /* Answered or Answer later: one line at its place; a tap opens it (2026-11-01). */
+    .annotate-folded-row {
+      display: flex !important; align-items: center !important; gap: 8px !important; width: 100% !important; min-height: 32px !important;
+      margin: 0 !important; padding: 2px 0 !important; border: 0 !important; background: transparent !important; color: inherit !important;
+      font: inherit !important; font-size: calc(11px * var(--aa-text, 1)) !important; text-align: left !important; cursor: pointer !important;
+    }
+    @media (pointer: coarse) { .annotate-folded-row { min-height: 44px !important; touch-action: manipulation !important; } }
+    .annotate-folded-row .annotate-decision-num { flex: 0 0 auto !important; margin: 0 !important; }
+    .annotate-folded-prompt { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; font-weight: 600 !important; }
+    .annotate-folded-what { flex: 0 1 auto !important; max-width: 40% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; font-weight: 700 !important; }
+    .annotate-folded:not(.annotate-answered) .annotate-folded-what { font-weight: 600 !important; color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
+    .annotate-decision-strip:has(> .annotate-folded:only-child) { padding-top: 2px !important; padding-bottom: 2px !important; }
   `;
   document.head.appendChild(style);
 }
@@ -1122,7 +1134,7 @@ function evidenceOf(dr) {
 // cells are joined with " | ", and everything this file injected (strips,
 // pins, markers, state chips) is left out.
 const EXCERPT_MAX = 1200;
-const EXCERPT_SKIP_SEL = '.aa-img-zoom, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
+const EXCERPT_SKIP_SEL = '.aa-img-bar, .aa-img-zoom, .aa-full, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
 const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
 
 function excerptText(el) {
@@ -1206,7 +1218,9 @@ function ensureCardStateStyle() {
   style.id = 'annotate-card-state-style';
   style.textContent = `
     .card[data-annotate-state="waiting"], .card[data-annotate-state="done"] { opacity: .6; }
-    .card[data-annotate-state="waiting"] > p.q, .card[data-annotate-state="done"] > p.q { display: none; }
+    /* Published pages still carry "Answer it on the card, then press Finish review." (2026-11-01):
+       a live card is answered in its own box, and a card with no live one has nothing to answer. */
+    .card > p.q { display: none; }
     .annotate-card-state { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 10px;
       font: 700 calc(9.5px * var(--aa-text, 1)) "Inter", sans-serif; letter-spacing: .02em; }
     .annotate-card-state.review { background: var(--error-soft); color: var(--color-error); }
@@ -1378,11 +1392,11 @@ function renderDecisionStrips() {
     if (!items.length) continue;
     const el = stripTarget(anchorId, items);
     if (!el || !inActivePanel(el)) continue;
-    items.sort((a, b) => (a.n || 0) - (b.n || 0));
+    items.sort((a, b) => (parseInt(a.n, 10) || 0) - (parseInt(b.n, 10) || 0));
     placed.push({ anchorId, items, el });
   }
   // Questions sharing a target keep their numbers' order under it.
-  placed.sort((a, b) => (a.items[0].n || 0) - (b.items[0].n || 0));
+  placed.sort((a, b) => (parseInt(a.items[0].n, 10) || 0) - (parseInt(b.items[0].n, 10) || 0));
   const lastAt = new Map();
   placed.forEach(({ anchorId, items, el }) => {
     const stripEl = buildStripEl(anchorId, items, lastExcerpts);

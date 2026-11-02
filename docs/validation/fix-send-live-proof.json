@@ -1,0 +1,29 @@
+{
+  "before_send": {
+    "private_text_in_inbox": false,
+    "hook_notices": 0,
+    "owner_prompts": 0,
+    "waiting_count_unchanged": true
+  },
+  "after_send": {
+    "note_and_general_feedback_in_inbox": true,
+    "hook_round_notice": true,
+    "owner_prompts": 1,
+    "delivery": {
+      "id": "62f7cc35a1a1d18bd4c37481",
+      "state": "accepted",
+      "created_at": "2026-11-01T07:08:22Z",
+      "detail": "Orca accepted owner prompt; action completion is not yet proven",
+      "updated_at": "2026-11-01T07:08:22.860455+00:00",
+      "delivered": true
+    },
+    "owner_read_state": "acknowledged",
+    "ui_result": "\u2705 Sent to session (2)"
+  },
+  "source_unchanged": true,
+  "source_files": 330,
+  "copy": "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/aa-send-live-copy-4elhmooy/page",
+  "screenshot": "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/aa-send-live-copy-4elhmooy/send-proof.png",
+  "server_and_browser_stopped": true,
+  "real_terminal_input": false
+}

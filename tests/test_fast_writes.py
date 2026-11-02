@@ -240,8 +240,8 @@ def test_encoded_store_cache_retains_only_four_current_representations(server):
             for encoding in ("identity", "gzip"):
                 assert request(httpd, route, headers={"Accept-Encoding": encoding})[0] == 200
         cache = httpd.RequestHandlerClass._store_responses
-        assert set(cache) == {"signature", (False, False), (False, True), (True, False), (True, True)}
-        assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"]
+        assert set(cache) == {"signature", (False, False, False), (False, True, False), (True, False, False), (True, True, False)}
+        assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"][0]
 
 
 def test_poll_validators_never_bypass_review_key_authentication(server, monkeypatch):

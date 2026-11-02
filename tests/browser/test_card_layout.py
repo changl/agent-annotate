@@ -160,10 +160,11 @@ def _page(tmp_path, migration="Two statements and two weeks of dual writes."):
     return slug_dir
 
 
-def _serve(tmp_path, slug_dir):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+def _serve(tmp_path, slug_dir, *, port=None):
+    if port is None:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
     env = os.environ.copy()
     env["ANNOTATE_STATE_DIR"] = str(tmp_path / "state")
     process = subprocess.Popen(
@@ -290,7 +291,7 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             page.evaluate("() => window.AA.rail.reveal()")
             page.locator('.citem[data-comment-id="card-1"] .decision-btn').first.click()
             page.locator('.sec-ready .citem[data-comment-id="card-1"]').wait_for()
-            frame.locator('[data-strip-item="card-1"].annotate-decision-resolved').wait_for()
+            frame.locator('[data-strip-item="card-1"].annotate-answered').wait_for()
             page.set_viewport_size({"width": 390, "height": 844})
             page.wait_for_timeout(200)
             page.evaluate("() => window.AnnotateDocs.setMobileSheetOpen(false)")

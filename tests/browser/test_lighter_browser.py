@@ -53,7 +53,7 @@ def test_history_is_built_and_fully_fetched_only_when_opened(tmp_path):
     _rounds(directory)
     with _ipad(tmp_path, directory) as (page, _, history, _fonts):
         # The header's receipt comes from the latest round alone; the hidden list is not built.
-        page.wait_for_function("() => document.getElementById('send-note').textContent.includes('Feedback saved (1)')")
+        page.wait_for_function("() => document.getElementById('send-note').textContent.includes('Waiting for the agent (1)')")
         assert history == ["?latest=1"]
         assert page.locator("#vrail-body-review .vrow").count() == 0
 
@@ -86,9 +86,10 @@ def test_strip_evidence_is_built_on_open_and_stays_open_across_a_poll_redraw(tmp
         assert item.count() == 1
         frame.locator(".annotate-decision-evidence-toggle").first.evaluate("el => { el.dataset.before = '1'; }")
 
-        # An agent change redraws the strips on the next poll.
+        # An agent change redraws the strips once the reviewer asks for it (dw4).
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "A note from the agent.", "version": "v1"}]})
         _poll(page, 3)
+        page.locator("#unified-version-banner button").tap()
         page.wait_for_function("""() => {
           const doc = document.getElementById('content-frame').contentDocument;
           const t = doc.querySelector('.annotate-decision-evidence-toggle');

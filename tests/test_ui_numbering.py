@@ -44,6 +44,57 @@ def test_legacy_q_prefix_stays_canonical_when_same_question_exists_in_prior_vers
     assert [(card["id"], card["number"]) for card in _decision_cards(store)] == [("legacy", 13)]
 
 
+def test_existing_live_duplicates_get_distinct_labels_without_rewriting_store():
+    store = {"anchors": {"d:q41": [_card("current", 41, version="v24")],
+                         "s:repair": [_card("plan", 41, version="v1", doc="plan:repair")]}, "archived": {}}
+    before = json.dumps(store)
+    cards = {c["id"]: c["number"] for c in _decision_cards(store)}
+    assert cards == {"current": 41, "plan": "41·2"}
+    assert json.dumps(store) == before
+
+
+def test_current_version_wins_even_when_a_later_staged_card_exists():
+    store = {"current_version": "v36", "anchors": {"d:q10": [
+        _card("staged", 10, version="v37"), _card("current", 10, version="v36")]}, "archived": {}}
+    assert cli._item_numbers(store) == {"current": 10, "staged": "10·2"}
+
+
+def test_finding_lookup_uses_the_same_display_numbers(tmp_path):
+    from agent_annotate.categories import _finding
+    store = {"anchors": {"d:q41": [_card("review", 41, version="v24")],
+                         "s:finding": [_card("finding", 41, version="v1", category="findings")]}, "archived": {}}
+    assert _finding(store, "41·2")["id"] == "finding"
+    (tmp_path / "comments.json").write_text(json.dumps({"schema_version": 2, **store}))
+    fixed = cli.fix_finding({"slug_dir": str(tmp_path)}, "41·2", ["https://example.test/proof.png"], "Fixed", "agent:test")
+    assert fixed["id"] == "finding" and fixed["fixed"]["note"] == "Fixed"
+
+
+def test_cli_cards_prints_suffix_labels(tmp_path, monkeypatch, capsys):
+    store = {"schema_version": 2, "anchors": {"d:q41": [_card("current", 41, version="v24")],
+                         "s:repair": [_card("plan", 41, version="v1", doc="plan:repair")]}, "archived": {}}
+    (tmp_path / "comments.json").write_text(json.dumps(store))
+    monkeypatch.setattr(cli, "_resolve_slug", lambda *a: ("p", "page", {"slug_dir": str(tmp_path)}))
+    assert cli.cmd_cards(SimpleNamespace(slug="p/page", project=None, json=False)) == 0
+    assert "#41·2" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["resolve", "withdraw"])
+def test_number_targets_live_card_instead_of_prior_round(tmp_path, monkeypatch, command):
+    directory = tmp_path / "page"
+    directory.mkdir()
+    store = {"schema_version": 2, "anchors": {"d:q10": [
+        _card("old", 10, version="v3", status="resolved_in_version"),
+        _card("current", 10, version="v36")]}, "archived": {}}
+    (directory / "comments.json").write_text(json.dumps(store))
+    (directory / "current.meta.json").write_text(json.dumps({"current": "v36"}))
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *a: ("p", "page", {"slug_dir": str(directory)}))
+    calls = []
+    monkeypatch.setattr(cli, "_comment_call", lambda args, *a, **kw: calls.append(args.comment_id) or 0)
+    args = cli.build_parser().parse_args([command, "p/page", "10"] + (["--why", "Superseded"] if command == "withdraw" else []))
+    assert args.func(args) == 0
+    assert calls == ["current"]
+
+
 @pytest.mark.parametrize("archived, expected", [
     ({"d:old": [_card("old", 21, status="archived")]}, 22),
     ([_card("old", 21, status="archived")], 22),

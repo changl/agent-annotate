@@ -91,7 +91,7 @@
   // register, the rail and the header count always agree.
   function statusOf(f) {
     const d = f.decision || {};
-    if (f.round_pending || (d.round_pending && f.status !== 'resolved_in_version')) return 'ready';
+    if (f.round_pending || d.round_pending) return 'ready';
     if (f.fixed) return 'done';
     if (!d.verdict) return f.reopened && f.reopened.length || f.response_text ? 'waiting' : 'needs';
     let choice = d.option_id || d.option;
@@ -225,7 +225,7 @@
     const head = `<div class="fix-head"><span class="badge badge-sm badge-soft badge-success">Marked fixed</span><span class="citem-author">${esc(d.whoName({ by: fx.by }))}</span><span>${esc(UI.fmtTs(fx.ts))}</span></div>`;
     let action = '';
     if (r) {
-      action = `<div class="citem-meta"><span>${esc(d.whoName({ by: r.by }))} reopened it · ${esc(UI.fmtTs(r.ts))} · ${f.round_pending ? 'goes out with Send' : 'sent; waiting on agent'}</span></div>${r.text ? `<div class="citem-txt">${esc(r.text)}</div>` : ''}`;
+      action = `<div class="citem-meta"><span>${esc(d.whoName({ by: r.by }))} reopened it · ${esc(UI.fmtTs(r.ts))} · ${f.round_pending ? 'goes out with Send' : d.deliveryHtml(r.delivery_id)}</span></div>${r.text ? `<div class="citem-txt">${esc(r.text)}</div>` : ''}`;
     } else if (reopening || drafts.reopen[f.id]) {
       action = `<textarea class="textarea decision-say-ta" id="f-reopen-ta" placeholder="What is still wrong? (optional)" rows="2" aria-label="Why reopen ${esc(tag(f))}" data-submit="#f-reopen-save">${esc(drafts.reopen[f.id] || '')}</textarea>
         <div class="gf-ft"><span class="gf-hint">Goes out with Send</span><button type="button" class="btn btn-ghost btn-xs" id="f-reopen-cancel">Cancel</button><button type="button" class="btn btn-xs" id="f-reopen-save">Reopen</button></div>`;
@@ -345,13 +345,13 @@
     // sent yet" (final/app/findings.js:235-238).
     // A discarded answer (UI-14) never went out; History leaves it out.
     (f.decision_history || []).concat(f.decision ? [f.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach((x, i) => {
-      const what = i === 0 && !x.round_pending ? 'answered' : 'changed the answer · ' + (x.round_pending ? 'not sent yet' : 'sent');
+      const what = i === 0 && !x.round_pending ? 'answered · ' + d.deliveryHtml(x.delivery_id) : 'changed the answer · ' + (x.round_pending ? 'not sent yet' : d.deliveryHtml(x.delivery_id));
       e.push({ ts: x.ts, html: `<b>${who(x.by)}</b> · ${what}`, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict) });
     });
     if (f.response_text) e.push({ ts: f.created_at, html: `<b>${esc(d.whoName(f))}</b> · resolved in ${esc(f.resolved_in_version || 'v1')}`, text: f.response_text });
     (f.fixed_history || []).concat(f.fixed ? [f.fixed] : []).forEach(fx => e.push({ ts: fx.ts, html: `<b>${who(fx.by)}</b> · marked fixed, with ${(fx.proof || []).length} proof item${(fx.proof || []).length === 1 ? '' : 's'}`, text: fx.note || '' }));
-    (f.reopened || []).forEach((r, i, all) => e.push({ ts: r.ts, html: `<b>${who(r.by)}</b> · reopened · ${i === all.length - 1 && f.round_pending ? 'not sent yet' : 'sent'}`, text: r.text || '' }));
-    commentsOf(f).forEach(c => e.push({ ts: c.created_at, html: `<b>${esc(d.whoName(c))}</b> · comment · ${d.needsPush(c) ? 'not sent yet' : 'sent'}`, text: c.text }));
+    (f.reopened || []).forEach((r, i, all) => e.push({ ts: r.ts, html: `<b>${who(r.by)}</b> · reopened · ${i === all.length - 1 && f.round_pending ? 'not sent yet' : d.deliveryHtml(r.delivery_id)}`, text: r.text || '' }));
+    commentsOf(f).forEach(c => e.push({ ts: c.created_at, html: `<b>${esc(d.whoName(c))}</b> · comment · ${d.needsPush(c) ? 'not sent yet' : d.deliveryHtml(c.delivery_id)}`, text: c.text }));
     e.sort((x, y) => (x.ts < y.ts ? 1 : -1));
     el.innerHTML = `<p class="project-detail hist-sub">${esc(tag(f) + ' · ' + titleOf(f))}</p>` + e.map(h => `<div class="hist-item"><div class="hist-head">${h.html}<span>· ${esc(UI.fmtTs(h.ts))}</span></div><div class="hist-text">${esc(h.text)}</div></div>`).join('');
   }

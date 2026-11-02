@@ -46,6 +46,8 @@ def waiting_count(directory: Path) -> int:
         store = json.loads((directory / "comments.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         store = {}
+    from agent_annotate.submitted import copy_view, store_view
+    store = store_view(store)
     count = 0
     for comments in (store.get("anchors") or {}).values():
         for comment in comments:
@@ -57,7 +59,7 @@ def waiting_count(directory: Path) -> int:
     try:
         count += sum(block.get("status") == "needs_you" and
                      not any(revision.get("round_pending") for revision in block["revisions"])
-                     for block in load_copy(directory)["blocks"])
+                     for block in copy_view(load_copy(directory))["blocks"])
     except (OSError, ValueError):
         pass
     return count

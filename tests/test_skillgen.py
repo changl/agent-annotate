@@ -106,8 +106,8 @@ def test_the_generated_hook_shim_runs_the_packaged_hook(tmp_path):
                  "decision": {"verdict": "accept", "ts": "2026-09-17T10:00:00Z", "by": "r@x"}}]},
         "archived": {}}))
     (bus_root / "proj" / "demo.ndjson").write_text(json.dumps(
-        {"ts": "2026-09-17T10:00:00Z", "event": "comment_updated", "slug": "demo",
-         "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "r@x", "decision": "accept"}) + "\n")
+        {"ts": "2026-09-17T10:00:00Z", "event": "session_push", "comment_ids": ["aaaaaaaaaaaa"], "slug": "demo",
+         "comment_id": "aaaaaaaaaaaa", "anchor_id": "s:a", "author": "r@x"}) + "\n")
     env = os.environ.copy()
     env["ANNOTATE_BUS_ROOT"] = str(bus_root)
     env["ANNOTATE_STATE_DIR"] = str(state)

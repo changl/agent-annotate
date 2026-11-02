@@ -719,7 +719,6 @@ class Renderer:
             parts.append(f'<p class="card-ref muted">Anchored to '
                          f'<a href="#{E(bound_to, quote=True)}">{E(str(name))}</a> '
                          f'(<code>{E(bound_to)}</code>)</p>')
-        parts.append('<p class="q">Answer it on the card, then press Finish review.</p>')
         attr = f' data-anchor-id="{aid}"' if aid else ""
         cls = "card" if aid else "card card-bound"
         return f'<div class="{cls}"{attr}>{"".join(parts)}</div>'

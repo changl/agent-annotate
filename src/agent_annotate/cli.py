@@ -552,7 +552,7 @@ def _server_capabilities(port: int, base_path: str = "", *, timeout: float = 1.0
         raise RuntimeError(f"unknown occupant on port {port}: invalid capabilities ({exc})") from exc
 
 
-def _find_free_port_after(start: int, registered_pid: int | None = None) -> int:
+def _find_free_port_after(start: int, registered_pid: int | None = None, *, slug_dir: Path | None = None) -> int:
     """Lowest usable port at or after `start`.
 
     The probe must bind EXACTLY what the sync server binds — ("localhost", p)
@@ -577,9 +577,11 @@ def _find_free_port_after(start: int, registered_pid: int | None = None) -> int:
     reuses TIME_WAIT but is still refused by an active LISTEN on that exact
     address.
     """
+    from .sync_server import _reserved_ports
+    reserved = _reserved_ports(slug_dir)
     p = start
     while p < start + 50:
-        if _port_is_free(p):
+        if p not in reserved and _port_is_free(p):
             return p
         p += 1
     raise RuntimeError(f"No free port found in [{start}, {start+50})")
@@ -1228,6 +1230,9 @@ def _print_publish(project: str, slug: str, slug_dir: Path, record: dict,
         if len(access) < len(report.unavailable):
             print("  UNVERIFIED     could not reach the authenticated browser — the public")
             print("                 URL below is UNCONFIRMED, not known-good")
+            for stage in report.unavailable:
+                if stage not in access:
+                    print(f"                 {stage.name} browser check skipped: {redact_share_links(stage.detail)}")
 
     # The one URL to hand over. Pid, port, bus and state paths used to follow
     # it; `status` has them, and no round needed them from here.
@@ -1285,8 +1290,9 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
     """
     wanted = getattr(args, "transport", None) or _project_config(project).get("transport")
     if wanted == "funnel" and record.get("transport") != "funnel":
+        from .pagegen import slugify
         previous = dict(record)
-        mount = f"/annotate/{project}/{slug}"
+        mount = f"/annotate/{slugify(project)}/{slug}"
         needs_mount = mount != record.get("public_base_path")
         remounted = False
         from .review_access import ensure_key
@@ -1515,7 +1521,8 @@ def _publish(args) -> int:
             # Transport: publish (insert public route)
             transport_name = args.transport or cfg.get("transport", "local")
             hostname = args.hostname or cfg.get("hostname")
-            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{project}/{slug}" if transport_name == "funnel" else f"/{slug}")
+            from .pagegen import slugify
+            path_prefix = args.path_prefix or cfg.get("path_prefix") or (f"/annotate/{slugify(project)}/{slug}" if transport_name == "funnel" else f"/{slug}")
             if path_prefix and not path_prefix.startswith("/"):
                 path_prefix = "/" + path_prefix
             path_prefix = path_prefix.rstrip("/")
@@ -1715,6 +1722,49 @@ def cmd_unpublish(args) -> int:
     return 0
 
 
+def _process_argv(pid: int) -> list[str] | None:
+    """The exact argv of a live process, or None when it cannot be read.
+
+    `ps` joins arguments with spaces and quotes nothing, so a path with a space
+    cannot be read back from it. Linux keeps argv in /proc; macOS returns it
+    from sysctl KERN_PROCARGS2. A process that exited, one the OS will not
+    describe (another user's, on macOS), an argv it cannot place exactly or any
+    other platform gives None, which is never an identity.
+    """
+    try:
+        if sys.platform.startswith("linux"):
+            raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+            args = raw[:-1].split(b"\0") if raw.endswith(b"\0") else raw.split(b"\0")
+        elif sys.platform == "darwin":
+            import ctypes
+            sysctl = ctypes.CDLL(None, use_errno=True).sysctl
+            sysctl.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                               ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t)
+            size = ctypes.c_size_t(os.sysconf("SC_ARG_MAX"))
+            buffer = ctypes.create_string_buffer(size.value)
+            name = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
+            if sysctl(name, 3, buffer, ctypes.byref(size), None, 0) != 0:
+                return None
+            raw = buffer.raw[:size.value]
+            argc = int.from_bytes(raw[:4], sys.byteorder)
+            # argc, the executable path, NULs padding it to a multiple of 8 bytes, then
+            # argc NUL-terminated arguments and the environment. An empty argv[0] reads
+            # as one more padding NUL, so a NUL where argv[0] must start, anything but
+            # NULs in the padding, or a missing terminator leaves argv unplaced.
+            path_end = raw.index(b"\0", 4) + 1
+            start = path_end + (4 - path_end) % 8
+            parts = raw[start:].split(b"\0", argc)
+            if (raw[path_end:start].strip(b"\0") or raw[start:start + 1] in (b"", b"\0")
+                    or len(parts) <= argc):
+                return None
+            args = parts[:argc]
+        else:
+            return None
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+    return [os.fsdecode(arg) for arg in args] if raw and args else None
+
+
 def _running_servers(strict: bool = False) -> dict:
     """Map resolved slug_dir -> [{pid, port}] for every live page server.
 
@@ -1722,6 +1772,7 @@ def _running_servers(strict: bool = False) -> dict:
     (a supervisor, a manual relaunch, a peer session) keeps the ORIGINAL pid in
     the state file forever, so a live page reads as dead everywhere slugs are
     enumerated. slug_dir is the stable identity — pid and port both move.
+    `ps` only finds candidates; each one's arguments are its exact argv.
     """
     try:
         out = subprocess.run(
@@ -1735,11 +1786,12 @@ def _running_servers(strict: bool = False) -> dict:
     for line in out.splitlines():
         if "sync_server" not in line or "--slug-dir" not in line:
             continue
-        pid_str, _, rest = line.strip().partition(" ")
         try:
-            argv = shlex.split(rest)
-            pid = int(pid_str)
+            pid = int(line.split()[0])
         except ValueError:
+            continue
+        argv = _process_argv(pid)
+        if not argv:
             continue
 
         def _arg(flag, argv=argv):
@@ -1912,9 +1964,9 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
             "reason": str(exc),
         }]
 
+    from .submitted import store_view
     from .sync_server import _validate_store, _version_has_anchor
-
-    store = _validate_store(raw)
+    store = store_view(_validate_store(raw))
     meta = _read_meta(slug_dir)
     history = [
         item.get("version")
@@ -2123,7 +2175,8 @@ def _inbox_visible(ev: dict, session_id: str) -> bool:
     posed and every item it had just resolved, ahead of the verdicts it was
     waiting for.
     """
-    if ev.get("event") in _INBOX_HIDDEN:
+    from .submitted import draft_event
+    if draft_event(ev) or ev.get("event") in _INBOX_HIDDEN:
         return False
     # A reopen click is a draft until the reviewer's Send, whose round carries
     # the reopen's words; the bare click invited a re-fix before them.
@@ -2287,7 +2340,7 @@ def _category_counts(record: dict) -> dict | None:
     reviewer's unread), so the CLI and the UI agree."""
     from .categories import category_counts
     try:
-        return category_counts(record["slug_dir"]) if record.get("slug_dir") else None
+        return category_counts(record["slug_dir"], store=_load_store(record), submitted_only=True) if record.get("slug_dir") else None
     except (OSError, ValueError, LookupError, TypeError):
         return None
 
@@ -2349,6 +2402,8 @@ def cmd_inbox(args) -> int:
                     events.append(ev)
             new_offset = f.tell()
 
+    from .submitted import draft_event
+    events = [e for e in events if not draft_event(e)]
     shown = events if getattr(args, "all_events", False) else [
         e for e in events if _inbox_visible(e, session_id)]
     store = _load_store(record)
@@ -2445,7 +2500,7 @@ def cmd_cards(args) -> int:
         verdict = c["verdict"] or ("pending" if c["pending"] else "—")
         if c["pending"]:
             verdict += " (unsent)"
-        item_number = f"#{c['number']}" if isinstance(c.get("number"), int) else "—"
+        item_number = f"#{c['number']}" if c.get("number") is not None else "—"
         line = "  %-6s %-12s %-20s %-6s %-9s %s" % (
             item_number, c["id"][:12], (c["anchor_id"] or "")[:20], c["version"][:6],
             verdict, _clip(c["prompt"], 64))
@@ -3429,7 +3484,7 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         if not port:
             return "skipped", "no recorded port"
         try:
-            free = _find_free_port_after(port, registered_pid=record.get("pid"))
+            free = _find_free_port_after(port, registered_pid=record.get("pid"), slug_dir=slug_dir)
         except RuntimeError as e:
             free = None
             detail = str(e)
@@ -3702,13 +3757,10 @@ def fix_finding(record: dict, identifier, proofs: list[str], note: str, author: 
     # Validate the target and all ordinary inputs before copying attachments.
     # A number is the one `cards` shows, allocated or stored.
     store = _load_store(record)
+    numbers = _item_numbers(store)
     matches = [c.get("id") for anchor, c in _iter_comments(store)
                if _comment_category({"anchor_id": anchor, **c}) == "findings" and
-               (c.get("id") == identifier or (str(identifier).isdigit() and str(c.get("number")) == str(identifier)))]
-    if str(identifier).isdigit():
-        matches = list(dict.fromkeys(matches + [
-            card["id"] for card in _decision_cards(store)
-            if card["category"] == "findings" and str(card.get("number")) == str(identifier)]))
+               (c.get("id") == identifier or str(numbers.get(c.get("id"))) == str(identifier))]
     if not matches:
         raise LookupError(f"finding {identifier} not found")
     if len(matches) != 1:
@@ -3751,7 +3803,8 @@ def cmd_finding(args) -> int:
         if getattr(args, "json", False):
             print(json.dumps(comment, ensure_ascii=False, indent=2))
         else:
-            print(f"  {page_name(record)}: finding #{comment.get('number', args.fixed)} fixed with proof\n  URL: {page_url(record)}")
+            number = _item_numbers(_load_store(record)).get(comment["id"], args.fixed)
+            print(f"  {page_name(record)}: finding #{number} fixed with proof\n  URL: {page_url(record)}")
         return 0
     except (OSError, ValueError, LookupError) as exc:
         # KeyError's str() quotes its message; print the words.
@@ -3827,7 +3880,8 @@ def cmd_copy(args) -> int:
             else:
                 print(f"  copy saved: {len(document['blocks'])} blocks\n  URL: {page_url(record)}")
         else:
-            document = load_copy(directory)
+            from .submitted import copy_view
+            document = copy_view(load_copy(directory))
             if block_id:
                 blocks = [block for block in document["blocks"] if block["id"] == block_id]
                 if not blocks:
@@ -4178,6 +4232,7 @@ def cmd_sync_skills(args) -> int:
 
 
 def cmd_watch(args) -> int:
+    from .submitted import draft_event
     slug = args.slug
     record = None
     for sf in _all_state_files():
@@ -4201,7 +4256,12 @@ def cmd_watch(args) -> int:
                 if not line:
                     time.sleep(0.5)
                     continue
-                print(line.rstrip())
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and not draft_event(event):
+                    print(line.rstrip())
         except KeyboardInterrupt:
             print()
             return 0
@@ -4479,7 +4539,8 @@ def _comment_call(args, method: str, path: str, body: dict, done: str | None = N
     if getattr(args, "json", False) or not done or not isinstance(payload, dict):
         print(json.dumps(payload, ensure_ascii=False) if payload is not None else "ok")
     else:
-        number = f" #{payload['number']}" if payload.get("number") else ""
+        label = getattr(args, "item_number", None) or payload.get("number")
+        number = f" #{label}" if label else ""
         print(f"{done} {args.comment_id}{number}{target}")
     return 0
 
@@ -4504,6 +4565,7 @@ def cmd_resolve(args) -> int:
         return 2
     comment = matches[0]
     args.comment_id = comment["id"]
+    args.item_number = numbers.get(comment["id"])
     args.in_version = getattr(args, "in_version", None) or _read_meta(Path(record["slug_dir"])).get("current")
     own_anchor = not getattr(args, "anchor", None)
     args.anchor = getattr(args, "anchor", None) or comment.get("anchor_id")
@@ -4528,7 +4590,7 @@ def cmd_withdraw(args) -> int:
     resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
-    store = _read_store_file(_store_file(resolved[2]))
+    store = _load_store(resolved[2])
     numbers = _item_numbers(store)
     matches = [c for _anchor, c in _iter_comments(store)
                if c.get("id") == args.comment_id or str(numbers.get(c.get("id"))) == args.comment_id]
@@ -4536,6 +4598,7 @@ def cmd_withdraw(args) -> int:
         print("ERROR: question not found or number is ambiguous; use its comment id", file=sys.stderr)
         return 2
     args.comment_id = matches[0]["id"]
+    args.item_number = numbers.get(args.comment_id)
     if getattr(args, "dry_run", False):
         from .sync_server import DecisionRequestError, _withdraw_decision
         try:
@@ -4685,7 +4748,9 @@ def _load_store(record: dict) -> dict:
     if not isinstance(anchors, dict):
         anchors = {}
     archived = data.get("archived")
-    return {"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else []}
+    from .submitted import store_view
+    return store_view({"anchors": anchors, "archived": archived if isinstance(archived, (dict, list)) else [],
+                       "current_version": _read_meta(Path(slug_dir)).get("current")})
 
 
 def _iter_comments(store: dict):
@@ -4696,8 +4761,9 @@ def _iter_comments(store: dict):
                     yield anchor_id, c
 
 
-def _item_numbers(store: dict) -> dict[str, int]:
+def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int | str]:
     """{comment id: the number the page shows}, as shell.js computeNumbers."""
+    current_version = current_version or store.get("current_version")
     comments = list(_iter_comments(store))
     historical = []
     archived = store.get("archived") or {}
@@ -4705,26 +4771,34 @@ def _item_numbers(store: dict) -> dict[str, int]:
     for value in values:
         historical.extend([value] if isinstance(value, dict) else value if isinstance(value, list) else [])
     allocation = comments + [(c.get("anchor_id"), c) for c in historical if isinstance(c, dict)]
-    numbers: dict[str, int] = {}
+    def priority(item):
+        c = item[1]
+        version = re.fullmatch(r"v(\d+)", c.get("version") or "")
+        return (c.get("status") in ("archived", "resolved_in_version") or bool(c.get("withdrawn")),
+                c.get("version") != current_version if current_version else False,
+                -int(version[1]) if version else 0, c.get("created_at") or "", c.get("id") or "")
+    allocation.sort(key=priority)
+    numbers: dict[str, int | str] = {}
     used: set[int] = set()
+    reserved: set[int] = set()
+    duplicates: dict[int, int] = {}
     for _anchor_id, comment in allocation:
         number = comment.get("number")
         cid = comment.get("id")
-        if (cid and isinstance(number, int) and not isinstance(number, bool)
-                and number > 0 and cid not in numbers):
-            numbers[cid] = number
-            used.add(number)
-    for _anchor_id, comment in allocation:
-        cid = comment.get("id")
-        if not cid or cid in numbers:
-            continue
-        prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
-        match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
-        number = int(match.group(1)) if match else 0
+        if not (type(number) is int and number > 0):
+            prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+            match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
+            number = int(match.group(1)) if match else 0
         if number > 0:
-            numbers[cid] = number
-            used.add(number)
-    next_number = max(used, default=0) + 1
+            reserved.add(number)
+            if cid and cid not in numbers:
+                if number in used:
+                    duplicates[number] = duplicates.get(number, 1) + 1
+                    numbers[cid] = f"{number}·{duplicates[number]}"
+                else:
+                    numbers[cid] = number
+                    used.add(number)
+    next_number = max(reserved, default=0) + 1
     for _anchor_id, comment in sorted(
             allocation,
             key=lambda item: (
@@ -4744,6 +4818,8 @@ def _item_numbers(store: dict) -> dict[str, int]:
 
 def _decision_cards(store: dict) -> list[dict]:
     """Every live decision card, flattened for printing."""
+    from .submitted import store_view
+    store = store_view(store)
     comments = list(_iter_comments(store))
     numbers = _item_numbers(store)
     cards = []
@@ -4769,7 +4845,8 @@ def _decision_cards(store: dict) -> list[dict]:
             **{field: c[field] for field in ("doc", "finding", "fixed", "fixed_history", "reopened") if field in c},
         })
     return sorted(cards, key=lambda c: (
-        c["number"] if isinstance(c.get("number"), int) else 10**9,
+        int(str(c["number"]).split("·")[0]) if c.get("number") is not None else 10**9,
+        str(c.get("number") or ""),
         c["anchor_id"],
         c["id"],
     ))

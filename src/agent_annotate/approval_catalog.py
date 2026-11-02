@@ -62,7 +62,7 @@ def _cached_image_hash(path, signature):
 
 def item_id(comment: dict) -> str:
     request = comment.get("decision_request")
-    explicit = request.get("item_id") if isinstance(request, dict) else None
+    explicit = (request.get("item_id") if isinstance(request, dict) else None) or comment.get("origin_item_id")
     number = comment.get("number")
     identity = f"d:q{number}" if type(number) is int and number > 0 else comment.get("origin_id") or comment["id"]
     if explicit:

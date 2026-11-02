@@ -282,3 +282,42 @@ def test_an_unpublishable_slug_dir_fails_before_starting_a_server(published, cap
     assert rc == 2
     assert "publish-version" in err
     assert published.saved == {}
+
+
+def test_funnel_publish_with_vanished_browser_still_asks(published, monkeypatch, capsys):
+    from pathlib import Path
+
+    from agent_annotate import pagegen, verify
+
+    source = published.slug_dir.parent / "page.md"
+    source.write_text((Path(__file__).parent / "fixtures/full_review.md").read_text())
+    monkeypatch.setattr(verify, "probe_http", lambda name, url, **kw: StageResult(name, url, PASS, "ok"))
+
+    def orca(argv, timeout=60.0):
+        if argv[:2] == ["tab", "create"]:
+            return {"result": {"browserPageId": "gone"}}
+        raise RuntimeError("browser_tab_not_found")
+
+    monkeypatch.setattr(verify, "_orca", orca)
+    monkeypatch.setattr(pagegen, "_call_publish", lambda directory, args: cli.cmd_publish(
+        _args(directory, transport="funnel", verify_timeout=0)))
+    asked = []
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("reviews", "demo", published.saved["demo"]))
+
+    def api(record, method, path, body, author):
+        asked.append((method, path, body))
+        return 200, {"ids": ["q1", "q2", "q3"], "created": 3, "updated": 0}
+
+    monkeypatch.setattr(cli, "_api", api)
+    args = SimpleNamespace(slug_dir=str(published.slug_dir), from_file=str(source),
+                           version="v1", label=None, project="reviews", publish=True, ask=True)
+    assert pagegen.cmd_new(args) == 0
+    out = capsys.readouterr().out
+    assert "NOT PUBLISHED" not in out
+    assert PUBLIC_URL in out
+    assert "public browser check skipped" in out
+    assert "browser_tab_not_found" in out
+    assert asked[0][:2] == ("POST", "/api/comments/batch")
+    assert len(asked[0][2]["items"]) == 3
+    assert all(item["version"] == "v1" for item in asked[0][2]["items"])
+    assert published.saved["demo"]["verified"] is False
