@@ -199,8 +199,11 @@ def test_outside_link_opens_in_a_new_tab_not_in_the_frame(tmp_path, versions):
         link = frame.locator(f'a[href="{OUTSIDE}"]')
         expect(link).to_be_visible()
         src = page.locator("#content-frame").get_attribute("src")
+        link.click(trial=True)
+        link.focus()
         with page.context.expect_page() as popup:
-            link.click()
+            # A new tab can throttle the old tab before Playwright receives its click ack.
+            link.evaluate("a => setTimeout(() => a.click())")
         tab = popup.value
         assert link.get_attribute("target") == "_blank"
         assert "noopener" in (link.get_attribute("rel") or "").split()

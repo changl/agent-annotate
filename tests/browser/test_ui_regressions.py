@@ -39,7 +39,7 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
     before = path.read_bytes()
     expected = _item_numbers({**store, "current_version": "v1"})
     assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 5
-    process, base = _serve(tmp_path, directory, port=18740)
+    process, base = _serve(tmp_path, directory)
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
