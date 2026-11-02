@@ -44,6 +44,21 @@
 .aa-tabs-list .aa-tab-name{font-weight:600;font-size:calc(14px * var(--aa-text, 1));min-width:72px}
 .aa-tabs-list .aa-tab-state{flex:1;font-size:calc(12px * var(--aa-text, 1));color:var(--muted)}
 .aa-tabs-list .aa-tab-state.is-needs{color:var(--err-text);font-weight:600}
+/* av1: Review's version in its tab; an older one in the warning colour */
+.aa-tab-ver{font-weight:500;color:var(--muted)}
+.aa-tab-ver.is-older{color:var(--warn-text);font-weight:600}
+/* av1: the refresh button after the tabs: plain, or a red border and count when something waits */
+.aa-fresh{flex:none;gap:5px;padding-inline:8px;margin-left:-8px;border:1px solid transparent}
+.aa-fresh svg.i{width:16px;height:16px}
+.aa-fresh.is-waiting{border-color:color-mix(in oklab,var(--color-error) 60%,transparent);background:color-mix(in oklab,var(--color-error) 8%,var(--color-base-100))}
+.aa-fresh-n{font-variant-numeric:tabular-nums}
+.aa-fresh-n[hidden]{display:none}
+.aa-fresh.is-checking svg.i{animation:aa-spin .8s linear infinite}
+@keyframes aa-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.aa-fresh.is-checking svg.i{animation:none;opacity:.5}}
+@media (pointer:coarse){.aa-fresh{min-width:44px;min-height:40px}}
+/* av1: Review needs no title row: its version is in the tab */
+body[data-view="review"] .view-hd{display:none}
 
 /* ── Content title: what used to be the header's second line ─────────── */
 .view-hd{flex:none;display:flex;align-items:center;min-height:40px;padding:6px 18px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
