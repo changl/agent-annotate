@@ -1,6 +1,6 @@
 # Complete, immutable Review versions (agent-annotate-b93)
 
-Regression baseline: `005a450` (agent-annotate 2.28.2). Integration base: `b131005` (`origin/changl/next-2.28.3`, including PR #92). Runtime code: `e4489a3`; worktree: `changl/version-ready`. The rebase retained the numbering fix and both Unreleased changelog entries.
+Regression baseline: `005a450` (agent-annotate 2.28.2). Final integration base: `2c52d27` (`origin/changl/next-2.28.3`, including PRs #92 and #93). Final runtime source: `2b6c9cf`; worktree: `changl/version-ready`. Rebases retained the numbering fix, CI/port isolation and every Unreleased entry.
 
 ## Result
 
@@ -39,10 +39,11 @@ The baseline stderr was an erroneous exact-page-resolution diagnostic from the e
 
 The three original regression cases failed on the baseline: failed seeding changed current, a shown version could be republished, and `--fixes` was unavailable. Dedicated coverage now includes bad cards, number conflicts, failed/unavailable checks, checked-file changes, incomplete batches, storage rollback, shown-version/card immutability, fix metadata and old-server refusal.
 
-- Frozen-runtime full non-browser suite at `e4489a3`: **1781 passed, 2 skipped** (254.35 s).
-- Publish/version/numbering/verification focused chunk: 101 passed. Final readiness/publication/security/metadata-alias chunk: **64 passed**, including all **18 readiness cases** and both generated/manual HTML publication paths.
-- [GitHub Checks on the frozen runtime](https://github.com/changl/agent-annotate/actions/runs/41541130819) passed: **1244 passed, 4 skipped** on Linux (164.12 s for pytest; 3m7s job). Ruff and JavaScript syntax checks passed. The readiness and publish-version modules are included in the CI test list.
-- Full browser suite: four file-disjoint chunks, 297 cases exercised (294 initially passed; the three failing cases later passed focused reruns). First-pass chunks were 73 passed / 1 failed, 79 passed / 1 failed, 71 passed / 1 failed, and 71 passed. The legacy-number fixture was updated to expect only published items and use an allocated sandbox port. Popup and image-scroll checks passed individually; the image scroll assertion also failed in a combined rerun (3526 vs 3296), so the full browser sweep is not a single clean pass. Isolated original 2.28.2 and final candidate image checks both passed. The post-visibility desktop/iPad update/numbering chunk passed all 18 cases.
+- On the final integration base, `scripts/ci.py --full --local --workers 3` exercised the entire suite: **1822 runtime passed, 2 skipped**; browser chunks **96 passed**, **103 passed / 4 failed**, **94 passed**; ruff and all seven JS checks passed (1429.7 s total).
+- The four failures were the dense-workspace fixture's earlier `v0` questions lacking a published History entry. The fixture now declares that earlier publication; its full **six-case rerun passed**, retaining every product assertion. All **297 unique browser cases** were exercised. The original merged receipt remains FAIL rather than being rewritten; this is not a claim of a single all-green full-suite receipt.
+- The subsequent one-line version-specific card-file fix and its regression passed the complete readiness/page-generation/publication chunk: **83 passed**, including all **21 readiness cases**. The prior security/concurrency/verification chunk passed **88** cases; the post-visibility desktop/iPad update/numbering chunk passed **18**. These cover failed cards, number collisions, checked-file changes, rollback, peer publication, stale markers, immutable shown versions and metadata round-trips.
+- [GitHub Checks on the final runtime](https://github.com/changl/agent-annotate/actions/runs/41547072745) passed: **1286 passed, 4 skipped** on Linux; ruff/JS checks passed. The new readiness and publish-version modules are included in CI.
+- Earlier manual parallel runs encountered popup/image-scroll timing failures. Their isolated reruns passed; neither failed in the final isolated full sweep. No live/public Funnel verification was performed, as the task requires copies only.
 
 Tests use this worktree's absolute `src` in `PYTHONPATH` with `/Users/changlee/projects/agent-annotate/codex/.venv/bin/python`. Rendering/lifecycle fixtures now explicitly author drafts and make complete synthetic snapshots visible; the new publication tests use direct HTTP against real sandbox servers.
 
