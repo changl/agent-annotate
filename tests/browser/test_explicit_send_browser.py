@@ -115,7 +115,7 @@ def test_only_manual_send_and_confirmed_owner_receipt_can_say_sent(tmp_path, mon
         if received:
             playwright.expect(page.locator('.citem[data-comment-id="question-11"] .send-state').first).to_have_text("Sent", timeout=15000)
         else:
-            playwright.expect(note).to_contain_text("owner delivery pending")
+            playwright.expect(note).to_contain_text("Waiting for the agent")
         if not received:
             assert "Sent" not in note.inner_text()
             assert page.locator('.send-state:text-is("Sent")').count() == 0
@@ -149,7 +149,7 @@ def test_owner_receipt_updates_badges_without_replacing_a_typed_draft(tmp_path, 
         row = next(iter(data["deliveries"].values()))
         row["receipt"]["prompt"]["stages"] = ["input_accepted"]
         journal.write_text(json.dumps(data))
-        playwright.expect(page.locator("#delivery-status")).to_contain_text("Sent to owner session", timeout=15000)
+        playwright.expect(page.locator("#delivery-status")).to_have_text("Delivered; waiting for the agent to start", timeout=15000)
         playwright.expect(page.locator("#send-note")).to_contain_text("Sent to session")
         if view == "review":
             playwright.expect(card.locator('[data-delivery-ids]').first).to_have_text("Sent")

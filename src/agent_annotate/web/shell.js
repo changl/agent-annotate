@@ -1131,18 +1131,19 @@ function sentRounds() {
   }).filter(r => r.items.length);
 }
 // Only a matching owner receipt proves delivery, including after reload.
+const WAITING_LABEL = 'Waiting for the agent';
 function deliveryLabel(id) {
-  if (Array.isArray(id)) return id.length && id.every(value => deliveryLabel(value) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending';
+  if (Array.isArray(id)) return id.length && id.every(value => deliveryLabel(value) === 'Sent') ? 'Sent' : WAITING_LABEL;
   const data = SUMMARY_DELIVERY || {};
   const receipt = (data.deliveries || []).find(r => r.id === id) || (data.latest?.id === id ? data.latest : null);
-  return receipt?.delivered ? 'Sent' : 'In inbox · owner delivery pending';
+  return receipt?.delivered ? 'Sent' : WAITING_LABEL;
 }
 function deliveryHtml(id) {
   const ids = Array.isArray(id) ? id : [id];
   return `<span data-delivery-ids="${escAttr(ids.filter(Boolean).join(','))}">${esc(deliveryLabel(id))}</span>`;
 }
 function roundResult(n, ids) {
-  return (ids?.length && ids.every(id => deliveryLabel(id) === 'Sent') ? 'Sent' : 'In inbox · owner delivery pending') + ' (' + n + ')';
+  return (ids?.length && ids.every(id => deliveryLabel(id) === 'Sent') ? 'Sent' : WAITING_LABEL) + ' (' + n + ')';
 }
 function legacyRound(r) {
   {
@@ -1172,8 +1173,12 @@ async function loadDelivery() {
     SUMMARY_DELIVERY = data;
     node.hidden = !data.latest;
     if (data.latest) {
-      const labels = {acknowledged: 'Owner read this feedback round; project work is tracked separately', pending: 'Submitted; owner delivery pending — waiting in the inbox', accepted: 'Submitted; owner delivery unconfirmed — waiting in the inbox', started: 'Owner turn started; agent response pending', uncertain: 'Submitted; owner delivery unconfirmed — waiting in the inbox', superseded: 'Page owner changed before this round was delivered'};
-      node.textContent = ((data.latest.delivered && data.latest.state === 'accepted' ? 'Sent to owner session; agent response pending' : labels[data.latest.state]) || 'Feedback delivery: ' + data.latest.state) + (data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? '. ' + data.latest.detail : '');
+      // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
+      const unconfirmed = 'Saved; not yet confirmed that the agent got it';
+      const labels = {acknowledged: 'The agent has read your last Send', pending: 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
+      node.textContent = labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state;
+      // The technical reason stays on hover, out of the sentence he reads.
+      node.title = data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '';
     }
     window.AA?.send?.delivery(data.deliveries || []);
     for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {
@@ -1528,6 +1533,7 @@ async function setAnswerLater(id, on) {
   if (!storedComment(id)) return;
   const was = storedComment(id).answer_later;
   const key = 'later:' + id;
+  delete DOC_CARD.open[id];
   addPendingEdit(key, () => { const c = storedComment(id); if (c) c.answer_later = on ? { ts: new Date().toISOString() } : undefined; });
   renderAll();
   let ok = false;
@@ -2177,6 +2183,7 @@ function renderDecisionBlock(c) {
       <span class="badge badge-soft badge-ghost decision-verdict-chip">Addressed by agent &mdash; no answer needed</span>
     </div>`;
   }
+  if (foldsInDoc(c)) return foldedHtml(c);
   const changing = !!S.changing[c.id];
   if (decisionAnswer(c) && !changing) return answerBlockHtml(c);
   // Changing the choice: the options only; your notes stay as they are.
@@ -2236,6 +2243,22 @@ function renderDecisionBlock(c) {
     ${renderDecisionEvidence(c, dr)}
     ${cmtHtml}
     ${feedbackHtml(c)}
+  </div>`;
+}
+// A question he has answered or set aside folds to one line at its place in
+// the document, so the ones he can answer now sit close together (Chang,
+// 2026-11-01). It folds only as the document is drawn from the shown store
+// (load, Send, his own actions), never by a poll; a tap opens it, and a card
+// with unsent typed text never folds.
+function foldsInDoc(c) {
+  return S.doc && !S.open[c.id] && !S.changing[c.id] && !(decisionHint[c.id] && decisionHint[c.id].error)
+    && !String(DRAFTS['say:' + c.id] || '').trim() && (!!decisionAnswer(c) || isSetAside(c));
+}
+function foldedHtml(c) {
+  const d = decisionAnswer(c), n = NUM_MAP[c.id], id = escAttr(c.id);
+  const what = d ? (choiceLabel(c) || 'Answered in words') : 'Answer later';
+  return `<div class="annotate-decision-item annotate-folded${d ? ' annotate-answered' : ''}" data-strip-item="${id}">
+    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d ? stateTag(!!(d.round_pending || d.pending), d) : ''}</button>
   </div>`;
 }
 function promptHtml(c) {
@@ -2326,7 +2349,7 @@ const editingNote = {}; // 'id|key' while that note's editor is open
 // document's adapter.js styles), and its own open, changing and editing state.
 const RAIL_CARD = { doc: false, changing: decisionChanging, editing: editingNote,
   evOpen: decisionEvidenceOpen, evItemOpen: decisionEvidenceItemOpen, excerptOpen: decisionExcerptOpen };
-const DOC_CARD = { doc: true, changing: {}, editing: {}, evOpen: {}, evItemOpen: {}, excerptOpen: {}, x: null };
+const DOC_CARD = { doc: true, changing: {}, editing: {}, evOpen: {}, evItemOpen: {}, excerptOpen: {}, open: {}, x: null };
 let S = RAIL_CARD; // the place being drawn
 const k = (rail, doc) => S.doc ? doc : rail;
 const surfaceOf = el => el.closest('[data-strip-item]') ? DOC_CARD : RAIL_CARD;
@@ -3058,6 +3081,7 @@ function pickOption(root, btn) {
   const id = btn.dataset.id;
   const action = btn.dataset.decisionAction;
   const c = findCommentById(id);
+  delete DOC_CARD.open[id]; // a choice folds the document's card again; editing a note does not
   // A new choice on an answered card keeps the note that went with the old
   // one (a word answer included); the add-note box is left as it is.
   if (c && decisionAnswer(c)) {
@@ -3169,6 +3193,14 @@ function wireDecisionActions(root, scope = root) {
   root.querySelectorAll('[data-decision-action="later"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     setAnswerLater(btn.dataset.id, btn.dataset.later === '1');
+  }));
+  root.querySelectorAll('[data-decision-action="unfold"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const doc = btn.ownerDocument, id = btn.dataset.id;
+    DOC_CARD.open[id] = true;
+    redrawCard(btn);
+    const card = doc.querySelector('[data-strip-item="' + cssEsc(id) + '"]');
+    if (card) { card.tabIndex = -1; card.focus({ preventScroll: true }); }
   }));
   root.querySelectorAll('[data-decision-action="cancel-change"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4169,6 +4201,7 @@ async function submitPage(alsoPending, receipt) {
   }
   historyDirty = true;
   await Promise.all([loadStore(), loadReadState()]);
+  DOC_CARD.open = {}; // a Send folds every card he opened again
   loadHistory();
   const order = (it) => lines.indexOf(it);
   sent.sort((a, b) => order(a) - order(b));

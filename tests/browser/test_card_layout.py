@@ -291,7 +291,7 @@ def test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_lates
             page.evaluate("() => window.AA.rail.reveal()")
             page.locator('.citem[data-comment-id="card-1"] .decision-btn').first.click()
             page.locator('.sec-ready .citem[data-comment-id="card-1"]').wait_for()
-            frame.locator('[data-strip-item="card-1"].annotate-decision-resolved').wait_for()
+            frame.locator('[data-strip-item="card-1"].annotate-answered').wait_for()
             page.set_viewport_size({"width": 390, "height": 844})
             page.wait_for_timeout(200)
             page.evaluate("() => window.AnnotateDocs.setMobileSheetOpen(false)")
