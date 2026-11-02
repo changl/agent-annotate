@@ -15,3 +15,5 @@ build/
 reviews/
 .playwright-mcp/
 ui/node_modules/
+
+.ci-results/
