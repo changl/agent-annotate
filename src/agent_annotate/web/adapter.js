@@ -1365,7 +1365,18 @@ function stripTarget(anchorId, items) {
   return target;
 }
 
+// Strips are redrawn as one step with the answered-section folds, keeping
+// the card he acted on (or what is at the top of the screen) where it was.
 function renderDecisionStrips() {
+  const keep = keepPlaceOf();
+  clearSectionFolds();
+  drawDecisionStrips();
+  foldAnsweredSections();
+  markFoldRuns();
+  restorePlace(keep);
+}
+
+function drawDecisionStrips() {
   ensureStripStyle();
   lastExcerpts = excerptMap();
   // v9o: a rebuild under the reviewer's typing keeps the box focused with
@@ -1529,10 +1540,47 @@ function revealAnchor(el) {
 
 // Scrolls this document only. scrollIntoView also scrolls every ancestor,
 // the shell's page included, which pushed the shell header out of view.
-function scrollInFrame(el, block) {
-  const r = el.getBoundingClientRect();
-  const top = block === 'start' ? r.top : r.top - (window.innerHeight - r.height) / 2;
-  window.scrollTo({ top: Math.max(0, window.scrollY + top), behavior: 'smooth' });
+// A jump lands at once and holds its target there while the page above it
+// settles: pictures without a reserved size load and grow, sections open.
+// A smooth scroll aimed once took Chang two or more clicks to arrive
+// (2026-11-02, agent-annotate-1yy). His own scroll, tap or key lets go.
+const JUMP_TOP = 12;
+let heldJump = null;
+function scrollInFrame(el, block, find) {
+  releaseJump();
+  const target = () => (el.isConnected ? el : (el = (find && find()) || el));
+  const aim = () => {
+    const t = target();
+    if (!t.isConnected || !t.getClientRects().length) return 0;
+    const r = t.getBoundingClientRect();
+    return block === 'start' ? r.top - JUMP_TOP : r.top - (window.innerHeight - r.height) / 2;
+  };
+  const go = () => {
+    const d = aim();
+    if (Math.abs(d) >= 1) window.scrollTo({ top: Math.max(0, window.scrollY + d), behavior: 'auto' });
+  };
+  go();
+  let idle = 0;
+  const settle = () => { clearTimeout(idle); idle = setTimeout(releaseJump, 3000); };
+  const ro = new ResizeObserver(() => { go(); settle(); });
+  ro.observe(document.querySelector('.aa') || document.body);
+  const onResize = () => { go(); settle(); };
+  const letGo = () => releaseJump();
+  const inputs = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+  inputs.forEach(t => window.addEventListener(t, letGo, { passive: true, capture: true }));
+  window.addEventListener('resize', onResize);
+  const cap = setTimeout(releaseJump, 20000);
+  heldJump = () => {
+    ro.disconnect();
+    clearTimeout(idle);
+    clearTimeout(cap);
+    inputs.forEach(t => window.removeEventListener(t, letGo, { capture: true }));
+    window.removeEventListener('resize', onResize);
+  };
+  settle();
+}
+function releaseJump() {
+  if (heldJump) { const h = heldJump; heldJump = null; h(); }
 }
 
 // `back` ({commentId, n, from: 'strip'|'rail'}) is set by an evidence "Go to":
@@ -1586,8 +1634,12 @@ function scrollToAnchor(anchorId, target, back) {
                el.getBoundingClientRect().height > window.innerHeight * 0.6) {
       // Too tall to center with its marker in view: start at the marker.
       scrollInFrame(marker.row, 'start');
-    } else {
+    } else if (marker) {
       scrollInFrame(el, 'center');
+    } else {
+      // A card in the rail: its place at the top of the view. The strip is
+      // redrawn whenever the cards are; the jump follows the new one.
+      scrollInFrame(el, 'start', inner ? null : () => displayAnchorEl(anchorId));
     }
     clearGotoHighlight();
     el.classList.add('active');
@@ -1788,6 +1840,7 @@ function initUnchangedSections() {
       const open = sec.classList.contains('annotate-unchanged-collapsed');
       unchangedChoice[key] = open;
       setUnchangedOpen(sec, open);
+      markFoldRuns();
     });
     bar.appendChild(btn);
     sec.insertBefore(bar, sec.firstChild);
@@ -1807,15 +1860,18 @@ function openUnchangedSectionsForOpenCards() {
   for (const [aid, entries] of Object.entries(latestPins)) {
     for (const e of entries || []) {
       const open = e.decision === true || (e.decisionRequest && e.changing);
-      if (!open) continue;
+      // Answered or Answer later: folded, it is not an open question.
+      if (!open || document.querySelector('.annotate-folded[data-strip-item="' + cssEsc(e.id) + '"]')) continue;
       note(aid);
       evidenceOf(e.decisionRequest).forEach(x => note(x.anchor));
     }
   }
+  let opened = false;
   keep.forEach(sec => {
     if (unchangedChoice[unchangedKey(sec)] === false) return; // the reviewer folded it
-    if (sec.classList.contains('annotate-unchanged-collapsed')) setUnchangedOpen(sec, true);
+    if (sec.classList.contains('annotate-unchanged-collapsed')) { setUnchangedOpen(sec, true); opened = true; }
   });
+  if (opened) markFoldRuns();
 }
 
 // ── Earlier updates (long pages) ─────────────────────────────────────
@@ -1858,11 +1914,275 @@ function wireEarlier() {
 }
 
 function expandUnchangedAncestor(el) {
+  openSectionFoldFor(el);
   const sec = el && el.closest ? el.closest('section[data-unchanged-since]') : null;
   if (!sec || !sec.classList.contains('annotate-unchanged-collapsed')) return false;
   setUnchangedOpen(sec, true);
   return true;
 }
+
+// ── Answered sections fold (Chang, 2026-11-02) ──────────────────────
+// The page shows open only what still needs him. A section whose questions
+// are all answered or set to Answer later folds to one line: its heading and
+// each question's state; a tap opens it until the page reloads. The section is
+// the smallest heading block holding the question and everything it cites
+// (a `###` block, or the `##` when it cites several of them). A `##` also
+// folds when every `###` in it folds, or when it is unchanged since the last
+// version. Any open question keeps its section open. Folds are drawn with the
+// strips, which follow the shown store only (load, Send, his own actions),
+// never a poll. The bar is the "Unchanged since" bar's look.
+const sectionFoldOpen = new Set(); // block keys he opened
+let sectionFolds = []; // [{ key, bar, hidden: [el] }]
+let lastActed = null; // { id, t }: the card he last tapped
+
+function ensureSectionFoldStyle() {
+  ensureUnchangedStyle();
+  if (document.getElementById('annotate-sfold-style')) return;
+  const style = document.createElement('style');
+  style.id = 'annotate-sfold-style';
+  style.textContent = `
+    .annotate-sfold-hidden { display: none !important; }
+    .annotate-sfold-bar { display: block !important; margin: 26px 0 10px !important; padding: 0 !important; }
+    .annotate-sfold-bar .annotate-unchanged-toggle, .aa .annotate-run-next > .annotate-unchanged-toggle, .aa .annotate-run-cont > .annotate-unchanged-toggle { align-items: center !important; }
+    .annotate-sfold-bar .annotate-unchanged-toggle { padding: 6px 12px !important; flex-wrap: nowrap !important; }
+    .annotate-sfold-bar .annotate-unchanged-title { flex: 0 1 auto !important; min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+    .annotate-sfold-bar .annotate-unchanged-note { flex: 1 1 0 !important; min-width: 6em !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+    @media (pointer: coarse) {
+      .annotate-sfold-bar .annotate-unchanged-toggle, .aa .annotate-run-next > .annotate-unchanged-toggle, .aa .annotate-run-cont > .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
+    }
+    /* Folded sections in a row read as one list. */
+    .aa .annotate-run-next { margin-bottom: 0 !important; }
+    .aa .annotate-run-next > .annotate-unchanged-toggle, .aa .annotate-run-cont > .annotate-unchanged-toggle { padding-top: 6px !important; padding-bottom: 6px !important; }
+    .aa .annotate-run-next > .annotate-unchanged-toggle { border-bottom-left-radius: 0 !important; border-bottom-right-radius: 0 !important; }
+    .aa .annotate-run-cont { margin-top: 0 !important; }
+    .aa .annotate-run-cont > .annotate-unchanged-toggle { border-top: 0 !important; border-top-left-radius: 0 !important; border-top-right-radius: 0 !important; }
+  `;
+  document.head.appendChild(style);
+}
+
+// Every `##` section of a generated page and every `###` block in it.
+function sectionBlocks() {
+  const blocks = [], at = new Map();
+  document.querySelectorAll('.aa section[data-anchor-id]').forEach(sec => {
+    const h2 = sec.querySelector(':scope > h2');
+    const top = h2 ? { key: sec.dataset.anchorId, head: sec, title: h2, level: 2, sec, els: [sec], parent: null, kids: [] } : null;
+    if (top) { blocks.push(top); at.set(sec, top); }
+    let cur = null;
+    for (const n of sec.children) {
+      if (n.tagName === 'H3' && n.dataset.anchorId) {
+        cur = { key: n.dataset.anchorId, head: n, title: n, level: 3, sec, els: [n], parent: top, kids: [] };
+        blocks.push(cur);
+        if (top) top.kids.push(cur);
+      } else if (cur) cur.els.push(n);
+      if (cur) at.set(n, cur);
+    }
+  });
+  return { blocks, at };
+}
+
+// The smallest block holding `el`.
+function blockAt(el, at) {
+  for (let n = el; n; n = n.parentElement) {
+    const b = at.get(n);
+    if (b) return b;
+  }
+  return null;
+}
+
+const blockChain = b => b ? [b].concat(blockChain(b.parent)) : [];
+
+// The smallest block holding every one of `els`.
+function commonBlock(els, at) {
+  const chains = els.map(el => blockChain(blockAt(el, at)));
+  if (!chains.length || chains.some(c => !c.length)) return null;
+  return chains[0].find(b => chains.every(c => c.indexOf(b) !== -1)) || null;
+}
+
+function clearSectionFolds() {
+  document.querySelectorAll('.annotate-sfold-bar').forEach(n => n.remove());
+  document.querySelectorAll('.annotate-sfold-hidden').forEach(n => n.classList.remove('annotate-sfold-hidden'));
+  sectionFolds = [];
+}
+
+function foldAnsweredSections() {
+  if (!document.querySelector('.aa [data-strip-item]')) return;
+  const { blocks, at } = sectionBlocks();
+  if (!blocks.length) return;
+  const entryOf = {};
+  for (const entries of Object.values(latestPins)) (entries || []).forEach(e => { if (e && e.decisionRequest) entryOf[e.id] = e; });
+  const qs = new Map(blocks.map(b => [b, []])), homes = new Set();
+  const add = (b, item) => blockChain(b).forEach(x => { if (qs.get(x).indexOf(item) === -1) qs.get(x).push(item); });
+  document.querySelectorAll('.annotate-decision-strip [data-strip-item]').forEach(item => {
+    const e = entryOf[item.dataset.stripItem];
+    if (!e) return; // a read-only answer, not a question
+    // What the question is about: what it cites, else its own anchor, else where it sits.
+    const strip = item.closest('[data-annotate-strip]');
+    let els = evidenceOf(e.decisionRequest).map(x => findAnchorEl(x.anchor)).filter(el => el && !isStaticCard(el) && !el.closest('.cards'));
+    if (!els.length) {
+      const own = strip && findAnchorEl(strip.dataset.stripAnchor);
+      els = [own && !isStaticCard(own) && !own.closest('.cards') ? own : item];
+    }
+    const home = commonBlock(els, at);
+    if (home) { homes.add(home); add(home, item); }
+    const where = blockAt(item, at);
+    if (where) add(where, item);
+  });
+  const opened = b => blockChain(b).some(x => sectionFoldOpen.has(x.key));
+  const folds = new Set();
+  const folded = b => {
+    const items = qs.get(b);
+    if (!items.length || opened(b) || items.some(it => !it.matches('.annotate-folded'))) return false;
+    return homes.has(b) || (b.kids.length && b.kids.every(k => folds.has(k))) ||
+      (b.level === 2 && b.sec.hasAttribute('data-unchanged-since'));
+  };
+  blocks.filter(b => b.level === 3).forEach(b => { if (folded(b)) folds.add(b); });
+  blocks.filter(b => b.level === 2).forEach(b => { if (folded(b)) folds.add(b); });
+  if (!folds.size) return;
+  ensureSectionFoldStyle();
+  folds.forEach(b => {
+    if (b.parent && folds.has(b.parent)) return; // inside a folded `##`
+    const items = qs.get(b);
+    // Its questions' cards go with it, wherever they sit.
+    const strips = new Set();
+    items.forEach(it => {
+      let s = it.closest('[data-annotate-strip]');
+      for (let up; s && (up = s.parentElement && s.parentElement.closest('[data-annotate-strip]'));) s = up;
+      if (s && !b.els.some(el => el.contains(s)) &&
+          [...s.querySelectorAll('[data-strip-item]')].every(x => items.indexOf(x) !== -1)) strips.add(s);
+    });
+    const hidden = b.els.concat([...strips]);
+    hidden.forEach(el => el.classList.add('annotate-sfold-hidden'));
+    const bar = document.createElement('div');
+    bar.className = 'annotate-sfold-bar';
+    bar.dataset.sfoldKey = b.key;
+    bar.setAttribute('role', 'heading');
+    bar.setAttribute('aria-level', String(b.level));
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'annotate-unchanged-toggle';
+    btn.setAttribute('aria-expanded', 'false');
+    const title = document.createElement('span');
+    title.className = 'annotate-unchanged-title';
+    title.textContent = normText(b.title.textContent);
+    const note = document.createElement('span');
+    note.className = 'annotate-unchanged-note';
+    note.textContent = items.map(foldedItemStatus).join(' · ');
+    btn.title = title.textContent + ' · ' + note.textContent;
+    btn.appendChild(title);
+    btn.appendChild(note);
+    btn.addEventListener('click', () => openSectionFold(b.key));
+    bar.appendChild(btn);
+    b.head.parentNode.insertBefore(bar, b.head);
+    sectionFolds.push({ key: b.key, bar, hidden });
+  });
+}
+
+// "#2902 Revoked, Sent", "#2901 Answer later": what the folded card's line says.
+function foldedItemStatus(item) {
+  const text = sel => { const n = item.querySelector(sel); return n ? normText(n.textContent) : ''; };
+  const state = [text('.annotate-folded-what'), text('.annotate-send-state')].filter(Boolean).join(', ');
+  return [text('.annotate-decision-num'), state].filter(Boolean).join(' ');
+}
+
+// Folded sections with nothing shown between them join into one list.
+function markFoldRuns() {
+  document.querySelectorAll('.annotate-run-next, .annotate-run-cont').forEach(n => n.classList.remove('annotate-run-next', 'annotate-run-cont'));
+  const bars = [...document.querySelectorAll('.annotate-sfold-bar, section.annotate-unchanged-collapsed > .annotate-unchanged-bar')]
+    .filter(b => b.getClientRects().length);
+  for (let i = 1; i < bars.length; i++) {
+    if (!nothingShownBetween(bars[i - 1], bars[i])) continue;
+    bars[i - 1].classList.add('annotate-run-next');
+    bars[i].classList.add('annotate-run-cont');
+  }
+}
+
+function nothingShownBetween(a, b) {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: n => n.getClientRects().length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+  let last = a;
+  while (last.lastElementChild) last = last.lastElementChild;
+  walker.currentNode = last;
+  for (let n = walker.nextNode(); n && n !== b; n = walker.nextNode()) {
+    if (n.contains(b) || n.matches('.bpin, .bpin-inline, [data-annotate-back]')) continue;
+    if (n.getBoundingClientRect().height >= 1 && !/^(absolute|fixed)$/.test(getComputedStyle(n).position)) return false;
+  }
+  return true;
+}
+
+function openSectionFold(key) {
+  const keep = { key, top: placeTop({ key }) };
+  sectionFoldOpen.add(key);
+  const el = findAnchorEl(key);
+  const sec = el && el.closest('section[data-unchanged-since]');
+  if (sec) { unchangedChoice[unchangedKey(sec)] = true; setUnchangedOpen(sec, true); }
+  clearSectionFolds();
+  foldAnsweredSections();
+  markFoldRuns();
+  restorePlace(keep);
+  const head = el && (el.matches('section') ? el.querySelector(':scope > .annotate-unchanged-bar > button, :scope > h2') : el);
+  if (head) { if (head.tagName !== 'BUTTON') head.tabIndex = -1; head.focus({ preventScroll: true }); }
+}
+
+// A jump to something inside a folded section opens it first.
+function openSectionFoldFor(el) {
+  const f = el && sectionFolds.find(f => f.hidden.some(h => h === el || h.contains(el)));
+  if (f) openSectionFold(f.key);
+}
+
+// What stands for a place now: the card, or the folded section hiding it.
+function placeEl(p) {
+  let el = p.id ? document.querySelector('[data-strip-item="' + cssEsc(p.id) + '"]')
+    : p.key ? (document.querySelector('.annotate-sfold-bar[data-sfold-key="' + cssEsc(p.key) + '"]') || findAnchorEl(p.key)) : p.el;
+  if (!el || !el.isConnected) return null;
+  if (el.getClientRects().length) return el;
+  const f = sectionFolds.find(f => f.hidden.some(h => h.contains(el)));
+  if (f) return f.bar;
+  const sec = el.closest('section.annotate-unchanged-collapsed');
+  return sec ? sec.querySelector(':scope > .annotate-unchanged-bar') : null;
+}
+
+function placeTop(p) {
+  const el = placeEl(p);
+  return el ? el.getBoundingClientRect().top : null;
+}
+
+// The card he just acted on if it is on screen, else what is at the top.
+function keepPlaceOf() {
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  if (lastActed && Date.now() - lastActed.t < 10000) {
+    const top = placeTop(lastActed);
+    if (top != null && top < vh && top > -40) return { id: lastActed.id, top };
+  }
+  // The first block shown at the top of the screen, as deep as it goes.
+  let el = document.querySelector('.aa');
+  if (!el || window.scrollY <= 0) return null;
+  for (;;) {
+    const next = [...el.children].find(c => c.getClientRects().length && c.getBoundingClientRect().bottom > 0 &&
+      !c.matches('.bpin, .bpin-inline, [data-annotate-back]') && !/^(absolute|fixed)$/.test(getComputedStyle(c).position));
+    if (!next) break;
+    el = next;
+    if (el.getBoundingClientRect().top >= 0 || el.matches('[data-annotate-strip], [data-strip-item], .annotate-sfold-bar')) break;
+  }
+  const strip = el.closest('[data-annotate-strip]');
+  const item = el.closest('[data-strip-item]') || (strip && strip.querySelector('[data-strip-item]'));
+  const bar = el.closest('.annotate-sfold-bar');
+  const p = item ? { id: item.dataset.stripItem } : bar ? { key: bar.dataset.sfoldKey } : strip ? null : { el };
+  if (!p) return null;
+  p.top = placeTop(p);
+  return p.top == null ? null : p;
+}
+
+function restorePlace(p) {
+  if (!p || p.top == null) return;
+  const top = placeTop(p);
+  if (top != null && Math.abs(top - p.top) >= 1) window.scrollBy(0, top - p.top);
+}
+
+document.addEventListener('click', (e) => {
+  const item = e.target && e.target.closest && e.target.closest('[data-strip-item]');
+  if (item) lastActed = { id: item.dataset.stripItem, t: Date.now() };
+}, true);
 
 // ── Excerpts for the rail card ───────────────────────────────────────
 // shell.js never reads this document; the rail card's quoted excerpt and
@@ -2434,6 +2754,20 @@ function wirePageLinks() {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const link = e.target.closest && e.target.closest('a[href]');
     if (!link || (link.target && link.target !== '_self')) return;
+    // "#2752" in the text: a link into this document goes where the rail's
+    // card goes, in one click, opening a folded section. <base> made it read
+    // as another page, and the click did nothing (Chang, 2026-11-02).
+    const frag = (link.getAttribute('href') || '').match(/^#(.+)$/);
+    if (frag) {
+      let aid = frag[1];
+      try { aid = decodeURIComponent(aid); } catch {}
+      if (findAnchorEl(aid) || foldedAnchorEl(aid)) {
+        e.preventDefault();
+        closeViewer();
+        scrollToAnchor(aid, null, null);
+        return;
+      }
+    }
     let url;
     try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { return; }
     if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.origin !== PARENT_ORIGIN) {
