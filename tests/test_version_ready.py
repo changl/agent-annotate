@@ -200,17 +200,23 @@ def test_a_ready_round_rejects_later_card_authoring(round_server, tmp_path, monk
     assert (directory / 'comments.json').read_bytes() == before
 
 
-def test_a_failed_commit_rolls_back_the_cards_and_metadata(round_server, tmp_path, monkeypatch):
+@pytest.mark.parametrize("current_link", [True, False])
+def test_a_failed_commit_rolls_back_the_cards_and_metadata(round_server, tmp_path, monkeypatch, current_link):
     from agent_annotate import review_versions
     directory, httpd = round_server
     _, draft = _stage_round(directory, tmp_path)
-    before = {name: (directory / name).read_bytes() for name in ('comments.json', 'current.meta.json')}
+    if not current_link:
+        current = directory / 'current.html'
+        data = current.read_bytes()
+        current.unlink()
+        current.write_bytes(data)
+    before = {name: (directory / name).read_bytes() for name in ('comments.json', 'current.meta.json', 'current.html')}
     def fail(*args):
         raise OSError('simulated metadata write failure')
     monkeypatch.setattr(review_versions, 'activate', fail)
     assert _ready(httpd, draft, [_card()])[0] == 500
     assert all((directory / name).read_bytes() == data for name, data in before.items())
-    assert (directory / 'current.html').resolve().name == 'v1.html'
+    assert (directory / 'current.html').is_symlink() is current_link
     assert _http(httpd, 'GET', '/content?v=v2')[0] == 404
 
 

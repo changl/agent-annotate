@@ -37,7 +37,7 @@ def register(base, directory):
 def authoring(base, body):
     directory = DIRECTORIES.get(base)
     items = body.get('items', [body]) if isinstance(body, dict) else []
-    if directory is None or not any(it.get('decision_request') for it in items):
+    if directory is None or not any(it.get('decision_request') or it.get('carry_forward') for it in items):
         yield
         return
     path = directory / 'current.meta.json'

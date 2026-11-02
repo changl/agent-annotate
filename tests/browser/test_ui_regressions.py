@@ -73,7 +73,7 @@ def test_legacy_figure_numbers_match_cli_after_batch_and_reload(tmp_path):
     path = directory / "comments.json"
     path.write_text(json.dumps(store))
     expected = _item_numbers(store)
-    process, base = _serve(tmp_path, directory, port=18763)
+    process, base = _serve(tmp_path, directory)
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
@@ -87,8 +87,9 @@ def test_legacy_figure_numbers_match_cli_after_batch_and_reload(tmp_path):
                           "decision_request": {"prompt": "Regression question"}} for n in range(48, 56)]
                 request = urllib.request.Request(base + "api/comments/batch", json.dumps({"items": items}).encode(),
                                                  {"Content-Type": "application/json", "X-Annotate-Agent": "agent:test"})
-                with urllib.request.urlopen(request) as response:
-                    assert response.status == 200
+                with authoring(base, {"items": items}):
+                    with urllib.request.urlopen(request) as response:
+                        assert response.status == 200
                 page.reload(wait_until="networkidle")
                 page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('figure-0') === 1")
                 assert page.evaluate(read_numbers, list(expected)) == expected
@@ -282,7 +283,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
         expected = {added[0]: 13, ids[1]: 14, added[1]: 15}
         meta = json.loads((directory / "current.meta.json").read_text())
         meta["current"] = "v2"
-        meta["history"].append({"version": "v2", "label": "Second round"})
+        next(h for h in meta["history"] if h["version"] == "v2")["label"] = "Second round"
         (directory / "current.meta.json").write_text(json.dumps(meta))
         original_ids = set(ids)
 

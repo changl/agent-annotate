@@ -100,7 +100,8 @@ def test_new_version_withdraws_unasked_and_preserves_reviewer_content(page):
     assert after["cccccccccccc"]["text"] == before["cccccccccccc"]["text"]
     assert after["cccccccccccc"]["version"] == "v1"
     assert after["cccccccccccc"]["status"] == "addressed_by_agent"  # reasked in the new round
-    assert after["reviewer"] == store["anchors"]["s:reviewer"][0]
+    assert after["reviewer"] == {**store["anchors"]["s:reviewer"][0],
+                                 "number": cli._item_numbers(store)["reviewer"]}
     assert after["replied"] == replied
     assert after["pending"] == pending
     assert cli._read_meta(page)["current"] == "v2"

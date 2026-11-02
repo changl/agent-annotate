@@ -2439,7 +2439,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     from .review_versions import activate
                     old_store = self._store_path().read_bytes() if self._store_path().exists() else None
                     old_meta = self._meta_path().read_bytes() if self._meta_path().exists() else None
-                    old_link = os.readlink(self.artifact_dir / "current.html") if (self.artifact_dir / "current.html").is_symlink() else None
+                    current = self.artifact_dir / "current.html"
+                    old_link = os.readlink(current) if current.is_symlink() else None
+                    old_current = current.read_bytes() if old_link is None and current.exists() else None
                     try:
                         from .cli import _withdraw_unasked_store
                         _withdraw_unasked_store(store, version,
@@ -2457,6 +2459,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         current.unlink(missing_ok=True)
                         if old_link is not None:
                             current.symlink_to(old_link)
+                        elif old_current is not None:
+                            _atomic_bytes(current, old_current)
                         type(self)._store_snapshot = None
                         type(self)._store_responses.clear()
                         raise
