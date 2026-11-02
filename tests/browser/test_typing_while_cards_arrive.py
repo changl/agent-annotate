@@ -161,6 +161,7 @@ def test_an_unsent_pick_on_a_card_the_agent_resolves_stays_and_goes_with_send(tm
         label = pick.locator(".decision-opt-label").inner_text() if pick.locator(".decision-opt-label").count() else pick.inner_text()
         pick.click()
         page.wait_for_function("() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision?.round_pending")
+        playwright.expect(page.locator("#send-count")).to_have_text("1")
         before = int(page.locator("#send-count").inner_text())
         _agent(base, "api/comments/question-11", {"status": "resolved_in_version", "resolved_in_version": "v1",
                                                   "resolution_anchor_id": "s:checks"}, method="PUT")

@@ -184,7 +184,8 @@ def run_full(workers, junit, root=ROOT):
         failed = [case for case in cases if case.find("failure") is not None or case.find("error") is not None]
         skipped = sum(case.find("skipped") is not None for case in cases)
         suite.set("tests", str(len(cases)))
-        suite.set("failures", str(len(failed)))
+        suite.set("failures", str(sum(case.find("failure") is not None for case in cases)))
+        suite.set("errors", str(sum(case.find("error") is not None for case in cases)))
         suite.set("skipped", str(skipped))
         results.append(f"{suite.get('name')}={len(cases) - len(failed) - skipped}p/{len(failed)}f/{skipped}s")
         failures.extend(f"{case.get('file', case.get('classname', ''))}::{case.get('name')}" for case in failed)

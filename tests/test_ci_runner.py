@@ -122,3 +122,16 @@ def test_runtime_cleanup_completes_before_browser_pool_starts(tmp_path, monkeypa
     monkeypatch.setattr(ci.concurrent.futures, "ThreadPoolExecutor", pool)
     monkeypatch.setattr(ci.subprocess, "run", run)
     assert ci.run_full(4, tmp_path / "junit.xml", tmp_path) == 0
+
+
+def test_fixture_errors_keep_junit_error_counts_and_fail_the_receipt(tmp_path, monkeypatch, capsys):
+    def run(argv, **kwargs):
+        if "pytest" in argv:
+            (tmp_path / "runtime.xml").write_text('<testsuites><testsuite><testcase file="tests/test_fixture.py" name="test_setup"><error message="fixture failed"/></testcase></testsuite></testsuites>')
+            return subprocess.CompletedProcess(argv, 1)
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(ci.subprocess, "run", run)
+    assert ci.run_full(1, tmp_path / "junit.xml", tmp_path) == 1
+    assert "runtime=0p/1f/0s" in capsys.readouterr().out
+    suite = ET.parse(tmp_path / "junit.xml").getroot().find("testsuite[@name='runtime']")
+    assert suite.get("failures") == "0" and suite.get("errors") == "1"
