@@ -2475,8 +2475,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         session = self._session_fields()
         if publication:
+            owner = meta.get("owner") if isinstance(meta.get("owner"), dict) else {}
             _bus_append(self.bus_dir, self.slug, {"event": "version_published", "version": version,
-                        "label": draft.get("label", ""), **session})
+                        "label": draft.get("label", ""),
+                        "owner_session": owner.get("owner_session") or session.get("session_id") or "unknown", **session})
         for kind, c in created_events:
             ev = {
                 "event": kind,

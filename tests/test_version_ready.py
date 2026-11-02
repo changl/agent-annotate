@@ -119,12 +119,17 @@ def _card(number=1):
 
 def test_ready_fix_round_trips_in_metadata_api(round_server, tmp_path):
     directory, httpd = round_server
+    meta = cli._read_meta(directory)
+    meta['owner'] = {'owner_session': 'coordinator'}
+    (directory / 'current.meta.json').write_text(json.dumps(meta))
     _, draft = _stage_round(directory, tmp_path, fixes='v1')
     assert _ready(httpd, draft, [_card()])[0] == 200
     status, meta = _http(httpd, 'GET', '/current.meta.json')
     assert status == 200
     assert meta['current'] == 'v2'
     assert meta['history'][-1]['fixes'] == 'v1'
+    events = [json.loads(line) for line in (tmp_path / 'bus/review.ndjson').read_text().splitlines()]
+    assert [e['owner_session'] for e in events if e['event'] == 'version_published'] == ['coordinator']
     assert not any(k in meta['history'][-1] for k in ('preview', 'verified', 'fingerprint'))
     assert _http(httpd, 'GET', '/comments.json')[1]['anchors']['d:q1'][0]['version'] == 'v2'
     assert _ready(httpd, draft, [_card()])[0] == 409

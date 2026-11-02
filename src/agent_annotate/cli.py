@@ -2168,7 +2168,7 @@ def _commit_review(record, version, items, author):
         "items": items, "idempotency": "anchor",
         "publish_version": {"version": version, "preview": draft["preview"]}}, author)
     if code != 200:
-        print(f"ERROR: review not published (HTTP {code}): {payload}", file=sys.stderr)
+        print(f"ERROR: review publication failed (HTTP {code}): {payload}", file=sys.stderr)
         return 2
     print(f"  ready {version}: {len(items)} cards; previous versions remain immutable")
     return 0
