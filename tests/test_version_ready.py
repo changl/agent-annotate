@@ -296,3 +296,30 @@ def test_initial_page_root_waits_until_a_version_is_ready(round_server, tmp_path
     assert _http(httpd, 'GET', '/')[0] == 503
     assert _http(httpd, 'GET', '/?v=v2')[0] == 404
     assert _http(httpd, 'GET', '/__review_preview/v2/' + draft['preview'] + '/')[0] == 200
+
+
+def test_completed_metadata_wins_over_a_leftover_draft_marker(round_server, tmp_path):
+    directory, httpd = round_server
+    _, draft = _stage_round(directory, tmp_path)
+    assert _ready(httpd, draft, [_card()])[0] == 200
+    sync_server._atomic_write_json(directory / '.review-drafts/v2.json', draft)
+    assert _http(httpd, 'GET', '/?v=v2')[0] == 200
+    assert _http(httpd, 'GET', '/content?v=v2')[0] == 200
+    assert _http(httpd, 'GET', '/versions/v2.html')[0] == 200
+    assert _http(httpd, 'GET', '/__review_preview/v2/' + draft['preview'] + '/')[0] == 404
+
+
+def test_checks_cannot_recreate_a_draft_after_a_peer_has_published(round_server, tmp_path, monkeypatch):
+    from agent_annotate.review_versions import draft_path
+    from agent_annotate.verify import PASS, StageResult, VerifyReport
+    directory, httpd = round_server
+    _, draft = _stage_round(directory, tmp_path)
+    def check(*args, **kwargs):
+        assert _ready(httpd, draft, [_card()])[0] == 200
+        return VerifyReport([StageResult('origin', 'http://localhost/', PASS, 'ok')])
+    monkeypatch.setattr(cli, '_verify_published', check)
+    with pytest.raises(ValueError, match='immutable; use v3'):
+        cli._run_gate({'slug_dir': str(directory), 'port': httpd.server_port},
+            argparse.Namespace(candidate_version='v2', verify_timeout=1))
+    assert not draft_path(directory, 'v2').exists()
+    assert _http(httpd, 'GET', '/content?v=v2')[0] == 200

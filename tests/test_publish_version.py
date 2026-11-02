@@ -17,7 +17,7 @@ def test_publish_version_commits_once(round_server, tmp_path, monkeypatch, capsy
     source = tmp_path / 'page.md'
     source.write_text('---\ntitle: Next\n---\n\n## Evidence\n\nReady.\n')
     if generated:
-        pagegen.generate(source, directory, 'v2', label='Round 2')
+        pagegen.generate(source, directory, 'v2', label='Draft label')
     else:
         (directory / 'versions/v2.html').write_text('<h2 data-anchor-id="s:evidence">Ready</h2>')
     record = {'slug_dir': str(directory), 'port': httpd.server_port,
@@ -40,6 +40,7 @@ def test_publish_version_commits_once(round_server, tmp_path, monkeypatch, capsy
     assert _http(httpd, 'GET', '/current.meta.json')[1]['current'] == 'v2'
     meta = json.loads(before)
     assert [h['version'] for h in meta['history']] == ['v1', 'v2']
+    assert meta['history'][-1]['label'] == 'Round 2'
     assert meta['history'][-1]['sections'] == 1 and meta['history'][-1]['screenshots'] == 0
 
 

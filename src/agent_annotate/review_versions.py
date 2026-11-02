@@ -79,6 +79,9 @@ def preview_version(directory, route):
     match = re.fullmatch(r"/__review_preview/(v[0-9]+)/([A-Za-z0-9_-]+)/?", route)
     if match:
         try:
+            from .cli import _read_meta
+            if shown(_read_meta(directory), match[1]):
+                return None
             data = read_draft(directory, match[1])
             if secrets.compare_digest(data["preview"], match[2]):
                 return match[1]

@@ -1785,8 +1785,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _version_path(self, version: str | None):
         if version:
-            from .review_versions import draft_path
-            if draft_path(self.artifact_dir, version).exists():
+            from .review_versions import draft_path, shown
+            if draft_path(self.artifact_dir, version).exists() and not shown(self._read_meta(), version):
                 raise FileNotFoundError('review version is not ready')
         if version:
             return _version_file(self.artifact_dir, version)
@@ -1940,8 +1940,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return
         try:
             if plan_id is None:
-                from .review_versions import draft_path
-                if draft_path(self.artifact_dir, v).exists():
+                from .review_versions import draft_path, shown
+                if draft_path(self.artifact_dir, v).exists() and not shown(self._read_meta(), v):
                     return self._respond(404, b'{"error":"review version is not ready"}')
             if plan_id is not None:
                 from .categories import plan_meta, safe_path, validate_plan_id
@@ -4110,9 +4110,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if target == self._meta_path().resolve():
             with _locked_store(self.artifact_dir, write=False):
                 return self._v2_get_meta()  # Aliases share the publication lock and filtered API.
-        from .review_versions import draft_path
+        from .review_versions import draft_path, shown
         if target.parent.name in ("versions", "content") and _VERSION_ID.fullmatch(target.stem):
-            if draft_path(self.artifact_dir, target.stem).exists():
+            if draft_path(self.artifact_dir, target.stem).exists() and not shown(self._read_meta(), target.stem):
                 return self._respond(404, b"Not found")
         if not self._is_public_static(rel):
             return self._respond(404, b"Not found")

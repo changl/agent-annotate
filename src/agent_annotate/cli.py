@@ -1156,14 +1156,17 @@ def _run_gate(record: dict, args):
         timeout=getattr(args, "verify_timeout", 45.0),
     )
     if candidate and report.fully_verified:
-        from .review_versions import draft_path
-        from .sync_server import _atomic_write_json
-        if (read_draft(Path(record["slug_dir"]), candidate)["preview"] != draft["preview"]
-                or fingerprint(Path(record["slug_dir"]), candidate) != checked_fingerprint):
-            raise ValueError("draft changed during server checks; retry the publish")
-        draft["verified"] = True
-        draft["fingerprint"] = checked_fingerprint
-        _atomic_write_json(draft_path(Path(record["slug_dir"]), candidate), draft)
+        from .review_versions import draft_path, require_draft
+        from .sync_server import _atomic_write_json, _locked_store
+        directory = Path(record["slug_dir"])
+        with _locked_store(directory):
+            require_draft(_read_meta(directory), candidate)
+            if (read_draft(directory, candidate)["preview"] != draft["preview"]
+                    or fingerprint(directory, candidate) != checked_fingerprint):
+                raise ValueError("draft changed during server checks; retry the publish")
+            draft["verified"] = True
+            draft["fingerprint"] = checked_fingerprint
+            _atomic_write_json(draft_path(directory, candidate), draft)
     record["verified"] = report.fully_verified
     record["verify_stages"] = [
         {"name": s.name, "status": s.status, "url": redact_review_key(s.url),
@@ -2119,18 +2122,28 @@ def _moved_page(slug_dir) -> bool:
 
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
+    if not slug_dir.is_dir():
+        print(f"ERROR: slug-dir not found: {slug_dir}", file=sys.stderr)
+        return 2
     if _moved_page(slug_dir):
         return 2
     from .review_versions import draft_path, require_draft, stage
     version = args.version
+    from .review_versions import read_draft
+    from .sync_server import _atomic_write_json, _locked_store
     try:
-        require_draft(_read_meta(slug_dir), version)
-        if not (slug_dir / "versions" / f"{version}.html").is_file():
-            raise ValueError(f"versions/{version}.html not found — drop it in first")
-        if not draft_path(slug_dir, version).exists():
-            from .long_pages import size_of
-            sections, screenshots = size_of((slug_dir / "versions" / f"{version}.html").read_text(encoding="utf-8"))
-            stage(slug_dir, version, args.label or "", None, {"sections": sections, "screenshots": screenshots})
+        with _locked_store(slug_dir):
+            require_draft(_read_meta(slug_dir), version)
+            if not (slug_dir / "versions" / f"{version}.html").is_file():
+                raise ValueError(f"versions/{version}.html not found — drop it in first")
+            if not draft_path(slug_dir, version).exists():
+                from .long_pages import size_of
+                sections, screenshots = size_of((slug_dir / "versions" / f"{version}.html").read_text(encoding="utf-8"))
+                stage(slug_dir, version, args.label or "", None, {"sections": sections, "screenshots": screenshots})
+            elif args.label:
+                draft = read_draft(slug_dir, version)
+                draft["label"] = args.label
+                _atomic_write_json(draft_path(slug_dir, version), draft)
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
