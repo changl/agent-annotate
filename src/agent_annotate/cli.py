@@ -2128,7 +2128,9 @@ def cmd_publish_version(args) -> int:
         if not (slug_dir / "versions" / f"{version}.html").is_file():
             raise ValueError(f"versions/{version}.html not found — drop it in first")
         if not draft_path(slug_dir, version).exists():
-            stage(slug_dir, version, args.label or "", None, {})
+            from .long_pages import size_of
+            sections, screenshots = size_of((slug_dir / "versions" / f"{version}.html").read_text(encoding="utf-8"))
+            stage(slug_dir, version, args.label or "", None, {"sections": sections, "screenshots": screenshots})
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
