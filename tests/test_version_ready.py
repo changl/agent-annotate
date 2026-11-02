@@ -146,6 +146,8 @@ def test_server_card_failure_keeps_previous_round_and_store(round_server, tmp_pa
     assert (directory / 'comments.json').read_bytes() == before
     assert _http(httpd, 'GET', '/content?v=v2')[0] == 404
     assert _http(httpd, 'GET', '/versions/v2.html')[0] == 404
+    (directory / 'content').mkdir()
+    assert _http(httpd, 'GET', '/?v=v2')[0] == 404
     assert _http(httpd, 'GET', '/current.meta.json')[1]['history'] == [{'version': 'v1', 'label': 'Old'}]
 
 
@@ -283,3 +285,14 @@ def test_an_interrupted_initial_round_is_hidden_without_published_metadata(tmp_p
     assert result['anchors']['draft'] == []
     assert result['anchors']['plan'] == [plan]
     assert store['anchors']['draft'] == [item]
+
+
+def test_initial_page_root_waits_until_a_version_is_ready(round_server, tmp_path):
+    directory, httpd = round_server
+    (directory / 'current.html').unlink()
+    (directory / 'current.meta.json').write_text('{}')
+    _, draft = _stage_round(directory, tmp_path)
+    (directory / 'content').mkdir()
+    assert _http(httpd, 'GET', '/')[0] == 503
+    assert _http(httpd, 'GET', '/?v=v2')[0] == 404
+    assert _http(httpd, 'GET', '/__review_preview/v2/' + draft['preview'] + '/')[0] == 200

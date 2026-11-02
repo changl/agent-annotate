@@ -1787,7 +1787,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if version:
             from .review_versions import draft_path
             if draft_path(self.artifact_dir, version).exists():
-                return self.artifact_dir / '.review-not-ready'
+                raise FileNotFoundError('review version is not ready')
         if version:
             return _version_file(self.artifact_dir, version)
         return _contained_path(self.artifact_dir, "current.html")
@@ -1823,8 +1823,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_serve_root(self, parsed):
         v = (urllib.parse.parse_qs(parsed.query).get("v") or [None])[0]
+        if not v and not self._read_meta().get("current") and (self.artifact_dir / ".review-drafts").exists():
+            return self._respond(503, b'{"error":"no Review version is ready"}')
         try:
             target = self._version_path(v)
+        except FileNotFoundError:
+            return self._respond(404, b'{"error":"review version is not ready"}')
         except ValueError:
             return self._respond(400, b'{"error":"invalid version"}')
         except PermissionError:
@@ -4104,7 +4108,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(403, b"Forbidden")
             return
         if target == self._meta_path().resolve():
-            return self._v2_get_meta()  # Preserve normalized aliases through the filtered API, never raw bytes.
+            with _locked_store(self.artifact_dir, write=False):
+                return self._v2_get_meta()  # Aliases share the publication lock and filtered API.
         from .review_versions import draft_path
         if target.parent.name in ("versions", "content") and _VERSION_ID.fullmatch(target.stem):
             if draft_path(self.artifact_dir, target.stem).exists():
