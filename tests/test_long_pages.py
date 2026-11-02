@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from review_fixtures import complete
 from test_pagegen_images import png, write
 
 from agent_annotate import long_pages
@@ -65,6 +66,7 @@ def test_a_large_screenshot_gets_one_cached_preview_and_a_full_size_link(tmp_pat
     sections = {"Board": "The board.\n\n![Board](shots/wide.png)\n\n![Icon](shots/small.png)"}
     slug = tmp_path / "slug"
     generate(source(tmp_path, sections), slug)
+    complete(slug)
     html = canvas(slug, "v1")
     preview = next((slug / "assets" / "preview").iterdir())
     assert preview.suffix == ".jpg" and len(fake_sips) == 1 and "-Z" in fake_sips[0]
@@ -72,6 +74,7 @@ def test_a_large_screenshot_gets_one_cached_preview_and_a_full_size_link(tmp_pat
     assert 'class="aa-full"' in html and "⤢ Full size" in html
     assert html.count('loading="lazy" decoding="async"') == 2 and html.count('class="aa-full"') == 1
     generate(source(tmp_path, sections, version="v2"), slug)
+    complete(slug)
     assert len(fake_sips) == 1                      # cached by content hash
     assert "data-unchanged-since" in canvas(slug, "v2")   # preview markup does not count as a change
 
@@ -80,6 +83,7 @@ def test_without_sips_the_original_is_used(tmp_path, no_sips):
     write(tmp_path / "shots" / "wide.png", png(2400, 1600))
     slug = tmp_path / "slug"
     generate(source(tmp_path, {"Board": "![Board](shots/wide.png)"}), slug)
+    complete(slug)
     html = canvas(slug, "v1")
     assert 'loading="lazy"' in html and 'data-full="' not in html and 'class="aa-full"' not in html
     assert not (slug / "assets" / "preview").exists()
@@ -89,10 +93,12 @@ def test_finished_topics_fold_in_page_order_and_open_ones_stay(tmp_path, no_sips
     slug = tmp_path / "slug"
     parts = {"Alpha": "Done.", "Beta": "Done too.", "Gamma": "Evidence for an open card.", "Delta": "Has a comment."}
     generate(source(tmp_path, parts, [card(1, "s:gamma")]), slug)
+    complete(slug)
     assert '<details class="aa-earlier"' not in canvas(slug, "v1")    # nothing is unchanged on v1
     store(slug, {"s:delta:p1": [{"id": "c1", "author": "chang", "status": "open", "body": "Why?", "version": "v1"}]})
     changed = {**parts, "Beta": "Changed this round."}
     result = generate(source(tmp_path, changed, [card(1, "s:gamma")], "v2"), slug)
+    complete(slug)
     html = canvas(slug, "v2")
     fold = html[html.index('<details class="aa-earlier"'):]
     assert result["layout"]["folded"] == ["s:alpha"]
@@ -108,10 +114,12 @@ def test_an_answered_card_no_longer_holds_its_topic_open(tmp_path, no_sips):
     slug = tmp_path / "slug"
     parts = {"Alpha": "Done.", "Gamma": "Evidence."}
     generate(source(tmp_path, parts, [card(1, "s:gamma")]), slug)
+    complete(slug)
     store(slug, {"d:q1": [{"id": "q1", "number": 1, "author": "agent:claude", "status": "open", "version": "v1",
                            "decision_request": card(1, "s:gamma")["decision_request"],
                            "decision": {"verdict": "yes"}}]})
     result = generate(source(tmp_path, {**parts, "Epsilon": "New."}, version="v2"), slug)
+    complete(slug)
     assert result["layout"]["folded"] == ["s:alpha", "s:gamma"]
 
 
@@ -122,8 +130,10 @@ def big_page(n=45, changed=None):
 def test_over_the_limit_every_finished_topic_moves_to_one_archive_and_republishing_is_idempotent(tmp_path, no_sips):
     slug = tmp_path / "slug"
     first = generate(source(tmp_path, big_page(), [card(1, "s:topic-3")]), slug)
+    complete(slug)
     assert first["layout"]["archived"] == [] and any("size limit" in w for w in first["warnings"])
     second = generate(source(tmp_path, big_page(), [card(1, "s:topic-3")], "v2"), slug)
+    complete(slug)
     today = datetime.date.today().isoformat()
     assert second["layout"]["archived"][0]["id"] == f"archive-{today}"
     html = canvas(slug, "v2")
@@ -140,12 +150,14 @@ def test_over_the_limit_every_finished_topic_moves_to_one_archive_and_republishi
     cards_before = (slug / "cards.json").read_text()
 
     third = generate(source(tmp_path, big_page(), [card(1, "s:topic-3")], "v3"), slug)
+    complete(slug)
     assert third["layout"]["archived"] == [] and len(third["layout"]["already_archived"]) == 44
     assert canvas(slug, "v3").count('data-anchor-id="s:topic-1"') == 0
     assert (slug / "cards.json").read_text() == cards_before
     assert len([p for p in list_plans(slug) if is_archive_plan(p)]) == 1
 
     fourth = generate(source(tmp_path, big_page(changed={1: "Reopened with new work."}), [card(1, "s:topic-3")], "v4"), slug)
+    complete(slug)
     assert fourth["layout"]["returned"] == ["s:topic-1"]
     assert 'data-anchor-id="s:topic-1"' in canvas(slug, "v4")
     index = json.loads((slug / "archive" / "index.json").read_text())
@@ -159,9 +171,12 @@ def test_over_the_limit_every_finished_topic_moves_to_one_archive_and_republishi
 def test_a_reopened_comment_brings_an_archived_topic_back(tmp_path, no_sips):
     slug = tmp_path / "slug"
     generate(source(tmp_path, big_page()), slug)
+    complete(slug)
     generate(source(tmp_path, big_page(), version="v2"), slug)
+    complete(slug)
     store(slug, {"s:topic-7:p1": [{"id": "c7", "author": "chang", "status": "open", "body": "Again?", "version": "v1"}]})
     result = generate(source(tmp_path, big_page(), version="v3"), slug)
+    complete(slug)
     assert result["layout"]["returned"] == ["s:topic-7"]
     assert 'data-anchor-id="s:topic-7"' in canvas(slug, "v3")
 
@@ -193,6 +208,7 @@ def test_a_topic_is_dated_by_the_version_where_its_current_content_first_appeare
                 3: {"Alpha": "Same.", "Beta": "Second draft.", "Gamma": "Same too."}}  # and came back
     for n, parts in versions.items():
         generate(source(tmp_path, parts, version=f"v{n}"), slug, version=f"v{n}")
+        complete(slug)
     meta = json.loads((slug / "current.meta.json").read_text())
     meta["history"] = [{"version": f"v{n}", "ts": f"2026-10-{17 + n}T10:00:00Z", "label": ""} for n in versions]
     (slug / "current.meta.json").write_text(json.dumps(meta))
@@ -209,15 +225,18 @@ def test_every_image_carries_its_content_hash_id_across_versions(tmp_path, no_si
     sections = {"Board": "![A](shots/a.png)\n\n![B](shots/b.png)\n\n![A again](shots/a.png)"}
     slug = tmp_path / "slug"
     generate(source(tmp_path, sections), slug)
+    complete(slug)
     found = re.findall(r'<img src="assets/([0-9a-f]{12})-[^"]*" data-img="([0-9A-F]+)"', canvas(slug, "v1"))
     assert len(found) == 3 and found[0] == found[2]
     for prefix, image in found:                     # the id is the start of the hash the asset is named by
         assert image == prefix[:4].upper()
     generate(source(tmp_path, sections, version="v2"), slug)
+    complete(slug)
     assert re.findall(r'data-img="([0-9A-F]+)"', canvas(slug, "v2")) == [image for _, image in found]
     assert "data-unchanged-since" in canvas(slug, "v2")   # the id does not count as a change
     write(tmp_path / "shots" / "a.png", png(300, 200, (10, 10, 200)))
     generate(source(tmp_path, sections, version="v3"), slug)
+    complete(slug)
     assert re.findall(r'data-img="([0-9A-F]+)"', canvas(slug, "v3"))[0] != found[0][1]
 
 

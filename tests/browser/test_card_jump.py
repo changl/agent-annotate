@@ -11,6 +11,7 @@ import json
 import re
 
 import pytest
+from review_fixtures import complete
 from single_page import browser_page, feedback, go
 from test_card_layout import CHROME, _in_view, _wait
 
@@ -74,6 +75,7 @@ def page_dir(tmp_path):
     source.write_text(SOURCE)
     directory = tmp_path / "jump"
     generate(source, directory)
+    complete(directory)
     html = directory / "versions" / "v1.html"
     text = html.read_text()
     text, n = re.subn(r'<p[^>]*data-anchor-id="s:mockup:p1"[^>]*>FIGURE</p>', FIGURE, text)

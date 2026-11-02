@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
+from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -53,6 +54,7 @@ def test_withdrawn_question_leaves_needs_you_and_stays_in_history(tmp_path, monk
     source.write_text(EXAMPLE)
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {
         "d:q1": [_card("aaaaaaaaaaaa", "d:q1", 1)],
     }, "archived": {}}))
@@ -81,6 +83,7 @@ def test_questions_have_one_current_status_and_no_competing_reference_surface(tm
     source.write_text(EXAMPLE, encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
     generate(source, slug_dir)
+    complete(slug_dir)
     (slug_dir / "comments.json").write_text(
         json.dumps(
             {

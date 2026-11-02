@@ -284,7 +284,7 @@ def test_an_unpublishable_slug_dir_fails_before_starting_a_server(published, cap
     assert published.saved == {}
 
 
-def test_funnel_publish_with_vanished_browser_still_asks(published, monkeypatch, capsys):
+def test_funnel_publish_with_vanished_browser_keeps_the_review_staged(published, monkeypatch, capsys):
     from pathlib import Path
 
     from agent_annotate import pagegen, verify
@@ -299,25 +299,27 @@ def test_funnel_publish_with_vanished_browser_still_asks(published, monkeypatch,
         raise RuntimeError("browser_tab_not_found")
 
     monkeypatch.setattr(verify, "_orca", orca)
-    monkeypatch.setattr(pagegen, "_call_publish", lambda directory, args: cli.cmd_publish(
-        _args(directory, transport="funnel", verify_timeout=0)))
+    def publish(directory, args):
+        publish_args = _args(directory, transport="funnel", verify_timeout=0)
+        publish_args.candidate_version = args.candidate_version
+        return cli.cmd_publish(publish_args)
+    monkeypatch.setattr(pagegen, "_call_publish", publish)
     asked = []
     monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("reviews", "demo", published.saved["demo"]))
 
     def api(record, method, path, body, author):
+        if method == "GET":
+            return 200, {"review_ready": True}
         asked.append((method, path, body))
         return 200, {"ids": ["q1", "q2", "q3"], "created": 3, "updated": 0}
 
     monkeypatch.setattr(cli, "_api", api)
     args = SimpleNamespace(slug_dir=str(published.slug_dir), from_file=str(source),
                            version="v1", label=None, project="reviews", publish=True, ask=True)
-    assert pagegen.cmd_new(args) == 0
+    assert pagegen.cmd_new(args) == 2
     out = capsys.readouterr().out
-    assert "NOT PUBLISHED" not in out
-    assert PUBLIC_URL in out
     assert "public browser check skipped" in out
     assert "browser_tab_not_found" in out
-    assert asked[0][:2] == ("POST", "/api/comments/batch")
-    assert len(asked[0][2]["items"]) == 3
-    assert all(item["version"] == "v1" for item in asked[0][2]["items"])
+    assert not asked
+    assert not cli._read_meta(published.slug_dir).get("current")
     assert published.saved["demo"]["verified"] is False

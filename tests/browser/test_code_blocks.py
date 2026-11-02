@@ -8,6 +8,7 @@ included, scrolled.
 import json
 
 import pytest
+from review_fixtures import complete
 from single_page import browser_page, feedback
 from test_card_jump import _card
 from test_card_layout import CHROME, _wait
@@ -49,6 +50,7 @@ def page_dir(tmp_path):
     source.write_text(SOURCE)
     directory = tmp_path / "commands"
     generate(source, directory)
+    complete(directory)
     card = _card("card-1", 1, "d:q1", "Ran it?", ["accept", "reject"], [{"label": "Tail", "anchor": "s:tail"}])
     (directory / "comments.json").write_text(json.dumps(
         {"schema_version": 2, "anchors": {"d:q1": [card]}, "archived": {}}))

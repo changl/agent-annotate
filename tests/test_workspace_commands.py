@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from review_fixtures import checked, complete
 
 from agent_annotate import cli, delivery, pagegen, review_access, transports, workspace
 from agent_annotate.sync_server import make_handler
@@ -49,10 +50,21 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_ensure_shim_installed", lambda: (False, "inert"))
     monkeypatch.setattr(cli, "_ensure_hook_installed", lambda: (False, "inert"))
     monkeypatch.setattr(cli, "_check_js_lint", lambda *args, **kwargs: (True, []))
-    monkeypatch.setattr(cli, "_run_gate", lambda *args: None)
+    def gate(record, args):
+        if getattr(args, "candidate_version", None):
+            checked(Path(record["slug_dir"]), args)
+        return None
+    monkeypatch.setattr(cli, "_run_gate", gate)
     monkeypatch.setattr(cli, "_route_host", lambda record: None)
     monkeypatch.setattr(cli, "_inv", lambda: "annotate")
-    monkeypatch.setattr(cli, "_api", lambda *args, **kwargs: pytest.fail("Unexpected HTTP write"))
+    def publish_api(record, method, path, body, author, **kwargs):
+        if method == "GET" and path == "/api/capabilities":
+            return 200, {"review_ready": True}
+        assert body.get("publish_version"), "Unexpected HTTP write"
+        complete(Path(record["slug_dir"]))
+        cli._bus_emit(record["bus_file"], {"event": "version_published", "version": body["publish_version"]["version"]})
+        return 200, {"ids": [], "created": 0, "updated": 0}
+    monkeypatch.setattr(cli, "_api", publish_api)
     live = set()
     routes, starts = [], []
     counter = iter(range(18000, 19000))
@@ -90,6 +102,7 @@ def estate(tmp_path, monkeypatch):
     source = tmp_path / "initial.md"
     source.write_text("---\ntitle: Project\n---\n\n# Project\n\n## Progress\n\nBuild passed.\n")
     pagegen.generate(source, directory, version="v1")
+    complete(directory)
     return SimpleNamespace(root=tmp_path, repo=repo, directory=directory, routes=routes, starts=starts,
                            route=route, mutex=mutex)
 
@@ -131,8 +144,12 @@ def test_reused_directory_keeps_canonical_scope_through_publish_version_and_ask(
     asks = []
 
     def api(record, method, path, body, author, **kwargs):
+        if method == "GET" and path == "/api/capabilities":
+            return 200, {"review_ready": True}
         assert method == "POST" and path == "/api/comments/batch"
         asks.append((record["project"], record["slug"], body, author))
+        complete(Path(record["slug_dir"]))
+        cli._bus_emit(record["bus_file"], {"event": "version_published", "version": body["publish_version"]["version"]})
         return 200, {"ids": ["bbbbbbbbbbbb"], "created": 1, "updated": 0}
 
     monkeypatch.setattr(cli, "_api", api)
@@ -195,6 +212,7 @@ def test_concurrent_first_pages_with_provider_aliases_publish_only_one_route_and
     source = estate.root / "second.md"
     source.write_text("---\ntitle: Project\n---\n\n# Project\n\nBuild passed.\n")
     pagegen.generate(source, other, version="v1")
+    complete(other)
     caller = threading.local()
     key_barrier = threading.Barrier(2)
     both_routed = threading.Event()
@@ -245,7 +263,7 @@ def test_provider_author_change_preserves_canonical_decision_and_keeps_legacy_qu
     directory = tmp_path / "page"
     directory.mkdir()
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {}, "archived": {}}))
-    (directory / "current.meta.json").write_text(json.dumps({"current": "v1", "history": [{"version": "v1"}]}))
+    (directory / "current.meta.json").write_text(json.dumps({"history": []}))
     handler = make_handler(artifact_dir=directory, public_base_path="", slug="test", bus_dir=tmp_path / "bus",
                            local_author="reviewer@example.test", local_author_name="Reviewer")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -356,6 +374,7 @@ def test_exception_parent_uses_registry_identity_for_legacy_records_without_slug
     source = estate.root / "legacy.md"
     source.write_text("# Worksheet\n\nEvidence.\n")
     pagegen.generate(source, other, version="v1")
+    complete(other)
     arguments = _publish_args(other, "canonical")
     arguments.exception = "Explicit worksheet"
     assert cli.cmd_publish(arguments) == 0

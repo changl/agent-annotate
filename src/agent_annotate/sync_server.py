@@ -493,7 +493,8 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
     for _, other in _iter_comments(store):
         same_question = (other.get("anchor_id") == comment.get("anchor_id")
                          and other.get("doc") == comment.get("doc")
-                         and other.get("status") in ("archived", "resolved_in_version"))
+                         and (other.get("status") in ("archived", "resolved_in_version")
+                              or (comment.get("origin_id") and (other.get("origin_id") or other.get("id")) == comment["origin_id"])))
         if (other.get("id") != comment["id"] and not same_question
                 and (numbers.get(other.get("id")) == number or other.get("number") == number)):
             raise DecisionRequestError(f"card number {number} is already used by {other['id']} on {other.get('version', '?')}; use #{next_number}", 409)
@@ -1002,6 +1003,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return False
         if origin[0] == "https" and not self._identity()["authenticated"]:
             route = self._strip_base(path)
+            from .review_versions import preview_version
+            if self.command == "GET" and preview_version(self.artifact_dir, route):
+                return True  # The short-lived capability reads only this draft, never the APIs.
             bootstrap_assets = {"shell.js", "shell.css", "content.css", "daisyui.css", "quill.js", "quill.snow.css",
                                 "RobotoVariable.woff2", "RobotoVariable-Italic.woff2", "app.js", "app.css", "library.js", "findings.js"}
             bootstrap = (self.command == "GET" and ((route == "/") or route.lstrip("/") in bootstrap_assets
@@ -1313,17 +1317,28 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if route_path == "/comments.json":
             return self._v2_get_store(parsed)
         if route_path == "/current.meta.json":
-            return self._v2_get_meta()
+            with _locked_store(self.artifact_dir, write=False):
+                return self._v2_get_meta()
         if route_path.lstrip("/") in _WEB_ASSETS:
             return self._serve_skill_asset(route_path.lstrip("/"))
         # A distinct path survives CDN configurations that strip query strings.
         m = _ASSET_PATH_RE.match(route_path)
         if m:
             return self._serve_versioned_asset(m.group(2), m.group(1))
+        if route_path.startswith("/__review_preview/"):
+            from .review_versions import preview_version
+            with _locked_store(self.artifact_dir, write=False):
+                version = preview_version(self.artifact_dir, route_path)
+                if version:
+                    return self._respond(200, _version_file(self.artifact_dir, version).read_bytes(),
+                                         "text/html; charset=utf-8", cache_control=_NO_STORE)
+            return self._respond(404, b"Not found")
         if route_path == "/content":
-            return self._v2_serve_content(parsed)
+            with _locked_store(self.artifact_dir, write=False):
+                return self._v2_serve_content(parsed)
         if route_path == "/" or route_path == "":
-            return self._v2_serve_root(parsed)
+            with _locked_store(self.artifact_dir, write=False):
+                return self._v2_serve_root(parsed)
         return self._serve_static(route_path)
 
     # ── POST ─────────────────────────────────────────────────────────
@@ -1539,6 +1554,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # This server honors consolidated.json: no writes, redirect home.
             "consolidation": True,
             "batch": True,
+            "review_ready": True,
             "rounds": True,
             "decision_schema": 2,
             "decision_request_cap": _DECISION_REQUEST_CAP,
@@ -1761,6 +1777,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _version_path(self, version: str | None):
         if version:
+            from .review_versions import draft_path
+            if draft_path(self.artifact_dir, version).exists():
+                return self.artifact_dir / '.review-not-ready'
+        if version:
             return _version_file(self.artifact_dir, version)
         return _contained_path(self.artifact_dir, "current.html")
 
@@ -1907,6 +1927,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
             return
         try:
+            if plan_id is None:
+                from .review_versions import draft_path
+                if draft_path(self.artifact_dir, v).exists():
+                    return self._respond(404, b'{"error":"review version is not ready"}')
             if plan_id is not None:
                 from .categories import plan_meta, safe_path, validate_plan_id
                 validate_plan_id(plan_id)
@@ -2152,8 +2176,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         except DecisionRequestError as exc:
             self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             return
-        except OSError as exc:
-            self._respond(500, f'{{"error":"write error: {exc}"}}'.encode())
+        except (OSError, ValueError) as exc:
+            self._respond(500, json.dumps({"error": f"write error: {exc}"}).encode())
             return
 
         version = comment["version"]
@@ -2174,7 +2198,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
               + (" [decision card]" if comment.get("decision_request") else ""), flush=True)
         self._respond(201, json.dumps(comment, ensure_ascii=False).encode(), "application/json")
 
-    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict, store: dict | None = None) -> dict:
+    def _new_comment_from_payload(self, payload: dict, identity: dict, meta: dict, store: dict | None = None, *, ready=False) -> dict:
         """Build a fresh v2 comment from a create payload (single or batch).
 
         Caller validates anchor_id/text and holds _STORE_LOCK. Raises
@@ -2234,6 +2258,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # comment (previously a mandatory second PUT). Same validation as PUT.
         if payload.get("decision_request") is not None:
             comment["decision_request"] = _normalize_decision_request(payload["decision_request"])
+        if comment.get("decision_request") and not human(author) and not comment.get("doc") and comment.get("category", "review") == "review":
+            from .review_versions import draft_path, require_draft
+            try:
+                require_draft(meta, version)
+                if not ready and draft_path(self.artifact_dir, version).exists():
+                    raise ValueError("publish Review cards as a complete round with new --publish --ask")
+            except ValueError as exc:
+                raise DecisionRequestError(str(exc), 409) from exc
         if human(author):
             comment["agent_snapshot"] = None
         return comment
@@ -2259,7 +2291,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(400, b'{"error":"items list required"}')
             return
         items = payload["items"]
-        if not items:
+        publication = payload.get("publish_version")
+        if not items and not publication:
             self._respond(400, b'{"error":"items must not be empty"}')
             return
         idempotency = payload.get("idempotency")
@@ -2284,12 +2317,40 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         try:
             with _locked_store(self.artifact_dir):
                 meta = self._read_meta()
+                if publication:
+                    from .review_versions import fingerprint, read_draft, require_draft
+                    if (not self._is_direct_loopback_request() or self.headers.get("Origin")
+                            or self.headers.get("Sec-Fetch-Site") or not isinstance(publication, dict)):
+                        raise DecisionRequestError("publishing requires a local agent", 403)
+                    version = publication.get("version")
+                    try:
+                        require_draft(meta, version)
+                        draft = read_draft(self.artifact_dir, version)
+                        if (not draft.get("verified") or publication.get("preview") != draft["preview"]
+                                or draft.get("fingerprint") != fingerprint(self.artifact_dir, version)):
+                            raise ValueError("server checks must pass before publishing")
+                    except (OSError, ValueError) as exc:
+                        raise DecisionRequestError(str(exc), 409) from exc
+                    if any(it.get("version") != version for it in items):
+                        raise DecisionRequestError("every card must belong to the version being published")
+                    cards_file = self.artifact_dir / "versions" / f"{version}.cards.json"
+                    expected = json.loads(cards_file.read_text()) if cards_file.exists() else []
+                    if [(it.get("anchor_id"), it.get("number")) for it in items] != [
+                            (it.get("anchor_id"), it.get("number")) for it in expected]:
+                        raise DecisionRequestError("seed every staged card before publishing; regenerate the complete round")
                 store = self._v2_load()
                 # Validate everything first so a 413 on item 3 never leaves
                 # items 1-2 half-committed.
                 built = []
                 for it in items:
-                    built.append(self._new_comment_from_payload(it, identity, meta, store))
+                    built.append(self._new_comment_from_payload(it, identity, meta, store, ready=bool(publication)))
+                if publication:
+                    from .decision_quality import card_refusal, page_anchors
+                    anchors = page_anchors(_version_file(self.artifact_dir, version).read_text())
+                    for fresh in built:
+                        refusal = card_refusal(fresh, anchors)
+                        if refusal:
+                            raise DecisionRequestError(refusal)
                 now = _now_iso()
                 for it, fresh in zip(items, built):
                     aid = fresh["anchor_id"]
@@ -2307,7 +2368,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             if (c.get("status") not in ("archived", "resolved_in_version")
                                     and (c.get("author") == author or shared_decision)
                                     and c.get("decision_request") and c.get("doc") == fresh.get("doc")
-                                    and (c.get("version") == fresh.get("version") or _can_withdraw(c))):
+                                    and (c.get("version") == fresh.get("version") or (not publication and _can_withdraw(c)))):
                                 existing = c
                                 break
                     if existing is not None:
@@ -2357,7 +2418,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     else:
                         if idempotency == "anchor" and fresh.get("decision_request"):
                             lineage = [c for c in store["anchors"].get(aid, [])
-                                       if c.get("decision_request") and c.get("author") == author
+                                       if c.get("decision_request") and (c.get("author") == author or (publication and str(c.get("author", "")).startswith("agent:")))
                                        and c.get("doc") == fresh.get("doc")
                                        and (it.get("number") is None or c.get("number") == fresh.get("number"))]
                             roots = {c.get("origin_id") or c["id"] for c in lineage}
@@ -2366,12 +2427,41 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 prior = lineage[-1]
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
                                 fresh["origin_item_id"] = item_id(prior)
+                                if publication and _can_withdraw(prior):
+                                    prior["status"] = "addressed_by_agent"
+                                    prior["response_text"] = f"Asked again in {version}."
                         _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
                         ids.append(fresh["id"])
                         created_events.append(("comment_created", fresh))
-                self._v2_save(store)
+                if publication:
+                    from .review_versions import activate
+                    old_store = self._store_path().read_bytes() if self._store_path().exists() else None
+                    old_meta = self._meta_path().read_bytes() if self._meta_path().exists() else None
+                    old_link = os.readlink(self.artifact_dir / "current.html") if (self.artifact_dir / "current.html").is_symlink() else None
+                    try:
+                        from .cli import _withdraw_unasked_store
+                        _withdraw_unasked_store(store, version,
+                            {it["anchor_id"] for it in items}, {it["number"] for it in items if it.get("number")})
+                        self._v2_save(store)
+                        activate(self.artifact_dir, version)
+                    except (OSError, ValueError):
+                        from .categories import _atomic_bytes
+                        for path, data in ((self._store_path(), old_store), (self._meta_path(), old_meta)):
+                            if data is None:
+                                path.unlink(missing_ok=True)
+                            else:
+                                _atomic_bytes(path, data)
+                        current = self.artifact_dir / "current.html"
+                        current.unlink(missing_ok=True)
+                        if old_link is not None:
+                            current.symlink_to(old_link)
+                        type(self)._store_snapshot = None
+                        type(self)._store_responses.clear()
+                        raise
+                else:
+                    self._v2_save(store)
         except DecisionRequestError as exc:
             self._respond(exc.status, json.dumps({"error": str(exc)}).encode())
             return
@@ -2380,6 +2470,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return
 
         session = self._session_fields()
+        if publication:
+            _bus_append(self.bus_dir, self.slug, {"event": "version_published", "version": version,
+                        "label": draft.get("label", ""), **session})
         for kind, c in created_events:
             ev = {
                 "event": kind,
@@ -2501,6 +2594,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     or ("text" in payload and c.get("author") != author)):
                 self._respond(403, b'{"error":"reviewers can answer questions and edit their own comments; agent authoring requires a local caller"}')
                 return
+            if (not human(author) and c.get("decision_request") and not c.get("doc")
+                    and c.get("category", "review") == "review"
+                    and (any(k in payload for k in ("text", "number", "category", "doc", "target", "reanchor", "carry_forward"))
+                         or payload.get("decision_request") is not None)):
+                from .review_versions import require_draft
+                try:
+                    require_draft(self._read_meta(), c.get("version"))
+                except ValueError as exc:
+                    return self._respond(409, json.dumps({"error": str(exc)}).encode())
             if item_number is not None:
                 try:
                     _assign_item_number(store, c, item_number, existing=True)
@@ -3988,6 +4090,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return
         if target == self._meta_path().resolve():
             return self._v2_get_meta()  # Preserve normalized aliases through the filtered API, never raw bytes.
+        from .review_versions import draft_path
+        if target.parent.name in ("versions", "content") and _VERSION_ID.fullmatch(target.stem):
+            if draft_path(self.artifact_dir, target.stem).exists():
+                return self._respond(404, b"Not found")
         if not self._is_public_static(rel):
             return self._respond(404, b"Not found")
         if not self._is_public_static(target.relative_to(self.artifact_dir.resolve()).as_posix()):

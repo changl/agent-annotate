@@ -2,8 +2,10 @@
 
 import json
 import urllib.request
+from contextlib import nullcontext
 
 import pytest
+from review_fixtures import authoring, complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -114,6 +116,7 @@ def _page(tmp_path):
     source.write_text(_document())
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     return directory
 
 
@@ -223,8 +226,9 @@ def _api(base, path, body, method="POST", reviewer=False):
     request = urllib.request.Request(
         base + path, data=json.dumps(body).encode(), method=method, headers=headers
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.load(response)
+    with authoring(base, body) if not reviewer else nullcontext():
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
@@ -236,6 +240,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
     first_source = tmp_path / "v1.md"
     first_source.write_text(_document(cards=[_question(13), _question(14)]))
     generate(first_source, directory)
+    complete(directory)
     process, base = _serve(tmp_path, directory)
     try:
         ids = _api(
@@ -254,6 +259,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
         second_source = tmp_path / "v2.md"
         second_source.write_text(_document("v2", [_question(n) for n in (13, 14, 15)], title=second_title))
         generate(second_source, directory)
+        complete(directory)
         _api(
             base,
             f"api/comments/{ids[0]}",

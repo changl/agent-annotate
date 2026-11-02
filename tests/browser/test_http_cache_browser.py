@@ -7,6 +7,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import authoring, complete
 from test_card_layout import _serve
 
 from agent_annotate.pagegen import generate
@@ -36,13 +37,15 @@ def test_second_page_load_reuses_assets_and_revalidates_images(tmp_path):
                       '![Proof](attachments/plain.png)\n\n'
                       '## Questions\n\n```cards\n' + json.dumps([card]) + '\n```\n')
     generate(source, directory)
+    complete(directory)
     process, base = _serve(tmp_path, directory)
     try:
         request = urllib.request.Request(base + "api/comments/batch", method="POST",
                                         data=json.dumps({"items": [dict(card, version="v1")]}).encode(),
                                         headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:cache-smoke"})
         try:
-            urllib.request.urlopen(request).close()
+            with authoring(base, json.loads(request.data)):
+                urllib.request.urlopen(request).close()
         except urllib.error.HTTPError as error:
             pytest.fail(error.read().decode())
         with playwright.sync_playwright() as runner:

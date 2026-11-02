@@ -414,15 +414,12 @@ def test_generate_writes_every_file_a_publish_needs(tmp_path):
     result = generate(src, slug_dir)
 
     assert (slug_dir / "versions" / "v1.html").is_file()
-    assert (slug_dir / "current.html").is_symlink()
-    import os
-    assert os.readlink(slug_dir / "current.html") == "versions/v1.html"
+    assert not (slug_dir / "current.html").exists()
     assert (slug_dir / "source" / "v1.md").read_text(encoding="utf-8") == EXAMPLE
     assert (slug_dir / "comments.json").exists()
     meta = json.loads((slug_dir / "current.meta.json").read_text(encoding="utf-8"))
-    assert meta["current"] == "v1"
-    assert [h["version"] for h in meta["history"]] == ["v1"]
-    assert meta["history"][0]["label"] == "round 1"
+    assert not meta.get("current") and not meta.get("history")
+    assert json.loads((slug_dir / ".review-drafts/v1.json").read_text())["label"] == "round 1"
     assert result["prior_versions"] == []
 
 
@@ -435,7 +432,7 @@ def test_rerunning_the_same_version_is_idempotent(tmp_path):
     second = generate(src, slug_dir)
     meta = json.loads((slug_dir / "current.meta.json").read_text(encoding="utf-8"))
 
-    assert [h["version"] for h in meta["history"]] == ["v1"]     # never appended twice
+    assert not meta.get("history")  # retrying a draft is still invisible
     assert second["anchors"] == first["anchors"]
     assert (slug_dir / "versions" / "v1.html").read_text(encoding="utf-8") == before
     assert second["prior_versions"] == []
@@ -498,6 +495,8 @@ def test_generating_a_second_version_does_not_publish_it_before_the_gate(tmp_pat
     src.write_text(EXAMPLE, encoding="utf-8")
     slug_dir = tmp_path / "items-model-review"
     generate(src, slug_dir)
+    from agent_annotate.review_versions import activate
+    activate(slug_dir, "v1")
     result = generate(src, slug_dir, version="v2", label="round 2")
 
     import os
@@ -517,6 +516,8 @@ def test_later_version_warns_when_most_plan_sections_disappear(tmp_path):
         version="v1",
     ), encoding="utf-8")
     generate(v1, slug_dir)
+    from agent_annotate.review_versions import activate
+    activate(slug_dir, "v1")
 
     v2 = tmp_path / "v2.md"
     v2.write_text(_doc(
@@ -547,6 +548,8 @@ def _two_versions(tmp_path, v2_body):
     v1 = tmp_path / "v1.md"
     v1.write_text(_doc(_V1_BODY, version="v1"), encoding="utf-8")
     generate(v1, slug_dir)
+    from agent_annotate.review_versions import activate
+    activate(slug_dir, "v1")
     v2 = tmp_path / "v2.md"
     v2.write_text(_doc(v2_body, version="v2", full_plan="true",
                        other_files_required="none"), encoding="utf-8")
@@ -677,7 +680,7 @@ def test_new_json_preserves_the_anchor_count_and_the_next_commands(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "anchors        3" in json.loads(proc.stdout)["output"]
     assert "publish " in proc.stdout
-    assert "ask items-model-review --from" in proc.stdout
+    assert "--publish --ask" in proc.stdout
     assert "--version v1" in proc.stdout
 
 

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import pytest
+from review_fixtures import complete
 from single_page import go, history, ready
 from test_card_layout import CHROME, _serve
 from test_single_page_acceptance import workspace  # noqa: F401
@@ -37,6 +38,7 @@ def versions(tmp_path):
         f"## Checks\n\nSecond document with an [outside link]({OUTSIDE}).\n"
     )
     generate(source, directory)
+    complete(directory)
     meta = json.loads((directory / "current.meta.json").read_text())
     meta.update(current="v2", history=[{"version": "v1"}, {"version": "v2"}])
     (directory / "current.meta.json").write_text(json.dumps(meta))

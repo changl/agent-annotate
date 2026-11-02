@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -122,6 +123,7 @@ def _serve(tmp_path, card=None, anchor="s:overview"):
     else:
         process.terminate()
         raise AssertionError("standalone server did not become ready")
+    register(base, slug_dir)
     return process, base, slug_dir
 
 

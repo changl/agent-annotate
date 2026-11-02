@@ -290,34 +290,19 @@ def served(tmp_path, monkeypatch):
         thread.join(timeout=2)
 
 
-def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
+def test_ask_of_shown_version_is_refused_without_writing(served, tmp_path, capsys):
     cards = tmp_path / "cards.json"
-    cards.write_text(json.dumps([
-        {"number": 14, "anchor_id": "s:a",
-         "decision_request": {"prompt": "A?", "recommendation": "accept", "evidence": [{"anchor": "s:a"}]}},
-        {"anchor_id": "s:b", "text": "B please", "decision_request": {"prompt": "B?", "evidence": [{"anchor": "s:b"}]}},
-    ]))
+    cards.write_text(json.dumps([{"anchor_id": "s:a", "decision_request": {
+        "prompt": "A?", "evidence": [{"anchor": "s:a"}]}}]))
+    before = (served.slug_dir / "comments.json").read_bytes()
     args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
                            author="agent:test", json=True)
-    assert cli.cmd_ask(args) == 0
-    first = json.loads(_last_line(capsys))
-    assert first["route"] == "batch" and first["created"] == 2 and first["updated"] == 0
-    assert first["version"] == "v2"
-
-    assert cli.cmd_ask(args) == 0
-    second = json.loads(_last_line(capsys))
-    assert second["updated"] == 2 and second["ids"] == first["ids"]
-
-    store = json.loads((served.slug_dir / "comments.json").read_text())
-    assert len(store["anchors"]["s:a"]) == 1
-    assert store["anchors"]["s:a"][0]["number"] == 14
-    assert store["anchors"]["s:a"][0]["text"] == "A?"          # text defaults to the prompt
-    assert store["anchors"]["s:a"][0]["version"] == "v2"
-    seeded = [json.loads(line) for line in served.bus.read_text().splitlines() if '"comments_seeded"' in line]
-    assert len(seeded) == 2
+    assert cli.cmd_ask(args) == 2
+    assert "immutable; use v3" in capsys.readouterr().err
+    assert (served.slug_dir / "comments.json").read_bytes() == before
 
 
-def test_ask_number_collision_names_next_free_number_and_preserves_source(served, tmp_path, capsys):
+def test_ask_shown_version_preserves_source_and_existing_cards(served, tmp_path, capsys):
     code, first = cli._api(served.record, "POST", "/api/comments",
                            {"anchor_id": "s:a", "number": 10, "text": "Existing card"}, "agent:other")
     assert code == 201
@@ -330,7 +315,7 @@ def test_ask_number_collision_names_next_free_number_and_preserves_source(served
                            author="agent:test", json=False)
     assert cli.cmd_ask(args) == 2
     error = capsys.readouterr().err
-    assert first["id"] in error and "on v2; use #11" in error
+    assert "immutable; use v3" in error
     assert cards.read_bytes() == source and (served.slug_dir / "comments.json").read_bytes() == before
 
 
@@ -486,15 +471,15 @@ def test_republishing_stable_card_number_keeps_one_card_and_resolves(served):
             "version": "v1", "decision_request": {"prompt": "Keep this question?"}}
     (served.slug_dir / "versions/v1.html").write_text('<p data-anchor-id="d:q10">Question</p>')
     (served.slug_dir / "versions/v2.html").write_text('<p data-anchor-id="d:q10">Question</p>')
-    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v1"}))
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"history": []}))
     code, first = cli._api(served.record, "POST", "/api/comments/batch",
                            {"items": [item], "idempotency": "anchor"}, "agent:first")
     assert code == 200 and first["created"] == 1
     (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v2"}))
     code, second = cli._api(served.record, "POST", "/api/comments/batch",
                             {"items": [{**item, "version": "v2"}], "idempotency": "anchor"}, "agent:second")
-    assert code == 200 and second["ids"] == first["ids"] and second["updated"] == 1
+    assert code == 409 and "immutable" in second["error"]
     cards = cli._decision_cards(cli._load_store(served.record))
-    assert [(c["id"], c["number"], c["version"]) for c in cards] == [(first["ids"][0], 10, "v2")]
+    assert [(c["id"], c["number"], c["version"]) for c in cards] == [(first["ids"][0], 10, "v1")]
     args = cli.build_parser().parse_args(["resolve", "proj/live", "10"])
     assert cli.cmd_resolve(args) == 0 and args.comment_id == first["ids"][0]

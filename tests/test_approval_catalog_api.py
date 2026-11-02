@@ -16,10 +16,10 @@ def seed(server, text="First design", version="v1", **extra):
     (directory / f"content/{version}.html").write_text(
         f'<html><head></head><body><section data-anchor-id="s:design"><h2>{text}</h2>'
         '<p>Complete evidence</p></section></body></html>')
-    (directory / "current.meta.json").write_text(json.dumps({"current": version, "history": [{"version": version}]}))
     status, comment = _call(httpd, "POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
         {**_card("d:q1", **{"evidence": [{"anchor": "s:design"}], "catalog": True, **extra}), "version": version}]})
     assert status == 200
+    (directory / "current.meta.json").write_text(json.dumps({"current": version, "history": [{"version": version}]}))
     return _store(directory)["anchors"]["d:q1"][-1]
 
 
