@@ -2754,6 +2754,20 @@ function wirePageLinks() {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const link = e.target.closest && e.target.closest('a[href]');
     if (!link || (link.target && link.target !== '_self')) return;
+    // "#2752" in the text: a link into this document goes where the rail's
+    // card goes, in one click, opening a folded section. <base> made it read
+    // as another page, and the click did nothing (Chang, 2026-11-02).
+    const frag = (link.getAttribute('href') || '').match(/^#(.+)$/);
+    if (frag) {
+      let aid = frag[1];
+      try { aid = decodeURIComponent(aid); } catch {}
+      if (findAnchorEl(aid) || foldedAnchorEl(aid)) {
+        e.preventDefault();
+        closeViewer();
+        scrollToAnchor(aid, null, null);
+        return;
+      }
+    }
     let url;
     try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { return; }
     if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.origin !== PARENT_ORIGIN) {

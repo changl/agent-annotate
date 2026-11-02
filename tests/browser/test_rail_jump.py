@@ -5,6 +5,10 @@ place on the page." A smooth scroll was aimed once, then the pictures above the
 place loaded (side-by-side pictures have no size until they load) and pushed it
 down. The jump now lands at once and holds the place while the page settles,
 including when the place is in a folded section.
+
+A number in the page's own text ("Click a number to jump to it") goes the same
+way; before, the page's <base> made it read as a link to another page and the
+click did nothing.
 """
 
 import json
@@ -44,7 +48,7 @@ def _directory(tmp_path):
     tail = "\n\n".join(f"Closing note {i}." for i in range(40))
     source = tmp_path / "review.md"
     source.write_text(
-        "---\ntitle: Rail jump\nversion: v1\nfull_plan: true\nother_files_required: none\n---\n\nIntro.\n\n"
+        "---\ntitle: Rail jump\nversion: v1\nfull_plan: true\nother_files_required: none\n---\n\nStart here: [#1](#d:q1), set aside [#2](#d:q2). Click a number to jump to it.\n\n"
         + "\n".join(blocks)
         + "\n## Far\n\nThe place the first card asks about.\n"
         + "\n## Set aside\n\nThe place the second card asks about.\n"
@@ -149,5 +153,26 @@ def test_one_click_opens_a_folded_section_and_lands_there(session):
     page, frame, touch = session
     assert frame.locator('[data-strip-item="question-2"]').is_hidden()  # set aside: its section is folded
     _click_rail_card(page, touch, 2, "later")
+    top = _place_top(frame, 2)
+    assert top is not None and abs(top - 12) <= 4, top
+
+
+def _click_number(frame, touch, n):
+    link = frame.locator(f'a[href="#d:q{n}"]').first
+    link.tap() if touch else link.click()
+
+
+def test_a_number_in_the_text_lands_its_card_in_one_click(session):
+    page, frame, touch = session
+    _click_number(frame, touch, 1)
+    top = _place_top(frame, 1)
+    assert top is not None and abs(top - 12) <= 4, top
+    assert "#view=review" in page.url  # the page stays where it is
+
+
+def test_a_number_in_the_text_opens_a_folded_section(session):
+    page, frame, touch = session
+    assert frame.locator('[data-strip-item="question-2"]').is_hidden()
+    _click_number(frame, touch, 2)
     top = _place_top(frame, 2)
     assert top is not None and abs(top - 12) <= 4, top
