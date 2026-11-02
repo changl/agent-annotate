@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Annotate guide, step 3 "Ask at the evidence" (Chang approved card #28, 2026-11-02): "Write for a reader who has not followed the history: name things in words, not by card numbers, ids, codes, row numbers or times; say first what is being decided." The same sentence is in the Claude, Codex and plugin copies.
 - Plain page text (Chang, 2026-11-01; agent-annotate-2t1). A question's quoted excerpt now carries the text only. Before, it showed a picture's controls in the middle of the quote, e.g. `IMG FAE8⤢ Full size…`.
 - Baked question cards no longer end with "Answer it on the card, then press Finish review." The button is Send, and a card with no live card has nothing to answer. Pages published before this keep the line in their HTML, but the page hides it.
 - Delivery is said in plain words. Banner: `The agent has read your last Send`, `The agent is working on your last Send`, `Delivered; waiting for the agent to start` (the owner's receipt confirmed it), `Saved; the agent has not been told yet`, `Saved; not yet confirmed that the agent got it` and `This page changed agents before your Send was delivered`. The technical detail moves to the banner's hover text. Cards, Send and History say `Waiting for the agent` instead of `In inbox · owner delivery pending`, and `Sent` still appears only with the owner's receipt.
