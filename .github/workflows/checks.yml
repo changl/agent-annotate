@@ -30,4 +30,4 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen --python 3.12 --extra dev --extra mcp
-      - run: uv run --frozen python scripts/ci.py
+      - run: .venv/bin/python scripts/ci.py

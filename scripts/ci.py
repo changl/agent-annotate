@@ -159,8 +159,8 @@ def run_full(workers, junit, root=ROOT):
         suite = ET.SubElement(suites, "testsuite", name=name)
         commands = [command] if name == "ruff" else [command + [str(path)] for path in sorted((root / "src/agent_annotate/web").glob("*.js"))]
         with (junit.parent / f"{name}.log").open("w") as log:
-            for index, argv in enumerate(commands):
-                case = ET.SubElement(suite, "testcase", name=str(index), classname=name)
+            for argv in commands:
+                case = ET.SubElement(suite, "testcase", name=str(argv[-1]) if name == "js" else "check", classname=name)
                 try:
                     code = subprocess.run(argv, cwd=root, stdout=log, stderr=subprocess.STDOUT).returncode
                 except OSError as error:

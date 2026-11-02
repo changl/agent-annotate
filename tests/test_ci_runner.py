@@ -13,11 +13,12 @@ _spec.loader.exec_module(ci)
 
 
 @pytest.mark.parametrize("workers", [1, 4])
-def test_real_pytest_chunks_merge_pass_fail_skip_and_keep_logs(tmp_path, monkeypatch, capsys, workers):
+@pytest.mark.parametrize("failing", [False, True])
+def test_real_pytest_chunks_merge_pass_fail_skip_and_keep_logs(tmp_path, monkeypatch, capsys, workers, failing):
     browser = tmp_path / "tests/browser"
     browser.mkdir(parents=True)
     (tmp_path / "tests/test_runtime.py").write_text("def test_runtime(): assert True\n")
-    for name, source in {"a": "def test_ok(): assert True\n", "b": "def test_bad(): assert False\n",
+    for name, source in {"a": "def test_ok(): assert True\n", "b": f"def test_bad(): assert {not failing}\n",
                          "c": "import pytest\ndef test_skip(): pytest.skip('fixture')\n"}.items():
         (browser / f"test_{name}.py").write_text(source)
     original_run = subprocess.run
@@ -29,20 +30,20 @@ def test_real_pytest_chunks_merge_pass_fail_skip_and_keep_logs(tmp_path, monkeyp
 
     monkeypatch.setattr(ci.subprocess, "run", run)
     report = tmp_path / "artifacts with spaces/junit.xml"
-    assert ci.run_full(workers, report, tmp_path) == 1
+    assert ci.run_full(workers, report, tmp_path) == int(failing)
     line = capsys.readouterr().out
     assert len(line.splitlines()) == 1
-    assert line.startswith("FAIL ")
+    assert line.startswith("FAIL " if failing else "PASS ")
     assert "runtime=1p/0f/0s" in line
     assert "browser-1=1p/0f/0s" in line
-    assert "browser-2=0p/1f/0s" in line
+    assert ("browser-2=0p/1f/0s" if failing else "browser-2=1p/0f/0s") in line
     assert "browser-3=0p/0f/1s" in line
-    assert "tests/browser/test_b.py::test_bad" in line
+    assert ("tests/browser/test_b.py::test_bad" in line) == failing
     assert "duration=" in line
     root = ET.parse(report).getroot()
-    assert sum(int(s.get("failures")) for s in root) == 1
+    assert sum(int(s.get("failures")) for s in root) == int(failing)
     assert len(root.findall(".//testcase")) == 5  # four tests and lint
-    assert "AssertionError" in (report.parent / "browser-2.log").read_text()
+    assert ("AssertionError" in (report.parent / "browser-2.log").read_text()) == failing
     assert len(list(report.parent.glob("browser-*.xml"))) == 3
 
 
