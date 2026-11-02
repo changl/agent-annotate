@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.28.1
 
 - Annotate guide, step 3 "Ask at the evidence" (Chang approved card #28, 2026-11-02): "Write for a reader who has not followed the history: name things in words, not by card numbers, ids, codes, row numbers or times; say first what is being decided." The same sentence is in the Claude, Codex and plugin copies.
 - Plain page text (Chang, 2026-11-01; agent-annotate-2t1). A question's quoted excerpt now carries the text only. Before, it showed a picture's controls in the middle of the quote, e.g. `IMG FAE8⤢ Full size…`.
