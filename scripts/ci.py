@@ -59,6 +59,7 @@ TESTS = (
     "tests/test_ui_numbering.py",
     "tests/test_decision_api.py::test_legacy_comment_numbers_stay_fixed_when_cards_are_added_or_renumbered",
     "tests/test_decision_api.py::test_legacy_number_conflict_hint_works_on_retry_without_partial_migration",
+    "tests/test_decision_api.py::test_poll_labels_do_not_report_legacy_pinning_as_a_content_change",
     "tests/test_decision_api.py::test_deferred_verdicts_then_submit_emit_exactly_one_session_push",
     "tests/test_decision_api.py::test_an_answer_in_words_rides_the_round_and_counts_as_answered",
     "tests/test_comment_carryover.py::test_carry_forward_moves_card_to_new_version_and_preserves_origin",

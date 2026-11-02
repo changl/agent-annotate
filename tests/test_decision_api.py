@@ -223,6 +223,23 @@ def test_batch_number_collision_is_atomic_and_put_cannot_steal_a_number(server):
     assert (slug_dir / "comments.json").read_bytes() == before
 
 
+def test_poll_labels_do_not_report_legacy_pinning_as_a_content_change(server):
+    httpd, slug_dir, _ = server
+    legacy = {"id": "figure", "anchor_id": "fig:diagram", "version": "v1", "text": "Figure comment"}
+    legacy["agent_snapshot"] = legacy.copy()
+    path = slug_dir / "comments.json"
+    path.write_text(json.dumps({"schema_version": 2, "anchors": {"fig:diagram": [legacy]}, "archived": {}}))
+    original = path.read_bytes()
+    before = _call(httpd, "GET", "/comments.json?view=poll", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0]
+    assert before["number"] == before["agent_snapshot"]["number"] == 1
+    assert path.read_bytes() == original
+    # The cached raw store and full-store response remain untouched too.
+    assert _call(httpd, "GET", "/comments.json", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0] == legacy
+    assert _call(httpd, "POST", "/api/comments", {**_card(), "number": 48})[0] == 201
+    after = _call(httpd, "GET", "/comments.json?view=poll", author="reviewer@example.test")[1]["anchors"]["fig:diagram"][0]
+    assert after == before
+
+
 def test_store_response_tracks_current_version_without_persisting_it(server):
     httpd, slug_dir, _ = server
     path = slug_dir / "comments.json"

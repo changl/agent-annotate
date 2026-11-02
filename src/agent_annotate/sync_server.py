@@ -463,8 +463,8 @@ def _normalize_item_number(value: Any) -> int | None:
     return value
 
 
-def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
-    """Reserve labels under the store lock, including archived/legacy labels."""
+def _pin_item_numbers(store: dict) -> dict[str, int | str]:
+    """Pin displayed labels on a mutable store or its browser response copy."""
     from .cli import _item_numbers, _iter_comments
     numbers = _item_numbers(store)
     # Pin legacy labels before a new maximum can move their fallback numbers.
@@ -473,7 +473,14 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
         if type(shown) is int and not (type(other.get("number")) is int and other["number"] > 0):
             other["number"] = shown
             if isinstance(other.get("agent_snapshot"), dict):
-                other["agent_snapshot"]["number"] = shown
+                other["agent_snapshot"] = {**other["agent_snapshot"], "number": shown}
+    return numbers
+
+
+def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
+    """Reserve labels under the store lock, including archived/legacy labels."""
+    from .cli import _iter_comments
+    numbers = _pin_item_numbers(store)
     next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
     if not existing and comment["id"] in numbers:
         raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
@@ -1598,6 +1605,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                         for comment in items]
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
+                    # Label migration must not look like a content change to the shell.
+                    _pin_item_numbers(store)
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
