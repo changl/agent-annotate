@@ -99,7 +99,8 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
     generate(source, directory)
     key = "0123456789abcdef01234567"
     answered = _question("q-1", "d:q1", 1, decision={"verdict": "a", "text": "A", "ts": "2026-11-01T10:00:00Z",
-                                                     "by": "reviewer@example.com", "delivery_id": key})
+                                                     "by": "reviewer@example.com", "delivery_id": key},
+                         flagged_for_session=True, flagged_at="2026-11-01T10:01:00Z")  # a Send flags it, as live pages do
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {"d:q1": [answered]}}))
     journal = tmp_path / "state" / "deliveries" / "bus" / "items-model.json"
     journal.parent.mkdir(parents=True)

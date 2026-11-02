@@ -94,7 +94,7 @@ def test_adapter_rejects_foreign_origin_and_wrong_source_then_accepts_real_paren
                 foreign,
             )
             assert frame.locator('[data-pin-comments="forged"]').count() == 0
-            assert frame.locator(f'[data-pin-comments="{cid}"]').first.inner_text() == "31"
+            assert frame.locator(f'[data-pin-comments="{cid}"]').first.inner_text() == "#31"
         page.evaluate("""() => {
             document.getElementById('content-frame').contentWindow.postMessage({
                 type:'annotate:comment-counts', counts:{'s:coverage':1},
@@ -103,7 +103,7 @@ def test_adapter_rejects_foreign_origin_and_wrong_source_then_accepts_real_paren
         }""")
         pin = frame.locator('[data-pin-comments="valid-parent-command"]')
         pin.wait_for()
-        assert pin.first.inner_text() == "32"
+        assert pin.first.inner_text() == "#32"
 
 
 @contextmanager

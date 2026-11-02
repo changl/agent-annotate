@@ -1565,6 +1565,20 @@ function displayPrompt(c) {
   const m = p.match(/^\s*(?:Q|#)\s*(\d+)[\s:.\-—–]*/i);
   return (m && n && Number(m[1]) === n) ? p.slice(m[0].length) : p;
 }
+// One number chip everywhere, on the right; its colour is the item's state:
+// red needs you, yellow answered but not sent (it replaces the Pending chip),
+// neutral otherwise (Chang, 2026-11-02).
+function numState(c) {
+  const s = sectionOf(c), d = decisionAnswer(c);
+  return s === 'ready' || (d && d.pending) ? 'pending' : s === 'needs' || s === 'later' ? 'needs' : '';
+}
+const NUM_STATE_TEXT = { needs: 'needs you', pending: 'answered, not sent yet' };
+function numChipHtml(c, cls) {
+  const n = NUM_MAP[c.id], st = numState(c);
+  if (!n) return '';
+  // Colour is never the only signal: the state is in its name and tooltip.
+  return `<span class="${cls}${st ? ' is-' + st : ''}"${st ? ` role="img" aria-label="#${n}, ${NUM_STATE_TEXT[st]}" title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
+}
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
 // "Pending — not sent" chip and "Send now" stay reachable until submit).
@@ -2258,13 +2272,12 @@ function foldedHtml(c) {
   const d = decisionAnswer(c), n = NUM_MAP[c.id], id = escAttr(c.id);
   const what = d ? (choiceLabel(c) || 'Answered in words') : 'Answer later';
   return `<div class="annotate-decision-item annotate-folded${d ? ' annotate-answered' : ''}" data-strip-item="${id}">
-    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d ? stateTag(!!(d.round_pending || d.pending), d) : ''}</button>
+    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question"><span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d && numState(c) !== 'pending' ? stateTag(false, d) : ''}${numChipHtml(c, 'annotate-decision-num')}</button>
   </div>`;
 }
 function promptHtml(c) {
   if (!S.doc) return `<div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>`;
-  const n = NUM_MAP[c.id];
-  return `<div class="annotate-decision-prompt">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}${esc(displayPrompt(c))}</div>`;
+  return `<div class="annotate-decision-prompt"><span class="annotate-decision-q">${esc(displayPrompt(c))}</span>${numChipHtml(c, 'annotate-decision-num')}</div>`;
 }
 function docItemAttr(c) {
   return S.doc ? ` data-strip-item="${escAttr(c.id)}"` : '';
@@ -2598,7 +2611,8 @@ async function docNoteAction(btn, scope, id, key, action) {
 // Pending: saved here, not sent to the agent yet. Sent: in a Send (or round).
 function sendStateHtml(c) {
   if (!isMine(c.author) && !(c.decision && isMine(c.decision.by))) return '';
-  if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
+  // A numbered card says Pending with its yellow number chip.
+  if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return NUM_MAP[c.id] ? '' : '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
   if (c.flagged_for_session || (c.decision && !c.decision.round_pending)) return stateTag(false, c);
   return '';
 }
@@ -2651,7 +2665,7 @@ function commentTextHtml(c) {
 function renderCItem(c) {
   const cls = classify(c);
   const num = NUM_MAP[c.id];
-  const numHtml = num ? `<span class="citem-num">#${num}</span>` : '';
+  const numHtml = numChipHtml(c, 'citem-num');
   const rstate = readStateOf(c);
   const unreadCls = rstate !== 'read' ? ' is-unread' : '';
   const hl = c.id === highlightedCommentId ? ' hl' : '';
@@ -2661,9 +2675,9 @@ function renderCItem(c) {
     const a = answerLabel(c);
     return `<div class="citem is-line${hl}${unreadCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
       <div class="citem-line">
-        ${unreadDotHtml(c)}${numHtml}
+        ${unreadDotHtml(c)}
         <span class="citem-line-txt"><span class="citem-line-q">${ticketsHTML(displayPrompt(c))}</span><span class="citem-line-arrow" aria-hidden="true">&rarr;</span><span class="ans${a.muted ? ' is-muted' : ''}">${esc(a.text)}</span></span>
-        ${sendStateHtml(c)}
+        ${sendStateHtml(c)}${numHtml}
         ${hasAddNoteBox(c) ? `<button type="button" class="btn btn-ghost btn-xs btn-square change-btn" data-action="open-card" data-id="${escAttr(c.id)}" aria-label="Edit your answer to #${num || ''}" title="Edit your answer">${ico('pencil')}</button>` : ''}
         ${cardMenuHtml(c, cls)}
       </div>
@@ -2739,8 +2753,8 @@ function renderCItem(c) {
   return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
       ${unreadDotHtml(c)}
-      <span class="citem-node-name">${numHtml}${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
-      ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
+      <span class="citem-node-name">${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
+      ${numHtml}${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
     ${locHtml}
@@ -3506,13 +3520,12 @@ let pinPopoverCtx = null; // {anchorId, anchorLabel, x, y} of the open pin popov
 
 function renderPinPopItem(c) {
   const cls = classify(c);
-  const num = NUM_MAP[c.id];
   const respHtml = c.response_text
     ? `<div class="pinpop-item-resp"><b>Agent:</b> ${ticketsHTML(c.response_text)}</div>`
     : '';
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
-      ${unreadDotHtml(c)}${num ? `<span class="citem-num">#${num}</span>` : ''}
+      ${unreadDotHtml(c)}${numChipHtml(c, 'citem-num')}
     </div>
     <div class="pinpop-item-txt">${ticketsHTML(c.text)}</div>
     ${respHtml}
@@ -4462,6 +4475,7 @@ function sendCommentCountsToFrame() {
           id: c.id,
           n: NUM_MAP[c.id] || 0,
           unread: readStateOf(c) !== 'read',
+          state: numState(c),
           // Creation-time granular target. Older comments without one remain
           // at the anchor corner; new comments can render the numbered pin at
           // the exact clicked element/offset inside that anchor.

@@ -47,6 +47,8 @@ KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Im
 
 Anchors derive from content: heading `## Scope` → `s:scope`, a nested `### Detail` → `s:scope:detail`, its first paragraph → `s:scope:p1`, table row → `tbl:scope:row:receipt`, image → `fig:current-receipt`, compare title → `cmp:checkout`. Inspect the generated HTML anchor registry if unsure; keep anchors stable across versions.
 
+Tables: at most 5 columns. Column 1 is a short row label (at most 4 words). Numbers, dates, states and codes get their own short columns; a cell of up to 12 characters stays on one line, up to 24 wraps to two. Long prose goes in one column, the last. Two prose columns side by side, or more than 5 columns, means sections or a list instead.
+
 ## Cards
 
 ````markdown
