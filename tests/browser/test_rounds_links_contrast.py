@@ -4,6 +4,7 @@ import json
 import urllib.request
 
 import pytest
+from review_fixtures import complete
 from single_page import ROUNDS, feedback, go, history, ready, section, sent
 from test_card_layout import CHROME, _serve
 from test_workspace_intent import _contrast, _page
@@ -106,6 +107,7 @@ def _fixture(tmp_path):
         "\n## Checks\n\nCurrent layout has changed.\n\n| Item | State |\n|---|---|\n| Header | Checked |\n| Footer | Ready |\n"
     )
     generate(source, directory)
+    complete(directory)
     meta = json.loads((directory / "current.meta.json").read_text())
     meta.update(
         current="v2",

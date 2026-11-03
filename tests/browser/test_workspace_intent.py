@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import pytest
+from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -45,6 +46,7 @@ def _page(tmp_path, custom=True, title="Campaign review"):
         + "\n```\n"
     )
     generate(source, directory)
+    complete(directory)
     created = "2026-10-02T10:00:00Z"
     comment = dict(
         card, id="question-11", author="agent:review-test", created_at=created, version="v1", status="open"

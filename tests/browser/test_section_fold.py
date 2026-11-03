@@ -13,6 +13,7 @@ import socket
 import urllib.request
 
 import pytest
+from review_fixtures import complete
 from single_page import CHROME, ready
 from test_keep_drafts import _poll, _start, _stop
 
@@ -58,6 +59,7 @@ def _directory(tmp_path):
         "\n## Questions for Chang\n\n```cards\n" + json.dumps(cards) + "\n```\n")
     directory = tmp_path / "review"
     generate(source, directory)
+    complete(directory)
     created = "2026-11-02T10:00:00Z"
     anchors = {}
     for card in cards:

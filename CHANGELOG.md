@@ -5,6 +5,7 @@
 - Posting several numbered cards together on an older page keeps existing comment numbers fixed, including figure comments and archived comments. The next card no longer collides with a comment moved by the previous insertion; a conflict's suggested number can be used on retry (agent-annotate-2hk).
 - Tests: full runs write merged JUnit XML, keep per-chunk logs, and print one result line with counts, duration and failing tests. Runtime tests finish and clean up their detached test servers before three browser chunks run in parallel; browser ports are leased in 18700–18799 across suites. `--workers 1` provides a serial baseline. The PR check reuses uv's cache and frozen lockfile (agent-annotate-va0).
 - Carry the Windmill pilot's repository test profiles and clean-HEAD routing; `--full --local` explicitly runs on this machine without submitting a job (agent-annotate-4zw).
+- Review versions appear in current, History and refresh notices only after page checks and the complete card batch succeed. A bad card, number conflict or failed check leaves the previous round visible; retry the same draft. Shown versions cannot be rewritten, republished or extended with `annotate ask`; changes and follow-up fixes use the next version. The usual `annotate new ... --publish --ask` remains one command. Optional `--fixes vN` records the earlier version in its History entry's `fixes` field for the future header indicator (agent-annotate-b93; Chang #48, 2026-11-02).
 
 ## 2.28.2
 

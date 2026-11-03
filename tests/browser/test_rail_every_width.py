@@ -17,6 +17,7 @@ import struct
 import zlib
 
 import pytest
+from review_fixtures import complete
 from single_page import browser_page
 from test_card_jump import page_dir  # noqa: F401  (fixture)
 from test_card_layout import CHROME, _wait
@@ -271,6 +272,7 @@ def _wide_page(tmp_path, text):
     (tmp_path / "shots" / "wide.png").write_bytes(_png(1600, 900))
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     return directory
 
 

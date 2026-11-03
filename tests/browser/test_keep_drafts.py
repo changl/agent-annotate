@@ -17,6 +17,7 @@ import urllib.request
 from contextlib import contextmanager
 
 import pytest
+from review_fixtures import authoring, complete, register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -42,6 +43,7 @@ def _start(tmp_path, directory, port):
          "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}/"
+    register(base, directory)
     deadline = time.time() + 15
     while time.time() < deadline:
         try:
@@ -63,8 +65,9 @@ def _stop(process):
 def _agent(base, path, body, method="POST"):
     request = urllib.request.Request(base + path, data=json.dumps(body).encode(), method=method,
                                      headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:keep-drafts"})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.load(response)
+    with authoring(base, body):
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
 
 
 def _directory(tmp_path):
@@ -174,17 +177,7 @@ def _publish_v2(tmp_path, directory):
     source.write_text(source.read_text().replace("version: v1", "version: v2")
                       .replace("Build passed on both machines.", "Build passed on both machines, twice."))
     generate(source, directory)
-    # generate() writes a later version without making it current; going live
-    # is the publish step, done here the way the CLI does it.
-    from agent_annotate.cli import _write_meta_locked
-
-    def live(meta):
-        meta["current"] = "v2"
-        meta.setdefault("history", []).append({"version": "v2", "ts": "2026-10-03T10:00:00Z", "label": "v2"})
-
-    (directory / "current.html").unlink()
-    (directory / "current.html").symlink_to("versions/v2.html")
-    _write_meta_locked(directory, live)
+    complete(directory)
 
 
 def _say(page):

@@ -23,6 +23,8 @@ TESTS = (
     "tests/test_decision_quality.py",
     "tests/test_cli_reads.py",
     "tests/test_pagegen.py",
+    "tests/test_version_ready.py",
+    "tests/test_publish_version.py",
     "tests/test_page_names.py",
     "tests/test_fleet.py",
     "tests/test_reports.py",

@@ -78,7 +78,7 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
-                urllib.request.urlopen(base, timeout=1).close()
+                urllib.request.urlopen(base + "api/capabilities", timeout=1).close()
                 break
             except OSError:
                 time.sleep(0.05)
@@ -87,10 +87,16 @@ def test_generated_page_renders_its_anchors_and_a_recommended_card(tmp_path):
 
         # Publish the generated requests through the same batch endpoint as annotate new --ask.
         cards = json.loads((slug_dir / "cards.json").read_text())
+        from agent_annotate.review_versions import fingerprint, read_draft
+        from agent_annotate.sync_server import _atomic_write_json
+        draft = read_draft(slug_dir, "v1")
+        draft.update(verified=True, fingerprint=fingerprint(slug_dir, "v1"))
+        _atomic_write_json(slug_dir / ".review-drafts/v1.json", draft)
         request = urllib.request.Request(
             base + "api/comments/batch",
             method="POST",
-            data=json.dumps({"items": [dict(card, version="v1") for card in cards]}).encode(),
+            data=json.dumps({"items": [dict(card, version="v1") for card in cards],
+                "publish_version": {"version": "v1", "preview": draft["preview"]}}).encode(),
             headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:generated-browser"},
         )
         with urllib.request.urlopen(request) as response:

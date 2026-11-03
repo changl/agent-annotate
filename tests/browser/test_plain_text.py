@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from review_fixtures import complete
 from single_page import browser_page, ready
 
 from agent_annotate import long_pages
@@ -48,6 +49,7 @@ def test_a_quoted_excerpt_leaves_out_the_image_controls(tmp_path, monkeypatch):
                       "![Board](shots/wide.png)\n\n## Beta\n\nWhat we ask.\n", encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {
         "s:beta": [_question("q-1", "s:beta", 1, request={"evidence": [{"label": "Board", "anchor": "s:alpha"}]})]}}))
     with browser_page(tmp_path, directory) as (page, _):
@@ -65,6 +67,7 @@ def test_a_baked_card_never_asks_to_press_finish_review(tmp_path):
     source.write_text(EXAMPLE, encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     html = (directory / "versions" / "v1.html").read_text()
     assert "Answer it on the card" not in html and 'class="q"' not in html
     # A page published before this still carries the line; with no live card it stays hidden.
@@ -97,6 +100,7 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
     source.write_text(EXAMPLE, encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     key = "0123456789abcdef01234567"
     answered = _question("q-1", "d:q1", 1, decision={"verdict": "a", "text": "A", "ts": "2026-11-01T10:00:00Z",
                                                      "by": "reviewer@example.com", "delivery_id": key})

@@ -890,7 +890,8 @@ def _available_versions(slug_dir: Path) -> list[str]:
     versions_dir = slug_dir / "versions"
     if not versions_dir.is_dir():
         return []
-    return sorted(p.stem for p in versions_dir.glob("*.html"))
+    from .review_versions import draft_path
+    return sorted(p.stem for p in versions_dir.glob("*.html") if not draft_path(slug_dir, p.stem).exists())
 
 
 def _read_meta(slug_dir: Path) -> dict:
@@ -1081,7 +1082,7 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
     from .verify import VerifyReport, probe_browser, probe_http
 
     report = VerifyReport()
-    base = base_path or ""
+    base = (base_path or "") + record.get("_review_preview", "")
     hop_timeout = min(timeout, 30.0)
 
     report.stages.append(
@@ -1103,9 +1104,12 @@ def _verify_published(record: dict, transport_details: dict, base_path: str,
         if report.failed:
             return report
 
-    public = (page_url(record) if record.get("transport") == "funnel" else mounted_url(record.get("public_url"), base)) or (
+    public = (page_url(record) if record.get("transport") == "funnel" else mounted_url(record.get("public_url"), base_path)) or (
         page_url(record) if record.get("transport") == "cloudflare" else None) or ""
     if public.startswith("https://"):
+        if record.get("_review_preview"):
+            base_url, separator, fragment = public.partition("#")
+            public = base_url.rstrip("/") + record["_review_preview"] + "/" + separator + fragment
         report.stages.append(probe_browser("public", public, timeout=timeout))
     return report
 
@@ -1138,12 +1142,31 @@ def _run_gate(record: dict, args):
     """Verify `record` in place. Returns the report, or None when skipped."""
     if getattr(args, "no_verify", False):
         return None
+    candidate = getattr(args, "candidate_version", None)
+    probe_record = record
+    if candidate:
+        from .review_versions import fingerprint, read_draft
+        draft = read_draft(Path(record["slug_dir"]), candidate)
+        checked_fingerprint = fingerprint(Path(record["slug_dir"]), candidate)
+        probe_record = {**record, "_review_preview": f"/__review_preview/{candidate}/{draft['preview']}"}
     report = _verify_published(
-        record,
+        probe_record,
         record.get("transport_details") or {},
         record.get("public_base_path") or "",
         timeout=getattr(args, "verify_timeout", 45.0),
     )
+    if candidate and report.fully_verified:
+        from .review_versions import draft_path, require_draft
+        from .sync_server import _atomic_write_json, _locked_store
+        directory = Path(record["slug_dir"])
+        with _locked_store(directory):
+            require_draft(_read_meta(directory), candidate)
+            if (read_draft(directory, candidate)["preview"] != draft["preview"]
+                    or fingerprint(directory, candidate) != checked_fingerprint):
+                raise ValueError("draft changed during server checks; retry the publish")
+            draft["verified"] = True
+            draft["fingerprint"] = checked_fingerprint
+            _atomic_write_json(draft_path(directory, candidate), draft)
     record["verified"] = report.fully_verified
     record["verify_stages"] = [
         {"name": s.name, "status": s.status, "url": redact_review_key(s.url),
@@ -1427,14 +1450,25 @@ def _publish(args) -> int:
         from .review_access import ensure_key
         ensure_key(slug_dir)
 
-    # ── Slug-dir preflight: a resolvable current.html + registered history ──
-    current_version, notes = _ensure_current_symlink(slug_dir)
-    if current_version is None:
-        print(f"ERROR: {slug_dir} is not publishable:", file=sys.stderr)
-        for n in notes:
-            print(f"  {n}", file=sys.stderr)
-        return 2
-    notes += _ensure_meta_history(slug_dir, current_version)
+    # Drafts are checked through an unguessable preview; ordinary routes keep the old round.
+    candidate = getattr(args, "candidate_version", None)
+    if candidate:
+        from .review_versions import read_draft, require_draft
+        try:
+            require_draft(_read_meta(slug_dir), candidate)
+            read_draft(slug_dir, candidate)
+        except (ValueError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        notes = []
+    else:
+        current_version, notes = _ensure_current_symlink(slug_dir)
+        if current_version is None:
+            print(f"ERROR: {slug_dir} is not publishable:", file=sys.stderr)
+            for n in notes:
+                print(f"  {n}", file=sys.stderr)
+            return 2
+        notes += _ensure_meta_history(slug_dir, current_version)
     set_page_name(slug_dir, getattr(args, "title", None))
     for n in notes:
         print(f"  Repaired:      {n}")
@@ -1446,7 +1480,7 @@ def _publish(args) -> int:
 
     # ── Task 4: Build-time JS lint ──────────────────────────────────
     skip_lint = getattr(args, "skip_js_lint", False)
-    current_html = slug_dir / "current.html"
+    current_html = slug_dir / "versions" / f"{candidate}.html" if candidate else slug_dir / "current.html"
     if current_html.exists():
         # Resolve symlink so we lint the actual file content
         try:
@@ -2023,7 +2057,7 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
 
 def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None = None) -> list[str]:
     """A Review version keeps only the unanswered agent questions it poses again."""
-    from .sync_server import _atomic_write_json, _can_withdraw, _locked_store, _withdraw_decision
+    from .sync_server import _atomic_write_json, _locked_store
 
     if not (slug_dir / "comments.json").exists():
         return []
@@ -2042,22 +2076,28 @@ def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None
              and _version_has_anchor(slug_dir, new_version, card.get("anchor_id") or "")]
     anchors = {card["anchor_id"] for card in cards}
     numbers = {card["number"] for card in cards if card.get("number")}
-    done = []
     with _locked_store(slug_dir):
         store = _coerce_store_file(slug_dir)
-        for anchor, comment in _iter_comments(store):
-            version = comment.get("version") or ""
-            if (re.fullmatch(r"v[0-9]+", version) and re.fullmatch(r"v[0-9]+", new_version)
-                    and int(version[1:]) > int(new_version[1:])):
-                continue
-            if (_comment_category({"anchor_id": anchor, **comment}) != "review"
-                    or comment.get("version") == new_version or not _can_withdraw(comment)
-                    or _is_set_aside(comment) or anchor in anchors or comment.get("number") in numbers):
-                continue
-            _withdraw_decision(comment, f"not asked again in {new_version}", _resolve_author(None))
-            done.append(comment["id"])
+        done = _withdraw_unasked_store(store, new_version, anchors, numbers)
         if done:
             _atomic_write_json(slug_dir / "comments.json", store)
+    return done
+
+
+def _withdraw_unasked_store(store, new_version, anchors, numbers):
+    from .sync_server import _can_withdraw, _withdraw_decision
+    done = []
+    for anchor, comment in _iter_comments(store):
+        version = comment.get("version") or ""
+        if (re.fullmatch(r"v[0-9]+", version) and re.fullmatch(r"v[0-9]+", new_version)
+                and int(version[1:]) > int(new_version[1:])):
+            continue
+        if (_comment_category({"anchor_id": anchor, **comment}) != "review"
+                or comment.get("version") == new_version or not _can_withdraw(comment)
+                or _is_set_aside(comment) or anchor in anchors or comment.get("number") in numbers):
+            continue
+        _withdraw_decision(comment, f"not asked again in {new_version}", _resolve_author(None))
+        done.append(comment["id"])
     return done
 
 
@@ -2082,82 +2122,70 @@ def _moved_page(slug_dir) -> bool:
 
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
-    if not slug_dir.exists() or not slug_dir.is_dir():
+    if not slug_dir.is_dir():
         print(f"ERROR: slug-dir not found: {slug_dir}", file=sys.stderr)
         return 2
     if _moved_page(slug_dir):
         return 2
-    new_version = args.version
-    versions_dir = slug_dir / "versions"
-    target = versions_dir / f"{new_version}.html"
-    if not target.exists():
-        print(f"ERROR: versions/{new_version}.html not found — drop it in first", file=sys.stderr)
-        return 2
-    withdrawn = _withdraw_unasked(slug_dir, new_version)
-    if withdrawn:
-        print(f"  withdrawn: {', '.join(withdrawn)} (not asked again in {new_version})")
-    current_symlink = slug_dir / "current.html"
-    if current_symlink.exists() or current_symlink.is_symlink():
-        current_symlink.unlink()
-    current_symlink.symlink_to(Path("versions") / f"{new_version}.html")
-
-    # History is a set keyed on version, not a log of calls. Appending
-    # unconditionally is what listed every version of every observed page
-    # twice: `publish` registers the version through _ensure_meta_history and
-    # a later `publish-version` for the same vN appended a second entry, as did
-    # any re-run of this command. The raw read-modify-write also dropped
-    # whatever the running server had cached into the file in between, so this
-    # now goes through the same lock the server takes.
-    added = []
-    # Open project shows the working page's size (long pages).
-    from .long_pages import size_of
+    from .review_versions import draft_path, require_draft, stage
+    version = args.version
+    from .review_versions import read_draft
+    from .sync_server import _atomic_write_json, _locked_store
     try:
-        sections, screenshots = size_of(target.read_text(encoding="utf-8"))
-        size = {"sections": sections, "screenshots": screenshots}
-    except (OSError, UnicodeDecodeError):
-        size = {}
+        with _locked_store(slug_dir):
+            require_draft(_read_meta(slug_dir), version)
+            if not (slug_dir / "versions" / f"{version}.html").is_file():
+                raise ValueError(f"versions/{version}.html not found — drop it in first")
+            if not draft_path(slug_dir, version).exists():
+                from .long_pages import size_of
+                sections, screenshots = size_of((slug_dir / "versions" / f"{version}.html").read_text(encoding="utf-8"))
+                stage(slug_dir, version, args.label or "", None, {"sections": sections, "screenshots": screenshots})
+            elif args.label:
+                draft = read_draft(slug_dir, version)
+                draft["label"] = args.label
+                _atomic_write_json(draft_path(slug_dir, version), draft)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if not getattr(args, "prepared", False):
+        from .pagegen import _call_publish
+        args.candidate_version = version
+        rc = _call_publish(slug_dir, args)
+        if rc:
+            return rc
+    cards_file = slug_dir / "versions" / f"{version}.cards.json"
+    if cards_file.exists() and json.loads(cards_file.read_text()):
+        project, slug = _slug_project(slug_dir, getattr(args, "project", None))
+        return cmd_ask(argparse.Namespace(slug=slug, project=project,
+            version=version, from_file=str(cards_file), author=None, json=False, ready=True))
+    project, slug = _slug_project(slug_dir, getattr(args, "project", None))
+    resolved = _resolve_scoped_slug(slug, project)
+    if not resolved:
+        return 2
+    _, _, record = resolved
+    return _commit_review(record, version, [], _resolve_author(None))
 
-    def _mutate(meta: dict) -> None:
-        meta["current"] = new_version
-        history = meta.setdefault("history", [])
-        for h in history:
-            if isinstance(h, dict) and h.get("version") == new_version:
-                if args.label:
-                    h["label"] = args.label
-                h["ts"] = _now_iso()
-                h.update(size)
-                added.append(False)
-                return
-        history.append({
-            "version": new_version,
-            "ts": _now_iso(),
-            "label": args.label or "",
-            **size,
-        })
-        added.append(True)
 
-    _write_meta_locked(slug_dir, _mutate)
-    entries = len((_read_meta(slug_dir).get("history") or []))
-    print(f"  Swapped current.html → versions/{new_version}.html")
-    print(f"  meta:current = {new_version}")
-    print(f"  history:       {'added' if added and added[0] else 'updated in place'} "
-          f"{new_version} ({entries} entr{'y' if entries == 1 else 'ies'} total)")
-
-    resolved = _resolve_scoped_slug(slug_dir.name, getattr(args, "project", None))
-    if resolved:
-        _project, _slug, record = resolved
-        bus_file = record.get("bus_file")
-    else:
-        _project, _slug = _slug_project(slug_dir)
-        bus_file = BUS_ROOT / _project / f"{_slug}.ndjson"
-        record = {}
-    _bus_emit(bus_file, {
-        "event": "version_published",
-        "slug": _slug,
-        "version": new_version,
-        "label": args.label or "",
-        "owner_session": record.get("owner_session") or _session_id(),
-    })
+def _commit_review(record, version, items, author):
+    from .review_versions import read_draft
+    try:
+        draft = read_draft(Path(record["slug_dir"]), version)
+        if not draft.get("verified"):
+            raise ValueError("server checks did not all pass; retry the publish before showing this version")
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: cannot read staged review: {exc}", file=sys.stderr)
+        return 2
+    code, capabilities = _api(record, "GET", "/api/capabilities", None, author)
+    if code != 200 or not isinstance(capabilities, dict) or capabilities.get("review_ready") is not True:
+        print("ERROR: page server does not support complete Review publication; update its runtime before retrying; no cards were posted", file=sys.stderr)
+        return 2
+    code, payload = _api(record, "POST", "/api/comments/batch", {
+        "items": items, "idempotency": "anchor",
+        "publish_version": {"version": version, "preview": draft["preview"]}}, author)
+    if code != 200:
+        print(f"ERROR: review publication failed (HTTP {code}): {payload}", file=sys.stderr)
+        return 2
+    print(f"  ready {version}: {len(items)} cards; previous versions remain immutable")
     return 0
 
 
@@ -2723,9 +2751,25 @@ def cmd_ask(args) -> int:
             print(f"ERROR: categories.json could not be read; no cards were posted: {exc}", file=sys.stderr)
             return 2
 
+    if record.get("slug_dir") and any(
+            isinstance(c, dict) and not c.get("doc")
+            and not c.get("finding") and c.get("set", getattr(args, "set", None)) is None
+            and c.get("category", getattr(args, "category", None)) in (None, "review") for c in cards):
+        from .review_versions import require_draft
+        try:
+            require_draft(_read_meta(Path(record["slug_dir"])), version)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        if not getattr(args, "ready", False):
+            print("ERROR: seed Review cards with new --publish --ask so the whole round becomes visible together", file=sys.stderr)
+            return 2
+
     author = _resolve_author(getattr(args, "author", None))
     for warning in warnings:
         print(warning, file=sys.stderr)
+    if getattr(args, "ready", False):
+        return _commit_review(record, version, items, author)
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)

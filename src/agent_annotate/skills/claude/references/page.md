@@ -2,6 +2,8 @@
 
 Author page.md with built-in Markdown; `annotate new --example` prints a complete example. Review, Library, Findings and Plans share the project page; History preserves published versions and submitted rounds. Do not copy servers or styles into the project.
 
+Publish page and cards together with `annotate new DIR --from page.md --version vN --publish --ask` (omit `--ask` when there are no cards). Generation alone stages a draft. Failed checks or cards leave the previous version visible; retry the draft. A shown version cannot be rewritten, republished or extended with `annotate ask`: use the next version, optionally `--fixes vN` for a follow-up fix. The metadata History entry exposes `fixes`.
+
 ## Document
 
 Names: one stable `current.meta.json.name` per page; set/rename with `new --title` or `publish --title`, initially seeded from the document title if omitted.

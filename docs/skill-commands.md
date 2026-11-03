@@ -19,10 +19,10 @@ options:
 ## new
 
 ```text
-usage: annotate new [-h] [--from page.md] [--version VERSION] [--label LABEL]
-                    [--title TITLE] [--publish] [--ask] [--example]
-                    [--project PROJECT] [--exception REASON] [--standalone]
-                    [--port PORT]
+usage: annotate new [-h] [--from page.md] [--version VERSION] [--fixes vN]
+                    [--label LABEL] [--title TITLE] [--publish] [--ask]
+                    [--example] [--project PROJECT] [--exception REASON]
+                    [--standalone] [--port PORT]
                     [--transport {funnel,local,tailscale,cloudflare,cloudflare_tailscale}]
                     [--hostname HOSTNAME] [--public] [--json]
                     [slug_dir]
@@ -35,10 +35,12 @@ options:
   --from page.md        the markdown document (front matter + prose +
                         ```cards)
   --version VERSION     vN (default: front matter, else v1)
+  --fixes vN            this new version fixes an earlier visible version
   --label LABEL         version label for the rail
   --title TITLE         stable page name; version titles stay in Markdown
   --publish             run `publish` on the result
-  --ask                 pose the ```cards round after publishing
+  --ask                 seed the ```cards round before making the version
+                        visible
   --example             print a complete example document and exit
   --project PROJECT
   --exception REASON    explicit reason for a second project page

@@ -32,6 +32,7 @@ def server(tmp_path):
                            bus_dir=bus_dir, proxy_urls=("https://review.example.test",),
                            trusted_access_origins=("https://review.example.test",))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd.fixture_directory = slug_dir
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -43,6 +44,28 @@ def server(tmp_path):
 
 
 def _call(httpd, method, path, body=None, author="agent:test", session=None, timeout=3):
+    # These API fixtures author a draft before exposing it to lifecycle tests.
+    # Immutability itself uses direct HTTP in test_version_ready.py.
+    directory = getattr(httpd, "fixture_directory", None)
+    authoring = author.startswith("agent:") and (
+        method == "POST" and path in ("/api/comments", "/api/comments/batch")
+        or method == "PUT" and isinstance(body, dict)
+        and any(k in body for k in ("text", "number", "decision_request", "carry_forward")))
+    if directory and authoring:
+        meta = directory / "current.meta.json"
+        before = meta.read_bytes()
+        data = json.loads(before)
+        data.pop("current", None)
+        data["history"] = []
+        meta.write_text(json.dumps(data))
+        try:
+            return _request(httpd, method, path, body, author, session, timeout)
+        finally:
+            meta.write_bytes(before)
+    return _request(httpd, method, path, body, author, session, timeout)
+
+
+def _request(httpd, method, path, body=None, author="agent:test", session=None, timeout=3):
     conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=timeout)
     headers = {"X-Annotate-Agent": author} if author.startswith("agent:") else {
         "Host": "review.example.test", "Cf-Access-Authenticated-User-Email": author,
@@ -242,6 +265,7 @@ def test_poll_labels_do_not_report_legacy_pinning_as_a_content_change(server):
 
 def test_store_response_tracks_current_version_without_persisting_it(server):
     httpd, slug_dir, _ = server
+    (slug_dir / "current.meta.json").write_text(json.dumps({"current": "v1"}))
     path = slug_dir / "comments.json"
     before = path.read_bytes()
     assert _call(httpd, "GET", "/comments.json?view=poll")[1]["current_version"] == "v1"

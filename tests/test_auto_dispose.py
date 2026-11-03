@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_annotate import cli
-from agent_annotate.sync_server import make_handler
+from agent_annotate import cli, pagegen
+from agent_annotate.review_versions import draft_path, fingerprint, read_draft, stage
+from agent_annotate.sync_server import _atomic_write_json, make_handler
 
 
 def _card(cid, number, verdict=None):
@@ -51,6 +52,13 @@ def page(tmp_path, monkeypatch):
               "local_url": f"http://127.0.0.1:{httpd.server_address[1]}/",
               "bus_file": str(bus_dir / "demo.ndjson")}
     monkeypatch.setattr(cli, "_registry_entries", lambda: [("reviews", "demo", record)])
+    (slug_dir / "versions/v2.cards.json").write_bytes((slug_dir / "cards.json").read_bytes())
+    def check(directory, args):
+        data = read_draft(directory, args.candidate_version)
+        data.update(verified=True, fingerprint=fingerprint(directory, args.candidate_version))
+        _atomic_write_json(draft_path(directory, args.candidate_version), data)
+        return 0
+    monkeypatch.setattr(pagegen, "_call_publish", check)
     try:
         yield slug_dir
     finally:
@@ -89,8 +97,11 @@ def test_new_version_withdraws_unasked_and_preserves_reviewer_content(page):
     assert after["aaaaaaaaaaaa"]["withdrawn"]["decision_request"] == before["aaaaaaaaaaaa"]["decision_request"]
     assert after["aaaaaaaaaaaa"]["version"] == "v1"
     assert after["bbbbbbbbbbbb"] == before["bbbbbbbbbbbb"]
-    assert after["cccccccccccc"] == before["cccccccccccc"]  # asked again in cards.json
-    assert after["reviewer"] == store["anchors"]["s:reviewer"][0]
+    assert after["cccccccccccc"]["text"] == before["cccccccccccc"]["text"]
+    assert after["cccccccccccc"]["version"] == "v1"
+    assert after["cccccccccccc"]["status"] == "addressed_by_agent"  # reasked in the new round
+    assert after["reviewer"] == {**store["anchors"]["s:reviewer"][0],
+                                 "number": cli._item_numbers(store)["reviewer"]}
     assert after["replied"] == replied
     assert after["pending"] == pending
     assert cli._read_meta(page)["current"] == "v2"
@@ -120,11 +131,15 @@ def test_withdraw_refuses_an_answered_card_without_writing(page, capsys):
 
 
 def test_ask_version_withdraws_omitted_questions_and_reposes_open_card(page):
+    stage(page, "v2", "Next", None, {})
+    args = SimpleNamespace(candidate_version="v2")
+    pagegen._call_publish(page, args)
     assert cli.cmd_ask(SimpleNamespace(slug="reviews/demo", from_file=str(page / "cards.json"),
-                                      version="v2", project=None, author="agent:claude", json=True)) == 0
+                                      version="v2", project=None, author="agent:claude", json=True, ready=True)) == 0
     store = _store(page)
     assert store["aaaaaaaaaaaa"]["withdrawn"]["reason"] == "not asked again in v2"
-    assert store["cccccccccccc"]["version"] == "v2"
+    assert store["cccccccccccc"]["version"] == "v1"  # the shown question is retained
+    assert any(c.get("origin_id") == "cccccccccccc" and c["version"] == "v2" for c in store.values())
     assert store["bbbbbbbbbbbb"]["decision"]["text"] == "x"
 
 
@@ -132,7 +147,6 @@ def test_new_publish_with_no_cards_does_not_reuse_stale_cards_json(page, monkeyp
     from agent_annotate import pagegen
     source = page / "next.md"
     source.write_text("---\ntitle: New review\n---\n\n## Plan\n\nA revised plan.\n")
-    monkeypatch.setattr(pagegen, "_call_publish", lambda *a: 0)
     assert pagegen.cmd_new(SimpleNamespace(slug_dir=str(page), from_file=str(source), version="v2",
         label=None, project="reviews", publish=True, ask=False, exception=None)) == 0
     store = _store(page)
