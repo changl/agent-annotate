@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A saved note edit no longer reverts to the old text. The 8 s poll and the read after Save could overlap; when the older read answered last, the page put the card back as it was before the save. Now an older read that lands after a newer one is ignored (agent-annotate-pla; the notes test's M1Max16 timeouts).
 - Routine jobs are scripts (simplification plan Stage 4; agent-annotate-zsc; docs/routine-scripts.md). `scripts/rollout.py plan|apply|rollback|status` rolls a release out to one Mac in one command and prints one line. It backs up, installs the wheel with uv, syncs skills, restarts pages, checks with doctor, and rolls the whole Mac back at the first failed step. Another Mac needs `--approval`, or nothing is sent. Releases now carry `rollout.py` and list it in `SHA256SUMS`. `scripts/sweep.py beads|disk|sessions|all` prints one line per check and writes the items that need judgment to a file, which `run_summary.py` shows. An hourly launchd plist is included but not loaded. The worker brief says how to read the full-suite receipt.
 
 ## 2.28.3
