@@ -1408,6 +1408,9 @@ def _page_dir(raw: str, project: str | None) -> Path | None:
 
 def _publish_page(args) -> int:
     """`publish SLUG --from page.md [--stage]` makes the next version; `--version vN` alone shows a staged one."""
+    if args.section and not args.from_file:
+        print(f"ERROR: --section {args.section} needs the new text · fix: add --from FILE", file=sys.stderr)
+        return 2
     slug_dir = _page_dir(args.slug_dir, args.project)
     if slug_dir is None:
         return 2
@@ -1423,7 +1426,7 @@ def _publish_page(args) -> int:
 
 
 def cmd_publish(args) -> int:
-    if getattr(args, "from_file", None) or getattr(args, "version", None):
+    if getattr(args, "from_file", None) or getattr(args, "version", None) or getattr(args, "section", None):
         return _publish_page(args)
     from .workspace import exception_reason, project_key
     try:
@@ -5551,6 +5554,8 @@ def build_parser(*, all_commands=False):
                         help="with --from: the version to write; alone: show this staged version")
     sp_pub.add_argument("--fixes", default=None, metavar="vN", help="this new version fixes an earlier visible version")
     sp_pub.add_argument("--label", default=None, help="version label for the rail")
+    sp_pub.add_argument("--section", default=None, metavar="NAME",
+                        help="with --from: replace this ## section (heading or s: anchor) of the newest version")
     sp_pub.add_argument("--title", default=None, help="stable page name, independent of revision title")
     sp_pub.add_argument("--exception", metavar="REASON", help="explicit reason for a second project page")
     sp_pub.add_argument("--standalone", action="store_true", help="alias for --exception standalone")
@@ -5980,6 +5985,10 @@ def _short_receipt(args, record: dict | None) -> str | None:
         return None
     state = " live" if version == current else ""
     line = f"{version}{state}"
+    section = getattr(args, "section_title", None)
+    if state and section:
+        base = getattr(args, "section_base", None)
+        line += f" · {section} replaced" + (f" on {base}" if base else "")
     if args.cmd == "ask" or (state and (staged or getattr(args, "version", None))):
         try:
             store = _load_store(record)
@@ -5988,9 +5997,13 @@ def _short_receipt(args, record: dict | None) -> str | None:
         numbers = _item_numbers(store)
         asked = [numbers.get(c.get("id")) or c.get("id") for _, c in _iter_comments(store)
                  if c.get("version") == version and c.get("decision_request") and not c.get("withdrawn")]
+        kept = set(getattr(args, "kept", None) or ()) if section else set()
+        asked = [n for n in asked if n not in kept]
         if asked:
             ordered = sorted(n for n in asked if type(n) is int) + [n for n in asked if type(n) is not int]
             line += f" · {len(asked)} card{'s' if len(asked) != 1 else ''} {_number_runs(ordered)}"
+        if kept:
+            line += f" · {len(kept)} kept"
     return line
 
 

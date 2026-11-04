@@ -400,6 +400,131 @@ def _number_ask_fences(text: str, numbers: list[int]) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# `--section NAME`: replace one `##` block of the newest source
+# ────────────────────────────────────────────────────────────────────────────
+def _h2_blocks(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(first line, line after the block, heading text) for each `##` outside fences."""
+    starts, fenced = [], False
+    for i, line in enumerate(lines):
+        if _FENCE.match(line.strip()):
+            fenced = not fenced
+            continue
+        heading = None if fenced else _HEADING.match(line.strip())
+        if heading and len(heading.group(1)) == 2:
+            starts.append((i, heading.group(2).strip()))
+    ends = [i for i, _ in starts[1:]] + [len(lines)]
+    return [(start, end, text) for (start, text), end in zip(starts, ends)]
+
+
+def _closed_numbers(slug_dir: Path) -> set[int]:
+    """Numbers of questions the page holds that are answered or closed (none of their rows is still open)."""
+    from .cli import _iter_comments
+    from .sync_server import _can_withdraw
+    try:
+        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    seen, open_ = set(), set()
+    for _, comment in _iter_comments(store if isinstance(store, dict) else {}, include_archived=True):
+        number = comment.get("number")
+        if type(number) is int:
+            seen.add(number)
+            if _can_withdraw(comment):
+                open_.add(number)
+    return seen - open_
+
+
+def _keep_open_cards(lines: list[str], closed: set[int]) -> tuple[list[str], list[int]]:
+    """Drop answered questions from kept sections; return the lines and the numbers still asked."""
+    out, kept, i = [], [], 0
+    while i < len(lines):
+        fence = _FENCE.match(lines[i].strip())
+        if not fence or fence.group(1).lower() not in ("ask", "cards"):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = i + 1
+        while end < len(lines) and not _FENCE.match(lines[end].strip()):
+            end += 1
+        inner = lines[i + 1:end]
+        if fence.group(1).lower() == "ask":
+            number = parse_ask("\n".join(inner)).get("number")
+            if number not in closed:
+                out += lines[i:end + 1]
+                kept += [number] if number else []
+        else:
+            try:
+                data = json.loads("\n".join(inner))
+            except ValueError:
+                data = None  # left as it is; generation names the broken fence
+            cards = data.get("cards") if isinstance(data, dict) else data
+            if not isinstance(cards, list):
+                out += lines[i:end + 1]
+            else:
+                still = [c for c in cards if not (isinstance(c, dict) and c.get("number") in closed)]
+                kept += [c["number"] for c in still if isinstance(c, dict) and type(c.get("number")) is int]
+                if still == cards:
+                    out += lines[i:end + 1]
+                elif still:
+                    out += [lines[i], json.dumps(still, ensure_ascii=False), lines[end] if end < len(lines) else "```"]
+        i = end + 1
+    return out, kept
+
+
+def _front_matter(meta: dict) -> str:
+    return "---\n" + "".join(f"{key}: {value}\n" for key, value in meta.items()) + "---\n" if meta else ""
+
+
+def section_source(slug_dir: Path, text: str, name: str) -> dict:
+    """The newest source with one `##` block replaced by `text`.
+
+    The base is `source/<current>.md`, or the newest staged draft when it is newer.
+    A file without its own `##` keeps the original heading. Other sections keep
+    their open questions (carried with the same number) and drop answered ones.
+    """
+    from .cli import _read_meta
+    from .review_versions import draft_path
+    current = _read_meta(slug_dir).get("current")
+    candidates = [v for v in [current, *(p.stem for p in (slug_dir / ".review-drafts").glob("v*.json"))]
+                  if isinstance(v, str) and re.fullmatch(r"v\d+", v) and (slug_dir / "source" / f"{v}.md").is_file()
+                  and (v == current or draft_path(slug_dir, v).is_file())]
+    if not candidates:
+        raise PageGenError("--section needs an earlier version from markdown · fix: publish the whole page with --from first")
+    base = max(candidates, key=lambda v: int(v[1:]))
+    base_meta, base_body = parse_front_matter((slug_dir / "source" / f"{base}.md").read_text(encoding="utf-8"))
+    part_meta, part_body = parse_front_matter(text)
+    lines = base_body.split("\n")
+    blocks = _h2_blocks(lines)
+    used: set[str] = set()
+    anchors = []
+    for _, _, heading in blocks:  # the renderer's `s:<slug>` anchors, `-2` for a repeated heading
+        anchor, k = f"s:{slugify(heading)}", 2
+        while anchor in used:
+            anchor, k = f"s:{slugify(heading)}-{k}", k + 1
+        used.add(anchor)
+        anchors.append(anchor)
+    hits = [(b, anchor) for b, anchor in zip(blocks, anchors) if name.strip().lower() in (b[2].lower(), anchor)]
+    if not hits:
+        raise PageGenError(f'no section "{name}" on {base} · fix: --section one of '
+                           + (", ".join(b[2] for b in blocks) or "none; publish the whole page"))
+    if len(hits) > 1:
+        raise PageGenError(f'{len(hits)} sections are named "{name}" on {base} · fix: --section one of '
+                           + ", ".join(anchor for _, anchor in hits))
+    (start, end, heading), _ = hits[0]
+    part = part_body.strip("\n").split("\n")
+    if not _h2_blocks(part):
+        part = [lines[start], ""] + part
+    closed = _closed_numbers(slug_dir)
+    before, kept_before = _keep_open_cards(lines[:start], closed)
+    after, kept_after = _keep_open_cards(lines[end:], closed)
+    meta = {k: v for k, v in base_meta.items() if k not in ("version", "label")}
+    meta.update(part_meta)
+    body = "\n".join(before + part + [""] + after)
+    return {"text": _front_matter(meta) + body, "base": base, "current": current,
+            "section": heading, "kept": kept_before + kept_after}
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Images and the current-vs-proposed block
 #
 # Decision #16: the reviewer judges pictures inline, without clicking.
@@ -1237,9 +1362,9 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None, *, title: str | None = None,
-             fixes: str | None = None, _attempt: int = 0) -> dict:
-    """Parse, render, lint and write every file a publishable page needs."""
-    text = source.read_text(encoding="utf-8")
+             fixes: str | None = None, text: str | None = None, _attempt: int = 0) -> dict:
+    """Parse, render, lint and write every file a publishable page needs (`text` replaces the file's)."""
+    text = source.read_text(encoding="utf-8") if text is None else text
     meta, body = parse_front_matter(text)
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
@@ -1328,7 +1453,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     except _NumbersMoved:
         if _attempt >= 2:
             raise PageGenError("numbers kept colliding with another publish · fix: rerun the same command") from None
-        return generate(source, slug_dir, version, label, title=title, fixes=fixes, _attempt=_attempt + 1)
+        return generate(source, slug_dir, version, label, title=title, fixes=fixes, text=text, _attempt=_attempt + 1)
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1461,11 +1586,22 @@ def cmd_new(args) -> int:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
     from .cli import NUMBERS_TAKEN
+    text = None
+    if getattr(args, "section", None):
+        # shortcut: images in kept sections resolve from the --from file's folder; keep section files beside page.md.
+        try:
+            merged = section_source(slug_dir, source.read_text(encoding="utf-8"), args.section)
+        except PageGenError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        text = merged["text"]
+        args.section_title, args.kept = merged["section"], merged["kept"]
+        args.section_base = merged["base"] if merged["base"] != merged["current"] else None
     version = args.version
     for _attempt in range(3):  # a number taken after generation regenerates the same draft
         try:
             result = generate(source, slug_dir, version, args.label, title=getattr(args, "title", None),
-                              fixes=getattr(args, "fixes", None))
+                              fixes=getattr(args, "fixes", None), text=text)
         except PageGenError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
