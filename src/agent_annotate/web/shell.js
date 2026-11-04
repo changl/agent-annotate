@@ -2142,6 +2142,20 @@ function excerptsFor(c) {
   if (S.doc) return S.x; // read by adapter.js from the document it draws the card in
   return (EXCERPTS_VERSION === CURRENT_VERSION && gotoVersionFor(c) === CURRENT_VERSION) ? EXCERPTS : null;
 }
+// The section path comes from the anchor registry, which keeps the source's
+// markdown; show words only: link text, no emphasis or code marks.
+function mdPlain(s) {
+  return String(s || '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // Long names arrive cut short ("…"), which can leave a link or bold open.
+    .replace(/!?\[([^\]]*)\]\([^)]*$/, '$1…')
+    .replace(/!?\[([^\]]*)$/, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/\*\*(?=\S)|(?<=\S)\*\*/g, '')
+    .replace(/(^|[^\w*])\*(?!\s)([^*]+?)\*(?!\w)/g, '$1$2')
+    .replace(/(^|\W)_(?!\s)([^_]+?)_(?!\w)/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1');
+}
 // A quoted excerpt clamped to four lines; "Show more" appears only when the
 // text is cut off (see syncExcerptClamps).
 function renderExcerptBox(key, text, source, footExtra) {
@@ -2149,7 +2163,7 @@ function renderExcerptBox(key, text, source, footExtra) {
   const qid = idFor('q|' + key);
   const more = `<button type="button" class="${k('decision-excerpt-more', 'annotate-excerpt-more')}" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
   return `<figure class="${k('decision-excerpt', 'annotate-excerpt')}${open ? ' is-open' : ''}">
-      ${source ? `<figcaption class="${k('decision-excerpt-src', 'annotate-excerpt-src')}">${esc(source)}</figcaption>` : ''}
+      ${source ? `<figcaption class="${k('decision-excerpt-src', 'annotate-excerpt-src')}">${esc(mdPlain(source))}</figcaption>` : ''}
       <blockquote class="${k('decision-excerpt-text', 'annotate-excerpt-text')}" id="${qid}">${esc(text)}</blockquote>
       ${S.doc ? more : `<div class="decision-excerpt-ft">${more}${footExtra || ''}</div>`}
     </figure>`;

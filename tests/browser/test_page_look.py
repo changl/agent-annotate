@@ -43,7 +43,7 @@ Every item here waits on you.
 | Android release line (Play96) | 2 + the 10 above again | Merge into Android main, gates, picture check; carries the stop-box fix | Later |
 | Deletion merge | 1 | Done 02:25 (below) | Now |
 
-### Firebase login
+### **Firebase** `login`
 
 Switch off the leaked login.
 
@@ -292,3 +292,32 @@ def test_context_block_and_recommended_option_stand_out_in_dark_and_light(frame)
             r, g, b = x["rec"]
             assert x["exLine"] == "0px" and x["exApart"] >= 1.15 and x["exText"] >= 4.5, (theme, where, x)
             assert g > r and g > b and x["recVsOther"] >= 1.15 and x["recText"] >= 4.5 and x["tag"], (theme, where, x)
+
+
+# The quoted context's label (its section path) shows words, not markdown:
+# link text only, no emphasis or code marks, in the rail and in the page. The
+# registry keeps the heading's markdown ("**Firebase** `login`").
+def test_context_label_is_plain_text(frame):
+    page, f = frame
+    labels = {"page": f.locator('[data-strip-item="question-1"] .annotate-excerpt-src').inner_text()}
+    rail = page.locator('#comment-list .citem[data-comment-id="question-1"] .decision-excerpt-src')
+    if rail.is_visible():  # the rail is closed on narrow layouts
+        labels["rail"] = rail.inner_text()
+    for where, text in labels.items():
+        assert text.lower().endswith("firebase login"), (where, text)
+        assert not any(mark in text for mark in ("**", "`")), (where, text)
+    # Links keep their text only (FLD: "**Start here:** [Warnings as one card](#s:war...)").
+    import re
+    from pathlib import Path
+
+    import agent_annotate
+    shell = (Path(agent_annotate.__file__).parent / "web" / "shell.js").read_text()
+    fn = re.search(r"function mdPlain\(s\) \{.*?\n\}\n", shell, re.S).group(0)
+    raw = "Fastlane Drive › **Start here:** [Warnings as one card (your 15069 note)](#s:warnings) and snake_case_name"
+    plain = "([fn, raw]) => new Function(fn + 'return mdPlain(arguments[0]);')(raw)"
+    assert page.evaluate(plain, [fn, raw]) == \
+        "Fastlane Drive › Start here: Warnings as one card (your 15069 note) and snake_case_name"
+    # Names arrive cut short, which can leave the link or the bold open (live FLD).
+    assert page.evaluate(plain, [fn, "Fastlane Drive › **Start here:** [Warnings as one card (your 15069 note)](#s:war…"]) == \
+        "Fastlane Drive › Start here: Warnings as one card (your 15069 note)…"
+    assert page.evaluate(plain, [fn, "A › **Start here…"]) == "A › Start here…"
