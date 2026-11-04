@@ -21,6 +21,18 @@ def require_draft(meta, version):
         raise ValueError(f'{version} is already visible and immutable; use v{max([int(version[1:]), *numbers]) + 1}')
 
 
+def next_version(directory):
+    """One past every version the page shows, has staged or holds as a file; v1 for a new page."""
+    from .cli import _read_meta
+    directory = Path(directory)
+    meta = _read_meta(directory) if directory.is_dir() else {}
+    names = [meta.get('current'), *(h.get('version') for h in meta.get('history') or [] if isinstance(h, dict))]
+    names += [p.stem for p in (directory / '.review-drafts').glob('v*.json')]
+    names += [p.name[:-5] for p in (directory / 'versions').glob('v*.html')]
+    numbers = [int(v[1:]) for v in names if isinstance(v, str) and re.fullmatch(r'v[0-9]+', v)]
+    return f'v{max(numbers, default=0) + 1}'
+
+
 def draft_path(directory, version):
     if not isinstance(version, str) or not re.fullmatch(r'v[0-9]+', version):
         raise ValueError('invalid version')

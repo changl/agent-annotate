@@ -34,13 +34,13 @@ options:
   -h, --help            show this help message and exit
   --from page.md        the markdown document (front matter + prose +
                         ```cards)
-  --version VERSION     vN (default: front matter, else v1)
+  --version VERSION     vN (default: front matter, else the next version)
   --fixes vN            this new version fixes an earlier visible version
   --label LABEL         version label for the rail
   --title TITLE         stable page name; version titles stay in Markdown
   --publish             run `publish` on the result
-  --ask                 seed the ```cards round before making the version
-                        visible
+  --ask                 accepted for old commands; a page with cards always
+                        publishes its round
   --example             print a complete example document and exit
   --project PROJECT
   --exception REASON    explicit reason for a second project page

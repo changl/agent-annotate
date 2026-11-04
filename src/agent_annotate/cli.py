@@ -1392,7 +1392,39 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
 # ────────────────────────────────────────────────────────────────────────────
 # Commands
 # ────────────────────────────────────────────────────────────────────────────
+def _page_dir(raw: str, project: str | None) -> Path | None:
+    """SLUG, PROJECT/SLUG or a page directory; an unknown name is a new page directory."""
+    path = Path(raw).expanduser()
+    if path.is_dir():
+        return path.resolve()
+    name = raw.strip().strip("/")
+    matches = [r for p, s, r in _registry_entries()
+               if name in (s, f"{p}/{s}") and (project is None or p == project) and r.get("slug_dir")]
+    if len(matches) > 1:
+        print(f"ERROR: {raw!r} names {len(matches)} pages · fix: use PROJECT/SLUG", file=sys.stderr)
+        return None
+    return Path(matches[0]["slug_dir"]).resolve() if matches else path.resolve()
+
+
+def _publish_page(args) -> int:
+    """`publish SLUG --from page.md [--stage]` makes the next version; `--version vN` alone shows a staged one."""
+    slug_dir = _page_dir(args.slug_dir, args.project)
+    if slug_dir is None:
+        return 2
+    args.page_arg, args.slug_dir = args.slug_dir, str(slug_dir)
+    if not args.from_file:
+        return cmd_publish_version(argparse.Namespace(
+            slug_dir=args.slug_dir, version=args.version, label=args.label, project=args.project,
+            port=args.port, transport=args.transport, hostname=args.hostname, public=args.public,
+            standalone=args.standalone, exception=args.exception))
+    from .pagegen import cmd_new
+    args.publish, args.ask, args.example = not args.stage, False, False
+    return cmd_new(args)
+
+
 def cmd_publish(args) -> int:
+    if getattr(args, "from_file", None) or getattr(args, "version", None):
+        return _publish_page(args)
     from .workspace import exception_reason, project_key
     try:
         exception_reason(args)
@@ -5505,8 +5537,15 @@ def build_parser(*, all_commands=False):
 
     _add_new_parser(sub)   # `new` — markdown → versions/vN.html + cards.json
 
-    sp_pub = sub.add_parser("publish", help="start server + register transport route")
-    sp_pub.add_argument("slug_dir")
+    sp_pub = sub.add_parser("publish", help="publish the next version from markdown, or start server + route")
+    sp_pub.add_argument("slug_dir", help="page directory; with --from or --version also SLUG or PROJECT/SLUG")
+    sp_pub.add_argument("--from", dest="from_file", default=None, metavar="page.md",
+                        help="generate the next version from this markdown and make it live")
+    sp_pub.add_argument("--stage", action="store_true", help="with --from: stage the version without showing it")
+    sp_pub.add_argument("--version", default=None,
+                        help="with --from: the version to write; alone: show this staged version")
+    sp_pub.add_argument("--fixes", default=None, metavar="vN", help="this new version fixes an earlier visible version")
+    sp_pub.add_argument("--label", default=None, help="version label for the rail")
     sp_pub.add_argument("--title", default=None, help="stable page name, independent of revision title")
     sp_pub.add_argument("--exception", metavar="REASON", help="explicit reason for a second project page")
     sp_pub.add_argument("--standalone", action="store_true", help="alias for --exception standalone")
@@ -5914,7 +5953,14 @@ def _short_receipt(args, record: dict | None) -> str | None:
     The page's private link was 56-84% of every receipt and was copied into
     each transcript; `--verbose` keeps the old line with the link.
     """
-    if args.cmd not in _SHORT_RECEIPTS or not record:
+    if args.cmd not in _SHORT_RECEIPTS:
+        return None
+    staged = getattr(args, "candidate_version", None)
+    if args.cmd in ("new", "publish") and staged and not getattr(args, "publish", False):
+        from shlex import quote
+        page = getattr(args, "page_arg", None) or args.slug_dir
+        return f"{staged} staged · show it: {_inv()} publish {quote(str(page))} --version {staged}"
+    if not record:
         return None
     if args.cmd == "claim":
         return f"claimed {page_name(record)}"
@@ -5927,12 +5973,9 @@ def _short_receipt(args, record: dict | None) -> str | None:
     version = getattr(args, "candidate_version", None) or getattr(args, "version", None) or current
     if not version:
         return None
-    if args.cmd == "new" and not getattr(args, "publish", False):
-        state = " staged; add --publish" + (" --ask" if getattr(args, "ask", False) else "")
-    else:
-        state = " live" if version == current else ""
+    state = " live" if version == current else ""
     line = f"{version}{state}"
-    if args.cmd == "ask" or (args.cmd == "new" and getattr(args, "ask", False) and getattr(args, "publish", False)):
+    if args.cmd == "ask" or (state and (staged or getattr(args, "version", None))):
         try:
             store = _load_store(record)
         except (OSError, ValueError):
