@@ -38,6 +38,13 @@ def history(page):
     page.locator("#history-body").wait_for(state="visible")
 
 
+def project_notes(page):
+    """mme: the agent's progress notes sit in one folded row under the versions."""
+    fold = page.locator("#project-panel-review > details.project-notes")
+    if fold.get_attribute("open") is None:
+        fold.locator("> summary").click()
+
+
 # A round sent, nested under the version it was sent on (yvj).
 ROUNDS = "#history-body .vact-block:not(.vact-agent)"
 

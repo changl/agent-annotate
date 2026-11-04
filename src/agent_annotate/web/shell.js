@@ -1010,9 +1010,9 @@ function renderProject() {
   if (!rest.length) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.hidden = false;
   // mme: one folded row under the versions; it opened above them before.
-  const notesOpen = projectPreference('notes') === 'open';
+  const notesOpen = projectPreference('project-notes') === 'open';
   const when = PROJECT.updated_at ? ', last ' + esc(fmtTs(PROJECT.updated_at).replace(/,\s*\d.*$/, '')) : '';
-  panel.innerHTML = `<details class="project-notes" data-module="notes"${notesOpen ? ' open' : ''}><summary class="hist-lbl">The agent's progress notes (${rest.length}${when})</summary>` + rest.map((module) => {
+  panel.innerHTML = `<details class="project-notes" data-module="project-notes"${notesOpen ? ' open' : ''}><summary class="hist-lbl">The agent's progress notes (${rest.length}${when})</summary>` + rest.map((module) => {
     const preference = projectPreference(module.id);
     // 2.20: progress and notes modules start collapsed.
     const open = preference ? preference === 'open' : false;

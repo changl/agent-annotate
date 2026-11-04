@@ -84,14 +84,14 @@ def test_a_baked_card_never_asks_to_press_finish_review(tmp_path):
         assert line.is_hidden()
 
 
-STATES = [
-    ({"state": "acknowledged"}, "The agent has read your last Send", "Sent"),
-    ({"state": "started"}, "The agent is working on your last Send", "Sent"),
-    ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered; waiting for the agent to start", "Sent"),
-    ({"state": "accepted"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
-    ({"state": "pending", "detail": "Owner process ended"}, "Saved; the agent has not been told yet", "Waiting for the agent"),
-    ({"state": "uncertain"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
-    ({"state": "superseded"}, "This page changed agents before your Send was delivered", "Waiting for the agent"),
+STATES = [  # av1: the Send note's short words (the delivery row is gone)
+    ({"state": "acknowledged"}, "Read by the agent", "Sent"),
+    ({"state": "started"}, "Agent working on it", "Sent"),
+    ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered", "Sent"),
+    ({"state": "accepted"}, "Saved, not confirmed", "Waiting for the agent"),
+    ({"state": "pending", "detail": "Owner process ended"}, "Saved, agent not told yet", "Waiting for the agent"),
+    ({"state": "uncertain"}, "Saved, not confirmed", "Waiting for the agent"),
+    ({"state": "superseded"}, "Not delivered: the page changed agents", "Waiting for the agent"),
 ]
 
 
@@ -115,7 +115,6 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
             journal.write_text(json.dumps({"offset": 0, "deliveries": {key: {"id": key, **row}}}))
             page.reload(wait_until="networkidle")
             ready(page)
-            status = page.locator("#delivery-status")
-            playwright.expect(status).to_have_text(banner)
-            assert status.get_attribute("title") == (row.get("detail") or "")
+            page.wait_for_function("t => window.AnnotateDocs.deliveryNote()?.text === t", arg=banner)
+            assert page.evaluate("() => window.AnnotateDocs.deliveryNote().title") == (row.get("detail") or "")
             playwright.expect(frame.locator('[data-strip-item="q-1"] .annotate-send-state')).to_have_text(card)

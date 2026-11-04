@@ -5,7 +5,7 @@ import urllib.request
 
 import pytest
 from review_fixtures import complete
-from single_page import ROUNDS, feedback, go, history, ready, section, sent
+from single_page import ROUNDS, feedback, go, history, project_notes, ready, section, sent
 from test_card_layout import CHROME, _serve
 from test_workspace_intent import _contrast, _page
 
@@ -213,6 +213,7 @@ def test_rounds_are_readonly_and_ticket_links_preserve_current_drafts(tmp_path, 
             assert receipt.locator(".decision-btn,textarea").count() == 0
             assert (directory / "comments.json").read_bytes() == saved
             assert page.evaluate("window.__archiveRan") is None
+            project_notes(page)
             status = page.locator('[data-module="status"]')
             status.locator("summary").click()
             assert status.locator("li").first.locator(".ticket-link").count() == 2
@@ -296,23 +297,24 @@ def test_history_is_one_version_list_each_opening_to_what_was_sent_and_done(tmp_
                 assert v2.locator(".vrow-toggle").count() == 0
                 toggle = v1.locator(".vrow-toggle")
                 panel = page.locator("#" + toggle.get_attribute("aria-controls"))
-                # Collapsed by default: v1 is not the version on screen.
-                playwright.expect(toggle).to_have_attribute("aria-expanded", "false")
-                playwright.expect(panel).to_be_hidden()
-                toggle.click()
+                # mme: the latest round is open without a tap, though v1 is not on screen.
                 playwright.expect(toggle).to_have_attribute("aria-expanded", "true")
                 playwright.expect(panel).to_be_visible()
                 round_ = panel.locator(".vact-block:not(.vact-agent)")
                 playwright.expect(round_).to_have_count(1)
-                assert round_.locator(".vact-head").inner_text().startswith("Feedback · Waiting for the agent (1) · ")
+                head = round_.locator(".vact-head").inner_text()
+                # What was sent, then the version the agent published next.
+                assert head.startswith("You sent 1 · ") and head.endswith(" · next: v2"), head
                 assert "Keep the original wording for CHA-160." in round_.inner_text()
-                # Then what the agent did: it published v2.
-                playwright.expect(panel.locator(".vact-agent .vact-head")).to_contain_text("Agent · Published v2 · Current layout")
                 # Open or closed is remembered for the page.
+                toggle.click()
+                playwright.expect(panel).to_be_hidden()
                 page.reload(wait_until="networkidle")
                 ready(page)
                 history(page)
-                playwright.expect(toggle).to_have_attribute("aria-expanded", "true")
+                playwright.expect(toggle).to_have_attribute("aria-expanded", "false")
+                toggle.click()
+                playwright.expect(panel).to_be_visible()
                 toggle.click()
                 playwright.expect(panel).to_be_hidden()
                 # Arrow keys move between the versions; the row opens the version.
@@ -366,7 +368,7 @@ def test_each_sent_round_sits_under_the_version_it_was_sent_on(tmp_path):
                 for version in ("v1", "v2"):
                     item = page.locator(f'#vrail-body-review .vitem[data-version="{version}"]')
                     playwright.expect(item.locator(".vact-block:not(.vact-agent)")).to_have_count(1)
-                    assert item.locator(".vact-head").first.inner_text().startswith(("Feedback · Waiting for the agent (", "Feedback · Sent ("))
+                    assert item.locator(".vact-head").first.inner_text().startswith("You sent 1 · ")
                 page.evaluate("() => localStorage.clear()")
                 page.close()
             browser.close()
