@@ -87,8 +87,8 @@
    "3": {
     "session_start": {
      "commands": 0,
-     "tokens": 628,
-     "skill_tokens": 628,
+     "tokens": 634,
+     "skill_tokens": 634,
      "reference_tokens": 1351,
      "reference_loaded_at_start": false
     },
@@ -126,8 +126,8 @@
    "5": {
     "session_start": {
      "commands": 0,
-     "tokens": 628,
-     "skill_tokens": 628,
+     "tokens": 634,
+     "skill_tokens": 634,
      "reference_tokens": 1351,
      "reference_loaded_at_start": false
     },
