@@ -499,7 +499,8 @@ def sandbox_profile(sb: dict, provider: str) -> str:
     return ("(version 1) (allow default) "
             f"(deny file-write* (require-all {outside} "
             '(require-not (literal "/dev/null")) (require-not (literal "/dev/tty")))) '
-            f"(deny process-exec {denies})")
+            # An empty filter would deny every exec, so omit the rule when no blocked tool is on PATH.
+            + (f"(deny process-exec {denies})" if denies else ""))
 
 
 def run_model(sb: dict, prompt: str, session_id: str, args) -> tuple[int | None, bool]:
