@@ -500,8 +500,8 @@ def _ignore(directory, names):
 
 
 def _write_json(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    from .store import write_text
+    write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
 def write_target(result: dict) -> Path:
@@ -519,9 +519,8 @@ def write_target(result: dict) -> Path:
             (staging / name).unlink(missing_ok=True)
         _write_json(staging / "comments.json", result["store"])
         _write_json(staging / "read-state.json", result["read_state"])
-        with (staging / "rounds.ndjson").open("w", encoding="utf-8") as stream:
-            for item in result["rounds"]:
-                stream.write(json.dumps(item, ensure_ascii=False) + "\n")
+        from .store import write_lines
+        write_lines(staging / "rounds.ndjson", result["rounds"])
         if result["findings_sets"]:
             _write_json(staging / "categories.json", {"schema_version": 1, "findings_sets": result["findings_sets"]})
         if result["copy"]:

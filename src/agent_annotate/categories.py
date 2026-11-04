@@ -6,7 +6,6 @@ import json
 import os
 import re
 import stat
-import tempfile
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -76,30 +75,7 @@ def _json(path: Path, default: dict) -> dict:
     return data
 
 
-def _atomic_bytes(path: Path, body: bytes) -> None:
-    from .consolidate import refuse_if_moved
-    for page in list(path.parents)[:4]:  # page/, attachments/, plans/<id>/versions/
-        refuse_if_moved(page)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
-            temporary = Path(out.name)
-            out.write(body)
-            os.fchmod(out.fileno(), mode)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-        temporary = None
-        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
+from .store import write_bytes as _atomic_bytes  # noqa: E402  (plans, attachments and stores share it)
 
 
 def _write(path: Path, value: dict) -> None:
@@ -263,7 +239,8 @@ def add_proof_file(page_dir: Path | str, src_path: Path | str) -> dict:
 
 
 def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str, proof: list[dict]) -> dict:
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
     by = _text(by, "fixed by", 500)
     if not isinstance(note, str) or len(note) > 10000:
         raise ValueError("fixed note must be text of at most 10000 characters")
@@ -284,7 +261,8 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
 
 
 def reopen_finding(page_dir: Path | str, comment_id: str, *, by: str, text: str) -> dict:
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
     by, text = _text(by, "reopen by", 500), _text(text, "reopen text", 10000)
     with _locked_store(page_dir):
         store = _comments(page_dir)
@@ -348,7 +326,7 @@ def publish_plan_revision(page_dir: Path | str, plan_id: str, html: str, *, titl
         _text(label, "plan label", 200)
     if section is not None and section not in PLAN_SECTIONS:
         raise ValueError("plan section must be one of: " + ", ".join(PLAN_SECTIONS))
-    from .sync_server import _locked_store
+    from .store import transaction as _locked_store
     with _locked_store(page_dir), _lock(page_dir, f"plans/{plan_id}/.meta.json.lock"):
         if plan_id in _comments(page_dir).get("approved_plans", {}):
             raise ValueError("this item is filed by reviewer decisions; publish its next revision in Review")

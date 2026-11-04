@@ -46,7 +46,7 @@ def read_draft(directory, version):
 
 def stage(directory, version, label, fixes, stats):
     from .cli import _read_meta
-    from .sync_server import _atomic_write_json
+    from .store import write_json
     meta = _read_meta(directory)
     require_draft(meta, version)
     if fixes is not None and (not shown(meta, fixes) or int(fixes[1:]) >= int(version[1:])):
@@ -56,7 +56,7 @@ def stage(directory, version, label, fixes, stats):
         data['fixes'] = fixes
     path = draft_path(directory, version)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_json(path, data)
+    write_json(path, data)
     return data
 
 
@@ -70,7 +70,8 @@ def fingerprint(directory, version):
 
 def activate(directory, version, label=None):
     """Caller holds the comment-store lock, after every card was validated."""
-    from .cli import _now_iso, _write_meta_locked
+    from .cli import _now_iso
+    from .store import update_meta
     data = read_draft(directory, version)
     link = directory / '.current.html.ready'
     link.unlink(missing_ok=True)
@@ -83,7 +84,7 @@ def activate(directory, version, label=None):
         meta.setdefault('history', []).append(entry)
         meta['current'] = version
 
-    _write_meta_locked(directory, mutate)
+    update_meta(directory, mutate)
     os.replace(link, directory / 'current.html')
     draft_path(directory, version).unlink(missing_ok=True)
 
