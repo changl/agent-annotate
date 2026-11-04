@@ -113,10 +113,12 @@ def sessions(apply):
     finished, items, removed = [], [], 0
     for tree in listing.get("worktrees") or []:
         path = tree.get("path") or ""
-        if tree.get("hostId") != "local" or tree.get("isMainWorktree") or not os.path.isdir(path):
+        if tree.get("hostId") != "local" or tree.get("isMainWorktree"):
             continue
         if any(os.path.realpath(path) == os.path.realpath(d) for d in DENY):
             items.append(f"worktree {path}: on the deny list; not inspected")
+            continue
+        if not os.path.isdir(path):
             continue
         status = subprocess.run(["git", "--no-optional-locks", "-C", path, "status", "--porcelain"],
                                 capture_output=True, text=True)
