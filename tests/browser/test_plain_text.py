@@ -90,6 +90,7 @@ STATES = [
     ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered; waiting for the agent to start", "Sent"),
     ({"state": "accepted"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
     ({"state": "pending", "detail": "Owner process ended"}, "Saved; the agent has not been told yet", "Waiting for the agent"),
+    ({"state": "pending", "target": {"pid": 2147483647}}, "Waiting: the agent's session is not running", "Waiting for the agent"),
     ({"state": "uncertain"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
     ({"state": "superseded"}, "This page changed agents before your Send was delivered", "Waiting for the agent"),
 ]
@@ -116,5 +117,6 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
             ready(page)
             status = page.locator("#delivery-status")
             playwright.expect(status).to_have_text(banner)
-            assert status.get_attribute("title") == (row.get("detail") or "")
+            assert status.get_attribute("title") == ("Owner process ended; waiting for the session to resume"
+                                                     if row.get("target") else row.get("detail") or "")
             playwright.expect(frame.locator('[data-strip-item="q-1"] .annotate-send-state')).to_have_text(card)

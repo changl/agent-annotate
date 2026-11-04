@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local-only SessionStart notice shared by Claude Code and Codex."""
+"""SessionStart notice and safe owner refresh shared by Claude Code and Codex."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from agent_annotate.urls import page_url
 from agent_annotate.workspace import candidates, selected_page
 
 
-def notice(cwd: Path) -> str | None:
+def notice(cwd: Path, session_id: str | None = None) -> str | None:
     entries = []
     for state_file in paths.STATE_DIR.glob("*.json"):
         try:
@@ -27,6 +27,9 @@ def notice(cwd: Path) -> str | None:
                            for slug, record in state["slugs"].items() if isinstance(record, dict))
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             continue
+    if session_id:
+        from agent_annotate.delivery import refresh_session_owners
+        refresh_session_owners(session_id, {(p, s): r for p, s, r in entries})
     selected = selected_page(candidates(cwd, entries=entries))
     if not selected:
         return None
@@ -72,7 +75,8 @@ def main() -> int:
         if not sys.stdin.isatty() and select.select([sys.stdin], [], [], 0.01)[0]:
             payload = json.load(sys.stdin)
         cwd = payload.get("cwd") if isinstance(payload, dict) else None
-        line = notice(Path(cwd) if cwd else Path.cwd())
+        from agent_annotate.hooks.check_comment_bus import _session_id
+        line = notice(Path(cwd) if cwd else Path.cwd(), session_id=_session_id(payload))
         if line:
             print(json.dumps({"systemMessage": line, "hookSpecificOutput": {
                 "hookEventName": "SessionStart", "additionalContext": line}}, ensure_ascii=False))

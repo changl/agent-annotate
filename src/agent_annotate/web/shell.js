@@ -1176,7 +1176,7 @@ async function loadDelivery() {
     if (data.latest) {
       // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
       const unconfirmed = 'Saved; not yet confirmed that the agent got it';
-      const labels = {acknowledged: 'The agent has read your last Send', pending: 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
+      const labels = {acknowledged: 'The agent has read your last Send', pending: data.latest.owner_running === false ? "Waiting: the agent's session is not running" : 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
       node.textContent = labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state;
       // The technical reason stays on hover, out of the sentence he reads.
       node.title = data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '';
