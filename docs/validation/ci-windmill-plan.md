@@ -1,6 +1,6 @@
 # Full-suite automation proposal (agent-annotate-va0)
 
-Status: coordinator approved the plan for later activation on 2026-11-02 (blocking ask answered). No M1Max16 or Windmill changes made by this worker. Chang approval is still needed for the extra installs and Windmill changes below.
+Status: approved by Chang on 2026-11-04 (card #130) and activated the same day; see [the activation report](ci-m1max16-20261104.md). Where the activation differs from this plan, the report wins: credentials come from Infisical, and the source cache, Playwright cache and placement checks are as described there.
 
 ## Trigger and return path
 
