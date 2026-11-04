@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.28.3
 
 - A page poll that comes due while a document loads or a post is on its way runs a second later instead of a full 8 s cycle later, and where the last Send got to is read alongside the other poll reads instead of after them; under load two deferred polls had put a delivery receipt past 15 s. The notes test now reports the card, the open requests and any error the card shows if its save never appears (agent-annotate-pla).
 - Annotate is lighter for agents (simplification plan Stages 0–1; agent-annotate-knl; Chang #184, 2026-11-04). Write commands print one line without the page's private link: `v2 live · 3 cards #1–#3`, `resolved #1–#3 in v2`, `claimed NAME`; `--verbose` keeps the old linked line and `--json` is unchanged. `inbox` prints one line per answer or note, led by its number, and ends with the exact `annotate resolve PAGE 1 2 3` line; publish, delivery and status events are hidden unless `--all-events`, and `--verbose` keeps the old table. `resolve` takes several numbers or ids in one call and checks them all before writing any. The skill is shorter and reads the page reference only when needed. On the model-free fixture, a 3-answer round goes from 5 commands / 362 tokens to 3 / 149, and session start from 1,973 to 634 tokens; FLD's last 3-answer round prints 152 tokens instead of 329.
