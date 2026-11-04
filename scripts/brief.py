@@ -24,6 +24,8 @@ Rules:
   `python3 {lease} take NAME --run {run} --note WHY` (refused = held; only then ask).
   Release before worker_done: `python3 {lease} release --run {run}`.
 - Sandbox servers use ports 18700-18799 only. No live page writes; no other Macs.
+- full suite: M1Max16 posts it as the "full-suite" status on every PR head; don't run it
+  locally. To rerun it: scripts/ci.py --full → read the receipt line.
 - worker_done --body is three sentences: what changed where, the evidence, what is left
   (PR URL if any). Use --outcome failed if the work is not done."""
 
