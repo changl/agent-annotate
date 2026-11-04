@@ -2903,7 +2903,7 @@ def cmd_ask(args) -> int:
             print(_with_fix(f"ERROR: {e}", "check the page, then rerun"), file=sys.stderr)
             return 2
     elif code == 0:
-        print(f"ERROR: no usable API response from {project}/{slug} ({payload}); this write may already have completed"
+        print(f"ERROR: API response unavailable or unusable for {project}/{slug} ({payload}); this write may already have completed"
               " · fix: check the page before retrying", file=sys.stderr)
         return 2
     elif code >= 300 or not isinstance(payload, dict):
