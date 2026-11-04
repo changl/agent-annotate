@@ -2,8 +2,10 @@
 
 import json
 import urllib.request
+from contextlib import nullcontext
 
 import pytest
+from review_fixtures import authoring, complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -38,8 +40,10 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
     path.write_text(json.dumps(store))
     before = path.read_bytes()
     expected = _item_numbers({**store, "current_version": "v1"})
-    assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 5
-    process, base = _serve(tmp_path, directory, port=18740)
+    # Only published Review versions reach the reviewer; raw history stays intact.
+    expected = {cid: number for cid, number in expected.items() if cid not in ("old", "staged")}
+    assert expected["current"] == 10 and expected["duplicate"] == "10·2" and len(set(expected.values())) == 3
+    process, base = _serve(tmp_path, directory)
     try:
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
@@ -52,6 +56,47 @@ def test_legacy_duplicate_numbers_match_cli_without_rewriting_history(tmp_path):
                 page.reload(wait_until="networkidle")
                 page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('current') === 10")
                 assert path.read_bytes() == before
+            finally:
+                browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_legacy_figure_numbers_match_cli_after_batch_and_reload(tmp_path):
+    from agent_annotate.cli import _item_numbers
+
+    directory = _page(tmp_path)
+    legacy = [{"id": f"figure-{n}", "anchor_id": "s:coverage", "version": "v1", "status": "open",
+               "text": "Figure comment", "author": "agent:test", "created_at": f"2026-11-01T00:00:0{n}Z"}
+              for n in range(5)]
+    store = {"schema_version": 2, "anchors": {"s:coverage": legacy}, "archived": {}}
+    path = directory / "comments.json"
+    path.write_text(json.dumps(store))
+    expected = _item_numbers(store)
+    process, base = _serve(tmp_path, directory)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(base + "#view=review", wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('figure-0') === 1")
+                read_numbers = "ids => Object.fromEntries(ids.map(id => [id, window.AnnotateDocs.number(id)]))"
+                assert page.evaluate(read_numbers, list(expected)) == expected
+                items = [{"anchor_id": f"d:q{n}", "number": n, "text": "Regression question",
+                          "decision_request": {"prompt": "Regression question"}} for n in range(48, 56)]
+                request = urllib.request.Request(base + "api/comments/batch", json.dumps({"items": items}).encode(),
+                                                 {"Content-Type": "application/json", "X-Annotate-Agent": "agent:test"})
+                with authoring(base, {"items": items}):
+                    with urllib.request.urlopen(request) as response:
+                        assert response.status == 200
+                page.reload(wait_until="networkidle")
+                page.wait_for_function("() => window.AnnotateDocs && window.AnnotateDocs.number('figure-0') === 1")
+                assert page.evaluate(read_numbers, list(expected)) == expected
+                stored = _item_numbers(json.loads(path.read_text()))
+                assert page.evaluate(read_numbers, list(stored)) == stored
             finally:
                 browser.close()
     finally:
@@ -74,6 +119,7 @@ def _page(tmp_path):
     source.write_text(_document())
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     return directory
 
 
@@ -183,8 +229,9 @@ def _api(base, path, body, method="POST", reviewer=False):
     request = urllib.request.Request(
         base + path, data=json.dumps(body).encode(), method=method, headers=headers
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.load(response)
+    with authoring(base, body) if not reviewer else nullcontext():
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
@@ -196,6 +243,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
     first_source = tmp_path / "v1.md"
     first_source.write_text(_document(cards=[_question(13), _question(14)]))
     generate(first_source, directory)
+    complete(directory)
     process, base = _serve(tmp_path, directory)
     try:
         ids = _api(
@@ -214,6 +262,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
         second_source = tmp_path / "v2.md"
         second_source.write_text(_document("v2", [_question(n) for n in (13, 14, 15)], title=second_title))
         generate(second_source, directory)
+        complete(directory)
         _api(
             base,
             f"api/comments/{ids[0]}",
@@ -236,7 +285,7 @@ def test_explicit_labels_survive_two_rounds_repose_carry_history_and_new_questio
         expected = {added[0]: 13, ids[1]: 14, added[1]: 15}
         meta = json.loads((directory / "current.meta.json").read_text())
         meta["current"] = "v2"
-        meta["history"].append({"version": "v2", "label": "Second round"})
+        next(h for h in meta["history"] if h["version"] == "v2")["label"] = "Second round"
         (directory / "current.meta.json").write_text(json.dumps(meta))
         original_ids = set(ids)
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from review_fixtures import complete
 
 from agent_annotate import cli, deployment, pagegen, sync_server
 
@@ -219,6 +220,7 @@ def test_real_page_lifecycle_finishes_in_seconds_without_lsof(runtime, tmp_path,
     markdown.write_text("---\ntitle: Sandbox\n---\n\n## Scope\n\nRestart only this sandbox.\n")
     page = tmp_path / "pages" / "sandbox"
     pagegen.generate(markdown, page, version="v1")
+    complete(page)
     with socket.socket() as sock:
         sock.bind(("localhost", 0))
         port = sock.getsockname()[1]

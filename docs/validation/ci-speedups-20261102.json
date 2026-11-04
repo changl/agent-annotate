@@ -1,0 +1,405 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-02T23:01:52.637442+00:00",
+  "host_label": "M1 (current Mac)",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "python": "3.14.3",
+  "uv": "uv 0.11.6 (Homebrew 2026-04-09 aarch64-apple-darwin)",
+  "pr": "https://github.com/changl/agent-annotate/pull/93",
+  "base": "changl/next-2.28.3",
+  "tested_head": "fadb8490c14cd3dfe57c70949a84c85fa4e2bc78",
+  "accepted_run": "final-parallel",
+  "timings": [
+    {
+      "mode": "serial",
+      "workers": 1,
+      "source_sha": "0f361c89a3baf8f3d746d396e038f5d4fdea3e4e",
+      "duration_s": 3629.46,
+      "returncode": 0,
+      "load_before": [
+        41.853515625,
+        30.33203125,
+        22.736328125
+      ],
+      "load_after": [
+        68.7783203125,
+        65.677734375,
+        73.78515625
+      ],
+      "command": [
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.venv/bin/python",
+        "scripts/ci.py",
+        "--full",
+        "--local",
+        "--workers",
+        "1",
+        "--junitxml",
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/serial/junit.xml"
+      ],
+      "summary": "PASS ruff=1p/0f/0s js=7p/0f/0s runtime=1786p/0f/2s browser-1=96p/0f/0s browser-2=107p/0f/0s browser-3=93p/0f/0s duration=3629.4s failing=- junit=/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/serial/junit.xml",
+      "junit_sha256": "695826fee51c70bd1d20b79c4ee523c171427c75fd35814d11cbd28cf96aeba4",
+      "chunks": [
+        {
+          "name": "ruff",
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "js",
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "runtime",
+          "passed": 1786,
+          "failed": 0,
+          "skipped": 2,
+          "pytest_duration_s": 250.771
+        },
+        {
+          "name": "browser-1",
+          "passed": 96,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 993.108
+        },
+        {
+          "name": "browser-2",
+          "passed": 107,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 1325.226
+        },
+        {
+          "name": "browser-3",
+          "passed": 93,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 1058.314
+        }
+      ],
+      "pytest_counts": {
+        "passed": 2082,
+        "failed": 0,
+        "skipped": 2
+      },
+      "failed_test_ids": [],
+      "skipped_test_ids": [
+        "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
+        "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img"
+      ]
+    },
+    {
+      "mode": "parallel",
+      "workers": 4,
+      "source_sha": "0f361c89a3baf8f3d746d396e038f5d4fdea3e4e",
+      "duration_s": 1465.87,
+      "returncode": 1,
+      "load_before": [
+        68.7783203125,
+        65.677734375,
+        73.78515625
+      ],
+      "load_after": [
+        43.21875,
+        78.42919921875,
+        92.77490234375
+      ],
+      "command": [
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.venv/bin/python",
+        "scripts/ci.py",
+        "--full",
+        "--local",
+        "--workers",
+        "4",
+        "--junitxml",
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/parallel/junit.xml"
+      ],
+      "summary": "FAIL ruff=1p/0f/0s js=7p/0f/0s runtime=1786p/0f/2s browser-1=95p/1f/0s browser-2=105p/2f/0s browser-3=91p/2f/0s duration=1465.8s failing=tests/browser/test_live_updates.py::test_a_new_version_waits_in_the_banner_while_the_reviewer_types[rail-chrome],tests/browser/test_fix_ui_library.py::test_a_save_refused_for_size_gives_a_size_hint,tests/browser/test_fix_ui_shell.py::test_outside_link_opens_in_a_new_tab_not_in_the_frame,tests/browser/test_card_layout.py::test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_latest,tests/browser/test_card_layout.py::test_project_modules_and_custom_choices_share_managed_ui junit=/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/parallel/junit.xml",
+      "junit_sha256": "ff4b0f501753d118862c93a4ff6078a638a1e447e8715fbcff6cf3db2587a605",
+      "chunks": [
+        {
+          "name": "ruff",
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "js",
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "runtime",
+          "passed": 1786,
+          "failed": 0,
+          "skipped": 2,
+          "pytest_duration_s": 265.769
+        },
+        {
+          "name": "browser-1",
+          "passed": 95,
+          "failed": 1,
+          "skipped": 0,
+          "pytest_duration_s": 1246.164
+        },
+        {
+          "name": "browser-2",
+          "passed": 105,
+          "failed": 2,
+          "skipped": 0,
+          "pytest_duration_s": 1465.132
+        },
+        {
+          "name": "browser-3",
+          "passed": 91,
+          "failed": 2,
+          "skipped": 0,
+          "pytest_duration_s": 1247.888
+        }
+      ],
+      "pytest_counts": {
+        "passed": 2077,
+        "failed": 5,
+        "skipped": 2
+      },
+      "failed_test_ids": [
+        "tests/browser/test_live_updates.py::test_a_new_version_waits_in_the_banner_while_the_reviewer_types[rail-chrome]",
+        "tests/browser/test_fix_ui_library.py::test_a_save_refused_for_size_gives_a_size_hint",
+        "tests/browser/test_fix_ui_shell.py::test_outside_link_opens_in_a_new_tab_not_in_the_frame",
+        "tests/browser/test_card_layout.py::test_questions_sit_at_their_evidence_in_content_order_and_reload_opens_latest",
+        "tests/browser/test_card_layout.py::test_project_modules_and_custom_choices_share_managed_ui"
+      ],
+      "skipped_test_ids": [
+        "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
+        "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img"
+      ]
+    },
+    {
+      "mode": "verified-parallel",
+      "workers": 4,
+      "source_sha": "f2295ebe2213817c5b3313926d541953bbf6b58e",
+      "duration_s": 1424.42,
+      "returncode": 1,
+      "load_before": [
+        83.2001953125,
+        87.44677734375,
+        88.53125
+      ],
+      "load_after": [
+        34.17431640625,
+        50.94189453125,
+        63.158203125
+      ],
+      "command": [
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.venv/bin/python",
+        "scripts/ci.py",
+        "--full",
+        "--local",
+        "--workers",
+        "4",
+        "--junitxml",
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/verified-parallel/junit.xml"
+      ],
+      "summary": "FAIL ruff=1p/0f/0s js=7p/0f/0s runtime=1801p/0f/2s browser-1=96p/0f/0s browser-2=106p/1f/0s browser-3=94p/0f/0s duration=1424.3s failing=tests/browser/test_typing_while_cards_arrive.py::test_an_unsent_pick_on_a_card_the_agent_resolves_stays_and_goes_with_send[chrome] junit=/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/verified-parallel/junit.xml",
+      "junit_sha256": "165c74a3e21e5855136bd874de4839eb783f12b216b40e885d0957e808fbcc19",
+      "chunks": [
+        {
+          "name": "ruff",
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "js",
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "runtime",
+          "passed": 1801,
+          "failed": 0,
+          "skipped": 2,
+          "pytest_duration_s": 259.406
+        },
+        {
+          "name": "browser-1",
+          "passed": 96,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 1006.274
+        },
+        {
+          "name": "browser-2",
+          "passed": 106,
+          "failed": 1,
+          "skipped": 0,
+          "pytest_duration_s": 1163.472
+        },
+        {
+          "name": "browser-3",
+          "passed": 94,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 1015.792
+        }
+      ],
+      "pytest_counts": {
+        "passed": 2097,
+        "failed": 1,
+        "skipped": 2
+      },
+      "failed_test_ids": [
+        "tests/browser/test_typing_while_cards_arrive.py::test_an_unsent_pick_on_a_card_the_agent_resolves_stays_and_goes_with_send[chrome]"
+      ],
+      "skipped_test_ids": [
+        "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
+        "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img"
+      ]
+    },
+    {
+      "mode": "final-parallel",
+      "workers": 4,
+      "source_sha": "fadb8490c14cd3dfe57c70949a84c85fa4e2bc78",
+      "duration_s": 1390.09,
+      "returncode": 0,
+      "load_before": [
+        29.7646484375,
+        39.7109375,
+        54.42529296875
+      ],
+      "load_after": [
+        33.8583984375,
+        44.62158203125,
+        47.8623046875
+      ],
+      "command": [
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.venv/bin/python",
+        "scripts/ci.py",
+        "--full",
+        "--local",
+        "--workers",
+        "4",
+        "--junitxml",
+        "/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/final-parallel/junit.xml"
+      ],
+      "summary": "PASS ruff=1p/0f/0s js=7p/0f/0s runtime=1802p/0f/2s browser-1=96p/0f/0s browser-2=107p/0f/0s browser-3=94p/0f/0s duration=1390.0s failing=- junit=/Users/changlee/orca/workspaces/codex/aa-ci/.ci-results/final-parallel/junit.xml",
+      "junit_sha256": "73ba6d7fa44ca48691f1ec9d0f3996540c94afb208491df8e1f51bdbe92ef448",
+      "chunks": [
+        {
+          "name": "ruff",
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "js",
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "name": "runtime",
+          "passed": 1802,
+          "failed": 0,
+          "skipped": 2,
+          "pytest_duration_s": 252.572
+        },
+        {
+          "name": "browser-1",
+          "passed": 96,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 966.881
+        },
+        {
+          "name": "browser-2",
+          "passed": 107,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 1136.264
+        },
+        {
+          "name": "browser-3",
+          "passed": 94,
+          "failed": 0,
+          "skipped": 0,
+          "pytest_duration_s": 987.39
+        }
+      ],
+      "pytest_counts": {
+        "passed": 2099,
+        "failed": 0,
+        "skipped": 2
+      },
+      "failed_test_ids": [],
+      "skipped_test_ids": [
+        "tests/test_backend_review_fixes.py::test_be1_marker_script_does_not_run_when_opened",
+        "tests/test_backend_review_fixes.py::test_be1_proof_images_still_render_in_img"
+      ]
+    }
+  ],
+  "observed_walltime_reduction_percent": 61.7,
+  "observed_speedup": 2.611,
+  "comparison_limit": "Serial and first parallel samples share 0f361c8, but that parallel sample failed; accepted after sample is rebased on PR 92 and includes test-infrastructure fixes and 17 more cases. Host load varied. This is an observed before/after comparison, not an isolated causal benchmark.",
+  "added_test_ids_since_serial": [
+    "tests/browser/test_ui_regressions.py::test_legacy_figure_numbers_match_cli_after_batch_and_reload",
+    "tests/test_browser_ports.py::test_root_guard_refuses_a_live_range_server_before_spawning[8800]",
+    "tests/test_browser_ports.py::test_root_guard_refuses_a_live_range_server_before_spawning[8899]",
+    "tests/test_browser_ports.py::test_server_start_requires_its_own_pid_and_directory[False]",
+    "tests/test_browser_ports.py::test_server_start_requires_its_own_pid_and_directory[True]",
+    "tests/test_browser_ports.py::test_session_cleanup_stops_only_its_unique_temporary_estate",
+    "tests/test_ci_runner.py::test_fixture_errors_keep_junit_error_counts_and_fail_the_receipt",
+    "tests/test_ci_runner.py::test_runtime_cleanup_completes_before_browser_pool_starts",
+    "tests/test_decision_api.py::test_legacy_comment_numbers_stay_fixed_when_cards_are_added_or_renumbered[batch]",
+    "tests/test_decision_api.py::test_legacy_comment_numbers_stay_fixed_when_cards_are_added_or_renumbered[create]",
+    "tests/test_decision_api.py::test_legacy_comment_numbers_stay_fixed_when_cards_are_added_or_renumbered[renumber]",
+    "tests/test_decision_api.py::test_legacy_number_conflict_hint_works_on_retry_without_partial_migration[False]",
+    "tests/test_decision_api.py::test_legacy_number_conflict_hint_works_on_retry_without_partial_migration[True]",
+    "tests/test_decision_api.py::test_poll_labels_do_not_report_legacy_pinning_as_a_content_change",
+    "tests/test_ui_numbering.py::test_pinning_legacy_labels_preserves_archived_formats_and_submitted_snapshots[grouped]",
+    "tests/test_ui_numbering.py::test_pinning_legacy_labels_preserves_archived_formats_and_submitted_snapshots[list]",
+    "tests/test_ui_numbering.py::test_pinning_legacy_labels_preserves_archived_formats_and_submitted_snapshots[single]"
+  ],
+  "removed_test_ids_since_serial": [],
+  "focused_infrastructure_tests": 39,
+  "updated_browser_engine_checks": 2,
+  "github_checks": {
+    "head": "fadb8490c14cd3dfe57c70949a84c85fa4e2bc78",
+    "run": "https://github.com/changl/agent-annotate/actions/runs/41538375183",
+    "conclusion": "success",
+    "duration_s": 169,
+    "cold_cache_run": "https://github.com/changl/agent-annotate/actions/runs/41519119521",
+    "cache_hit_run": "https://github.com/changl/agent-annotate/actions/runs/41534151925",
+    "cache_evidence": [
+      "checks\tRun astral-sh/setup-uv@v7\t2026-11-02T22:05:24.6771158Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-37f5febb85802df882e36aa6d99fac93a9c66d6f36cdc565c210d0457ce52c53",
+      "checks\tRun astral-sh/setup-uv@v7\t2026-11-02T22:05:25.3397733Z Cache restored successfully",
+      "checks\tRun astral-sh/setup-uv@v7\t2026-11-02T22:05:25.3408855Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-37f5febb85802df882e36aa6d99fac93a9c66d6f36cdc565c210d0457ce52c53"
+    ]
+  },
+  "new_installs": {
+    "M1": [
+      "checkout-local .venv from frozen uv.lock: dev, mcp, browser extras"
+    ],
+    "M1Max16": [],
+    "Windmill": []
+  },
+  "tokens": {
+    "test_scripts_before": 0,
+    "manual_agent_coordination_before": "not measured",
+    "planned_passing_windmill_run": 0,
+    "windmill_activation_verified": false
+  },
+  "phase2": {
+    "status": "coordinator approved plan for later activation; Chang approval for extra installs and service changes pending",
+    "primary": "M1Max16",
+    "backup": "M1",
+    "haiku": "deferred",
+    "additional_runtime_cherrypicks_required": [],
+    "verified_install_helper_required": false
+  }
+}

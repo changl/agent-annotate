@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import pytest
+from review_fixtures import authoring
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -96,7 +97,7 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             page.screenshot(path=str(output / "review-after.png"), full_page=True)
             go(page, "plans", plan=identifier)
             playwright.expect(frame.locator("h2", has_text="One-step routing")).to_be_visible()
-            playwright.expect(page.locator("#unified-version-banner")).to_be_hidden()
+            playwright.expect(page.locator("#aa-fresh .aa-fresh-v")).to_be_hidden()
             playwright.expect(frame.locator("main")).to_contain_text("Chosen: Approve design")
             assert frame.locator("time[data-decided-time]").inner_text() != "Decided"
             assert "T" not in frame.locator("time[data-decided-time]").inner_text()
@@ -131,7 +132,8 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             selection.update(id="rollout-v3", anchor_id="d:q2", number=2, text="When should routing roll out?")
             selection["decision_request"] = {"prompt": "When should routing roll out?", "evidence": [{"anchor": "s:design"}], "catalog": True,
                 "options": [{"id": "later", "label": "Next month", "consequence": "Defer the rollout"}]}
-            response = page.request.post(base + "api/comments", data=selection, headers={"X-Annotate-Agent": "agent:test"})
+            with authoring(base, selection):
+                response = page.request.post(base + "api/comments", data=selection, headers={"X-Annotate-Agent": "agent:test"})
             assert response.status == 201
             selected_id = response.json()["id"]
             page.goto(base + "#view=review", wait_until="networkidle")

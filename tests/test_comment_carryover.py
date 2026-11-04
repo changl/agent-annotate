@@ -59,11 +59,7 @@ def server(tmp_path):
     )
     (slug_dir / "current.meta.json").write_text(
         json.dumps({
-            "current": "v2",
-            "history": [
-                {"version": "v1", "label": "round 1"},
-                {"version": "v2", "label": "round 2"},
-            ],
+            "history": [],
         }),
         encoding="utf-8",
     )
@@ -391,9 +387,21 @@ def _versioned_slug(tmp_path, status="addressed_by_agent"):
     return slug_dir
 
 
+
+def _mock_ready_publish(monkeypatch, directory):
+    from agent_annotate import pagegen
+    from agent_annotate.review_versions import activate
+    monkeypatch.setattr(pagegen, "_call_publish", lambda *args: 0)
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("test", directory.name, {"slug_dir": str(directory)}))
+    def commit(record, version, items, author):
+        activate(directory, version)
+        return 0
+    monkeypatch.setattr(cli, "_commit_review", commit)
+
 def test_publish_version_preserves_prior_reviewer_content_without_a_gate(tmp_path, monkeypatch, capsys):
     slug_dir = _versioned_slug(tmp_path)
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+    _mock_ready_publish(monkeypatch, slug_dir)
 
     result = cli.cmd_publish_version(SimpleNamespace(
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None,
@@ -414,6 +422,7 @@ def test_publish_version_allows_explicit_resolution(tmp_path, monkeypatch):
     comment["resolution_anchor_id"] = "s:new"
     (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+    _mock_ready_publish(monkeypatch, slug_dir)
 
     result = cli.cmd_publish_version(SimpleNamespace(
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None,
@@ -449,6 +458,7 @@ def test_publish_version_accepts_resolution_into_a_version_with_no_cards_left(tm
     }]
     (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+    _mock_ready_publish(monkeypatch, slug_dir)
 
     assert cli._carryover_blockers(slug_dir, "v3") == []
     result = cli.cmd_publish_version(SimpleNamespace(
@@ -471,6 +481,7 @@ def test_publish_version_does_not_gate_on_prior_resolution_metadata(tmp_path, mo
     comment["resolution_anchor_id"] = "s:later"
     (slug_dir / "comments.json").write_text(json.dumps(store), encoding="utf-8")
     monkeypatch.setattr(cli, "BUS_ROOT", tmp_path / "bus")
+    _mock_ready_publish(monkeypatch, slug_dir)
 
     result = cli.cmd_publish_version(SimpleNamespace(
         slug_dir=str(slug_dir), version="v2", label="round 2", project=None,

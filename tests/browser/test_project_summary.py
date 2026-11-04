@@ -3,7 +3,8 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, history
+from review_fixtures import complete
+from single_page import browser_page, feedback, go, history, project_notes
 from test_card_layout import CHROME
 from test_workspace_intent import _page
 
@@ -21,6 +22,7 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
         "---\ntitle: Second review\nversion: v2\nfull_plan: true\nother_files_required: none\n---\n\n## Checks\n\nSecond document.\n"
     )
     generate(source, directory)
+    complete(directory)
     meta = json.loads((directory / "current.meta.json").read_text())
     meta.update(current="v2", history=[{"version": "v1"}, {"version": "v2"}])
     (directory / "current.meta.json").write_text(json.dumps(meta))
@@ -50,6 +52,7 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
     save_project(directory, project)
     with browser_page(tmp_path, directory, width=width, height=900) as (page, base):
         history(page)
+        project_notes(page)
         panel = page.locator("#project-panel-review")
         assert panel.count() == 1 and panel.is_visible()
         progress = panel.locator('[data-module="progress"]')
@@ -89,6 +92,7 @@ def test_header_and_browser_title_use_branding_then_stable_page_name(tmp_path, b
     source = tmp_path / "v2.md"
     source.write_text("---\ntitle: Changing revision title\nversion: v2\n---\n## Checks\nSecond document.\n")
     generate(source, directory)
+    complete(directory)
     save_project(directory, {"modules": [], **({"title": branding} if branding else {})})
     expected = branding or "Canonical workspace"
     with browser_page(tmp_path, directory) as (page, _):

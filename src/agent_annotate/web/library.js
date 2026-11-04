@@ -133,13 +133,13 @@
 
   // ── Status words (the copy page's own) ─────────────────────────────────
   function chip(it) {
-    if (myPendingRevs(it).length) return '<span class="badge badge-sm badge-soft badge-primary">Edited</span>';
+    if (myPendingRevs(it).length) return '<span class="badge badge-sm is-orange">Edited</span>';
     const s = statusText(it);
-    if (/^held back/.test(s)) return '<span class="badge badge-sm badge-soft badge-warning">Held back</span>';
-    if (/pending review/.test(s)) return '<span class="badge badge-sm badge-soft badge-info">Pending review</span>';
+    if (/^held back/.test(s)) return '<span class="badge badge-sm badge-ghost">Held back</span>';
+    if (/pending review/.test(s)) return '<span class="badge badge-sm badge-soft badge-error">Pending review</span>';
     if (/^not rendered/.test(s)) return '<span class="badge badge-sm badge-ghost">Not rendered</span>';
     if (/^approved/.test(s)) return '<span class="badge badge-sm badge-soft badge-success">Approved</span>';
-    if (/^draft/.test(s)) return '<span class="badge badge-sm badge-soft badge-info">Draft</span>';
+    if (/^draft/.test(s)) return '<span class="badge badge-sm badge-ghost">Draft</span>';
     return '';
   }
 
@@ -160,7 +160,7 @@
     const held = items.filter(it => it.question_comment_id);
     if (qc && !qAnswer(qc) && held.length) html += UI.section('needs', 'Needs you', held.length, `<p class="project-detail">Question #${esc(D().number(qc.id) || '')} covers these ${held.length} held-back lines. Answer it, or edit a line yourself.</p>` + held.map(rowHtml).join(''), { cls: 'sec-needs', badge: 'badge-error', open: openGroups.needs !== false, scope: 'lib' });
     const ready = items.filter(isPendingItem);
-    if (ready.length) html += UI.section('ready', 'Ready to send', ready.length, ready.map(rowHtml).join(''), { open: openGroups.ready !== false, scope: 'lib' });
+    if (ready.length) html += UI.section('ready', 'Ready to send', ready.length, ready.map(rowHtml).join(''), { badge: 'is-orange', open: openGroups.ready !== false, scope: 'lib' });
     GROUP_ORDER.forEach(g => {
       const rows = items.filter(it => (it.group || '') === g);
       if (!rows.length) return;
@@ -459,7 +459,7 @@
     }
     const dr = q.decision_request;
     const opts = (dr.options || []).filter(o => o && typeof o === 'object');
-    const btns = opts.map(o => `<button class="btn decision-btn decision-custom${o.id === dr.recommendation ? ' is-recommended' : ''}" data-q-opt="${esc(o.id)}"${o.id === dr.recommendation ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${esc(o.label)}</span>${o.id === dr.recommendation ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('');
+    const btns = opts.map(o => `<button class="btn decision-btn decision-custom${o.id === dr.recommendation ? ' is-recommended' : ''}" data-q-opt="${esc(o.id)}"${o.id === dr.recommendation ? ' title="Recommended by the agent"' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${esc(o.label)}</span>${o.id === dr.recommendation ? '<span class="badge badge-ghost badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('');
     const reco = opts.find(o => o.id === dr.recommendation);
     const covered = ITEMS.filter(it => it.question_comment_id === q.id).length;
     return `<div class="citem decision-required" data-q="${esc(q.id)}" role="group" aria-label="Feedback #${esc(n)} · ${esc(d.displayPrompt(q))}">
@@ -495,7 +495,7 @@
       html += UI.section('ready', 'Ready to send', nReady,
         (qReady ? qCard(q) : '') +
         (lastEdit ? `<div class="citem"><div class="citem-meta"><span class="citem-author">${esc(d.whoName({ author: lastEdit.author.id, author_name: lastEdit.author.name }))}</span><span>${esc(UI.fmtTs(lastEdit.created_at))}</span></div><div class="citem-txt"><b>Edited</b> · see History for the change</div></div>` : '') +
-        readyC.map(commentCard).join(''), { scope: 'lib' });
+        readyC.map(commentCard).join(''), { badge: 'is-orange', scope: 'lib' });
     }
     const others = commentsOf(it).filter(c => !readyC.some(r => r.id === c.id));
     html += UI.section('comments', 'Comments', others.length, (others.map(commentCard).join('') || '<p class="project-detail">No comments on this item yet.</p>'), { scope: 'lib' });

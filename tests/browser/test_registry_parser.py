@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -41,6 +42,7 @@ def test_generated_standalone_registry_survives_double_escape_label(tmp_path):
     source = tmp_path / "page.md"
     source.write_text("---\ntitle: Registry parser review\n---\n\n## Coverage <!--<script></script>\n\nSafe text.\n")
     generated = generate(source, tmp_path / "review")
+    complete(tmp_path / "review")
     baked = generated["html"].read_text()
     with playwright.sync_playwright() as runner:
         browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)

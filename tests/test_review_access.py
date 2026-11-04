@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.cookies import SimpleCookie
 
 import pytest
+from review_fixtures import complete
 
 from agent_annotate import cli, review_access, sync_server
 from agent_annotate.pagegen import generate
@@ -103,6 +104,7 @@ def test_funnel_browser_needs_private_link_for_content_and_feedback(tmp_path, le
     source = tmp_path / "page.md"
     source.write_text("## Progress\n\nPrivate project content.\n")
     generate(source, directory)
+    complete(directory)
     for relative in ("assets/x.png", "assets/proof.webm", "assets/manifest.json", "assets/plan.html", "attachments/x.png"):
         target = directory / relative
         target.parent.mkdir(exist_ok=True)

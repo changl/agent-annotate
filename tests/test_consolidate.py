@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import complete
 
 from agent_annotate import cli, consolidate, pagegen, sync_server, workspace
 
@@ -21,6 +22,7 @@ def _page(tmp_path, name, versions=1):
         source = tmp_path / f"{name}-v{number}.md"
         source.write_text(f"---\ntitle: {name} page\n---\n\n## Scope\n\nVersion {number} of {name}.\n")
         pagegen.generate(source, directory, version=f"v{number}")
+        complete(directory)
     # publish-version registers later versions; record them as it would.
     meta = json.loads((directory / "current.meta.json").read_text())
     meta.update(current=f"v{versions}", history=[{"version": f"v{n}", "ts": f"2026-09-0{n}T00:00:00Z", "label": f"v{n}"}
@@ -389,7 +391,7 @@ def test_reasking_a_review_card_cannot_reuse_a_plan_cards_number(tmp_path, monke
     _store(directory, [copy.deepcopy(plan_card)])
     server = _serve(directory, "", "main")
     try:
-        item = {"anchor_id": "d:q5", "number": 5, "text": "Review question?",
+        item = {"anchor_id": "d:q5", "number": 5, "text": "Review question?", "version": "v2",
                 "decision_request": {"prompt": "Review question?", "options": [{"id": "yes", "label": "Yes"}]}}
         request = urllib.request.Request(f"http://localhost:{server.server_port}/api/comments/batch", method="POST",
                                          data=json.dumps({"items": [item], "idempotency": "anchor"}).encode(),

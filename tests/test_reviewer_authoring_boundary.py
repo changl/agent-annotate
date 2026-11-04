@@ -7,6 +7,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from review_fixtures import complete
 
 from agent_annotate import cli, delivery, project_state, review_access, sync_server
 from agent_annotate.pagegen import generate
@@ -19,6 +20,7 @@ def reviewer_page(tmp_path, monkeypatch):
     source = tmp_path / "page.md"
     source.write_text("## Progress\n\nKeep the existing review history.\n")
     generate(source, directory)
+    complete(directory)
     card = {"id": "agent-card", "anchor_id": "d:q1", "number": 1, "text": "Original owner question",
             "author": "agent:owner", "version": "v1", "status": "open",
             "decision_request": {"prompt": "Original owner question", "options": ["accept", "reject"]},
@@ -128,7 +130,9 @@ def test_public_create_reply_verdict_revision_free_text_and_round_preserve_histo
     assert [entry["verdict"] for entry in card["decision_history"]] == ["reject", "accept", "reject"]
     assert card["replies"][0]["text"] == "Original explanation"
     assert "round_pending" not in card["decision"] and card["flagged_by"] == page.identity
-    assert store["archived"] == page.original["archived"]
+    expected_archived = copy.deepcopy(page.original["archived"])
+    expected_archived["old"][0]["number"] = cli._item_numbers(page.original)["archived-comment"]
+    assert store["archived"] == expected_archived
 
 
 def test_public_project_authoring_has_no_mutation_endpoint(reviewer_page):
@@ -179,6 +183,7 @@ def test_project_get_grants_only_transient_bounded_child_links_without_persistin
         ("worksheet", page.directory / "worksheet", True, scope),
     ]:
         generate(page.directory.parent / "page.md", directory)
+        complete(directory)
         keys[name] = review_access.ensure_key(directory)
         urls[name] = f"https://host.ts.net/{project}-{name}/"
         state["slugs"][name] = {"slug_dir": str(directory), "port": 18000 + len(urls),

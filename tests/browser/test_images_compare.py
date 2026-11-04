@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import authoring, complete
 from single_page import CHROME, browser_page, go, ready
 from test_card_layout import _serve
 from test_single_page_acceptance import workspace  # noqa: F401
@@ -53,6 +54,7 @@ def shots_page(tmp_path):
         encoding="utf-8")
     slug_dir = tmp_path / "items-model"
     generate(source, slug_dir)
+    complete(slug_dir)
     return slug_dir
 
 
@@ -92,7 +94,8 @@ def test_pairs_flows_and_figures_are_judged_inline(tmp_path, shots_page, width, 
             base + "api/comments/batch", method="POST",
             data=json.dumps({"items": [dict(card, version="v1") for card in cards]}).encode(),
             headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:images-browser"})
-        urllib.request.urlopen(request).close()
+        with authoring(base, json.loads(request.data)):
+            urllib.request.urlopen(request).close()
         asset = next((shots_page / "assets").iterdir()).name
         with urllib.request.urlopen(base + "assets/" + asset) as response:
             assert response.headers["Content-Security-Policy"] == "sandbox"

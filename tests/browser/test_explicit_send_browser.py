@@ -45,7 +45,7 @@ def sandbox_page(tmp_path, monkeypatch, stages, directory=None, reviewer="review
         monkeypatch.setattr(module, "STATE_DIR", state)
     monkeypatch.setattr(cli, "LOCK_DIR", state / "locks")
     monkeypatch.setattr(delivery, "_target_ready", lambda target: (True, ""))
-    monkeypatch.setattr(delivery, "_process", lambda pid: ("sandbox", "codex"))
+    monkeypatch.setattr(delivery, "_target_exited", lambda target: False)
     sends = []
     def fake_orca(*args):
         assert args[:2] == ("terminal", "send") and args[3] == "sandbox-only"
@@ -149,8 +149,9 @@ def test_owner_receipt_updates_badges_without_replacing_a_typed_draft(tmp_path, 
         row = next(iter(data["deliveries"].values()))
         row["receipt"]["prompt"]["stages"] = ["input_accepted"]
         journal.write_text(json.dumps(data))
-        playwright.expect(page.locator("#delivery-status")).to_have_text("Delivered; waiting for the agent to start", timeout=15000)
-        playwright.expect(page.locator("#send-note")).to_contain_text("Sent to session")
+        # av1: no delivery row; the Send note's words come from the latest delivery.
+        page.wait_for_function("() => window.AnnotateDocs.deliveryNote()?.text === 'Delivered'", timeout=15000)
+        playwright.expect(page.locator("#send-note")).to_contain_text("Delivered (1)")
         if view == "review":
             playwright.expect(card.locator('[data-delivery-ids]').first).to_have_text("Sent")
             assert draft.input_value() == "Keep typing while delivery finishes"

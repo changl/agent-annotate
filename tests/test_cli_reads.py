@@ -59,8 +59,35 @@ def _inbox(**over):
     return SimpleNamespace(**base)
 
 
-def test_inbox_is_compact_and_hides_bookkeeping(registry, capsys):
+def test_inbox_is_one_line_per_item_led_by_its_handle(registry, capsys):
+    with registry.bus.open("a") as f:
+        f.write(json.dumps({"ts": "2026-09-17T10:05:00Z", "event": "version_published", "version": "v2"}) + "\n")
     assert cli.cmd_inbox(_inbox()) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "#1 created Rename status?",
+        "#1 round_submitted accept Rename status?",
+        "1 card unanswered",
+        f"resolve when done: {cli._inv()} resolve proj/demo 1",  # pasteable on any install; the agent's own card is not listed
+    ]
+
+
+def test_inbox_round_lists_answers_and_note_without_padding(registry, capsys):
+    with registry.bus.open("w") as f:
+        f.write(json.dumps({"ts": "2026-09-17T10:00:00Z", "event": "round_submitted", "by": "r@x",
+                            "note": "Go ahead.", "answers": [
+                                {"comment_id": "aaaaaaaaaaaa", "number": 1, "prompt": "Rename status?",
+                                 "verdict": "accept", "text": "Yes, rename it."},
+                                {"comment_id": "bbbbbbbbbbbb", "number": 2, "prompt": "Drop column?", "verdict": "comment"}]})
+                + "\n")
+    assert cli.cmd_inbox(_inbox()) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[:3] == ["round 2026-09-17T10:00Z, 2 answers · note: Go ahead.",
+                                    '#1 accept "Rename status?" → Yes, rename it.', '#2 comment "Drop column?"']
+    assert out.splitlines()[-1].endswith("resolve proj/demo 1 2") and "  " not in out
+
+
+def test_inbox_verbose_keeps_the_padded_table(registry, capsys):
+    assert cli.cmd_inbox(_inbox(verbose=True)) == 0
     out = capsys.readouterr().out
     lines = [line for line in out.splitlines() if line.strip()]
     assert len(lines) == 3  # two events + summary; seen_updated hidden
@@ -290,34 +317,19 @@ def served(tmp_path, monkeypatch):
         thread.join(timeout=2)
 
 
-def test_ask_posts_one_batch_and_is_idempotent(served, tmp_path, capsys):
+def test_ask_of_shown_version_is_refused_without_writing(served, tmp_path, capsys):
     cards = tmp_path / "cards.json"
-    cards.write_text(json.dumps([
-        {"number": 14, "anchor_id": "s:a",
-         "decision_request": {"prompt": "A?", "recommendation": "accept", "evidence": [{"anchor": "s:a"}]}},
-        {"anchor_id": "s:b", "text": "B please", "decision_request": {"prompt": "B?", "evidence": [{"anchor": "s:b"}]}},
-    ]))
+    cards.write_text(json.dumps([{"anchor_id": "s:a", "decision_request": {
+        "prompt": "A?", "evidence": [{"anchor": "s:a"}]}}]))
+    before = (served.slug_dir / "comments.json").read_bytes()
     args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
                            author="agent:test", json=True)
-    assert cli.cmd_ask(args) == 0
-    first = json.loads(_last_line(capsys))
-    assert first["route"] == "batch" and first["created"] == 2 and first["updated"] == 0
-    assert first["version"] == "v2"
-
-    assert cli.cmd_ask(args) == 0
-    second = json.loads(_last_line(capsys))
-    assert second["updated"] == 2 and second["ids"] == first["ids"]
-
-    store = json.loads((served.slug_dir / "comments.json").read_text())
-    assert len(store["anchors"]["s:a"]) == 1
-    assert store["anchors"]["s:a"][0]["number"] == 14
-    assert store["anchors"]["s:a"][0]["text"] == "A?"          # text defaults to the prompt
-    assert store["anchors"]["s:a"][0]["version"] == "v2"
-    seeded = [json.loads(line) for line in served.bus.read_text().splitlines() if '"comments_seeded"' in line]
-    assert len(seeded) == 2
+    assert cli.cmd_ask(args) == 2
+    assert "immutable; use v3" in capsys.readouterr().err
+    assert (served.slug_dir / "comments.json").read_bytes() == before
 
 
-def test_ask_number_collision_names_next_free_number_and_preserves_source(served, tmp_path, capsys):
+def test_ask_shown_version_preserves_source_and_existing_cards(served, tmp_path, capsys):
     code, first = cli._api(served.record, "POST", "/api/comments",
                            {"anchor_id": "s:a", "number": 10, "text": "Existing card"}, "agent:other")
     assert code == 201
@@ -330,7 +342,7 @@ def test_ask_number_collision_names_next_free_number_and_preserves_source(served
                            author="agent:test", json=False)
     assert cli.cmd_ask(args) == 2
     error = capsys.readouterr().err
-    assert first["id"] in error and "on v2; use #11" in error
+    assert "immutable; use v3" in error
     assert cards.read_bytes() == source and (served.slug_dir / "comments.json").read_bytes() == before
 
 
@@ -486,15 +498,42 @@ def test_republishing_stable_card_number_keeps_one_card_and_resolves(served):
             "version": "v1", "decision_request": {"prompt": "Keep this question?"}}
     (served.slug_dir / "versions/v1.html").write_text('<p data-anchor-id="d:q10">Question</p>')
     (served.slug_dir / "versions/v2.html").write_text('<p data-anchor-id="d:q10">Question</p>')
-    (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v1"}))
+    (served.slug_dir / "current.meta.json").write_text(json.dumps({"history": []}))
     code, first = cli._api(served.record, "POST", "/api/comments/batch",
                            {"items": [item], "idempotency": "anchor"}, "agent:first")
     assert code == 200 and first["created"] == 1
     (served.slug_dir / "current.meta.json").write_text(json.dumps({"current": "v2"}))
     code, second = cli._api(served.record, "POST", "/api/comments/batch",
                             {"items": [{**item, "version": "v2"}], "idempotency": "anchor"}, "agent:second")
-    assert code == 200 and second["ids"] == first["ids"] and second["updated"] == 1
+    assert code == 409 and "immutable" in second["error"]
     cards = cli._decision_cards(cli._load_store(served.record))
-    assert [(c["id"], c["number"], c["version"]) for c in cards] == [(first["ids"][0], 10, "v2")]
+    assert [(c["id"], c["number"], c["version"]) for c in cards] == [(first["ids"][0], 10, "v1")]
     args = cli.build_parser().parse_args(["resolve", "proj/live", "10"])
     assert cli.cmd_resolve(args) == 0 and args.comment_id == first["ids"][0]
+
+
+def test_resolve_checks_every_handle_before_writing_and_prints_one_receipt(served, capsys):
+    first, second = _posted(served, anchor="s:a"), _posted(served, anchor="s:b")
+    numbers = cli._item_numbers(cli._load_store(served.record))
+    path = served.slug_dir / "comments.json"
+    before = path.read_bytes()
+    args = cli.build_parser().parse_args(["resolve", "proj/live", str(numbers[first]), "999", "--anchor", "s:a"])
+    assert cli.run_command(args) == 2
+    assert "item 999 not found" in capsys.readouterr().err and path.read_bytes() == before
+    args = cli.build_parser().parse_args(["resolve", "proj/live", f"#{numbers[first]}", second, "--anchor", "s:a"])
+    assert cli.run_command(args) == 0
+    receipt = capsys.readouterr().out.strip().splitlines()[-1]
+    assert receipt == f"resolved {cli._number_runs([numbers[first], numbers[second]])} in v2" and "http" not in receipt
+    store = json.loads(path.read_text())
+    assert [c["resolved_in_version"] for cs in store["anchors"].values() for c in cs] == ["v2", "v2"]
+
+
+def test_verbose_resolve_keeps_the_linked_receipt(served, capsys):
+    cid = _posted(served, anchor="s:a")
+    args = cli.build_parser().parse_args(["resolve", "proj/live", cid, "--anchor", "s:a", "--verbose"])
+    assert cli.run_command(args) == 0
+    assert f"feedback={cid}" in capsys.readouterr().out.strip().splitlines()[-1]
+
+
+def test_number_runs_compresses_consecutive_numbers():
+    assert cli._number_runs([1, 2, 3, 7, "4·2", "abcdef123456"]) == "#1–#3 #7 #4·2 abcdef123456"

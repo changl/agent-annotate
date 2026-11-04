@@ -2,6 +2,7 @@ import json
 import re
 
 import pytest
+from review_fixtures import complete
 
 from agent_annotate.decision_quality import decision_warnings
 from agent_annotate.pagegen import PageGenError, generate
@@ -15,6 +16,7 @@ def test_project_and_details_compile_and_project_survives_next_version(tmp_path)
     source.write_text(text)
     directory = tmp_path / "review"
     result = generate(source, directory)
+    complete(directory)
     html = result["html"].read_text()
     assert '<details class="aa-details"' in html
     assert '<summary>Supporting evidence</summary>' in html
@@ -22,6 +24,7 @@ def test_project_and_details_compile_and_project_survives_next_version(tmp_path)
     before = (directory / "project.json").read_bytes()
     source.write_text(text.split("```project", 1)[0])
     generate(source, directory, "v2")
+    complete(directory)
     assert (directory / "project.json").read_bytes() == before
 
 
@@ -30,6 +33,7 @@ def test_bad_project_does_not_write_any_version(tmp_path):
     source.write_text('## Scope\n```project\n{"modules":[{"kind":"links"}]}\n```\n')
     with pytest.raises(PageGenError):
         generate(source, tmp_path / "review")
+        complete(tmp_path / "review")
     assert not (tmp_path / "review").exists()
 
 

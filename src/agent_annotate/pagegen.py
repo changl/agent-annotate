@@ -1069,7 +1069,8 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
 
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
-             label: str | None = None, *, title: str | None = None) -> dict:
+             label: str | None = None, *, title: str | None = None,
+             fixes: str | None = None) -> dict:
     """Parse, render, lint and write every file a publishable page needs."""
     text = source.read_text(encoding="utf-8")
     meta, body = parse_front_matter(text)
@@ -1091,6 +1092,12 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     version = version or meta.get("version") or "v1"
     if not re.fullmatch(r"v\d+", version):
         raise PageGenError(f"version must look like v1, v2, v3 (got {version!r})")
+    from .cli import _read_meta
+    from .review_versions import require_draft
+    try:
+        require_draft(_read_meta(slug_dir), version)
+    except ValueError as exc:
+        raise PageGenError(str(exc)) from exc
     label = label or meta.get("label") or f"generated from {source.name}"
 
     blocks = parse_blocks(body)
@@ -1141,8 +1148,11 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     from .page_names import page_name, set_page_name
     # Resolve legacy titles before an in-place regeneration replaces their HTML.
     initial_name = page_name(slug_dir, fallback=meta["title"])
-    prior = _write_files(slug_dir, version, label, source, text, html_out, cards,
-                         {"sections": layout["sections"], "screenshots": layout["screenshots"]})
+    try:
+        prior = _write_files(slug_dir, version, label, source, text, html_out, cards,
+                             {"sections": layout["sections"], "screenshots": layout["screenshots"]}, fixes)
+    except ValueError as exc:
+        raise PageGenError(str(exc)) from exc
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1155,6 +1165,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "name": name,
         "version": version,
         "label": label,
+        "fixes": fixes,
         "anchors": len(registry),
         "cards": len(cards),
         "warnings": warnings,
@@ -1162,7 +1173,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "layout": layout,
         "prior_versions": prior,
         "html": slug_dir / "versions" / f"{version}.html",
-        "cards_json": slug_dir / "cards.json",
+        "cards_json": slug_dir / "versions" / f"{version}.cards.json",
         "source_copy": slug_dir / "source" / f"{version}.md",
     }
 
@@ -1175,16 +1186,23 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _write_files(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None) -> list[str]:
-    # Lazy: cli.py imports this module, and the server takes the same lock on
-    # current.meta.json that _write_meta_locked does.
-    from .cli import _read_meta, _write_meta_locked
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
+    from .sync_server import _locked_store
+    slug_dir.mkdir(parents=True, exist_ok=True)
+    with _locked_store(slug_dir):
+        return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes)
+
+
+def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
+    from .cli import _read_meta
 
     slug_dir.mkdir(parents=True, exist_ok=True)
     existing_meta = _read_meta(slug_dir)
     prior = sorted(h.get("version") for h in (existing_meta.get("history") or [])
                    if isinstance(h, dict) and h.get("version"))
-    activate = not prior or existing_meta.get("current") == version
+    from .review_versions import stage
+    stage(slug_dir, version, label, fixes, stats or {})
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
     _atomic_write(slug_dir / "source" / f"{version}.md", source_text)
@@ -1192,24 +1210,6 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
     _atomic_write(slug_dir / "cards.json", cards_text)
     _atomic_write(slug_dir / "versions" / f"{version}.cards.json", cards_text)
 
-    if activate:
-        current = slug_dir / "current.html"
-        tmp_link = slug_dir / ".current.html.tmp"
-        if tmp_link.is_symlink() or tmp_link.exists():
-            tmp_link.unlink()
-        tmp_link.symlink_to(Path("versions") / f"{version}.html")
-        os.replace(tmp_link, current)
-
-        def _mutate(meta: dict) -> None:
-            meta["current"] = version
-            history = meta.setdefault("history", [])
-            for entry in history:
-                if isinstance(entry, dict) and entry.get("version") == version:
-                    entry.update(label=label, **(stats or {}))
-                    return                  # idempotent by version, never appended twice
-            history.append({"version": version, "ts": _now_iso(), "label": label, **(stats or {})})
-
-        _write_meta_locked(slug_dir, _mutate)
     # Reports can have no decision cards, so the server may never write this
     # store before the next publish gate reads it. Initialize valid JSON while
     # leaving any existing feedback (including a damaged store) untouched.
@@ -1218,10 +1218,6 @@ def _write_files(slug_dir: Path, version: str, label: str, source: Path,
         if not (slug_dir / "comments.json").exists():
             _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
     return [v for v in prior if v != version]
-
-
-def _now_iso() -> str:
-    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1273,7 +1269,7 @@ def cmd_new(args) -> int:
     from .cli import _moved_page, _slug_project
     if _moved_page(slug_dir):
         return 2
-    args.project, _ = _slug_project(slug_dir, getattr(args, "project", None))
+    args.project, page_slug = _slug_project(slug_dir, getattr(args, "project", None))
     from .workspace import duplicate_message, duplicate_page, exception_reason
     try:
         reason = exception_reason(args)
@@ -1286,7 +1282,8 @@ def cmd_new(args) -> int:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
     try:
-        result = generate(source, slug_dir, args.version, args.label, title=getattr(args, "title", None))
+        result = generate(source, slug_dir, args.version, args.label, title=getattr(args, "title", None),
+                          fixes=getattr(args, "fixes", None))
     except PageGenError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -1294,7 +1291,7 @@ def cmd_new(args) -> int:
         print(f"ERROR: could not write the page: {exc}", file=sys.stderr)
         return 1
 
-    slug, version = result["slug"], result["version"]
+    slug, version = page_slug, result["version"]
     print(f"  wrote          {result['html']}")
     print(f"  anchors        {result['anchors']}")
     print(f"  cards          {result['cards']}"
@@ -1315,33 +1312,23 @@ def cmd_new(args) -> int:
     for warning in result.get("warnings") or []:
         print(f"  WARN           {warning}")
 
-    new_version = bool(result["prior_versions"])
-    rc = 0
+    args.candidate_version = version
+    args.ready = True
     if args.publish:
-        if new_version:
-            rc = _call_publish_version(slug_dir, version, result["label"], args)
-        if rc == 0:
-            rc = _call_publish(slug_dir, args)
-        if rc != 0:
+        if result["cards"] and not args.ask:
+            print("ERROR: this page has cards; publish the complete round with --publish --ask", file=sys.stderr)
+            return 2
+        rc = _call_publish(slug_dir, args)
+        if rc:
             return rc
-    else:
-        print("  next:")
-        if new_version:
-            print(f"    {_inv()} publish-version {slug_dir} {version} "
-                  f"--label {result['label']!r}")
-        from shlex import quote
-        exception_flag = f" --exception {quote(reason)}" if reason else ""
-        print(f"    {_inv()} publish {slug_dir}{exception_flag}")
-
-    if result["cards"]:
-        ask_cmd = (f"{_inv()} ask {slug} --from {result['cards_json']} "
-                   f"--version {version}")
-        if args.ask and args.publish:
-            rc = _call_ask(slug, result["cards_json"], version, args)
-        elif args.ask:
-            print(f"  --ask needs a published page; run:\n    {ask_cmd}")
-        else:
-            print(f"    {ask_cmd}")
+        if result["cards"]:
+            return _call_ask(slug, result["cards_json"], version, args)
+        return _call_publish_version(slug_dir, version, result["label"], args)
+    from shlex import quote
+    print("  staged; publish the complete round:")
+    print(f"    {_inv()} new {slug_dir} --from {quote(str(source))} --version {version} --publish"
+          + (" --ask" if result["cards"] else ""))
+    rc = 0
     return rc
 
 
@@ -1359,6 +1346,7 @@ def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
         skip_js_lint=False,
         no_verify=False,
         verify_timeout=45.0,
+        candidate_version=getattr(args, "candidate_version", None),
     )
 
 
@@ -1371,14 +1359,15 @@ def _call_publish_version(slug_dir: Path, version: str, label: str, args) -> int
     from .cli import cmd_publish_version
     return cmd_publish_version(argparse.Namespace(
         slug_dir=str(slug_dir), version=version, label=label,
-        project=getattr(args, "project", None)))
+        project=getattr(args, "project", None), prepared=True))
 
 
 def _call_ask(slug: str, cards_json: Path, version: str, args) -> int:
     from .cli import cmd_ask
     return cmd_ask(argparse.Namespace(
         slug=slug, from_file=str(cards_json), version=version,
-        project=getattr(args, "project", None), author=None, json=False))
+        project=getattr(args, "project", None), author=None, json=False,
+        ready=getattr(args, "ready", False)))
 
 
 def add_parser(sub) -> None:
@@ -1389,11 +1378,12 @@ def add_parser(sub) -> None:
     sp.add_argument("--from", dest="from_file", default=None, metavar="page.md",
                     help="the markdown document (front matter + prose + ```cards)")
     sp.add_argument("--version", default=None, help="vN (default: front matter, else v1)")
+    sp.add_argument("--fixes", default=None, metavar="vN", help="this new version fixes an earlier visible version")
     sp.add_argument("--label", default=None, help="version label for the rail")
     sp.add_argument("--title", default=None, help="stable page name; version titles stay in Markdown")
     sp.add_argument("--publish", action="store_true", help="run `publish` on the result")
     sp.add_argument("--ask", action="store_true",
-                    help="pose the ```cards round after publishing")
+                    help="seed the ```cards round before making the version visible")
     sp.add_argument("--example", action="store_true",
                     help="print a complete example document and exit")
     sp.add_argument("--project", default=None)
@@ -1406,4 +1396,5 @@ def add_parser(sub) -> None:
     sp.add_argument("--public", action="store_true",
                     help="legacy Cloudflare option; Funnel is public by default")
     sp.add_argument("--json", action="store_true", help="print full generation and publication output")
+    sp.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp.set_defaults(func=cmd_new)

@@ -15,8 +15,10 @@
 .aa .annotate-strip-block{max-width:var(--aa-measure) !important}
 .aa h1{font-size:calc(20px * var(--aa-text, 1));margin:18px 0 8px}
 .annotate-embed-note{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin:8px 0 4px}
-.aa h2{font-size:calc(12.5px * var(--aa-text, 1));margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
-.aa h3{font-size:calc(16px * var(--aa-text, 1));margin:22px 0 6px}
+/* A section is a tinted band with an accent bar; a subsection keeps the bar,
+   thinner, so it still reads as a break (Chang, 2026-11-02). */
+.aa h2{font-size:calc(13px * var(--aa-text, 1));font-weight:700;margin:28px 0 10px;padding:5px 10px;border-left:3px solid var(--color-primary);border-radius:0 6px 6px 0;background:var(--primary-soft)}
+.aa h3{font-size:calc(12.5px * var(--aa-text, 1));font-weight:700;margin:18px 0 6px;padding:1px 0 1px 8px;border-left:2px solid color-mix(in oklab,var(--color-primary) 60%,var(--color-base-100))}
 .aa p{margin:6px 0 10px}
 .aa ul,.aa ol{margin:6px 0 12px;padding-left:22px}
 .aa li{margin:3px 0}
@@ -30,7 +32,8 @@
 .aa .wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .aa table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:calc(11px * var(--aa-text, 1))}
 .aa th,.aa td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left}
-.aa th{background:var(--color-base-200);font-weight:600}
+/* The header is a step towards the text colour: darker on light, lighter on dark. */
+.aa th{background:color-mix(in oklab,var(--color-base-content) 10%,var(--color-base-100));font-weight:700;border-bottom:2px solid color-mix(in oklab,var(--color-base-content) 28%,var(--color-base-100))}
 .aa tr[data-anchor-id]:hover td{background:var(--color-base-200)}
 .aa pre{background:var(--color-base-200);color:var(--color-base-content);border-radius:8px;padding:10px 12px;font:calc(12.5px * var(--aa-text, 1))/1.5 "Roboto", sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .aa code{font:calc(10.5px * var(--aa-text, 1)) "Roboto", sans-serif;background:var(--color-base-200);padding:1px 4px;border-radius:4px}
@@ -116,6 +119,14 @@
 .aa .aa-earlier>summary:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 .aa .aa-earlier[open]{background:none}
 .aa .aa-earlier[open]>section{padding:0 16px}
+/* Number chips sit in a right gutter, so text keeps its left edge (2026-11-02).
+   Short table columns shrink (adapter.js sizeTableColumns); the label column keeps room. */
+@media (min-width:768px){
+  .aa{padding-right:56px}
+  .aa .aa-col-short{width:1%;white-space:nowrap}
+  .aa .aa-col-two{width:var(--aa-col-w);box-sizing:content-box}
+  .aa :is(th,td):first-child:not(.aa-col-short,.aa-col-two){min-width:12em}
+}
 @media (max-width:760px){.aa{padding:8px 12px 60px}.aa table{font-size:calc(12.5px * var(--aa-text, 1))}.aa .kpis{grid-template-columns:1fr 1fr}}
 /* U-01 + final: the page's title lives in the shell (project name and the
    content title), so the title the server adds to extracted documents is not

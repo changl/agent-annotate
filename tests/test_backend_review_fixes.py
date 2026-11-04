@@ -12,6 +12,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from review_fixtures import complete
 from test_categories_api import finding
 from test_copy_api import _seed
 from test_decision_api import _call, _card, _events, _store
@@ -888,6 +889,7 @@ def _make_estate(tmp_path, monkeypatch, git=True):
     source = tmp_path / "initial.md"
     source.write_text("---\ntitle: Project\n---\n\n# Project\n\n## Progress\n\nBuild passed.\n")
     pagegen.generate(source, directory, version="v1")
+    complete(directory)
     return SimpleNamespace(root=tmp_path, repo=repo, directory=directory, live=live, starts=starts)
 
 
@@ -896,6 +898,7 @@ def _second(estate, name="worksheet"):
     src = estate.root / f"{name}.md"
     src.write_text(f"# {name}\n\nEvidence.\n")
     pagegen.generate(src, other, version="v1")
+    complete(other)
     return other
 
 

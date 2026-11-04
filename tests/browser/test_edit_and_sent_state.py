@@ -2,6 +2,8 @@
 says whether it has been sent (Chang, 2026-10-30)."""
 
 import json
+import time
+from contextlib import contextmanager
 
 import pytest
 from test_keep_drafts import _directory, _session
@@ -32,7 +34,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         page.locator("#pop-save").click()
         card = _card(page, "Build note, first take")
         card.wait_for()
-        assert card.locator(".send-state").inner_text() == "Pending"
+        assert card.locator(".citem-num.is-pending").count() == 1 and card.locator(".send-state").count() == 0
         _send(page)
         playwright.expect(_card(page, "Build note, first take").locator(".send-state")).to_have_text("Waiting for the agent")
         card = _card(page, "Build note, first take")
@@ -46,7 +48,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         card = _card(page, "Build note, corrected")
         card.wait_for()
         assert "(edited)" in card.inner_text()
-        assert card.locator(".send-state").inner_text() == "Pending"
+        assert card.locator(".citem-num.is-pending").count() == 1 and card.locator(".send-state").count() == 0
         cid = card.get_attribute("data-comment-id")
         assert _stored(directory, cid)["text"] == "Build note, corrected"
         _send(page)
@@ -58,6 +60,35 @@ def _round_answers(directory):
     path = directory / "rounds.ndjson"
     rounds = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
     return rounds[-1]["answers"] if rounds else []
+
+
+@contextmanager
+def _evidence_on_timeout(page, item, what):
+    """agent-annotate-pla: on M1Max16 under load this wait timed out once and we
+    could not reproduce it; a timeout here carries the card, the requests still
+    open and any error the card shows, so the next one explains itself."""
+    open_requests = {}
+    started = time.monotonic()
+    on_request = lambda r: open_requests.__setitem__(id(r), f"{r.method} {r.url.split('/', 3)[-1][:80]} +{time.monotonic() - started:.2f}s")  # noqa: E731
+    on_done = lambda r: open_requests.pop(id(r), None)  # noqa: E731
+    page.on("request", on_request)
+    page.on("requestfinished", on_done)
+    page.on("requestfailed", on_done)
+    try:
+        yield
+    except playwright.Error as exc:
+        if "Timeout" not in str(exc):
+            raise
+        card = item.evaluate("el => el.outerHTML")[:4000] if item.count() else "(card not in the document)"
+        feedback = page.evaluate("""() => [...document.querySelectorAll('.decision-feedback'),
+            ...document.querySelector('#content-frame').contentDocument.querySelectorAll('.annotate-decision-feedback, .decision-feedback')]
+            .map(e => e.textContent.trim()).filter(Boolean)""")
+        raise AssertionError(f"{what} after {time.monotonic() - started:.1f}s\nopen requests: {list(open_requests.values())}\n"
+                             f"feedback: {feedback}\ncard: {card}") from exc
+    finally:
+        page.remove_listener("request", on_request)
+        page.remove_listener("requestfinished", on_done)
+        page.remove_listener("requestfailed", on_done)
 
 
 def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
@@ -85,8 +116,9 @@ def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
         edit = item.locator("textarea.annotate-note-edit")
         assert edit.input_value() == "Change the time to 10:30"
         edit.fill("Change the time to 10:30 and leave the roll-out time blank")
-        item.locator(".annotate-note-save").click()
-        page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.body.textContent.includes('roll-out time blank')")
+        with _evidence_on_timeout(page, item, "the edited note never showed"):
+            item.locator(".annotate-note-save").click()
+            page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.body.textContent.includes('roll-out time blank')")
         assert item.locator(".annotate-send-state.is-pending").count() == 2
         _send(page)
         page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelectorAll('.annotate-send-state.is-pending').length === 0")

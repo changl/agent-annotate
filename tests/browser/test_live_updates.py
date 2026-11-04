@@ -8,9 +8,9 @@ me a notification at the top where it states back to latest."
 
 The reviewer types in a question's box. The agent publishes v2, which withdraws
 that question, and asks a new one. Polls must leave the cards, the document,
-the typed text and the scroll alone, and say in the banner at the top what is
-waiting. A tap on the banner shows it all: the new question, and the typed
-text still on its (now withdrawn) card. Desktop Chrome and iPad (Playwright
+the typed text and the scroll alone, and say on the header's refresh button
+what is waiting (av1, #136). A tap on it shows it all: the new question, and
+the typed text still on its (now withdrawn) card. Desktop Chrome and iPad (Playwright
 WebKit, the engine of iPad Chrome), and an iPad tab brought back from the
 background.
 
@@ -93,7 +93,7 @@ def _box(page, where):
 
 @pytest.mark.parametrize("engine", ["chrome", "ipad"])
 @pytest.mark.parametrize("where", ["rail", "document"])
-def test_a_new_version_waits_in_the_banner_while_the_reviewer_types(tmp_path, engine, where):
+def test_a_new_version_waits_on_the_refresh_button_while_the_reviewer_types(tmp_path, engine, where):
     directory = _directory(tmp_path)
     with _open(tmp_path, directory, engine) as (page, base):
         box = _box(page, where)
@@ -108,14 +108,14 @@ def test_a_new_version_waits_in_the_banner_while_the_reviewer_types(tmp_path, en
         assert _screen(page) == before
         assert box.input_value() == TYPED + MORE
         assert box.evaluate("el => el === el.ownerDocument.activeElement")
-        banner = page.locator("#unified-version-banner")
-        assert banner.is_visible()
-        assert "Latest is v2 · 1 new question · 1 card changed" in banner.inner_text()
+        fresh = page.locator("#aa-fresh")
+        assert fresh.get_attribute("aria-label") == "Latest is v2 · 1 new item. Tap to show."
+        assert fresh.inner_text().split() == ["1", "v2"]
 
-        banner.locator("button").click()
+        fresh.click()
         page.wait_for_function("() => document.getElementById('content-frame').dataset.version === 'v2'")
         page.locator("#comment-list", has_text="New question 12?").wait_for()
-        assert banner.is_hidden()
+        page.wait_for_function("() => document.getElementById('aa-fresh').dataset.state === 'idle'")
         shown = page.evaluate("() => [...document.querySelectorAll('#comment-list textarea')].map(t => t.value)")
         assert TYPED + MORE in shown
 
@@ -130,15 +130,15 @@ def test_a_question_asked_on_the_version_on_screen_waits_too(tmp_path):
         }]})
         _poll(page)
         assert _screen(page) == before
-        banner = page.locator("#unified-version-banner")
-        assert banner.inner_text().startswith("1 new question — show")
-        banner.locator("button").click()
+        fresh = page.locator("#aa-fresh")
+        assert fresh.get_attribute("aria-label") == "1 new item. Tap to show."
+        fresh.click()
         page.locator("#comment-list", has_text="New question 12?").wait_for()
         page.frame_locator("#content-frame").locator("[data-annotate-strip]", has_text="New question 12?").wait_for()
-        assert banner.is_hidden()
+        page.wait_for_function("() => document.getElementById('aa-fresh').dataset.state === 'idle'")
 
 
-def test_a_backgrounded_ipad_tab_comes_back_to_the_same_page_and_the_banner(tmp_path):
+def test_a_backgrounded_ipad_tab_comes_back_to_the_same_page_and_the_refresh_button(tmp_path):
     directory = _directory(tmp_path)
     with _open(tmp_path, directory, "ipad") as (page, base):
         hide = """hidden => {
@@ -152,7 +152,7 @@ def test_a_backgrounded_ipad_tab_comes_back_to_the_same_page_and_the_banner(tmp_
         _agent_moves_on(tmp_path, directory, base)
         page.wait_for_timeout(9000)  # a hidden page makes no requests
         page.evaluate(hide, False)
-        page.locator("#unified-version-banner", has_text="Latest is v2").wait_for()
+        page.wait_for_function("() => document.querySelector('#aa-fresh .aa-fresh-v').textContent === 'v2'")
         assert _screen(page) == before
         assert _box(page, "rail").input_value() == TYPED
 
@@ -200,4 +200,4 @@ def test_a_confirmed_post_renders_once_without_rereading_the_store(tmp_path, kin
         shown = page.locator("#comment-list .citem" if kind == "comment" else "#comment-list .thread-reply",
                              has_text="A new note" if kind == "comment" else "A reply")
         assert shown.count() == 1
-        assert page.locator("#unified-version-banner").is_hidden()
+        assert page.evaluate("() => document.getElementById('aa-fresh').dataset.state") == "idle"

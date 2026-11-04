@@ -369,6 +369,9 @@ def _scan(session_id: str) -> list:
         return lines
 
     registry = _load_registry()
+    if not DRY_RUN:
+        from agent_annotate.delivery import refresh_session_owners
+        refresh_session_owners(session_id, registry)
     hook_all = os.environ.get("ANNOTATE_HOOK_ALL") == "1"
     sid_dir = _safe_component(session_id)
 

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from review_fixtures import complete
 from single_page import browser_page, ready
 
 from agent_annotate import long_pages
@@ -48,6 +49,7 @@ def test_a_quoted_excerpt_leaves_out_the_image_controls(tmp_path, monkeypatch):
                       "![Board](shots/wide.png)\n\n## Beta\n\nWhat we ask.\n", encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {
         "s:beta": [_question("q-1", "s:beta", 1, request={"evidence": [{"label": "Board", "anchor": "s:alpha"}]})]}}))
     with browser_page(tmp_path, directory) as (page, _):
@@ -65,6 +67,7 @@ def test_a_baked_card_never_asks_to_press_finish_review(tmp_path):
     source.write_text(EXAMPLE, encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     html = (directory / "versions" / "v1.html").read_text()
     assert "Answer it on the card" not in html and 'class="q"' not in html
     # A page published before this still carries the line; with no live card it stays hidden.
@@ -81,14 +84,15 @@ def test_a_baked_card_never_asks_to_press_finish_review(tmp_path):
         assert line.is_hidden()
 
 
-STATES = [
-    ({"state": "acknowledged"}, "The agent has read your last Send", "Sent"),
-    ({"state": "started"}, "The agent is working on your last Send", "Sent"),
-    ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered; waiting for the agent to start", "Sent"),
-    ({"state": "accepted"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
-    ({"state": "pending", "detail": "Owner process ended"}, "Saved; the agent has not been told yet", "Waiting for the agent"),
-    ({"state": "uncertain"}, "Saved; not yet confirmed that the agent got it", "Waiting for the agent"),
-    ({"state": "superseded"}, "This page changed agents before your Send was delivered", "Waiting for the agent"),
+STATES = [  # av1: the Send note's short words (the delivery row is gone)
+    ({"state": "acknowledged"}, "Read by the agent", "Sent"),
+    ({"state": "started"}, "Agent working on it", "Sent"),
+    ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered", "Sent"),
+    ({"state": "accepted"}, "Saved, not confirmed", "Waiting for the agent"),
+    ({"state": "pending", "detail": "Owner process ended"}, "Saved, agent not told yet", "Waiting for the agent"),
+    ({"state": "pending", "target": {"pid": 2147483647}}, "Agent's session not running", "Waiting for the agent"),
+    ({"state": "uncertain"}, "Saved, not confirmed", "Waiting for the agent"),
+    ({"state": "superseded"}, "Not delivered: the page changed agents", "Waiting for the agent"),
 ]
 
 
@@ -97,9 +101,11 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
     source.write_text(EXAMPLE, encoding="utf-8")
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     key = "0123456789abcdef01234567"
     answered = _question("q-1", "d:q1", 1, decision={"verdict": "a", "text": "A", "ts": "2026-11-01T10:00:00Z",
-                                                     "by": "reviewer@example.com", "delivery_id": key})
+                                                     "by": "reviewer@example.com", "delivery_id": key},
+                         flagged_for_session=True, flagged_at="2026-11-01T10:01:00Z")  # a Send flags it, as live pages do
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {"d:q1": [answered]}}))
     journal = tmp_path / "state" / "deliveries" / "bus" / "items-model.json"
     journal.parent.mkdir(parents=True)
@@ -110,7 +116,7 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
             journal.write_text(json.dumps({"offset": 0, "deliveries": {key: {"id": key, **row}}}))
             page.reload(wait_until="networkidle")
             ready(page)
-            status = page.locator("#delivery-status")
-            playwright.expect(status).to_have_text(banner)
-            assert status.get_attribute("title") == (row.get("detail") or "")
+            page.wait_for_function("t => window.AnnotateDocs.deliveryNote()?.text === t", arg=banner)
+            assert page.evaluate("() => window.AnnotateDocs.deliveryNote().title") == (
+                "Owner process ended; waiting for the session to resume" if row.get("target") else row.get("detail") or "")
             playwright.expect(frame.locator('[data-strip-item="q-1"] .annotate-send-state')).to_have_text(card)

@@ -9,6 +9,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
+from review_fixtures import complete
+
 from agent_annotate import cli, pagegen, sync_server
 
 
@@ -18,6 +20,7 @@ def test_cli_category_lifecycle_over_real_http(tmp_path, monkeypatch):
     source = tmp_path / "review.md"
     source.write_text("---\ntitle: Runtime workspace\n---\n\n## Scope\n\nObserve the actual result.\n")
     pagegen.generate(source, directory, version="v1")
+    complete(directory)
     state = tmp_path / "state"
     state.mkdir()
     bus = tmp_path / "bus/project"

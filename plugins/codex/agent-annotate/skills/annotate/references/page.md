@@ -2,6 +2,8 @@
 
 Author page.md with built-in Markdown; `annotate new --example` prints a complete example. Review, Library, Findings and Plans share the project page; History preserves published versions and submitted rounds. Do not copy servers or styles into the project.
 
+Publish page and cards together with `annotate new DIR --from page.md --version vN --publish --ask` (omit `--ask` when there are no cards). Generation alone stages a draft. Failed checks or cards leave the previous version visible; retry the draft. A shown version cannot be rewritten, republished or extended with `annotate ask`: use the next version, optionally `--fixes vN` for a follow-up fix. The metadata History entry exposes `fixes`.
+
 ## Document
 
 Names: one stable `current.meta.json.name` per page; set/rename with `new --title` or `publish --title`, initially seeded from the document title if omitted.
@@ -43,9 +45,11 @@ proposed: shots/checkout-proposed.png | One-step payment
 ```
 ````
 
-KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Image paths are relative to page.md; supported local PNG/JPEG/GIF/WebP assets are copied into the page. URLs and SVG images are refused. Captions come from alt text. Compare accepts repeated current/proposed pairs for a flow, optional `title`, and optional `layout: side|stack|auto`.
+KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Image paths are relative to page.md; supported local PNG/JPEG/GIF/WebP assets are copied into the page. URLs and SVG images are refused. Captions come from alt text. Compare accepts repeated current/proposed pairs for a flow, optional `title`, and optional `layout: side|stack|auto`. Use matching crops: by default phone/portrait pairs sit side by side (current left, proposed right) and desktop/landscape pairs stack (current above, proposed below).
 
 Anchors derive from content: heading `## Scope` → `s:scope`, a nested `### Detail` → `s:scope:detail`, its first paragraph → `s:scope:p1`, table row → `tbl:scope:row:receipt`, image → `fig:current-receipt`, compare title → `cmp:checkout`. Inspect the generated HTML anchor registry if unsure; keep anchors stable across versions.
+
+Tables: at most 5 columns. Column 1 is a short row label (at most 4 words). Numbers, dates, states and codes get their own short columns; a cell of up to 12 characters stays on one line, up to 24 wraps to two. Long prose goes in one column, the last. Two prose columns side by side, or more than 5 columns, means sections or a list instead.
 
 ## Cards
 

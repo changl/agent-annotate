@@ -14,6 +14,7 @@ One project page for progress, feedback, and decisions across Claude Code and Co
 annotate new reviews/workspace --from page.md --project my-project --publish
 annotate project my-project/workspace --from project.json
 annotate inbox my-project/workspace --unread
+annotate resolve my-project/workspace 1 2 3
 annotate cards my-project/workspace --category findings --json
 annotate ask my-project/workspace --from cards.json --category findings --set design --json
 annotate finding my-project/workspace --fixed 11 --proof evidence.png --note "Verified" --json
@@ -21,13 +22,13 @@ annotate plan my-project/workspace rollout --from plan.md --title "Rollout" --js
 annotate library my-project/workspace --from copy.json --json
 ```
 
-Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
+Write commands print one line without the page link (`v2 live · 3 cards #1–#3`); `--verbose` adds the link and `--json` prints everything. `inbox` prints one line per answer and the `resolve` line that closes them. Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
 
 Each page owns one stable display name in `current.meta.json.name`; set or rename it with `new --title` or `publish --title`. Without an explicit name, the initial document title seeds it; later Markdown titles describe revisions. Page links, receipts, workspace JSON and session-start notices use that name. The header and browser tab title prefer project branding (`project.json.title`), then the stable page name. Use sentence case, preserving proper nouns such as **Agent Annotate**; `agent-annotate` is the package/repository identifier. New directory slugs use lowercase ASCII kebab-case from the initial name; reserve `-YYYYMMDD` for separate dated reports/events, and preserve existing routes. Parent page references derive names from their targets; see [naming and migration](docs/page-names.md).
 
 ## Review interface
 
-Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents lists the project's other pages once, by name, and its supporting links, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. `project.issue_links` maps issue ids from any tracker to URLs and makes them clickable. `project.board` (`url`, `project`, optional `label`, `prefix` and `dir`) adds a header link to the project's board with its ready count (`bd ready --json` in `dir`, or in the directory Bead Me Up Scotty lists for `project`; cached, never delaying the page), and ids with the board's prefix, such as `agent-annotate-w6e.4`, open that issue on the board.
+Review holds document feedback; Library holds formatted copy; Findings holds fix/keep decisions; Plans holds independently versioned plans. Documents lists the project's other pages once, by name, and its supporting links, and History revisits published documents and submitted rounds. Categories appear when data is available; legacy pages without category data keep Review and declared tabs. `project.issue_links` maps issue ids from any tracker to URLs and makes them clickable. `project.board` (`url`, `project`, optional `label`, `prefix` and `dir`) adds a header link to the project's board with its ready count before the arrow (`bd ready --json` in `dir`, or in the directory Bead Me Up Scotty lists for `project`; cached, never delaying the page) and a summary of Backlog, Ready, In progress and Blocked on hover or tap, and ids with the board's prefix, such as `agent-annotate-w6e.4`, open that issue on the board.
 
 Every decision supports a choice and any number of your own **notes**: adding a note never replaces an earlier one, each can be edited (and deleted while unsent), and changing the choice keeps them. A card answered only in words has notes and no choice. Each of your items shows Pending until Send and Sent after it. Choices are never preselected. Your own unsent comments can be edited or deleted; code blocks wrap and have a copy button. **Send** submits one durable round across categories, including proposed Library revisions and reopened findings. Drafts, decisions, numbering, and history survive refreshes and handoffs.
 

@@ -350,9 +350,9 @@ def test_board_ready_count_is_cached_and_never_waits_for_bd(tmp_path, monkeypatc
     def slow(board):
         calls.append(board["project"])
         release.wait(5)
-        return 7
+        return {"ready": 7, "backlog": 1, "in_progress": 2, "blocked": 0}
 
-    monkeypatch.setattr(board_module, "ready_count", slow)
+    monkeypatch.setattr(board_module, "board_counts", slow)
     monkeypatch.setattr(board_module, "_cache", {})
     monkeypatch.setattr(board_module, "_refreshing", set())
     info = {"url": "https://h.example/p/x", "project": "x", "label": "Beads", "prefix": "x", "dir": "/srv/x"}
@@ -365,16 +365,36 @@ def test_board_ready_count_is_cached_and_never_waits_for_bd(tmp_path, monkeypatc
             break
         threading.Event().wait(0.05)
     assert board_module.board_status(info)["ready"] == 7 and calls == ["x"]
-    assert board_module.board_status(None) == {"board": None, "ready": None, "checked_at": None}
+    assert board_module.board_status(info)["counts"] == {"ready": 7, "backlog": 1, "in_progress": 2, "blocked": 0}
+    assert board_module.board_status(None) == {"board": None, "ready": None, "counts": None, "checked_at": None}
 
 
-def test_board_ready_count_runs_bd_ready_in_the_board_directory(tmp_path, monkeypatch):
+# A fake bd: `ready` lists x-1 and x-2; `list` adds x-3 (in progress), x-4
+# (blocked by its status), x-5 (blocked by a dependency) and x-6 (backlog).
+FAKE_BD = """#!/bin/sh
+printf '%s\\n' "$@" >> "$(dirname "$0")/args"
+case "$3" in
+  ready) echo '[{"id":"x-1"},{"id":"x-2"}]' ;;
+  list) echo '[{"id":"x-1","status":"open"},{"id":"x-2","status":"open"},{"id":"x-3","status":"in_progress"},{"id":"x-4","status":"blocked"},{"id":"x-5","status":"open"},{"id":"x-6","status":"open"}]' ;;
+  blocked) echo '[{"id":"x-5"}]' ;;
+esac
+"""
+
+
+def test_board_counts_run_bd_in_the_board_directory(tmp_path, monkeypatch):
     from agent_annotate import board as board_module
     fake = tmp_path / "bd"
-    fake.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$(dirname "$0")/args"\necho \'[{"id":"x-1"},{"id":"x-2"}]\'\n')
+    fake.write_text(FAKE_BD)
     fake.chmod(0o755)
     monkeypatch.setenv("ANNOTATE_BD", str(fake))
-    assert board_module.ready_count({"project": "x", "dir": str(tmp_path)}) == 2
-    assert (tmp_path / "args").read_text().splitlines() == ["-C", str(tmp_path), "ready", "--json", "--brief", "-n", "0", "--exclude-type", "epic", "--readonly"]
+    # #109: Backlog, Ready, In progress, Blocked; each open item in exactly one.
+    assert board_module.board_counts({"project": "x", "dir": str(tmp_path)}) == {
+        "ready": 2, "backlog": 1, "in_progress": 1, "blocked": 2}
+    calls = (tmp_path / "args").read_text().splitlines()
+    assert calls[:11] == ["-C", str(tmp_path), "ready", "--brief", "-n", "0", "--exclude-type", "epic", "--json", "--readonly", "-C"]
+    assert "list" in calls and "blocked" in calls
+    # bd list failing leaves the ready count alone.
+    fake.write_text(FAKE_BD.replace("list) echo", "list) exit 1; echo"))
+    assert board_module.board_counts({"project": "x", "dir": str(tmp_path)}) == {"ready": 2}
     # No directory and no reachable board API: no count, no error.
     assert board_module.board_status({"url": "https://h/p", "project": "nowhere", "prefix": "nowhere"})["ready"] is None

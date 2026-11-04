@@ -446,7 +446,8 @@ function adoptLive(id) {
 // (worked out once per store read: it writes out every comment).
 let waiting = null;
 function waitingChanges() {
-  const out = { questions: 0, cards: 0 };
+  // cards: new feedback; changed: a shown card edited or gone (#136: only new items turn the button red).
+  const out = { questions: 0, cards: 0, changed: 0 };
   if (!LIVE || LIVE === STORE) return out;
   if (waiting && waiting.live === LIVE && waiting.doc === DOC) return waiting.out;
   waiting = { live: LIVE, doc: DOC, out };
@@ -456,9 +457,9 @@ function waitingChanges() {
     const was = shown.get(c.id);
     shown.delete(c.id);
     if (was === undefined) { if (c.decision_request) out.questions++; else out.cards++; }
-    else if (was !== JSON.stringify(c)) out.cards++;
+    else if (was !== JSON.stringify(c)) out.changed++;
   }
-  out.cards += shown.size; // gone from the server
+  out.changed += shown.size; // gone from the server
   return out;
 }
 
@@ -468,6 +469,7 @@ function waitingChanges() {
 // creation order over live + archived history. One map drives rail, pin and
 // body order, so a response item never has three competing labels.
 function computeNumbers() {
+  // The server pins legacy fallback numbers before inserting or renumbering cards.
   NUM_MAP = {};
   const all = flattenStore(true);
   // Live/current cards keep canonical labels when old stores contain collisions.
@@ -960,7 +962,7 @@ function archivePagesHtml(archives) {
   if (!archives.length) return '';
   const size = (n, shots) => `${n} section${n === 1 ? '' : 's'}${shots ? ` · ${shots} screenshot${shots === 1 ? '' : 's'}` : ''}`;
   const latest = (META.history || []).find(h => h.version === latestVersion()) || {};
-  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-primary badge-sm">this page</span></a>`
+  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-ghost badge-sm">this page</span></a>`
     + (latest.sections != null ? `<span class="project-detail">Now · ${esc(size(latest.sections, latest.screenshots))}</span>` : '') + '</li>';
   const sorted = archives.slice().sort((a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
   const items = sorted.map(p => {
@@ -978,7 +980,7 @@ function updateProjectTitle() {
   header.title = title;
   if (window.AA) window.AA.setTitle(title);
 }
-const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-info', todo: 'badge-ghost' };
+const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'is-yellow', todo: 'badge-ghost' };
 function renderProject() {
   // The project's links and progress belong to Review; a plan has none.
   if (DOC === 'review') updateProjectTitle();
@@ -1007,7 +1009,10 @@ function renderProject() {
   // Progress (History tab)
   if (!rest.length) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.hidden = false;
-  panel.innerHTML = `<div class="project-heading"><strong>${esc(PROJECT.title || 'Project links and progress')}</strong><small>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</small></div>` + rest.map((module) => {
+  // mme: one folded row under the versions; it opened above them before.
+  const notesOpen = projectPreference('project-notes') === 'open';
+  const when = PROJECT.updated_at ? ', last ' + esc(fmtTs(PROJECT.updated_at).replace(/,\s*\d.*$/, '')) : '';
+  panel.innerHTML = `<details class="project-notes" data-module="project-notes"${notesOpen ? ' open' : ''}><summary class="hist-lbl">The agent's progress notes (${rest.length}${when})</summary>` + rest.map((module) => {
     const preference = projectPreference(module.id);
     // 2.20: progress and notes modules start collapsed.
     const open = preference ? preference === 'open' : false;
@@ -1016,7 +1021,7 @@ function renderProject() {
       return `<li>${ticketsHTML(item.text)}</li>`;
     }).join('');
     return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
-  }).join('');
+  }).join('') + '</details>';
   panel.querySelectorAll('details').forEach(node => {
     node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
   });
@@ -1039,10 +1044,10 @@ async function loadProject() {
 }
 // The board's ready count (./api/board) for the header link. The server answers
 // from its cache, so this never holds up the page; it is not awaited.
-let BOARD_READY = null;
+let BOARD_READY = null, BOARD_COUNTS = null;
 let boardFirstTries = 0;
 async function loadBoard() {
-  if (!PROJECT.board) { BOARD_READY = null; return; }
+  if (!PROJECT.board) { BOARD_READY = BOARD_COUNTS = null; return; }
   try {
     // Its check time moves every minute; only the ready count matters.
     const got = await pollJson('./api/board', true);
@@ -1051,12 +1056,16 @@ async function loadBoard() {
     // The server's first count is still running: ask again soon, a few times.
     if (!data.checked_at && boardFirstTries < 8) { boardFirstTries++; setTimeout(loadBoard, 1500); }
     const ready = typeof data.ready === 'number' ? data.ready : null;
-    if (ready !== BOARD_READY) { BOARD_READY = ready; if (window.AA) window.AA.changed(); }
+    const counts = data.counts && typeof data.counts === 'object' ? data.counts : null;
+    if (ready !== BOARD_READY || JSON.stringify(counts) !== JSON.stringify(BOARD_COUNTS)) {
+      BOARD_READY = ready; BOARD_COUNTS = counts;
+      if (window.AA) window.AA.changed();
+    }
   } catch {}
 }
 function boardLink() {
   const b = PROJECT.board, url = b && safeHttpUrl(b.url);
-  return url ? { url, label: b.label || 'Board', project: b.project, ready: BOARD_READY } : null;
+  return url ? { url, label: b.label || 'Board', project: b.project, ready: BOARD_READY, counts: BOARD_COUNTS } : null;
 }
 // F17 + U-07: History lists the rounds the server recorded, newest first,
 // each with its answers; the header keeps the latest one beside Send.
@@ -1160,8 +1169,11 @@ function legacyRound(r) {
     return { ts: r.ts, result: roundResult(n, [r.id]), items, n };
   }
 }
+// Where the last Send got to. av1: said in the header's Send note, which
+// already names that Send; the row above the document is gone.
+let DELIVERY_NOTE = null;
+let deliveredIds = '';
 async function loadDelivery() {
-  const node = document.getElementById('delivery-status');
   try {
     let data = SUMMARY_DELIVERY;
     if (!HAS_SUMMARY || DOC !== VIEW_DOC || DOC !== 'review' || docBusy) {
@@ -1171,17 +1183,23 @@ async function loadDelivery() {
     }
     data = data || {};
     SUMMARY_DELIVERY = data;
-    node.hidden = !data.latest;
+    let next = null;
     if (data.latest) {
       // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
-      const unconfirmed = 'Saved; not yet confirmed that the agent got it';
-      const labels = {acknowledged: 'The agent has read your last Send', pending: 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
-      node.textContent = labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state;
-      // The technical reason stays on hover, out of the sentence he reads.
-      node.title = data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '';
+      const unconfirmed = 'Saved, not confirmed';
+      // #97: a pending Send whose owner session is not running says so.
+      const labels = {acknowledged: 'Read by the agent', pending: data.latest.owner_running === false ? "Agent's session not running" : 'Saved, agent not told yet', accepted: data.latest.delivered ? 'Delivered' : unconfirmed, started: 'Agent working on it', uncertain: unconfirmed, superseded: 'Not delivered: the page changed agents'};
+      // The technical reason stays in the tooltip, out of the words he reads.
+      next = { id: data.latest.id, text: labels[data.latest.state] || data.latest.state, title: data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '' };
     }
+    if (JSON.stringify(next) !== JSON.stringify(DELIVERY_NOTE)) { DELIVERY_NOTE = next; if (window.AA) window.AA.changed(); }
     window.AA?.send?.delivery(data.deliveries || []);
+    const got = (data.deliveries || []).filter(r => r.delivered).map(r => r.id).join(',');
+    const recolour = got !== deliveredIds;
+    deliveredIds = got;
+    if (recolour && VIEW_DOC) sendCommentCountsToFrame();
     for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {
+      if (recolour && root) recolourChips(root);
       root?.querySelectorAll('[data-delivery-ids]').forEach(label => {
         const text = deliveryLabel(label.dataset.deliveryIds.split(',').filter(Boolean));
         if (label.textContent !== text) label.textContent = text;
@@ -1242,20 +1260,36 @@ function versionFolds(value) {
     return JSON.parse(localStorage.getItem(key) || '{}') || {};
   } catch { return {}; }
 }
-function versionActivityHtml(h, next, rounds, done) {
+// mme (Chang, card #78): each item once: what you answered, and as its chip
+// where it stands now. The agent's second list of the same items is gone; the
+// version it published next is named on the round's line.
+function itemChipHtml(c) {
+  if (!c) return '';
+  const cls = classify(c), st = numState(c);
+  return ` <span class="vact-chip${st ? ' is-' + st : ''}">${esc(statusLabel(c, cls))}</span>`;
+}
+function versionActivityHtml(h, next, rounds, done, byNum) {
   const tag = (cat) => cat !== DOC && window.AA && window.AA.rail ? window.AA.rail.tagHtml(cat) + ' ' : '';
-  const sent = rounds.map(r => `<div class="vact-block">
-      <div class="vact-head">Feedback · ${r.delivery_ids ? deliveryHtml(r.delivery_ids) + ' (' + (r.n ?? r.items.length) + ')' : esc(r.result)} · ${esc(fmtTs(r.ts))}</div>
-      <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul>
+  const listed = new Set();
+  const itemComment = (it) => {
+    const m = /^#(\d+(?:·\d+)?) · /.exec(it.label || '');
+    const c = m && byNum[m[1]] ? findCommentById(byNum[m[1]]) : null;
+    if (c) listed.add(c.id);
+    return c;
+  };
+  const nextHtml = next ? ` · next: ${esc(next.version)}` : '';
+  const sent = rounds.map((r, i) => `<div class="vact-block">
+      <div class="vact-head">You sent ${r.n ?? r.items.length} · ${esc(fmtTs(r.ts))}${i === rounds.length - 1 ? nextHtml : ''}</div>
+      <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}${itemChipHtml(itemComment(it))}</li>`).join('')}</ul>
     </div>`).join('');
-  const lines = done.map(c => {
+  const rest = done.filter(c => !listed.has(c.id)).map(c => {
     const n = NUM_MAP[c.id];
-    const what = c.status === 'resolved_in_version' ? 'Resolved in ' + (c.resolved_in_version || 'a later version') : 'Addressed';
-    return `<li>${n ? '#' + n + ' · ' : ''}${esc(displayPrompt(c) || firstLine(c.text))} — ${esc(what)}</li>`;
+    return `<li>${n ? '#' + n + ' · ' : ''}${esc(displayPrompt(c) || firstLine(c.text))}${itemChipHtml(c)}</li>`;
   }).join('');
-  const agent = next || lines ? `<div class="vact-block vact-agent">
-      <div class="vact-head">Agent${next ? ' · Published ' + esc(next.version) + (next.label ? ' · ' + esc(next.label) : '') + ' · ' + esc(fmtTs(next.ts)) : ''}</div>
-      ${lines ? `<ul>${lines}</ul>` : ''}
+  // With no round on this version, only these (activity needs one or the other).
+  const agent = rest ? `<div class="vact-block vact-agent">
+      <div class="vact-head">${rounds.length ? 'Also closed by the agent' : 'Closed by the agent' + nextHtml}</div>
+      <ul>${rest}</ul>
     </div>` : '';
   return sent + agent;
 }
@@ -1288,6 +1322,14 @@ function renderVersionRail(shown) {
     return 0;
   }
   const folds = versionFolds();
+  const byNum = {};
+  for (const [id, n] of Object.entries(NUM_MAP)) byNum[n] = id;
+  // mme: an agent label shared by many versions ("Round 19:00Z") tells them
+  // apart no better than nothing; every row carries its own time.
+  const labelUses = {};
+  for (const h of allHistory) labelUses[h.label] = (labelUses[h.label] || 0) + 1;
+  // mme: the latest round's items show without a tap.
+  const latestRound = (allHistory.find(h => byVersion[h.version]) || {}).version;
   // One pass over the comments for every version: per-version scans made
   // History freeze for 2.2 s on FLD (535 versions × 1,418 comments).
   const doneBy = {}, countsBy = {};
@@ -1306,7 +1348,7 @@ function renderVersionRail(shown) {
     const done = sentOnly ? [] : (doneBy[h.version] || []);
     const activity = rounds.length || done.length;
     const next = activity ? publishedAfter(h, rounds) : null;
-    const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION);
+    const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION || h.version === latestRound);
     const pid = 'vact-' + doc + '-' + h.version;
     const counts = countsBy[h.version] || { review: 0, waiting: 0, done: 0, total: 0 };
     const isCur = h.version === CURRENT_VERSION;
@@ -1324,13 +1366,14 @@ function renderVersionRail(shown) {
       <div class="vitem-row">
         <button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
           ${dotHtml}
-          <span class="vrow-label">${esc(h.version)}${h.label ? ' &middot; ' + esc(h.label) : ''}</span>
+          <span class="vrow-label">${esc(h.version)}${h.label && labelUses[h.label] === 1 ? ' &middot; ' + esc(h.label) : ''}</span>
+          ${h.ts ? `<span class="vrow-time">${esc(fmtTs(h.ts))}</span>` : ''}
           ${newHtml}
           ${badgeHtml}
         </button>
         ${toggleHtml}
       </div>
-      ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done)}</div>` : ''}
+      ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done, byNum)}</div>` : ''}
     </div>`;
   }).join('') + (allHistory.length > limit
     ? `<button type="button" class="btn btn-ghost btn-xs vrail-more">Show ${Math.min(HISTORY_PAGE, allHistory.length - limit)} earlier</button>` : '');
@@ -1389,26 +1432,55 @@ function renderVersionRail(shown) {
   if (doc === VIEW_DOC) renderVersionBanner();
   return rows.length;
 }
-// U-10: an older version on screen says so, with the way back. It also says
-// what a poll brought that is not shown yet; one tap shows it all.
-function renderVersionBanner() {
-  const banner = document.getElementById('unified-version-banner');
-  const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
-  const older = !!latest && CURRENT_VERSION !== latest;
-  const w = waitingChanges();
+// The header's refresh button (Chang #54, #136). (a) Nothing newer, nothing
+// new: a plain icon; a tap reloads the same version. (b) A newer version: its
+// name in plain text. (c) New feedback or questions: a red border and their
+// count. (d) The newer version fixes the one on screen: "fix" in orange.
+function setFresh(n, newer, fix) {
+  const btn = document.getElementById('aa-fresh');
+  const set = (cls, text) => { const el = btn.querySelector(cls); el.hidden = !text; el.textContent = text || ''; };
+  set('.aa-fresh-n', n ? String(n) : '');
+  set('.aa-fresh-v', newer || '');
+  set('.aa-fresh-fix', newer && fix ? 'fix' : '');
+  btn.classList.toggle('is-waiting', !!n);
   const parts = [];
-  if (older) parts.push('Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest));
-  if (w.questions) parts.push(w.questions + (w.questions === 1 ? ' new question' : ' new questions'));
-  if (w.cards) parts.push(w.cards + (w.cards === 1 ? ' card changed' : ' cards changed'));
-  banner.hidden = !parts.length;
-  if (banner.hidden) return;
-  banner.innerHTML = parts.join(' · ') + ' — <button type="button" class="btn btn-link btn-sm">' + (older ? 'back to latest' : 'show') + '</button>';
-  banner.querySelector('button').onclick = () => {
-    if (older) return switchVersion(latest);
+  if (newer) parts.push((fix ? newer + ' fixes this version' : 'Latest is ' + newer));
+  if (n) parts.push(n + (n === 1 ? ' new item' : ' new items'));
+  const say = parts.length ? parts.join(' · ') + '. Tap to show.' : 'Reload this version';
+  btn.title = say;
+  btn.setAttribute('aria-label', say);
+  btn.dataset.state = n ? 'new' : newer ? 'newer' : 'idle';
+}
+function renderVersionBanner() {
+  const latest = latestVersion();
+  const newer = latest && CURRENT_VERSION !== latest ? latest : '';
+  const w = waitingChanges();
+  const fix = !!newer && (META.history || []).some(h => h.fixes === CURRENT_VERSION);
+  setFresh(w.questions + w.cards, newer, fix);
+}
+// One tap: check now, then show what waits: the latest version, the new
+// cards, or this version again. Typed text is kept (v9o drafts).
+let pollNow = async () => {};
+async function freshTap() {
+  const btn = document.getElementById('aa-fresh');
+  if (btn.classList.contains('is-checking')) return;
+  btn.classList.add('is-checking');
+  try { await pollNow(); } finally { btn.classList.remove('is-checking'); }
+  if (!VIEW_DOC) return;
+  withDoc(VIEW_DOC, () => {
+    const latest = latestVersion();
+    if (latest && CURRENT_VERSION !== latest) return switchVersion(latest);
+    const w = waitingChanges();
     applyLive();
     renderAll();
     document.dispatchEvent(new CustomEvent('annotate:store'));
-  };
+    if (w.questions || w.cards || !CURRENT_VERSION) return;
+    // (a): this version again, at the same place.
+    const frame = document.getElementById('content-frame');
+    const y = frame.contentWindow ? frame.contentWindow.scrollY : 0;
+    frame.addEventListener('load', () => frame.contentWindow.scrollTo(0, y), { once: true });
+    loadIframe(CURRENT_VERSION);
+  });
 }
 // (The phone header's version <select> is gone: History is the one version
 // picker on every layout — B3.)
@@ -1565,6 +1637,43 @@ function displayPrompt(c) {
   const m = p.match(/^\s*(?:Q|#)\s*(\d+)[\s:.\-—–]*/i);
   return (m && n && Number(m[1]) === n) ? p.slice(m[0].length) : p;
 }
+// One number chip everywhere, on the right; its colour is the item's state
+// (Chang #123, #136): red needs you, orange answered but not sent (it
+// replaces the Pending chip), yellow the agent has it (sent, and the owner's
+// receipt came back) and has not addressed it, light green addressed, grey otherwise.
+const ADDRESSED = ['addressed_by_agent', 'resolved_in_version', 'user_confirmed'];
+function numState(c) {
+  const s = sectionOf(c), d = decisionAnswer(c);
+  if (s === 'archived') return '';
+  if (s === 'ready' || (d && d.pending)) return 'pending';
+  if (s === 'needs' || s === 'later') return 'needs';
+  if (ADDRESSED.includes(c.status)) return 'done';
+  const sent = (d && d.delivery_id) || c.delivery_id;
+  return sent && deliveryLabel(sent) === 'Sent' ? 'working' : '';
+}
+const NUM_STATE_TEXT = { needs: 'needs you', pending: 'answered, not sent yet', working: 'the agent has it', done: 'addressed' };
+function numChipHtml(c, cls) {
+  const n = NUM_MAP[c.id], st = numState(c);
+  if (!n) return '';
+  // #172: no separate unread dot; the chip names it for screen readers.
+  const unread = readStateOf(c) !== 'read' ? ', unread' : '';
+  // Colour is never the only signal: the state is in its name and tooltip.
+  return `<span class="${cls}${st ? ' is-' + st : ''}" data-num-for="${escAttr(c.id)}"${st || unread ? ` role="img" aria-label="#${n}${st ? ', ' + NUM_STATE_TEXT[st] : ''}${unread}"` : ''}${st ? ` title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
+}
+// A receipt arriving turns a sent item's chip yellow where it stands; nothing else re-renders.
+function recolourChips(root) {
+  root.querySelectorAll('[data-num-for]').forEach(chip => {
+    const c = findCommentById(chip.dataset.numFor);
+    if (!c) return;
+    const st = numState(c), cls = chip.className.replace(/\s*is-(needs|pending|working|done)\b/g, '');
+    chip.className = cls + (st ? ' is-' + st : '');
+    if (st) {
+      chip.setAttribute('role', 'img');
+      chip.setAttribute('aria-label', '#' + NUM_MAP[c.id] + ', ' + NUM_STATE_TEXT[st] + (readStateOf(c) !== 'read' ? ', unread' : ''));
+      chip.title = NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1);
+    } else ['role', 'aria-label', 'title'].forEach(a => chip.removeAttribute(a));
+  });
+}
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
 // "Pending — not sent" chip and "Send now" stay reachable until submit).
@@ -1601,7 +1710,8 @@ function isNewerThanViewed(c) {
 // Four sections replace the chip filters, "Mark all read" and the per-card
 // status pill: Needs you · Ready to send · Waiting on agent · Done (plus
 // Archived at the bottom when there is any).
-const SECTION_ORDER = ['later', 'needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
+// mme (Chang, card #78): Needs you comes first, Answer later under it.
+const SECTION_ORDER = ['needs', 'later', 'ready','waiting', 'done', 'earlier', 'archived'];
 const SECTION_LABEL = { later: 'Answer later', needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
 function sectionOpen(k) {
   return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
@@ -1790,7 +1900,7 @@ function renderDrawerNow() {
   listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
-    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
+    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'is-orange' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
       <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
       <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
@@ -2009,6 +2119,8 @@ function renderDecisionReco(opts, dr) {
   if (!rec) return '';
   const id = canonicalOptionId(rec);
   const o = opts.find(x => x.id === id);
+  // mme: in the rail the option's own Recommended tag says it; no second line.
+  if (o && !S.doc) return '';
   const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
   return `<div class="${k('decision-reco-line', 'annotate-decision-reco-line')}">Recommended: <b>${esc(label)}</b></div>`;
 }
@@ -2030,6 +2142,20 @@ function excerptsFor(c) {
   if (S.doc) return S.x; // read by adapter.js from the document it draws the card in
   return (EXCERPTS_VERSION === CURRENT_VERSION && gotoVersionFor(c) === CURRENT_VERSION) ? EXCERPTS : null;
 }
+// The section path comes from the anchor registry, which keeps the source's
+// markdown; show words only: link text, no emphasis or code marks.
+function mdPlain(s) {
+  return String(s || '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // Long names arrive cut short ("…"), which can leave a link or bold open.
+    .replace(/!?\[([^\]]*)\]\([^)]*$/, '$1…')
+    .replace(/!?\[([^\]]*)$/, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/\*\*(?=\S)|(?<=\S)\*\*/g, '')
+    .replace(/(^|[^\w*])\*(?!\s)([^*]+?)\*(?!\w)/g, '$1$2')
+    .replace(/(^|\W)_(?!\s)([^_]+?)_(?!\w)/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1');
+}
 // A quoted excerpt clamped to four lines; "Show more" appears only when the
 // text is cut off (see syncExcerptClamps).
 function renderExcerptBox(key, text, source, footExtra) {
@@ -2037,7 +2163,7 @@ function renderExcerptBox(key, text, source, footExtra) {
   const qid = idFor('q|' + key);
   const more = `<button type="button" class="${k('decision-excerpt-more', 'annotate-excerpt-more')}" data-decision-action="excerpt-more" data-key="${escAttr(key)}" aria-controls="${qid}" aria-expanded="${open ? 'true' : 'false'}" hidden>${open ? 'Show less' : 'Show more'}</button>`;
   return `<figure class="${k('decision-excerpt', 'annotate-excerpt')}${open ? ' is-open' : ''}">
-      ${source ? `<figcaption class="${k('decision-excerpt-src', 'annotate-excerpt-src')}">${esc(source)}</figcaption>` : ''}
+      ${source ? `<figcaption class="${k('decision-excerpt-src', 'annotate-excerpt-src')}">${esc(mdPlain(source))}</figcaption>` : ''}
       <blockquote class="${k('decision-excerpt-text', 'annotate-excerpt-text')}" id="${qid}">${esc(text)}</blockquote>
       ${S.doc ? more : `<div class="decision-excerpt-ft">${more}${footExtra || ''}</div>`}
     </figure>`;
@@ -2202,7 +2328,7 @@ function renderDecisionBlock(c) {
       : k('', 'annotate-') + DECISION_BTN_CLASS[o.id];
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
-    const badge = isRec ? k('<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>', '<span class="annotate-decision-rec">Recommended</span>') : '';
+    const badge = isRec ? k('<span class="badge badge-ghost badge-xs decision-rec-badge">Recommended</span>', '<span class="annotate-decision-rec">Recommended</span>') : '';
     const cons = o.consequence ? `<span class="${k('decision-consequence', 'annotate-decision-consequence')}">${esc(o.consequence)}</span>` : '';
     const key = kbd && i < 9 ? `<kbd class="kbd kbd-xs">${i + 1}</kbd>` : '';
     btns += `<button type="button" class="${k('btn decision-btn', 'annotate-decision-btn annotate-opt-row')} ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${id}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="${k('decision-opt-head', 'annotate-opt-head')}">${key}<span class="${k('decision-opt-label', 'annotate-opt-label')}">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
@@ -2239,8 +2365,8 @@ function renderDecisionBlock(c) {
     ${renderDecisionReco(opts, dr)}
     ${renderDecisionExcerpt(c, dr)}
     <div class="${k('decision-btns', 'annotate-decision-btns')}${hasCons ? ' has-consequences' : ''}" data-options>${btns}</div>
-    ${decisionAnswer(c) ? '' : `<button type="button" class="${k('btn btn-ghost btn-sm decision-later', 'annotate-decision-btn annotate-decision-later')}" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${id}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
-    ${renderDecisionEvidence(c, dr)}
+    ${S.doc ? '' : '<div class="decision-later-row">'}${decisionAnswer(c) ? '' : `<button type="button" class="${k('btn btn-ghost btn-sm decision-later', 'annotate-decision-btn annotate-decision-later')}" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${id}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
+    ${renderDecisionEvidence(c, dr)}${S.doc ? '' : '</div>'}
     ${cmtHtml}
     ${feedbackHtml(c)}
   </div>`;
@@ -2258,13 +2384,12 @@ function foldedHtml(c) {
   const d = decisionAnswer(c), n = NUM_MAP[c.id], id = escAttr(c.id);
   const what = d ? (choiceLabel(c) || 'Answered in words') : 'Answer later';
   return `<div class="annotate-decision-item annotate-folded${d ? ' annotate-answered' : ''}" data-strip-item="${id}">
-    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d ? stateTag(!!(d.round_pending || d.pending), d) : ''}</button>
+    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${numChipHtml(c, 'annotate-decision-num')}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d && numState(c) !== 'pending' ? stateTag(false, d) : ''}</button>
   </div>`;
 }
 function promptHtml(c) {
   if (!S.doc) return `<div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>`;
-  const n = NUM_MAP[c.id];
-  return `<div class="annotate-decision-prompt">${n ? `<span class="annotate-decision-num">#${n}</span>` : ''}${esc(displayPrompt(c))}</div>`;
+  return `<div class="annotate-decision-prompt">${numChipHtml(c, 'annotate-decision-num')}<span class="annotate-decision-q">${esc(displayPrompt(c))}</span></div>`;
 }
 function docItemAttr(c) {
   return S.doc ? ` data-strip-item="${escAttr(c.id)}"` : '';
@@ -2598,7 +2723,8 @@ async function docNoteAction(btn, scope, id, key, action) {
 // Pending: saved here, not sent to the agent yet. Sent: in a Send (or round).
 function sendStateHtml(c) {
   if (!isMine(c.author) && !(c.decision && isMine(c.decision.by))) return '';
-  if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
+  // A numbered card says Pending with its yellow number chip.
+  if (needsPush(c) || isRoundPending(c) || strandedSay(c)) return NUM_MAP[c.id] ? '' : '<span class="send-state is-pending" title="Saved here. Goes to the agent when you press Send.">Pending</span>';
   if (c.flagged_for_session || (c.decision && !c.decision.round_pending)) return stateTag(false, c);
   return '';
 }
@@ -2609,12 +2735,6 @@ function cardMenuHtml(c, cls) {
 }
 function cardMenuPanel(c, cls) {
   return `<ul class="menu menu-sm citem-menu" role="menu" data-menu-for="${escAttr(c.id)}"${openMenuId === c.id ? '' : ' hidden'}>${cardMenuItems(c, cls)}</ul>`;
-}
-function unreadDotHtml(c) {
-  const rstate = readStateOf(c);
-  if (rstate === 'new-activity') return '<span class="unread-dot new-reply" title="The agent responded since you last read this" role="img" aria-label="↑ NEW reply"></span>';
-  if (rstate === 'unread') return '<span class="unread-dot" title="You have not opened this comment yet" role="img" aria-label="Unread"></span>';
-  return '';
 }
 // A1: a reply box only once the agent has said something on this item.
 function agentResponded(c) {
@@ -2651,7 +2771,7 @@ function commentTextHtml(c) {
 function renderCItem(c) {
   const cls = classify(c);
   const num = NUM_MAP[c.id];
-  const numHtml = num ? `<span class="citem-num">#${num}</span>` : '';
+  const numHtml = numChipHtml(c, 'citem-num');
   const rstate = readStateOf(c);
   const unreadCls = rstate !== 'read' ? ' is-unread' : '';
   const hl = c.id === highlightedCommentId ? ' hl' : '';
@@ -2661,7 +2781,7 @@ function renderCItem(c) {
     const a = answerLabel(c);
     return `<div class="citem is-line${hl}${unreadCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
       <div class="citem-line">
-        ${unreadDotHtml(c)}${numHtml}
+        ${numHtml}
         <span class="citem-line-txt"><span class="citem-line-q">${ticketsHTML(displayPrompt(c))}</span><span class="citem-line-arrow" aria-hidden="true">&rarr;</span><span class="ans${a.muted ? ' is-muted' : ''}">${esc(a.text)}</span></span>
         ${sendStateHtml(c)}
         ${hasAddNoteBox(c) ? `<button type="button" class="btn btn-ghost btn-xs btn-square change-btn" data-action="open-card" data-id="${escAttr(c.id)}" aria-label="Edit your answer to #${num || ''}" title="Edit your answer">${ico('pencil')}</button>` : ''}
@@ -2738,8 +2858,10 @@ function renderCItem(c) {
 
   return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
-      ${unreadDotHtml(c)}
-      <span class="citem-node-name">${numHtml}${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
+      ${numHtml}
+      <span class="citem-node-name">${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
+      <span class="citem-meta"><span class="citem-author">${esc(authorLabel(c).replace(/^agent:/, ''))}</span>
+        <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span></span>
       ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
@@ -2748,10 +2870,6 @@ function renderCItem(c) {
     ${agentReplyHtml}
     ${replyHtml}
     ${quoteHtml}${newerHtml}
-    <div class="citem-meta">
-      <span class="citem-author">${esc(authorLabel(c))}</span>
-      <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span>
-    </div>
     ${decisionHtml}
     ${strandedSay(c) && !hasAddNoteBox(c) ? strandedSayHtml(c) : ''}
     ${replyFormHtml}
@@ -3506,13 +3624,12 @@ let pinPopoverCtx = null; // {anchorId, anchorLabel, x, y} of the open pin popov
 
 function renderPinPopItem(c) {
   const cls = classify(c);
-  const num = NUM_MAP[c.id];
   const respHtml = c.response_text
     ? `<div class="pinpop-item-resp"><b>Agent:</b> ${ticketsHTML(c.response_text)}</div>`
     : '';
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
-      ${unreadDotHtml(c)}${num ? `<span class="citem-num">#${num}</span>` : ''}
+      ${numChipHtml(c, 'citem-num')}
     </div>
     <div class="pinpop-item-txt">${ticketsHTML(c.text)}</div>
     ${respHtml}
@@ -3832,6 +3949,7 @@ function wireHeader() {
     applyTheme(t);
     try { localStorage.setItem('annotate:theme', t); } catch {}
   });
+  document.getElementById('aa-fresh').addEventListener('click', freshTap);
   document.getElementById('copy-link-btn').addEventListener('click', async event => {
     const button = event.currentTarget;
     try {
@@ -4462,6 +4580,7 @@ function sendCommentCountsToFrame() {
           id: c.id,
           n: NUM_MAP[c.id] || 0,
           unread: readStateOf(c) !== 'read',
+          state: numState(c),
           // Creation-time granular target. Older comments without one remain
           // at the anchor corner; new comments can render the numbered pin at
           // the exact clicked element/offset inside that anchor.
@@ -4736,6 +4855,7 @@ const popReopened = new Set();
 function parkDoc() {
   if (VIEW_DOC) applyLive();
   VIEW_DOC = null;
+  setFresh(0, '', false);
 }
 
 // ── Categories (one page per project) ───────────────────────────────
@@ -4974,21 +5094,27 @@ async function init() {
     nextAt = Date.now() + ms;
     refreshTimer = setTimeout(refresh, ms);
   }
+  pollNow = () => { idlePolls = 0; return refresh(); };
   async function refresh() {
     clearTimeout(refreshTimer);
     if (document.hidden) return;
-    if (refreshing || docBusy || pendingPosts) { schedule(8000); return; }
+    // A poll already on its way schedules the next one itself. A document
+    // switch or a post on its way only defers this one a moment, not a whole
+    // cycle: under load two skips put a delivery receipt 16 s late (agent-annotate-pla).
+    if (refreshing) return;
+    if (docBusy || pendingPosts) { schedule(1000); return; }
     refreshing = true;
     let changed = false;
     try {
       pollChanged = false;
-      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
-      if (historyDirty) loadHistory();
-      loadBoard();
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
-      if (onDoc) await loadMeta();
-      loadDelivery();
+      // Where the last Send got to comes with the page's meta: read it with
+      // the rest, not after it.
+      const delivery = onDoc ? loadMeta().then(() => loadDelivery()) : loadDelivery();
+      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]);
+      if (historyDirty) loadHistory();
+      loadBoard();
       changed = pollChanged;
       if (changed) {
         if (onDoc) renderVersionRail();
@@ -5068,6 +5194,7 @@ window.AnnotateDocs = {
   needsPush,
   deliveryLabel,
   deliveryHtml,
+  deliveryNote: () => DELIVERY_NOTE,
   decisionAnswer,
   answerLabel,
   displayPrompt,

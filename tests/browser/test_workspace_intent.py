@@ -6,10 +6,11 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import pytest
+from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from single_page import feedback, history, ready, section  # noqa: E402
+from single_page import feedback, history, project_notes, ready, section  # noqa: E402
 from test_card_layout import CHROME, _serve  # noqa: E402
 
 from agent_annotate.pagegen import generate  # noqa: E402
@@ -45,6 +46,7 @@ def _page(tmp_path, custom=True, title="Campaign review"):
         + "\n```\n"
     )
     generate(source, directory)
+    complete(directory)
     created = "2026-10-02T10:00:00Z"
     comment = dict(
         card, id="question-11", author="agent:review-test", created_at=created, version="v1", status="open"
@@ -309,6 +311,7 @@ def test_tabs_theme_and_noop_progress_are_persistent(tmp_path, width):
             feedback(page)
             assert _contrast(page.locator(".decision-rec-badge").first) >= 4.5
             history(page)
+            project_notes(page)
             panel = page.locator("#project-panel-review")
             module = panel.locator('[data-module="progress"]')
             if module.get_attribute("open") is None:

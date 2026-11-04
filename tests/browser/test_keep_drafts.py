@@ -17,6 +17,7 @@ import urllib.request
 from contextlib import contextmanager
 
 import pytest
+from review_fixtures import authoring, complete, register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -42,6 +43,7 @@ def _start(tmp_path, directory, port):
          "--local-author", "reviewer@example.com", "--local-author-name", "Browser Reviewer"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}/"
+    register(base, directory)
     deadline = time.time() + 15
     while time.time() < deadline:
         try:
@@ -63,8 +65,9 @@ def _stop(process):
 def _agent(base, path, body, method="POST"):
     request = urllib.request.Request(base + path, data=json.dumps(body).encode(), method=method,
                                      headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:keep-drafts"})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.load(response)
+    with authoring(base, body):
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
 
 
 def _directory(tmp_path):
@@ -147,7 +150,8 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _poll(page)
         assert len(responses) == 1 and responses[0].status == 200
         assert responses[0].json()["delivery_status"]["latest"]["state"] == "acknowledged"
-        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
+        # av1: the delivery row is gone; the Send note says it (here, with no Send, the page holds it).
+        page.wait_for_function("() => window.AnnotateDocs.deliveryNote()?.text === 'Read by the agent'")
         responses.clear()
         _poll(page)
         assert responses and all(response.status == 304 for response in responses)
@@ -160,7 +164,8 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         _loaded(page)
         assert responses and responses[0].status == 200
         assert "if-none-match" not in responses[0].request.headers
-        assert page.locator("#delivery-status").inner_text() == "The agent has read your last Send"
+        # av1: the delivery row is gone; the Send note says it (here, with no Send, the page holds it).
+        page.wait_for_function("() => window.AnnotateDocs.deliveryNote()?.text === 'Read by the agent'")
 
 
 def _blur(page):
@@ -174,17 +179,7 @@ def _publish_v2(tmp_path, directory):
     source.write_text(source.read_text().replace("version: v1", "version: v2")
                       .replace("Build passed on both machines.", "Build passed on both machines, twice."))
     generate(source, directory)
-    # generate() writes a later version without making it current; going live
-    # is the publish step, done here the way the CLI does it.
-    from agent_annotate.cli import _write_meta_locked
-
-    def live(meta):
-        meta["current"] = "v2"
-        meta.setdefault("history", []).append({"version": "v2", "ts": "2026-10-03T10:00:00Z", "label": "v2"})
-
-    (directory / "current.html").unlink()
-    (directory / "current.html").symlink_to("versions/v2.html")
-    _write_meta_locked(directory, live)
+    complete(directory)
 
 
 def _say(page):
@@ -237,17 +232,17 @@ def test_rail_composers_keep_text_through_polls_changes_versions_restarts_and_re
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Another note from the agent.", "version": "v1"}]})
         _agent(base, "api/comments/reply-card", {"status": "addressed_by_agent", "response_text": "Fixed in the next build."}, method="PUT")
         _poll(page)
-        # The page waits for the reviewer (dw4): the banner says what came.
+        # The page waits for the reviewer (dw4): the refresh button says what came.
         assert page.evaluate("() => window.AnnotateDocs.comments().length") == before
         _expect_all(page, "after the agent commented and resolved the card, not shown yet")
-        page.locator("#unified-version-banner button").click()
+        page.locator("#aa-fresh").click()
         page.wait_for_function("n => window.AnnotateDocs.comments().length > n", arg=before)
         page.wait_for_timeout(300)
         _expect_all(page, "after the agent commented and resolved the card")
 
         _publish_v2(tmp_path, directory)
         _poll(page)
-        page.locator("#unified-version-banner").wait_for(state="visible")
+        page.wait_for_function("() => document.querySelector('#aa-fresh .aa-fresh-v').textContent === 'v2'")
         assert page.locator("#content-frame").get_attribute("data-version") == "v1"
         _expect_all(page, "after a new version")
 
@@ -548,6 +543,6 @@ def test_polls_read_the_poll_view_of_the_store(tmp_path):
         page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the poll view.", "version": "v1"}]})
         _poll(page)
-        page.locator("#unified-version-banner button").click()  # dw4: shown when the reviewer asks
+        page.locator("#aa-fresh").click()  # dw4: shown when the reviewer asks
         page.locator("#comment-list .citem", has_text="Seen through the poll view.").wait_for()
         assert urls and all(u.endswith("/comments.json?view=poll") for u in urls)

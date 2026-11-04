@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -49,6 +50,7 @@ def _page(tmp_path, monkeypatch) -> Path:
                           "## Alpha\n\nFinished work.\n\n![Board](shots/wide.png)\n\n"
                           f"## Beta\n\n{text} {n}\n", encoding="utf-8")
         generate(source, slug, version=f"v{n}")
+        complete(slug)
     meta = json.loads((slug / "current.meta.json").read_text())
     meta["current"] = "v25"
     meta["history"] = [{"version": f"v{n}", "ts": f"2026-10-{n + 1:02d}T10:00:00Z", "label": f"Round {n}"}

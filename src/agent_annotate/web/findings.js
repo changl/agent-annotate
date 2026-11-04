@@ -131,7 +131,7 @@
   // ── Register: a document, in the Review document's own styles ───────────
   const SECTIONS = [
     { key: 'needs', label: 'Needs you', badge: 'badge-error', cls: 'sec-needs' },
-    { key: 'ready', label: 'Ready to send', badge: 'badge-primary' },
+    { key: 'ready', label: 'Ready to send', badge: 'is-orange' },
     { key: 'waiting', label: 'Waiting on agent' },
     { key: 'done', label: 'Done', open: false },
   ];
@@ -173,7 +173,7 @@
   // ── Rail: every finding as a card under the rail's sections ─────────────
   function optionsHtml(f, chosenLabel) {
     const rec = f.decision_request.recommendation;
-    return `<div class="decision-btns has-consequences">${(f.decision_request.options || []).filter(o => o && typeof o === 'object').map(o => `<button class="btn decision-btn decision-custom${o.id === rec ? ' is-recommended' : ''}" data-opt="${esc(o.id)}" aria-pressed="${o.label === chosenLabel}"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.label === chosenLabel ? '☑ ' : ''}${esc(o.label)}</span>${o.id === rec ? '<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('')}<button class="btn decision-btn decision-comment" id="f-words"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">&#128172; Answer in words</span></span></button></div>`;
+    return `<div class="decision-btns has-consequences">${(f.decision_request.options || []).filter(o => o && typeof o === 'object').map(o => `<button class="btn decision-btn decision-custom${o.id === rec ? ' is-recommended' : ''}" data-opt="${esc(o.id)}" aria-pressed="${o.label === chosenLabel}"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">${o.label === chosenLabel ? '☑ ' : ''}${esc(o.label)}</span>${o.id === rec ? '<span class="badge badge-ghost badge-xs decision-rec-badge">Recommended</span>' : ''}</span>${o.consequence ? `<span class="decision-consequence">${esc(o.consequence)}</span>` : ''}</button>`).join('')}<button class="btn decision-btn decision-comment" id="f-words"${busy ? ' disabled' : ''}><span class="decision-opt-head"><span class="decision-opt-label">&#128172; Answer in words</span></span></button></div>`;
   }
   function lineCard(f) {
     const a = answerOf(f), fx = statusOf(f) === 'done' && fixOf(f);

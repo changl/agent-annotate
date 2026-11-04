@@ -59,6 +59,27 @@ def test_current_version_wins_even_when_a_later_staged_card_exists():
     assert cli._item_numbers(store) == {"current": 10, "staged": "10·2"}
 
 
+@pytest.mark.parametrize("archived", ["grouped", "single", "list"])
+def test_pinning_legacy_labels_preserves_archived_formats_and_submitted_snapshots(archived):
+    from agent_annotate.submitted import store_view
+    from agent_annotate.sync_server import _assign_item_number
+
+    old = _card("archived", anchor_id="fig:old", status="archived")
+    history = {"fig:old": [old]} if archived == "grouped" else {"archived": old} if archived == "single" else [old]
+    snapshot = _card("figure", anchor_id="fig:current")
+    comment = {**snapshot, "agent_snapshot": snapshot.copy()}
+    store = {"anchors": {"fig:current": [comment]}, "archived": history}
+    before = cli._item_numbers(store)
+    new = _card("new", 48)
+    _assign_item_number(store, new, 48)
+    store["anchors"]["d:q48"] = [new]
+    assert {cid: cli._item_numbers(store)[cid] for cid in before} == before
+    assert {cid: cli._item_numbers(store_view(store))[cid] for cid in before} == before
+    assert old["number"] == before["archived"]
+    assert comment["number"] == before["figure"]
+    assert comment["agent_snapshot"]["number"] == before["figure"]
+
+
 def test_finding_lookup_uses_the_same_display_numbers(tmp_path):
     from agent_annotate.categories import _finding
     store = {"anchors": {"d:q41": [_card("review", 41, version="v24")],

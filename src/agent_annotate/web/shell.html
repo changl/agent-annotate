@@ -24,6 +24,10 @@
   </div>
   <nav class="aa-tabs" id="aa-tabs" aria-label="Tabs"></nav>
   <details class="aa-tabs-menu" id="aa-tabs-menu"><summary>Review</summary></details>
+  <!-- av1/#136: always here. A red border and count only for new items; a newer version's name in plain text, "fix" in orange. -->
+  <button type="button" class="btn btn-ghost btn-sm aa-fresh" id="aa-fresh" aria-label="Reload this version" title="Reload this version"><svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg><span class="badge badge-error badge-xs aa-fresh-n" id="aa-fresh-n" hidden></span><span class="aa-fresh-v" hidden></span><span class="aa-fresh-fix" hidden></span></button>
+  <!-- #109: the board's counts, one per line, under the Beads link -->
+  <div class="aa-board-sum" id="aa-board-sum" role="tooltip" hidden></div>
   <div class="hdr-right">
     <div class="text-size" id="text-size">
       <button type="button" class="btn btn-ghost btn-sm btn-square text-size-btn" id="text-size-btn" aria-expanded="false" aria-controls="text-size-panel" aria-label="Text size" title="Text size">Aa</button>
@@ -57,7 +61,6 @@
 
   <!-- Review and Plans: a document in the frame (the accepted shell) -->
   <div class="frame-area" id="frame-area" role="main" aria-label="Document" tabindex="-1">
-    <div class="unified-version-banner" id="unified-version-banner" hidden></div>
     <div class="view-hd"><a class="btn btn-ghost btn-xs view-hd-back" id="view-hd-index" href="#view=plans" hidden><svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"/></svg>All plans</a><h2 class="view-hd-title"><span id="view-hd-name">Review</span><span class="view-hd-sub" id="view-hd-sub-doc"></span></h2><select class="select select-xs view-hd-plan" id="view-hd-plan" aria-label="Plan" hidden></select></div>
     <!-- Plans opens on this index (cards #8, #9): Tracking, Unsorted, then one section per topic -->
     <div class="aa-scroll plans-index" id="plans-index" hidden>
@@ -67,6 +70,7 @@
         <div id="pi-body"></div>
       </div>
     </div>
+    <!-- Only a page that cannot load says why here (an expired link) -->
     <div class="delivery-status" id="delivery-status" role="status" aria-live="polite" hidden></div>
     <div class="repin-banner" id="repin-banner" style="display:none">
       <span class="repin-banner-txt">Re-pinning &mdash; click the comment's correct location in the document</span>
@@ -147,10 +151,12 @@
       <!-- Each tab's own history first; it collapses like a sent round, open by default -->
       <section class="hist-section hist-cat" data-cat="review" aria-label="Review history">
         <details class="hist-collapse" open>
-          <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Review</span> Versions</summary>
-          <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
-          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+          <!-- mme: plain names; versions first, the agent's progress notes folded under them -->
+          <summary class="hist-lbl">Versions and what you sent</summary>
           <div class="vrail-body" id="vrail-body-review" role="list" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
+          <!-- Below the list: showing it never moves a version under the pointer -->
+          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
+          <section class="project-panel" id="project-panel-review" aria-label="Project information" hidden></section>
         </details>
       </section>
       <section class="hist-section hist-cat" data-cat="library" aria-label="Library history" hidden>
@@ -169,8 +175,8 @@
         <details class="hist-collapse" open>
           <summary class="hist-lbl"><span class="badge badge-xs badge-ghost hist-tag">Plans</span> Revisions</summary>
           <section class="project-panel" id="project-panel-plans" aria-label="Plan information" hidden></section>
-          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
           <div class="vrail-body" id="vrail-body-plans" role="list" aria-label="Versions"><div class="vrail-empty">Loading&hellip;</div></div>
+          <p class="unified-history-hint">Use arrow keys to choose a version, then Enter to open it.</p>
         </details>
       </section>
       <section class="hist-section" id="hist-withdrawn" aria-labelledby="hist-withdrawn-lbl" hidden>

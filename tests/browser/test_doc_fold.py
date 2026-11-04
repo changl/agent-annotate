@@ -81,7 +81,8 @@ def test_an_answered_question_folds_at_its_place_and_a_tap_opens_it(session):
     frame.locator(Q11 + ".annotate-folded").wait_for()
     _one_line(item)
     assert item.evaluate("el => el.closest('[data-annotate-strip]').dataset.stripAnchor") == anchor
-    assert "Ship now" in item.inner_text() and "Pending" in item.inner_text()
+    # Not sent yet: its number chip turns yellow instead of a Pending chip (2026-11-02).
+    assert "Ship now" in item.inner_text() and item.locator(".annotate-decision-num.is-pending").count() == 1
     # The question still open stays full size.
     assert frame.locator(".annotate-decision-item:not(.annotate-folded)").count() == 1
     press(item.locator(".annotate-folded-row"))

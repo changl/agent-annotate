@@ -214,7 +214,7 @@ def test_cli_writes_are_visible_on_the_next_conditional_get(server, monkeypatch)
     (root / "versions").mkdir()
     (root / "versions/v1.html").write_text('<p data-anchor-id="s:test">Evidence</p>')
     source = root / "cards.json"
-    source.write_text(json.dumps([{"anchor_id": "d:q2", "number": 2, "decision_request": {
+    source.write_text(json.dumps([{"anchor_id": "d:q2", "number": 2, "category": "findings", "decision_request": {
         "prompt": "New CLI question?", "evidence": [{"anchor": "s:test"}]}}]))
 
     def validators(*routes):
@@ -245,10 +245,11 @@ def test_cli_writes_are_visible_on_the_next_conditional_get(server, monkeypatch)
     before = validators("/current.meta.json", "/api/history")
     markdown = root / "next.md"
     markdown.write_text("---\ntitle: Next version\n---\n\n## Evidence\n\nUpdated via CLI.\n")
-    monkeypatch.setattr(pagegen, "_call_publish", lambda *args: 0)  # no transport/installation changes
+    from review_fixtures import checked
+    monkeypatch.setattr(pagegen, "_call_publish", checked)  # no transport/installation changes
     assert pagegen.cmd_new(SimpleNamespace(slug_dir=str(root), from_file=str(markdown), version="v2", label=None,
                                           project="project", publish=True, ask=False)) == 0
     assert changed(before)["/current.meta.json"]["current"] == "v2"
     before = validators("/current.meta.json", "/api/history")
-    assert cli.cmd_publish_version(SimpleNamespace(slug_dir=str(root), version="v1", label="CLI republish", project=None)) == 0
-    assert changed(before)["/current.meta.json"]["current"] == "v1"
+    assert cli.cmd_publish_version(SimpleNamespace(slug_dir=str(root), version="v1", label="CLI republish", project=None)) == 2
+    assert validators("/current.meta.json", "/api/history") == before

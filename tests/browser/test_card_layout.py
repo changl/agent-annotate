@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from review_fixtures import authoring, complete, register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -119,9 +120,11 @@ def _page(tmp_path, migration="Two statements and two weeks of dual writes."):
     v1 = tmp_path / "v1.md"
     v1.write_text(_doc("v1", "Two statements and a week of dual writes."), encoding="utf-8")
     generate(v1, slug_dir)
+    complete(slug_dir)
     v2 = tmp_path / "v2.md"
     v2.write_text(_doc("v2", migration, CARDS), encoding="utf-8")
     result = generate(v2, slug_dir)
+    complete(slug_dir)
     assert result["unchanged_sections"] == ["s:scope", "s:columns"]
     (slug_dir / "current.html").unlink()
     (slug_dir / "current.html").symlink_to(Path("versions") / "v2.html")
@@ -192,6 +195,7 @@ def _serve(tmp_path, slug_dir, *, port=None):
         text=True,
     )
     base = f"http://127.0.0.1:{port}/"
+    register(base, slug_dir)
     deadline = time.time() + 15
     last_error = None
     while time.time() < deadline:
@@ -348,7 +352,8 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             assert rail.locator(".decision-prompt").inner_text() == "Rename status → lifecycle_state?"
             assert rail.locator(".decision-context").inner_text() == CONTEXT
             assert "Why / details" not in rail.inner_text()
-            assert rail.locator(".decision-reco-line").inner_text().startswith("Recommended:")
+            # mme: the option carries its Recommended tag, so no "Recommended: X" line.
+            assert rail.locator(".decision-reco-line").count() == 0
             assert rail.locator(".decision-rec-badge").text_content() == "Recommended"
             rows = rail.locator(".decision-btns > .decision-btn")
             assert rows.count() == 3 and "Answer in words" in rows.nth(2).inner_text()
@@ -413,6 +418,7 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
     source.write_text(_doc("v1", "```details\nSupporting evidence\nThis is a hidden detail.\n```"))
     directory = tmp_path / "items-model"
     generate(source, directory)
+    complete(directory)
     save_project(
         directory,
         {
@@ -452,7 +458,8 @@ def test_project_modules_and_custom_choices_share_managed_ui(tmp_path):
             data=json.dumps({"items": [item]}).encode(),
             headers={"Content-Type": "application/json", "X-Annotate-Agent": "agent:test"},
         )
-        urllib.request.urlopen(request).close()
+        with authoring(base, {"items": [item]}):
+            urllib.request.urlopen(request).close()
         with playwright.sync_playwright() as runner:
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
