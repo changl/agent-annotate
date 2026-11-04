@@ -177,8 +177,9 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem-node .citem-meta{flex:0 1 auto;min-width:0;margin:0 0 0 auto;gap:6px;flex-wrap:nowrap;font-weight:400;white-space:nowrap;overflow:hidden}
 .citem-node .citem-node-name{flex:0 1 auto}
 .citem-author{font-weight:600;color:var(--muted)}
-.agent-reply{background:color-mix(in oklab,var(--color-info) 10%,var(--color-base-100));border:1px solid color-mix(in oklab,var(--color-info) 30%,transparent);border-radius:var(--radius-field);padding:8px;margin:6px 0;font-size:calc(12px * var(--aa-text, 1));line-height:1.45}
-.agent-reply-hdr{font-size:calc(10px * var(--aa-text, 1));font-weight:700;color:var(--info-text);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+.agent-reply{background:var(--excerpt-bg);border:0;border-radius:var(--radius-field);padding:8px;margin:6px 0;font-size:calc(12px * var(--aa-text, 1));line-height:1.45}
+/* #172: neutral like the context block; blue is for Send, links and focus only */
+.agent-reply-hdr{font-size:calc(10px * var(--aa-text, 1));font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
 .thread-reply{background:var(--soft);border-left:2px solid var(--line);padding:5px 8px;margin:4px 0 4px 8px;font-size:calc(12px * var(--aa-text, 1));word-break:break-word}
 .thread-reply > div:last-child{white-space:pre-wrap}
 .thread-reply-hdr{font-size:calc(10px * var(--aa-text, 1));font-weight:600;color:var(--muted);margin-bottom:2px}
