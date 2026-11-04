@@ -1042,14 +1042,14 @@ function ensureStripStyle() {
     }
     .annotate-decision-item + .annotate-decision-item { border-top-color: var(--line) !important; }
     .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: calc(11px * var(--aa-text, 1)) !important; }
-    /* The question and its number chip, the chip on the right (2026-11-02). */
+    /* The number chip first, then the question (Chang #172; pins stay on the right). */
     .annotate-decision-prompt { display: flex !important; align-items: flex-start !important; gap: 8px !important; }
     .annotate-decision-q { flex: 1 1 auto !important; min-width: 0 !important; }
     .annotate-decision-num {
       display: inline-flex !important; align-items: center !important; justify-content: center !important; box-sizing: border-box !important;
       height: calc(18px * var(--aa-text, 1)) !important; min-width: calc(18px * var(--aa-text, 1)) !important; padding: 0 6px !important;
       border-radius: 999px !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; line-height: 1 !important;
-      font-variant-numeric: tabular-nums !important; white-space: nowrap !important; flex: 0 0 auto !important; margin: 0 0 0 auto !important;
+      font-variant-numeric: tabular-nums !important; white-space: nowrap !important; flex: 0 0 auto !important; margin: 0 !important;
     }
     ${NUM_CHIP_CSS('.annotate-decision-num')}
     .annotate-decision-btns > .annotate-decision-btn, .annotate-decision-btns > .annotate-decision-btn:hover {
@@ -1060,7 +1060,12 @@ function ensureStripStyle() {
     .annotate-decision-btns > .annotate-decision-btn:hover { background: var(--color-base-300) !important; }
     .annotate-decision-rec { background: var(--color-base-200) !important; color: var(--muted) !important; border: none !important; }
     .annotate-decision-reco-line { color: var(--ok-text) !important; }
-    .annotate-excerpt { background: var(--color-base-200) !important; border-left-color: color-mix(in oklab,var(--color-primary) 45%,transparent) !important; }
+    /* #172: no line on the left; its own background, set apart in both themes. */
+    .annotate-excerpt { background: color-mix(in oklab,var(--color-base-content) 11%,var(--color-base-100)) !important; border-left: 0 !important; border-radius: 6px !important; }
+    /* #172: the recommended option on light green, easy to spot in both themes. */
+    .annotate-decision-btns > .annotate-decision-btn.is-recommended { background: color-mix(in oklab,var(--color-success) 26%,var(--color-base-100)) !important; border-color: color-mix(in oklab,var(--color-success) 55%,var(--color-base-100)) !important; }
+    [data-theme="light"] .annotate-decision-btns > .annotate-decision-btn.is-recommended { background: color-mix(in oklab,var(--color-success) 38%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-btn.is-recommended:hover { background: color-mix(in oklab,var(--color-success) 30%,var(--color-base-100)) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-excerpt-more { color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
     .annotate-decision-evidence-goto { background: var(--color-base-300) !important; color: var(--color-base-content) !important; border-radius: .25rem !important; }
     .annotate-decision-ta, .annotate-decision-cmt {

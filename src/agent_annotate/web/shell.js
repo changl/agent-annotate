@@ -1654,8 +1654,10 @@ const NUM_STATE_TEXT = { needs: 'needs you', pending: 'answered, not sent yet', 
 function numChipHtml(c, cls) {
   const n = NUM_MAP[c.id], st = numState(c);
   if (!n) return '';
+  // #172: no separate unread dot; the chip names it for screen readers.
+  const unread = readStateOf(c) !== 'read' ? ', unread' : '';
   // Colour is never the only signal: the state is in its name and tooltip.
-  return `<span class="${cls}${st ? ' is-' + st : ''}" data-num-for="${escAttr(c.id)}"${st ? ` role="img" aria-label="#${n}, ${NUM_STATE_TEXT[st]}" title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
+  return `<span class="${cls}${st ? ' is-' + st : ''}" data-num-for="${escAttr(c.id)}"${st || unread ? ` role="img" aria-label="#${n}${st ? ', ' + NUM_STATE_TEXT[st] : ''}${unread}"` : ''}${st ? ` title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
 }
 // A receipt arriving turns a sent item's chip yellow where it stands; nothing else re-renders.
 function recolourChips(root) {
@@ -1666,7 +1668,7 @@ function recolourChips(root) {
     chip.className = cls + (st ? ' is-' + st : '');
     if (st) {
       chip.setAttribute('role', 'img');
-      chip.setAttribute('aria-label', '#' + NUM_MAP[c.id] + ', ' + NUM_STATE_TEXT[st]);
+      chip.setAttribute('aria-label', '#' + NUM_MAP[c.id] + ', ' + NUM_STATE_TEXT[st] + (readStateOf(c) !== 'read' ? ', unread' : ''));
       chip.title = NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1);
     } else ['role', 'aria-label', 'title'].forEach(a => chip.removeAttribute(a));
   });
@@ -2367,12 +2369,12 @@ function foldedHtml(c) {
   const d = decisionAnswer(c), n = NUM_MAP[c.id], id = escAttr(c.id);
   const what = d ? (choiceLabel(c) || 'Answered in words') : 'Answer later';
   return `<div class="annotate-decision-item annotate-folded${d ? ' annotate-answered' : ''}" data-strip-item="${id}">
-    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question"><span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d && numState(c) !== 'pending' ? stateTag(false, d) : ''}${numChipHtml(c, 'annotate-decision-num')}</button>
+    <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${numChipHtml(c, 'annotate-decision-num')}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d && numState(c) !== 'pending' ? stateTag(false, d) : ''}</button>
   </div>`;
 }
 function promptHtml(c) {
   if (!S.doc) return `<div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>`;
-  return `<div class="annotate-decision-prompt"><span class="annotate-decision-q">${esc(displayPrompt(c))}</span>${numChipHtml(c, 'annotate-decision-num')}</div>`;
+  return `<div class="annotate-decision-prompt">${numChipHtml(c, 'annotate-decision-num')}<span class="annotate-decision-q">${esc(displayPrompt(c))}</span></div>`;
 }
 function docItemAttr(c) {
   return S.doc ? ` data-strip-item="${escAttr(c.id)}"` : '';
@@ -2719,12 +2721,6 @@ function cardMenuHtml(c, cls) {
 function cardMenuPanel(c, cls) {
   return `<ul class="menu menu-sm citem-menu" role="menu" data-menu-for="${escAttr(c.id)}"${openMenuId === c.id ? '' : ' hidden'}>${cardMenuItems(c, cls)}</ul>`;
 }
-function unreadDotHtml(c) {
-  const rstate = readStateOf(c);
-  if (rstate === 'new-activity') return '<span class="unread-dot new-reply" title="The agent responded since you last read this" role="img" aria-label="↑ NEW reply"></span>';
-  if (rstate === 'unread') return '<span class="unread-dot" title="You have not opened this comment yet" role="img" aria-label="Unread"></span>';
-  return '';
-}
 // A1: a reply box only once the agent has said something on this item.
 function agentResponded(c) {
   if (c.response_text) return true;
@@ -2770,9 +2766,9 @@ function renderCItem(c) {
     const a = answerLabel(c);
     return `<div class="citem is-line${hl}${unreadCls}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
       <div class="citem-line">
-        ${unreadDotHtml(c)}
+        ${numHtml}
         <span class="citem-line-txt"><span class="citem-line-q">${ticketsHTML(displayPrompt(c))}</span><span class="citem-line-arrow" aria-hidden="true">&rarr;</span><span class="ans${a.muted ? ' is-muted' : ''}">${esc(a.text)}</span></span>
-        ${sendStateHtml(c)}${numHtml}
+        ${sendStateHtml(c)}
         ${hasAddNoteBox(c) ? `<button type="button" class="btn btn-ghost btn-xs btn-square change-btn" data-action="open-card" data-id="${escAttr(c.id)}" aria-label="Edit your answer to #${num || ''}" title="Edit your answer">${ico('pencil')}</button>` : ''}
         ${cardMenuHtml(c, cls)}
       </div>
@@ -2847,11 +2843,11 @@ function renderCItem(c) {
 
   return `<div class="citem${hl}${unreadCls}${decisionCls}${c.pending ? ' is-pending' : ''}" data-comment-id="${escAttr(c.id)}" title="Click to show this comment's location in the document">
     <div class="citem-node">
-      ${unreadDotHtml(c)}
+      ${numHtml}
       <span class="citem-node-name">${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
       <span class="citem-meta"><span class="citem-author">${esc(authorLabel(c).replace(/^agent:/, ''))}</span>
         <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span></span>
-      ${numHtml}${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
+      ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
     ${locHtml}
@@ -3618,7 +3614,7 @@ function renderPinPopItem(c) {
     : '';
   return `<div class="pinpop-item" data-comment-id="${escAttr(c.id)}">
     <div class="pinpop-item-hdr">
-      ${unreadDotHtml(c)}${numChipHtml(c, 'citem-num')}
+      ${numChipHtml(c, 'citem-num')}
     </div>
     <div class="pinpop-item-txt">${ticketsHTML(c.text)}</div>
     ${respHtml}

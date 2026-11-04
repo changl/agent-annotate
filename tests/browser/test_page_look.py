@@ -62,7 +62,7 @@ OPTIONS = [{"id": "now", "label": "Ship now"}, {"id": "later", "label": "Ship la
 
 def _directory(tmp_path):
     cards = [{"number": n, "anchor_id": f"d:q{n}", "text": f"Question {n}.", "decision_request": {
-        "prompt": f"Question {n}?", "options": OPTIONS, "evidence": [{"anchor": FIREBASE, "label": "Firebase"}]}}
+        "prompt": f"Question {n}?", "options": OPTIONS, "recommendation": "now", "evidence": [{"anchor": FIREBASE, "label": "Firebase"}]}}
         for n in (1, 2, 3)]
     source = tmp_path / "review.md"
     source.write_text(SOURCE.replace("CARDS", json.dumps(cards)))
@@ -171,26 +171,30 @@ def test_one_number_chip_on_the_right_coloured_by_state(frame):
     assert place["pinRight"] <= place["vw"], place
     assert "is-needs" in place["pinState"] and "is-" not in place["rowState"].replace("bpin", ""), place
     assert place["cardPins"] == 0, "a card in the page carries its own number"
-    # Cards in the page: the chip ends the question line; orange replaces the Pending chip.
+    # Cards in the page: the chip starts the question line (Chang #172); orange replaces the Pending chip.
     cards = f.evaluate("""() => [1, 2, 3].map(n => {
       const item = document.querySelector('[data-strip-item="question-' + n + '"]');
       const chip = item.querySelector('.annotate-decision-num'), r = chip.getBoundingClientRect();
       const line = chip.parentElement.getBoundingClientRect();
-      const before = [...chip.parentElement.children].filter(c => c !== chip).map(c => c.getBoundingClientRect().right);
-      return {cls: chip.className, text: chip.textContent, last: Math.max(...before) <= r.left, atEnd: line.right - r.right < 2,
+      const after = [...chip.parentElement.children].filter(c => c !== chip).map(c => c.getBoundingClientRect().left);
+      return {cls: chip.className, text: chip.textContent, first: Math.min(...after) >= r.right, atStart: r.left - line.left < 2,
               pending: item.querySelectorAll('.annotate-send-state.is-pending').length};
     })""")
     assert [c["text"] for c in cards] == ["#1", "#2", "#3"]
-    assert all(c["last"] and c["atEnd"] for c in cards), cards
+    assert all(c["first"] and c["atStart"] for c in cards), cards
     assert [c["cls"].replace("annotate-decision-num", "").strip() for c in cards] == ["is-needs", "is-pending", ""]
     assert all(c["pending"] == 0 for c in cards), cards
-    # Right column: the same chip, right of the card's name.
-    rail = page.evaluate("""() => { const card = document.querySelector('#comment-list .citem[data-comment-id="agent-replied"]');
-      const chip = card.querySelector('.citem-num'), name = card.querySelector('.citem-node-name');
-      return chip && {cls: chip.className, right: chip.getBoundingClientRect().left >= name.getBoundingClientRect().right,
-                      inName: name.contains(chip)}; }""")
+    # Right column (Chang #172): the chip is the first thing on each card's line, and
+    # there is no separate unread dot; Needs you cards have no tinted background.
+    rail = page.evaluate("""() => { const cards = [...document.querySelectorAll('#comment-list .citem')];
+      const card = document.querySelector('#comment-list .citem[data-comment-id="agent-replied"]');
+      return card && card.offsetWidth ? {cls: card.querySelector('.citem-num').className,
+        firsts: cards.filter(c => c.querySelector('.citem-num')).map(c => (c.querySelector('.citem-node, .citem-line').firstElementChild || {}).className),
+        dots: document.querySelectorAll('.unread-dot').length,
+        tinted: cards.filter(c => getComputedStyle(c).backgroundColor !== getComputedStyle(cards[0]).backgroundColor).length} : null; }""")
     if rail:  # the rail is closed on narrow layouts
-        assert "is-needs" in rail["cls"] and rail["right"] and not rail["inName"], rail
+        assert "is-needs" in rail["cls"] and rail["dots"] == 0 and rail["tinted"] == 0, rail
+        assert rail["firsts"] and all(f.startswith("citem-num") for f in rail["firsts"]), rail
     for theme in ("light", "dark"):
         _theme(page, f, theme)
         look = f.evaluate("""() => { const L = window.__look, root = getComputedStyle(document.documentElement);
@@ -259,3 +263,32 @@ def test_short_columns_shrink_and_a_longer_cell_wraps_to_two_lines(frame):
     assert t["beadsLines"] == 2, t  # "2 + the 10 above again" wraps to two lines, not one wide line
     assert t["whenLines"] == [1, 1, 1, 1] and t["when"] < 100, t  # short values stay on one line, column shrinks
     assert t["prose"] > 3 * t["beads"], t
+
+
+# Chang #172: the quoted context has no line on its left and its own background;
+# the recommended option sits on light green (its Recommended tag stays, so
+# colour is not the only sign), in the right column and in the page, dark and light.
+LOOK = """root => { const L = window.__look, s = el => getComputedStyle(el);
+  const under = el => { for (el = el.parentElement; el; el = el.parentElement) { const c = s(el).backgroundColor; if (c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') return c; } return L.page(); };
+  const q = sel => root.querySelector(sel);
+  const ex = q('.decision-excerpt, .annotate-excerpt'), rec = q('.decision-btn.is-recommended, .annotate-decision-btn.is-recommended');
+  const other = q('.decision-btn:not(.is-recommended), .annotate-decision-btn:not(.is-recommended)');
+  return {exLine: s(ex).borderLeftWidth, exApart: L.ratio(s(ex).backgroundColor, under(ex)), exText: L.ratio(s(ex).color, s(ex).backgroundColor),
+          rec: L.rgb(s(rec).backgroundColor), recVsOther: L.ratio(s(rec).backgroundColor, s(other).backgroundColor),
+          recText: L.ratio(s(rec).color, s(rec).backgroundColor), tag: !!rec.querySelector('.decision-rec-badge, .annotate-decision-rec')}; }"""
+
+
+def test_context_block_and_recommended_option_stand_out_in_dark_and_light(frame):
+    page, f = frame
+    page.evaluate(HELPERS)
+    rail = page.locator('#comment-list .citem[data-comment-id="question-1"]')
+    doc = f.locator('[data-strip-item="question-1"]')
+    for theme in ("dark", "light"):
+        _theme(page, f, theme)
+        found = {"page": doc.evaluate(LOOK)}
+        if rail.is_visible():  # the rail is closed on narrow layouts
+            found["rail"] = rail.evaluate(LOOK)
+        for where, x in found.items():
+            r, g, b = x["rec"]
+            assert x["exLine"] == "0px" and x["exApart"] >= 1.15 and x["exText"] >= 4.5, (theme, where, x)
+            assert g > r and g > b and x["recVsOther"] >= 1.15 and x["recText"] >= 4.5 and x["tag"], (theme, where, x)
