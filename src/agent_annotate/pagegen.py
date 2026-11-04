@@ -1548,8 +1548,12 @@ current: shots/checkout-current.png | Today
 proposed: shots/checkout-proposed.png | One-step pay
 ```
 
-```cards
-[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Ship the one-step checkout?","context":"Checks passed; the preview matches the proposed screen.","recommendation":"ship","options":[{"id":"ship","label":"Ship","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep the current checkout."}],"evidence":[{"label":"Checkout, current vs proposed","anchor":"cmp:checkout"}]}}]
+```ask
+Ship the one-step checkout?
+Checks passed; the preview matches the proposed screen.
++ Ship: Preview becomes public.
+- Hold: Keep the current checkout.
+see: cmp:checkout
 ```
 
 ## Progress

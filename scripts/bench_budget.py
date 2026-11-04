@@ -42,12 +42,13 @@ except Exception:  # noqa: BLE001 - any import failure falls back
 
 
 def budgets(n: int) -> dict:
-    """Goal 1 budgets: commands, printed tokens, retries."""
+    """Goal 1 budgets: commands, printed tokens, retries (stage 3: markup and input size too)."""
     return {
         "session_start": {"commands": 0, "tokens": 700},
+        "ask_markup": {"commands": 0, "tokens": 10},
         "read_one_round": {"commands": 1, "tokens": 40 + 60 * n},
         "resolve_a_round": {"commands": 1, "tokens": 15 * n},
-        "publish_small_update": {"commands": 1, "tokens": 25},
+        "publish_small_update": {"commands": 1, "tokens": 25, "input_ratio": 1.2},
         "ask": {"commands": 1, "tokens": 25},
         "claim": {"commands": 1, "tokens": 25},
         "small_round": {"commands": 3, "tokens": 1000},
@@ -73,13 +74,23 @@ def _sandbox_env(root: Path, src: Path) -> dict:
     return env
 
 
-def _cards(n: int) -> list[dict]:
-    return [{"number": i, "anchor_id": f"d:q{i}", "decision_request": {
-        "prompt": f"Use layout {i}?", "context": "The evidence shows the proposed layout.",
-        "recommendation": "use",
-        "options": [{"id": "use", "label": "Use it", "consequence": "The proposed layout ships."},
-                    {"id": "keep", "label": "Keep current", "consequence": "The layout stays unchanged."}],
-        "evidence": [{"label": "Layout evidence", "anchor": "s:evidence"}]}} for i in range(1, n + 1)]
+CARD = ("Use layout {i}?", "The evidence shows the proposed layout.",
+        "Use it", "The proposed layout ships.", "Keep current", "The layout stays unchanged.")
+
+
+def _ask(i: int) -> str:
+    prompt, context, label, consequence, other, other_consequence = CARD
+    return (f"```ask\n{prompt.format(i=i)}\n{context}\n+ {label}: {consequence}\n"
+            f"- {other}: {other_consequence}\n```\n")
+
+
+def markup_tokens() -> int:
+    """Tokens one plain card adds beyond its words (the plan measured 8; the JSON fence 76)."""
+    return tokens(_ask(1)) - sum(tokens(part.format(i=1)) for part in CARD)
+
+
+PLAN = ("## Plan\n\n" + "The checkout keeps the receipt visible while the reviewer pays. "
+        "Each layout below was measured on a phone and a desktop screen. " * 3 + "\n\n")
 
 
 def run_budget(src: Path, answers: int = 3, port: int | None = None, python: str = sys.executable,
@@ -113,12 +124,11 @@ def run_budget(src: Path, answers: int = 3, port: int | None = None, python: str
             return json.load(resp)
 
     page, source = root / "review", root / "page.md"
-    source.write_text("---\ntitle: Round measurement\nversion: v1\n---\n\n## Evidence\n\n"
-                      "The proposed layout keeps the receipt visible.\n\n```cards\n"
-                      + json.dumps(_cards(answers)) + "\n```\n")
+    source.write_text("---\ntitle: Round measurement\n---\n\n" + PLAN + "## Evidence\n\n"
+                      "The proposed layout keeps the receipt visible.\n\n" + "\n".join(_ask(i) for i in range(1, answers + 1)))
     pid = None
     try:
-        cli("ask", "new", "review", "--from", "page.md", "--project", "fixture", "--publish", "--ask")
+        cli("ask", "publish", "review", "--from", "page.md", "--project", "fixture")
         rec = json.loads((root / "state/fixture.json").read_text())["slugs"]["review"]
         pid = rec["pid"]
         port = rec["port"]  # the first free port from port_base; other sandboxes share the range
@@ -128,12 +138,16 @@ def run_budget(src: Path, answers: int = 3, port: int | None = None, python: str
         store = json.loads((page / "comments.json").read_text())
         for c in [c for cs in store["anchors"].values() for c in cs]:
             post(f"/api/comments/{c['id']}/decision",
-                 {"verdict": "select", "option_id": "use", "text": "Use it. Keep the receipt visible."})
+                 {"verdict": "select", "option_id": "use-it", "text": "Use it. Keep the receipt visible."})
         post("/api/rounds/submit", {"note": "Please proceed with these layouts."})
         cli("read_one_round", "inbox", "fixture/review", "--unread")
-        source.write_text("---\ntitle: Round measurement\nversion: v2\n---\n\n## Result\n\n"
-                          "The layouts now keep the receipt visible.\n")
-        cli("publish_small_update", "new", "review", "--from", "page.md", "--project", "fixture", "--publish")
+        part = root / "result.md"
+        part.write_text("## Result\n\nThe layouts now keep the receipt visible.\n")
+        cli("publish_small_update", "publish", "fixture/review", "--from", "result.md", "--section", "Evidence")
+        stored = (page / "source/v2.md").read_text()
+        section = stored[stored.index("## Result"):]
+        input_ratio = tokens(part.read_text()) / tokens(section)
+        assert stored.count(PLAN.strip()) == 1, "the untouched section must stay byte-identical"
         nums = [str(i) for i in range(1, answers + 1)]
         # One command per round; a build without batch resolve exits 2 (usage) and is measured per item.
         p = cli("resolve_a_round", "resolve", "fixture/review", *nums, "--anchor", "s:result", ok=(0, 2))
@@ -160,11 +174,13 @@ def run_budget(src: Path, answers: int = 3, port: int | None = None, python: str
     always_ref = "references/page.md) when authoring" in skill
     measured = {"session_start": {"commands": 0, "tokens": tokens(skill) + (tokens(ref) if always_ref else 0),
                                   "skill_tokens": tokens(skill), "reference_tokens": tokens(ref),
-                                  "reference_loaded_at_start": always_ref}}
+                                  "reference_loaded_at_start": always_ref},
+                "ask_markup": {"commands": 0, "tokens": markup_tokens()}}
     for action in ("read_one_round", "resolve_a_round", "publish_small_update", "ask", "claim"):
         rows = [c for c in cmds if c["action"] == action]
         measured[action] = {"commands": len(rows), "tokens": sum(c["tokens"] for c in rows),
                             "retries": sum(1 for c in rows if c["exit"] != 0)}
+    measured["publish_small_update"]["input_ratio"] = round(input_ratio, 2)
     rnd = [c for c in cmds if c["action"] in ("read_one_round", "publish_small_update", "resolve_a_round")]
     measured["small_round"] = {"commands": len(rnd), "tokens": sum(c["tokens"] + c["command_tokens"] for c in rnd),
                                "retries": 0}
@@ -178,7 +194,7 @@ def over_budget(measured: dict, limit: dict) -> list[str]:
     """Actions over their command or token budget, or that needed a retry."""
     return [a for a, b in limit.items()
             if measured[a]["commands"] > b["commands"] or measured[a]["tokens"] > b["tokens"]
-            or measured[a].get("retries")]
+            or measured[a].get("retries") or measured[a].get("input_ratio", 0) > b.get("input_ratio", 1e9)]
 
 
 def render(result: dict) -> str:

@@ -2275,7 +2275,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             try:
                 require_draft(meta, version)
                 if not ready and draft_path(self.artifact_dir, version).exists():
-                    raise ValueError("publish Review cards as a complete round with new --publish --ask")
+                    raise ValueError("Review cards go live with their version · fix: annotate publish PAGE --from page.md")
             except ValueError as exc:
                 raise DecisionRequestError(str(exc), 409) from exc
         if human(author):
