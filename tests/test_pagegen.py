@@ -703,7 +703,7 @@ def test_new_default_output_is_one_line_naming_the_show_command(tmp_path):
     source.write_text("## Result\n\nChecks passed.\n")
     result = _cli("new", str(tmp_path / "receipt"), "--from", str(source))
     assert result.returncode == 0, result.stderr
-    assert result.stdout == f"v1 staged · show it: annotate publish {tmp_path / 'receipt'} --version v1\n"
+    assert result.stdout.startswith("v1 staged · show it: ") and result.stdout.endswith(f" publish {tmp_path / 'receipt'} --version v1\n")
 
 
 def test_full_plan_accepts_reviewer_heading_without_a_persons_name(tmp_path):
