@@ -195,7 +195,7 @@ def parse_blocks(body: str) -> list[dict]:
                 raise PageGenError(f"fenced block opened with ```{lang} was never closed")
             i += 1
             text = "\n".join(buf)
-            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "details", "project", "compare")
+            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "ask", "details", "project", "compare")
                           else {"kind": "code", "lang": lang, "text": text})
             continue
 
@@ -250,6 +250,88 @@ def parse_blocks(body: str) -> list[dict]:
                 i += 1
             blocks.append({"kind": "para", "text": " ".join(buf)})
     return blocks
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Plain-text decision cards
+#
+#     ```ask
+#     Use one-step payment?                 prompt; `#19012 Use…` keeps question #19012
+#     The receipt remains visible.          context (any plain lines before the options)
+#     + One step: Payment and receipt …     the recommended option (at most one `+`)
+#     - Keep current: Payment stays …       another option; id = slugify(label)
+#     see: cmp:checkout, s:plan             evidence (default: the enclosing section)
+#     impact: high                          also blocking: yes, catalog: yes
+#     ```
+# ────────────────────────────────────────────────────────────────────────────
+_ASK_NUMBER = re.compile(r"^#(\d+)\s+(.*\S)$")
+_ASK_OPTION = re.compile(r"^([+-])\s+(.*\S)$")
+_ASK_KEY = re.compile(r"^(see|impact|blocking|catalog):\s*(.*)$", re.IGNORECASE)
+_ASK_YES = {"yes": True, "true": True, "no": False, "false": False}
+
+
+def parse_ask(raw: str) -> dict:
+    """An ```ask fence → today's card dict (`decision_request` and, with `#N`, its number)."""
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    if not lines:
+        raise PageGenError("an ask card is empty · fix: put the question on the fence's first line")
+    prompt, rest = lines[0], lines[1:]
+    card: dict = {"source_kind": "ask"}
+    numbered = _ASK_NUMBER.match(prompt)
+    if numbered:
+        card["number"], prompt = int(numbered.group(1)), numbered.group(2)
+        if card["number"] < 1:
+            raise PageGenError(f"ask card {prompt!r}: #0 is not a question number · fix: use the number the page shows")
+    if _ASK_OPTION.match(prompt) or _ASK_KEY.match(prompt):
+        raise PageGenError(f"ask card starts with {prompt!r} · fix: put the question on the fence's first line")
+    dr: dict = {"prompt": prompt}
+    context, options, recommended, keys = [], [], [], False
+    for line in rest:
+        option = _ASK_OPTION.match(line)
+        key = _ASK_KEY.match(line) if options else None
+        if option and not keys:
+            # The first colon followed by a space ends the label, so "10:30 start" stays whole.
+            split = re.match(r"(.*?):(?:\s+|$)(.*)", option.group(2))
+            label, consequence = (split.group(1).strip(), split.group(2)) if split else (option.group(2), "")
+            oid = slugify(label)
+            if not label:
+                raise PageGenError(f"ask card {prompt!r}: an option has no label · fix: write {option.group(1)} Label: consequence")
+            if any(o["id"] == oid for o in options):
+                raise PageGenError(f"ask card {prompt!r}: two options are named {label!r} · fix: give each option its own label")
+            options.append({"id": oid, "label": label, "consequence": consequence.strip()})
+            if option.group(1) == "+":
+                recommended.append(oid)
+        elif key:
+            keys = True
+            name, value = key.group(1).lower(), key.group(2).strip()
+            if name == "see":
+                anchors = [a for a in re.split(r"[\s,]+", value) if a]
+                if not anchors:
+                    raise PageGenError(f"ask card {prompt!r}: see: names no anchor · fix: see: s:<section> or another anchor on this page")
+                dr["evidence"] = [{"label": a, "anchor": a} for a in anchors]
+            elif name == "impact":
+                if value.lower() not in ("low", "medium", "high"):
+                    raise PageGenError(f"ask card {prompt!r}: impact {value!r} · fix: impact: low, medium or high")
+                dr["impact"] = value.lower()
+            elif value.lower() not in _ASK_YES:
+                raise PageGenError(f"ask card {prompt!r}: {name} {value!r} · fix: {name}: yes or no")
+            else:
+                dr[name] = _ASK_YES[value.lower()]
+        elif options:
+            raise PageGenError(f"ask card {prompt!r}: {clip(line, 60)!r} comes after the options · fix: "
+                               "context goes before the options; after them only see:, impact:, blocking:, catalog:")
+        else:
+            context.append(line)
+    if len(recommended) > 1:
+        raise PageGenError(f"ask card {prompt!r} recommends {len(recommended)} options · fix: mark one option with +")
+    if context:
+        dr["context"] = " ".join(context)
+    if recommended:
+        dr["recommendation"] = recommended[0]
+    if options:
+        dr["options"] = options
+    card["decision_request"] = dr
+    return card
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -570,7 +652,7 @@ class Renderer:
         if not summary.strip():
             raise PageGenError("a details fence needs a summary on its first line")
         blocks = parse_blocks(body)
-        if any(b["kind"] in ("cards", "project", "details", "heading") for b in blocks):
+        if any(b["kind"] in ("cards", "ask", "project", "details", "heading") for b in blocks):
             raise PageGenError("details holds paragraphs, lists, tables or KPIs; keep headings and cards outside")
         aid = self._unique(f"s:{self.section_slug}:details{self._next('details:' + self.section_slug)}")
         self.reg(aid, summary, "details", parent=self.parent)
@@ -650,6 +732,15 @@ class Renderer:
                 raise PageGenError("each entry in a ```cards block must be an object")
             rendered.append(self._card(card))
         self.parts.append(f'<div class="cards">{"".join(rendered)}</div>')
+
+    def ask_block(self, raw: str) -> None:
+        self.ensure_section()
+        card = parse_ask(raw)
+        dr = card["decision_request"]
+        dr.setdefault("evidence", [{"label": self.section_title, "anchor": self.section}])
+        if "number" in card:
+            card["anchor_id"] = f"d:q{card['number']}"
+        self.parts.append(f'<div class="cards">{self._card(card)}</div>')
 
     def _card(self, card: dict) -> str:
         dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
@@ -755,6 +846,8 @@ class Renderer:
             self.table(block["header"], block["rows"])
         elif kind == "cards" and not self.skip_cards:
             self.cards_block(block["raw"])
+        elif kind == "ask" and not self.skip_cards:
+            self.ask_block(block["raw"])
         elif kind == "details":
             self.details(block["raw"])
         elif kind == "image":
@@ -782,6 +875,10 @@ def render(meta: dict, blocks: list[dict],
     prepass.run(blocks)
     renderer = Renderer(title, structural=set(prepass.used), images=images)
     renderer.run(blocks)
+    for card in renderer.cards:  # `see:` may name content further down; label it from the whole page
+        if card.get("source_kind") == "ask":
+            for item in card["decision_request"]["evidence"]:
+                item["label"] = (renderer.registry.get(item["anchor"]) or {}).get("name") or item["label"]
     return renderer.canvas, renderer.registry, renderer.cards
 
 
@@ -1089,7 +1186,8 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
             title = validate_name(title)
         except ValueError as exc:
             raise PageGenError(str(exc)) from exc
-    version = version or meta.get("version") or "v1"
+    from .review_versions import next_version
+    version = version or meta.get("version") or next_version(slug_dir)
     if not re.fullmatch(r"v\d+", version):
         raise PageGenError(f"version must look like v1, v2, v3 (got {version!r})")
     from .cli import _read_meta
@@ -1314,10 +1412,8 @@ def cmd_new(args) -> int:
 
     args.candidate_version = version
     args.ready = True
+    args.ask = bool(result["cards"])  # a page with cards is always published as its whole round
     if args.publish:
-        if result["cards"] and not args.ask:
-            print("ERROR: this page has cards; publish the complete round with --publish --ask", file=sys.stderr)
-            return 2
         rc = _call_publish(slug_dir, args)
         if rc:
             return rc
@@ -1326,10 +1422,8 @@ def cmd_new(args) -> int:
         return _call_publish_version(slug_dir, version, result["label"], args)
     from shlex import quote
     print("  staged; publish the complete round:")
-    print(f"    {_inv()} new {slug_dir} --from {quote(str(source))} --version {version} --publish"
-          + (" --ask" if result["cards"] else ""))
-    rc = 0
-    return rc
+    print(f"    {_inv()} publish {quote(str(slug_dir))} --version {version}")
+    return 0
 
 
 def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
@@ -1377,13 +1471,13 @@ def add_parser(sub) -> None:
     sp.add_argument("slug_dir", nargs="?", default=None)
     sp.add_argument("--from", dest="from_file", default=None, metavar="page.md",
                     help="the markdown document (front matter + prose + ```cards)")
-    sp.add_argument("--version", default=None, help="vN (default: front matter, else v1)")
+    sp.add_argument("--version", default=None, help="vN (default: front matter, else the next version)")
     sp.add_argument("--fixes", default=None, metavar="vN", help="this new version fixes an earlier visible version")
     sp.add_argument("--label", default=None, help="version label for the rail")
     sp.add_argument("--title", default=None, help="stable page name; version titles stay in Markdown")
     sp.add_argument("--publish", action="store_true", help="run `publish` on the result")
     sp.add_argument("--ask", action="store_true",
-                    help="seed the ```cards round before making the version visible")
+                    help="accepted for old commands; a page with cards always publishes its round")
     sp.add_argument("--example", action="store_true",
                     help="print a complete example document and exit")
     sp.add_argument("--project", default=None)
