@@ -68,7 +68,8 @@ def test_a_card_cites_its_section_by_default_and_renders_like_a_json_card(tmp_pa
     [card] = json.loads(result["cards_json"].read_text())
     assert card["source_kind"] == "ask"
     assert card["decision_request"]["evidence"] == [{"label": "Plan", "anchor": "s:plan"}]
-    as_json = dict(card, anchor_id="d:1")
+    assert (card["number"], card["anchor_id"]) == (1, "d:q1")
+    as_json = dict(card)
     as_json.pop("source_kind")
     js = _source(tmp_path, "## Plan\n\nPay in one step.\n\n```cards\n" + json.dumps([as_json]) + "\n```\n")
     expected = pagegen.generate(js, tmp_path / "json")
@@ -128,7 +129,7 @@ def test_cards_imply_ask_on_publish(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_slug_project", lambda *a: ("test", "review"))
     monkeypatch.setattr("agent_annotate.workspace.duplicate_page", lambda *a: None)
     monkeypatch.setattr(pagegen, "_call_publish", lambda *a: 0)
-    monkeypatch.setattr(pagegen, "_call_ask", lambda slug, cards, version, args: calls.append(version) or 0)
+    monkeypatch.setattr(pagegen, "_call_ask", lambda slug, cards, version, args, renumber: calls.append(version) or 0)
     source = _source(tmp_path, "## Plan\n\nText.\n\n```ask\n" + CARD + "\n```\n")
     assert pagegen.cmd_new(_new_args(tmp_path, source)) == 0
     assert calls == ["v1"]

@@ -334,6 +334,71 @@ def parse_ask(raw: str) -> dict:
     return card
 
 
+class _NumbersMoved(Exception):
+    """Another publish took a reserved number between allocation and the locked write."""
+
+
+def _taken_numbers(slug_dir: Path, version: str) -> set[int]:
+    """Every number the page shows (archived and legacy included) or another draft reserved."""
+    from .cli import _item_numbers
+    try:
+        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        store = {}
+    taken = {n for n in _item_numbers(store if isinstance(store, dict) else {}).values() if type(n) is int}
+    for path in (slug_dir / ".review-drafts").glob("v*.json"):
+        if path.stem == version:
+            continue  # the draft this generation replaces
+        try:
+            taken.update(n for n in json.loads(path.read_text(encoding="utf-8")).get("reserved") or [] if type(n) is int)
+        except (OSError, ValueError, AttributeError):
+            pass
+    return taken
+
+
+def _reserve_numbers(slug_dir: Path, version: str, blocks: list[dict]) -> list[int]:
+    """Numbers for the page's unnumbered ask cards: one past everything taken or on this page."""
+    explicit, count = set(), 0
+    for block in blocks:
+        if block["kind"] == "ask":
+            number = parse_ask(block["raw"]).get("number")
+            if number:
+                explicit.add(number)
+            else:
+                count += 1
+        elif block["kind"] == "cards":
+            try:
+                data = json.loads(block["raw"])
+            except ValueError:
+                continue  # render names the broken fence
+            data = data.get("cards") if isinstance(data, dict) else data
+            explicit.update(c["number"] for c in data or [] if isinstance(c, dict) and type(c.get("number")) is int)
+    if not count:
+        return []
+    start = max(_taken_numbers(slug_dir, version) | explicit, default=0) + 1
+    return list(range(start, start + count))
+
+
+def _number_ask_fences(text: str, numbers: list[int]) -> str:
+    """Write each allocated number into its fence, so the stored source re-poses the same question."""
+    lines, todo, i = text.split("\n"), iter(numbers), 0
+    while i < len(lines):
+        fence = _FENCE.match(lines[i].strip())
+        i += 1
+        if not fence:
+            continue
+        first = None
+        while i < len(lines) and not _FENCE.match(lines[i].strip()):
+            if fence.group(1).lower() == "ask" and first is None and lines[i].strip():
+                first = i
+            i += 1
+        i += 1
+        if first is not None and not _ASK_NUMBER.match(lines[first].strip()):
+            indent = lines[first][:len(lines[first]) - len(lines[first].lstrip())]
+            lines[first] = f"{indent}#{next(todo)} {lines[first].lstrip()}"
+    return "\n".join(lines)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Images and the current-vs-proposed block
 #
@@ -515,9 +580,10 @@ class Renderer:
 
     def __init__(self, title: str, skip_cards: bool = False,
                  structural: set[str] | None = None,
-                 images: ImageStore | None = None) -> None:
+                 images: ImageStore | None = None, ask_numbers: list[int] | None = None) -> None:
         self.title = title
         self.skip_cards = skip_cards
+        self.ask_numbers = iter(ask_numbers or ())
         self.images = images or ImageStore(None, None)
         # Anchors the prose owns, collected by a first pass. A card may name one
         # (that is how a card is pinned to a table row); it must never mint a
@@ -738,8 +804,10 @@ class Renderer:
         card = parse_ask(raw)
         dr = card["decision_request"]
         dr.setdefault("evidence", [{"label": self.section_title, "anchor": self.section}])
-        if "number" in card:
-            card["anchor_id"] = f"d:q{card['number']}"
+        # Without reserved numbers (a comparison render) an unnumbered card keeps a d:<n> anchor.
+        number = card.get("number") or next(self.ask_numbers, None)
+        if number:
+            card["number"], card["anchor_id"] = number, f"d:q{number}"
         self.parts.append(f'<div class="cards">{self._card(card)}</div>')
 
     def _card(self, card: dict) -> str:
@@ -861,7 +929,7 @@ class Renderer:
 
 
 def render(meta: dict, blocks: list[dict],
-           images: ImageStore | None = None) -> tuple[str, dict, list[dict]]:
+           images: ImageStore | None = None, ask_numbers: list[int] | None = None) -> tuple[str, dict, list[dict]]:
     """Two passes: one to learn which anchors the prose owns, one to render.
 
     Without the first pass a card that names `tbl:columns:row:tier` before the
@@ -873,7 +941,7 @@ def render(meta: dict, blocks: list[dict],
     images = images or ImageStore(None, None)
     prepass = Renderer(title, skip_cards=True, images=images)
     prepass.run(blocks)
-    renderer = Renderer(title, structural=set(prepass.used), images=images)
+    renderer = Renderer(title, structural=set(prepass.used), images=images, ask_numbers=ask_numbers)
     renderer.run(blocks)
     for card in renderer.cards:  # `see:` may name content further down; label it from the whole page
         if card.get("source_kind") == "ask":
@@ -934,6 +1002,8 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
             "later versions require `other_files_required: none` or an explicit file list")
 
     card_blocks = [i for i, block in enumerate(blocks) if block.get("kind") == "cards"]
+    # Numbered by annotate and citing their own section, ask cards may sit anywhere; JSON cards keep every rule.
+    cards = [card for card in cards if card.get("source_kind") != "ask"]
     if cards:
         if len(card_blocks) != 1:
             problems.append("later versions require exactly one ```cards block")
@@ -1167,7 +1237,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None, *, title: str | None = None,
-             fixes: str | None = None) -> dict:
+             fixes: str | None = None, _attempt: int = 0) -> dict:
     """Parse, render, lint and write every file a publishable page needs."""
     text = source.read_text(encoding="utf-8")
     meta, body = parse_front_matter(text)
@@ -1210,7 +1280,8 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         except ValueError as exc:
             raise PageGenError(f"project fence: {exc}") from exc
     images = ImageStore(source.parent, slug_dir)
-    canvas, registry, cards = render(meta, blocks, images)
+    reserved = _reserve_numbers(slug_dir, version, blocks)
+    canvas, registry, cards = render(meta, blocks, images, reserved)
     from .decision_quality import card_refusal, page_anchors
     anchors = page_anchors(canvas)
     for card in cards:
@@ -1246,11 +1317,18 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     from .page_names import page_name, set_page_name
     # Resolve legacy titles before an in-place regeneration replaces their HTML.
     initial_name = page_name(slug_dir, fallback=meta["title"])
+    stats = {"sections": layout["sections"], "screenshots": layout["screenshots"]}
+    if reserved:
+        stats["reserved"] = reserved
     try:
-        prior = _write_files(slug_dir, version, label, source, text, html_out, cards,
-                             {"sections": layout["sections"], "screenshots": layout["screenshots"]}, fixes)
+        prior = _write_files(slug_dir, version, label, source, _number_ask_fences(text, reserved), html_out, cards,
+                             stats, fixes)
     except ValueError as exc:
         raise PageGenError(str(exc)) from exc
+    except _NumbersMoved:
+        if _attempt >= 2:
+            raise PageGenError("numbers kept colliding with another publish · fix: rerun the same command") from None
+        return generate(source, slug_dir, version, label, title=title, fixes=fixes, _attempt=_attempt + 1)
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1266,6 +1344,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "fixes": fixes,
         "anchors": len(registry),
         "cards": len(cards),
+        "reserved": reserved,
         "warnings": warnings,
         "unchanged_sections": unchanged,
         "layout": layout,
@@ -1299,6 +1378,8 @@ def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
     existing_meta = _read_meta(slug_dir)
     prior = sorted(h.get("version") for h in (existing_meta.get("history") or [])
                    if isinstance(h, dict) and h.get("version"))
+    if set((stats or {}).get("reserved") or ()) & _taken_numbers(slug_dir, version):
+        raise _NumbersMoved
     from .review_versions import stage
     stage(slug_dir, version, label, fixes, stats or {})
 
@@ -1379,51 +1460,58 @@ def cmd_new(args) -> int:
         if duplicate:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
-    try:
-        result = generate(source, slug_dir, args.version, args.label, title=getattr(args, "title", None),
-                          fixes=getattr(args, "fixes", None))
-    except PageGenError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
-        print(f"ERROR: could not write the page: {exc}", file=sys.stderr)
-        return 1
+    from .cli import NUMBERS_TAKEN
+    version = args.version
+    for _attempt in range(3):  # a number taken after generation regenerates the same draft
+        try:
+            result = generate(source, slug_dir, version, args.label, title=getattr(args, "title", None),
+                              fixes=getattr(args, "fixes", None))
+        except PageGenError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            print(f"ERROR: could not write the page: {exc}", file=sys.stderr)
+            return 1
 
-    slug, version = page_slug, result["version"]
-    print(f"  wrote          {result['html']}")
-    print(f"  anchors        {result['anchors']}")
-    print(f"  cards          {result['cards']}"
-          + (f" → {result['cards_json']}" if result["cards"] else ""))
-    print(f"  source copy    {result['source_copy']}")
-    print(f"  version        {version} ({result['label']})"
-          + (f"; earlier: {', '.join(result['prior_versions'])}"
-             if result["prior_versions"] else ""))
-    layout = result.get("layout") or {}
-    if layout.get("folded"):
-        print(f"  earlier        {len(layout['folded'])} finished topics folded into Earlier updates")
-    for archive in layout.get("archived") or []:
-        print(f"  archived       {archive['topics']} finished topics → {archive['id']} ({archive['title']})")
-    if layout.get("already_archived"):
-        print(f"  archived       {len(layout['already_archived'])} topics already in an archive page left out")
-    if layout.get("returned"):
-        print(f"  returned       {len(layout['returned'])} archived topics changed and are back on the page")
-    for warning in result.get("warnings") or []:
-        print(f"  WARN           {warning}")
+        slug, version = page_slug, result["version"]
+        print(f"  wrote          {result['html']}")
+        print(f"  anchors        {result['anchors']}")
+        print(f"  cards          {result['cards']}"
+              + (f" → {result['cards_json']}" if result["cards"] else ""))
+        print(f"  source copy    {result['source_copy']}")
+        print(f"  version        {version} ({result['label']})"
+              + (f"; earlier: {', '.join(result['prior_versions'])}"
+                 if result["prior_versions"] else ""))
+        layout = result.get("layout") or {}
+        if layout.get("folded"):
+            print(f"  earlier        {len(layout['folded'])} finished topics folded into Earlier updates")
+        for archive in layout.get("archived") or []:
+            print(f"  archived       {archive['topics']} finished topics → {archive['id']} ({archive['title']})")
+        if layout.get("already_archived"):
+            print(f"  archived       {len(layout['already_archived'])} topics already in an archive page left out")
+        if layout.get("returned"):
+            print(f"  returned       {len(layout['returned'])} archived topics changed and are back on the page")
+        for warning in result.get("warnings") or []:
+            print(f"  WARN           {warning}")
 
-    args.candidate_version = version
-    args.ready = True
-    args.ask = bool(result["cards"])  # a page with cards is always published as its whole round
-    if args.publish:
+        args.candidate_version = version
+        args.ready = True
+        args.ask = bool(result["cards"])  # a page with cards is always published as its whole round
+        if not args.publish:
+            from shlex import quote
+            print("  staged; publish the complete round:")
+            print(f"    {_inv()} publish {quote(str(slug_dir))} --version {version}")
+            return 0
         rc = _call_publish(slug_dir, args)
         if rc:
             return rc
-        if result["cards"]:
-            return _call_ask(slug, result["cards_json"], version, args)
-        return _call_publish_version(slug_dir, version, result["label"], args)
-    from shlex import quote
-    print("  staged; publish the complete round:")
-    print(f"    {_inv()} publish {quote(str(slug_dir))} --version {version}")
-    return 0
+        if not result["cards"]:
+            return _call_publish_version(slug_dir, version, result["label"], args)
+        rc = _call_ask(slug, result["cards_json"], version, args, bool(result["reserved"]))
+        if rc != NUMBERS_TAKEN:
+            return rc
+    print("not live: numbers kept colliding with another publish · fix: rerun the same command", file=sys.stderr)
+    return 2
 
 
 def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
@@ -1456,12 +1544,12 @@ def _call_publish_version(slug_dir: Path, version: str, label: str, args) -> int
         project=getattr(args, "project", None), prepared=True))
 
 
-def _call_ask(slug: str, cards_json: Path, version: str, args) -> int:
+def _call_ask(slug: str, cards_json: Path, version: str, args, renumber: bool = False) -> int:
     from .cli import cmd_ask
     return cmd_ask(argparse.Namespace(
         slug=slug, from_file=str(cards_json), version=version,
         project=getattr(args, "project", None), author=None, json=False,
-        ready=getattr(args, "ready", False)))
+        ready=getattr(args, "ready", False), renumber=renumber))
 
 
 def add_parser(sub) -> None:
