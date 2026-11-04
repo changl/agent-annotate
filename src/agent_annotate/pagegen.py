@@ -334,8 +334,12 @@ def parse_ask(raw: str) -> dict:
     return card
 
 
-class _NumbersMoved(Exception):
-    """Another publish took a reserved number between allocation and the locked write."""
+class _Regenerate(Exception):
+    """Another publish took a reserved number, or the picked version, before the locked write."""
+
+
+class VersionTaken(PageGenError):
+    """The picked version was taken while a merged (`--section`) source was built on the version before it."""
 
 
 def _taken_numbers(slug_dir: Path, version: str) -> set[int]:
@@ -397,6 +401,67 @@ def _number_ask_fences(text: str, numbers: list[int]) -> str:
             indent = lines[first][:len(lines[first]) - len(lines[first].lstrip())]
             lines[first] = f"{indent}#{next(todo)} {lines[first].lstrip()}"
     return "\n".join(lines)
+
+
+_COMPARE_IMAGE = re.compile(r"^(\s*(?:current|proposed):\s*)([^|\s]+)(.*)$", re.IGNORECASE)
+
+
+def _image_refs(text: str, refs: dict[str, str]) -> str:
+    """Replace image paths (image lines and compare lines) by the page's own copies, so the stored source
+    renders again without the author's files."""
+    lines, fenced = text.split("\n"), None
+    for i, line in enumerate(lines):
+        fence = _FENCE.match(line.strip())
+        if fence:
+            fenced = None if fenced is not None else fence.group(1).lower()
+            continue
+        image = _IMAGE.match(line.strip()) if fenced is None else None
+        if image and image.group(2) in refs:
+            at = line.rfind(image.group(2))  # the path, not alt text that repeats it
+            lines[i] = line[:at] + refs[image.group(2)] + line[at + len(image.group(2)):]
+        pair = _COMPARE_IMAGE.match(line) if fenced == "compare" else None
+        if pair and pair.group(2) in refs:
+            lines[i] = pair.group(1) + refs[pair.group(2)] + pair.group(3)
+    return "\n".join(lines)
+
+
+_COPY = r'assets/[0-9a-f]{12}-[^"]+'
+
+
+def _shown_images(slug_dir: Path, base: str, sections: list[tuple[str, str]]) -> dict[str, str]:
+    """{image path: page copy} for kept sections of a page whose stored source still names the author's files.
+
+    Each section is matched with its rendered copy in the base version or the archive page that holds
+    it; a path maps when exactly one copy in that section carries its file name.
+    """
+    rendered: dict[str, str] = {}
+    for page in [slug_dir / "versions" / f"{base}.html",
+                 *sorted((slug_dir / "plans").glob("archive-*/versions/v*.html"), reverse=True)]:
+        try:
+            for m in _SECTION_RE.finditer(page.read_text(encoding="utf-8")):
+                rendered.setdefault(m.group(1), m.group(2))
+        except OSError:
+            continue
+    refs: dict[str, str] = {}
+    unclear: set[str] = set()
+    for anchor, block in sections:
+        html_section = rendered.get(anchor, "")
+        copies = {None: set(re.findall(_COPY, html_section))}  # a compare cell also matches on its role
+        for role, cell in re.findall(r'<figure class="aa-cmp-cell" data-role="(current|proposed)">(.*?)</figure>',
+                                     html_section, re.DOTALL):
+            copies.setdefault(role, set()).update(re.findall(_COPY, cell))
+        for b in parse_blocks(block):
+            paths = [(b["path"], None)] if b["kind"] == "image" else []
+            if b["kind"] == "compare":
+                paths = [(item[0], role) for pair in parse_compare(b["raw"])[1] for item, role in zip(pair, ROLES)]
+            for path, role in paths:
+                if path.startswith(("assets/", "attachments/")):
+                    continue  # already the page's own copy
+                found = {c for c in copies.get(role, copies[None]) if c.endswith("-" + _asset_stem(Path(path).name))}
+                copy = found.pop() if len(found) == 1 else None
+                if copy is None or refs.setdefault(path, copy) != copy:
+                    unclear.add(path)
+    return {path: copy for path, copy in refs.items() if path not in unclear}
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -505,8 +570,12 @@ def section_source(slug_dir: Path, text: str, name: str) -> dict:
         anchors.append(anchor)
     hits = [(b, anchor) for b, anchor in zip(blocks, anchors) if name.strip().lower() in (b[2].lower(), anchor)]
     if not hits:
+        from difflib import get_close_matches
+        names = [b[2] for b in blocks]  # a long page names the closest few, not its 80 headings
+        shown = names if len(names) <= 8 else get_close_matches(name, names, n=5, cutoff=0.3) or names[:5]
+        more = f" (+{len(names) - len(shown)} more)" if len(names) > len(shown) else ""
         raise PageGenError(f'no section "{name}" on {base} · fix: --section one of '
-                           + (", ".join(b[2] for b in blocks) or "none; publish the whole page"))
+                           + (", ".join(shown) + more or "none; publish the whole page"))
     if len(hits) > 1:
         raise PageGenError(f'{len(hits)} sections are named "{name}" on {base} · fix: --section one of '
                            + ", ".join(anchor for _, anchor in hits))
@@ -517,6 +586,11 @@ def section_source(slug_dir: Path, text: str, name: str) -> dict:
     closed = _closed_numbers(slug_dir)
     before, kept_before = _keep_open_cards(lines[:start], closed)
     after, kept_after = _keep_open_cards(lines[end:], closed)
+    shown = _shown_images(slug_dir, base, [(anchor, "\n".join(lines[s:e])) for (s, e, _), anchor in zip(blocks, anchors)
+                                           if s != start])
+    if shown:  # kept sections render from the page's own image copies, not the author's files
+        before = _image_refs("\n".join(before), shown).split("\n")
+        after = _image_refs("\n".join(after), shown).split("\n")
     meta = {k: v for k, v in base_meta.items() if k not in ("version", "label")}
     meta.update(part_meta)
     body = "\n".join(before + part + [""] + after)
@@ -630,8 +704,7 @@ class ImageStore:
             except ValueError:
                 pass
         if src is None:
-            stem = re.sub(r"[^A-Za-z0-9_.-]", "-", found.name).replace("..", "-").strip(".-")[:80] or "image"
-            name = hashlib.sha256(data).hexdigest()[:12] + "-" + stem
+            name = hashlib.sha256(data).hexdigest()[:12] + "-" + _asset_stem(found.name)
             self.staged[name] = data
             src = "assets/" + name
         self.cache[ref] = (src, size)
@@ -645,6 +718,10 @@ class ImageStore:
                 tmp = target.with_name(target.name + ".tmp")
                 tmp.write_bytes(data)
                 os.replace(tmp, target)
+
+
+def _asset_stem(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", name).replace("..", "-").strip(".-")[:80] or "image"
 
 
 def _img(src: str, size: tuple[int, int] | None, alt: str) -> str:
@@ -1371,6 +1448,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None, *, title: str | None = None,
              fixes: str | None = None, text: str | None = None, _attempt: int = 0) -> dict:
     """Parse, render, lint and write every file a publishable page needs (`text` replaces the file's)."""
+    merged = text is not None
     text = source.read_text(encoding="utf-8") if text is None else text
     meta, body = parse_front_matter(text)
     for key in meta:
@@ -1389,6 +1467,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         except ValueError as exc:
             raise PageGenError(str(exc)) from exc  # fix: passes through
     from .review_versions import next_version
+    picked = not (version or meta.get("version"))  # picked here, so a concurrent publish may take it first
     version = version or meta.get("version") or next_version(slug_dir)
     if not re.fullmatch(r"v\d+", version):
         raise PageGenError(f"version must look like v1, v2, v3 (got {version!r}) · fix: --version v2, or leave it out for the next one")
@@ -1453,14 +1532,17 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if reserved:
         stats["reserved"] = reserved
     try:
-        prior = _write_files(slug_dir, version, label, source, _number_ask_fences(text, reserved), html_out, cards,
-                             stats, fixes)
+        stored = _image_refs(_number_ask_fences(text, reserved), {ref: src for ref, (src, _) in images.cache.items()})
+        prior = _write_files(slug_dir, version, label, source, stored, html_out, cards, stats, fixes, picked)
     except ValueError as exc:
         raise PageGenError(str(exc)) from exc  # fix: passes through
-    except _NumbersMoved:
+    except _Regenerate as moved:
+        if moved.args and merged:  # rebuild on the newer source, or the other publish's section is lost
+            raise VersionTaken(f"{version} was taken · fix: rerun the same command") from None
         if _attempt >= 2:
             raise PageGenError("numbers kept colliding with another publish · fix: rerun the same command") from None
-        return generate(source, slug_dir, version, label, title=title, fixes=fixes, text=text, _attempt=_attempt + 1)
+        return generate(source, slug_dir, None if picked else version, label, title=title, fixes=fixes, text=text,
+                        _attempt=_attempt + 1)
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1477,6 +1559,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "anchors": len(registry),
         "cards": len(cards),
         "reserved": reserved,
+        "picked": picked,
         "warnings": warnings,
         "unchanged_sections": unchanged,
         "layout": layout,
@@ -1495,24 +1578,28 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _write_files(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None,
+                 picked: bool = False) -> list[str]:
     from .sync_server import _locked_store
     slug_dir.mkdir(parents=True, exist_ok=True)
     with _locked_store(slug_dir):
-        return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes)
+        return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes, picked)
 
 
 def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None,
+                 picked: bool = False) -> list[str]:
     from .cli import _read_meta
 
     slug_dir.mkdir(parents=True, exist_ok=True)
     existing_meta = _read_meta(slug_dir)
     prior = sorted(h.get("version") for h in (existing_meta.get("history") or [])
                    if isinstance(h, dict) and h.get("version"))
+    from .review_versions import draft_path, shown, stage
     if set((stats or {}).get("reserved") or ()) & _taken_numbers(slug_dir, version):
-        raise _NumbersMoved
-    from .review_versions import stage
+        raise _Regenerate
+    if picked and (shown(existing_meta, version) or draft_path(slug_dir, version).exists()):
+        raise _Regenerate(version)  # another publish staged or showed this version since it was picked
     stage(slug_dir, version, label, fixes, stats or {})
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
@@ -1596,23 +1683,24 @@ def cmd_new(args) -> int:
         if duplicate:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
-    from .cli import NUMBERS_TAKEN
-    text = None
-    if getattr(args, "section", None):
-        # shortcut: images in kept sections resolve from the --from file's folder; keep section files beside page.md.
-        try:
-            merged = section_source(slug_dir, source.read_text(encoding="utf-8"), args.section)
-        except PageGenError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
-            return 1
-        text = merged["text"]
-        args.section_title, args.kept = merged["section"], merged["kept"]
-        args.section_base = merged["base"] if merged["base"] != merged["current"] else None
-    version = args.version
-    for _attempt in range(3):  # a number taken after generation regenerates the same draft
+    from .cli import NUMBERS_TAKEN, VERSION_TAKEN
+    version, auto = args.version, None
+    for _attempt in range(3):  # a number or version another publish took first regenerates the draft
+        text = None
+        if getattr(args, "section", None):  # (again) on the newest source: another publish may have landed
+            try:
+                merged = section_source(slug_dir, source.read_text(encoding="utf-8"), args.section)
+            except PageGenError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
+                return 1
+            text = merged["text"]
+            args.section_title, args.kept = merged["section"], merged["kept"]
+            args.section_base = merged["base"] if merged["base"] != merged["current"] else None
         try:
             result = generate(source, slug_dir, version, args.label, title=getattr(args, "title", None),
                               fixes=getattr(args, "fixes", None), text=text)
+        except VersionTaken:
+            continue  # merge again on the version that was staged first
         except PageGenError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
             return 1
@@ -1652,10 +1740,18 @@ def cmd_new(args) -> int:
         rc = _call_publish(slug_dir, args)
         if rc:
             return rc
-        if not result["cards"]:
-            return _call_publish_version(slug_dir, version, result["label"], args)
-        rc = _call_ask(slug, result["cards_json"], version, args, bool(result["reserved"]))
-        if rc != NUMBERS_TAKEN:
+        if result["cards"]:
+            rc = _call_ask(slug, result["cards_json"], version, args, bool(result["reserved"]))
+        else:
+            rc = _call_publish_version(slug_dir, version, result["label"], args)
+        auto = result["picked"] if auto is None else auto
+        if rc == VERSION_TAKEN and auto:
+            version = None  # the next version, on top of the one that landed
+        elif rc == VERSION_TAKEN:
+            print(f"not live: {version} is not newer than the version shown now · fix: leave out --version",
+                  file=sys.stderr)
+            return 2
+        elif rc != NUMBERS_TAKEN:
             return rc
     print("not live: numbers kept colliding with another publish · fix: rerun the same command", file=sys.stderr)
     return 2
@@ -1688,7 +1784,7 @@ def _call_publish_version(slug_dir: Path, version: str, label: str, args) -> int
     from .cli import cmd_publish_version
     return cmd_publish_version(argparse.Namespace(
         slug_dir=str(slug_dir), version=version, label=label,
-        project=getattr(args, "project", None), prepared=True))
+        project=getattr(args, "project", None), prepared=True, newest=True))
 
 
 def _call_ask(slug: str, cards_json: Path, version: str, args, renumber: bool = False) -> int:
@@ -1696,7 +1792,7 @@ def _call_ask(slug: str, cards_json: Path, version: str, args, renumber: bool = 
     return cmd_ask(argparse.Namespace(
         slug=slug, from_file=str(cards_json), version=version,
         project=getattr(args, "project", None), author=None, json=False,
-        ready=getattr(args, "ready", False), renumber=renumber))
+        ready=getattr(args, "ready", False), renumber=renumber, newest=True))
 
 
 def add_parser(sub) -> None:
