@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A page poll that comes due while a document loads or a post is on its way runs a second later instead of a full 8 s cycle later, and where the last Send got to is read alongside the other poll reads instead of after them; under load two deferred polls had put a delivery receipt past 15 s. The notes test now reports the card, the open requests and any error the card shows if its save never appears (agent-annotate-pla).
 - SessionStart (Claude Code and Codex) and Claude Code's prompt hook refresh a resumed session's page owners when the recorded process has ended, then deliver queued Sends. The session and captured terminal must match; other sessions and live owners keep their pages. Reviewers see when a Send is waiting because the agent's session is not running.
 
 - Posting several numbered cards together on an older page keeps existing comment numbers fixed, including figure comments and archived comments. The next card no longer collides with a comment moved by the previous insertion; a conflict's suggested number can be used on retry (agent-annotate-2hk).

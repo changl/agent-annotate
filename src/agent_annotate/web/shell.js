@@ -4978,18 +4978,23 @@ async function init() {
   async function refresh() {
     clearTimeout(refreshTimer);
     if (document.hidden) return;
-    if (refreshing || docBusy || pendingPosts) { schedule(8000); return; }
+    // A poll already on its way schedules the next one itself. A document
+    // switch or a post on its way only defers this one a moment, not a whole
+    // cycle: under load two skips put a delivery receipt 16 s late (agent-annotate-pla).
+    if (refreshing) return;
+    if (docBusy || pendingPosts) { schedule(1000); return; }
     refreshing = true;
     let changed = false;
     try {
       pollChanged = false;
-      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject()]);
-      if (historyDirty) loadHistory();
-      loadBoard();
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
-      if (onDoc) await loadMeta();
-      loadDelivery();
+      // Where the last Send got to comes with the page's meta: read it with
+      // the rest, not after it.
+      const delivery = onDoc ? loadMeta().then(() => loadDelivery()) : loadDelivery();
+      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]);
+      if (historyDirty) loadHistory();
+      loadBoard();
       changed = pollChanged;
       if (changed) {
         if (onDoc) renderVersionRail();
