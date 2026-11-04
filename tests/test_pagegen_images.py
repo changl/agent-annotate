@@ -225,4 +225,4 @@ def test_new_example_shows_a_compare_and_a_card_citing_it(tmp_path):
                           capture_output=True, text=True,
                           env={**__import__("os").environ, "PYTHONPATH": str(Path(pagegen.__file__).parents[1])})
     assert proc.returncode == 0, proc.stderr
-    assert "```compare" in proc.stdout and '"anchor":"cmp:checkout"' in proc.stdout
+    assert "```compare" in proc.stdout and "see: cmp:checkout" in proc.stdout
