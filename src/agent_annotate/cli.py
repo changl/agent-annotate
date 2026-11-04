@@ -2198,7 +2198,10 @@ def cmd_publish_version(args) -> int:
     return _commit_review(record, version, [], _resolve_author(None))
 
 
-def _commit_review(record, version, items, author):
+NUMBERS_TAKEN = 9  # internal: a card number was taken after generation; `new` regenerates and retries
+
+
+def _commit_review(record, version, items, author, renumber=False):
     from .review_versions import read_draft
     try:
         draft = read_draft(Path(record["slug_dir"]), version)
@@ -2214,6 +2217,8 @@ def _commit_review(record, version, items, author):
     code, payload = _api(record, "POST", "/api/comments/batch", {
         "items": items, "idempotency": "anchor",
         "publish_version": {"version": version, "preview": draft["preview"]}}, author)
+    if renumber and code == 409 and "card number" in str(payload):
+        return NUMBERS_TAKEN
     if code != 200:
         print(f"ERROR: review publication failed (HTTP {code}): {payload}", file=sys.stderr)
         return 2
@@ -2784,7 +2789,7 @@ def cmd_ask(args) -> int:
         if c.get("anchor_label"):
             item["anchor_label"] = c["anchor_label"]
         number = c.get("number")
-        if numbered_round:
+        if numbered_round and c.get("source_kind") != "ask":  # annotate numbered ask cards itself
             if isinstance(number, bool) or not isinstance(number, int) or number < 1:
                 print(f"ERROR: card #{i} needs a positive integer `number` for {version}",
                       file=sys.stderr)
@@ -2874,7 +2879,7 @@ def cmd_ask(args) -> int:
     for warning in warnings:
         print(warning, file=sys.stderr)
     if getattr(args, "ready", False):
-        return _commit_review(record, version, items, author)
+        return _commit_review(record, version, items, author, getattr(args, "renumber", False))
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)

@@ -77,7 +77,7 @@ def activate(directory, version, label=None):
 
     def mutate(meta):
         require_draft(meta, version)
-        entry = {k: v for k, v in data.items() if k not in ('preview', 'verified', 'fingerprint')}
+        entry = {k: v for k, v in data.items() if k not in ('preview', 'verified', 'fingerprint', 'reserved')}
         entry.update(ts=_now_iso(), label=label if label is not None else data['label'])
         meta.setdefault('history', []).append(entry)
         meta['current'] = version
