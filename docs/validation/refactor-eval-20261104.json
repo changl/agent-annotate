@@ -1,0 +1,421 @@
+{
+  "base": "bdd629143f2ae647e7a3086b0a7ea1e0db5d8f0a",
+  "snapshot_utc": "2026-11-04T01:27:11Z",
+  "source": {
+    "files": 64,
+    "lines": 36487
+  },
+  "tokenizer": "tiktoken 0.14.0 / o200k_base proxy; not provider billing",
+  "fixtures": [
+    {
+      "answers": 1,
+      "commands": 3,
+      "output_bytes": 676,
+      "output_proxy_tokens": 165,
+      "command_proxy_tokens": 68,
+      "steps": [
+        {
+          "name": "inbox",
+          "exit": 0,
+          "output_bytes": 521,
+          "output_tokens": 120,
+          "command_tokens": 9
+        },
+        {
+          "name": "new-v2",
+          "exit": 0,
+          "output_bytes": 62,
+          "output_tokens": 15,
+          "command_tokens": 46
+        },
+        {
+          "name": "resolve-01",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 30,
+          "command_tokens": 13
+        }
+      ]
+    },
+    {
+      "answers": 3,
+      "commands": 5,
+      "output_bytes": 1178,
+      "output_proxy_tokens": 286,
+      "command_proxy_tokens": 94,
+      "steps": [
+        {
+          "name": "inbox",
+          "exit": 0,
+          "output_bytes": 837,
+          "output_tokens": 184,
+          "command_tokens": 9
+        },
+        {
+          "name": "new-v2",
+          "exit": 0,
+          "output_bytes": 62,
+          "output_tokens": 15,
+          "command_tokens": 46
+        },
+        {
+          "name": "resolve-01",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-02",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 30,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-03",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 29,
+          "command_tokens": 13
+        }
+      ]
+    },
+    {
+      "answers": 5,
+      "commands": 7,
+      "output_bytes": 1680,
+      "output_proxy_tokens": 411,
+      "command_proxy_tokens": 120,
+      "steps": [
+        {
+          "name": "inbox",
+          "exit": 0,
+          "output_bytes": 1153,
+          "output_tokens": 252,
+          "command_tokens": 9
+        },
+        {
+          "name": "new-v2",
+          "exit": 0,
+          "output_bytes": 62,
+          "output_tokens": 15,
+          "command_tokens": 46
+        },
+        {
+          "name": "resolve-01",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 29,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-02",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 29,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-03",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 30,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-04",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-05",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        }
+      ]
+    },
+    {
+      "answers": 10,
+      "commands": 12,
+      "output_bytes": 2937,
+      "output_proxy_tokens": 709,
+      "command_proxy_tokens": 185,
+      "steps": [
+        {
+          "name": "inbox",
+          "exit": 0,
+          "output_bytes": 1945,
+          "output_tokens": 410,
+          "command_tokens": 9
+        },
+        {
+          "name": "new-v2",
+          "exit": 0,
+          "output_bytes": 62,
+          "output_tokens": 15,
+          "command_tokens": 46
+        },
+        {
+          "name": "resolve-01",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 27,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-02",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-03",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-04",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 27,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-05",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 26,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-06",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 30,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-07",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 30,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-08",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 29,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-09",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 31,
+          "command_tokens": 13
+        },
+        {
+          "name": "resolve-10",
+          "exit": 0,
+          "output_bytes": 93,
+          "output_tokens": 28,
+          "command_tokens": 13
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "schema_version": 1,
+    "window": {
+      "since": "2026-10-31T00:00:00+00:00",
+      "until": "2026-11-04T01:31:10.567752+00:00"
+    },
+    "global": {
+      "active_pages": 2,
+      "events": 7198,
+      "decision_requests": 2592,
+      "reviewer_decisions": 312,
+      "submitted_rounds": 60,
+      "legacy_rounds_without_id": 0,
+      "publish_successes": 353,
+      "publish_failures": 86,
+      "deliveries": {
+        "started": 0,
+        "accepted": 1,
+        "pending": 0,
+        "uncertain": 0,
+        "superseded": 2,
+        "acknowledged": 57
+      },
+      "decision_quality": {
+        "cards": 467,
+        "cards_with_warnings": 0,
+        "warnings": 0
+      },
+      "submission_to_attempt_seconds": {
+        "samples": 57,
+        "p50": 0.778,
+        "p95": 1.241
+      },
+      "submission_to_acceptance_seconds": {
+        "samples": 57,
+        "p50": 2.859,
+        "p95": 10.516
+      },
+      "submission_to_acknowledgment_seconds": {
+        "samples": 57,
+        "p50": 7.68,
+        "p95": 25.19
+      }
+    },
+    "by_project": {
+      "reviews": {
+        "active_pages": 2,
+        "events": 7198,
+        "decision_requests": 2592,
+        "reviewer_decisions": 312,
+        "submitted_rounds": 60,
+        "legacy_rounds_without_id": 0,
+        "publish_successes": 353,
+        "publish_failures": 86,
+        "deliveries": {
+          "started": 0,
+          "accepted": 1,
+          "pending": 0,
+          "uncertain": 0,
+          "superseded": 2,
+          "acknowledged": 57
+        },
+        "decision_quality": {
+          "cards": 467,
+          "cards_with_warnings": 0,
+          "warnings": 0
+        },
+        "submission_to_attempt_seconds": {
+          "samples": 57,
+          "p50": 0.778,
+          "p95": 1.241
+        },
+        "submission_to_acceptance_seconds": {
+          "samples": 57,
+          "p50": 2.859,
+          "p95": 10.516
+        },
+        "submission_to_acknowledgment_seconds": {
+          "samples": 57,
+          "p50": 7.68,
+          "p95": 25.19
+        }
+      }
+    },
+    "limitations": [
+      "Estate-local: only pages in the current top-level project registries are included; retired pages are excluded.",
+      "Active pages and decision quality are current snapshots, not historical window snapshots.",
+      "Delivery states are latest journal rows timestamped in the window, not historical transitions.",
+      "Prompt attempt, acceptance, and acknowledgment do not prove agent action completion.",
+      "Browser timing and resource opens are not measured.",
+      "Old round events without an ID have no deduplication guarantee.",
+      "Only recorded events are counted; missing instrumentation is not evidence of no activity."
+    ]
+  },
+  "eval_measures": {
+    "reviewer_correction_candidates_per_week": {
+      "2026-10-26": 4,
+      "2026-11-02": 7
+    },
+    "open_cards": 380,
+    "open_cards_owner_absent_or_moved_or_superseded": 0,
+    "open_cards_owner_unknown": 0,
+    "rail_only_open_cards": 357,
+    "open_cards_document_unavailable": 0,
+    "bulk_approval_candidate_cards": 0,
+    "visual_change_candidate_versions": 208,
+    "visual_change_candidate_versions_no_image": 42,
+    "submitted_rounds": 247
+  },
+  "historical_cost": {
+    "transcripts_copied": 5,
+    "files_with_recognized_calls": 4,
+    "heuristic_failures": 32,
+    "closed_authoring_rounds": 27,
+    "median_issuing_output": 1049.5,
+    "median_result_char_div4": 931,
+    "median_combined": 2310.3,
+    "limitations": "Selected local development sessions; mixed releases, no network or cross-Mac reads; heuristic includes at least one quoted failure and misses unknown verbs.",
+    "recognized_tool_rows": 166,
+    "cli_tool_rows": 161,
+    "documentation_tool_rows": 5
+  },
+  "snapshot_hashes": {
+    "fld-stack-round8/comments.json": "ba04e7eae3b40f7376d0c7b0059e7f3e88d8baf2335123c735a02851e07667ab",
+    "fld-stack-round8/current.meta.json": "c6e6708287a9dcffb85c593fc7595ad7bc46fa78f42871596aac0a49b503c66e",
+    "bus/reviews/fld-stack-round8.ndjson": "38e46ec80b6c15e9dd54d99d825bab6be178c3985d87792fb8e6bb1ad68d6cbd",
+    "annotate-conformity-20260927/comments.json": "d0afacbcd0aeddfd961cf7edcfc427c13bfffd2a2353f1f5f752d323d557026a",
+    "annotate-conformity-20260927/current.meta.json": "ffb28793cceb84dc6e5cbdf4f08e742cab786a5c0e30a8e7d5fb8c8f3f215c40",
+    "bus/reviews/annotate-conformity-20260927.ndjson": "a866c95fdc29de0987e39f131aed47624c216ab34487801311b35a803416b9f2"
+  },
+  "fld-stack-round8": {
+    "history_count": 385,
+    "replaced_within10m": 164,
+    "events": {
+      "seen_updated": 182,
+      "version_published": 177,
+      "page_published": 112,
+      "comment_updated": 2750,
+      "decision_requested": 2533,
+      "comment_created": 394,
+      "comments_seeded": 131,
+      "round_submitted": 43,
+      "session_push": 44,
+      "notice_emitted": 65,
+      "round_received": 43,
+      "inbox_read": 136,
+      "comment_resolved": 236,
+      "page_claimed": 4,
+      "plan_published": 104,
+      "page_publish_failed": 67
+    },
+    "incomplete_lines": 2
+  },
+  "annotate-conformity-20260927": {
+    "history_count": 41,
+    "replaced_within10m": 18,
+    "events": {
+      "version_published": 41,
+      "seen_updated": 61,
+      "page_published": 23,
+      "comment_created": 50,
+      "decision_requested": 59,
+      "comments_seeded": 22,
+      "comment_updated": 100,
+      "round_submitted": 16,
+      "session_push": 16,
+      "inbox_read": 47,
+      "page_claimed": 3,
+      "notice_emitted": 15,
+      "round_received": 14,
+      "comment_resolved": 40,
+      "comment_reply": 2,
+      "page_publish_failed": 19
+    },
+    "incomplete_lines": 0
+  },
+  "copied_fld_round_replay": {
+    "round_ts": "2026-11-04T00:11:03Z",
+    "round_id": "5d73cadd0c8055e7379b329a",
+    "answers": 3,
+    "output_bytes": 1235,
+    "command": "annotate inbox reviews/fld-stack-round8 --unread",
+    "output_proxy_tokens": 329,
+    "command_proxy_tokens": 12
+  }
+}

@@ -90,6 +90,7 @@ STATES = [  # av1: the Send note's short words (the delivery row is gone)
     ({"state": "accepted", "receipt": {"prompt": {"stages": ["input_accepted"]}}}, "Delivered", "Sent"),
     ({"state": "accepted"}, "Saved, not confirmed", "Waiting for the agent"),
     ({"state": "pending", "detail": "Owner process ended"}, "Saved, agent not told yet", "Waiting for the agent"),
+    ({"state": "pending", "target": {"pid": 2147483647}}, "Agent's session not running", "Waiting for the agent"),
     ({"state": "uncertain"}, "Saved, not confirmed", "Waiting for the agent"),
     ({"state": "superseded"}, "Not delivered: the page changed agents", "Waiting for the agent"),
 ]
@@ -116,5 +117,6 @@ def test_delivery_says_where_the_last_send_is_in_plain_words(tmp_path):
             page.reload(wait_until="networkidle")
             ready(page)
             page.wait_for_function("t => window.AnnotateDocs.deliveryNote()?.text === t", arg=banner)
-            assert page.evaluate("() => window.AnnotateDocs.deliveryNote().title") == (row.get("detail") or "")
+            assert page.evaluate("() => window.AnnotateDocs.deliveryNote().title") == (
+                "Owner process ended; waiting for the session to resume" if row.get("target") else row.get("detail") or "")
             playwright.expect(frame.locator('[data-strip-item="q-1"] .annotate-send-state')).to_have_text(card)

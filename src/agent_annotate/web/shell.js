@@ -1187,7 +1187,8 @@ async function loadDelivery() {
     if (data.latest) {
       // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
       const unconfirmed = 'Saved, not confirmed';
-      const labels = {acknowledged: 'Read by the agent', pending: 'Saved, agent not told yet', accepted: data.latest.delivered ? 'Delivered' : unconfirmed, started: 'Agent working on it', uncertain: unconfirmed, superseded: 'Not delivered: the page changed agents'};
+      // #97: a pending Send whose owner session is not running says so.
+      const labels = {acknowledged: 'Read by the agent', pending: data.latest.owner_running === false ? "Agent's session not running" : 'Saved, agent not told yet', accepted: data.latest.delivered ? 'Delivered' : unconfirmed, started: 'Agent working on it', uncertain: unconfirmed, superseded: 'Not delivered: the page changed agents'};
       // The technical reason stays in the tooltip, out of the words he reads.
       next = { id: data.latest.id, text: labels[data.latest.state] || data.latest.state, title: data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '' };
     }

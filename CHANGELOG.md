@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- SessionStart (Claude Code and Codex) and Claude Code's prompt hook refresh a resumed session's page owners when the recorded process has ended, then deliver queued Sends. The session and captured terminal must match; other sessions and live owners keep their pages. Reviewers see when a Send is waiting because the agent's session is not running.
+
 - Posting several numbered cards together on an older page keeps existing comment numbers fixed, including figure comments and archived comments. The next card no longer collides with a comment moved by the previous insertion; a conflict's suggested number can be used on retry (agent-annotate-2hk).
 - Tests: full runs write merged JUnit XML, keep per-chunk logs, and print one result line with counts, duration and failing tests. Runtime tests finish and clean up their detached test servers before three browser chunks run in parallel; browser ports are leased in 18700–18799 across suites. `--workers 1` provides a serial baseline. The PR check reuses uv's cache and frozen lockfile (agent-annotate-va0).
 - Carry the Windmill pilot's repository test profiles and clean-HEAD routing; `--full --local` explicitly runs on this machine without submitting a job (agent-annotate-4zw).

@@ -45,7 +45,7 @@ def sandbox_page(tmp_path, monkeypatch, stages, directory=None, reviewer="review
         monkeypatch.setattr(module, "STATE_DIR", state)
     monkeypatch.setattr(cli, "LOCK_DIR", state / "locks")
     monkeypatch.setattr(delivery, "_target_ready", lambda target: (True, ""))
-    monkeypatch.setattr(delivery, "_process", lambda pid: ("sandbox", "codex"))
+    monkeypatch.setattr(delivery, "_target_exited", lambda target: False)
     sends = []
     def fake_orca(*args):
         assert args[:2] == ("terminal", "send") and args[3] == "sandbox-only"
