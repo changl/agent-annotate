@@ -14,6 +14,7 @@ One project page for progress, feedback, and decisions across Claude Code and Co
 annotate new reviews/workspace --from page.md --project my-project --publish
 annotate project my-project/workspace --from project.json
 annotate inbox my-project/workspace --unread
+annotate resolve my-project/workspace 1 2 3
 annotate cards my-project/workspace --category findings --json
 annotate ask my-project/workspace --from cards.json --category findings --set design --json
 annotate finding my-project/workspace --fixed 11 --proof evidence.png --note "Verified" --json
@@ -21,7 +22,7 @@ annotate plan my-project/workspace rollout --from plan.md --title "Rollout" --js
 annotate library my-project/workspace --from copy.json --json
 ```
 
-Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
+Write commands print one line without the page link (`v2 live · 3 cards #1–#3`); `--verbose` adds the link and `--json` prints everything. `inbox` prints one line per answer and the `resolve` line that closes them. Use `--ask` only when the Markdown contains actual decision cards. A changed review can publish `--version vN` to the same directory. Ordinary progress needs no version or full-plan metadata. Requested full-plan reviews preserve the current plan and prior feedback.
 
 Each page owns one stable display name in `current.meta.json.name`; set or rename it with `new --title` or `publish --title`. Without an explicit name, the initial document title seeds it; later Markdown titles describe revisions. Page links, receipts, workspace JSON and session-start notices use that name. The header and browser tab title prefer project branding (`project.json.title`), then the stable page name. Use sentence case, preserving proper nouns such as **Agent Annotate**; `agent-annotate` is the package/repository identifier. New directory slugs use lowercase ASCII kebab-case from the initial name; reserve `-YYYYMMDD` for separate dated reports/events, and preserve existing routes. Parent page references derive names from their targets; see [naming and migration](docs/page-names.md).
 
