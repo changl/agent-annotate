@@ -2197,21 +2197,26 @@ def cmd_publish_version(args) -> int:
     cards_file = slug_dir / "versions" / f"{version}.cards.json"
     if cards_file.exists() and json.loads(cards_file.read_text()):
         project, slug = _slug_project(slug_dir, getattr(args, "project", None))
-        return cmd_ask(argparse.Namespace(slug=slug, project=project,
+        return cmd_ask(argparse.Namespace(slug=slug, project=project, newest=getattr(args, "newest", False),
             version=version, from_file=str(cards_file), author=None, json=False, ready=True))
     project, slug = _slug_project(slug_dir, getattr(args, "project", None))
     resolved = _resolve_scoped_slug(slug, project)
     if not resolved:
         return 2
     _, _, record = resolved
-    return _commit_review(record, version, [], _resolve_author(None))
+    return _commit_review(record, version, [], _resolve_author(None), newest=getattr(args, "newest", False))
 
 
 NUMBERS_TAKEN = 9  # internal: a card number was taken after generation; `new` regenerates and retries
+VERSION_TAKEN = 10  # internal: another publish showed this or a later version first; `new` picks the next one
 
 
-def _commit_review(record, version, items, author, renumber=False):
+def _commit_review(record, version, items, author, renumber=False, newest=False):
+    """renumber: a card number taken first returns NUMBERS_TAKEN; newest: a version shown first returns VERSION_TAKEN."""
     from .review_versions import read_draft
+    current = _read_meta(Path(record["slug_dir"])).get("current") if newest else None
+    if current and re.fullmatch(r"v\d+", current) and int(current[1:]) >= int(version[1:]):
+        return VERSION_TAKEN  # showing it now would put an older page back in front
     try:
         draft = read_draft(Path(record["slug_dir"]), version)
         if not draft.get("verified"):
@@ -2228,6 +2233,8 @@ def _commit_review(record, version, items, author, renumber=False):
         "publish_version": {"version": version, "preview": draft["preview"]}}, author)
     if renumber and code == 409 and "card number" in str(payload):
         return NUMBERS_TAKEN
+    if newest and code == 409 and "already visible" in str(payload):
+        return VERSION_TAKEN
     if code != 200:
         err = payload.get("error") if isinstance(payload, dict) else payload
         print(_with_fix(f"ERROR: review publication failed (HTTP {code}): {err}", "rerun the same command; the previous version stays visible"), file=sys.stderr)
@@ -2889,7 +2896,8 @@ def cmd_ask(args) -> int:
     for warning in warnings:
         print(warning, file=sys.stderr)
     if getattr(args, "ready", False):
-        return _commit_review(record, version, items, author, getattr(args, "renumber", False))
+        return _commit_review(record, version, items, author, getattr(args, "renumber", False),
+                              getattr(args, "newest", False))
     route = "batch"
     code, payload = _api(record, "POST", "/api/comments/batch",
                          {"items": items, "idempotency": "anchor"}, author)

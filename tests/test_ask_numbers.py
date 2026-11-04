@@ -77,7 +77,7 @@ def _publish_flow(directory, httpd, monkeypatch, before_ask=None):
         draft = read_draft(directory, args.candidate_version)
         draft.update(verified=True, fingerprint=fingerprint(directory, args.candidate_version))
         sync_server._atomic_write_json(directory / f".review-drafts/{args.candidate_version}.json", draft)
-        attempts.append(draft["reserved"])
+        attempts.append(draft.get("reserved"))
         if before_ask:
             before_ask(draft)
         return 0
