@@ -25,10 +25,10 @@ def resolution_scope():
 
 def validate_name(value: str) -> str:
     if not isinstance(value, str) or any(unicodedata.category(c).startswith("C") for c in value):
-        raise ValueError("page name must be plain text without control characters")
+        raise ValueError("page name has control characters · fix: use plain text")
     value = " ".join(value.split())
     if not value or len(value) > 160 or "<" in value or ">" in value:
-        raise ValueError("page name must be 1–160 plain-text characters")
+        raise ValueError("page name is empty, over 160 characters or has < > · fix: use 1–160 plain-text characters")
     return value
 
 

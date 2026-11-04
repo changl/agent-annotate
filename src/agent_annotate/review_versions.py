@@ -14,11 +14,12 @@ def shown(meta, version):
 
 def require_draft(meta, version):
     if not isinstance(version, str) or not re.fullmatch(r'v[0-9]+', version):
-        raise ValueError('version must look like v1, v2, v3')
+        raise ValueError('version is not vN · fix: --version v2 (or leave it out for the next one)')
     if shown(meta, version):
         numbers = [int(h['version'][1:]) for h in meta.get('history', [])
                    if isinstance(h, dict) and re.fullmatch(r'v[0-9]+', str(h.get('version', '')))]
-        raise ValueError(f'{version} is already visible and immutable; use v{max([int(version[1:]), *numbers]) + 1}')
+        raise ValueError(f'{version} is already visible and immutable; use v{max([int(version[1:]), *numbers]) + 1}'
+                         ' · fix: leave out --version and the next one is picked')
 
 
 def next_version(directory):
@@ -49,7 +50,7 @@ def stage(directory, version, label, fixes, stats):
     meta = _read_meta(directory)
     require_draft(meta, version)
     if fixes is not None and (not shown(meta, fixes) or int(fixes[1:]) >= int(version[1:])):
-        raise ValueError('--fixes must name an earlier visible review version')
+        raise ValueError('--fixes names no earlier shown version · fix: --fixes one of the versions in History')
     data = {'version': version, 'label': label, 'preview': secrets.token_urlsafe(24), **stats}
     if fixes is not None:
         data['fixes'] = fixes

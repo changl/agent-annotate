@@ -26,6 +26,7 @@ TESTS = (
     "tests/test_ask_cards.py",
     "tests/test_ask_numbers.py",
     "tests/test_ask_section.py",
+    "tests/test_fix_lines.py",
     "tests/test_version_ready.py",
     "tests/test_publish_version.py",
     "tests/test_page_names.py",

@@ -178,19 +178,18 @@ def exception_reason(args) -> str | None:
         # One line of plain text: it is shown under the page's name in Documents.
         reason = " ".join("".join(ch for ch in reason if ch.isprintable() or ch.isspace()).split())
         if not reason:
-            raise ValueError('--exception requires a nonempty reason')
+            raise ValueError('--exception requires a nonempty reason · fix: --exception "why this page stands apart"')
         if len(reason) > MAX_EXCEPTION_REASON:
-            raise ValueError(f"--exception reason must be at most {MAX_EXCEPTION_REASON} characters")
+            raise ValueError(f"--exception reason is over {MAX_EXCEPTION_REASON} characters · fix: shorten it")
         return reason
     return "standalone" if getattr(args, "standalone", False) else None
 
 
 def duplicate_message(record: dict) -> str:
     from .page_names import page_name
-    return (f"ERROR: project page already exists: {page_name(record)}\n"
-            f"  Directory: {record['slug_dir']}\n  URL: {page_url(record)}\n"
-            'Post into a category of this page: Review, Library, Findings, or Plans.\n'
-            'A second page requires --exception "REASON".')
+    return (f"ERROR: this project already has a page, {page_name(record)} ({record['slug_dir']}, {page_url(record)})"
+            " · fix: publish "
+            'into a category of that page (Review, Library, Findings, or Plans), or pass --exception "REASON" for a second page')
 
 
 def _url_identity(url) -> tuple | None:

@@ -130,12 +130,12 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
     while i < len(lines) and lines[i].strip() != "---":
         i += 1
     if i >= len(lines):
-        raise PageGenError("front matter opened with `---` but never closed")
+        raise PageGenError("front matter opened with `---` but never closed · fix: end it with a `---` line")
     for raw in lines[start:i]:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         if ":" not in raw:
-            raise PageGenError(f"front matter line is not `key: value`: {raw.strip()!r}")
+            raise PageGenError(f"front matter line {raw.strip()!r} is not `key: value` · fix: write `key: value` or remove the line")
         key, _, value = raw.partition(":")
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -192,7 +192,7 @@ def parse_blocks(body: str) -> list[dict]:
                 buf.append(lines[i])
                 i += 1
             if i >= n:
-                raise PageGenError(f"fenced block opened with ```{lang} was never closed")
+                raise PageGenError(f"fenced block opened with ```{lang} was never closed · fix: close it with a ``` line")
             i += 1
             text = "\n".join(buf)
             blocks.append({"kind": lang, "raw": text} if lang in ("cards", "ask", "details", "project", "compare")
@@ -557,31 +557,31 @@ def parse_compare(raw: str) -> tuple[str, list[tuple[tuple[str, str], tuple[str,
         key, sep, value = s.partition(":")
         key, value = key.strip().lower(), value.strip()
         if not sep or key not in ("title", "layout", "current", "proposed"):
-            raise PageGenError(f"compare line must be `current:`, `proposed:`, `title:` or `layout:`: {s!r}")
+            raise PageGenError(f"compare line must be `current:`, `proposed:`, `title:` or `layout:`: {s!r} · fix: start it with one of them")
         if key == "title":
             title = value
         elif key == "layout":
             if value.lower() not in ("side", "stack", "auto"):
-                raise PageGenError(f"compare layout must be side, stack or auto (got {value!r})")
+                raise PageGenError(f"compare layout must be side, stack or auto (got {value!r}) · fix: layout: side")
             layout = None if value.lower() == "auto" else value.lower()
         else:
             path, _, caption = value.partition("|")
             item = (path.strip(), caption.strip())
             if not item[0]:
-                raise PageGenError(f"compare `{key}:` needs an image path: {s!r}")
+                raise PageGenError(f"compare `{key}:` needs an image path: {s!r} · fix: {key}: shots/name.png | Caption")
             if key == "current":
                 if pending:
-                    raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+                    raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it · fix: add `proposed: <image>` after it")
                 pending = item
             else:
                 if not pending:
-                    raise PageGenError(f"compare `proposed: {item[0]}` needs a `current:` line before it")
+                    raise PageGenError(f"compare `proposed: {item[0]}` needs a `current:` line before it · fix: add `current: <image>` before it")
                 pairs.append((pending, item))
                 pending = None
     if pending:
-        raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+        raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it · fix: add `proposed: <image>` after it")
     if not pairs:
-        raise PageGenError("a compare fence needs at least one `current:` / `proposed:` pair")
+        raise PageGenError("a compare fence needs at least one `current:` / `proposed:` pair · fix: add both lines")
     return title, pairs, layout
 
 
@@ -603,9 +603,9 @@ class ImageStore:
         if ref in self.cache:
             return self.cache[ref]
         if re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)", ref):
-            raise PageGenError(f"image must be a local file, not a URL: {ref}")
+            raise PageGenError(f"image must be a local file, not a URL: {ref} · fix: save it and use its local path")
         if Path(ref).suffix.lower() not in IMAGE_SUFFIXES:
-            raise PageGenError(f"image must be a .png, .jpg, .gif or .webp file: {ref}")
+            raise PageGenError(f"image must be a .png, .jpg, .gif or .webp file: {ref} · fix: convert it to PNG or JPEG")
         path = Path(ref).expanduser()
         candidates = [path] if path.is_absolute() else []
         if not path.is_absolute() and self.base_dir:
@@ -614,13 +614,13 @@ class ImageStore:
             candidates.append(self.page_dir / path)
         found = next((c for c in candidates if c.is_file()), None)
         if found is None:
-            raise PageGenError(f"image not found: {ref}")
+            raise PageGenError(f"image not found: {ref} · fix: use a path relative to the markdown file")
         if found.stat().st_size > MAX_IMAGE_BYTES:
-            raise PageGenError(f"image is over 10 MB: {ref}")
+            raise PageGenError(f"image is over 10 MB: {ref} · fix: shrink it below 10 MB")
         data = found.read_bytes()
         size = image_size(data)
         if size is None:
-            raise PageGenError(f"not a readable PNG, JPEG, GIF or WebP image: {ref}")
+            raise PageGenError(f"not a readable PNG, JPEG, GIF or WebP image: {ref} · fix: export it again as PNG or JPEG")
         src = None
         if self.page_dir:
             try:
@@ -793,7 +793,7 @@ class Renderer:
     # ── blocks ─────────────────────────────────────────────────────────────
     def para(self, text: str) -> None:
         if _INLINE_IMAGE.search(text):
-            raise PageGenError(f"put each image on its own line: {clip(text, 80)!r}")
+            raise PageGenError(f"put each image on its own line: {clip(text, 80)!r} · fix: move the image out of the sentence")
         self.ensure_section()
         aid = self._unique(f"s:{self.section_slug}:p{self._next('p:' + self.section_slug)}")
         self.reg(aid, text, "para", parent=self.parent)
@@ -841,10 +841,10 @@ class Renderer:
         self.ensure_section()
         summary, _, body = raw.strip().partition("\n")
         if not summary.strip():
-            raise PageGenError("a details fence needs a summary on its first line")
+            raise PageGenError("a details fence has no summary · fix: put the summary on its first line")
         blocks = parse_blocks(body)
         if any(b["kind"] in ("cards", "ask", "project", "details", "heading") for b in blocks):
-            raise PageGenError("details holds paragraphs, lists, tables or KPIs; keep headings and cards outside")
+            raise PageGenError("a details fence holds a heading, card or project · fix: move headings and cards outside it")
         aid = self._unique(f"s:{self.section_slug}:details{self._next('details:' + self.section_slug)}")
         self.reg(aid, summary, "details", parent=self.parent)
         self.parts.append(f'<details class="aa-details" data-anchor-id="{aid}"><summary>{inline(summary)}</summary>')
@@ -865,7 +865,7 @@ class Renderer:
             cls = fields[2].lower() if len(fields) > 2 and fields[2] else ""
             if cls not in ("bad", "warn", "ok", ""):
                 raise PageGenError(
-                    f"kpi tone must be bad, warn or ok (got {cls!r} in {tile!r})")
+                    f"kpi tone must be bad, warn or ok (got {cls!r} in {tile!r}) · fix: end the tile with | bad, | warn or | ok")
             aid = self._unique(f"kpi:{slugify(label or value, 40)}")
             self.reg(aid, f"{value} {label}", "kpi", parent=self.parent)
             cells.append(
@@ -910,17 +910,17 @@ class Renderer:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise PageGenError(f"```cards block is not valid JSON: {exc}") from exc
+            raise PageGenError(f"```cards block is not valid JSON ({exc}) · fix: correct the JSON or write ```ask cards") from exc
         if isinstance(data, dict):
             data = data.get("cards")
         if not isinstance(data, list) or not data:
             raise PageGenError(
-                '```cards block must hold a JSON array of '
-                '{anchor_id, text, decision_request} objects')
+                '```cards block is not a list of cards · fix: a JSON array of '
+                '{anchor_id, text, decision_request} objects, or ```ask cards')
         rendered = []
         for card in data:
             if not isinstance(card, dict):
-                raise PageGenError("each entry in a ```cards block must be an object")
+                raise PageGenError("a ```cards entry is not an object · fix: make each entry {anchor_id, text, decision_request}")
             rendered.append(self._card(card))
         self.parts.append(f'<div class="cards">{"".join(rendered)}</div>')
 
@@ -939,7 +939,7 @@ class Renderer:
         dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
         text = re.sub(r"\s+", " ", (card.get("text") or dr.get("prompt") or "")).strip()
         if not text:
-            raise PageGenError("a card has neither `text` nor `decision_request.prompt`")
+            raise PageGenError("a card has neither `text` nor `decision_request.prompt` · fix: give it a prompt")
         self.card_n += 1
         wanted = (card.get("anchor_id") or "").strip()
         bound_to = None
@@ -1093,21 +1093,28 @@ def lint(canvas: str, registry: dict) -> list[str]:
         if stray.strip():
             problems.append(
                 f"text between </style> and the first element: {clip(stray, 80)!r} "
-                "— CSS and anything else must live inside the <style> block")
+                "· fix: keep CSS inside the <style> block")
 
     anchors = _ANCHOR_ATTR.findall(canvas)
     seen: set[str] = set()
     for aid in anchors:
         if aid in seen:
-            problems.append(f"duplicate anchor id: {aid!r}")
+            problems.append(f"duplicate anchor id: {aid!r} · fix: rename one of the two headings, rows or captions")
         seen.add(aid)
     if not anchors:
-        problems.append("no anchors — nothing on this page can be commented on")
+        problems.append("no anchors — nothing on this page can be commented on · fix: add a ## section with text")
     for aid in sorted(seen - set(registry)):
-        problems.append(f"anchor {aid!r} is rendered but missing from ANCHOR_REGISTRY")
+        problems.append(f"anchor {aid!r} is rendered but missing from ANCHOR_REGISTRY · fix: report this annotate bug with the page.md")
     for aid in sorted(set(registry) - seen):
-        problems.append(f"anchor {aid!r} is registered but not rendered")
+        problems.append(f"anchor {aid!r} is registered but not rendered · fix: report this annotate bug with the page.md")
     return problems
+
+
+def _first_problem(problems: list[str]) -> str:
+    """One line: the first problem, how many follow, then its fix."""
+    head, _, fix = problems[0].partition(" · fix: ")
+    more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
+    return f"{head}{more} · fix: {fix}"
 
 
 def _is_later_version(version: str) -> bool:
@@ -1121,17 +1128,17 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
         return []
     problems = []
     if str(meta.get("full_plan") or "").strip().lower() != "true":
-        problems.append("later versions require front matter `full_plan: true`")
+        problems.append("a full plan needs `full_plan: true` · fix: set `full_plan: true` in the front matter")
     if not str(meta.get("other_files_required") or "").strip():
         problems.append(
-            "later versions require `other_files_required: none` or an explicit file list")
+            "a full plan names no other files · fix: add `other_files_required: none` or the file list")
 
     card_blocks = [i for i, block in enumerate(blocks) if block.get("kind") == "cards"]
     # Numbered by annotate and citing their own section, ask cards may sit anywhere; JSON cards keep every rule.
     cards = [card for card in cards if card.get("source_kind") != "ask"]
     if cards:
         if len(card_blocks) != 1:
-            problems.append("later versions require exactly one ```cards block")
+            problems.append("a full plan has several ```cards blocks · fix: merge them into one, or write ```ask cards")
         elif card_blocks:
             prior_h2 = next((
                 block for block in reversed(blocks[:card_blocks[0]])
@@ -1139,41 +1146,41 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
             ), None)
             if not prior_h2 or slugify(prior_h2.get("text", "")) not in {"questions-for-reviewer", "questions-for-chang"}:
                 problems.append(
-                    "the ```cards block must be in one final `## Questions for reviewer` section")
+                    "the ```cards block is outside `## Questions for reviewer` · fix: move it into that final section, or write ```ask cards")
 
         seen: set[int] = set()
         previous = 0
         for card in cards:
             number = card.get("number")
             if isinstance(number, bool) or not isinstance(number, int) or number < 1:
-                problems.append("every later-version card needs a positive integer `number`")
+                problems.append("a JSON card has no `number` · fix: add a positive `number`, or write ```ask cards (annotate numbers them)")
                 continue
             if number in seen:
-                problems.append(f"duplicate card number {number}")
+                problems.append(f"duplicate card number {number} · fix: give each card its own number")
             if number <= previous:
-                problems.append("card numbers must be strictly increasing")
+                problems.append("card numbers must be strictly increasing · fix: order the cards by number")
             seen.add(number)
             previous = number
 
             expected_anchor = f"d:q{number}"
             if card.get("anchor_id") != expected_anchor:
                 problems.append(
-                    f"card #{number} must use anchor_id {expected_anchor!r}; "
-                    "link plan locations through decision_request.evidence")
+                    f"card #{number} has anchor_id {card.get('anchor_id')!r} · fix: use {expected_anchor!r}; "
+                    "cite plan locations in decision_request.evidence")
             prompt = str((card.get("decision_request") or {}).get("prompt") or "")
             if re.match(r"^\s*(?:Q(?:uestion)?\s*\d+|#\s*\d+)", prompt, re.IGNORECASE):
                 problems.append(
-                    f"card #{number} prompt repeats a number; the `number` badge is canonical")
+                    f"card #{number} prompt repeats a number · fix: drop the number from the prompt")
             evidence = (card.get("decision_request") or {}).get("evidence")
             if not isinstance(evidence, list) or not evidence:
                 problems.append(
-                    f"card #{number} needs decision_request.evidence linking to the plan")
+                    f"card #{number} cites no evidence · fix: add decision_request.evidence with an anchor on this page")
             else:
                 for item in evidence:
                     anchor = item.get("anchor") if isinstance(item, dict) else None
                     if not anchor or anchor not in registry:
                         problems.append(
-                            f"card #{number} evidence anchor {anchor!r} is not on this page")
+                            f"card #{number} cites {anchor!r}, not on this page · fix: cite an anchor on this page")
     return problems
 
 
@@ -1344,7 +1351,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     meta, body = parse_front_matter(text)
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
-            raise PageGenError(f"unknown front-matter key {key!r}")
+            raise PageGenError(f"unknown front-matter key {key!r} · fix: use one of {', '.join(FRONT_MATTER_KEYS)}")
     meta["title"] = title or meta.get("title") or plan_id.replace("-", " ").capitalize()
     meta["slug"] = f"plan:{plan_id}"
     meta.setdefault("date", datetime.date.today().isoformat())
@@ -1353,7 +1360,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     canvas, registry, _cards = render(meta, blocks, images)
     problems = lint(canvas, registry)
     if problems:
-        raise PageGenError("plan rejected by lint: " + "; ".join(problems))
+        raise PageGenError("plan: " + _first_problem(problems))  # fix: passes through
     if page_dir is not None:
         images.copy_into(page_dir)
     # The HTTP plan route supplies the actual version; no Review version is embedded.
@@ -1369,7 +1376,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
             raise PageGenError(
-                f"unknown front-matter key {key!r} — known keys: "
+                f"unknown front-matter key {key!r} · fix: use one of "
                 f"{', '.join(FRONT_MATTER_KEYS)}")
     meta.setdefault("title", slug_dir.name.replace("-", " ").strip().capitalize())
     meta.setdefault("slug", slug_dir.name)
@@ -1380,17 +1387,17 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         try:
             title = validate_name(title)
         except ValueError as exc:
-            raise PageGenError(str(exc)) from exc
+            raise PageGenError(str(exc)) from exc  # fix: passes through
     from .review_versions import next_version
     version = version or meta.get("version") or next_version(slug_dir)
     if not re.fullmatch(r"v\d+", version):
-        raise PageGenError(f"version must look like v1, v2, v3 (got {version!r})")
+        raise PageGenError(f"version must look like v1, v2, v3 (got {version!r}) · fix: --version v2, or leave it out for the next one")
     from .cli import _read_meta
     from .review_versions import require_draft
     try:
         require_draft(_read_meta(slug_dir), version)
     except ValueError as exc:
-        raise PageGenError(str(exc)) from exc
+        raise PageGenError(str(exc)) from exc  # fix: passes through
     label = label or meta.get("label") or f"generated from {source.name}"
 
     blocks = parse_blocks(body)
@@ -1399,11 +1406,11 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if project_blocks:
         from .project_state import validate_project
         if len(project_blocks) > 1:
-            raise PageGenError("use one project fence for persistent project modules")
+            raise PageGenError("the page has several project fences · fix: merge them into one")
         try:
             project_data = validate_project(json.loads(project_blocks[0]["raw"]))
         except ValueError as exc:
-            raise PageGenError(f"project fence: {exc}") from exc
+            raise PageGenError(f"project fence: {exc} · fix: correct the project JSON") from exc
     images = ImageStore(source.parent, slug_dir)
     reserved = _reserve_numbers(slug_dir, version, blocks)
     canvas, registry, cards = render(meta, blocks, images, reserved)
@@ -1412,11 +1419,11 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     for card in cards:
         refusal = card_refusal(card, anchors)
         if refusal:
-            raise PageGenError(f"card {card['anchor_id']!r}: {refusal}")
+            raise PageGenError(f'card "{first_sentence(card["text"])}" {refusal}')  # fix: passes through
     problems = lint(canvas, registry)
     problems += _round_contract_problems(meta, blocks, cards, registry, version)
     if problems:
-        raise PageGenError("page rejected by lint:\n  " + "\n  ".join(problems))
+        raise PageGenError(_first_problem(problems))  # fix: passes through
 
     unchanged: list[str] = []
     previous = _previous_sections(slug_dir, version, meta["title"])
@@ -1449,7 +1456,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         prior = _write_files(slug_dir, version, label, source, _number_ask_fences(text, reserved), html_out, cards,
                              stats, fixes)
     except ValueError as exc:
-        raise PageGenError(str(exc)) from exc
+        raise PageGenError(str(exc)) from exc  # fix: passes through
     except _NumbersMoved:
         if _attempt >= 2:
             raise PageGenError("numbers kept colliding with another publish · fix: rerun the same command") from None
@@ -1561,13 +1568,13 @@ def cmd_new(args) -> int:
         sys.stdout.write(EXAMPLE)
         return 0
     if not args.slug_dir or not args.from_file:
-        print("ERROR: `new` needs a <slug-dir> and --from <page.md> "
+        print("ERROR: `new` has no page or markdown · fix: annotate new <slug-dir> --from <page.md> "
               "(or --example on its own)", file=sys.stderr)
         return 2
 
     source = Path(args.from_file).expanduser()
     if not source.is_file():
-        print(f"ERROR: markdown source not found: {source}", file=sys.stderr)
+        print(f"ERROR: markdown {source} not found · fix: check the --from path", file=sys.stderr)
         return 2
     slug_dir = Path(args.slug_dir).expanduser().resolve()
     from .cli import _moved_page, _slug_project
@@ -1578,7 +1585,7 @@ def cmd_new(args) -> int:
     try:
         reason = exception_reason(args)
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
         return 2
     if not reason:
         duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
@@ -1592,7 +1599,7 @@ def cmd_new(args) -> int:
         try:
             merged = section_source(slug_dir, source.read_text(encoding="utf-8"), args.section)
         except PageGenError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
             return 1
         text = merged["text"]
         args.section_title, args.kept = merged["section"], merged["kept"]
@@ -1603,10 +1610,10 @@ def cmd_new(args) -> int:
             result = generate(source, slug_dir, version, args.label, title=getattr(args, "title", None),
                               fixes=getattr(args, "fixes", None), text=text)
         except PageGenError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
             return 1
         except OSError as exc:
-            print(f"ERROR: could not write the page: {exc}", file=sys.stderr)
+            print(f"ERROR: could not write the page ({exc}) · fix: check the page folder is writable and rerun", file=sys.stderr)
             return 1
 
         slug, version = page_slug, result["version"]
