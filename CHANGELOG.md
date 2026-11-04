@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Closing the image viewer puts the image back where it was on screen, even when pictures above it finished loading while the viewer was open (it restored only the old scroll offset, 230 px off on a slow machine). Its test now waits for the server to confirm the comment instead of the "Sending…" card, and for started pictures to load before measuring (agent-annotate-22p).
 - SessionStart (Claude Code and Codex) and Claude Code's prompt hook refresh a resumed session's page owners when the recorded process has ended, then deliver queued Sends. The session and captured terminal must match; other sessions and live owners keep their pages. Reviewers see when a Send is waiting because the agent's session is not running.
 
 - Posting several numbered cards together on an older page keeps existing comment numbers fixed, including figure comments and archived comments. The next card no longer collides with a comment moved by the previous insertion; a conflict's suggested number can be used on retry (agent-annotate-2hk).
