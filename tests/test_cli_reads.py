@@ -67,7 +67,7 @@ def test_inbox_is_one_line_per_item_led_by_its_handle(registry, capsys):
         "#1 created Rename status?",
         "#1 round_submitted accept Rename status?",
         "1 card unanswered",
-        "resolve when done: annotate resolve proj/demo 1",  # the agent's own card is not listed
+        f"resolve when done: {cli._inv()} resolve proj/demo 1",  # pasteable on any install; the agent's own card is not listed
     ]
 
 
