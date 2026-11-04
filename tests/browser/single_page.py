@@ -83,7 +83,8 @@ def browser_page(tmp_path, directory, width=1440, height=960, ipad=False):
                     browser = runner.webkit.launch()
                 except playwright.Error:
                     pytest.skip("Playwright WebKit is not installed")
-                page = browser.new_context(**runner.devices["iPad Pro 11 landscape"]).new_page()
+                device = ipad if isinstance(ipad, str) else "iPad Pro 11 landscape"
+                page = browser.new_context(**runner.devices[device]).new_page()
             else:
                 browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
                 page = browser.new_page(viewport={"width": width, "height": height})

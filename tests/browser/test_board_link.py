@@ -90,10 +90,7 @@ def test_phone_header_menu_lists_the_board(tmp_path, board_page):
         menu = page.locator("#aa-tabs-menu")
         menu.locator("summary").click()
         item = menu.locator("a.aa-board-link")
-        # #109: the tap that opens the menu shows the summary, one count per line.
-        _wait(lambda: item.locator(".aa-board-line").count() == 4, page, timeout_ms=10_000)
-        assert item.locator(".aa-board-line").all_inner_texts() == SUMMARY
-        assert item.locator(".aa-board-count").inner_text() == "7"
+        _wait(lambda: "7 ready" in item.inner_text(), page, timeout_ms=10_000)
         assert item.get_attribute("href") == BOARD and item.get_attribute("target") == "_blank"
         page.screenshot(path=str(tmp_path / "board-link-390.png"))
 
@@ -197,14 +194,24 @@ def test_board_summary_shows_on_mouse_hover(tmp_path, board_page):
         _wait(lambda: page.locator("#aa-board-sum").is_hidden(), page)
 
 
-# On the iPad a tap shows the summary (no sticky hover); the next tap opens the board.
-def test_board_summary_shows_on_ipad_tap(tmp_path, board_page):
-    with browser_page(tmp_path, board_page, ipad=True) as (page, _):
+# Chang #148: on the iPad, tabs stay side by side (portrait too); a tap on the
+# count shows the same tooltip, a tap elsewhere closes it, the arrow opens the board.
+@pytest.mark.parametrize("device", ["iPad Pro 11", "iPad Pro 11 landscape"])
+def test_board_summary_shows_on_ipad_tap_of_the_count(tmp_path, board_page, device):
+    with browser_page(tmp_path, board_page, ipad=device) as (page, _):
         link = _link(page)
         _wait(lambda: link.get_attribute("aria-describedby") == "aa-board-sum", page, timeout_ms=10_000)
-        link.tap()
-        _wait(lambda: page.locator("#aa-board-sum").is_visible(), page)
-        assert _summary(page) == SUMMARY
+        assert link.is_visible() and page.locator("#aa-tabs-menu").is_hidden()
+        tip = page.locator("#aa-board-sum")
+        link.locator(".aa-board-count").tap()
+        _wait(lambda: tip.is_visible(), page)
+        assert _summary(page) == SUMMARY and len(page.context.pages) == 1
+        page.locator("#hdr-title").tap()  # elsewhere in the header
+        _wait(lambda: tip.is_hidden(), page)
+        link.locator(".aa-board-count").tap()
+        _wait(lambda: tip.is_visible(), page)
+        page.frame_locator("#content-frame").locator("body").tap(position={"x": 8, "y": 8})  # in the document
+        _wait(lambda: tip.is_hidden(), page)
         assert len(page.context.pages) == 1
         with page.context.expect_page():  # board.example never loads; the new tab is the proof
-            link.tap()
+            link.locator("svg").tap()

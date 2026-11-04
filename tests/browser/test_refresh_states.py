@@ -135,3 +135,40 @@ def test_d_a_fix_of_this_version_says_fix_in_orange(tmp_path, engine, with_items
         r, g, b, _ = s["fixColour"]
         assert r > g > b and r - b > 80, s["fixColour"]  # orange: red high, green middle, blue low
         assert "v2 fixes this version" in s["label"]
+
+
+# Chang #148: the tabs stay side by side with their badges on an iPad Pro 11
+# in portrait, even with the busiest button (count, newer version and "fix").
+def test_tabs_stay_side_by_side_on_ipad_portrait_in_the_busiest_state(tmp_path):
+    import socket
+
+    from test_keep_drafts import _loaded, _start, _stop
+    directory = _directory(tmp_path)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = _start(tmp_path, directory, port)
+    base = f"http://127.0.0.1:{port}/"
+    try:
+        with playwright.sync_playwright() as runner:
+            try:
+                browser = runner.webkit.launch()
+            except Exception:
+                pytest.skip("Playwright WebKit is not installed")
+            page = browser.new_context(**runner.devices["iPad Pro 11"]).new_page()
+            page.set_default_timeout(10000)
+            page.goto(base + "#view=review", wait_until="networkidle")
+            _loaded(page)
+            _publish_fix(tmp_path, directory)
+            _agent(base, "api/comments/batch", {"items": [dict(QUESTION, version="v2")]})
+            _poll(page, 2)
+            assert _state(page)["count"] == "1" and _state(page)["fix"] == "fix"
+            geo = page.evaluate("""() => { const hdr = document.querySelector('.hdr');
+              return {fold: hdr.classList.contains('tabs-fold'), over: hdr.scrollWidth - hdr.clientWidth,
+                      tabs: [...document.querySelectorAll('#aa-tabs .tab')].filter(t => t.offsetWidth).map(t => t.innerText.replace(/\\s+/g, ' ').trim()),
+                      menu: getComputedStyle(document.getElementById('aa-tabs-menu')).display}; }""")
+            assert not geo["fold"] and geo["over"] <= 0 and geo["menu"] == "none", geo
+            assert geo["tabs"] == ["Review v1 · older 1"], geo  # the tab itself, with its version and needs-you badge
+            browser.close()
+    finally:
+        _stop(server)

@@ -32,8 +32,8 @@
 .aa-tabs .tab.aa-board-link{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
 .aa-tabs .aa-board-link svg.i,.aa-tabs-list .aa-board-link svg.i{width:14px;height:14px}
 .aa-tabs .aa-board-count{font-weight:600;font-variant-numeric:tabular-nums;margin-left:4px;color:var(--muted)}
-.aa-tabs-list .aa-board-line{display:block}
-.aa-tabs-list .aa-board-count{font-weight:600;font-variant-numeric:tabular-nums}
+/* A bigger tap target for the count on touch screens (it shows the tooltip) */
+@media (pointer:coarse){.aa-tabs .aa-board-count{padding:10px 6px;margin:-10px 0 -10px -2px}}
 .aa-board-sum{position:fixed;z-index:60;min-width:140px;padding:6px 10px;background:var(--color-base-100);color:var(--color-base-content);border:1px solid var(--line);border-radius:var(--radius-box);box-shadow:0 4px 16px color-mix(in oklab,var(--color-neutral) 22%,transparent);font-size:calc(12px * var(--aa-text, 1));line-height:1.7}
 .aa-board-sum[hidden]{display:none}
 .aa-board-sum-row{display:flex;justify-content:space-between;gap:16px}
@@ -211,8 +211,8 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
   .aa-tabs-menu{flex:0 1 auto;min-width:0}
   .aa-tabs-menu > summary{max-width:100%}
   .aa-tabs-menu-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
-  .aa-tabs{display:none}
-  .aa-tabs-menu{display:block}
+  /* Chang #148: tabs stay side by side wherever they fit (iPad portrait
+     included); app.js folds them into the menu only when the header overflows. */
   .view-hd{padding:6px 12px}
   .lib-main{flex-direction:column;overflow:hidden}
   .sp-list{width:100%;border-right:none;flex:1}

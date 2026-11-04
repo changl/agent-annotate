@@ -393,11 +393,15 @@ function ensureBadgeLayer() {
 // yellow the agent has it, light green addressed, neutral grey otherwise:
 // darker grey on light, lighter grey on dark.
 const ORANGE = 'color-mix(in oklab,var(--color-warning) 50%,var(--color-error))';
+// #148: yellow a step lighter than the stock warning (shell.css --yellow).
+const YELLOW_DARK = 'color-mix(in oklab,var(--color-warning) 60%,var(--color-base-content))';
+const YELLOW_LIGHT = 'color-mix(in oklab,var(--color-warning) 60%,var(--color-base-100))';
 const NUM_CHIP_CSS = sel => `
     ${sel} { background: color-mix(in oklab,var(--color-base-content) 62%,var(--color-base-100)) !important; color: var(--color-base-100) !important; }
     ${sel}.is-needs { background: var(--color-error) !important; color: var(--color-error-content) !important; }
     ${sel}.is-pending { background: ${ORANGE} !important; color: var(--color-error-content) !important; }
-    ${sel}.is-working { background: var(--color-warning) !important; color: var(--color-warning-content) !important; }
+    ${sel}.is-working { background: ${YELLOW_DARK} !important; color: var(--color-warning-content) !important; }
+    [data-theme="light"] ${sel}.is-working { background: ${YELLOW_LIGHT} !important; }
     ${sel}.is-done { background: color-mix(in oklab,var(--color-success) 20%,var(--color-base-100)) !important; color: var(--color-success-content) !important; }
     [data-theme="dark"] ${sel}.is-done { color: var(--color-success) !important; }`;
 const NUM_STATES = { needs: ', needs you', pending: ', answered, not sent yet', working: ', the agent has it', done: ', addressed' };

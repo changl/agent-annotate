@@ -980,7 +980,7 @@ function updateProjectTitle() {
   header.title = title;
   if (window.AA) window.AA.setTitle(title);
 }
-const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-warning', todo: 'badge-ghost' };
+const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'is-yellow', todo: 'badge-ghost' };
 function renderProject() {
   // The project's links and progress belong to Review; a plan has none.
   if (DOC === 'review') updateProjectTitle();

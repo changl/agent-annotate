@@ -140,6 +140,12 @@ HELPERS = """() => {
 }"""
 
 
+def L_of(rgb):
+    """Relative luminance of an sRGB triple."""
+    lin = [(v / 255) / 12.92 if v / 255 <= 0.04045 else ((v / 255 + 0.055) / 1.055) ** 2.4 for v in rgb]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
 def _theme(page, f, theme):
     page.evaluate("t => { document.documentElement.setAttribute('data-theme', t); document.querySelector('#content-frame').contentDocument.documentElement.setAttribute('data-theme', t); }", theme)
     page.wait_for_timeout(150)
@@ -195,6 +201,10 @@ def test_one_number_chip_on_the_right_coloured_by_state(frame):
                     error: L.rgb(root.getPropertyValue('--color-error')), warning: L.rgb(root.getPropertyValue('--color-warning')),
                     success: L.rgb(root.getPropertyValue('--color-success'))}; }); }""")
         assert {w for c in look for w in c["cls"].split() if w.startswith("is-")} >= {"is-needs", "is-pending", "is-working", "is-done"}, look
+        # Yellow and orange part clearly: at least 1.4:1 between their backgrounds.
+        bg = {w: c["bg"] for c in look for w in c["cls"].split() if w in ("is-pending", "is-working")}
+        hi, lo = sorted([L_of(bg["is-working"]), L_of(bg["is-pending"])], reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) >= 1.4, (theme, bg)
         for chip in look:
             assert chip["text"] >= 4.5 and chip["fits"], (theme, chip)
             if "is-needs" in chip["cls"]:
@@ -204,7 +214,10 @@ def test_one_number_chip_on_the_right_coloured_by_state(frame):
                 r, g, b = chip["bg"]
                 assert chip["bg"] not in (chip["warning"], chip["error"]) and r > g > b, (theme, chip)
             elif "is-working" in chip["cls"]:
-                assert chip["bg"] == chip["warning"], (theme, chip)
+                # #148: a step lighter than the stock warning, clearly apart from orange.
+                r, g, b = chip["bg"]
+                assert r > b and g > b and chip["bg"] != chip["warning"], (theme, chip)
+                assert L_of(chip["bg"]) > L_of(chip["warning"]), (theme, chip)
             elif "is-done" in chip["cls"]:
                 # Light green: a tint of success, never the full colour.
                 r, g, b = chip["bg"]

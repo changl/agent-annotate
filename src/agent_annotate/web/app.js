@@ -346,9 +346,7 @@
     if (!b) return '';
     const ready = typeof b.ready === 'number' ? b.ready + ' ready' : '';
     const title = `Open the ${b.project} board in a new tab` + (ready ? ' · ' + ready : '');
-    // #109: in the folded menu (iPad portrait, phone) the tap that opens the menu shows the summary, one count per line.
-    const lines = summary(b);
-    if (inMenu) return `<a role="listitem" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" class="aa-board-link"><span class="aa-tab-name">${esc(b.label)}${typeof b.ready === 'number' ? ` <span class="aa-board-count">${b.ready}</span>` : ''} ${ICON_EXT}</span><span class="aa-tab-state">${lines ? lines.map(([word, n]) => `<span class="aa-board-line">${esc(word)} ${n}</span>`).join('') : (ready ? esc(ready) + ' · ' : '') + 'opens the board'}</span></a>`;
+    if (inMenu) return `<a role="listitem" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" class="aa-board-link"><span class="aa-tab-name">${esc(b.label)} ${ICON_EXT}</span><span class="aa-tab-state">${ready ? esc(ready) + ' · ' : ''}opens the board</span></a>`;
     // #109: "Beads 5 ↗", the count before the arrow; the summary shows on hover, focus or a tap.
     const sum = summary(b);
     return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer"${sum ? ' aria-describedby="aa-board-sum"' : ` title="${esc(title)}"`}>${esc(b.label)}${typeof b.ready === 'number' ? ` <span class="aa-board-count">${b.ready}</span>` : ''}${ICON_EXT}</a>`;
@@ -366,6 +364,8 @@
     if (!link || !rows) return hideSummary();
     sumEl.innerHTML = rows.map(([word, n]) => `<div class="aa-board-sum-row"><span>${esc(word)}</span><b>${n}</b></div>`).join('');
     sumEl.hidden = false;
+    // A tap in the document lands in its frame, not here.
+    document.getElementById('content-frame')?.contentDocument?.addEventListener('pointerdown', hideSummary, { once: true });
     const r = link.getBoundingClientRect(), w = sumEl.offsetWidth;
     sumEl.style.top = Math.round(r.bottom + 4) + 'px';
     sumEl.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px';
@@ -378,15 +378,16 @@
   nav.addEventListener('pointerout', (e) => { if (e.pointerType === 'mouse' && boardLinkOf(e.target) && !boardLinkOf(e.relatedTarget)) hideSummary(); });
   nav.addEventListener('focusin', (e) => { if (boardLinkOf(e.target) && e.target.matches(':focus-visible')) showSummary(e.target); });
   nav.addEventListener('focusout', (e) => { if (boardLinkOf(e.target)) hideSummary(); });
-  // A tap (or long-press) shows the summary first; the next tap opens the board.
+  // Chang #148: on the iPad a tap on the count shows the same tooltip (a tap
+  // elsewhere closes it); the name and the arrow still open the board.
+  const countOf = (el) => el && el.closest && el.closest('#aa-tabs a.aa-board-link .aa-board-count');
   nav.addEventListener('click', (e) => {
-    const link = boardLinkOf(e.target);
-    if (!link || lastPointer === 'mouse' || !summary(board()) || !sumEl.hidden) return;
+    if (!countOf(e.target) || lastPointer === 'mouse' || !summary(board())) return;
     e.preventDefault();
-    showSummary(link);
+    if (sumEl.hidden) showSummary(boardLinkOf(e.target)); else hideSummary();
   });
-  nav.addEventListener('contextmenu', (e) => { const link = boardLinkOf(e.target); if (link && lastPointer !== 'mouse' && summary(board())) { e.preventDefault(); showSummary(link); } });
-  document.addEventListener('pointerdown', (e) => { if (!sumEl.hidden && !boardLinkOf(e.target)) hideSummary(); });
+  document.addEventListener('pointerdown', (e) => { if (!sumEl.hidden && e.pointerType !== 'mouse' && !countOf(e.target)) hideSummary(); });
+
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSummary(); });
 
   // w6e.15: the tabs never squeeze or overlap the tools on the right. The send

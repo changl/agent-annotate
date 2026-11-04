@@ -19,12 +19,14 @@ body{font-family:"Roboto", sans-serif;background:var(--color-base-200);color:var
      the agent has it, light green addressed, grey nothing to do. Orange is
      the stock warning and error tokens mixed; blue stays for Send and links. */
   --orange:color-mix(in oklab,var(--color-warning) 50%,var(--color-error));--orange-text:var(--orange);
+  /* #148: yellow a step lighter than the stock warning, clearly apart from orange */
+  --yellow:color-mix(in oklab,var(--color-warning) 60%,var(--color-base-content));
   --done-bg:color-mix(in oklab,var(--color-success) 20%,var(--color-base-100));--done-text:var(--color-success)}
 /* final/ (Chang, 2026-10-04): in dark, borders are slightly lighter than
    the surface they sit on. The one change from stock dark; light keeps
    --line = base-300. Same value as theme.css (content documents). */
 [data-theme="dark"]{--line:color-mix(in oklab,var(--color-base-content) 12%,var(--color-base-100))}
-[data-theme="light"]{--ok-text:var(--color-success-content);--warn-text:var(--color-warning-content);--err-text:var(--color-error-content);--info-text:var(--color-info-content);--orange-text:color-mix(in oklab,var(--orange) 30%,var(--color-warning-content));--done-text:var(--color-success-content)}
+[data-theme="light"]{--yellow:color-mix(in oklab,var(--color-warning) 60%,var(--color-base-100));--ok-text:var(--color-success-content);--warn-text:var(--color-warning-content);--err-text:var(--color-error-content);--info-text:var(--color-info-content);--orange-text:color-mix(in oklab,var(--orange) 30%,var(--color-warning-content));--done-text:var(--color-success-content)}
 [data-theme="light"] .badge-soft.badge-success{color:var(--color-success-content)}
 [data-theme="light"] .badge-soft.badge-error{color:var(--color-error-content)}
 [data-theme="light"] .badge-soft.badge-warning{color:var(--color-warning-content)}
@@ -146,7 +148,8 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem-num.is-needs{background:var(--color-error);color:var(--color-error-content)}
 .citem-num.is-pending{background:var(--orange);color:var(--color-error-content)}
 .badge.is-orange{background:var(--orange);border-color:var(--orange);color:var(--color-error-content)}
-.citem-num.is-working{background:var(--color-warning);color:var(--color-warning-content)}
+.citem-num.is-working{background:var(--yellow);color:var(--color-warning-content)}
+.badge.is-yellow{background:var(--yellow);border-color:var(--yellow);color:var(--color-warning-content)}
 .citem-num.is-done{background:var(--done-bg);color:var(--done-text)}
 .citem-img-id{flex-shrink:0;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--color-base-content)}
 .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--color-error);flex-shrink:0}
@@ -282,7 +285,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .vact-chip{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;line-height:1.6;white-space:nowrap;vertical-align:1px;color:var(--muted);background:var(--soft)}
 /* The chip's colour is its item's state, as on the number chip (numState). */
 .vact-chip.is-done{color:var(--done-text);background:var(--done-bg)}
-.vact-chip.is-working{color:var(--color-warning-content);background:var(--color-warning)}
+.vact-chip.is-working{color:var(--color-warning-content);background:var(--yellow)}
 .vact-chip.is-pending{color:var(--color-error-content);background:var(--orange)}
 .vact-chip.is-needs{color:var(--color-error-content);background:var(--color-error)}
 /* Keyboard focus only: a mouse click must not shift the list under the pointer (the click would miss). */
