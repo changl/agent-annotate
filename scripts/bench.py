@@ -805,6 +805,11 @@ def _details(rows: list[dict]) -> list[str]:
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--budget" in argv:  # model-free Goal 1 budget; see scripts/bench_budget.py
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import bench_budget
+        return bench_budget.main([a for a in argv if a != "--budget"])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ref", action="append", required=True,
                     help="git ref or checkout directory; repeat. The first is the baseline.")

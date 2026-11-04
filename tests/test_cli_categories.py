@@ -73,9 +73,11 @@ def test_round_state_agrees_across_cards_inbox_and_hook(page, capsys, category, 
     assert "(unsent)" not in cards_output
     assert "undecided: d:q9, d:q10" in cards_output
     assert f"1 {verdict}" in cards_output
-    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False, verbose=True)) == 0
     inbox_output = capsys.readouterr().out
     assert cards_output.splitlines()[-1] == inbox_output.splitlines()[-1]
+    assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
+    assert "2 cards unanswered" in capsys.readouterr().out  # the compact inbox counts the same two
     options["json"] = True
     assert cli.cmd_inbox(SimpleNamespace(**options, unread=False, all_events=False)) == 0
     inbox = json.loads(capsys.readouterr().out)
@@ -100,7 +102,8 @@ def test_inbox_labels_a_deferred_verdict_unsent_only_until_its_round_is_submitte
     with page.bus.open("a") as bus:
         bus.write(json.dumps({"event": "comment_updated", "comment_id": card["id"], "anchor_id": "d:q1",
                               "author": "reviewer@example.com", "decision": "accept", "deferred": True}) + "\n")
-    options = dict(slug="project/main", project=None, category=None, json=False, unread=False, all_events=False)
+    options = dict(slug="project/main", project=None, category=None, json=False, unread=False, all_events=False,
+                   verbose=True)  # the unsent label belongs to the event table
 
     def inbox_text():
         assert cli.cmd_inbox(SimpleNamespace(**options)) == 0
@@ -114,6 +117,8 @@ def test_inbox_labels_a_deferred_verdict_unsent_only_until_its_round_is_submitte
     output = inbox_text()
     assert "round_submitted" in output and "comment_updated" not in output
     assert "1 accept" in output and "(unsent)" not in output
+    options["verbose"] = False
+    assert "unsent" not in inbox_text()
 
 
 def tool(name):

@@ -63,9 +63,13 @@ def test_image_ids_scales_and_one_comment_on_a_spot(tmp_path, shots_page):  # no
 
             # Each scale is exactly that share of the original's pixels.
             fig.scroll_into_view_if_needed()
-            before = content.evaluate("() => scrollY")
+            # Pictures load without a reserved size: every one the browser has begun (lazy ones far
+            # away have not) finishes, so the layout is settled before places are measured.
+            content.wait_for_function("() => [...document.images].filter(i => i.currentSrc).every(i => i.complete)")
             fig.locator('[data-aa-scale="25"]').tap()
             frame.locator(".aa-viewer").wait_for()
+            # Where the image sat on screen when the viewer opened (pictures above can still be loading).
+            before = content.evaluate("sel => document.querySelector(sel + ' img').getBoundingClientRect().top", FIG)
             assert not page.locator("#popover").evaluate("p => p.classList.contains('vis')")
             assert frame.locator(".aa-viewer-title").inner_text().startswith("IMG " + image)
             view = content.evaluate(VIEW)
@@ -81,7 +85,9 @@ def test_image_ids_scales_and_one_comment_on_a_spot(tmp_path, shots_page):  # no
             assert page.locator("#pop-node-name").inner_text().startswith("IMG " + image)
             page.fill("#pop-ta", "This button is too small.")
             page.click("#pop-save")
-            page.wait_for_function("() => document.querySelectorAll('.citem-img-id').length === 1")
+            # The real condition: the server has confirmed it (the "Sending…" card already carries the id).
+            page.wait_for_function("""() => document.querySelectorAll('.citem-img-id').length === 1
+                && !document.querySelector('#comment-list .citem.is-pending')""")
             assert page.locator(".citem-img-id").inner_text() == "IMG " + image
             made = [c for c in _comments(shots_page) if c["text"] == "This button is too small."]
             assert len(made) == 1
@@ -97,7 +103,8 @@ def test_image_ids_scales_and_one_comment_on_a_spot(tmp_path, shots_page):  # no
                 page.locator("#unified-sheet-close").click()
             frame.locator(".aa-viewer-close").tap()
             frame.locator(".aa-viewer").wait_for(state="detached")
-            assert content.evaluate("() => scrollY") == before
+            after = content.evaluate("sel => document.querySelector(sel + ' img').getBoundingClientRect().top", FIG)
+            assert abs(after - before) < 1, (before, after)
             inside = content.evaluate("""sel => { const i = document.querySelector(sel + ' img').getBoundingClientRect();
                 const p = document.querySelector('#badge-layer .bpin').getBoundingClientRect();
                 const x = p.left + p.width / 2, y = p.top + p.height / 2;
@@ -117,6 +124,41 @@ def test_image_ids_scales_and_one_comment_on_a_spot(tmp_path, shots_page):  # no
                 assert small["src"] != full and view["src"] == full
             page.keyboard.press("Escape")
             frame.locator(".aa-viewer").wait_for(state="detached")
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+
+# agent-annotate-22p: content above the image can grow while the viewer is open
+# (a picture without a reserved size finishing its load); closing still puts
+# the image back where it was on screen, not merely at the old scroll offset.
+def test_closing_the_viewer_keeps_the_image_in_place_when_the_page_above_grows(tmp_path, shots_page):  # noqa: F811
+    process, base = _serve(tmp_path, shots_page)
+    try:
+        with playwright.sync_playwright() as runner:
+            try:
+                browser = runner.webkit.launch()
+            except Exception:
+                pytest.skip("Playwright WebKit is not installed")
+            page = browser.new_context(**dict(runner.devices["iPad Pro 11"])).new_page()
+            page.set_default_timeout(10_000)
+            page.goto(base + "#view=review", wait_until="networkidle")
+            if page.locator("#unified-sheet-backdrop").is_visible():
+                page.keyboard.press("Escape")
+            fig = page.frame_locator("#content-frame").locator(FIG)
+            fig.locator(".aa-img-bar").wait_for()
+            content = next(f for f in page.frames if f.url.startswith(base) and f != page.main_frame)
+            fig.scroll_into_view_if_needed()
+            fig.locator('[data-aa-scale="50"]').tap()
+            page.frame_locator("#content-frame").locator(".aa-viewer").wait_for()
+            top = content.evaluate("sel => document.querySelector(sel + ' img').getBoundingClientRect().top", FIG)
+            content.evaluate("""() => { const grow = document.createElement('div'); grow.style.height = '230px';
+                const first = document.querySelector('.aa').firstElementChild; first.parentNode.insertBefore(grow, first); }""")
+            page.keyboard.press("Escape")
+            page.frame_locator("#content-frame").locator(".aa-viewer").wait_for(state="detached")
+            after = content.evaluate("sel => document.querySelector(sel + ' img').getBoundingClientRect().top", FIG)
+            assert abs(after - top) < 1, (top, after)
             browser.close()
     finally:
         process.terminate()
