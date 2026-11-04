@@ -69,6 +69,7 @@ def estate(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "STATE_DIR", state_dir)
     monkeypatch.setattr(cli, "LOCK_DIR", state_dir / "locks")
     monkeypatch.setattr(delivery, "_process", lambda pid: (_START, "/usr/local/bin/codex"))
+    monkeypatch.setattr(delivery.os, "kill", lambda pid, signal: None)
     monkeypatch.setattr(delivery.os, "getppid", lambda: 4242)
     monkeypatch.delenv("ORCA_TERMINAL_HANDLE", raising=False)
     monkeypatch.setattr(delivery, "_parent_handle", lambda expected: None)
@@ -127,6 +128,92 @@ def _write_registry(estate, record):
 
 def _journal_path(estate):
     return estate["state_dir"] / "deliveries" / _PROJECT / f"{_SLUG}.json"
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("exited", ["dead", "reused"])
+def test_resumed_session_refreshes_all_owned_pages_and_delivers_once(estate, monkeypatch, tmp_path, agent, exited):
+    from agent_annotate import paths
+    from agent_annotate.hooks import check_comment_bus, session_start
+
+    old = {**_target(), "agent": agent}
+    new = {**old, "pid": 4343, "process_start": "new start"}
+    record = {**estate["record"], "owner_target": old, "owner_agent": agent,
+              "owner_label": "Owner", "owner_claimed_at": "original claim"}
+    estate["terminal"]["agentIdentity"] = agent
+    estate["receipt"]["prompt"]["stages"] = ["input_accepted", "turn_started"]
+    estate["record"].update(record)
+    _write_registry(estate, record)
+    _append(estate, _round(owner_target=old))
+    monkeypatch.setattr(delivery, "_target_ready", lambda target: (target == new, "Owner process ended"))
+    assert _dispatch(estate)["deliveries"][0]["state"] == "pending"
+
+    def kill(pid, signal):
+        assert signal == 0
+        if pid == old["pid"] and exited == "dead":
+            raise ProcessLookupError()
+    monkeypatch.setattr(delivery.os, "kill", kill)
+    monkeypatch.setattr(delivery, "_process", lambda pid: ("new start", agent))
+    monkeypatch.setattr(delivery, "capture_target", lambda session, provider: new)
+    monkeypatch.setattr(check_comment_bus, "STATE", str(estate["state_dir"]))
+    monkeypatch.setattr(check_comment_bus, "BUS_ROOT", str(estate["bus"].parent.parent))
+    monkeypatch.setattr(check_comment_bus, "HOOK_OFFSET_ROOT", str(estate["state_dir"] / "hook-offsets"))
+
+    # Multiple pages in another project must resume too, independent of cwd.
+    page = tmp_path / "page"
+    page.mkdir()
+    second = {**record, "slug_dir": str(page)}
+    second.pop("bus_file")
+    (estate["state_dir"] / "other.json").write_text(json.dumps({"project": "other", "slugs": {"two": second}}))
+    def on_send(args):
+        assert cli._load_state_for_project("other")["slugs"]["two"]["owner_target"] == new
+    estate["on_send"] = on_send
+    if agent == "codex":
+        with monkeypatch.context() as scoped:
+            scoped.setattr(paths, "STATE_DIR", estate["state_dir"])
+            session_start.notice(tmp_path, session_id=_OWNER)
+    else:
+        check_comment_bus._scan(_OWNER)
+    for project, slug in [(_PROJECT, _SLUG), ("other", "two")]:
+        saved = cli._load_state_for_project(project)["slugs"][slug]
+        assert saved["owner_target"] == new
+        assert saved["owner_claimed_at"] == "original claim"
+    assert json.loads((page / "current.meta.json").read_text())["owner"]["target"] == new
+    assert delivery.delivery_status(_PROJECT, _SLUG)["latest"]["state"] == "started"
+    delivery.refresh_session_owners(_OWNER, check_comment_bus._load_registry())
+    assert len([call for call in estate["calls"] if call[:2] == ("terminal", "send")]) == 1
+    assert not (estate["state_dir"] / "bus-offsets").exists()
+
+
+@pytest.mark.parametrize("case", ["different-session", "live", "different-terminal", "unverifiable", "no-target"])
+def test_session_resume_preserves_other_or_live_owners(estate, monkeypatch, case):
+    old = _target()
+    record = {**estate["record"], "owner_target": None if case == "no-target" else old, "owner_agent": "codex"}
+    _write_registry(estate, record)
+    before = (estate["state_dir"] / f"{_PROJECT}.json").read_bytes()
+    monkeypatch.setattr(delivery, "_target_exited", lambda target: case != "live")
+    new = {**old, "pid": 4343, "handle": "other" if case == "different-terminal" else old["handle"]}
+    monkeypatch.setattr(delivery, "capture_target", lambda *args: None if case in ("unverifiable", "no-target") else new)
+    delivery.refresh_session_owners("other-session" if case == "different-session" else _OWNER,
+                                    {(_PROJECT, _SLUG): record})
+    assert (estate["state_dir"] / f"{_PROJECT}.json").read_bytes() == before
+    assert estate["calls"] == []
+
+
+@pytest.mark.parametrize("state", ["pending", "accepted", "started"])
+def test_delivery_status_explains_a_stopped_owner(estate, monkeypatch, state):
+    _append(estate, _round())
+    _dispatch(estate)
+    path = _journal_path(estate)
+    journal = json.loads(path.read_text())
+    journal["deliveries"]["a" * 12]["state"] = state
+    path.write_text(json.dumps(journal))
+    monkeypatch.setattr(delivery, "_target_exited", lambda target: True)
+    status = delivery.delivery_status(_PROJECT, _SLUG)["latest"]
+    assert status["state"] == "pending"
+    assert status["owner_running"] is False
+    assert status["delivered"] is False
+    assert status["detail"] == "Owner process ended; waiting for the session to resume"
 
 
 def _journal(estate):

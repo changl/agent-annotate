@@ -172,6 +172,61 @@ def _target_exited(target: dict | None) -> bool:
         return False
 
 
+def refresh_session_owners(session: str, records: dict) -> None:
+    """Rebind a resumed session only after its recorded process provably ended."""
+    if not session or session == "unknown":
+        return
+    exited, targets, refreshed = {}, {}, []
+    for (project, slug), record in records.items():
+        old = record.get("owner_target")
+        if (record.get("owner_session") != session or not isinstance(old, dict)
+                or old.get("session", session) != session or record.get("archived")
+                or record.get("consolidated_into")):
+            continue
+        try:
+            key = (old.get("pid"), old.get("process_start"))
+            if key not in exited:
+                exited[key] = _target_exited(old)
+            if not exited[key]:
+                continue
+            agent = old.get("agent")
+            if agent not in ("claude", "codex"):
+                continue
+            if agent not in targets:
+                targets[agent] = capture_target(session, agent)
+            target = targets[agent]
+            if not target or (old.get("handle") and old["handle"] != target.get("handle")):
+                continue
+            from .cli import (
+                _flock,
+                _load_state_for_project,
+                _save_state_for_project,
+                _state_lock_path,
+                _write_owner_meta,
+            )
+            with _flock(_state_lock_path(project)):
+                state = _load_state_for_project(project)
+                current = state.get("slugs", {}).get(slug)
+                # A concurrent claim or a PID reused since the scan must win.
+                if (not current or current.get("owner_session") != session
+                        or current.get("owner_target") != old or not _target_exited(old)):
+                    continue
+                current["owner_target"] = target
+                _save_state_for_project(project, state)
+                if current.get("slug_dir"):
+                    _write_owner_meta(Path(current["slug_dir"]), current)
+                record.update(current)
+            refreshed.append((project, slug, current))
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
+            continue  # Hooks must not prevent a session or prompt from starting.
+    # Shared tabs route through their canonical page, which must be refreshed first.
+    for project, slug, current in refreshed:
+        try:
+            dispatch_record(current, project, slug)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
+            continue
+
+
 def _target_ready(target: dict) -> tuple[bool, str]:
     try:
         process = _process(int(target["pid"]))
@@ -335,10 +390,9 @@ def delivery_status(project: str, slug: str) -> dict:
             deliveries.append(public)
         latest = deliveries[-1]
         target = rows[-1].get("target") or {}
-        if latest.get("state") in ("accepted", "started") and target.get("pid"):
-            process = _process(int(target["pid"]))
-            if not process or process[0] != target.get("process_start"):
-                latest.update(state="pending", delivered=False, detail="Current agent must claim the workspace")
+        if latest.get("state") in ("pending", "accepted", "started") and _target_exited(target):
+            latest.update(state="pending", delivered=False, owner_running=False,
+                          detail="Owner process ended; waiting for the session to resume")
         return {"latest": latest, "deliveries": deliveries}
     except (OSError, ValueError):
         return {"latest": None}

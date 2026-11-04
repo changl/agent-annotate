@@ -1,5 +1,6 @@
 """Project membership and native SessionStart hooks, entirely off live state."""
 
+import io
 import json
 import os
 import subprocess
@@ -193,3 +194,13 @@ def test_hook_never_uses_network_or_writes_state(estate, monkeypatch):
     before = {file: file.read_bytes() for file in estate.root.rglob("*") if file.is_file()}
     assert session_start.notice(estate.repo)
     assert before == {file: file.read_bytes() for file in estate.root.rglob("*") if file.is_file()}
+
+
+def test_session_start_passes_the_payload_session_to_owner_refresh(estate, monkeypatch):
+    from agent_annotate import delivery
+    calls = []
+    monkeypatch.setattr(delivery, "refresh_session_owners", lambda session, records: calls.append((session, records)))
+    monkeypatch.setattr(session_start.sys, "stdin", io.StringIO(json.dumps({"session_id": "resumed", "cwd": str(estate.repo)})))
+    monkeypatch.setattr(session_start.select, "select", lambda *args: ([session_start.sys.stdin], [], []))
+    assert session_start.main() == 0
+    assert calls == [("resumed", {("project", "main"): estate.record})]

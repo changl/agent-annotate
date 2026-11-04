@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook: local files only, no CLI startup or network requests.
+# SessionStart hook: local notice; Orca delivery only when its owner resumes.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 0
 for cmd in python3 python; do
