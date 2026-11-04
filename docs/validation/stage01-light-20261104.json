@@ -1,0 +1,299 @@
+{
+ "generated": "2026-11-04",
+ "tokenizer": "tiktoken 0.14.0 o200k_base (proxy)",
+ "budget": {
+  "command": "uv run --no-project --with tiktoken python scripts/bench.py --budget [--ref origin/changl/next-2.28.3]",
+  "before": {
+   "3": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 1973,
+     "skill_tokens": 657,
+     "reference_tokens": 1316,
+     "reference_loaded_at_start": true
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 202,
+     "retries": 0
+    },
+    "resolve_a_round": {
+     "commands": 3,
+     "tokens": 84,
+     "retries": 0
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "small_round": {
+     "commands": 5,
+     "tokens": 362,
+     "retries": 0
+    }
+   },
+   "5": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 1973,
+     "skill_tokens": 657,
+     "reference_tokens": 1316,
+     "reference_loaded_at_start": true
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 270,
+     "retries": 0
+    },
+    "resolve_a_round": {
+     "commands": 5,
+     "tokens": 143,
+     "retries": 0
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 15,
+     "retries": 0
+    },
+    "small_round": {
+     "commands": 7,
+     "tokens": 515,
+     "retries": 0
+    }
+   }
+  },
+  "after": {
+   "3": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 634,
+     "skill_tokens": 634,
+     "reference_tokens": 1351,
+     "reference_loaded_at_start": false
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 96,
+     "retries": 0
+    },
+    "resolve_a_round": {
+     "commands": 1,
+     "tokens": 10,
+     "retries": 0
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 4,
+     "retries": 0
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 13,
+     "retries": 0
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 4,
+     "retries": 0
+    },
+    "small_round": {
+     "commands": 3,
+     "tokens": 149,
+     "retries": 0
+    }
+   },
+   "5": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 634,
+     "skill_tokens": 634,
+     "reference_tokens": 1351,
+     "reference_loaded_at_start": false
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 136,
+     "retries": 0
+    },
+    "resolve_a_round": {
+     "commands": 1,
+     "tokens": 10,
+     "retries": 0
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 4,
+     "retries": 0
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 13,
+     "retries": 0
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 4,
+     "retries": 0
+    },
+    "small_round": {
+     "commands": 3,
+     "tokens": 193,
+     "retries": 0
+    }
+   }
+  },
+  "limits": {
+   "3": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 700
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 220
+    },
+    "resolve_a_round": {
+     "commands": 1,
+     "tokens": 45
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "small_round": {
+     "commands": 3,
+     "tokens": 1000
+    }
+   },
+   "5": {
+    "session_start": {
+     "commands": 0,
+     "tokens": 700
+    },
+    "read_one_round": {
+     "commands": 1,
+     "tokens": 340
+    },
+    "resolve_a_round": {
+     "commands": 1,
+     "tokens": 75
+    },
+    "publish_small_update": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "ask": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "claim": {
+     "commands": 1,
+     "tokens": 25
+    },
+    "small_round": {
+     "commands": 3,
+     "tokens": 1000
+    }
+   }
+  },
+  "over_before": {
+   "3": [
+    "session_start",
+    "resolve_a_round",
+    "small_round"
+   ],
+   "5": [
+    "session_start",
+    "resolve_a_round",
+    "small_round"
+   ]
+  },
+  "over_after": {
+   "3": [],
+   "5": []
+  }
+ },
+ "fld_round_replay": {
+  "round_ts": "2026-11-04T00:11:03Z",
+  "answers": 3,
+  "before": {
+   "bytes": 1235,
+   "tokens": 329
+  },
+  "after": {
+   "bytes": 674,
+   "tokens": 152
+  },
+  "budget": 220
+ },
+ "orch_cost_reproduction": {
+  "command": "python3 -I scripts/orch_cost.py COPY.jsonl --json OUT",
+  "sessions": [
+   "145f492c",
+   "2ac5a669",
+   "fd956ed9"
+  ],
+  "printed_figures": 107,
+  "within_2pct": 103,
+  "outside": [
+   {
+    "session": "145f492c",
+    "metric": "cost_share.output",
+    "plan": 0.04,
+    "measured": 0.038,
+    "deviation": 0.05
+   },
+   {
+    "session": "2ac5a669",
+    "metric": "cost_share.output",
+    "plan": 0.03,
+    "measured": 0.032,
+    "deviation": 0.0667
+   },
+   {
+    "session": "fd956ed9",
+    "metric": "cost_share.output",
+    "plan": 0.06,
+    "measured": 0.063,
+    "deviation": 0.05
+   },
+   {
+    "session": "fd956ed9",
+    "metric": "annotate.total.card_json_tokens",
+    "plan": 1800.0,
+    "measured": 1756,
+    "deviation": 0.0244
+   }
+  ],
+  "note": "The four outside 2% are the plan rounding 0.038 to 4%, 0.032 to 3%, 0.063 to 6% and 1,756 to 1.8k; against the unrounded study receipt (analysis.json, actions.json) every value matches; annotate USD 73.89 vs 73.88."
+ }
+}
