@@ -3148,7 +3148,7 @@ function scaleSource(img, pct) {
   return px && img.naturalWidth >= px[0] * pct / 100 * (window.devicePixelRatio || 1) ? shown : full;
 }
 
-let viewer = null; // {box, img, big, aid, id, css, stage, frame, pins, pct, scrollY}
+let viewer = null; // {box, img, big, aid, id, css, stage, frame, pins, pct, scrollY, imgTop}
 
 function viewerPins() {
   if (!viewer) return;
@@ -3186,13 +3186,18 @@ function viewerScale(pct, fresh) {
   stage.scrollTop += after.top + at[1] * after.height - mid[1];
 }
 
+// Closing returns the image to where it was on screen. Pictures above it can
+// finish loading while the viewer is open; the old scroll offset alone would
+// then land elsewhere (agent-annotate-22p).
 function closeViewer() {
   if (!viewer) return;
-  const { box, scrollY } = viewer;
+  const { box, scrollY, img, imgTop } = viewer;
   viewer = null;
   box.remove();
   document.documentElement.classList.remove('aa-viewer-open');
   window.scrollTo(window.scrollX, scrollY);
+  const moved = img.isConnected ? img.getBoundingClientRect().top - imgTop : 0;
+  if (Math.abs(moved) >= 1) window.scrollBy(0, moved);
 }
 
 function openViewer(img, pct) {
@@ -3214,7 +3219,7 @@ function openViewer(img, pct) {
   box.setAttribute('aria-label', title);
   const big = box.querySelector('.aa-viewer-frame img');
   big.alt = img.getAttribute('alt') || '';
-  viewer = { box, img, big, aid, id, css: cssPathFrom(anchorEl, img) || '', scrollY: window.scrollY, pct,
+  viewer = { box, img, big, aid, id, css: cssPathFrom(anchorEl, img) || '', scrollY: window.scrollY, imgTop: img.getBoundingClientRect().top, pct,
              stage: box.querySelector('.aa-viewer-stage'), frame: box.querySelector('.aa-viewer-frame'),
              pins: box.querySelector('.aa-viewer-pins') };
   big.src = scaleSource(img, pct);
