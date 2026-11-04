@@ -249,3 +249,9 @@ def test_claude_temp_allowance_is_exact_and_provider_specific(tmp_path):
     assert write("claude", sibling / "output").returncode != 0
     assert write("codex", task_dir / "codex-output").returncode != 0
     assert write("codex", root / "output").returncode == 0
+
+
+def test_sandbox_profile_without_blocked_tools_still_allows_exec(tmp_path, monkeypatch):
+    # A minimal PATH (the M1Max16 executor) has none of the blocked tools.
+    monkeypatch.setattr(bench.shutil, "which", lambda name: None)
+    assert "process-exec" not in bench.sandbox_profile({"root": tmp_path}, "codex")

@@ -1,4 +1,4 @@
-"""scripts/ci.py --full goes to the M1 through wm-test only when a private route is ready (agent-annotate-4zw)."""
+"""scripts/ci.py --full goes to M1Max16 (M1 backup) through wm-test only when a private route is ready (agent-annotate-4zw)."""
 
 import importlib.util
 import json

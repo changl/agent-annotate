@@ -1,4 +1,4 @@
-"""Fast PR gate. --full runs every test, on the M1 through wm-test when a private route is configured."""
+"""Fast PR gate. --full runs every test, on M1Max16 (M1 backup) through wm-test when a private route is configured."""
 
 import argparse
 import concurrent.futures
@@ -84,7 +84,7 @@ TESTS = (
 def full_route(root=ROOT, env=os.environ, config=None):
     """The wm-test command for --full when a private route is configured; None runs it here.
 
-    Inside the M1 executor (WM_TEST_ARTIFACTS set), without a config, or with
+    Inside the host executor (WM_TEST_ARTIFACTS set), without a config, or with
     one that does not register agent-annotate's full profile, --full runs
     locally as before. A registered route that is not ready fails instead of
     silently running the heavy suite here. A routed run tests exactly HEAD, so
@@ -104,7 +104,7 @@ def full_route(root=ROOT, env=os.environ, config=None):
     git = ["git", "-C", str(root)]
     if subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip():
         raise SystemExit("ci.py --full: uncommitted or untracked changes; commit them "
-                         "(the M1 run tests exactly HEAD) or pass --local")
+                         "(the routed run tests exactly HEAD) or pass --local")
     wm_test = shutil.which("wm-test", path=env.get("PATH"))
     if not wm_test:
         raise SystemExit("ci.py --full: the wm-test route is ready but wm-test is not on PATH")
