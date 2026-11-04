@@ -1396,4 +1396,5 @@ def add_parser(sub) -> None:
     sp.add_argument("--public", action="store_true",
                     help="legacy Cloudflare option; Funnel is public by default")
     sp.add_argument("--json", action="store_true", help="print full generation and publication output")
+    sp.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp.set_defaults(func=cmd_new)

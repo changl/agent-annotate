@@ -24,7 +24,7 @@ usage: annotate new [-h] [--from page.md] [--version VERSION] [--fixes vN]
                     [--example] [--project PROJECT] [--exception REASON]
                     [--standalone] [--port PORT]
                     [--transport {funnel,local,tailscale,cloudflare,cloudflare_tailscale}]
-                    [--hostname HOSTNAME] [--public] [--json]
+                    [--hostname HOSTNAME] [--public] [--json] [--verbose]
                     [slug_dir]
 
 positional arguments:
@@ -50,6 +50,7 @@ options:
   --hostname HOSTNAME
   --public              legacy Cloudflare option; Funnel is public by default
   --json                print full generation and publication output
+  --verbose             receipt with the page link
 ```
 
 ## project
@@ -137,7 +138,7 @@ options:
 ```text
 usage: annotate inbox [-h] [--project PROJECT] [--unread] [--json]
                       [--all-events]
-                      [--category {review,library,findings,plans}]
+                      [--category {review,library,findings,plans}] [--verbose]
                       slug
 
 positional arguments:
@@ -152,6 +153,7 @@ options:
   --all-events          include bookkeeping events (seen_updated,
                         notice_emitted, …)
   --category {review,library,findings,plans}
+  --verbose             the padded event table with timestamps and authors
 ```
 
 ## resolve
@@ -160,11 +162,13 @@ options:
 usage: annotate resolve [-h] [--in-version IN_VERSION] [--anchor ANCHOR]
                         [--response RESPONSE] [--note NOTE]
                         [--project PROJECT] [--author AUTHOR] [--json]
-                        slug comment_id
+                        [--verbose]
+                        slug ITEM [ITEM ...]
 
 positional arguments:
   slug                  <slug> or <project>/<slug>
-  comment_id            item number or comment id
+  ITEM                  item numbers or comment ids; all are checked before
+                        any is resolved
 
 options:
   -h, --help            show this help message and exit
@@ -176,6 +180,7 @@ options:
   --project PROJECT
   --author AUTHOR
   --json                print the updated comment
+  --verbose             receipt with the page link
 ```
 
 ## withdraw
@@ -201,7 +206,7 @@ options:
 ## claim
 
 ```text
-usage: annotate claim [-h] [--project PROJECT] [--json] slug
+usage: annotate claim [-h] [--project PROJECT] [--json] [--verbose] slug
 
 positional arguments:
   slug               <slug> or <project>/<slug>
@@ -210,4 +215,5 @@ options:
   -h, --help         show this help message and exit
   --project PROJECT
   --json
+  --verbose          receipt with the page link
 ```

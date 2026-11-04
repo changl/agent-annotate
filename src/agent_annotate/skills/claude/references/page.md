@@ -45,7 +45,7 @@ proposed: shots/checkout-proposed.png | One-step payment
 ```
 ````
 
-KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Image paths are relative to page.md; supported local PNG/JPEG/GIF/WebP assets are copied into the page. URLs and SVG images are refused. Captions come from alt text. Compare accepts repeated current/proposed pairs for a flow, optional `title`, and optional `layout: side|stack|auto`.
+KPI states: `ok`, `warn`, `bad`. A details fence's first line is its summary. Image paths are relative to page.md; supported local PNG/JPEG/GIF/WebP assets are copied into the page. URLs and SVG images are refused. Captions come from alt text. Compare accepts repeated current/proposed pairs for a flow, optional `title`, and optional `layout: side|stack|auto`. Use matching crops: by default phone/portrait pairs sit side by side (current left, proposed right) and desktop/landscape pairs stack (current above, proposed below).
 
 Anchors derive from content: heading `## Scope` → `s:scope`, a nested `### Detail` → `s:scope:detail`, its first paragraph → `s:scope:p1`, table row → `tbl:scope:row:receipt`, image → `fig:current-receipt`, compare title → `cmp:checkout`. Inspect the generated HTML anchor registry if unsure; keep anchors stable across versions.
 

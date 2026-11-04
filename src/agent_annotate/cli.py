@@ -2318,6 +2318,76 @@ def _round_lines(ev: dict) -> list[str]:
     return lines
 
 
+# Publishing, delivery and status echoes: nothing to act on. `--all-events` shows them.
+_COMPACT_QUIET = {"page_claimed", "page_published", "page_publish_failed", "page_publish_fail", "page_revived",
+                  "version_published", "plan_published", "comments_seeded", "decision_requested",
+                  "round_received", "session_push", "comment_carried_forward", "comment_resolved",
+                  "comment_archived", "inbox_read", "seen_updated", "notice_emitted"}
+
+
+def _compact_inbox(events: list[dict], store: dict, texts: dict, cards: list[dict], page: str,
+                   all_events: bool = False, unread: bool = True) -> list[str]:
+    """One line per item to act on, led by the handle `resolve` takes; no padding.
+
+    The padded table was 12-16% spaces, and FLD's printed 104 publish lines
+    that were not feedback. `--verbose` keeps the table.
+    """
+    numbers = _item_numbers(store)
+    counts: dict[str, int] = {}
+    for n in numbers.values():
+        counts[str(n)] = counts.get(str(n), 0) + 1
+    handles: list[str] = []
+
+    def handle(cid, number=None, reviewer=True) -> str:
+        label = numbers.get(cid, number)
+        key = str(label) if label is not None and counts.get(str(label), 0) <= 1 else (cid or "")
+        if key and reviewer and key not in handles:  # only the reviewer's items wait to be resolved
+            handles.append(key)
+        return f"#{key}" if key and key != cid else key
+
+    lines = []
+    for ev in events:
+        kind = ev.get("event") or ""
+        author = str(ev.get("author") or ev.get("by") or "")
+        if not all_events and (kind in _COMPACT_QUIET or (kind == "comment_updated" and (
+                author.startswith("agent:") or not ev.get("decision")))):
+            continue
+        answers = [a for a in ev.get("answers") or [] if isinstance(a, dict)]
+        if kind == "round_submitted" and (answers or ev.get("edits") or not ev.get("comment_id")):
+            when = f" {ev['ts'][:16]}Z" if ev.get("ts") else ""
+            lines.append(f"round{when}, {len(answers)} answer{'s' if len(answers) != 1 else ''}"
+                         + (f" · note: {ev['note']}" if ev.get("note") else ""))
+            for a in answers:
+                words, prompt = str(a.get("text") or ""), str(a.get("prompt") or "")
+                head = " ".join(x for x in (handle(a.get("comment_id"), a.get("number")), str(a.get("verdict") or "")) if x)
+                said = f'"{prompt}" → {words}' if prompt and words else words or f'"{prompt}"'
+                lines.append(f"{head} {_image_tag(a)}{said}")
+            for e in ev.get("edits") or []:
+                if isinstance(e, dict):
+                    lines.append(f"edit {e.get('block_id') or ''} {_clip(str(e.get('title') or ''), 60)}: "
+                                 f"{_delta_excerpt(e.get('delta'))}")
+            continue
+        body, note = texts.get(ev.get("comment_id")) or ("", "")
+        text = (ev.get("text") or ev.get("response_text") or ev.get("note") or ev.get("detail")
+                or (note if ev.get("decision") else "") or body)
+        text = _clip(text, 120) if author.startswith("agent:") else text  # a reviewer's words print whole
+        label = (handle(ev["comment_id"], reviewer=not author.startswith("agent:"))
+                 if ev.get("comment_id") and kind not in _COMPACT_QUIET else "")
+        verdict = ev.get("decision") or ev.get("new_status") or ""
+        lines.append(" ".join(x for x in (label, kind.replace("comment_", ""), str(verdict),
+                                          _image_tag(ev.get("target")) + str(text)) if x))
+    if not lines:
+        lines.append("(no new events)" if unread else "(no events)")
+    open_cards = sum(1 for c in cards if _is_undecided(c))
+    unsent = sum(1 for c in cards if c["pending"])
+    if open_cards or unsent:
+        lines.append(", ".join(x for x in (f"{open_cards} card{'s' if open_cards != 1 else ''} unanswered" if open_cards else "",
+                                           f"{unsent} unsent" if unsent else "") if x))
+    if handles:
+        lines.append(f"resolve when done: {_inv()} resolve {page} {' '.join(handles)}")
+    return lines
+
+
 def _category(value: str | None) -> str | None:
     if value is not None and value not in CATEGORY_IDS:
         raise ValueError(f"category must be one of {', '.join(CATEGORY_IDS)}")
@@ -2465,7 +2535,7 @@ def cmd_inbox(args) -> int:
             "category_counts": _category_counts(record),
             **({"category": category} if category else {}),
         }, ensure_ascii=False, indent=2))
-    else:
+    elif getattr(args, "verbose", False):
         if not shown:
             print("(no new events)" if args.unread else "(no events)")
         pending = _round_pending_ids(store)
@@ -2475,6 +2545,9 @@ def cmd_inbox(args) -> int:
                 print(line)
         if cards:
             print(_decision_line(cards))
+    else:
+        print("\n".join(_compact_inbox(shown, store, texts, cards, f"{project}/{slug}",
+                                       getattr(args, "all_events", False), args.unread)))
 
     if args.unread and new_offset > offset:
         if record.get("owner_session") == session_id and not category:
@@ -4595,33 +4668,50 @@ def cmd_archive_comment(args) -> int:
 
 
 def cmd_resolve(args) -> int:
+    """Close every item acted on in one call; all handles are checked before any write."""
     resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2
     record = resolved[2]
     store = _load_store(record)
     numbers = _item_numbers(store)
-    matches = [c for _, c in _iter_comments(store)
-               if c.get("id") == str(args.comment_id)
-               or str(numbers.get(c.get("id"))) == str(args.comment_id)]
-    if len(matches) != 1:
-        print("ERROR: item not found or number is ambiguous; use its comment id", file=sys.stderr)
-        return 2
-    comment = matches[0]
-    args.comment_id = comment["id"]
-    args.item_number = numbers.get(comment["id"])
-    args.in_version = getattr(args, "in_version", None) or _read_meta(Path(record["slug_dir"])).get("current")
-    own_anchor = not getattr(args, "anchor", None)
-    args.anchor = getattr(args, "anchor", None) or comment.get("anchor_id")
-    body = {"status": "resolved_in_version", "resolved_in_version": args.in_version,
-            "resolution_anchor_id": args.anchor}
-    if own_anchor:
-        body["resolve_own_anchor"] = True
+    comments = [c for _, c in _iter_comments(store)]
+    targets = []
+    handles = getattr(args, "comment_ids", None) or [args.comment_id]
+    for handle in handles:
+        handle = str(handle).lstrip("#")
+        matches = [c for c in comments if c.get("id") == handle or str(numbers.get(c.get("id"))) == handle]
+        if len(matches) != 1:
+            print(f"ERROR: item {handle} not found or number is ambiguous; use its comment id"
+                  + ("; nothing was resolved" if len(handles) > 1 else ""), file=sys.stderr)
+            return 2
+        if matches[0] not in targets:
+            targets.append(matches[0])
+    in_version = getattr(args, "in_version", None) or _read_meta(Path(record["slug_dir"])).get("current")
+    anchor = getattr(args, "anchor", None)
     note = getattr(args, "note", None) or getattr(args, "response", None)
-    if note:
-        body["response_text"] = note
-    return _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
-                         done="resolved", target=f" → {args.in_version} {args.anchor}")
+    done = []
+    for comment in targets:
+        args.comment_id = comment["id"]
+        args.item_number = numbers.get(comment["id"])
+        args.in_version = in_version
+        args.anchor = anchor or comment.get("anchor_id")
+        body = {"status": "resolved_in_version", "resolved_in_version": in_version,
+                "resolution_anchor_id": args.anchor}
+        if not anchor:
+            body["resolve_own_anchor"] = True
+        if note:
+            body["response_text"] = note
+        rc = _comment_call(args, "PUT", f"/api/comments/{args.comment_id}", body,
+                           done="resolved", target=f" → {in_version} {args.anchor}")
+        if rc:
+            if done:
+                print(f"ERROR: resolved {_number_runs(done)} before this failure; later items were not resolved",
+                      file=sys.stderr)
+            return rc
+        done.append(args.item_number or comment["id"])
+    args.resolved = done
+    return 0
 
 
 def cmd_carry(args) -> int:
@@ -5452,6 +5542,7 @@ def build_parser(*, all_commands=False):
         help="seconds to wait for each verification stage (default 45)",
     )
     sp_pub.add_argument("--json", action="store_true")
+    sp_pub.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp_pub.set_defaults(func=cmd_publish)
 
     sp_unpub = sub.add_parser("unpublish", help="tear down route + stop server")
@@ -5471,6 +5562,7 @@ def build_parser(*, all_commands=False):
     sp_pv.add_argument("--label", default=None)
     sp_pv.add_argument("--project", default=None)
     sp_pv.add_argument("--json", action="store_true")
+    sp_pv.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp_pv.set_defaults(func=cmd_publish_version)
 
     sp_in = sub.add_parser("inbox", help="read this session's unseen bus events")
@@ -5482,6 +5574,8 @@ def build_parser(*, all_commands=False):
     sp_in.add_argument("--all-events", dest="all_events", action="store_true",
                        help="include bookkeeping events (seen_updated, notice_emitted, …)")
     sp_in.add_argument("--category", choices=CATEGORY_IDS)
+    sp_in.add_argument("--verbose", action="store_true",
+                       help="the padded event table with timestamps and authors")
     sp_in.set_defaults(func=cmd_inbox)
 
     sp_cards = sub.add_parser("cards", aliases=["open-cards"],
@@ -5504,12 +5598,14 @@ def build_parser(*, all_commands=False):
     sp_ask.add_argument("--json", action="store_true")
     sp_ask.add_argument("--category", choices=CATEGORY_IDS)
     sp_ask.add_argument("--set", metavar="ID", help="findings set (requires --category findings)")
+    sp_ask.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp_ask.set_defaults(func=cmd_ask)
 
     sp_claim = sub.add_parser("claim", help="take ownership of a page for this session")
     sp_claim.add_argument("slug", help="<slug> or <project>/<slug>")
     sp_claim.add_argument("--project", default=None)
     sp_claim.add_argument("--json", action="store_true")
+    sp_claim.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp_claim.set_defaults(func=cmd_claim)
 
     sp_close = sub.add_parser("close", help="archive decision cards nobody answered")
@@ -5670,7 +5766,8 @@ def build_parser(*, all_commands=False):
         help="resolve a prior-round comment in a named version and anchor",
     )
     sp_resolve.add_argument("slug", help="<slug> or <project>/<slug>")
-    sp_resolve.add_argument("comment_id", help="item number or comment id")
+    sp_resolve.add_argument("comment_ids", nargs="+", metavar="ITEM",
+                            help="item numbers or comment ids; all are checked before any is resolved")
     sp_resolve.add_argument("--in-version", default=None, help="default: current version")
     sp_resolve.add_argument("--anchor", default=None, help="default: the item's own anchor")
     sp_resolve.add_argument("--response", default=None)
@@ -5678,6 +5775,7 @@ def build_parser(*, all_commands=False):
     sp_resolve.add_argument("--project", default=None)
     sp_resolve.add_argument("--author", default=None)
     sp_resolve.add_argument("--json", action="store_true", help="print the updated comment")
+    sp_resolve.add_argument("--verbose", action="store_true", help="receipt with the page link")
     sp_resolve.set_defaults(func=cmd_resolve)
 
     sp_carry = sub.add_parser(
@@ -5785,8 +5883,67 @@ def run_command(args):
             if "WARN" in line or "UNVERIFIED" in line:
                 print(line.strip(), file=sys.stderr)
         prefix = "dry run: would " if dry_run else ""
-        print(f"{prefix}{args.cmd} {page_name(record or directory or {})} — {url or 'no page URL available'}")
+        short = None if dry_run or getattr(args, "verbose", False) else _short_receipt(args, record)
+        print(short or f"{prefix}{args.cmd} {page_name(record or directory or {})} — {url or 'no page URL available'}")
     return rc
+
+
+def _number_runs(labels: list) -> str:
+    """'#1–#3 #7' from [1, 2, 3, 7]; non-integer labels (ids, '4·2') stay as they are."""
+    parts, run = [], []
+    for label in labels:
+        if type(label) is int and run and label == run[-1] + 1:
+            run.append(label)
+            continue
+        if run:
+            parts.append(f"#{run[0]}" + (f"–#{run[-1]}" if len(run) > 1 else ""))
+        run = [label] if type(label) is int else []
+        if type(label) is not int:
+            parts.append(f"#{label}" if re.fullmatch(r"\d+·\d+", str(label)) else str(label))
+    if run:
+        parts.append(f"#{run[0]}" + (f"–#{run[-1]}" if len(run) > 1 else ""))
+    return " ".join(parts)
+
+
+_SHORT_RECEIPTS = {"new", "publish", "publish-version", "ask", "resolve", "claim"}
+
+
+def _short_receipt(args, record: dict | None) -> str | None:
+    """The one line an agent needs after a write: no share link, banner or ID list.
+
+    The page's private link was 56-84% of every receipt and was copied into
+    each transcript; `--verbose` keeps the old line with the link.
+    """
+    if args.cmd not in _SHORT_RECEIPTS or not record:
+        return None
+    if args.cmd == "claim":
+        return f"claimed {page_name(record)}"
+    if args.cmd == "resolve":
+        done = getattr(args, "resolved", None)
+        return f"resolved {_number_runs(done)} in {args.in_version}" if done else None
+    if not record.get("slug_dir"):
+        return None
+    current = _read_meta(Path(record["slug_dir"])).get("current")
+    version = getattr(args, "candidate_version", None) or getattr(args, "version", None) or current
+    if not version:
+        return None
+    if args.cmd == "new" and not getattr(args, "publish", False):
+        state = " staged; add --publish" + (" --ask" if getattr(args, "ask", False) else "")
+    else:
+        state = " live" if version == current else ""
+    line = f"{version}{state}"
+    if args.cmd == "ask" or (args.cmd == "new" and getattr(args, "ask", False) and getattr(args, "publish", False)):
+        try:
+            store = _load_store(record)
+        except (OSError, ValueError):
+            return line
+        numbers = _item_numbers(store)
+        asked = [numbers.get(c.get("id")) or c.get("id") for _, c in _iter_comments(store)
+                 if c.get("version") == version and c.get("decision_request") and not c.get("withdrawn")]
+        if asked:
+            ordered = sorted(n for n in asked if type(n) is int) + [n for n in asked if type(n) is not int]
+            line += f" · {len(asked)} card{'s' if len(asked) != 1 else ''} {_number_runs(ordered)}"
+    return line
 
 
 def main():
