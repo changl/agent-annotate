@@ -5408,7 +5408,7 @@ def cmd_mcp(args) -> int:
 # ────────────────────────────────────────────────────────────────────────────
 # Argparse
 # ────────────────────────────────────────────────────────────────────────────
-AGENT_COMMANDS = ("workspace", "new", "project", "copy", "finding", "plan",
+AGENT_COMMANDS = ("workspace", "publish", "new", "project", "copy", "finding", "plan",
                   "inbox", "resolve", "withdraw", "claim")
 
 
