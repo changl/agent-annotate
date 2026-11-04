@@ -4,7 +4,7 @@ import json
 
 import pytest
 from review_fixtures import complete
-from single_page import browser_page, feedback, go, history
+from single_page import browser_page, feedback, go, history, project_notes
 from test_card_layout import CHROME
 from test_workspace_intent import _page
 
@@ -52,6 +52,7 @@ def test_summary_scrolls_with_document_and_keeps_expansion_across_versions(tmp_p
     save_project(directory, project)
     with browser_page(tmp_path, directory, width=width, height=900) as (page, base):
         history(page)
+        project_notes(page)
         panel = page.locator("#project-panel-review")
         assert panel.count() == 1 and panel.is_visible()
         progress = panel.locator('[data-module="progress"]')

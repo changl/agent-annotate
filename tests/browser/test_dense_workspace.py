@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from single_page import browser_page, feedback, go, history, section
+from single_page import browser_page, feedback, go, history, project_notes, section
 from test_card_layout import CHROME
 from test_workspace_intent import _page, _project, _wait_decision
 
@@ -81,6 +81,7 @@ def test_feedback_first_dense_workspace(tmp_path, width, theme):
         # v9o: a card holding unsent text opens with it; no click needed.
         assert card.locator(".decision-say-ta").input_value() == draft
         history(page)
+        project_notes(page)
         module = page.locator('#project-panel-review [data-module="progress"]')
         if module.get_attribute("open") is None:
             module.locator("summary").click()

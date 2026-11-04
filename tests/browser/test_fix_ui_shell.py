@@ -123,20 +123,19 @@ def open_sections(page):
         head.click()
 
 
-# ── UI-10: ?v=vN opens that version with the older-version banner ──────────
+# ── UI-10: ?v=vN opens that version; the tab and the refresh button say so (av1, #136)
 @pytest.mark.parametrize("address", ["?v=v1#view=review", "?v=v1"])
 def test_query_version_link_opens_that_version_with_banner(tmp_path, versions, address):
     with opened(tmp_path, versions, address) as (page, base, _):
         page.wait_for_function("() => document.getElementById('content-frame').dataset.version === 'v1'")
-        banner = page.locator("#unified-version-banner")
-        expect(banner).to_be_visible()
-        expect(banner).to_contain_text("Viewing v1 (older) · Latest is v2")
-        expect(page.locator("#view-hd-sub-doc")).to_contain_text("v1")
+        fresh = page.locator("#aa-fresh")
+        expect(fresh.locator(".aa-fresh-v")).to_have_text("v2")
+        expect(page.locator("#aa-tabs .aa-tab-ver")).to_have_text("v1 · older")
         assert page.evaluate("location.search") == ""
         assert "v=v1" in page.evaluate("location.hash")
-        banner.locator("button").click()
+        fresh.click()
         page.wait_for_function("() => document.getElementById('content-frame').dataset.version === 'v2'")
-        expect(banner).to_be_hidden()
+        expect(fresh.locator(".aa-fresh-v")).to_be_hidden()
         page.reload(wait_until="networkidle")
         ready(page)
         assert frame_version(page) == "v2"
@@ -145,20 +144,21 @@ def test_query_version_link_opens_that_version_with_banner(tmp_path, versions, a
 def test_hash_version_wins_over_query_version(tmp_path, versions):
     with opened(tmp_path, versions, "?v=v1#view=review&v=v2") as (page, _, _b):
         assert frame_version(page) == "v2"
-        expect(page.locator("#unified-version-banner")).to_be_hidden()
+        expect(page.locator("#aa-fresh .aa-fresh-v")).to_be_hidden()
 
 
-# ── UI-20: the banner sits above the content title, as in final/ ───────────
+# ── UI-20 → av1: an older version is named in the Review tab (no banner row);
+# the refresh button names the latest in plain text, never in a red pill (#136).
 @pytest.mark.parametrize("width", [1440, 390])
-def test_older_version_banner_sits_above_the_content_title(tmp_path, versions, width):
+def test_older_version_shows_in_the_tab_and_the_refresh_button(tmp_path, versions, width):
     with opened(tmp_path, versions, "#view=review&v=v1", width=width, height=844) as (page, _, _b):
-        banner = page.locator("#unified-version-banner")
-        expect(banner).to_be_visible()
-        order = page.evaluate(
-            "() => [...document.getElementById('frame-area').children].filter(e => !e.hidden && e.offsetHeight).map(e => e.id || e.className)"
-        )
-        assert order.index("unified-version-banner") < order.index("view-hd")
-        assert banner.bounding_box()["y"] < page.locator("#frame-area .view-hd").bounding_box()["y"]
+        label = page.locator("#aa-tabs .aa-tab-ver" if width > 768 else "#aa-tabs-menu summary .aa-tab-ver")
+        expect(label).to_have_text("v1 · older")
+        assert label.evaluate("el => !el.closest('.badge')")
+        fresh = page.locator("#aa-fresh")
+        expect(fresh.locator(".aa-fresh-v")).to_have_text("v2")
+        assert fresh.locator(".badge:visible").count() == 0
+        assert page.locator("#frame-area .view-hd").is_hidden()
 
 
 # ── UI-19: a collapsed card from a newer version keeps its way back ────────
@@ -334,11 +334,16 @@ def test_version_hint_shows_only_for_the_document_on_screen(tmp_path, workspace)
         history(page)
         page.locator('[data-hist-filter="all"]').click()
         expect(page.locator('.hist-cat[data-cat="plans"]')).to_be_visible()
+        # mme: the hint shows while the list has keyboard focus.
+        page.locator('#vrail-body-review .vrow').first.focus()
+        page.keyboard.press("Home")
         expect(page.locator('.hist-cat[data-cat="review"] .unified-history-hint')).to_be_visible()
         expect(page.locator('.hist-cat[data-cat="plans"] .unified-history-hint')).to_be_hidden()
         go(page, "plans")
         history(page)
         page.locator('[data-hist-filter="all"]').click()
+        page.locator('#vrail-body-plans .vrow').first.focus()
+        page.keyboard.press("Home")
         expect(page.locator('.hist-cat[data-cat="plans"] .unified-history-hint')).to_be_visible()
         expect(page.locator('.hist-cat[data-cat="review"] .unified-history-hint')).to_be_hidden()
 
@@ -391,6 +396,8 @@ def test_one_tab_page_has_no_filter_no_menu_and_a_clean_address(tmp_path, versio
         assert page.evaluate("new URLSearchParams(location.hash.slice(1)).get('view')") == "review"
         history(page)
         expect(page.locator("#hist-filter")).to_be_hidden()
+        page.locator(".vrow").first.focus()
+        page.keyboard.press("Home")
         expect(page.locator(".unified-history-hint").first).to_be_visible()
     with opened(tmp_path, versions, width=390, height=844) as (page, _, _b):
         expect(page.locator("#aa-tabs-menu")).to_be_hidden()

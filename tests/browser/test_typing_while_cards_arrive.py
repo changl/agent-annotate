@@ -230,15 +230,16 @@ def test_withdrawn_question_keeps_typed_answer_and_its_send_count(tmp_path, wher
         shown = page.evaluate("""() => [...document.querySelectorAll('textarea')].map(t => t.value).concat(
             [...document.querySelector('#content-frame').contentDocument.querySelectorAll('textarea')].map(t => t.value))""")
         assert FIRST + MORE in shown, shown
-        # Blur and polls leave the shown card alone; only the banner applies the withdrawal.
+        # Blur and polls leave the shown card alone; only the refresh button applies the withdrawal.
         from test_keep_drafts import _blur
         _blur(page)
         _poll(page, 2)
         playwright.expect(box).to_have_value(FIRST + MORE)
         playwright.expect(page.locator('#comment-list .decision-stranded')).to_have_count(0)
-        banner = page.locator('#unified-version-banner')
-        playwright.expect(banner).to_contain_text('1 card changed')
-        banner.locator('button').click()
+        # #136: a changed card is not a new item, so the button stays plain; a tap still shows it.
+        fresh = page.locator('#aa-fresh')
+        assert fresh.get_attribute('data-state') == 'idle'
+        fresh.click()
         kept = page.locator('#comment-list .decision-stranded [data-decision-say-ta="question-11"]')
         playwright.expect(kept).to_have_value(FIRST + MORE)
         assert int(page.locator("#send-count").inner_text()) == before

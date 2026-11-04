@@ -34,7 +34,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         page.locator("#pop-save").click()
         card = _card(page, "Build note, first take")
         card.wait_for()
-        assert card.locator(".send-state").inner_text() == "Pending"
+        assert card.locator(".citem-num.is-pending").count() == 1 and card.locator(".send-state").count() == 0
         _send(page)
         playwright.expect(_card(page, "Build note, first take").locator(".send-state")).to_have_text("Waiting for the agent")
         card = _card(page, "Build note, first take")
@@ -48,7 +48,7 @@ def test_edit_your_comment_and_send_it_again(tmp_path):
         card = _card(page, "Build note, corrected")
         card.wait_for()
         assert "(edited)" in card.inner_text()
-        assert card.locator(".send-state").inner_text() == "Pending"
+        assert card.locator(".citem-num.is-pending").count() == 1 and card.locator(".send-state").count() == 0
         cid = card.get_attribute("data-comment-id")
         assert _stored(directory, cid)["text"] == "Build note, corrected"
         _send(page)

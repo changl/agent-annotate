@@ -352,7 +352,8 @@ def test_card_layout_and_unchanged_sections(tmp_path):
             assert rail.locator(".decision-prompt").inner_text() == "Rename status → lifecycle_state?"
             assert rail.locator(".decision-context").inner_text() == CONTEXT
             assert "Why / details" not in rail.inner_text()
-            assert rail.locator(".decision-reco-line").inner_text().startswith("Recommended:")
+            # mme: the option carries its Recommended tag, so no "Recommended: X" line.
+            assert rail.locator(".decision-reco-line").count() == 0
             assert rail.locator(".decision-rec-badge").text_content() == "Recommended"
             rows = rail.locator(".decision-btns > .decision-btn")
             assert rows.count() == 3 and "Answer in words" in rows.nth(2).inner_text()

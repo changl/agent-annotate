@@ -10,7 +10,7 @@ from review_fixtures import complete
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from single_page import feedback, history, ready, section  # noqa: E402
+from single_page import feedback, history, project_notes, ready, section  # noqa: E402
 from test_card_layout import CHROME, _serve  # noqa: E402
 
 from agent_annotate.pagegen import generate  # noqa: E402
@@ -311,6 +311,7 @@ def test_tabs_theme_and_noop_progress_are_persistent(tmp_path, width):
             feedback(page)
             assert _contrast(page.locator(".decision-rec-badge").first) >= 4.5
             history(page)
+            project_notes(page)
             panel = page.locator("#project-panel-review")
             module = panel.locator('[data-module="progress"]')
             if module.get_attribute("open") is None:

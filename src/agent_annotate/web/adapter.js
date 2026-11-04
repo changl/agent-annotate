@@ -388,6 +388,24 @@ function ensureBadgeLayer() {
   return layer;
 }
 
+// The number chip: one look for pins and in-page card numbers, matching the
+// rail's .citem-num (shell.css). Red needs you, orange answered but not sent,
+// yellow the agent has it, light green addressed, neutral grey otherwise:
+// darker grey on light, lighter grey on dark.
+const ORANGE = 'color-mix(in oklab,var(--color-warning) 50%,var(--color-error))';
+// #148: yellow a step lighter than the stock warning (shell.css --yellow).
+const YELLOW_DARK = 'color-mix(in oklab,var(--color-warning) 60%,var(--color-base-content))';
+const YELLOW_LIGHT = 'color-mix(in oklab,var(--color-warning) 60%,var(--color-base-100))';
+const NUM_CHIP_CSS = sel => `
+    ${sel} { background: color-mix(in oklab,var(--color-base-content) 62%,var(--color-base-100)) !important; color: var(--color-base-100) !important; }
+    ${sel}.is-needs { background: var(--color-error) !important; color: var(--color-error-content) !important; }
+    ${sel}.is-pending { background: ${ORANGE} !important; color: var(--color-error-content) !important; }
+    ${sel}.is-working { background: ${YELLOW_DARK} !important; color: var(--color-warning-content) !important; }
+    [data-theme="light"] ${sel}.is-working { background: ${YELLOW_LIGHT} !important; }
+    ${sel}.is-done { background: color-mix(in oklab,var(--color-success) 20%,var(--color-base-100)) !important; color: var(--color-success-content) !important; }
+    [data-theme="dark"] ${sel}.is-done { color: var(--color-success) !important; }`;
+const NUM_STATES = { needs: ', needs you', pending: ', answered, not sent yet', working: ', the agent has it', done: ', addressed' };
+
 // Pins are CLICKABLE (reverse lookup: pin -> its comments in the shell
 // drawer). Base geometry stays inline (computed per-position); interaction
 // affordances live in one injected style block.
@@ -400,9 +418,8 @@ function ensurePinStyle() {
     .bpin:hover, .bpin-inline:hover {
       box-shadow: 0 0 0 3px color-mix(in oklab,var(--color-primary) 35%,transparent), 0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent) !important;
     }
-    .bpin-unread { background: var(--color-error) !important; }
+    ${NUM_CHIP_CSS('.bpin')}
     .bpin-cluster {
-      background: var(--color-primary) !important;
       box-shadow: 0 0 0 2px var(--color-base-100), 0 1px 4px color-mix(in oklab,var(--color-neutral) 35%,transparent) !important;
     }
     .bpin-cluster:hover {
@@ -411,7 +428,6 @@ function ensurePinStyle() {
     /* Decision pins take priority over unread/cluster styling — placed
        last so equal-specificity !important rules resolve in its favor. */
     .bpin-decision {
-      background: var(--color-primary) !important;
       box-shadow: 0 0 0 3px var(--color-base-100), 0 1px 4px color-mix(in oklab,var(--color-neutral) 30%,transparent) !important;
       animation: bpinDecisionPulse 1.5s ease-in-out 3;
     }
@@ -447,7 +463,7 @@ const PIN_SIZE_MOBILE = 26;  // px — larger touch target (AC: pins scale up on
 function PIN_SIZE() { return isMobileLayout() ? PIN_SIZE_MOBILE : PIN_SIZE_DESKTOP; }
 function pinBaseCss() {
   const s = PIN_SIZE();
-  return `width:${s}px;height:${s}px;color:var(--color-primary-content);border-radius:50%;font-size:${s > 20 ? 11 : 9.5}px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent);background:var(--color-primary)`;
+  return `height:${s}px;min-width:${s}px;box-sizing:border-box;padding:0 6px;border-radius:999px;font-size:${s > 20 ? 12 : 10.5}px;font-weight:700;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px color-mix(in oklab,var(--color-neutral) 25%,transparent)`;
 }
 
 // Build one pin element. `entries` = the comment(s) this pin represents
@@ -460,21 +476,23 @@ function makePin(anchorId, entries, isCluster) {
   b.dataset.pinComments = entries.map(x => x.id).join(',');
   const hasDecision = entries.some(x => x.decision);
   if (hasDecision) b.classList.add('bpin-decision');
+  const state = ['needs', 'pending', 'working', 'done'].find(st => entries.some(x => x.state === st));
+  if (state) b.classList.add('is-' + state);
   if (isCluster) {
     b.classList.add('bpin-cluster');
     b.textContent = String(entries.length);
     b.title = anchorName(anchorId) + ': ' + entries.length + ' comments (#' +
       entries.map(x => x.n).join(', #') + ')' + (hasDecision ? ' — decision needed' : '') + ' — click to view';
   } else {
-    b.textContent = String(entries[0].n);
-    if (entries[0].unread) b.classList.add('bpin-unread');
+    b.textContent = '#' + entries[0].n;
     b.title = anchorName(anchorId) + ': comment #' + entries[0].n +
       (entries[0].unread ? ' (unread)' : '') +
       (entries[0].decision ? ' — decision needed' : '') + ' — click to view';
   }
   b.setAttribute('role', 'button');
   b.tabIndex = 0;
-  b.setAttribute('aria-label', 'Open feedback ' + entries.map(x => '#' + x.n).join(', '));
+  b.setAttribute('aria-label', 'Open feedback ' + entries.map(x => '#' + x.n).join(', ') +
+    (NUM_STATES[state] || ''));
   b.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); }
   });
@@ -490,8 +508,8 @@ function makePin(anchorId, entries, isCluster) {
 // between stacked/nudged pins than the desktop 18px one to avoid overlap.
 function PIN_SPACING() { return PIN_SIZE() + 2; }
 function pinSpecsFor(anchorId) {
-  const entries = (latestPins[anchorId] || []).slice().sort((a, b) => parseInt(a.n, 10) - parseInt(b.n, 10));
-  if (!entries.length) {
+  const all = latestPins[anchorId] || [];
+  if (!all.length) {
     // Shell predates pins payload (or race before first counts message):
     // degrade to a count cluster so the badge never vanishes. Empty
     // data-pin-comments makes the shell list every comment on this anchor.
@@ -502,6 +520,10 @@ function pinSpecsFor(anchorId) {
     b.title = anchorName(anchorId) + ': ' + count + ' comment(s) — click to view';
     return [{ pin: b, entry: null }];
   }
+  // A question card drawn in the page carries its own number chip.
+  const entries = all.filter(en => !(en.decisionRequest && document.querySelector('[data-strip-item="' + cssEsc(en.id) + '"]')))
+    .sort((a, b) => parseInt(a.n, 10) - parseInt(b.n, 10));
+  if (!entries.length) return [];
   const hasGranular = entries.some(en => en.target && en.target.offset);
   if (entries.length > 3 && !hasGranular) {
     return [{ pin: makePin(anchorId, entries, true), entry: null }];
@@ -521,8 +543,8 @@ function pinPoint(anchorEl, entry, wrapperRect) {
   if (row) {
     const rect = row.getBoundingClientRect();
     const scroll = row.closest('.unified-table-scroll');
-    const edge = scroll ? scroll.getBoundingClientRect().left : rect.left;
-    return { left: edge - wrapperRect.left - PIN_SIZE() - 4, top: rect.top - wrapperRect.top + rect.height / 2 - PIN_SIZE() / 2, granular: false, centered: true };
+    const edge = scroll ? scroll.getBoundingClientRect().right : rect.right;
+    return { left: edge - wrapperRect.left + 6, top: rect.top - wrapperRect.top + rect.height / 2 - PIN_SIZE() / 2, granular: false, centered: true };
   }
   const placementEl = resolved ? resolved.el : anchorEl;
   const rect = placementEl.getBoundingClientRect();
@@ -535,7 +557,9 @@ function pinPoint(anchorEl, entry, wrapperRect) {
       granular: true,
     };
   }
-  // Legacy (non-granular) placement: the anchor's top-right corner — EXCEPT
+  // Legacy (non-granular) placement: just right of the anchor, level with its
+  // first line, in the page's right gutter (Chang, 2026-11-02: a left chip
+  // would push the text over) — EXCEPT
   // for table rows (the reported case: real decision-table rows run
   // 73-165px tall, well past any plausible "short row" height cutoff), where
   // that corner sits exactly on the shared boundary between two rows and
@@ -544,14 +568,11 @@ function pinPoint(anchorEl, entry, wrapperRect) {
   // tag (a real <tr>, whatever its height) rather than a height threshold —
   // a <60px height also still centers, for any non-TR row-like anchor that
   // happens to be short. Centered anchors get their pin vertically centered
-  // in their own row band; renderBadges renders this WITHOUT the corner
-  // case's translate(0,-100%) shift (point.centered below), so the pin's
-  // true rendered center lands on rect's vertical midpoint, unambiguously
-  // inside the row. Non-TR, taller-than-60px elements are unaffected — same
-  // corner placement as before.
+  // in their own row band, unambiguously inside the row. Non-TR,
+  // taller-than-60px elements keep their first line.
   const centered = placementEl.tagName === 'TR' || (rect.height > 0 && rect.height <= 60);
   return {
-    left: rect.right - wrapperRect.left,
+    left: rect.right - wrapperRect.left + 6,
     top: centered
       ? rect.top - wrapperRect.top + rect.height / 2 - PIN_SIZE() / 2
       : rect.top - wrapperRect.top,
@@ -568,17 +589,17 @@ function pinPoint(anchorEl, entry, wrapperRect) {
 // horizontal scrollWidth and forces an unwanted scrollbar. Only the right
 // bound is pulled in: vertical page scroll is normal and expected, so top
 // is left untouched.
-function clampPinLeft(left, wrapperRect, granular) {
+function clampPinLeft(left, wrapperRect, granular, width) {
   // Mobile pins extend their invisible hit area by 9px; reserve all of it
   // so the touch target does not add a 1px horizontal scrollbar.
   const inset = isMobileLayout() ? 9 : 8;
   const viewportW = document.documentElement.clientWidth || window.innerWidth;
   // `left` is the pin's CSS left, not its right edge: a granular pin is
   // horizontally centered on it (translate(-50%,...)), so only half its box
-  // extends past `left`, but a legacy corner pin (translate(0,-100%)) has
-  // `left` AS its left edge, so the full box extends past it. Reserve the
+  // extends past `left`, but a gutter pin has `left` AS its left edge, so the
+  // full box extends past it. Reserve the
   // right amount or the pin's own width still pokes past the clamp target.
-  const reserve = granular ? PIN_SIZE() / 2 : PIN_SIZE();
+  const reserve = granular ? width / 2 : width;
   const maxLeft = viewportW - wrapperRect.left - inset - reserve;
   return Number.isFinite(maxLeft) && left > maxLeft ? Math.max(inset, maxLeft) : left;
 }
@@ -627,17 +648,13 @@ function renderBadges() {
         b.style.top = point.top + 'px';
         b.style.transform = 'translate(-50%,-50%)';
       } else {
-        finalLeft = point.left - (specs.length - 1 - i) * PIN_SPACING();
-        b.style.top = point.top + 'px';
-        // Centered pins (see pinPoint's `centered` flag) already carry their
-        // own vertical center in `top` — no corner shift. Everything else
-        // keeps the original top-right-corner placement (bottom-anchored
-        // via -100%). Single shared flag, not a re-derived condition, so
-        // this can never drift out of sync with pinPoint's own predicate.
-        b.style.transform = point.centered ? 'translate(0,0)' : 'translate(0,-100%)';
+        // Several numbers on one anchor stack down the gutter.
+        finalLeft = point.left;
+        b.style.top = point.top + i * PIN_SPACING() + 'px';
       }
-      b.style.left = clampPinLeft(finalLeft, wrapperRect, point.granular) + 'px';
+      b.style.left = finalLeft + 'px';
       layer.appendChild(b);
+      b.style.left = clampPinLeft(finalLeft, wrapperRect, point.granular, b.offsetWidth) + 'px';
     });
   }
 }
@@ -798,7 +815,6 @@ function ensureStripStyle() {
     .annotate-decision-accept { color:var(--color-success-content) !important; }
     .annotate-decision-reject { color:var(--color-error-content) !important; }
     .annotate-decision-changes { color:var(--color-warning-content) !important; }
-    .bpin-unread { color:var(--color-error-content) !important; }
     .annotate-strip-tr > td { padding: 0 !important; border: none !important; background: transparent !important; }
     .annotate-strip-abs { pointer-events: auto !important; }
     .annotate-decision-item + .annotate-decision-item {
@@ -809,7 +825,6 @@ function ensureStripStyle() {
       font-size: calc(12px * var(--aa-text, 1)) !important; font-weight: 600 !important; color: var(--link) !important;
       margin: 0 0 6px !important; line-height: 1.4 !important; white-space: normal !important;
     }
-    .annotate-decision-num { display: inline-block !important; margin-right: 6px !important; font-weight: 800 !important; color: var(--link) !important; }
     .annotate-decision-resolved .annotate-decision-prompt { margin-bottom: 5px !important; }
     .annotate-decision-text {
       font-size: calc(11.5px * var(--aa-text, 1)) !important; color: var(--color-base-content) !important; line-height: 1.5 !important;
@@ -954,7 +969,7 @@ function ensureStripStyle() {
     }
     .annotate-decision-rec {
       font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 800 !important; letter-spacing: .05em !important;
-      text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
+      text-transform: uppercase !important; background: var(--color-base-200) !important; color: var(--muted) !important;
       border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
     .annotate-decision-custom { background: var(--muted) !important; }
@@ -1027,19 +1042,30 @@ function ensureStripStyle() {
     }
     .annotate-decision-item + .annotate-decision-item { border-top-color: var(--line) !important; }
     .annotate-decision-prompt { color: var(--color-base-content) !important; font-weight: 700 !important; font-size: calc(11px * var(--aa-text, 1)) !important; }
+    /* The number chip first, then the question (Chang #172; pins stay on the right). */
+    .annotate-decision-prompt { display: flex !important; align-items: flex-start !important; gap: 8px !important; }
+    .annotate-decision-q { flex: 1 1 auto !important; min-width: 0 !important; }
     .annotate-decision-num {
-      color: var(--color-base-content) !important; background: var(--color-base-300) !important; border-radius: 999px !important;
-      padding: 0 6px !important; font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 700 !important;
+      display: inline-flex !important; align-items: center !important; justify-content: center !important; box-sizing: border-box !important;
+      height: calc(18px * var(--aa-text, 1)) !important; min-width: calc(18px * var(--aa-text, 1)) !important; padding: 0 6px !important;
+      border-radius: 999px !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; line-height: 1 !important;
+      font-variant-numeric: tabular-nums !important; white-space: nowrap !important; flex: 0 0 auto !important; margin: 0 !important;
     }
+    ${NUM_CHIP_CSS('.annotate-decision-num')}
     .annotate-decision-btns > .annotate-decision-btn, .annotate-decision-btns > .annotate-decision-btn:hover {
       background: var(--color-base-200) !important; color: var(--color-base-content) !important;
       border: 1px solid var(--line) !important; border-radius: .25rem !important; font-weight: 600 !important;
       box-shadow: 0 1px 1px color-mix(in oklab,var(--color-neutral) 4%,transparent) !important;
     }
     .annotate-decision-btns > .annotate-decision-btn:hover { background: var(--color-base-300) !important; }
-    .annotate-decision-rec { background: color-mix(in oklab,var(--color-success) 15%,transparent) !important; color: var(--ok-text) !important; border: none !important; }
+    .annotate-decision-rec { background: var(--color-base-200) !important; color: var(--muted) !important; border: none !important; }
     .annotate-decision-reco-line { color: var(--ok-text) !important; }
-    .annotate-excerpt { background: var(--color-base-200) !important; border-left-color: color-mix(in oklab,var(--color-primary) 45%,transparent) !important; }
+    /* #172: no line on the left; its own background, set apart in both themes. */
+    .annotate-excerpt { background: color-mix(in oklab,var(--color-base-content) 11%,var(--color-base-100)) !important; border-left: 0 !important; border-radius: 6px !important; }
+    /* #172: the recommended option on light green, easy to spot in both themes. */
+    .annotate-decision-btns > .annotate-decision-btn.is-recommended { background: color-mix(in oklab,var(--color-success) 26%,var(--color-base-100)) !important; border-color: color-mix(in oklab,var(--color-success) 55%,var(--color-base-100)) !important; }
+    [data-theme="light"] .annotate-decision-btns > .annotate-decision-btn.is-recommended { background: color-mix(in oklab,var(--color-success) 38%,var(--color-base-100)) !important; }
+    .annotate-decision-btns > .annotate-decision-btn.is-recommended:hover { background: color-mix(in oklab,var(--color-success) 30%,var(--color-base-100)) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-excerpt-more { color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
     .annotate-decision-evidence-goto { background: var(--color-base-300) !important; color: var(--color-base-content) !important; border-radius: .25rem !important; }
     .annotate-decision-ta, .annotate-decision-cmt {
@@ -1085,7 +1111,7 @@ function ensureStripStyle() {
     .annotate-note-icon:hover { background: var(--color-base-300) !important; }
     .annotate-note-save { background: var(--color-primary) !important; color: var(--color-primary-content) !important; font-weight: 600 !important; padding: 4px 12px !important; border-radius: .25rem !important; }
     .annotate-send-state { display: inline-block !important; padding: 0 6px !important; border-radius: 999px !important; border: 1px solid var(--line) !important; font-size: calc(10px * var(--aa-text, 1)) !important; font-weight: 600 !important; line-height: 1.6 !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; white-space: nowrap !important; }
-    .annotate-send-state.is-pending { background: var(--color-warning) !important; border-color: var(--color-warning) !important; color: var(--color-warning-content) !important; }
+    .annotate-send-state.is-pending { background: ${ORANGE} !important; border-color: ${ORANGE} !important; color: var(--color-error-content) !important; }
     .annotate-add-note { display: flex !important; align-items: flex-end !important; gap: 8px !important; margin-top: 10px !important; }
     .annotate-add-note .annotate-decision-ta { flex: 1 1 auto !important; margin-top: 0 !important; }
     .annotate-note-add { background: var(--color-base-300) !important; color: var(--color-base-content) !important; font-weight: 600 !important; padding: 6px 12px !important; border-radius: .25rem !important; min-height: 2.25rem !important; }
@@ -1778,14 +1804,15 @@ function ensureUnchangedStyle() {
       display: flex !important; align-items: baseline !important; gap: 4px 10px !important; flex-wrap: wrap !important;
       width: 100% !important; box-sizing: border-box !important; text-align: left !important;
       font: 600 calc(13px * var(--aa-text, 1))/1.4 "Inter", sans-serif !important;
-      color: var(--color-base-content) !important; background: var(--color-base-200) !important; border: 1px dashed var(--line) !important;
-      border-radius: 8px !important; padding: 8px 12px !important; cursor: pointer !important; margin: 0 !important;
+      color: var(--color-base-content) !important; background: var(--primary-soft) !important; border: 0 !important;
+      border-left: 3px solid var(--color-primary) !important; border-radius: 0 6px 6px 0 !important;
+      padding: 5px 10px !important; cursor: pointer !important; margin: 0 !important;
     }
-    .annotate-unchanged-toggle:hover { background: var(--color-base-200) !important; border-color: var(--muted) !important; }
+    .annotate-unchanged-toggle:hover { background: var(--primary-soft) !important; }
     .annotate-unchanged-toggle:focus-visible { outline: 2px solid var(--link) !important; outline-offset: 1px !important; }
     .annotate-unchanged-toggle::before { content: '\\25B8'; font-size: calc(11px * var(--aa-text, 1)); color: var(--muted); transition: transform .12s; align-self: center; }
     .annotate-unchanged-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-    .annotate-unchanged-title { font-size: calc(12.5px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
+    .annotate-unchanged-title { font-size: calc(13px * var(--aa-text, 1)) !important; font-weight: 700 !important; color: var(--color-base-content) !important; }
     .annotate-unchanged-note { font-weight: 500 !important; color: var(--muted) !important; font-size: calc(10.5px * var(--aa-text, 1)) !important; }
     @media (max-width: 768px), (max-height: 480px) {
       .annotate-unchanged-toggle { min-height: 44px !important; touch-action: manipulation !important; }
@@ -1944,7 +1971,12 @@ function ensureSectionFoldStyle() {
     .annotate-sfold-hidden { display: none !important; }
     .annotate-sfold-bar { display: block !important; margin: 26px 0 10px !important; padding: 0 !important; }
     .annotate-sfold-bar .annotate-unchanged-toggle, .aa .annotate-run-next > .annotate-unchanged-toggle, .aa .annotate-run-cont > .annotate-unchanged-toggle { align-items: center !important; }
-    .annotate-sfold-bar .annotate-unchanged-toggle { padding: 6px 12px !important; flex-wrap: nowrap !important; }
+    .annotate-sfold-bar .annotate-unchanged-toggle { padding: 5px 10px !important; flex-wrap: nowrap !important; }
+    /* A folded subsection looks like its \`###\` heading (content.css .aa h3). */
+    .annotate-sfold-bar[aria-level="3"] { margin: 18px 0 6px !important; }
+    .annotate-sfold-bar[aria-level="3"] .annotate-unchanged-toggle { background: transparent !important; padding: 1px 0 1px 8px !important;
+      border-left: 2px solid color-mix(in oklab,var(--color-primary) 60%,var(--color-base-100)) !important; border-radius: 0 !important; }
+    .annotate-sfold-bar[aria-level="3"] .annotate-unchanged-title { font-size: calc(12.5px * var(--aa-text, 1)) !important; }
     .annotate-sfold-bar .annotate-unchanged-title { flex: 0 1 auto !important; min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
     .annotate-sfold-bar .annotate-unchanged-note { flex: 1 1 0 !important; min-width: 6em !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
     @media (pointer: coarse) {
@@ -2080,7 +2112,8 @@ function foldAnsweredSections() {
 // "#2902 Revoked, Sent", "#2901 Answer later": what the folded card's line says.
 function foldedItemStatus(item) {
   const text = sel => { const n = item.querySelector(sel); return n ? normText(n.textContent) : ''; };
-  const state = [text('.annotate-folded-what'), text('.annotate-send-state')].filter(Boolean).join(', ');
+  const pending = item.querySelector('.annotate-decision-num.is-pending') ? 'Pending' : '';
+  const state = [text('.annotate-folded-what'), text('.annotate-send-state'), pending].filter(Boolean).join(', ');
   return [text('.annotate-decision-num'), state].filter(Boolean).join(' ');
 }
 
@@ -2641,6 +2674,7 @@ function wrapScrollTables() {
     wrap.tabIndex = 0;
     wrap.setAttribute('role', 'region');
     wrap.setAttribute('aria-label', 'Table · scroll sideways');
+    sizeTableColumns(t);
     t.before(frame);
     frame.append(wrap);
     wrap.append(t);
@@ -2654,6 +2688,29 @@ function wrapScrollTables() {
   });
   window.addEventListener('resize', () => document.querySelectorAll('.unified-table-scroll').forEach(markTableEdges));
   scheduleBadgeRefresh();
+}
+// Short columns shrink to their content (content.css, from 768 px up). A short
+// column with a longer cell wraps it to about two lines instead of widening,
+// and the first, label column keeps room (Chang, 2026-11-02).
+// shortcut: two lines is estimated from character count, not from the row's
+// real height; measure the rows if a column still widens a one-line row.
+function sizeTableColumns(t) {
+  if (t.querySelector('[rowspan]:not([rowspan="1"])')) return;
+  const cols = [];
+  [...t.rows].forEach(r => {
+    let i = 0;
+    [...r.cells].forEach(c => { if (c.colSpan === 1) (cols[i] = cols[i] || []).push(c); i += c.colSpan; });
+  });
+  cols.forEach(cells => {
+    const body = cells.filter(c => c.tagName === 'TD');
+    if (!body.length || body.some(c => c.querySelector('img,svg,table,pre,ul,ol'))) return;
+    const len = Math.max(...body.map(c => c.textContent.trim().length));
+    if (len > 24) return;
+    cells.forEach(c => {
+      c.classList.add(len > 12 ? 'aa-col-two' : 'aa-col-short');
+      if (len > 12) c.style.setProperty('--aa-col-w', Math.ceil(len / 2) + 1 + 'ch');
+    });
+  });
 }
 // Code and terminal blocks get a copy button, top right (GitHub, VitePress,
 // Docusaurus): it shows on hover or focus, always on touch, and turns into a
@@ -2721,7 +2778,7 @@ function ensureAffordanceStyle() {
     .unified-annotation-hover,.unified-commentable{outline:2px solid var(--color-primary)!important;outline-offset:2px!important}
     .unified-commentable{cursor:crosshair}
     .bpin[role=button]:focus-visible{outline:3px solid var(--color-primary);outline-offset:3px}
-    .unified-table-frame{position:relative;max-width:calc(100% - 28px);margin-left:28px}
+    .unified-table-frame{position:relative}
     .unified-table-frame::before,.unified-table-frame::after{content:'';position:absolute;top:0;bottom:0;width:32px;pointer-events:none;opacity:0}
     .unified-table-frame::before{left:0;background:linear-gradient(to right,var(--color-base-100),transparent)}
     .unified-table-frame::after{right:2px;background:linear-gradient(to left,var(--color-base-100),transparent)}
@@ -2731,7 +2788,7 @@ function ensureAffordanceStyle() {
     .unified-table-scroll table{width:100%;min-width:0;max-width:100%;table-layout:auto!important}
     .unified-table-scroll th,.unified-table-scroll td{overflow-wrap:normal!important;word-break:normal!important;hyphens:none!important;min-width:0}
     @media (max-width:480px){.unified-table-scroll th,.unified-table-scroll td{padding-left:4px!important;padding-right:4px!important}}
-    .unified-table-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:4px 0 14px 28px;color:var(--color-base-content)}
+    .unified-table-hint{font-size:calc(10.5px * var(--aa-text, 1));margin:4px 0 14px;color:var(--color-base-content)}
     pre{white-space:pre-wrap!important;overflow-wrap:anywhere}
     pre.aa-copy-host{position:relative;padding-right:44px!important}
     .aa-copy{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:1px solid var(--color-base-300);border-radius:6px;background:var(--color-base-100);color:var(--color-base-content);cursor:pointer;opacity:0;transition:opacity .15s}

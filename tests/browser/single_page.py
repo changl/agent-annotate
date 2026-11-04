@@ -38,6 +38,13 @@ def history(page):
     page.locator("#history-body").wait_for(state="visible")
 
 
+def project_notes(page):
+    """mme: the agent's progress notes sit in one folded row under the versions."""
+    fold = page.locator("#project-panel-review > details.project-notes")
+    if fold.get_attribute("open") is None:
+        fold.locator("> summary").click()
+
+
 # A round sent, nested under the version it was sent on (yvj).
 ROUNDS = "#history-body .vact-block:not(.vact-agent)"
 
@@ -76,7 +83,8 @@ def browser_page(tmp_path, directory, width=1440, height=960, ipad=False):
                     browser = runner.webkit.launch()
                 except playwright.Error:
                     pytest.skip("Playwright WebKit is not installed")
-                page = browser.new_context(**runner.devices["iPad Pro 11 landscape"]).new_page()
+                device = ipad if isinstance(ipad, str) else "iPad Pro 11 landscape"
+                page = browser.new_context(**runner.devices[device]).new_page()
             else:
                 browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
                 page = browser.new_page(viewport={"width": width, "height": height})

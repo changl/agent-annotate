@@ -347,8 +347,48 @@
     const ready = typeof b.ready === 'number' ? b.ready + ' ready' : '';
     const title = `Open the ${b.project} board in a new tab` + (ready ? ' · ' + ready : '');
     if (inMenu) return `<a role="listitem" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" class="aa-board-link"><span class="aa-tab-name">${esc(b.label)} ${ICON_EXT}</span><span class="aa-tab-state">${ready ? esc(ready) + ' · ' : ''}opens the board</span></a>`;
-    return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${esc(b.label)}${ICON_EXT}${ready ? `<span class="badge badge-soft badge-primary badge-xs aa-board-count">${esc(ready)}</span>` : ''}</a>`;
+    // #109: "Beads 5 ↗", the count before the arrow; the summary shows on hover, focus or a tap.
+    const sum = summary(b);
+    return `<a class="tab aa-board-link" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer"${sum ? ' aria-describedby="aa-board-sum"' : ` title="${esc(title)}"`}>${esc(b.label)}${typeof b.ready === 'number' ? ` <span class="aa-board-count">${b.ready}</span>` : ''}${ICON_EXT}</a>`;
   }
+  const SUMMARY = [['backlog', 'Backlog'], ['ready', 'Ready'], ['in_progress', 'In progress'], ['blocked', 'Blocked']];
+  function summary(b) {
+    const c = b && b.counts;
+    return c ? SUMMARY.filter(([key]) => typeof c[key] === 'number').map(([key, word]) => [word, c[key]]) : null;
+  }
+  // The summary sits outside the tabs (they re-render on every change).
+  const sumEl = document.getElementById('aa-board-sum');
+  let lastPointer = 'mouse';
+  function showSummary(link) {
+    const rows = summary(board());
+    if (!link || !rows) return hideSummary();
+    sumEl.innerHTML = rows.map(([word, n]) => `<div class="aa-board-sum-row"><span>${esc(word)}</span><b>${n}</b></div>`).join('');
+    sumEl.hidden = false;
+    // A tap in the document lands in its frame, not here.
+    document.getElementById('content-frame')?.contentDocument?.addEventListener('pointerdown', hideSummary, { once: true });
+    const r = link.getBoundingClientRect(), w = sumEl.offsetWidth;
+    sumEl.style.top = Math.round(r.bottom + 4) + 'px';
+    sumEl.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px';
+  }
+  function hideSummary() { sumEl.hidden = true; }
+  const boardLinkOf = (el) => el && el.closest && el.closest('#aa-tabs a.aa-board-link');
+  nav.addEventListener('pointerdown', (e) => { lastPointer = e.pointerType; });
+  // Hover is the mouse's only (an iPad tap must not leave it open).
+  nav.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse' && boardLinkOf(e.target)) showSummary(boardLinkOf(e.target)); });
+  nav.addEventListener('pointerout', (e) => { if (e.pointerType === 'mouse' && boardLinkOf(e.target) && !boardLinkOf(e.relatedTarget)) hideSummary(); });
+  nav.addEventListener('focusin', (e) => { if (boardLinkOf(e.target) && e.target.matches(':focus-visible')) showSummary(e.target); });
+  nav.addEventListener('focusout', (e) => { if (boardLinkOf(e.target)) hideSummary(); });
+  // Chang #148: on the iPad a tap on the count shows the same tooltip (a tap
+  // elsewhere closes it); the name and the arrow still open the board.
+  const countOf = (el) => el && el.closest && el.closest('#aa-tabs a.aa-board-link .aa-board-count');
+  nav.addEventListener('click', (e) => {
+    if (!countOf(e.target) || lastPointer === 'mouse' || !summary(board())) return;
+    e.preventDefault();
+    if (sumEl.hidden) showSummary(boardLinkOf(e.target)); else hideSummary();
+  });
+  document.addEventListener('pointerdown', (e) => { if (!sumEl.hidden && e.pointerType !== 'mouse' && !countOf(e.target)) hideSummary(); });
+
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSummary(); });
 
   // w6e.15: the tabs never squeeze or overlap the tools on the right. The send
   // note gives way first (ellipsis, down to NOTE_MIN); past that the tabs fold
@@ -369,13 +409,25 @@
     [hdr, nav, ...hdr.querySelector('.hdr-right').children].forEach(el => ro.observe(el));
   }
 
+  // av1: Review's version sits in its tab ("Review v646"); the row above the
+  // document that said "Review · Version v646" is gone. An older one says so.
+  function version(id) {
+    const d = DOCS();
+    const v = id === 'review' && d && d.docs.includes(id) ? d.version(id) : null;
+    return v ? { v, older: d.olderShown(id) } : null;
+  }
+  function versionHtml(id) {
+    const x = version(id);
+    return x ? ` <span class="aa-tab-ver${x.older ? ' is-older' : ''}">${esc(x.v)}${x.older ? ' · older' : ''}</span>` : '';
+  }
+  const versionWords = (id) => { const x = version(id); return x ? ' ' + x.v + (x.older ? ', an older version' : '') : ''; };
   function render(counts) {
     const cur = AA.view;
     const b = board();
     nav.innerHTML = '<div class="tabs tabs-border">' + AA.TABS.map(t => {
       const k = counts[t.id], s = sentence(k);
       const badge = k.needs ? ` <span class="badge badge-error badge-xs" aria-hidden="true">${k.needs}</span>` : '';
-      return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + ', ' + s.text)}">${esc(t.label)}${badge}</a>`;
+      return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + versionWords(t.id) + ', ' + s.text)}">${esc(t.label)}${versionHtml(t.id)}${badge}</a>`;
     }).join('') + boardHtml(b, false) + '</div>';
 
     const curTab = AA.tab(cur);
@@ -384,7 +436,7 @@
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
     menu.hidden = AA.TABS.length < 2 && !b; // UI-28: one tab, no menu
-    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
+    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}${versionHtml(cur)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
@@ -607,8 +659,12 @@
     const live = note && Date.now() < note.until;
     const last = receipts()[0];
     const n = $('#send-note');
+    // av1: where that Send got to replaces "Sent", when the server's latest delivery is this Send.
+    const dn = last && docs && docs.deliveryNote();
+    const lastWords = dn && (last.delivery_ids || [last.delivery_id]).includes(dn.id) ? dn.text + ' (' + last.items.length + ')' : last && last.result;
+    n.title = live || !lastWords || lastWords === (last && last.result) ? '' : dn.title;
     if (live) { n.textContent = note.text; n.className = 'send-note' + (note.cls ? ' ' + note.cls : ''); }
-    else if (last) { n.textContent = last.result + ' · ' + UI.fmtTs(last.ts); n.className = 'send-note unified-durable-receipt'; }
+    else if (last) { n.textContent = lastWords + ' · ' + UI.fmtTs(last.ts); n.className = 'send-note unified-durable-receipt'; }
     else { n.textContent = ''; n.className = 'send-note'; }
     // D2: the phone bar, on every tab.
     const mobile = docs && docs.isMobileLayout();
@@ -625,7 +681,7 @@
     const k = counts || AA.counts();
     const elsewhere = AA.TABS.filter(t => t.id !== AA.view && k[t.id].needs).map(t => t.label + ' ' + k[t.id].needs);
     const sub = $('#round-bar-sub');
-    sub.textContent = live ? note.text : elsewhere.length ? 'Needs you: ' + elsewhere.join(' · ') : (last ? last.result : '');
+    sub.textContent = live ? note.text : elsewhere.length ? 'Needs you: ' + elsewhere.join(' · ') : (lastWords || '');
     sub.className = 'round-bar-sub' + (live && note.cls ? ' ' + note.cls : '');
     if (open && !sending) syncCounts();
   }
