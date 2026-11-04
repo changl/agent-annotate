@@ -2,6 +2,8 @@
 says whether it has been sent (Chang, 2026-10-30)."""
 
 import json
+import time
+from contextlib import contextmanager
 
 import pytest
 from test_keep_drafts import _directory, _session
@@ -60,6 +62,35 @@ def _round_answers(directory):
     return rounds[-1]["answers"] if rounds else []
 
 
+@contextmanager
+def _evidence_on_timeout(page, item, what):
+    """agent-annotate-pla: on M1Max16 under load this wait timed out once and we
+    could not reproduce it; a timeout here carries the card, the requests still
+    open and any error the card shows, so the next one explains itself."""
+    open_requests = {}
+    started = time.monotonic()
+    on_request = lambda r: open_requests.__setitem__(id(r), f"{r.method} {r.url.split('/', 3)[-1][:80]} +{time.monotonic() - started:.2f}s")  # noqa: E731
+    on_done = lambda r: open_requests.pop(id(r), None)  # noqa: E731
+    page.on("request", on_request)
+    page.on("requestfinished", on_done)
+    page.on("requestfailed", on_done)
+    try:
+        yield
+    except playwright.Error as exc:
+        if "Timeout" not in str(exc):
+            raise
+        card = item.evaluate("el => el.outerHTML")[:4000] if item.count() else "(card not in the document)"
+        feedback = page.evaluate("""() => [...document.querySelectorAll('.decision-feedback'),
+            ...document.querySelector('#content-frame').contentDocument.querySelectorAll('.annotate-decision-feedback, .decision-feedback')]
+            .map(e => e.textContent.trim()).filter(Boolean)""")
+        raise AssertionError(f"{what} after {time.monotonic() - started:.1f}s\nopen requests: {list(open_requests.values())}\n"
+                             f"feedback: {feedback}\ncard: {card}") from exc
+    finally:
+        page.remove_listener("request", on_request)
+        page.remove_listener("requestfinished", on_done)
+        page.remove_listener("requestfailed", on_done)
+
+
 def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
     """#2659: a second worded answer replaced the first, and only the second was sent."""
     directory = _directory(tmp_path)
@@ -85,8 +116,9 @@ def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
         edit = item.locator("textarea.annotate-note-edit")
         assert edit.input_value() == "Change the time to 10:30"
         edit.fill("Change the time to 10:30 and leave the roll-out time blank")
-        item.locator(".annotate-note-save").click()
-        page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.body.textContent.includes('roll-out time blank')")
+        with _evidence_on_timeout(page, item, "the edited note never showed"):
+            item.locator(".annotate-note-save").click()
+            page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.body.textContent.includes('roll-out time blank')")
         assert item.locator(".annotate-send-state.is-pending").count() == 2
         _send(page)
         page.wait_for_function("() => document.querySelector('#content-frame').contentDocument.querySelectorAll('.annotate-send-state.is-pending').length === 0")
