@@ -59,6 +59,7 @@ import contextlib
 import fcntl
 import hashlib
 import ipaddress
+import itertools
 import json
 import os
 import re
@@ -2141,24 +2142,29 @@ def _coerce_store_file(slug_dir: Path) -> dict:
     return _validate_store(json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
 
 
+def _with_fix(message: str, fix: str) -> str:
+    """A passed-through error keeps its own `· fix:`; one without gets this one."""
+    return message if " · fix: " in message else f"{message} · fix: {fix}"
+
+
 def _moved_page(slug_dir) -> bool:
     """A consolidated page is frozen: name the page that holds it now."""
     from .consolidate import marker
     moved = marker(slug_dir) if slug_dir else None
     if moved and moved.get("archived"):
-        print("ERROR: this page is archived and read-only; use annotate unarchive to restore it.", file=sys.stderr)
+        print("ERROR: this page is archived and read-only · fix: annotate unarchive it first", file=sys.stderr)
         return True
     if moved:
         target = moved.get("target") or {}
         print(f"ERROR: this page moved to {target.get('project')}/{target.get('slug')} "
-              f"({moved.get('tab', 'review')}); post there. The old page is kept read-only.", file=sys.stderr)
+              f"({moved.get('tab', 'review')}) and is kept read-only · fix: post there", file=sys.stderr)
     return bool(moved)
 
 
 def cmd_publish_version(args) -> int:
     slug_dir = Path(args.slug_dir).resolve()
     if not slug_dir.is_dir():
-        print(f"ERROR: slug-dir not found: {slug_dir}", file=sys.stderr)
+        print(f"ERROR: page {slug_dir} not found · fix: check the page directory or PROJECT/SLUG", file=sys.stderr)
         return 2
     if _moved_page(slug_dir):
         return 2
@@ -2170,7 +2176,7 @@ def cmd_publish_version(args) -> int:
         with _locked_store(slug_dir):
             require_draft(_read_meta(slug_dir), version)
             if not (slug_dir / "versions" / f"{version}.html").is_file():
-                raise ValueError(f"versions/{version}.html not found — drop it in first")
+                raise ValueError(f"versions/{version}.html not found · fix: annotate publish PAGE --from page.md --stage first")
             if not draft_path(slug_dir, version).exists():
                 from .long_pages import size_of
                 sections, screenshots = size_of((slug_dir / "versions" / f"{version}.html").read_text(encoding="utf-8"))
@@ -2180,7 +2186,7 @@ def cmd_publish_version(args) -> int:
                 draft["label"] = args.label
                 _atomic_write_json(draft_path(slug_dir, version), draft)
     except (OSError, ValueError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(_with_fix(f"ERROR: {exc}", "check the page folder and rerun"), file=sys.stderr)
         return 2
     if not getattr(args, "prepared", False):
         from .pagegen import _call_publish
@@ -2209,13 +2215,13 @@ def _commit_review(record, version, items, author, renumber=False):
     try:
         draft = read_draft(Path(record["slug_dir"]), version)
         if not draft.get("verified"):
-            raise ValueError("server checks did not all pass; retry the publish before showing this version")
+            raise ValueError("server checks did not all pass · fix: rerun the publish")
     except (OSError, ValueError) as exc:
-        print(f"ERROR: cannot read staged review: {exc}", file=sys.stderr)
+        print(_with_fix(f"ERROR: cannot read the staged version: {exc}", "rerun the publish"), file=sys.stderr)
         return 2
     code, capabilities = _api(record, "GET", "/api/capabilities", None, author)
     if code != 200 or not isinstance(capabilities, dict) or capabilities.get("review_ready") is not True:
-        print("ERROR: page server does not support complete Review publication; update its runtime before retrying; no cards were posted", file=sys.stderr)
+        print("ERROR: the page server is too old for complete Review publication; no cards were posted · fix: annotate update, then rerun", file=sys.stderr)
         return 2
     code, payload = _api(record, "POST", "/api/comments/batch", {
         "items": items, "idempotency": "anchor",
@@ -2223,7 +2229,8 @@ def _commit_review(record, version, items, author, renumber=False):
     if renumber and code == 409 and "card number" in str(payload):
         return NUMBERS_TAKEN
     if code != 200:
-        print(f"ERROR: review publication failed (HTTP {code}): {payload}", file=sys.stderr)
+        err = payload.get("error") if isinstance(payload, dict) else payload
+        print(_with_fix(f"ERROR: review publication failed (HTTP {code}): {err}", "rerun the same command; the previous version stays visible"), file=sys.stderr)
         return 2
     print(f"  ready {version}: {len(items)} cards; previous versions remain immutable")
     return 0
@@ -2720,11 +2727,11 @@ def cmd_ask(args) -> int:
     try:
         raw = json.loads(src.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"ERROR: could not read cards file {src}: {e}", file=sys.stderr)
+        print(f"ERROR: could not read cards file {src} ({e}) · fix: check the path and the JSON", file=sys.stderr)
         return 2
     cards = raw.get("cards") if isinstance(raw, dict) else raw
     if not isinstance(cards, list) or not cards:
-        print("ERROR: cards file must be a JSON array (or {\"cards\": [...]}) of "
+        print("ERROR: cards file holds no cards · fix: a JSON array (or {\"cards\": [...]}) of "
               "{anchor_id, text, decision_request} objects", file=sys.stderr)
         return 2
 
@@ -2743,7 +2750,7 @@ def cmd_ask(args) -> int:
     previous_number = 0
     for i, c in enumerate(cards):
         if not isinstance(c, dict) or not c.get("anchor_id"):
-            print(f"ERROR: card #{i} has no anchor_id", file=sys.stderr)
+            print(f"ERROR: card #{i} has no anchor_id · fix: give it an anchor_id such as d:q{i + 1}", file=sys.stderr)
             return 2
         dr = c.get("decision_request") if isinstance(c.get("decision_request"), dict) else None
         item = {
@@ -2751,7 +2758,7 @@ def cmd_ask(args) -> int:
             "text": (c.get("text") or (dr or {}).get("prompt") or "").strip(),
         }
         if not item["text"]:
-            print(f"ERROR: card #{i} ({c['anchor_id']}) has neither text nor a "
+            print(f"ERROR: card #{i} ({c['anchor_id']}) has no question · fix: give it "
                   f"decision_request.prompt", file=sys.stderr)
             return 2
         if version:
@@ -2766,58 +2773,58 @@ def cmd_ask(args) -> int:
                 item["category"] = category
             if finding is not None:
                 if not isinstance(finding, dict):
-                    raise ValueError("finding must be an object")
+                    raise ValueError("finding is not an object · fix: {\"set\": ID, \"title\": TEXT}")
                 if set(finding) != {"set", "title"} or not all(isinstance(v, str) and 0 < len(v) <= 200 for v in finding.values()):
-                    raise ValueError("finding needs set and title (at most 200 characters each)")
+                    raise ValueError("finding needs set and title · fix: both, at most 200 characters each")
                 from .categories import validate_plan_id
                 validate_plan_id(finding["set"])
                 if category not in (None, "findings"):
-                    raise ValueError("finding metadata requires category findings")
+                    raise ValueError("finding metadata on a non-Findings card · fix: set category findings or drop finding")
                 item.update(finding=finding, category="findings")
             elif set_id is not None:
                 if category != "findings":
-                    raise ValueError("--set/card set requires category findings")
+                    raise ValueError("--set/card set on a non-Findings card · fix: set category findings")
                 if not isinstance(set_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", set_id):
-                    raise ValueError("finding set must be a safe lowercase ID")
+                    raise ValueError("finding set is not a lowercase ID · fix: use a-z, 0-9 and -, up to 64 characters")
                 # The finding's short name: its own title, else its text.
                 title = c.get("title") or (item["text"] if len(item["text"]) <= 200 else _clip(item["text"], 200))
                 if not isinstance(title, str) or len(title) > 200:
-                    raise ValueError("finding title must be text of at most 200 characters")
+                    raise ValueError("finding title is not text up to 200 characters · fix: shorten it")
                 item["finding"] = {"set": set_id, "title": title}
             if c.get("doc") is not None:
                 item["doc"] = c["doc"]
         except ValueError as exc:
-            print(f"ERROR: card #{i}: {exc}", file=sys.stderr)
+            print(f"ERROR: card #{i}: {exc}", file=sys.stderr)  # fix: passes through
             return 2
         if c.get("anchor_label"):
             item["anchor_label"] = c["anchor_label"]
         number = c.get("number")
         if numbered_round and c.get("source_kind") != "ask":  # annotate numbered ask cards itself
             if isinstance(number, bool) or not isinstance(number, int) or number < 1:
-                print(f"ERROR: card #{i} needs a positive integer `number` for {version}",
+                print(f"ERROR: card #{i} needs a positive integer `number` for {version} · fix: add one, or write ```ask cards",
                       file=sys.stderr)
                 return 2
             if number in seen_numbers:
-                print(f"ERROR: duplicate card number {number}", file=sys.stderr)
+                print(f"ERROR: duplicate card number {number} · fix: give each card its own number", file=sys.stderr)
                 return 2
             if number <= previous_number:
-                print("ERROR: card numbers must be strictly increasing", file=sys.stderr)
+                print("ERROR: card numbers must be strictly increasing · fix: order the cards by number", file=sys.stderr)
                 return 2
             seen_numbers.add(number)
             previous_number = number
             expected_anchor = f"d:q{number}"
             if c["anchor_id"] != expected_anchor:
-                print(f"ERROR: card #{number} must use anchor_id {expected_anchor!r}",
+                print(f"ERROR: card #{number} has another anchor_id · fix: use {expected_anchor!r}",
                       file=sys.stderr)
                 return 2
             prompt = str((dr or {}).get("prompt") or "")
             if re.match(r"^\s*(?:Q(?:uestion)?\s*\d+|#\s*\d+)", prompt,
                         re.IGNORECASE):
-                print(f"ERROR: card #{number} prompt repeats a number", file=sys.stderr)
+                print(f"ERROR: card #{number} prompt repeats a number · fix: drop the number from the prompt", file=sys.stderr)
                 return 2
             evidence = (dr or {}).get("evidence")
             if not isinstance(evidence, list) or not evidence:
-                print(f"ERROR: card #{number} needs decision_request.evidence",
+                print(f"ERROR: card #{number} cites no evidence · fix: add decision_request.evidence",
                       file=sys.stderr)
                 return 2
         if number is not None:
@@ -2835,7 +2842,7 @@ def cmd_ask(args) -> int:
     for item in items:
         doc = item.get("doc")
         if doc is not None and not isinstance(doc, str):
-            print("ERROR: card doc must be a document ID", file=sys.stderr)
+            print("ERROR: card doc is not a document ID · fix: use plan:<id> or leave doc out", file=sys.stderr)
             return 2
         if doc not in target_anchors:
             try:
@@ -2850,7 +2857,7 @@ def cmd_ask(args) -> int:
                 target_anchors[doc] = set()
         refusal = card_refusal(item, target_anchors[doc])
         if refusal:
-            print(f"ERROR: card {item['anchor_id']!r}: {refusal}", file=sys.stderr)
+            print(f"ERROR: card {item['anchor_id']!r} {refusal}", file=sys.stderr)  # fix: passes through
             return 2
 
     finding_sets = {item["finding"]["set"] for item in items if item.get("finding")}
@@ -2861,7 +2868,7 @@ def cmd_ask(args) -> int:
         try:
             load_categories(record["slug_dir"])
         except (OSError, ValueError) as exc:
-            print(f"ERROR: categories.json could not be read; no cards were posted: {exc}", file=sys.stderr)
+            print(f"ERROR: categories.json could not be read ({exc}); no cards were posted · fix: repair or remove categories.json", file=sys.stderr)
             return 2
 
     if record.get("slug_dir") and any(
@@ -2872,10 +2879,10 @@ def cmd_ask(args) -> int:
         try:
             require_draft(_read_meta(Path(record["slug_dir"])), version)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
             return 2
         if not getattr(args, "ready", False):
-            print("ERROR: seed Review cards with new --publish --ask so the whole round becomes visible together", file=sys.stderr)
+            print("ERROR: Review cards go live with their version · fix: put them in page.md and annotate publish PAGE --from page.md", file=sys.stderr)
             return 2
 
     author = _resolve_author(getattr(args, "author", None))
@@ -2893,15 +2900,14 @@ def cmd_ask(args) -> int:
         try:
             ids, created, updated = _ask_fallback(record, slug, items, author)
         except RuntimeError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(_with_fix(f"ERROR: {e}", "check the page, then rerun"), file=sys.stderr)
             return 2
     elif code == 0:
-        print(f"ERROR: API response unavailable or unusable for {project}/{slug}: {payload}\n"
-              "  Inspect the server and page state before retrying; this write may already have completed.",
-              file=sys.stderr)
+        print(f"ERROR: API response unavailable or unusable for {project}/{slug} ({payload}); this write may already have completed"
+              " · fix: check the page before retrying", file=sys.stderr)
         return 2
     elif code >= 300 or not isinstance(payload, dict):
-        print(f"ERROR: batch create failed (HTTP {code}): {payload}", file=sys.stderr)
+        print(_with_fix(f"ERROR: batch create failed (HTTP {code}): {payload}", "rerun after the page server answers"), file=sys.stderr)
         return 2
     else:
         ids = payload.get("ids") or []
@@ -2920,7 +2926,7 @@ def cmd_ask(args) -> int:
             if additions:
                 save_findings_sets(record["slug_dir"], sets + additions)
         except (OSError, ValueError) as exc:
-            print(f"ERROR: cards posted, but findings sets could not be saved: {exc}", file=sys.stderr)
+            print(f"ERROR: cards posted, but findings sets could not be saved ({exc}) · fix: repair categories.json and rerun", file=sys.stderr)
             return 2
 
     if getattr(args, "json", False):
@@ -5877,6 +5883,19 @@ def cmd_help(args):
     return 0
 
 
+def _not_live(errors: str, output: str) -> str | None:
+    """The first error of a failed publish as one `not live: … · fix: …` line; None without one."""
+    for text in (errors, output):
+        lines = text.splitlines()
+        first = next((i for i, line in enumerate(lines) if line.startswith(("ERROR:", "not live:"))), None)
+        if first is None:
+            continue
+        rest = [line.strip() for line in itertools.takewhile(lambda line: line[:1].isspace(), lines[first + 1:])]
+        message = "; ".join([lines[first].split(":", 1)[1].strip(), *rest])
+        return "not live: " + _with_fix(message, "rerun with --verbose for the whole output")
+    return None
+
+
 def run_command(args):
     """Keep successful page writes to a linked receipt; JSON preserves the full output."""
     import io
@@ -5895,13 +5914,22 @@ def run_command(args):
             print((f"dry run: would {args.cmd}\n" if not rc else "") + detail.lstrip(), end="")
             return rc
         return args.func(args)
-    output = io.StringIO()
-    with contextlib.redirect_stdout(output):
+    # A failed publish from markdown is one line; --json and --verbose keep the whole output.
+    one_line = (args.cmd == "new" or (args.cmd == "publish" and (getattr(args, "from_file", None) or getattr(args, "version", None)))
+                ) and not getattr(args, "json", False) and not getattr(args, "verbose", False)
+    output, errors = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(output), (contextlib.redirect_stderr(errors) if one_line else contextlib.nullcontext()):
         rc = args.func(args)
     detail = output.getvalue()
     if rc:
-        print(detail, end="")
+        line = _not_live(errors.getvalue(), detail) if one_line else None
+        if line:
+            print(line, file=sys.stderr)
+        else:  # no error line to quote: keep the diagnostics
+            print(detail, end="")
+            print(errors.getvalue(), end="", file=sys.stderr)
         return rc
+    print(errors.getvalue(), end="", file=sys.stderr)
     raw = getattr(args, "slug", None)
     directory = getattr(args, "slug_dir", None)
     record = next((r for p, s, r in _registry_entries()

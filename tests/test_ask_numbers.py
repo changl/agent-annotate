@@ -126,9 +126,9 @@ def test_ask_cards_skip_the_numbered_round_rules_and_json_cards_keep_them(tmp_pa
     directory = _page(tmp_path)
     assert pagegen.generate(_source(tmp_path, "Ship it?", head=FULL), directory)["cards"] == 1
     bad = tmp_path / "json.md"
-    bad.write_text(FULL + "```cards\n" + json.dumps([{"anchor_id": "d:x", "decision_request": {
+    bad.write_text(FULL + "## Questions for reviewer\n\n```cards\n" + json.dumps([{"anchor_id": "d:x", "decision_request": {
         "prompt": "Ship?", "options": ["yes", "no"], "evidence": [{"label": "E", "anchor": "s:evidence"}]}}]) + "\n```\n")
-    with pytest.raises(pagegen.PageGenError, match="positive integer `number`"):
+    with pytest.raises(pagegen.PageGenError, match="has no `number`"):
         pagegen.generate(bad, directory, "v3")
 
 
