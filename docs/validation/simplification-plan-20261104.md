@@ -1,46 +1,86 @@
-# Make the tools do the bookkeeping: simplification plan
+# Make agent-annotate light, and let tools do the bookkeeping: simplification plan
 
 ## One-page summary for Chang
 
-**You are right: the work has drifted from tools to the AI.** The cost doesn't come from annotate's commands. It comes from how the coordinating sessions work: they wake up very often, keep everything in one conversation that keeps growing, and re-read that whole conversation on every step.
+**Goal one: annotate must be a light helper, not a burden.** Each small action gets a fixed overhead budget: reading a round, answering a card, publishing a small update. A test fails the build when an action goes over its budget. Today every action is over budget.
 
-**What three coordinating sessions cost (Oct 30 – Nov 4), measured from their own records:**
+**What annotate costs today, from real sessions:**
+
+| One small action | Budget | Today |
+|---|---|---|
+| Read one round of your answers | 1 command | 2 commands (up to 14 for FLD) |
+| Mark one card answered | no extra command (one per round) | 1 command per card; 1 in 7 fail in FLD |
+| Publish one small update | 1 command, 0 retries | 4–7 commands; about half the attempts print an error first |
+| A whole small round (3 answers) | 3 commands, about 15¢ | **9–12 commands, about 80¢–$1.80** |
+| Annotate's share of the coordinating cost | 3% or less | **6% (FLD), 16–17% (Agent Annotate, Multi-Mac)** |
+
+**Why "a few small things" cost multiples more:** a 3-answer round carries about 150 tokens of your answers. The 9–12 bookkeeping commands around it each re-read the whole coordinating conversation (365k–509k tokens). That's 3–6 million tokens processed to file three answers. **Every command is that expensive, so the budget counts commands first.**
+
+**What annotate makes agents do that it should do itself:**
+- Pick card numbers and anchors by hand. FLD's coordinator wrote its own renumbering workaround (run 46 times), and card numbers drifted past #20,000.
+- Write card JSON (21,000 tokens in FLD).
+- Retry after rule errors ("numbers must be strictly increasing", "number already used", "cite an evidence anchor").
+- Resolve cards one at a time.
+- Read long outputs: every resolve receipt repeats the page's private share link (56–84% of the receipt), inbox output is 12–16% padding spaces, and publish prints banners and ID lists.
+
+**The rest of the cost is how coordinating sessions work** (measured Oct 30 – Nov 4, at Claude Code's list price; your plan may bill differently):
+- FLD: $1,204 over 84 hours, $52 per round you submitted. Agent Annotate: $205, $16 per round.
+- 48–82% of the cost is re-reading a conversation of 325k–509k tokens on every step.
+- Half of FLD's cost came from wake-ups for progress notes (1,839 notes, against 620 finished-work reports).
+
+**The plan, in six stages (26–39 worker-days):**
+
+| Stage | What changes | Expected result | Days |
+|---|---|---|---:|
+| 0. Meter and budget test | One script measures any session; a test fails when an annotate action is over budget | Every claim provable; "light" stays guarded | 1–2 |
+| **1. Make annotate light** | One-line receipts (no links, banners or ID lists), compact inbox, one command to resolve a whole round, shorter skill | Reading and resolving under budget; round 9–12 → 5–7 commands | 2–3 |
+| 2. Lighter coordination | Progress notes stop waking the session; it restarts fresh at a size limit with state in files | **55–75% less coordinating cost** (FLD $14 → $4–6 an hour) | 4–6 |
+| 3. Annotate does its own bookkeeping | Software picks card numbers and versions; cards written as plain text; update one section at a time | Publish and ask under budget; a round takes 3 commands; numbering errors gone | 5–8 |
+| 4. Scripts for routine jobs | Release and three-Mac rollout as one script; sweeps and tests on a schedule, with no AI | Rollout takes 2 steps per Mac; sweeps cost no AI | 4–5 |
+| 5. Database | Each Mac keeps its page records in one SQLite file instead of many JSON and lock files | Page and cards saved in one step; no lost updates; about 0% direct token saving | 10–15 |
+
+**Storage answer:** **SQLite, one file per Mac, not Postgres.** Each Mac hosts its own pages, so no shared server is needed. A database makes the one-line answers trustworthy but doesn't cut tokens itself, so it comes after the stages that do.
+
+**Start with Stages 0 and 1:** they are small, change no page data and are easy to undo. Stage 2 follows; it saves the most money.
+
+---
+
+## Goal 1: an overhead budget for every annotate action
+
+A **command** is one tool call an agent makes for annotate's sake. Each one costs a full re-read of the agent's conversation, $0.11–0.12 at today's 365k–509k contexts and about $0.05 at 150k. **Tokens** count only what the action writes and reads; the content itself (your answers, the page text the agent means to write) is excluded. "Today" comes from the three coordinator transcripts (FLD = `145f492c`, AA = `2ac5a669`), using `actions.py`, plus the first evaluation's model-free fixtures.
+
+| Action | Budget | Today, measured | Over by | Stage that brings it under |
+|---|---|---|---|---|
+| **Read one round** (N answers) | 1 command; ≤ 40 + 60·N tokens; 0 raw-store reads | Median **2 commands** (FLD p90 **14**); **453 (AA) / 723 (FLD) tokens**; the fixture's 3-answer inbox is 184 and FLD's 3-answer replay is 329. Output is 12–16% padding spaces; FLD inbox printed 104 publish-event lines that aren't feedback; 115 raw-store reads (`comments.json`, `current.html`) in the window. Cost $0.35 (FLD) / $1.12 (AA, rounds arrive after idle) | 2× commands; 2–3× tokens | **1** (compact inbox, `--worklist`) |
+| **Answer (resolve) one card** | 0 extra commands, as one batch command per round; ≤ 15 tokens per card in the receipt | **1 command per card** (FLD 152 for 152; AA 47 for 47); **104–114 tokens** per receipt, **56–84% of it the page's share link**; failed: **21/152 (14%) FLD, 4/47 (9%) AA**, "number is ambiguous; use its comment id" | N× commands; 7× tokens | **1** (batch resolve, short receipt, handles from the worklist) |
+| **Ask one question** | Question + options + ≤ 10 tokens of markup; no number, anchor or JSON | Card JSON median **186–218 tokens per publish**, FLD **21,423** in total. Rules the agent must satisfy: strictly increasing numbers, a matching `d:qN` anchor, at least one evidence anchor | ~20× markup | **3** (software numbers and anchors; plain-text cards) |
+| **Publish one small update** (≤ 1 section, ≤ 3 cards) | 1 command; agent writes only the changed section; receipt ≤ 25 tokens; 0 retries | **4.3 (AA) / 7.3 (FLD) commands per version drafted**; **1,739 / 2,707 tokens per version** beyond nothing-changed; **49% (AA) / 64% (FLD)** of publish attempts printed an ERROR. FLD wrote its own `pubfix` script to renumber and repost (46 runs). Publish output repeats an owner banner, an unrelated "Invocation" line and a JSON list of up to 19 IDs | 4–7× commands | **1** (receipt) + **3** (numbers, versions, section drafts) |
+| **A whole small round** (read 3 answers, resolve them, publish the result) | **3 commands; ≤ 1,000 tokens; ≈ $0.15 at 150k context** | Fixture: 5 commands / 380 tokens. **Live: ≈ 9–12 commands, $0.80–1.80**; 3–6 million tokens re-read to file ~150 tokens of answers | 3–4× commands | 1 → 5–7 commands; 3 → 3 commands |
+| **Session start** | ≤ 700 tokens; the page reference loads only when needed | Skill 657 + page reference 1,316 = **1,973 tokens** when loaded | 3× | **1** (trim; reference on demand) |
+| **Annotate's share of coordinator cost** | ≤ 3% | **FLD 6.1% ($74), AA 17.4% ($36), Multi-Mac 16.2% ($8)** | 2–6× | 1 + 3; the share also drops as Stage 2 shrinks contexts |
+
+### What the annotate side imposes on orchestration
+
+Counted from the same transcripts: annotate commands, page drafting and card JSON, and raw-store reads. Each is costed at the share of the model step that issued it.
 
 | | FLD | Agent Annotate | Multi-Mac |
 |---|---:|---:|---:|
-| Hours running | 84 | 83 | 14 |
-| AI steps taken | 8,510 | 968 | 291 |
-| Size of the conversation re-read on each step (typical) | 509,000 tokens | 365,000 | 325,000 |
-| Cost at list price* | **$1,204** | **$205** | **$52** |
-| Cost per hour | $14 | $2.50 | $3.70 |
-| Rounds you submitted | 23 | 13 | 1 |
-| Cost per round you submitted | **$52** | **$16** | — |
+| Annotate-side commands | 940 | 266 | 45 |
+| — writing page drafts and cards (incl. throwaway build scripts) | 504 | 68 | 14 |
+| — publish / read / resolve / other / raw-store reads | 55 / 112 / 152 / 27 / 90 | 53 / 56 / 47 / 19 / 23 | 8 / 11 / 5 / 5 / 2 |
+| Page versions drafted | 92 | 38 | — |
+| Tokens added to the conversation | 331k | 89k | 16k |
+| — of which card JSON | 21.4k | 6.6k | 1.8k |
+| — of which annotate output | 166k | 48k | 7k |
+| Longest single output; 90th percentile | 6,015; 508 tokens | 2,910; 685 | 2,130; 360 |
+| Attempts that printed an error | 99 ($6.77) | 36 ($3.08) | 4 ($0.48) |
+| **Cost; share of the coordinator's cost** | **$73.88; 6.1%** | **$35.78; 17.4%** | **$8.44; 16.2%** |
 
-\*Claude Code's own list-price estimate. Your plan may bill differently, but the proportions hold.
+The causes differ by session. Drafting dominates in FLD: 504 commands, $33, most of them patching the previous version's markdown with string replacement. Reading dominates in Agent Annotate: $21 for 56 inbox reads, because rounds arrive after idle and each read pays a cache rewrite. Errors are spread over numbering, evidence-anchor rules and the browser check (now fixed).
 
-**Where the money goes:**
+### How the budget is kept
 
-1. **Re-reading the conversation: 48–82% of all cost.** Each FLD step re-reads about half a million tokens, roughly 12 cents a step, before it does any work.
-2. **Waking up to read worker mail: 42% of FLD's cost.** FLD woke 1,825 times, about 22 times an hour. Its mail held 1,839 progress notes and only 620 finished-work reports. **Half of FLD's cost (50%) came from wakes where the mail held only progress notes.**
-3. **Closing each wake with a status message: 21% of FLD's cost.** This shrinks only when there are fewer wakes.
-4. **Annotate itself is small:** 3% of FLD's cost and 14% of Agent Annotate's. Even so, about half its publish attempts hit an error first.
-5. **Bookkeeping by hand:** the FLD session wrote 90 throwaway scripts and edited its own notes file by hand 334 times. Its page drafts were patched by text replacement 205 times.
-
-**The plan, in five stages (25–38 worker-days total):**
-
-| Stage | What changes | Expected saving | Days |
-|---|---|---|---:|
-| 0. Meter | One script reports these numbers for any session | Lets us prove every later claim | 1–2 |
-| 1. Lighter coordination | Progress notes stop waking the session. The session starts fresh at a size limit, with its state kept in files. Commands print one line. | **55–75% less coordinating cost** (FLD: about $14/hour → $4–6/hour) | 4–6 |
-| 2. Annotate does its own bookkeeping | The software picks card numbers and versions. A round becomes a ready to-do list, and resolving takes one command. | 3 commands per round instead of 5–7; numbering and stale-owner failures removed; 2–9% less cost | 6–10 |
-| 3. Scripts for routine jobs | Release + three-Mac rollout as one script; hourly board sweeps and test runs on a schedule, with no AI | Rollout goes from dozens of steps to two (plan, apply); routine sweeps cost no AI | 4–5 |
-| 4. Database | Each Mac keeps its page records in one SQLite file instead of dozens of JSON files and lock files | Publishing saves the page and its cards in one step; no lost-update races; history queries are instant. About 0% direct token saving | 10–15 |
-
-**Storage answer:** **SQLite, one file per Mac, is the right fit; Postgres isn't.** Each Mac hosts its own pages, so nothing needs a shared server. Postgres would add a server to run and upgrade on every Mac, or make the M5 and M1Max16 depend on the M1. Dolt (which runs Beads) lives only on the M1. **But a database alone won't cut tokens.** It makes the tools reliable enough for agents to trust their one-line answers. That's why it comes after Stages 1–2, behind the same commands.
-
-**Do Stage 1 first.** It saves the most, changes no page data, and is easy to undo. Every stage is measured with the same meter before and after.
-
----
+Stage 0 adds `scripts/bench.py --budget`, using the model-free fixtures already used by the first evaluation (ports 18700–18799, copied pages). For each action it asserts the command count, printed tokens (o200k proxy) and zero retries, and it fails CI when an action goes over. The live meter (`orch_cost.py`) reports annotate's share of coordinator cost weekly. Any new annotate feature must state its effect on these numbers before it ships.
 
 ## 1. Token evidence
 
@@ -159,7 +199,7 @@ Many of the publish failures came from the browser-check failure that the curren
 | 9 | **Resource "GO" gating** (ports, CI slots, disk) by reply | A lease script: `lease take ports-14300 --for ctx_…` grants if free and records the owner; release on worker_done | Status → reply round trips (508 replies in status-only wakes) |
 | 10 | **Status summaries and notes**: 1,875 closing messages; 334 inline edits of `pending.txt` | `run-summary` renders Orca run state + Beads + leases into a ≤40-line digest on demand; the coordinator writes a note only when a decision changes | Hand-kept state file; long closing messages |
 | 11 | **Worker briefs**: 521 brief writes in FLD, 4.2% of its context | `brief.py BEAD` fills the standard brief from the bead, base branch and rules; the coordinator adds only the task-specific lines | Re-typing rules into every brief |
-| 12 | **Session handoff**: successors read long handoff files; FLD rode near 1M and compacted nine times | State lives in Beads + Orca run + `run-summary`. The coordinator recycles itself at 250k by reading the digest (~20k tokens) | Giant contexts (see the Stage 1 simulation) |
+| 12 | **Session handoff**: successors read long handoff files; FLD rode near 1M and compacted nine times | State lives in Beads + Orca run + `run-summary`. The coordinator recycles itself at 250k by reading the digest (~20k tokens) | Giant contexts (see the Stage 2 simulation) |
 | 13 | **Screenshots read by the coordinator** (64 in Agent Annotate, 2,534 tokens each, 12% of its context) | `annotate verify --shots` (headless) returns pass/fail plus only the failing crops; review images stay with the worker that made them | Image tokens re-read for the rest of the session |
 | 14 | **Hourly board sweeps** by AI workers (BEAD-SWEEP-30…43) and `bd` counting via inline python | A Windmill/launchd scheduled script: counts, stale detection, closing of finished sessions; AI only for judgment items it lists | Hourly worker sessions (not measured here) |
 | 15 | **Test runs** started and watched by agents | `scripts/ci.py` and the existing full-suite routes run on a schedule or by trigger; workers read a one-line receipt | Watching long test output |
@@ -183,20 +223,41 @@ The code touches `comments.json` from about 20 modules. It uses per-file `flock`
 
 **Recommendation: SQLite, metadata only, one `annotate.db` per Mac.** Keep HTML, sources and assets as files. Migration cost: an importer that reads `comments.json`, `current.meta.json`, `project.json`, the cursors and the bus into tables, plus a JSON export so older clients and `eval` keep working. Rehearse on copies of all three Macs' pages. Run one release of dual-write: the DB is authoritative, and the JSON is written as an export. Then retire the lock files. Estimate: 10–15 worker-days including rehearsal and staged rollout.
 
-**What SQLite will not do:** cut tokens by itself, fix Orca mail, or fix owner lifecycle. It removes the cross-file race and partial-publish failure classes, and it makes the single-command operations in Stage 2 simple to build correctly.
+**What SQLite will not do:** cut tokens by itself, fix Orca mail, or fix owner lifecycle. It removes the cross-file race and partial-publish failure classes, and it makes the single-command operations in Stages 1 and 3 simple to build correctly.
 
 ## 4. The plan
 
-Targets use the Stage 0 meter on real sessions, comparing three days before with three days after, and compare like-for-like work (rounds, workers started). Annotate-round targets also use the model-free fixtures in `scripts/bench.py` (ports 18700–18799, copied pages only).
+Targets use the Stage 0 meter on real sessions, comparing three days before with three days after, and compare like-for-like work (rounds, workers started). Annotate-action targets use the budget fixtures in `scripts/bench.py` (ports 18700–18799, copied pages only).
 
-### Stage 0 — Meter (1–2 worker-days)
+### Stage 0 — Meter and budget test (1–2 worker-days)
 
-- **What:** turn this study's analyzers into `scripts/orch_cost.py SESSION.jsonl [--since]`. It reports cost per wall hour, calls per hour, wakes per hour by mail type, median/p90 context, category shares, commands per round, failures per category and cost per round or worker started. Output is one compact table, plus a JSON receipt.
+- **What:**
+  - Turn this study's analyzers into `scripts/orch_cost.py SESSION.jsonl [--since]`. It reports cost per wall hour, calls per hour, wakes per hour by mail type, median/p90 context, category shares, annotate's share and per-action costs (the Goal 1 table), failures per category, and cost per round or worker started.
+  - Add `bench.py --budget`, which fails CI when any annotate action exceeds its Goal 1 budget.
 - **Agents stop:** estimating their own context or cost.
-- **Measured by:** reproducing this document's numbers within 2% on the same copies.
-- **Risk / rollback:** none; read-only.
+- **Measured by:** reproducing this document's numbers within 2% on the same copies. The budget test fails on today's base, which proves the test bites.
+- **Risk / rollback:** none; read-only plus one test.
 
-### Stage 1 — Lighter coordination (4–6 worker-days; mostly Orca helpers, briefs and the skill, little annotate code)
+### Stage 1 — Make annotate light (2–3 worker-days; output and CLI surface only, no data change)
+
+- **What:**
+  - **Receipts:** one line. Publish prints `v412 live · 3 cards #3101–#3103`. Resolve prints `resolved #14065 #14316 #14320 in v412`. No share link, no owner banner, no "Invocation" line, no ID lists; `--json` keeps the full form for scripts. This also stops the page's private link from being copied into every transcript.
+  - **Inbox:** one line per actionable item (`#14065 select "Update staging?" → "Update staging" · note: …`). No column padding. Publish, plan, round and seen events are hidden unless `--all-events`. The undecided list becomes a count.
+  - **`--worklist FILE`** writes the same lines with exact handles, and the agent ticks them off.
+  - **Batch resolve:** `annotate resolve PAGE #a #b #c [--from FILE]` resolves in one transaction and prints one receipt. Each handle is unambiguous (number, or ID when numbers collide). Today `resolve` takes exactly one item (`cli.py` `sp_resolve`).
+  - **Skill:** cut the page reference out of the default load; errors name the one section to read.
+- **Agents stop:** one resolve per card, reading share links and banners, parsing padded tables, reading `comments.json` to find IDs.
+- **Targets (budget):**
+  - Read one round: 1 command, ≤ 40 + 60·N tokens.
+  - Resolve: 1 command per round, ≤ 15 tokens per card.
+  - Publish receipt: ≤ 25 tokens.
+  - Session start: ≤ 700 tokens.
+  - Small round: 9–12 → 5–7 commands live (5 → 3 in the fixture, since resolving goes from 3 calls to 1).
+- **Failure classes removed:** ambiguous resolve (21 + 4 failures in the window); missed IDs.
+- **Risks:** scripts that parse today's text output. **Mitigation:** `--json` unchanged; grep the repo and the skills for parsers first.
+- **Rollback:** previous wheel.
+
+### Stage 2 — Lighter coordination (4–6 worker-days; mostly Orca helpers, briefs and the skill, little annotate code)
 
 1. **Mail that does not wake.** Workers send `status` only when the brief asks; anything needing an answer is a `question`. `orca-quiet-wait` absorbs `status` like heartbeats and appends it to `run/status.log`. It wakes on worker_done, question or escalation, or on a status marked `--needs-reply`. It wakes for a status digest at most once per 30 minutes. Apply this M1-first (quiet-wait is a shared tool; prove it in a live M1 run before any other Mac).
 2. **Leases instead of GO replies.** `lease take|release|list NAME` (a file under the run directory with owner and expiry). Workers take ports, CI slots and disk budget themselves; the coordinator is asked only on conflict.
@@ -212,6 +273,8 @@ Targets use the Stage 0 meter on real sessions, comparing three days before with
 - Context: median 509k → ≤ 150k; never above 250k.
 - Cost: $14 → $4–6 per wall hour; $52 → ≤ $20 per round.
 - Agent Annotate-like run: $16 → ≤ $7 per round.
+
+Smaller contexts also make every remaining annotate command cheaper: about $0.12 → $0.05.
 
 **Why these numbers:**
 - Status-only wakes are 49.6% of FLD cost. Removing all of the "only waited/noted" share (13.1%) and half of the "then acted" share (18%) saves about 31%.
@@ -230,27 +293,27 @@ Targets use the Stage 0 meter on real sessions, comparing three days before with
 
 **Rollback:** flags on quiet-wait (`--wake-on-status`) and the recycle threshold.
 
-### Stage 2 — Annotate does its own bookkeeping (6–10 worker-days; option A of the first evaluation)
+### Stage 3 — Annotate does its own bookkeeping (5–8 worker-days; option A of the first evaluation, minus what Stage 1 already did)
 
 - **What:**
-  - Publish allocates card numbers and the next version in one store transaction and prints `v412 live · cards #3101–#3104 · verified`.
-  - `annotate round --worklist` writes and prints one line per actionable item, with an exact handle.
-  - `annotate resolve --from FILE` (or `--items`) takes the whole batch and returns one receipt line.
+  - Cards are written as plain text in the page: a question line plus option bullets, with no number, anchor or JSON. Publish allocates numbers and anchors in one store transaction, and evidence defaults to the enclosing section.
+  - `annotate publish --from page.md` picks the next version.
+  - `annotate draft --section NAME --from sec.md` replaces one section of the current version, so agents stop copying and patching whole versions.
   - SessionStart and Send validate the owner and rebind when the current session and terminal match.
-  - `annotate draft --section` replaces one section of the current draft.
   - Errors print the one command that fixes them.
-- **Agents stop:** choosing numbers, versions or `d:qN` anchors; reading `comments.json`, `current.html` or versions; writing renumber, publish-fix and drain scripts; resolving item by item; re-claiming pages.
-- **Targets:**
-  - Commands per round: 5 → 3 (three answers) and 7 → 3 (five answers).
-  - Raw store reads and renumber failures per round: 0.
-  - Publish attempts needing a retry: ≤ 5% (from about 50% in this window, partly fixed already).
-  - Annotate + raw store + page-draft share of coordinator cost: 17.5% → ≤ 8% (Agent Annotate) and 5.2% → ≤ 3% (FLD), so 2–9% of total cost.
-- **Failure classes removed:** number collision, ambiguous resolve, partial publish visible, stale owner.
-- **Risks:** identity and lineage of existing cards, cursor positions, older browser clients. **Mitigation:** additive fields; keep existing numbers, IDs and URLs; capability gate.
+- **Agents stop:** choosing numbers, versions or `d:qN` anchors; writing card JSON; reading old versions to patch them; writing renumber or publish-fix scripts; re-claiming pages.
+- **Targets (budget):**
+  - Ask one question: ≤ 10 tokens of markup.
+  - Publish one small update: 1 command, 0 retries, written tokens ≈ the changed section only.
+  - Small round: 3 commands live and in the fixture (3- and 5-answer rounds).
+  - Annotate share of coordinator cost ≤ 3%.
+  - Raw-store reads and renumbering per round: 0.
+- **Failure classes removed:** number collision and "strictly increasing" errors, missing evidence anchors, partial publish visible, stale owner.
+- **Risks:** identity and lineage of existing cards, cursor positions, older browser clients. **Mitigation:** additive fields; keep existing numbers, IDs and URLs; the old JSON card format is still accepted; capability gate.
 - **Rollback:** previous wheel; the data stays compatible.
-- **Measured by:** `bench.py` fixtures (first publish, 3- and 5-answer rounds, number conflict, failed publish, dead owner, interrupted Send), interleaved five runs per ref, plus Stage 0 on live rounds.
+- **Measured by:** `bench.py --budget` plus the fixtures for first publish, number conflict, failed publish, dead owner and interrupted Send, with five interleaved runs per ref; then Stage 0 on live rounds.
 
-### Stage 3 — Scripts for routine jobs (4–5 worker-days)
+### Stage 4 — Scripts for routine jobs (4–5 worker-days)
 
 - **Rollout:** `scripts/rollout.py plan VERSION` prints the per-Mac steps. `apply --mac M1` and the other Macs run them: install the release wheel with uv, sync skills, restart pages via `restart_record`, run `doctor --versions`, back up first, roll back on failure, and print one line per Mac. Each remote Mac needs your explicit yes; the script asks for it and records it.
 - **Housekeeping on a schedule:** bead sweeps, finished-session cleanup, disk checks and board counts run as Windmill/launchd scripts. They list only items needing judgment, which a small model or the coordinator handles.
@@ -260,7 +323,7 @@ Targets use the Stage 0 meter on real sessions, comparing three days before with
 - **Risks:** a script hides a Mac-specific failure. **Mitigation:** dry-run on the target first (a standing rule), refuse on any unknown state, and print the failing step.
 - **Rollback:** the script keeps the previous wheel and skills snapshot per Mac.
 
-### Stage 4 — SQLite store (10–15 worker-days)
+### Stage 5 — SQLite store (10–15 worker-days)
 
 - **Data model:**
   - `pages(id, slug, project, owner_session, owner_pid, owner_start, terminal)`
@@ -270,38 +333,44 @@ Targets use the Stage 0 meter on real sessions, comparing three days before with
   - `read_cursors(page, reader, seq)`
   - `deliveries(id, page, round, target, state, receipt_json)`
   - `plans(page, id, version, approved_at)`
-  - `leases(name, owner, expires)`, if Stage 1 leases move here
+  - `leases(name, owner, expires)`, if Stage 2 leases move here
 - **How:** import read-only from the existing files into a new `annotate.db`. Keep files as the asset store. One release dual-writes the JSON export; then lock files retire. The commands are unchanged, so agents notice nothing.
-- **Agents stop:** nothing new; this makes Stage 2's one-line answers trustworthy.
+- **Agents stop:** nothing new; this makes the one-line answers of Stages 1 and 3 trustworthy.
 - **Targets:**
   - Publish is one transaction; no `.lock` files.
   - Inbox/history queries take < 50 ms on FLD's history (from scanning 15.6 MB).
   - Zero lost-update incidents.
   - Import of the FLD copy preserves every item, number, version and cursor (checked by a diff tool).
+  - The Goal 1 budgets still pass.
 - **Risks:** migrating a long live history; old clients. **Mitigation:** rehearse on copies from all three Macs; a capability gate; JSON export.
 - **Rollback:** the original JSON files are untouched by import; switch back with a flag.
 
-### Stage 5 — optional, after measuring
+### Stage 6 — optional, after measuring
 
 The server becomes the authority on numbers, counts and status for the browser too (option C of the first evaluation). Fund it only if Stage 0 shows browser/CLI disagreement still costs rounds.
 
 ### Totals
 
-| Stage | Worker-days | Coordinator cost effect | Main failure classes removed |
+| Stage | Worker-days | Effect | Main failure classes removed |
 |---|---:|---|---|
-| 0 Meter | 1–2 | enables proof | — |
-| 1 Lighter coordination | 4–6 | **−55–75%** | ignored status, rate-limit cut-offs, compaction loss |
-| 2 Annotate bookkeeping | 6–10 | −2–9% | numbering, ambiguous resolve, partial publish, stale owner |
-| 3 Routine scripts | 4–5 | not measured here (sweep and rollout workers) | manual rollout errors |
-| 4 SQLite | 10–15 | ≈0% direct | lost updates, cross-file races |
-| **Total** | **25–38** | | |
+| 0 Meter + budget test | 1–2 | enables proof; guards "light" | — |
+| **1 Make annotate light** | **2–3** | read and resolve under budget; round 9–12 → 5–7 commands | ambiguous resolve, missed IDs |
+| 2 Lighter coordination | 4–6 | **−55–75% coordinator cost**; each command ~$0.12 → $0.05 | ignored status, API-error cut-offs, compaction loss |
+| 3 Annotate bookkeeping | 5–8 | ask and publish under budget; round 3 commands; annotate ≤ 3% of cost | numbering, evidence-anchor errors, partial publish, stale owner |
+| 4 Routine scripts | 4–5 | not measured here (sweep and rollout workers) | manual rollout errors |
+| 5 SQLite | 10–15 | ≈0% direct | lost updates, cross-file races |
+| **Total** | **26–39** | | |
 
-Savings are projections from the measured sequences; 0% is a possible result for any stage. Claim a saving only after the Stage 0 meter shows it on real sessions, with every outcome preserved.
+Savings are projections from the measured sequences; 0% is a possible result for any stage. Claim a saving only after the Stage 0 meter and budget test show it, with every outcome preserved.
 
 ## Limits of this study
 
 - Three sessions over four days. FLD dominates the totals.
 - Category rules are text patterns. Shell reads (12–45%) contain some work that belongs to other categories.
 - Cost uses each session's own recorded rate.
+- Per-action figures come from grouping commands by type:
+  - Publish cost is divided over the versions drafted (FLD 92, AA 38).
+  - Reading a round counts annotate reads from a round's delivery until the next publish.
+  - "Printed an error" includes attempts that partly succeeded.
 - Worker sessions (including hourly sweep workers) were not measured.
 - No live page, installed annotate, M5, M1Max16 or forbidden workspace was touched. No product code changed.
