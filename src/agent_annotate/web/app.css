@@ -31,6 +31,13 @@
 /* The project's board: an outside link after the tabs, set apart */
 .aa-tabs .tab.aa-board-link{font-weight:500;border-left:1px solid var(--line);margin-left:6px}
 .aa-tabs .aa-board-link svg.i,.aa-tabs-list .aa-board-link svg.i{width:14px;height:14px}
+.aa-tabs .aa-board-count{font-weight:600;font-variant-numeric:tabular-nums;margin-left:4px;color:var(--muted)}
+.aa-tabs-list .aa-board-line{display:block}
+.aa-tabs-list .aa-board-count{font-weight:600;font-variant-numeric:tabular-nums}
+.aa-board-sum{position:fixed;z-index:60;min-width:140px;padding:6px 10px;background:var(--color-base-100);color:var(--color-base-content);border:1px solid var(--line);border-radius:var(--radius-box);box-shadow:0 4px 16px color-mix(in oklab,var(--color-neutral) 22%,transparent);font-size:calc(12px * var(--aa-text, 1));line-height:1.7}
+.aa-board-sum[hidden]{display:none}
+.aa-board-sum-row{display:flex;justify-content:space-between;gap:16px}
+.aa-board-sum-row b{font-variant-numeric:tabular-nums}
 .aa-tabs-list a.aa-board-link{border-top:1px solid var(--line);border-radius:0;margin-top:4px}
 .aa-tabs-list .aa-board-link .aa-tab-name{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .aa-tabs-menu{display:none;position:relative}
@@ -46,13 +53,16 @@
 .aa-tabs-list .aa-tab-state.is-needs{color:var(--err-text);font-weight:600}
 /* av1: Review's version in its tab; an older one in the warning colour */
 .aa-tab-ver{font-weight:500;color:var(--muted)}
-.aa-tab-ver.is-older{color:var(--warn-text);font-weight:600}
+.aa-tab-ver.is-older{font-weight:600}
 /* av1: the refresh button after the tabs: plain, or a red border and count when something waits */
 .aa-fresh{flex:none;gap:5px;padding-inline:8px;margin-left:-8px;border:1px solid transparent}
 .aa-fresh svg.i{width:16px;height:16px}
 .aa-fresh.is-waiting{border-color:color-mix(in oklab,var(--color-error) 60%,transparent);background:color-mix(in oklab,var(--color-error) 8%,var(--color-base-100))}
 .aa-fresh-n{font-variant-numeric:tabular-nums}
-.aa-fresh-n[hidden]{display:none}
+.aa-fresh-n[hidden],.aa-fresh-v[hidden],.aa-fresh-fix[hidden]{display:none}
+/* #136: a newer version's name is plain text; "fix" is orange */
+.aa-fresh-v{font-weight:600;font-variant-numeric:tabular-nums}
+.aa-fresh-fix{font-weight:700;color:var(--orange-text);margin-left:-2px}
 .aa-fresh.is-checking svg.i{animation:aa-spin .8s linear infinite}
 @keyframes aa-spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.aa-fresh.is-checking svg.i{animation:none;opacity:.5}}

@@ -446,7 +446,8 @@ function adoptLive(id) {
 // (worked out once per store read: it writes out every comment).
 let waiting = null;
 function waitingChanges() {
-  const out = { questions: 0, cards: 0 };
+  // cards: new feedback; changed: a shown card edited or gone (#136: only new items turn the button red).
+  const out = { questions: 0, cards: 0, changed: 0 };
   if (!LIVE || LIVE === STORE) return out;
   if (waiting && waiting.live === LIVE && waiting.doc === DOC) return waiting.out;
   waiting = { live: LIVE, doc: DOC, out };
@@ -456,9 +457,9 @@ function waitingChanges() {
     const was = shown.get(c.id);
     shown.delete(c.id);
     if (was === undefined) { if (c.decision_request) out.questions++; else out.cards++; }
-    else if (was !== JSON.stringify(c)) out.cards++;
+    else if (was !== JSON.stringify(c)) out.changed++;
   }
-  out.cards += shown.size; // gone from the server
+  out.changed += shown.size; // gone from the server
   return out;
 }
 
@@ -961,7 +962,7 @@ function archivePagesHtml(archives) {
   if (!archives.length) return '';
   const size = (n, shots) => `${n} section${n === 1 ? '' : 's'}${shots ? ` · ${shots} screenshot${shots === 1 ? '' : 's'}` : ''}`;
   const latest = (META.history || []).find(h => h.version === latestVersion()) || {};
-  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-primary badge-sm">this page</span></a>`
+  const here = `<li><a href="#view=review"><strong>${esc(PROJECT.title || PROJECT.name || 'This page')}</strong> <span class="badge badge-ghost badge-sm">this page</span></a>`
     + (latest.sections != null ? `<span class="project-detail">Now · ${esc(size(latest.sections, latest.screenshots))}</span>` : '') + '</li>';
   const sorted = archives.slice().sort((a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
   const items = sorted.map(p => {
@@ -979,7 +980,7 @@ function updateProjectTitle() {
   header.title = title;
   if (window.AA) window.AA.setTitle(title);
 }
-const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-info', todo: 'badge-ghost' };
+const PROJECT_STATE_BADGE = { done: 'badge-success', blocked: 'badge-error', in_progress: 'badge-warning', todo: 'badge-ghost' };
 function renderProject() {
   // The project's links and progress belong to Review; a plan has none.
   if (DOC === 'review') updateProjectTitle();
@@ -1043,10 +1044,10 @@ async function loadProject() {
 }
 // The board's ready count (./api/board) for the header link. The server answers
 // from its cache, so this never holds up the page; it is not awaited.
-let BOARD_READY = null;
+let BOARD_READY = null, BOARD_COUNTS = null;
 let boardFirstTries = 0;
 async function loadBoard() {
-  if (!PROJECT.board) { BOARD_READY = null; return; }
+  if (!PROJECT.board) { BOARD_READY = BOARD_COUNTS = null; return; }
   try {
     // Its check time moves every minute; only the ready count matters.
     const got = await pollJson('./api/board', true);
@@ -1055,12 +1056,16 @@ async function loadBoard() {
     // The server's first count is still running: ask again soon, a few times.
     if (!data.checked_at && boardFirstTries < 8) { boardFirstTries++; setTimeout(loadBoard, 1500); }
     const ready = typeof data.ready === 'number' ? data.ready : null;
-    if (ready !== BOARD_READY) { BOARD_READY = ready; if (window.AA) window.AA.changed(); }
+    const counts = data.counts && typeof data.counts === 'object' ? data.counts : null;
+    if (ready !== BOARD_READY || JSON.stringify(counts) !== JSON.stringify(BOARD_COUNTS)) {
+      BOARD_READY = ready; BOARD_COUNTS = counts;
+      if (window.AA) window.AA.changed();
+    }
   } catch {}
 }
 function boardLink() {
   const b = PROJECT.board, url = b && safeHttpUrl(b.url);
-  return url ? { url, label: b.label || 'Board', project: b.project, ready: BOARD_READY } : null;
+  return url ? { url, label: b.label || 'Board', project: b.project, ready: BOARD_READY, counts: BOARD_COUNTS } : null;
 }
 // F17 + U-07: History lists the rounds the server recorded, newest first,
 // each with its answers; the header keeps the latest one beside Send.
@@ -1167,6 +1172,7 @@ function legacyRound(r) {
 // Where the last Send got to. av1: said in the header's Send note, which
 // already names that Send; the row above the document is gone.
 let DELIVERY_NOTE = null;
+let deliveredIds = '';
 async function loadDelivery() {
   try {
     let data = SUMMARY_DELIVERY;
@@ -1187,7 +1193,12 @@ async function loadDelivery() {
     }
     if (JSON.stringify(next) !== JSON.stringify(DELIVERY_NOTE)) { DELIVERY_NOTE = next; if (window.AA) window.AA.changed(); }
     window.AA?.send?.delivery(data.deliveries || []);
+    const got = (data.deliveries || []).filter(r => r.delivered).map(r => r.id).join(',');
+    const recolour = got !== deliveredIds;
+    deliveredIds = got;
+    if (recolour && VIEW_DOC) sendCommentCountsToFrame();
     for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {
+      if (recolour && root) recolourChips(root);
       root?.querySelectorAll('[data-delivery-ids]').forEach(label => {
         const text = deliveryLabel(label.dataset.deliveryIds.split(',').filter(Boolean));
         if (label.textContent !== text) label.textContent = text;
@@ -1253,8 +1264,8 @@ function versionFolds(value) {
 // version it published next is named on the round's line.
 function itemChipHtml(c) {
   if (!c) return '';
-  const cls = classify(c);
-  return ` <span class="vact-chip is-${cls}">${esc(statusLabel(c, cls))}</span>`;
+  const cls = classify(c), st = numState(c);
+  return ` <span class="vact-chip${st ? ' is-' + st : ''}">${esc(statusLabel(c, cls))}</span>`;
 }
 function versionActivityHtml(h, next, rounds, done, byNum) {
   const tag = (cat) => cat !== DOC && window.AA && window.AA.rail ? window.AA.rail.tagHtml(cat) + ' ' : '';
@@ -1420,31 +1431,34 @@ function renderVersionRail(shown) {
   if (doc === VIEW_DOC) renderVersionBanner();
   return rows.length;
 }
-// av1 (Chang, card #54): the header's refresh button replaces the grey banner
-// above the document. Plain when nothing waits; a border and a red count of
-// new questions and changed cards (or the newer version's name) when
-// something does. An older version on screen says so in the Review tab.
-function setFresh(parts, badge) {
-  const btn = document.getElementById('aa-fresh'), n = document.getElementById('aa-fresh-n');
-  const say = parts.length ? parts.join(' · ') + '. Tap to show.' : 'Check for updates';
-  btn.classList.toggle('is-waiting', !!parts.length);
-  n.hidden = !parts.length;
-  n.textContent = parts.length ? String(badge) : '';
+// The header's refresh button (Chang #54, #136). (a) Nothing newer, nothing
+// new: a plain icon; a tap reloads the same version. (b) A newer version: its
+// name in plain text. (c) New feedback or questions: a red border and their
+// count. (d) The newer version fixes the one on screen: "fix" in orange.
+function setFresh(n, newer, fix) {
+  const btn = document.getElementById('aa-fresh');
+  const set = (cls, text) => { const el = btn.querySelector(cls); el.hidden = !text; el.textContent = text || ''; };
+  set('.aa-fresh-n', n ? String(n) : '');
+  set('.aa-fresh-v', newer || '');
+  set('.aa-fresh-fix', newer && fix ? 'fix' : '');
+  btn.classList.toggle('is-waiting', !!n);
+  const parts = [];
+  if (newer) parts.push((fix ? newer + ' fixes this version' : 'Latest is ' + newer));
+  if (n) parts.push(n + (n === 1 ? ' new item' : ' new items'));
+  const say = parts.length ? parts.join(' · ') + '. Tap to show.' : 'Reload this version';
   btn.title = say;
   btn.setAttribute('aria-label', say);
+  btn.dataset.state = n ? 'new' : newer ? 'newer' : 'idle';
 }
 function renderVersionBanner() {
   const latest = latestVersion();
-  const older = !!latest && CURRENT_VERSION !== latest;
+  const newer = latest && CURRENT_VERSION !== latest ? latest : '';
   const w = waitingChanges();
-  const parts = [];
-  if (older) parts.push('Latest is ' + latest);
-  if (w.questions) parts.push(w.questions + (w.questions === 1 ? ' new question' : ' new questions'));
-  if (w.cards) parts.push(w.cards + (w.cards === 1 ? ' card changed' : ' cards changed'));
-  setFresh(parts, w.questions + w.cards || latest);
+  const fix = !!newer && (META.history || []).some(h => h.fixes === CURRENT_VERSION);
+  setFresh(w.questions + w.cards, newer, fix);
 }
-// One tap: check now, then show what waits: the latest version, or the cards
-// the polls brought. Typed text is kept as on any re-render (v9o drafts).
+// One tap: check now, then show what waits: the latest version, the new
+// cards, or this version again. Typed text is kept (v9o drafts).
 let pollNow = async () => {};
 async function freshTap() {
   const btn = document.getElementById('aa-fresh');
@@ -1456,10 +1470,15 @@ async function freshTap() {
     const latest = latestVersion();
     if (latest && CURRENT_VERSION !== latest) return switchVersion(latest);
     const w = waitingChanges();
-    if (!w.questions && !w.cards) return setSendNote('Up to date', 'is-success', 2000);
     applyLive();
     renderAll();
     document.dispatchEvent(new CustomEvent('annotate:store'));
+    if (w.questions || w.cards || !CURRENT_VERSION) return;
+    // (a): this version again, at the same place.
+    const frame = document.getElementById('content-frame');
+    const y = frame.contentWindow ? frame.contentWindow.scrollY : 0;
+    frame.addEventListener('load', () => frame.contentWindow.scrollTo(0, y), { once: true });
+    loadIframe(CURRENT_VERSION);
   });
 }
 // (The phone header's version <select> is gone: History is the one version
@@ -1617,19 +1636,40 @@ function displayPrompt(c) {
   const m = p.match(/^\s*(?:Q|#)\s*(\d+)[\s:.\-—–]*/i);
   return (m && n && Number(m[1]) === n) ? p.slice(m[0].length) : p;
 }
-// One number chip everywhere, on the right; its colour is the item's state:
-// red needs you, yellow answered but not sent (it replaces the Pending chip),
-// neutral otherwise (Chang, 2026-11-02).
+// One number chip everywhere, on the right; its colour is the item's state
+// (Chang #123, #136): red needs you, orange answered but not sent (it
+// replaces the Pending chip), yellow the agent has it (sent, and the owner's
+// receipt came back) and has not addressed it, light green addressed, grey otherwise.
+const ADDRESSED = ['addressed_by_agent', 'resolved_in_version', 'user_confirmed'];
 function numState(c) {
   const s = sectionOf(c), d = decisionAnswer(c);
-  return s === 'ready' || (d && d.pending) ? 'pending' : s === 'needs' || s === 'later' ? 'needs' : '';
+  if (s === 'archived') return '';
+  if (s === 'ready' || (d && d.pending)) return 'pending';
+  if (s === 'needs' || s === 'later') return 'needs';
+  if (ADDRESSED.includes(c.status)) return 'done';
+  const sent = (d && d.delivery_id) || c.delivery_id;
+  return sent && deliveryLabel(sent) === 'Sent' ? 'working' : '';
 }
-const NUM_STATE_TEXT = { needs: 'needs you', pending: 'answered, not sent yet' };
+const NUM_STATE_TEXT = { needs: 'needs you', pending: 'answered, not sent yet', working: 'the agent has it', done: 'addressed' };
 function numChipHtml(c, cls) {
   const n = NUM_MAP[c.id], st = numState(c);
   if (!n) return '';
   // Colour is never the only signal: the state is in its name and tooltip.
-  return `<span class="${cls}${st ? ' is-' + st : ''}"${st ? ` role="img" aria-label="#${n}, ${NUM_STATE_TEXT[st]}" title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
+  return `<span class="${cls}${st ? ' is-' + st : ''}" data-num-for="${escAttr(c.id)}"${st ? ` role="img" aria-label="#${n}, ${NUM_STATE_TEXT[st]}" title="${NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1)}"` : ''}>#${n}</span>`;
+}
+// A receipt arriving turns a sent item's chip yellow where it stands; nothing else re-renders.
+function recolourChips(root) {
+  root.querySelectorAll('[data-num-for]').forEach(chip => {
+    const c = findCommentById(chip.dataset.numFor);
+    if (!c) return;
+    const st = numState(c), cls = chip.className.replace(/\s*is-(needs|pending|working|done)\b/g, '');
+    chip.className = cls + (st ? ' is-' + st : '');
+    if (st) {
+      chip.setAttribute('role', 'img');
+      chip.setAttribute('aria-label', '#' + NUM_MAP[c.id] + ', ' + NUM_STATE_TEXT[st]);
+      chip.title = NUM_STATE_TEXT[st][0].toUpperCase() + NUM_STATE_TEXT[st].slice(1);
+    } else ['role', 'aria-label', 'title'].forEach(a => chip.removeAttribute(a));
+  });
 }
 // Cards that follow the reviewer to whichever version is on screen: open
 // questions, plus verdicts still pending in the current round (so the
@@ -1857,7 +1897,7 @@ function renderDrawerNow() {
   listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
-    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'badge-primary' : 'badge-ghost';
+    const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'is-orange' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
       <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
       <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
@@ -2271,7 +2311,7 @@ function renderDecisionBlock(c) {
       : k('', 'annotate-') + DECISION_BTN_CLASS[o.id];
     const action = o.custom ? 'custom' : o.id;
     const extra = o.custom ? ` data-option-id="${escAttr(o.id)}" data-option-label="${escAttr(o.labelText)}"` : '';
-    const badge = isRec ? k('<span class="badge badge-success badge-soft badge-xs decision-rec-badge">Recommended</span>', '<span class="annotate-decision-rec">Recommended</span>') : '';
+    const badge = isRec ? k('<span class="badge badge-ghost badge-xs decision-rec-badge">Recommended</span>', '<span class="annotate-decision-rec">Recommended</span>') : '';
     const cons = o.consequence ? `<span class="${k('decision-consequence', 'annotate-decision-consequence')}">${esc(o.consequence)}</span>` : '';
     const key = kbd && i < 9 ? `<kbd class="kbd kbd-xs">${i + 1}</kbd>` : '';
     btns += `<button type="button" class="${k('btn decision-btn', 'annotate-decision-btn annotate-opt-row')} ${cls}${isRec ? ' is-recommended' : ''}" data-decision-action="${action}" data-id="${id}"${extra}${isRec ? ' title="Recommended by the agent"' : ''}><span class="${k('decision-opt-head', 'annotate-opt-head')}">${key}<span class="${k('decision-opt-label', 'annotate-opt-label')}">${o.labelHtml}</span>${badge}</span>${cons}</button>`;
@@ -4804,7 +4844,7 @@ const popReopened = new Set();
 function parkDoc() {
   if (VIEW_DOC) applyLive();
   VIEW_DOC = null;
-  setFresh([], '');
+  setFresh(0, '', false);
 }
 
 // ── Categories (one page per project) ───────────────────────────────

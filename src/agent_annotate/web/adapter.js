@@ -389,12 +389,18 @@ function ensureBadgeLayer() {
 }
 
 // The number chip: one look for pins and in-page card numbers, matching the
-// rail's .citem-num (shell.css). Red needs you, yellow answered but not sent,
-// neutral grey otherwise: darker grey on light, lighter grey on dark.
+// rail's .citem-num (shell.css). Red needs you, orange answered but not sent,
+// yellow the agent has it, light green addressed, neutral grey otherwise:
+// darker grey on light, lighter grey on dark.
+const ORANGE = 'color-mix(in oklab,var(--color-warning) 50%,var(--color-error))';
 const NUM_CHIP_CSS = sel => `
     ${sel} { background: color-mix(in oklab,var(--color-base-content) 62%,var(--color-base-100)) !important; color: var(--color-base-100) !important; }
     ${sel}.is-needs { background: var(--color-error) !important; color: var(--color-error-content) !important; }
-    ${sel}.is-pending { background: var(--color-warning) !important; color: var(--color-warning-content) !important; }`;
+    ${sel}.is-pending { background: ${ORANGE} !important; color: var(--color-error-content) !important; }
+    ${sel}.is-working { background: var(--color-warning) !important; color: var(--color-warning-content) !important; }
+    ${sel}.is-done { background: color-mix(in oklab,var(--color-success) 20%,var(--color-base-100)) !important; color: var(--color-success-content) !important; }
+    [data-theme="dark"] ${sel}.is-done { color: var(--color-success) !important; }`;
+const NUM_STATES = { needs: ', needs you', pending: ', answered, not sent yet', working: ', the agent has it', done: ', addressed' };
 
 // Pins are CLICKABLE (reverse lookup: pin -> its comments in the shell
 // drawer). Base geometry stays inline (computed per-position); interaction
@@ -466,7 +472,7 @@ function makePin(anchorId, entries, isCluster) {
   b.dataset.pinComments = entries.map(x => x.id).join(',');
   const hasDecision = entries.some(x => x.decision);
   if (hasDecision) b.classList.add('bpin-decision');
-  const state = ['needs', 'pending'].find(st => entries.some(x => x.state === st));
+  const state = ['needs', 'pending', 'working', 'done'].find(st => entries.some(x => x.state === st));
   if (state) b.classList.add('is-' + state);
   if (isCluster) {
     b.classList.add('bpin-cluster');
@@ -482,7 +488,7 @@ function makePin(anchorId, entries, isCluster) {
   b.setAttribute('role', 'button');
   b.tabIndex = 0;
   b.setAttribute('aria-label', 'Open feedback ' + entries.map(x => '#' + x.n).join(', ') +
-    (state === 'needs' ? ', needs you' : state === 'pending' ? ', answered, not sent yet' : ''));
+    (NUM_STATES[state] || ''));
   b.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); }
   });
@@ -959,7 +965,7 @@ function ensureStripStyle() {
     }
     .annotate-decision-rec {
       font-size: calc(9.5px * var(--aa-text, 1)) !important; font-weight: 800 !important; letter-spacing: .05em !important;
-      text-transform: uppercase !important; background: var(--success-soft) !important; color: var(--ok-text) !important;
+      text-transform: uppercase !important; background: var(--color-base-200) !important; color: var(--muted) !important;
       border: 1px solid var(--line) !important; padding: 1px 6px !important; border-radius: 999px !important;
     }
     .annotate-decision-custom { background: var(--muted) !important; }
@@ -1048,7 +1054,7 @@ function ensureStripStyle() {
       box-shadow: 0 1px 1px color-mix(in oklab,var(--color-neutral) 4%,transparent) !important;
     }
     .annotate-decision-btns > .annotate-decision-btn:hover { background: var(--color-base-300) !important; }
-    .annotate-decision-rec { background: color-mix(in oklab,var(--color-success) 15%,transparent) !important; color: var(--ok-text) !important; border: none !important; }
+    .annotate-decision-rec { background: var(--color-base-200) !important; color: var(--muted) !important; border: none !important; }
     .annotate-decision-reco-line { color: var(--ok-text) !important; }
     .annotate-excerpt { background: var(--color-base-200) !important; border-left-color: color-mix(in oklab,var(--color-primary) 45%,transparent) !important; }
     .annotate-decision-evidence-toggle, .annotate-decision-evidence-link, .annotate-excerpt-more { color: color-mix(in oklab,var(--color-base-content) 65%,transparent) !important; }
@@ -1096,7 +1102,7 @@ function ensureStripStyle() {
     .annotate-note-icon:hover { background: var(--color-base-300) !important; }
     .annotate-note-save { background: var(--color-primary) !important; color: var(--color-primary-content) !important; font-weight: 600 !important; padding: 4px 12px !important; border-radius: .25rem !important; }
     .annotate-send-state { display: inline-block !important; padding: 0 6px !important; border-radius: 999px !important; border: 1px solid var(--line) !important; font-size: calc(10px * var(--aa-text, 1)) !important; font-weight: 600 !important; line-height: 1.6 !important; color: color-mix(in oklab,var(--color-base-content) 70%,transparent) !important; white-space: nowrap !important; }
-    .annotate-send-state.is-pending { background: var(--color-warning) !important; border-color: var(--color-warning) !important; color: var(--color-warning-content) !important; }
+    .annotate-send-state.is-pending { background: ${ORANGE} !important; border-color: ${ORANGE} !important; color: var(--color-error-content) !important; }
     .annotate-add-note { display: flex !important; align-items: flex-end !important; gap: 8px !important; margin-top: 10px !important; }
     .annotate-add-note .annotate-decision-ta { flex: 1 1 auto !important; margin-top: 0 !important; }
     .annotate-note-add { background: var(--color-base-300) !important; color: var(--color-base-content) !important; font-weight: 600 !important; padding: 6px 12px !important; border-radius: .25rem !important; min-height: 2.25rem !important; }

@@ -14,12 +14,17 @@ body{font-family:"Roboto", sans-serif;background:var(--color-base-200);color:var
   /* Text colours for states, from the stock theme tokens. In light, the
      stock state colours are too pale to read as text on white (check:
      1.76:1), so their stock *-content partners are used instead. */
-  --ok-text:var(--color-success);--warn-text:var(--color-warning);--err-text:var(--color-error);--info-text:var(--color-info)}
+  --ok-text:var(--color-success);--warn-text:var(--color-warning);--err-text:var(--color-error);--info-text:var(--color-info);
+  /* #123/#136 state colours: red needs you, orange answered not sent, yellow
+     the agent has it, light green addressed, grey nothing to do. Orange is
+     the stock warning and error tokens mixed; blue stays for Send and links. */
+  --orange:color-mix(in oklab,var(--color-warning) 50%,var(--color-error));--orange-text:var(--orange);
+  --done-bg:color-mix(in oklab,var(--color-success) 20%,var(--color-base-100));--done-text:var(--color-success)}
 /* final/ (Chang, 2026-10-04): in dark, borders are slightly lighter than
    the surface they sit on. The one change from stock dark; light keeps
    --line = base-300. Same value as theme.css (content documents). */
 [data-theme="dark"]{--line:color-mix(in oklab,var(--color-base-content) 12%,var(--color-base-100))}
-[data-theme="light"]{--ok-text:var(--color-success-content);--warn-text:var(--color-warning-content);--err-text:var(--color-error-content);--info-text:var(--color-info-content)}
+[data-theme="light"]{--ok-text:var(--color-success-content);--warn-text:var(--color-warning-content);--err-text:var(--color-error-content);--info-text:var(--color-info-content);--orange-text:color-mix(in oklab,var(--orange) 30%,var(--color-warning-content));--done-text:var(--color-success-content)}
 [data-theme="light"] .badge-soft.badge-success{color:var(--color-success-content)}
 [data-theme="light"] .badge-soft.badge-error{color:var(--color-error-content)}
 [data-theme="light"] .badge-soft.badge-warning{color:var(--color-warning-content)}
@@ -42,7 +47,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .btn-primary .send-count{background:color-mix(in oklab,var(--color-primary) 62%,var(--color-neutral));color:var(--color-primary-content);border-color:transparent}
 .send-note{font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
 .send-note.is-success{color:var(--ok-text)}
-.send-note.is-queued{color:var(--warn-text)}
+.send-note.is-queued{color:var(--muted)}
 .send-note:empty{display:none}
 
 /* E1 avatar menu (owner + reviewer) */
@@ -135,10 +140,14 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .citem-node{font-size:calc(11px * var(--aa-text, 1));font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px;min-height:22px}
 .citem-node-name{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 /* The number chip (same rules as adapter.js NUM_CHIP_CSS): red needs you,
-   yellow answered but not sent, neutral grey otherwise. Each passes 4.5:1. */
+   orange answered not sent, yellow the agent has it, light green addressed,
+   neutral grey otherwise. Each passes 4.5:1. */
 .citem-num{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:calc(18px * var(--aa-text, 1));min-width:calc(18px * var(--aa-text, 1));padding:0 6px;border-radius:999px;font-size:calc(10.5px * var(--aa-text, 1));font-weight:700;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0;background:color-mix(in oklab,var(--color-base-content) 62%,var(--color-base-100));color:var(--color-base-100)}
 .citem-num.is-needs{background:var(--color-error);color:var(--color-error-content)}
-.citem-num.is-pending{background:var(--color-warning);color:var(--color-warning-content)}
+.citem-num.is-pending{background:var(--orange);color:var(--color-error-content)}
+.badge.is-orange{background:var(--orange);border-color:var(--orange);color:var(--color-error-content)}
+.citem-num.is-working{background:var(--color-warning);color:var(--color-warning-content)}
+.citem-num.is-done{background:var(--done-bg);color:var(--done-text)}
 .citem-img-id{flex-shrink:0;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--color-base-content)}
 .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--color-error);flex-shrink:0}
 .unread-dot.new-reply{background:var(--color-secondary)}
@@ -255,7 +264,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .vrow.current .vrow-dot{background:var(--color-primary)}
 .vrow-dot-hollow{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--color-primary);flex-shrink:0}
 .vrow-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.vrow-new{font-size:calc(9px * var(--aa-text, 1));font-weight:800;color:var(--warn-text);letter-spacing:.02em;flex-shrink:0}
+.vrow-new{font-size:calc(9px * var(--aa-text, 1));font-weight:800;color:var(--err-text);letter-spacing:.02em;flex-shrink:0}
 /* yvj: a version's chevron opens what was sent and done on it, nested under it */
 .vitem-row{display:flex;align-items:center;gap:2px}
 .vitem-row .vrow{flex:1;min-width:0}
@@ -270,10 +279,14 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .vact .hist-tag{margin-right:2px}
 /* mme: each version's time, and one status chip per item where it stands now */
 .vrow-time{flex:none;color:var(--muted);font-weight:400;font-size:calc(10.5px * var(--aa-text, 1))}
-.vact-chip{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;line-height:1.6;white-space:nowrap;vertical-align:1px;color:var(--ok-text);background:color-mix(in oklab,var(--color-success) 14%,transparent)}
-.vact-chip.is-waiting{color:var(--warn-text);background:color-mix(in oklab,var(--color-warning) 16%,transparent)}
-.vact-chip.is-review{color:var(--err-text);background:color-mix(in oklab,var(--color-error) 14%,transparent)}
-.hist-collapse:not(:focus-within) .unified-history-hint{display:none}
+.vact-chip{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;font-size:calc(9.5px * var(--aa-text, 1));font-weight:600;line-height:1.6;white-space:nowrap;vertical-align:1px;color:var(--muted);background:var(--soft)}
+/* The chip's colour is its item's state, as on the number chip (numState). */
+.vact-chip.is-done{color:var(--done-text);background:var(--done-bg)}
+.vact-chip.is-working{color:var(--color-warning-content);background:var(--color-warning)}
+.vact-chip.is-pending{color:var(--color-error-content);background:var(--orange)}
+.vact-chip.is-needs{color:var(--color-error-content);background:var(--color-error)}
+/* Keyboard focus only: a mouse click must not shift the list under the pointer (the click would miss). */
+.hist-collapse:not(:has(:focus-visible)) .unified-history-hint{display:none}
 .project-notes > summary{cursor:pointer;padding:4px 0}
 .project-panel{margin-top:10px;padding:8px 4px 0;border-top:1px solid var(--line);font-size:calc(11px * var(--aa-text, 1))}
 .project-panel[hidden]{display:none}
@@ -460,7 +473,7 @@ body.has-summary #send-btn{visibility:hidden}
   .round-bar-sub{font-size:calc(11.5px * var(--aa-text, 1));color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .round-bar-sub:empty{display:none}
   .round-bar-sub.is-success{color:var(--ok-text)}
-  .round-bar-sub.is-queued{color:var(--warn-text)}
+  .round-bar-sub.is-queued{color:var(--muted)}
   .round-bar-btn{min-height:44px;padding:0 20px;font-size:calc(14px * var(--aa-text, 1));touch-action:manipulation}
 
   #mobile-dialog-backdrop.vis{display:block}
@@ -509,7 +522,7 @@ body.has-summary #send-btn{visibility:hidden}
 .comment-edit .edit-ta{width:100%;font-size:calc(12px * var(--aa-text, 1))}
 .comment-edit-ft{display:flex;justify-content:flex-end;gap:6px}
 .send-state{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;border:1px solid var(--line);font-size:calc(10px * var(--aa-text, 1));font-weight:600;line-height:1.6;vertical-align:middle;color:var(--muted)}
-.send-state.is-pending{background:var(--color-warning);border-color:var(--color-warning);color:var(--color-warning-content)}
+.send-state.is-pending{background:var(--orange);border-color:var(--orange);color:var(--color-error-content)}
 .citem-line .send-state{flex-shrink:0}
 .decision-stranded{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .decision-stranded .decision-say-ta{width:100%}

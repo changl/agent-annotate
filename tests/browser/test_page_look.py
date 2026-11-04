@@ -2,8 +2,9 @@
 headings that read as breaks, and tables whose short columns shrink.
 
 - The number chip sits right of what it numbers, so the text keeps its left edge.
-  Red needs you, yellow is answered but not sent (no separate Pending chip),
-  neutral grey otherwise; each passes 4.5:1, in light and dark. A question card
+  Red needs you, orange is answered but not sent (no separate Pending chip),
+  yellow the agent has it (sent, owner receipt back), light green addressed,
+  neutral grey otherwise (Chang #123, #136); each passes 4.5:1, in light and dark. A question card
   in the page carries its own chip, so its anchor gets no second one.
 - A `##` is a tinted band with an accent bar; a `###` is bold with a thinner bar.
 - Table headers step towards the text colour; a short column shrinks, one with a
@@ -14,6 +15,7 @@ import json
 import socket
 
 import pytest
+from review_fixtures import complete
 from single_page import CHROME, ready
 from test_keep_drafts import _start, _stop
 
@@ -66,12 +68,13 @@ def _directory(tmp_path):
     source.write_text(SOURCE.replace("CARDS", json.dumps(cards)))
     directory = tmp_path / "review"
     generate(source, directory)
+    complete(directory)  # a draft is never shown (PR 95)
     anchors = {}
     for card in cards:
         c = dict(card, id=f"question-{card['number']}", author="agent:page-look", created_at=T, version="v1", status="open")
         c["decision_request"] = dict(card["decision_request"], requested_at=T)
         anchors[card["anchor_id"]] = [c]
-    # #2 answered, not sent: yellow. #3 answered and sent: neutral. #1 open: red.
+    # #2 answered, not sent: orange. #3 answered and sent: neutral. #1 open: red.
     anchors["d:q2"][0]["decision"] = {"verdict": "select", "text": "Ship now", "ts": SENT, "by": ME, "round_pending": True}
     anchors["d:q3"][0].update(decision={"verdict": "select", "text": "Ship now", "ts": T, "by": ME},
                               flagged_for_session=True, flagged_at=SENT)
@@ -79,6 +82,14 @@ def _directory(tmp_path):
     anchors[TWILIO_P] = [dict(mine, id="agent-replied", anchor_id=TWILIO_P, text="Is it off?", number=4,
                               replies=[{"author": "agent:page-look", "text": "Yes; the laptop copy needs you.", "ts": SENT}])]
     anchors[ROW] = [dict(mine, id="waiting", anchor_id=ROW, text="When?", number=5, replies=[])]
+    # #6 sent and the owner read it: yellow. #7 addressed by the agent: light green.
+    anchors[FIREBASE] = [dict(mine, id="working", anchor_id=FIREBASE, text="Switch it off today.", number=6, replies=[],
+                              delivery_id="d-read"),
+                         dict(mine, id="addressed", anchor_id=FIREBASE, text="And log it.", number=7, replies=[],
+                              status="addressed_by_agent", delivery_id="d-read")]
+    journal = tmp_path / "state" / "deliveries" / "bus" / "items-model.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({"deliveries": {"d-read": {"id": "d-read", "state": "acknowledged"}}}))
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": anchors, "archived": {}}))
     return directory
 
@@ -154,7 +165,7 @@ def test_one_number_chip_on_the_right_coloured_by_state(frame):
     assert place["pinRight"] <= place["vw"], place
     assert "is-needs" in place["pinState"] and "is-" not in place["rowState"].replace("bpin", ""), place
     assert place["cardPins"] == 0, "a card in the page carries its own number"
-    # Cards in the page: the chip ends the question line; yellow replaces the Pending chip.
+    # Cards in the page: the chip ends the question line; orange replaces the Pending chip.
     cards = f.evaluate("""() => [1, 2, 3].map(n => {
       const item = document.querySelector('[data-strip-item="question-' + n + '"]');
       const chip = item.querySelector('.annotate-decision-num'), r = chip.getBoundingClientRect();
@@ -181,13 +192,23 @@ def test_one_number_chip_on_the_right_coloured_by_state(frame):
             return {cls: c.className, bg: L.rgb(cs.backgroundColor), text: L.ratio(cs.color, cs.backgroundColor),
                     page: L.ratio(cs.backgroundColor, L.page()), darker: L.lum(cs.backgroundColor) < L.lum(L.page()),
                     fits: c.scrollWidth <= c.clientWidth + 0.5,
-                    error: L.rgb(root.getPropertyValue('--color-error')), warning: L.rgb(root.getPropertyValue('--color-warning'))}; }); }""")
+                    error: L.rgb(root.getPropertyValue('--color-error')), warning: L.rgb(root.getPropertyValue('--color-warning')),
+                    success: L.rgb(root.getPropertyValue('--color-success'))}; }); }""")
+        assert {w for c in look for w in c["cls"].split() if w.startswith("is-")} >= {"is-needs", "is-pending", "is-working", "is-done"}, look
         for chip in look:
             assert chip["text"] >= 4.5 and chip["fits"], (theme, chip)
             if "is-needs" in chip["cls"]:
                 assert chip["bg"] == chip["error"], (theme, chip)
             elif "is-pending" in chip["cls"]:
+                # Orange: between the theme's warning and error, red above green above blue.
+                r, g, b = chip["bg"]
+                assert chip["bg"] not in (chip["warning"], chip["error"]) and r > g > b, (theme, chip)
+            elif "is-working" in chip["cls"]:
                 assert chip["bg"] == chip["warning"], (theme, chip)
+            elif "is-done" in chip["cls"]:
+                # Light green: a tint of success, never the full colour.
+                r, g, b = chip["bg"]
+                assert g > r and g > b and chip["bg"] != chip["success"] and chip["page"] < 2, (theme, chip)
             else:
                 # Neutral: darker grey on light, lighter grey on dark, clear of the page.
                 assert chip["page"] >= 3 and chip["darker"] == (theme == "light"), (theme, chip)

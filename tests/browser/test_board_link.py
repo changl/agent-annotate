@@ -25,7 +25,13 @@ BOARD = "https://board.example:8473/p/jump"
 def board_page(tmp_path, page_dir, monkeypatch):  # noqa: F811
     fake = tmp_path / "bd"
     # A second of latency, like the real bd: the page must not wait for it.
-    fake.write_text("#!/bin/sh\nsleep 1\necho '[" + ",".join('{"id":"jump-%d"}' % i for i in range(7)) + "]'\n")
+    # Fixture counts (the live board is unreachable from tests): Ready 7,
+    # Backlog 3, In progress 2, Blocked 1.
+    ready = ",".join('{"id":"jump-%d","status":"open"}' % i for i in range(7))
+    rest = ('{"id":"jump-p1","status":"in_progress"},{"id":"jump-p2","status":"in_progress"},'
+            '{"id":"jump-b1","status":"blocked"},' + ",".join('{"id":"jump-l%d","status":"open"}' % i for i in range(3)))
+    fake.write_text("#!/bin/sh\nsleep 1\ncase \"$3\" in\n  ready) echo '[" + ready + "]' ;;\n"
+                    "  list) echo '[" + ready + "," + rest + "]' ;;\n  blocked) echo '[]' ;;\nesac\n")
     fake.chmod(0o755)
     monkeypatch.setenv("ANNOTATE_BD", str(fake))
     save_project(page_dir, {"title": "Jump", "modules": [], "board": {
@@ -52,18 +58,21 @@ def test_header_board_link_with_ready_count_on_every_tab(tmp_path, board_page):
         assert link.inner_text().startswith("Beads")
         # The count arrives after the page is usable, from the server's cache.
         _wait(lambda: link.locator(".aa-board-count").count() == 1, page, timeout_ms=10_000)
-        assert link.locator(".aa-board-count").inner_text() == "7 ready"
+        # #109: "Beads 7 ↗": the count sits before the arrow.
+        assert link.locator(".aa-board-count").inner_text() == "7"
+        assert link.evaluate("a => a.querySelector('.aa-board-count').nextElementSibling.tagName") == "svg"
         # The page never exposes the board's local directory.
         project = json.loads(page.evaluate("() => fetch('./api/project').then(r => r.text())"))
         assert "dir" not in project["board"]
         board = json.loads(page.evaluate("() => fetch('./api/board').then(r => r.text())"))
         assert board["ready"] == 7 and "dir" not in board["board"]
+        assert board["counts"] == {"ready": 7, "backlog": 3, "in_progress": 2, "blocked": 1}
         # It sits with the tabs, after the last one.
         assert page.evaluate("() => document.querySelector('#aa-tabs .tabs').lastElementChild.classList.contains('aa-board-link')")
         page.screenshot(path=str(tmp_path / "board-link-1440.png"), clip={"x": 0, "y": 0, "width": 1440, "height": 120})
         for view, extra in (("plans", {"plan": "launch"}), ("findings", {})):
             go(page, view, **extra)
-            assert _link(page).is_visible() and "7 ready" in _link(page).inner_text()
+            assert _link(page).is_visible() and _link(page).locator(".aa-board-count").inner_text() == "7"
         go(page, "review")
         # Issue ids on the board link to the issue, in the document and in the rail.
         frame = page.frame_locator("#content-frame")
@@ -81,7 +90,10 @@ def test_phone_header_menu_lists_the_board(tmp_path, board_page):
         menu = page.locator("#aa-tabs-menu")
         menu.locator("summary").click()
         item = menu.locator("a.aa-board-link")
-        _wait(lambda: "7 ready" in item.inner_text(), page, timeout_ms=10_000)
+        # #109: the tap that opens the menu shows the summary, one count per line.
+        _wait(lambda: item.locator(".aa-board-line").count() == 4, page, timeout_ms=10_000)
+        assert item.locator(".aa-board-line").all_inner_texts() == SUMMARY
+        assert item.locator(".aa-board-count").inner_text() == "7"
         assert item.get_attribute("href") == BOARD and item.get_attribute("target") == "_blank"
         page.screenshot(path=str(tmp_path / "board-link-390.png"))
 
@@ -160,3 +172,39 @@ def test_header_progress_counts_the_needs_you_set(tmp_path, board_page):
         page.locator('.citem[data-comment-id="card-1"] .decision-btns > .decision-btn').first.click()
         _wait(lambda: progress.inner_text() == "1 of 1 decided", page)
         assert needs.count() == 0
+
+
+SUMMARY = ["Backlog 3", "Ready 7", "In progress 2", "Blocked 1"]
+
+
+def _summary(page):
+    return page.evaluate("() => [...document.querySelectorAll('#aa-board-sum .aa-board-sum-row')]"
+                         ".map(r => r.innerText.replace(/\\s+/g, ' ').trim())")
+
+
+# #109: the summary, one count per line, on mouse hover; it leaves with the mouse.
+def test_board_summary_shows_on_mouse_hover(tmp_path, board_page):
+    with browser_page(tmp_path, board_page) as (page, _):
+        link = _link(page)
+        _wait(lambda: link.get_attribute("aria-describedby") == "aa-board-sum", page, timeout_ms=10_000)
+        assert page.locator("#aa-board-sum").is_hidden()
+        link.hover()
+        _wait(lambda: page.locator("#aa-board-sum").is_visible(), page)
+        assert _summary(page) == SUMMARY
+        box, sum_box = link.bounding_box(), page.locator("#aa-board-sum").bounding_box()
+        assert sum_box["y"] >= box["y"] + box["height"]
+        page.mouse.move(5, 500)
+        _wait(lambda: page.locator("#aa-board-sum").is_hidden(), page)
+
+
+# On the iPad a tap shows the summary (no sticky hover); the next tap opens the board.
+def test_board_summary_shows_on_ipad_tap(tmp_path, board_page):
+    with browser_page(tmp_path, board_page, ipad=True) as (page, _):
+        link = _link(page)
+        _wait(lambda: link.get_attribute("aria-describedby") == "aa-board-sum", page, timeout_ms=10_000)
+        link.tap()
+        _wait(lambda: page.locator("#aa-board-sum").is_visible(), page)
+        assert _summary(page) == SUMMARY
+        assert len(page.context.pages) == 1
+        with page.context.expect_page():  # board.example never loads; the new tab is the proof
+            link.tap()

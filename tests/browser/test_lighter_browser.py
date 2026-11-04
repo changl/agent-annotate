@@ -89,7 +89,7 @@ def test_strip_evidence_is_built_on_open_and_stays_open_across_a_poll_redraw(tmp
         # An agent change redraws the strips once the reviewer asks for it (dw4).
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "A note from the agent.", "version": "v1"}]})
         _poll(page, 3)
-        page.locator("#unified-version-banner button").tap()
+        page.locator("#aa-fresh").tap()
         page.wait_for_function("""() => {
           const doc = document.getElementById('content-frame').contentDocument;
           const t = doc.querySelector('.annotate-decision-evidence-toggle');

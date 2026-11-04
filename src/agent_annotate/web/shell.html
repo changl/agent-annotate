@@ -24,8 +24,10 @@
   </div>
   <nav class="aa-tabs" id="aa-tabs" aria-label="Tabs"></nav>
   <details class="aa-tabs-menu" id="aa-tabs-menu"><summary>Review</summary></details>
-  <!-- av1: always here; a border and a red count when something waits. One tap checks now and shows it. -->
-  <button type="button" class="btn btn-ghost btn-sm aa-fresh" id="aa-fresh" aria-label="Check for updates" title="Check for updates"><svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg><span class="badge badge-error badge-xs aa-fresh-n" id="aa-fresh-n" hidden></span></button>
+  <!-- av1/#136: always here. A red border and count only for new items; a newer version's name in plain text, "fix" in orange. -->
+  <button type="button" class="btn btn-ghost btn-sm aa-fresh" id="aa-fresh" aria-label="Reload this version" title="Reload this version"><svg class="i" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg><span class="badge badge-error badge-xs aa-fresh-n" id="aa-fresh-n" hidden></span><span class="aa-fresh-v" hidden></span><span class="aa-fresh-fix" hidden></span></button>
+  <!-- #109: the board's counts, one per line, under the Beads link -->
+  <div class="aa-board-sum" id="aa-board-sum" role="tooltip" hidden></div>
   <div class="hdr-right">
     <div class="text-size" id="text-size">
       <button type="button" class="btn btn-ghost btn-sm btn-square text-size-btn" id="text-size-btn" aria-expanded="false" aria-controls="text-size-panel" aria-label="Text size" title="Text size">Aa</button>

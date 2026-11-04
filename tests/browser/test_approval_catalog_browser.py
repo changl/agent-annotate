@@ -97,7 +97,7 @@ def test_sandbox_approval_selection_history_changes_and_retry(tmp_path):
             page.screenshot(path=str(output / "review-after.png"), full_page=True)
             go(page, "plans", plan=identifier)
             playwright.expect(frame.locator("h2", has_text="One-step routing")).to_be_visible()
-            playwright.expect(page.locator("#unified-version-banner")).to_be_hidden()
+            playwright.expect(page.locator("#aa-fresh .aa-fresh-v")).to_be_hidden()
             playwright.expect(frame.locator("main")).to_contain_text("Chosen: Approve design")
             assert frame.locator("time[data-decided-time]").inner_text() != "Decided"
             assert "T" not in frame.locator("time[data-decided-time]").inner_text()

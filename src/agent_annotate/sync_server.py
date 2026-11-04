@@ -67,7 +67,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
                                               (may carry decision_request; v2.19)
       GET  /api/capabilities                → {"version","batch","rounds","decision_schema",
                                                "verdicts"}
-      GET  /api/board                       → {"board","ready","checked_at"}: the
+      GET  /api/board                       → {"board","ready","counts","checked_at"}: the
                                               project's board link and its cached
                                               ready count (board.py; never waits on bd)
       POST /api/comments/batch             → {"items":[...], "idempotency":"anchor"|null}
