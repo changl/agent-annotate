@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Routine jobs are scripts (simplification plan Stage 4; agent-annotate-zsc; docs/routine-scripts.md). `scripts/rollout.py plan|apply|rollback|status` rolls a release out to one Mac in one command and prints one line. It backs up, installs the wheel with uv, syncs skills, restarts pages, checks with doctor, and rolls the whole Mac back at the first failed step. Another Mac needs `--approval`, or nothing is sent. Releases now carry `rollout.py` and list it in `SHA256SUMS`. `scripts/sweep.py beads|disk|sessions|all` prints one line per check and writes the items that need judgment to a file, which `run_summary.py` shows. An hourly launchd plist is included but not loaded. The worker brief says how to read the full-suite receipt.
+
 ## 2.28.3
 
 - A page poll that comes due while a document loads or a post is on its way runs a second later instead of a full 8 s cycle later, and where the last Send got to is read alongside the other poll reads instead of after them; under load two deferred polls had put a delivery receipt past 15 s. The notes test now reports the card, the open requests and any error the card shows if its save never appears (agent-annotate-pla).

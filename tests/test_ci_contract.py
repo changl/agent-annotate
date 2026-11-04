@@ -28,6 +28,9 @@ def shipping_wheel(tmp_path):
     (root / "pyproject.toml").write_text('[project]\nversion="2.23.0"\n')
     (web / "shell.js").write_text("window.shipping=true;")
     (web / "daisyui.css").write_text(":root{color:black}")
+    (root / "scripts").mkdir()
+    for folder in (root / "scripts", tmp_path):  # the release ships rollout.py beside the wheel
+        (folder / "rollout.py").write_text("# rollout\n")
     wheel = tmp_path / "agent_annotate-2.23.0-py3-none-any.whl"
     def write(*, build_id=COMMIT, altered=False, missing=False):
         with zipfile.ZipFile(wheel, "w") as archive:
@@ -124,9 +127,9 @@ def test_publish_checks_artifact_checksum_before_any_upload(shipping_wheel, monk
     with pytest.raises(ValueError, match="checksum"):
         release.main()
     assert calls == []
-    manifest.write_text(f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}\n")
+    manifest.write_text(release.checksums(wheel))
     release.main()
-    assert calls == [["gh", "release", "create", TAG, str(wheel), str(manifest),
+    assert calls == [["gh", "release", "create", TAG, str(wheel), str(wheel.parent / "rollout.py"), str(manifest),
                       "--repo", "changl/agent-annotate", "--target", COMMIT, "--generate-notes"]]
 
 
