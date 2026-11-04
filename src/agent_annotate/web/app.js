@@ -369,13 +369,25 @@
     [hdr, nav, ...hdr.querySelector('.hdr-right').children].forEach(el => ro.observe(el));
   }
 
+  // av1: Review's version sits in its tab ("Review v646"); the row above the
+  // document that said "Review · Version v646" is gone. An older one says so.
+  function version(id) {
+    const d = DOCS();
+    const v = id === 'review' && d && d.docs.includes(id) ? d.version(id) : null;
+    return v ? { v, older: d.olderShown(id) } : null;
+  }
+  function versionHtml(id) {
+    const x = version(id);
+    return x ? ` <span class="aa-tab-ver${x.older ? ' is-older' : ''}">${esc(x.v)}${x.older ? ' · older' : ''}</span>` : '';
+  }
+  const versionWords = (id) => { const x = version(id); return x ? ' ' + x.v + (x.older ? ', an older version' : '') : ''; };
   function render(counts) {
     const cur = AA.view;
     const b = board();
     nav.innerHTML = '<div class="tabs tabs-border">' + AA.TABS.map(t => {
       const k = counts[t.id], s = sentence(k);
       const badge = k.needs ? ` <span class="badge badge-error badge-xs" aria-hidden="true">${k.needs}</span>` : '';
-      return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + ', ' + s.text)}">${esc(t.label)}${badge}</a>`;
+      return `<a class="tab${t.id === cur ? ' tab-active' : ''}" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''} title="${esc(t.title)} · ${esc(s.text)}" aria-label="${esc(t.label + versionWords(t.id) + ', ' + s.text)}">${esc(t.label)}${versionHtml(t.id)}${badge}</a>`;
     }).join('') + boardHtml(b, false) + '</div>';
 
     const curTab = AA.tab(cur);
@@ -384,7 +396,7 @@
     const others = AA.TABS.filter(t => t.id !== cur).reduce((n, t) => n + counts[t.id].needs, 0);
     const open = menu.open;
     menu.hidden = AA.TABS.length < 2 && !b; // UI-28: one tab, no menu
-    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
+    menu.innerHTML =`<summary aria-label="Tab: ${esc(curLabel)}${others ? ', ' + others + ' need you elsewhere' : ''}"><span class="aa-tabs-menu-label">${esc(curLabel)}${versionHtml(cur)}</span>${curNeeds ? ` <span class="badge badge-error badge-xs">${curNeeds}</span>` : ''}${ICON_DOWN}</summary>
       <div class="aa-tabs-list" role="list">${AA.TABS.map(t => {
         const s = sentence(counts[t.id]);
         return `<a role="listitem" href="${href(t.id)}" data-view="${t.id}"${t.id === cur ? ' aria-current="page"' : ''}><span class="aa-tab-name">${esc(t.label)}</span><span class="aa-tab-state${s.needs ? ' is-needs' : ''}">${esc(s.text)}</span></a>`;
@@ -607,8 +619,12 @@
     const live = note && Date.now() < note.until;
     const last = receipts()[0];
     const n = $('#send-note');
+    // av1: where that Send got to replaces "Sent", when the server's latest delivery is this Send.
+    const dn = last && docs && docs.deliveryNote();
+    const lastWords = dn && (last.delivery_ids || [last.delivery_id]).includes(dn.id) ? dn.text + ' (' + last.items.length + ')' : last && last.result;
+    n.title = live || !lastWords || lastWords === (last && last.result) ? '' : dn.title;
     if (live) { n.textContent = note.text; n.className = 'send-note' + (note.cls ? ' ' + note.cls : ''); }
-    else if (last) { n.textContent = last.result + ' · ' + UI.fmtTs(last.ts); n.className = 'send-note unified-durable-receipt'; }
+    else if (last) { n.textContent = lastWords + ' · ' + UI.fmtTs(last.ts); n.className = 'send-note unified-durable-receipt'; }
     else { n.textContent = ''; n.className = 'send-note'; }
     // D2: the phone bar, on every tab.
     const mobile = docs && docs.isMobileLayout();
@@ -625,7 +641,7 @@
     const k = counts || AA.counts();
     const elsewhere = AA.TABS.filter(t => t.id !== AA.view && k[t.id].needs).map(t => t.label + ' ' + k[t.id].needs);
     const sub = $('#round-bar-sub');
-    sub.textContent = live ? note.text : elsewhere.length ? 'Needs you: ' + elsewhere.join(' · ') : (last ? last.result : '');
+    sub.textContent = live ? note.text : elsewhere.length ? 'Needs you: ' + elsewhere.join(' · ') : (lastWords || '');
     sub.className = 'round-bar-sub' + (live && note.cls ? ' ' + note.cls : '');
     if (open && !sending) syncCounts();
   }

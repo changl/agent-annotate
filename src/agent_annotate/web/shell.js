@@ -1008,7 +1008,10 @@ function renderProject() {
   // Progress (History tab)
   if (!rest.length) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.hidden = false;
-  panel.innerHTML = `<div class="project-heading"><strong>${esc(PROJECT.title || 'Project links and progress')}</strong><small>${PROJECT.updated_at ? 'Updated ' + esc(fmtTs(PROJECT.updated_at)) : ''}</small></div>` + rest.map((module) => {
+  // mme: one folded row under the versions; it opened above them before.
+  const notesOpen = projectPreference('notes') === 'open';
+  const when = PROJECT.updated_at ? ', last ' + esc(fmtTs(PROJECT.updated_at).replace(/,\s*\d.*$/, '')) : '';
+  panel.innerHTML = `<details class="project-notes" data-module="notes"${notesOpen ? ' open' : ''}><summary class="hist-lbl">The agent's progress notes (${rest.length}${when})</summary>` + rest.map((module) => {
     const preference = projectPreference(module.id);
     // 2.20: progress and notes modules start collapsed.
     const open = preference ? preference === 'open' : false;
@@ -1017,7 +1020,7 @@ function renderProject() {
       return `<li>${ticketsHTML(item.text)}</li>`;
     }).join('');
     return `<details class="project-module" data-module="${escAttr(module.id)}" ${open ? 'open' : ''}><summary>${esc(module.title)} (${module.items.length})</summary><ul>${items}</ul></details>`;
-  }).join('');
+  }).join('') + '</details>';
   panel.querySelectorAll('details').forEach(node => {
     node.addEventListener('toggle', () => projectPreference(node.dataset.module, node.open));
   });
@@ -1161,8 +1164,10 @@ function legacyRound(r) {
     return { ts: r.ts, result: roundResult(n, [r.id]), items, n };
   }
 }
+// Where the last Send got to. av1: said in the header's Send note, which
+// already names that Send; the row above the document is gone.
+let DELIVERY_NOTE = null;
 async function loadDelivery() {
-  const node = document.getElementById('delivery-status');
   try {
     let data = SUMMARY_DELIVERY;
     if (!HAS_SUMMARY || DOC !== VIEW_DOC || DOC !== 'review' || docBusy) {
@@ -1172,15 +1177,15 @@ async function loadDelivery() {
     }
     data = data || {};
     SUMMARY_DELIVERY = data;
-    node.hidden = !data.latest;
+    let next = null;
     if (data.latest) {
       // Plain words (Chang, 2026-11-01); "accepted" counts as delivered only with the owner's receipt.
-      const unconfirmed = 'Saved; not yet confirmed that the agent got it';
-      const labels = {acknowledged: 'The agent has read your last Send', pending: 'Saved; the agent has not been told yet', accepted: data.latest.delivered ? 'Delivered; waiting for the agent to start' : unconfirmed, started: 'The agent is working on your last Send', uncertain: unconfirmed, superseded: 'This page changed agents before your Send was delivered'};
-      node.textContent = labels[data.latest.state] || 'Feedback delivery: ' + data.latest.state;
-      // The technical reason stays on hover, out of the sentence he reads.
-      node.title = data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '';
+      const unconfirmed = 'Saved, not confirmed';
+      const labels = {acknowledged: 'Read by the agent', pending: 'Saved, agent not told yet', accepted: data.latest.delivered ? 'Delivered' : unconfirmed, started: 'Agent working on it', uncertain: unconfirmed, superseded: 'Not delivered: the page changed agents'};
+      // The technical reason stays in the tooltip, out of the words he reads.
+      next = { id: data.latest.id, text: labels[data.latest.state] || data.latest.state, title: data.latest.detail && ['pending', 'uncertain'].includes(data.latest.state) ? data.latest.detail : '' };
     }
+    if (JSON.stringify(next) !== JSON.stringify(DELIVERY_NOTE)) { DELIVERY_NOTE = next; if (window.AA) window.AA.changed(); }
     window.AA?.send?.delivery(data.deliveries || []);
     for (const root of [document, document.getElementById('content-frame')?.contentDocument]) {
       root?.querySelectorAll('[data-delivery-ids]').forEach(label => {
@@ -1243,20 +1248,36 @@ function versionFolds(value) {
     return JSON.parse(localStorage.getItem(key) || '{}') || {};
   } catch { return {}; }
 }
-function versionActivityHtml(h, next, rounds, done) {
+// mme (Chang, card #78): each item once: what you answered, and as its chip
+// where it stands now. The agent's second list of the same items is gone; the
+// version it published next is named on the round's line.
+function itemChipHtml(c) {
+  if (!c) return '';
+  const cls = classify(c);
+  return ` <span class="vact-chip is-${cls}">${esc(statusLabel(c, cls))}</span>`;
+}
+function versionActivityHtml(h, next, rounds, done, byNum) {
   const tag = (cat) => cat !== DOC && window.AA && window.AA.rail ? window.AA.rail.tagHtml(cat) + ' ' : '';
-  const sent = rounds.map(r => `<div class="vact-block">
-      <div class="vact-head">Feedback · ${r.delivery_ids ? deliveryHtml(r.delivery_ids) + ' (' + (r.n ?? r.items.length) + ')' : esc(r.result)} · ${esc(fmtTs(r.ts))}</div>
-      <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}</li>`).join('')}</ul>
+  const listed = new Set();
+  const itemComment = (it) => {
+    const m = /^#(\d+(?:·\d+)?) · /.exec(it.label || '');
+    const c = m && byNum[m[1]] ? findCommentById(byNum[m[1]]) : null;
+    if (c) listed.add(c.id);
+    return c;
+  };
+  const nextHtml = next ? ` · next: ${esc(next.version)}` : '';
+  const sent = rounds.map((r, i) => `<div class="vact-block">
+      <div class="vact-head">You sent ${r.n ?? r.items.length} · ${esc(fmtTs(r.ts))}${i === rounds.length - 1 ? nextHtml : ''}</div>
+      <ul>${r.items.map(it => `<li>${tag(it.cat)}${esc(it.label)}${it.answer ? ' → ' + esc(it.answer) : ''}${itemChipHtml(itemComment(it))}</li>`).join('')}</ul>
     </div>`).join('');
-  const lines = done.map(c => {
+  const rest = done.filter(c => !listed.has(c.id)).map(c => {
     const n = NUM_MAP[c.id];
-    const what = c.status === 'resolved_in_version' ? 'Resolved in ' + (c.resolved_in_version || 'a later version') : 'Addressed';
-    return `<li>${n ? '#' + n + ' · ' : ''}${esc(displayPrompt(c) || firstLine(c.text))} — ${esc(what)}</li>`;
+    return `<li>${n ? '#' + n + ' · ' : ''}${esc(displayPrompt(c) || firstLine(c.text))}${itemChipHtml(c)}</li>`;
   }).join('');
-  const agent = next || lines ? `<div class="vact-block vact-agent">
-      <div class="vact-head">Agent${next ? ' · Published ' + esc(next.version) + (next.label ? ' · ' + esc(next.label) : '') + ' · ' + esc(fmtTs(next.ts)) : ''}</div>
-      ${lines ? `<ul>${lines}</ul>` : ''}
+  // With no round on this version, only these (activity needs one or the other).
+  const agent = rest ? `<div class="vact-block vact-agent">
+      <div class="vact-head">${rounds.length ? 'Also closed by the agent' : 'Closed by the agent' + nextHtml}</div>
+      <ul>${rest}</ul>
     </div>` : '';
   return sent + agent;
 }
@@ -1289,6 +1310,14 @@ function renderVersionRail(shown) {
     return 0;
   }
   const folds = versionFolds();
+  const byNum = {};
+  for (const [id, n] of Object.entries(NUM_MAP)) byNum[n] = id;
+  // mme: an agent label shared by many versions ("Round 19:00Z") tells them
+  // apart no better than nothing; every row carries its own time.
+  const labelUses = {};
+  for (const h of allHistory) labelUses[h.label] = (labelUses[h.label] || 0) + 1;
+  // mme: the latest round's items show without a tap.
+  const latestRound = (allHistory.find(h => byVersion[h.version]) || {}).version;
   // One pass over the comments for every version: per-version scans made
   // History freeze for 2.2 s on FLD (535 versions × 1,418 comments).
   const doneBy = {}, countsBy = {};
@@ -1307,7 +1336,7 @@ function renderVersionRail(shown) {
     const done = sentOnly ? [] : (doneBy[h.version] || []);
     const activity = rounds.length || done.length;
     const next = activity ? publishedAfter(h, rounds) : null;
-    const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION);
+    const open = !!activity && (h.version in folds ? folds[h.version] : sentOnly || h.version === CURRENT_VERSION || h.version === latestRound);
     const pid = 'vact-' + doc + '-' + h.version;
     const counts = countsBy[h.version] || { review: 0, waiting: 0, done: 0, total: 0 };
     const isCur = h.version === CURRENT_VERSION;
@@ -1325,13 +1354,14 @@ function renderVersionRail(shown) {
       <div class="vitem-row">
         <button type="button" aria-current="${isCur ? 'page' : 'false'}" class="vrow ${isCur ? 'current' : ''}" data-version="${escAttr(h.version)}" title="${escAttr(h.label || '')}">
           ${dotHtml}
-          <span class="vrow-label">${esc(h.version)}${h.label ? ' &middot; ' + esc(h.label) : ''}</span>
+          <span class="vrow-label">${esc(h.version)}${h.label && labelUses[h.label] === 1 ? ' &middot; ' + esc(h.label) : ''}</span>
+          ${h.ts ? `<span class="vrow-time">${esc(fmtTs(h.ts))}</span>` : ''}
           ${newHtml}
           ${badgeHtml}
         </button>
         ${toggleHtml}
       </div>
-      ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done)}</div>` : ''}
+      ${activity ? `<div class="vact" id="${escAttr(pid)}"${open ? '' : ' hidden'}>${versionActivityHtml(h, next, rounds, done, byNum)}</div>` : ''}
     </div>`;
   }).join('') + (allHistory.length > limit
     ? `<button type="button" class="btn btn-ghost btn-xs vrail-more">Show ${Math.min(HISTORY_PAGE, allHistory.length - limit)} earlier</button>` : '');
@@ -1390,26 +1420,47 @@ function renderVersionRail(shown) {
   if (doc === VIEW_DOC) renderVersionBanner();
   return rows.length;
 }
-// U-10: an older version on screen says so, with the way back. It also says
-// what a poll brought that is not shown yet; one tap shows it all.
+// av1 (Chang, card #54): the header's refresh button replaces the grey banner
+// above the document. Plain when nothing waits; a border and a red count of
+// new questions and changed cards (or the newer version's name) when
+// something does. An older version on screen says so in the Review tab.
+function setFresh(parts, badge) {
+  const btn = document.getElementById('aa-fresh'), n = document.getElementById('aa-fresh-n');
+  const say = parts.length ? parts.join(' · ') + '. Tap to show.' : 'Check for updates';
+  btn.classList.toggle('is-waiting', !!parts.length);
+  n.hidden = !parts.length;
+  n.textContent = parts.length ? String(badge) : '';
+  btn.title = say;
+  btn.setAttribute('aria-label', say);
+}
 function renderVersionBanner() {
-  const banner = document.getElementById('unified-version-banner');
-  const latest = META.current || ((META.history || []).slice(-1)[0] || {}).version;
+  const latest = latestVersion();
   const older = !!latest && CURRENT_VERSION !== latest;
   const w = waitingChanges();
   const parts = [];
-  if (older) parts.push('Viewing ' + esc(CURRENT_VERSION) + ' (older) · Latest is ' + esc(latest));
+  if (older) parts.push('Latest is ' + latest);
   if (w.questions) parts.push(w.questions + (w.questions === 1 ? ' new question' : ' new questions'));
   if (w.cards) parts.push(w.cards + (w.cards === 1 ? ' card changed' : ' cards changed'));
-  banner.hidden = !parts.length;
-  if (banner.hidden) return;
-  banner.innerHTML = parts.join(' · ') + ' — <button type="button" class="btn btn-link btn-sm">' + (older ? 'back to latest' : 'show') + '</button>';
-  banner.querySelector('button').onclick = () => {
-    if (older) return switchVersion(latest);
+  setFresh(parts, w.questions + w.cards || latest);
+}
+// One tap: check now, then show what waits: the latest version, or the cards
+// the polls brought. Typed text is kept as on any re-render (v9o drafts).
+let pollNow = async () => {};
+async function freshTap() {
+  const btn = document.getElementById('aa-fresh');
+  if (btn.classList.contains('is-checking')) return;
+  btn.classList.add('is-checking');
+  try { await pollNow(); } finally { btn.classList.remove('is-checking'); }
+  if (!VIEW_DOC) return;
+  withDoc(VIEW_DOC, () => {
+    const latest = latestVersion();
+    if (latest && CURRENT_VERSION !== latest) return switchVersion(latest);
+    const w = waitingChanges();
+    if (!w.questions && !w.cards) return setSendNote('Up to date', 'is-success', 2000);
     applyLive();
     renderAll();
     document.dispatchEvent(new CustomEvent('annotate:store'));
-  };
+  });
 }
 // (The phone header's version <select> is gone: History is the one version
 // picker on every layout — B3.)
@@ -1602,7 +1653,8 @@ function isNewerThanViewed(c) {
 // Four sections replace the chip filters, "Mark all read" and the per-card
 // status pill: Needs you · Ready to send · Waiting on agent · Done (plus
 // Archived at the bottom when there is any).
-const SECTION_ORDER = ['later', 'needs', 'ready', 'waiting', 'done', 'earlier', 'archived'];
+// mme (Chang, card #78): Needs you comes first, Answer later under it.
+const SECTION_ORDER = ['needs', 'later', 'ready','waiting', 'done', 'earlier', 'archived'];
 const SECTION_LABEL = { later: 'Answer later', needs: 'Needs you', ready: 'Ready to send', waiting: 'Waiting on agent', done: 'Done', earlier: 'Earlier feedback', archived: 'Archived' };
 function sectionOpen(k) {
   return Object.prototype.hasOwnProperty.call(SECTION_OPEN, k) ? !!SECTION_OPEN[k] : !!SECTION_DEFAULT_OPEN[k];
@@ -2010,6 +2062,8 @@ function renderDecisionReco(opts, dr) {
   if (!rec) return '';
   const id = canonicalOptionId(rec);
   const o = opts.find(x => x.id === id);
+  // mme: in the rail the option's own Recommended tag says it; no second line.
+  if (o && !S.doc) return '';
   const label = o ? o.plainLabel : (DECISION_PLAIN_LABEL[id] || rec);
   return `<div class="${k('decision-reco-line', 'annotate-decision-reco-line')}">Recommended: <b>${esc(label)}</b></div>`;
 }
@@ -2240,8 +2294,8 @@ function renderDecisionBlock(c) {
     ${renderDecisionReco(opts, dr)}
     ${renderDecisionExcerpt(c, dr)}
     <div class="${k('decision-btns', 'annotate-decision-btns')}${hasCons ? ' has-consequences' : ''}" data-options>${btns}</div>
-    ${decisionAnswer(c) ? '' : `<button type="button" class="${k('btn btn-ghost btn-sm decision-later', 'annotate-decision-btn annotate-decision-later')}" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${id}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
-    ${renderDecisionEvidence(c, dr)}
+    ${S.doc ? '' : '<div class="decision-later-row">'}${decisionAnswer(c) ? '' : `<button type="button" class="${k('btn btn-ghost btn-sm decision-later', 'annotate-decision-btn annotate-decision-later')}" data-decision-action="later" data-later="${isSetAside(c) ? '0' : '1'}" data-id="${id}">${isSetAside(c) ? 'Back to Needs you' : 'Answer later'}</button>`}
+    ${renderDecisionEvidence(c, dr)}${S.doc ? '' : '</div>'}
     ${cmtHtml}
     ${feedbackHtml(c)}
   </div>`;
@@ -2741,6 +2795,8 @@ function renderCItem(c) {
     <div class="citem-node">
       ${unreadDotHtml(c)}
       <span class="citem-node-name">${numHtml}${imageTag(c.target) ? `<span class="citem-img-id">${imageTag(c.target)}</span> ` : ''}${esc(anchorLabel(c))}</span>
+      <span class="citem-meta"><span class="citem-author">${esc(authorLabel(c).replace(/^agent:/, ''))}</span>
+        <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span></span>
       ${navKeys}${collapseHtml}${c.pending ? '' : cardMenuHtml(c, cls)}
     </div>
     ${c.pending ? '' : cardMenuPanel(c, cls)}
@@ -2749,10 +2805,6 @@ function renderCItem(c) {
     ${agentReplyHtml}
     ${replyHtml}
     ${quoteHtml}${newerHtml}
-    <div class="citem-meta">
-      <span class="citem-author">${esc(authorLabel(c))}</span>
-      <span>${c.pending ? 'Sending…' : fmtTs(c.created_at) + (c.edited_at ? ' (edited)' : '')} ${c.pending ? '' : sendStateHtml(c)}</span>
-    </div>
     ${decisionHtml}
     ${strandedSay(c) && !hasAddNoteBox(c) ? strandedSayHtml(c) : ''}
     ${replyFormHtml}
@@ -3833,6 +3885,7 @@ function wireHeader() {
     applyTheme(t);
     try { localStorage.setItem('annotate:theme', t); } catch {}
   });
+  document.getElementById('aa-fresh').addEventListener('click', freshTap);
   document.getElementById('copy-link-btn').addEventListener('click', async event => {
     const button = event.currentTarget;
     try {
@@ -4737,6 +4790,7 @@ const popReopened = new Set();
 function parkDoc() {
   if (VIEW_DOC) applyLive();
   VIEW_DOC = null;
+  setFresh([], '');
 }
 
 // ── Categories (one page per project) ───────────────────────────────
@@ -4975,6 +5029,7 @@ async function init() {
     nextAt = Date.now() + ms;
     refreshTimer = setTimeout(refresh, ms);
   }
+  pollNow = () => { idlePolls = 0; return refresh(); };
   async function refresh() {
     clearTimeout(refreshTimer);
     if (document.hidden) return;
@@ -5069,6 +5124,7 @@ window.AnnotateDocs = {
   needsPush,
   deliveryLabel,
   deliveryHtml,
+  deliveryNote: () => DELIVERY_NOTE,
   decisionAnswer,
   answerLabel,
   displayPrompt,
