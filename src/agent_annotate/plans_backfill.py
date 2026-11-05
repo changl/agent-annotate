@@ -403,7 +403,8 @@ def restore_page(directory, backup):
         for name, info in manifest["files"].items():
             path = safe_path(directory, name)
             if info["before"] is None:
-                path.unlink(missing_ok=True)
+                from .store import remove
+                remove(path)
             else:
                 _atomic_bytes(path, safe_path(backup, name).read_bytes())
 

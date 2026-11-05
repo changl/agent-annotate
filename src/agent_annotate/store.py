@@ -79,8 +79,73 @@ class Snapshot:
         return list(read_lines(self.dir / "rounds.ndjson"))
 
 
+class DbSnapshot(Snapshot):
+    """The records as page.db holds them at one data_version."""
+
+    def __init__(self, slug_dir, texts: dict[str, str]):
+        super().__init__(slug_dir)
+        self.texts = texts
+        self._parsed: dict[str, object] = {}
+
+    def _value(self, name: str, default):
+        if name not in self._parsed:
+            text = self.texts.get(name)
+            try:
+                self._parsed[name] = json.loads(text) if text is not None else default
+            except ValueError:
+                self._parsed[name] = default
+        return self._parsed[name]
+
+    @property
+    def comments(self) -> dict:
+        from .sync_server import _validate_store
+        value = self._value("comments.json", None)
+        return _validate_store(json.loads(json.dumps(value))) if isinstance(value, dict) else json.loads(json.dumps(_EMPTY_STORE))
+
+    @property
+    def meta(self) -> dict:
+        value = self._value("current.meta.json", {})
+        return json.loads(json.dumps(value)) if isinstance(value, dict) else {}
+
+    def sidecar(self, name: str, default=None):
+        return self._value(SIDECARS[name], default)
+
+    def rounds(self) -> list[dict]:
+        out = []
+        for line in (self.texts.get("rounds.ndjson") or "").splitlines():
+            try:
+                value = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(value, dict):
+                out.append(value)
+        return out
+
+
+_SNAPSHOTS: dict[str, tuple] = {}
+_SNAPSHOT_LOCK = threading.Lock()
+
+
 def snapshot(slug_dir) -> Snapshot:
-    return Snapshot(slug_dir)
+    """Read-only records. On page.db: one reader connection per process, and
+    the decoded records cached until PRAGMA data_version says another
+    connection committed."""
+    if backend(slug_dir) != "sqlite":
+        return Snapshot(slug_dir)
+    key = str(Path(slug_dir).resolve() / DB_NAME)
+    with _SNAPSHOT_LOCK:
+        conn, version, cached = _SNAPSHOTS.get(key, (None, None, None))
+        if conn is None:
+            conn = connect(key)
+        current = conn.execute("PRAGMA data_version").fetchone()[0]
+        if cached is None or current != version:
+            conn.execute("BEGIN")
+            try:
+                cached = DbSnapshot(slug_dir, export_texts(conn))
+            finally:
+                conn.execute("COMMIT")
+        _SNAPSHOTS[key] = (conn, current, cached)
+        return cached
 
 
 def read_lines(path):
@@ -130,6 +195,43 @@ class Tx:
         self.dir = Path(slug_dir)
         self._loaded: dict[str, tuple[object, str]] = {}
         self._events: list[tuple] = []
+        self.conn = None
+        self._marker = None
+        self._applied = False
+
+    def _begin(self) -> None:
+        self.conn = _connection(self.dir)
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            _take_in(self.conn, self.dir)
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            self.conn = None
+            raise
+
+    def _writing(self) -> None:
+        """Files are written through before the commit; the marker tells the
+        next transaction that a mismatch is this one's crash, not a foreign write."""
+        if self._marker is None:
+            self._marker = self.dir / (DB_NAME + ".writing")
+            self._marker.touch()
+
+    def _commit(self) -> None:
+        # Commit even after an error: the files written so far stand, as on JSON.
+        if self.conn is None:
+            return
+        conn, self.conn = self.conn, None
+        try:
+            if self._applied:
+                catch_up_bus(self.dir, conn)
+                conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_write', ?)", (_now(),))
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        if self._marker is not None:
+            self._marker.unlink(missing_ok=True)
 
     def _load(self, key, reader):
         if key not in self._loaded:
@@ -173,7 +275,10 @@ class Tx:
 def transaction(directory, *, write=True):
     """Serialize HTTP and direct agent storage writes across threads/processes.
 
-    Nested on the same thread it joins the outer transaction."""
+    Nested on the same thread it joins the outer transaction. On a page with
+    page.db it is also one SQLite write transaction (BEGIN IMMEDIATE): files
+    other processes changed are taken in first, and every record write inside
+    lands in the same commit."""
     from .categories import safe_path
     with _STORE_LOCK:
         path = safe_path(directory, ".comments.json.lock")
@@ -205,10 +310,27 @@ def transaction(directory, *, write=True):
             fcntl.flock(lock, fcntl.LOCK_EX)
             _STORE_LOCAL.held = {**held, path: tx}
             try:
+                if backend(directory) == "sqlite":
+                    tx._begin()
                 yield tx
                 tx._flush()
             finally:
-                _STORE_LOCAL.held = held
+                try:
+                    tx._commit()
+                finally:
+                    _STORE_LOCAL.held = held
+
+
+@contextmanager
+def page_lock(page_dir, lock_path):
+    """A per-file lock (categories, topics, project, meta, rounds). On a page
+    with page.db the page transaction is taken first, so every process takes
+    the locks in one order: the store, then the file."""
+    from contextlib import nullcontext
+    with transaction(page_dir) if backend(page_dir) == "sqlite" else nullcontext():
+        with Path(lock_path).open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
 
 
 def put_items(tx: Tx, items) -> None:
@@ -230,54 +352,101 @@ def _refuse_if_moved(*directories) -> None:
         refuse_if_moved(directory)
 
 
+def _target(path) -> tuple[Path, str] | None:
+    """(page dir, record name) for a page record file, else None."""
+    path = Path(path)
+    if path.parent.name == ".review-drafts" and path.suffix == ".json" and _VERSION.fullmatch(path.stem):
+        return path.parent.parent, f".review-drafts/{path.name}"
+    if path.name in RECORD_NAMES:
+        return path.parent, path.name
+    return None
+
+
+def _record(path, write, text=None, value=None):
+    """Run one file write; on a page with page.db, inside its transaction, and
+    apply the written text to the DB (changed rows only)."""
+    target = _target(path)
+    if target is None or backend(target[0]) != "sqlite":
+        return write()
+    slug_dir, name = target
+    with transaction(slug_dir) as tx:
+        if tx.conn is None:
+            return write()
+        tx._writing()
+        result = write()
+        body = text() if text else None
+        _apply(tx.conn, name, body, value)
+        _set_fingerprint(tx.conn, slug_dir, name, body)
+        tx._applied = True
+        return result
+
+
 def write_json(path, data) -> None:
     """Pretty JSON, atomically, keeping the file's mode (0600 when new)."""
     path = Path(path)
-    _refuse_if_moved(path.parent)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            json.dump(data, output, indent=2, ensure_ascii=False)
-            os.fchmod(output.fileno(), mode)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
-
-def write_bytes(path, body: bytes) -> None:
-    """Durable atomic replace: fsync the file and its directory."""
-    path = Path(path)
-    _refuse_if_moved(*list(path.parents)[:4])  # page/, attachments/, plans/<id>/versions/
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
-            temporary = Path(out.name)
-            out.write(body)
-            os.fchmod(out.fileno(), mode)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-        temporary = None
-        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    def write():
+        _refuse_if_moved(path.parent)
+        mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         try:
-            os.fsync(fd)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                json.dump(data, output, indent=2, ensure_ascii=False)
+                os.fchmod(output.fileno(), mode)
+            os.replace(temporary, path)
         finally:
-            os.close(fd)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
+            Path(temporary).unlink(missing_ok=True)
+
+    _record(path, write, lambda: json.dumps(data, indent=2, ensure_ascii=False), data)
+
+
+def write_bytes(path, body: bytes, *, value=None) -> None:
+    """Durable atomic replace: fsync the file and its directory. `value` is
+    the parsed body when the caller has it (saves a parse on page.db)."""
+    path = Path(path)
+
+    def write():
+        _refuse_if_moved(*list(path.parents)[:4])  # page/, attachments/, plans/<id>/versions/
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
+                temporary = Path(out.name)
+                out.write(body)
+                os.fchmod(out.fileno(), mode)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(temporary, path)
+            temporary = None
+            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+
+    _record(path, write, lambda: body.decode("utf-8"), value)
 
 
 def write_text(path, text: str) -> None:
     """Replace through a fixed .tmp sibling; servers read the result live."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+
+    def write():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
+    _record(path, write, lambda: text)
+
+
+def remove(path) -> None:
+    """Delete a record file (a shown draft, a rolled-back first store)."""
+    _record(path, lambda: Path(path).unlink(missing_ok=True))
 
 
 def write_journal(path, value: dict) -> None:
@@ -309,20 +478,21 @@ def update_meta(slug_dir, mutate, *, read=None, durable=False) -> dict:
     `durable` writes through write_json (mode kept, moved pages refused).
     """
     path = Path(slug_dir) / "current.meta.json"
-    with open(path.with_suffix(".json.lock"), "a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            meta = (read or (lambda: read_meta(slug_dir)))()
-            mutate(meta)
-            if durable:
-                write_json(path, meta)
-            else:
+    with page_lock(slug_dir, path.with_suffix(".json.lock")):
+        meta = (read or (lambda: read_meta(slug_dir)))()
+        mutate(meta)
+        if durable:
+            write_json(path, meta)
+        else:
+            text = json.dumps(meta, indent=2, ensure_ascii=False)
+
+            def write():
                 tmp = path.with_suffix(".json.tmp")
-                tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+                tmp.write_text(text, encoding="utf-8")
                 os.replace(tmp, path)
-            return meta
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+            _record(path, write, lambda: text, meta)
+        return meta
 
 
 def append_line(path, line: str, *, fsync: bool = False) -> None:
@@ -358,27 +528,35 @@ def append_round(directory, event: dict) -> None:
     directory = Path(directory)
     _refuse_if_moved(directory)
     path = directory / "rounds.ndjson"
-    with path.open("a+", encoding="utf-8") as source:
-        fcntl.flock(source.fileno(), fcntl.LOCK_EX)
-        source.seek(0)
-        for line in source:
-            try:
-                old = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(old, dict) and old.get("id") == event["id"]:
-                return
-        source.seek(0, 2)
-        source.write(json.dumps(event, ensure_ascii=False) + "\n")
-        source.flush()
-        os.fsync(source.fileno())
+
+    def write():
+        with path.open("a+", encoding="utf-8") as source:
+            fcntl.flock(source.fileno(), fcntl.LOCK_EX)
+            source.seek(0)
+            for line in source:
+                try:
+                    old = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(old, dict) and old.get("id") == event["id"]:
+                    return
+            source.seek(0, 2)
+            source.write(json.dumps(event, ensure_ascii=False) + "\n")
+            source.flush()
+            os.fsync(source.fileno())
+
+    _record(path, write, lambda: path.read_text(encoding="utf-8"))
 
 
 def write_lines(path, rows) -> None:
     """Rewrite a whole NDJSON file (page consolidation builds rounds this way)."""
-    with Path(path).open("w", encoding="utf-8") as stream:
-        for row in rows:
-            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+    def write():
+        with Path(path).open("w", encoding="utf-8") as stream:
+            stream.write(text)
+
+    _record(path, write, lambda: text)
 
 
 # ── the SQLite page store (docs/validation/stages-3-5-specs-20261104.md §5) ──
@@ -781,6 +959,7 @@ def export_texts(conn) -> dict[str, str]:
     """Every page record file the DB holds, as the text the JSON backend keeps."""
     layout = {key[len("layout:"):]: json.loads(value)
               for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'layout:%'")}
+    raw = dict((key[4:], value) for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'raw:%'"))
     out: dict[str, str] = {}
     frame = _meta_value(conn, "comments_frame")
     if frame is not None:
@@ -814,7 +993,7 @@ def export_texts(conn) -> dict[str, str]:
     lines = [body for (body,) in conn.execute("SELECT body_json FROM rounds ORDER BY seq")]
     if lines:
         out["rounds.ndjson"] = "\n".join(lines) + ("\n" if _meta_value(conn, "rounds_nl") == "1" else "")
-    return out
+    return {**out, **raw}
 
 
 def export_journal(conn) -> str | None:
@@ -948,19 +1127,23 @@ def _refuse_network_volume(slug_dir: Path) -> None:
 
 
 def export_page(slug_dir) -> list[str]:
-    """Write every record file from page.db; returns the names written."""
+    """Write every record file from page.db (inside the page transaction); returns the names."""
     slug_dir = Path(slug_dir)
-    conn = connect(slug_dir / DB_NAME)
-    try:
-        texts = export_texts(conn)
-    finally:
-        conn.close()
-    for name, text in texts.items():
-        if (slug_dir / name).is_file() and (slug_dir / name).read_text(encoding="utf-8") == text:
-            continue
-        (slug_dir / name).parent.mkdir(parents=True, exist_ok=True)
-        write_bytes(slug_dir / name, text.encode())
+    with transaction(slug_dir) as tx:
+        texts = export_texts(tx.conn)
+        for name, text in texts.items():
+            if (slug_dir / name).is_file() and (slug_dir / name).read_text(encoding="utf-8") == text:
+                continue
+            (slug_dir / name).parent.mkdir(parents=True, exist_ok=True)
+            write_bytes(slug_dir / name, text.encode())
     return sorted(texts)
+
+
+def _forget_connection(slug_dir) -> None:
+    cache = getattr(_CONNECTIONS, "open", {})
+    conn = cache.pop(str(Path(slug_dir).resolve() / DB_NAME), None)
+    if conn is not None:
+        conn.close()
 
 
 def db_off(slug_dir) -> Path:
@@ -969,8 +1152,10 @@ def db_off(slug_dir) -> Path:
     slug_dir = Path(slug_dir)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%MZ")
     kept = slug_dir / f"{DB_NAME}.off-{stamp}"
-    with transaction(slug_dir):
-        export_page(slug_dir)
+    export_page(slug_dir)
+    with open(slug_dir / ".comments.json.lock", "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _forget_connection(slug_dir)
         conn = connect(slug_dir / DB_NAME)
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.close()
@@ -1060,3 +1245,159 @@ def refresh_cursors(conn, sources: Sources) -> list[str]:
     if began:
         conn.execute("COMMIT")
     return bad
+
+
+
+# ── page.db as the backend under the seam (Stage 5c) ─────────────────────
+_CONNECTIONS = threading.local()
+
+
+def _connection(slug_dir):
+    """This thread's connection to the page's page.db."""
+    cache = getattr(_CONNECTIONS, "open", None)
+    if cache is None:
+        cache = _CONNECTIONS.open = {}
+    key = str(Path(slug_dir).resolve() / DB_NAME)
+    conn = cache.get(key)
+    if conn is None or not Path(key).exists():
+        conn = cache[key] = connect(key)
+    return conn
+
+
+def _sync_rows(conn, table: str, columns: tuple, keys: int, rows, where: str = "", args: tuple = ()) -> int:
+    """Make `table` (restricted by `where`) hold exactly `rows`, writing only changed rows."""
+    names = ", ".join(columns)
+    clause = f" WHERE {where}" if where else ""
+    old = {row[:keys]: row for row in conn.execute(f"SELECT {names} FROM {table}{clause}", args)}
+    new = {tuple(row[:keys]): tuple(row) for row in rows}
+    gone = [key for key in old if key not in new]
+    changed = [row for key, row in new.items() if old.get(key) != row]
+    match = " AND ".join(f"{c} = ?" for c in columns[:keys])
+    conn.executemany(f"DELETE FROM {table} WHERE {match}", gone)
+    conn.executemany(f"INSERT OR REPLACE INTO {table} ({names}) VALUES ({', '.join('?' * len(columns))})", changed)
+    return len(gone) + len(changed)
+
+
+_ITEM_COLUMNS = ("id", "area", "anchor_id", "doc", "number", "version", "status", "category", "origin_id",
+                 "created_at", "resolved_in_version", "round_pending", "position", "body_json")
+_VERSION_COLUMNS = ("n", "state", "label", "fixes", "ts", "preview_token", "verified", "reserved_json",
+                    "position", "entry_json")
+
+
+def _set_meta(conn, key: str, value) -> None:
+    if value is None:
+        conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+    else:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
+
+
+def _apply(conn, name: str, text: str | None, value=None) -> None:
+    """Store one record file's new text (None: the file is gone), changed rows only."""
+    if text is not None and name != "rounds.ndjson" and value is None:
+        try:
+            value = json.loads(text)
+        except ValueError:  # an unreadable file is kept as it is, like the JSON backend keeps it
+            _set_meta(conn, f"raw:{name}", text)
+            return
+    if text is not None and name.endswith(".json"):
+        _set_meta(conn, f"layout:{name}", _compact(_layout_guess(text)))
+    problems: list[str] = []
+    if name == "comments.json":
+        if text is None:
+            frame, items, plans = None, [], []
+        else:
+            from .sync_server import _validate_store
+            frame, items, plans = _comment_rows(value if isinstance(value, dict) else _validate_store(value), problems)
+        _set_meta(conn, "comments_frame", _compact(frame) if frame is not None else None)
+        _sync_rows(conn, "items", _ITEM_COLUMNS, 1, items)
+        _sync_rows(conn, "approved_plans", ("id", "position", "body_json"), 1, plans)
+        _sync_rows(conn, "numbers", ("number", "anchor_id", "doc", "first_item"), 2, _number_rows(items, []))
+    elif name == "current.meta.json":
+        page, versions = _meta_rows(value, problems) if isinstance(value, dict) else (None, [])
+        conn.execute("DELETE FROM page")
+        if page:
+            conn.execute("INSERT INTO page VALUES (?, ?, ?, ?, ?)", page)
+        _sync_rows(conn, "versions", _VERSION_COLUMNS, 2, versions, "state = 'live'")
+    elif name.startswith(".review-drafts/"):
+        n = int(_VERSION.fullmatch(Path(name).stem)[1])
+        row = _draft_row(name, text, problems) if text is not None else None
+        _sync_rows(conn, "versions", _VERSION_COLUMNS, 2, [row] if row else [], "state = 'draft' AND n = ?", (n,))
+    elif name == "rounds.ndjson":
+        rows = []
+        for line in (text or "").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                row = None
+            row = row if isinstance(row, dict) else {}
+            rows.append((len(rows) + 1, row.get("id"), row.get("ts"), line))
+        _sync_rows(conn, "rounds", ("seq", "round", "ts", "body_json"), 1, rows)
+        _set_meta(conn, "rounds_nl", "1" if (text or "\n").endswith("\n") else "0")
+    else:
+        key = next(k for k, v in SIDECARS.items() if v == name)
+        if text is None:
+            conn.execute("DELETE FROM sidecars WHERE name = ?", (key,))
+        else:
+            conn.execute("INSERT OR REPLACE INTO sidecars VALUES (?, ?, ?)", (key, text, _now()))
+    # A shape the tables cannot hold (duplicate ids, odd history) is kept whole: never lost, never refused.
+    _set_meta(conn, f"raw:{name}", text if problems else None)
+
+
+def _set_fingerprint(conn, slug_dir: Path, name: str, text: str | None) -> None:
+    path = slug_dir / name
+    _set_meta(conn, f"fp:{name}", _compact(_fingerprint(path, text.encode("utf-8") if text is not None else None))
+              if path.exists() else None)
+
+
+def _record_paths(slug_dir: Path) -> list[str]:
+    names = [name for name in RECORD_NAMES if (slug_dir / name).is_file()]
+    drafts = slug_dir / ".review-drafts"
+    if drafts.is_dir():
+        names += [f".review-drafts/{p.name}" for p in drafts.glob("v*.json") if _VERSION.fullmatch(p.stem)]
+    return names
+
+
+def _take_in(conn, slug_dir: Path) -> list[str]:
+    """Inside BEGIN IMMEDIATE: copy in record files changed outside this store
+    (an older process wrote JSON, or this page's last transaction died between
+    its file writes and its commit), then the bus lines appended since."""
+    stored = {key[3:]: json.loads(value) for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'fp:%'")}
+    changed = []
+    for name in sorted(set(stored) | set(_record_paths(slug_dir))):
+        path = slug_dir / name
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            if name in stored:
+                changed.append((name, None))
+            continue
+        old = stored.get(name)
+        if old and old[0] == stat.st_size and old[1] == stat.st_mtime_ns:
+            continue
+        body = path.read_bytes()
+        if old and old[2] == _fingerprint(path, body)[2]:
+            _set_meta(conn, f"fp:{name}", _compact(_fingerprint(path, body)))
+            continue
+        changed.append((name, body.decode("utf-8")))
+    if changed:
+        marker = slug_dir / (DB_NAME + ".writing")
+        kind = "store_recovered" if marker.exists() else "store_foreign_write"
+        for name, text in changed:
+            _apply(conn, name, text)
+            _set_fingerprint(conn, slug_dir, name, text)
+        count = int(_meta_value(conn, kind) or 0) + len(changed)
+        _set_meta(conn, kind, str(count))
+        _log(slug_dir, kind, [name for name, _ in changed])
+        marker.unlink(missing_ok=True)
+    catch_up_bus(slug_dir, conn)
+    return [name for name, _ in changed]
+
+
+def _log(slug_dir: Path, kind: str, names: list[str]) -> None:
+    from . import paths
+    try:
+        paths.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(paths.LOG_DIR / "store.log", "a", encoding="utf-8") as log:
+            log.write(f"{_now()} {kind} {slug_dir} {' '.join(names)}\n")
+    except OSError:
+        pass

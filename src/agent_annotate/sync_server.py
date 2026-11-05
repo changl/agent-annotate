@@ -1522,7 +1522,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_save(self, store: dict) -> None:
         from .store import write_bytes as _atomic_bytes
-        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode())
+        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode(), value=store)
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
@@ -2387,7 +2387,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         from .store import write_bytes as _atomic_bytes
                         for path, data in ((self._store_path(), old_store), (self._meta_path(), old_meta)):
                             if data is None:
-                                path.unlink(missing_ok=True)
+                                from .store import remove
+                                remove(path)
                             else:
                                 _atomic_bytes(path, data)
                         current = self.artifact_dir / "current.html"

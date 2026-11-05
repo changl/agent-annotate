@@ -71,7 +71,7 @@ def fingerprint(directory, version):
 def activate(directory, version, label=None):
     """Caller holds the comment-store lock, after every card was validated."""
     from .cli import _now_iso
-    from .store import update_meta
+    from .store import remove, update_meta
     data = read_draft(directory, version)
     link = directory / '.current.html.ready'
     link.unlink(missing_ok=True)
@@ -86,7 +86,7 @@ def activate(directory, version, label=None):
 
     update_meta(directory, mutate)
     os.replace(link, directory / 'current.html')
-    draft_path(directory, version).unlink(missing_ok=True)
+    remove(draft_path(directory, version))
 
 
 def preview_version(directory, route):

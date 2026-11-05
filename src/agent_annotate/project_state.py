@@ -241,13 +241,13 @@ def load_project(slug_dir: Path | str) -> dict:
 
 def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
-    from .cli import _flock
     from .consolidate import refuse_if_moved
+    from .store import page_lock
     refuse_if_moved(slug_dir)
     validate_project(data)
     directory = Path(slug_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    with _flock(directory / "project.json.lock"):
+    with page_lock(directory, directory / "project.json.lock"):
         return _save_project(directory, data)
 
 
