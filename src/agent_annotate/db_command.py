@@ -47,15 +47,10 @@ def _diff(project, slug, record) -> tuple[str, list[str]]:
     directory = Path(record["slug_dir"])
     if not (directory / store.DB_NAME).is_file():
         return f"{slug} json · no {store.DB_NAME}", []
-    conn = store.connect(directory / store.DB_NAME)
-    try:
-        with store.transaction(directory):
-            sources = store.Sources(directory, **_sources_args(project, slug, record))
-            store.catch_up_bus(directory, conn)
-            differences = store.refresh_cursors(conn, sources)
-            differences += store.diff(conn, sources)[0]
-    finally:
-        conn.close()
+    with store.transaction(directory) as tx:  # takes in other writers' files and bus lines first
+        sources = store.Sources(directory, **_sources_args(project, slug, record))
+        differences = store.refresh_cursors(tx.conn, sources)
+        differences += store.diff(tx.conn, sources)[0]
     if not differences:
         return f"{slug} db = json · 0 differences", []
     return f"{slug} db ≠ json · {len(differences)} differences", differences[:5]
@@ -98,9 +93,9 @@ def cmd_db(args) -> int:
             if store.backend(directory) != "sqlite":
                 line = f"{slug} json · nothing to export"
             else:
-                with store.transaction(directory):
+                with store.transaction(directory) as tx:
                     names = store.export_page(directory)
-                    caught = store.catch_up_bus(directory)
+                    caught = store.catch_up_bus(directory, tx.conn)
                 line = f"{slug} exported {len(names)} files · bus caught up ({caught} events)"
         elif args.db_action == "status":
             line = _status(project, slug, record)

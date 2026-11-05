@@ -33,7 +33,7 @@ def _page(root: Path) -> dict:
     (page / ".review-drafts" / "v3.json").write_text(json.dumps({"version": "v3", "label": "next", "preview": "tok",
                                                                  "reserved": [4, 5]}, indent=2))
     (page / "seen.json").write_text('{"a": {"ts": "t"}}')
-    (page / "project.json").write_text(json.dumps({"title": "Demo"}, indent=2) + "\n")
+    (page / "project.json").write_text(json.dumps({"title": "Demo", "modules": []}, indent=2) + "\n")
     (page / "rounds.ndjson").write_text('{"id": "r1", "ts": "t"}\n{"id": "r2", "ts": "u"}\n')
     bus = root / "bus" / "proj" / "demo.ndjson"
     bus.parent.mkdir(parents=True)
@@ -85,7 +85,7 @@ def test_import_diff_zero_and_export_byte_stable(tmp_path):
             if p.is_file() and not p.name.startswith("page.db")} == before
     store.export_page(fixture["page"])
     assert {p.relative_to(fixture["page"]): p.read_bytes() for p in fixture["page"].rglob("*")
-            if p.is_file() and not p.name.startswith("page.db")} == before
+            if p.is_file() and not p.name.startswith("page.db") and p.suffix != ".lock"} == before
 
 
 def test_diff_names_a_changed_file(tmp_path):

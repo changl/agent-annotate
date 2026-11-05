@@ -55,7 +55,7 @@ def _check(op, path) -> None:
 
 
 if LOG:
-    _open, _replace, _rename = builtins.open, os.replace, os.rename
+    _open, _replace, _rename, _unlink = builtins.open, os.replace, os.rename, os.unlink
 
     def _guarded_open(file, mode="r", *args, **kwargs):
         if any(flag in mode for flag in "wax+"):
@@ -70,5 +70,10 @@ if LOG:
         _check("rename", dst)
         return _rename(src, dst, *args, **kwargs)
 
+    def _guarded_unlink(path, *args, **kwargs):
+        _check("unlink", path)
+        return _unlink(path, *args, **kwargs)
+
     builtins.open = io.open = _guarded_open
     os.replace, os.rename = _guarded_replace, _guarded_rename
+    os.unlink = os.remove = _guarded_unlink

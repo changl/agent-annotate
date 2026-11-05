@@ -1,7 +1,6 @@
 """Optional category storage for a single review page. No services or CLI state."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -87,10 +86,10 @@ def _write(path: Path, value: dict) -> None:
 
 @contextmanager
 def _lock(page_dir: Path | str, name: str):
+    from .store import page_lock
     path = safe_path(page_dir, name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with page_lock(page_dir, path):
         yield
 
 

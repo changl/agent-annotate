@@ -496,7 +496,7 @@ def tab_counts(store: dict) -> dict:
 
 
 def _ignore(directory, names):
-    return [name for name in names if name.startswith(".") or name.endswith(".lock") or name == MARKER]
+    return [name for name in names if name.startswith((".", "page.db")) or name.endswith(".lock") or name == MARKER]
 
 
 def _write_json(path: Path, value) -> None:
@@ -515,8 +515,8 @@ def write_target(result: dict) -> Path:
     primary = result["primary"]
     try:
         shutil.copytree(primary.dir, staging, symlinks=True, ignore=_ignore)
-        for name in ("rounds.ndjson",):
-            (staging / name).unlink(missing_ok=True)
+        from .store import remove
+        remove(staging / "rounds.ndjson")
         _write_json(staging / "comments.json", result["store"])
         _write_json(staging / "read-state.json", result["read_state"])
         from .store import write_lines
