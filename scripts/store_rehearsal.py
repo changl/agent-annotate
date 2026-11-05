@@ -3,6 +3,8 @@
 
     store_rehearsal.py copy DEST [SLUG ...]   clone every registered page (or the named ones), its bus,
                                               cursors and delivery journal into DEST; live servers keep running
+    store_rehearsal.py adopt DEST             pages copied from another Mac: DEST/raw-state (its state
+                                              directory) and DEST/pages/<project, spaces as _>/<slug>
     store_rehearsal.py run DEST [--port 18700] [SLUG ...]
 
 `run` works only inside DEST, with the annotate roots pointed at DEST and a
@@ -68,6 +70,32 @@ def copy(dest: Path, only: set[str]) -> None:
         (dest / "state" / registry.name).write_text(json.dumps(data, indent=2))
 
 
+def adopt(dest: Path) -> None:
+    """Registry, cursors and journals of another Mac's copied pages, pointed at DEST."""
+    raw, state = dest / "raw-state", dest / "state"
+    for folder in ("bus-offsets", "hook-offsets", "monitor-offsets", "deliveries"):
+        if (raw / folder).is_dir():
+            shutil.copytree(raw / folder, state / folder, dirs_exist_ok=True)
+    for registry in sorted(raw.glob("*.json")):
+        try:
+            data = json.loads(registry.read_text())
+        except ValueError:
+            continue
+        project = registry.stem
+        pages = dest / "pages" / project.replace(" ", "_")
+        slugs = {s: r for s, r in (data.get("slugs") or {}).items() if isinstance(r, dict) and (pages / s).is_dir()}
+        for slug, record in (data.get("slugs") or {}).items():
+            if slug not in slugs:
+                print(f"not copied {project}/{slug}: {record.get('slug_dir') if isinstance(record, dict) else record}")
+        if not slugs:
+            continue
+        data["slugs"] = {s: {**{k: v for k, v in r.items() if k not in _OWNER}, "slug_dir": str(pages / s),
+                             "transport": "local", "bus_file": str(dest / "bus" / project / f"{s}.ndjson")}
+                         for s, r in slugs.items()}
+        (state / registry.name).write_text(json.dumps(data, indent=2))
+        print(f"adopted {project}: {', '.join(slugs)}")
+
+
 def _env(dest: Path) -> dict:
     fake = dest / "bin"
     fake.mkdir(exist_ok=True)
@@ -126,7 +154,10 @@ def _open_card(directory: Path) -> str | None:
 
 
 def rehearse(dest: Path, env: dict, project: str, slug: str, port: int) -> str:
-    directory, bus = dest / "pages" / project / slug, dest / "bus" / project / f"{slug}.ndjson"
+    directory = dest / "pages" / project / slug
+    if not directory.is_dir():
+        directory = dest / "pages" / project.replace(" ", "_") / slug
+    bus = dest / "bus" / project / f"{slug}.ndjson"
     for leftover in directory.glob("page.db*"):
         leftover.unlink()
     started = time.monotonic()
@@ -197,7 +228,7 @@ def rehearse(dest: Path, env: dict, project: str, slug: str, port: int) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("action", choices=("copy", "run"))
+    ap.add_argument("action", choices=("copy", "adopt", "run"))
     ap.add_argument("dest")
     ap.add_argument("slugs", nargs="*")
     ap.add_argument("--port", type=int, default=18700)
@@ -206,13 +237,20 @@ def main(argv=None) -> int:
     if args.action == "copy":
         copy(dest, set(args.slugs))
         return 0
+    if args.action == "adopt":
+        (dest / "state").mkdir(exist_ok=True)
+        adopt(dest)
+        return 0
     if not 18700 <= args.port <= 18799:
         raise SystemExit("sandbox ports are 18700-18799")
     env = _env(dest)
     failed = 0
     pages = sorted(p for p in (dest / "pages").glob("*/*") if p.is_dir() and (not args.slugs or p.name in args.slugs))
     for index, page in enumerate(pages):
-        line = rehearse(dest, env, page.parent.name, page.name, args.port + index % 100)
+        project = page.parent.name
+        if not (dest / "state" / f"{project}.json").exists():  # adopted: spaces were stored as _
+            project = project.replace("_", " ")
+        line = rehearse(dest, env, project, page.name, args.port + index % 100)
         failed += "FAILED" in line
         print(line, flush=True)
     return 1 if failed else 0

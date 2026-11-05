@@ -26,6 +26,17 @@ The registry lists 16 pages; `annotate-memory-consolidation` has no directory (`
 
 Every page's files are exported byte-identical from page.db (FLD 10 of 10 files). Every page ends back on JSON with `db off`.
 
+## M5 copies: 16 of 16 pass
+
+Copied read-only through an Orca terminal on the M5 (`rsync -a` to this Mac, no `--delete`; nothing written on the M5; the terminal was closed afterwards). Assets, attachments, approval evidence and archives were left out; they are not records. Adopted into a sandbox with `store_rehearsal.py adopt DEST`.
+
+| Pages | Result |
+|---|---|
+| annotate (DealCenter), evo-padel, human-by-intent, cli-proxy-api-m5-clients | import, diff 0, replayed note sent, db off |
+| fld-stack-round8 (the M5's archived copy: 35.1 MB page.db, import 1.1 s), rebex, workspace, agent-config-audit and 8 consolidated rebex pages | import, diff 0; read-only, so the write is refused (410, as on JSON) and reads are served; db off |
+
+Not copied: three registered M5 pages whose directories are gone (`memory-consolidation-annotation`, `ponytail-impact/annotate` under `/private/tmp`) or are all of `/private/tmp` (`memory-phase2/tmp`). No M5 page lives under `/Volumes`.
+
 ## Measurements (§5.7)
 
 | Target | Result |
@@ -54,5 +65,4 @@ Every page's files are exported byte-identical from page.db (FLD 10 of 10 files)
 
 ## Not done here
 
-- M5 copies: waiting for the source path to be confirmed. Nothing is read from or written to the M5 without it.
 - Stage 5g (rollout integration, release, any live migration) is out of scope.
