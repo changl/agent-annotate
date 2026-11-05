@@ -5500,6 +5500,8 @@ def build_parser(*, all_commands=False):
     sp_plan.add_argument("--project", default=None)
     sp_plan.add_argument("--json", action="store_true")
     sp_plan.set_defaults(func=cmd_plan)
+    from .db_command import add_parser as add_db_parser
+    add_db_parser(sub)
     from .plans_backfill import cmd_plans
     sp_plans = sub.add_parser("plans", help="operator-only historical approval reconciliation")
     plans_sub = sp_plans.add_subparsers(dest="plans_action", required=True)
