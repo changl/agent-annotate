@@ -1492,7 +1492,8 @@ def _take_in(conn, slug_dir: Path) -> list[str]:
         count = int(_meta_value(conn, kind) or 0) + len(changed)
         _set_meta(conn, kind, str(count))
         _log(slug_dir, kind, [name for name, _ in changed])
-        marker.unlink(missing_ok=True)
+    # We hold the page lock, so a marker left here belongs to a dead transaction.
+    (slug_dir / (DB_NAME + ".writing")).unlink(missing_ok=True)
     catch_up_bus(slug_dir, conn)
     return [name for name, _ in changed]
 
