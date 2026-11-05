@@ -115,7 +115,7 @@ class DbSnapshot(Snapshot):
 
     def rounds(self) -> list[dict]:
         out = []
-        for line in (self.texts.get("rounds.ndjson") or "").splitlines():
+        for line in _lines(self.texts.get("rounds.ndjson") or ""):
             try:
                 value = json.loads(line)
             except ValueError:
@@ -425,7 +425,7 @@ def _record(path, write, text=None, value=None):
         tx._writing()
         result = write()
         body = text() if text else None
-        _apply(tx.conn, name, body, value)
+        _apply(tx.conn, name, body, value, slug_dir)
         _set_fingerprint(tx.conn, slug_dir, name, body)
         tx._applied = True
         return result
@@ -777,19 +777,27 @@ class Sources:
 
 
 def _bus_lines(data: bytes):
-    """(end offset, parsed event or None, text) per line; an unterminated tail is skipped."""
-    offset = 0
-    for raw in data.splitlines(keepends=True):
-        offset += len(raw)
-        if not raw.endswith(b"\n"):
-            yield offset, None, None
+    """(end offset, parsed event or None, text) per line; an unterminated tail is skipped.
+    Lines end at \\n only: U+2028 and other separators are legal inside a JSON line."""
+    start = 0
+    while start < len(data):
+        end = data.find(b"\n", start)
+        if end < 0:
+            yield len(data), None, None
             return
-        text = raw[:-1].decode("utf-8", errors="replace")
+        text = data[start:end].decode("utf-8", errors="replace")
+        start = end + 1
         try:
             event = json.loads(text)
         except ValueError:
             event = None
-        yield offset, event if isinstance(event, dict) else None, text
+        yield start, event if isinstance(event, dict) else None, text
+
+
+def _lines(text: str) -> list[str]:
+    """NDJSON lines, split at \\n only."""
+    parts = text.split("\n")
+    return parts[:-1] if parts[-1] == "" else parts
 
 
 def _item_row(comment: dict, area: str, anchor: str, position: int) -> tuple:
@@ -807,7 +815,8 @@ def _event_row(seq: int, offset: int | None, event: dict, text: str) -> tuple:
             offset, text)
 
 
-def _comment_rows(store: dict, refusals: list[str]):
+def _comment_rows(store: dict, refusals: list[str], row_for=None):
+    row_for = row_for or _item_row
     frame, items, plans = {}, [], []
     seen: dict[str, str] = {}
     for key, value in store.items():
@@ -822,7 +831,7 @@ def _comment_rows(store: dict, refusals: list[str]):
                         refusals.append(f"item {comment['id']}: stored twice ({seen[comment['id']]} and {key}/{anchor})")
                         continue
                     seen[comment["id"]] = f"{key}/{anchor}"
-                    items.append(_item_row(comment, key, anchor, position))
+                    items.append(row_for(comment, key, anchor, position))
         elif key == "approved_plans" and isinstance(value, dict):
             frame[key] = list(value)
             plans = [(plan_id, position, _compact(body)) for position, (plan_id, body) in enumerate(value.items())]
@@ -947,17 +956,11 @@ def build(conn, sources: Sources) -> dict:
     deliveries, journal_shape = [], None
     if sources.journal is not None:
         try:
-            journal = json.loads(sources.journal)
-            layouts["journal"] = _layout(sources.journal, journal)[0]
-            rows = journal.get("deliveries") if isinstance(journal, dict) else None
-            journal_shape = {k: (list(v) if k == "deliveries" else v) for k, v in journal.items()}
-            for position, (delivery_id, row) in enumerate((rows or {}).items()):
-                deliveries.append((delivery_id, (row or {}).get("round_id") if isinstance(row, dict) else None,
-                                   row.get("state") if isinstance(row, dict) else None, position, _compact(row)))
+            journal_shape, deliveries, layouts["journal"] = _journal_rows(sources.journal)
         except (ValueError, AttributeError) as exc:
             refusals.append(f"delivery journal: unreadable ({exc})")
     rounds = []
-    for line in (files.get("rounds.ndjson") or "").splitlines():
+    for line in _lines(files.get("rounds.ndjson") or ""):
         try:
             row = json.loads(line)
         except ValueError:
@@ -1001,6 +1004,18 @@ def build(conn, sources: Sources) -> dict:
                   drafts=sum(1 for v in versions if v[1] == "draft"), events=len(events),
                   numbers=len(numbers), cursors=len(cursors), deliveries=len(deliveries), rounds=len(rounds))
     return counts
+
+
+def _journal_rows(text: str):
+    """(shape, rows, layout) of a delivery journal {"offset", "deliveries": {id: row}}."""
+    journal = json.loads(text)
+    rows = journal.get("deliveries") if isinstance(journal, dict) else None
+    shape = {k: (list(v) if k == "deliveries" else v) for k, v in journal.items()}
+    found = []
+    for position, (delivery_id, row) in enumerate((rows or {}).items()):
+        found.append((delivery_id, row.get("round_id") if isinstance(row, dict) else None,
+                      row.get("state") if isinstance(row, dict) else None, position, _compact(row)))
+    return shape, found, _layout(text, journal)[0]
 
 
 def _now() -> str:
@@ -1087,7 +1102,7 @@ def diff(conn, sources: Sources) -> tuple[list[str], int]:
             differences.append(f"{name}: only in the {'files' if mine is None else 'db'}")
             continue
         if name.endswith(".ndjson"):
-            if mine.splitlines() != theirs.splitlines():
+            if _lines(mine) != _lines(theirs):
                 differences.append(f"{name}: lines differ")
             continue
         try:
@@ -1104,14 +1119,12 @@ def diff(conn, sources: Sources) -> tuple[list[str], int]:
         differences.append("delivery journal differs")
     elif journal is not None:
         identical += journal == sources.journal
-    stored = conn.execute("SELECT seq, bus_offset, data_json FROM events ORDER BY seq").fetchall()
+    reset = int(_meta_value(conn, "bus_reset_seq") or 0)  # events before a prune live in the archived bus
+    stored = conn.execute("SELECT seq, bus_offset, data_json FROM events WHERE seq > ? ORDER BY seq", (reset,)).fetchall()
     on_bus = [(offset, text) for offset, event, text in _bus_lines(sources.bus_bytes) if event is not None]
-    known = {offset for _, offset, _ in stored}
-    tail = [line for line in on_bus if line[0] not in known]
+    # Lines past what the DB copied are not a difference: a live server appends outside the lock.
     if [(o, t) for _, o, t in stored] != on_bus[:len(stored)]:
         differences.append(f"bus: {len(stored)} events in the db, {len(on_bus)} on the bus, first {len(stored)} differ")
-    elif tail:
-        differences.append(f"bus: {len(tail)} newer events not in the db yet")
     ends = {offset: seq for seq, offset, _ in stored} | {0: 0}
     cursors = {(k, r): (s, o) for k, r, s, o in conn.execute("SELECT kind, reader, seq, bus_offset FROM cursors")}
     for key, offset in sources.cursors().items():
@@ -1326,8 +1339,8 @@ def _catch_up(conn, bus: str) -> int:
 
 
 def refresh_cursors(conn, sources: Sources) -> list[str]:
-    """Mirror the cursor files (still written by hooks, inbox and monitors) into the DB;
-    returns the cursors that point inside a bus line."""
+    """Mirror the cursor files and the delivery journal (still written by hooks, inbox,
+    monitors and delivery) into the DB; returns the cursors that point inside a bus line."""
     known = dict(conn.execute("SELECT bus_offset, seq FROM events WHERE bus_offset IS NOT NULL"))
     ends, last = {0: 0}, 0
     for offset, _, text in _bus_lines(sources.bus_bytes):
@@ -1346,6 +1359,14 @@ def refresh_cursors(conn, sources: Sources) -> list[str]:
         conn.execute("BEGIN IMMEDIATE")
     conn.execute("DELETE FROM cursors")
     conn.executemany("INSERT INTO cursors VALUES (?,?,?,?)", rows)
+    if sources.journal is not None:  # the delivery journal, like the cursors, is still the file's
+        try:
+            shape, deliveries, layout = _journal_rows(sources.journal)
+            _set_meta(conn, "journal_frame", _compact(shape))
+            _set_meta(conn, "layout:journal", _compact(layout))
+            _sync_rows(conn, "deliveries", ("id", "round", "state", "position", "row_json"), 1, deliveries)
+        except (ValueError, AttributeError) as exc:
+            bad.append(f"delivery journal: unreadable ({exc})")
     if began:
         conn.execute("COMMIT")
     return bad
@@ -1395,7 +1416,50 @@ def _set_meta(conn, key: str, value) -> None:
         conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
 
 
-def _apply(conn, name: str, text: str | None, value=None) -> None:
+# Per process: the item rows page.db holds, as of the comments.json fingerprint
+# stored with them, each with its own parsed copy (never the caller's dicts).
+# A write then serializes only the items that changed.
+_ITEM_CACHE: dict[str, tuple[str | None, dict]] = {}
+
+
+def _item_cache_key(slug_dir) -> str | None:
+    return str(Path(slug_dir).resolve() / DB_NAME) if slug_dir is not None else None
+
+
+def _store_items(conn, store: dict, problems: list[str], key: str | None):
+    cached = _ITEM_CACHE.pop(key, None) if key else None
+    if cached and cached[0] == _meta_value(conn, "fp:comments.json"):
+        old = cached[1]
+    else:
+        old = {row[0]: (row, None) for row in conn.execute(f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items")}
+    fresh: dict = {}
+
+    def row_for(comment, area, anchor, position):
+        hit = old.get(comment["id"])
+        if hit is not None:
+            row, parsed = hit
+            if row[1] == area and row[2] == anchor and row[12] == position:
+                if parsed is None:
+                    parsed = json.loads(row[13])
+                if parsed == comment:
+                    fresh[row[0]] = (row, parsed)
+                    return row
+        row = _item_row(comment, area, anchor, position)
+        fresh[row[0]] = (row, None)
+        return row
+
+    frame, items, plans = _comment_rows(store, problems, row_for)
+    gone = [(item_id,) for item_id in old if item_id not in fresh]
+    changed = [row for row in items if old.get(row[0], (None,))[0] != row]
+    conn.executemany("DELETE FROM items WHERE id = ?", gone)
+    conn.executemany(f"INSERT OR REPLACE INTO items ({', '.join(_ITEM_COLUMNS)}) "
+                     f"VALUES ({', '.join('?' * len(_ITEM_COLUMNS))})", changed)
+    if key and not problems:
+        _ITEM_CACHE[key] = (None, fresh)  # _set_fingerprint dates it once the file is written
+    return frame, items, plans
+
+
+def _apply(conn, name: str, text: str | None, value=None, slug_dir=None) -> None:
     """Store one record file's new text (None: the file is gone), changed rows only."""
     if text is not None and name != "rounds.ndjson" and value is None:
         try:
@@ -1409,11 +1473,12 @@ def _apply(conn, name: str, text: str | None, value=None) -> None:
     if name == "comments.json":
         if text is None:
             frame, items, plans = None, [], []
+            _sync_rows(conn, "items", _ITEM_COLUMNS, 1, items)
         else:
             from .sync_server import _validate_store
-            frame, items, plans = _comment_rows(value if isinstance(value, dict) else _validate_store(value), problems)
+            frame, items, plans = _store_items(conn, value if isinstance(value, dict) else _validate_store(value),
+                                               problems, _item_cache_key(slug_dir))
         _set_meta(conn, "comments_frame", _compact(frame) if frame is not None else None)
-        _sync_rows(conn, "items", _ITEM_COLUMNS, 1, items)
         _sync_rows(conn, "approved_plans", ("id", "position", "body_json"), 1, plans)
         _sync_rows(conn, "numbers", ("number", "anchor_id", "doc", "first_item"), 2, _number_rows(items, []))
     elif name == "current.meta.json":
@@ -1428,7 +1493,7 @@ def _apply(conn, name: str, text: str | None, value=None) -> None:
         _sync_rows(conn, "versions", _VERSION_COLUMNS, 2, [row] if row else [], "state = 'draft' AND n = ?", (n,))
     elif name == "rounds.ndjson":
         rows = []
-        for line in (text or "").splitlines():
+        for line in _lines(text or ""):
             try:
                 row = json.loads(line)
             except ValueError:
@@ -1449,8 +1514,13 @@ def _apply(conn, name: str, text: str | None, value=None) -> None:
 
 def _set_fingerprint(conn, slug_dir: Path, name: str, text: str | None) -> None:
     path = slug_dir / name
-    _set_meta(conn, f"fp:{name}", _compact(_fingerprint(path, text.encode("utf-8") if text is not None else None))
-              if path.exists() else None)
+    value = _compact(_fingerprint(path, text.encode("utf-8") if text is not None else None)) if path.exists() else None
+    _set_meta(conn, f"fp:{name}", value)
+    if name == "comments.json":
+        key = _item_cache_key(slug_dir)
+        cached = _ITEM_CACHE.pop(key, None)
+        if cached and cached[0] is None and value is not None:
+            _ITEM_CACHE[key] = (value, cached[1])
 
 
 def _record_paths(slug_dir: Path) -> list[str]:
@@ -1487,7 +1557,7 @@ def _take_in(conn, slug_dir: Path) -> list[str]:
         marker = slug_dir / (DB_NAME + ".writing")
         kind = "store_recovered" if marker.exists() else "store_foreign_write"
         for name, text in changed:
-            _apply(conn, name, text)
+            _apply(conn, name, text, slug_dir=slug_dir)
             _set_fingerprint(conn, slug_dir, name, text)
         count = int(_meta_value(conn, kind) or 0) + len(changed)
         _set_meta(conn, kind, str(count))
