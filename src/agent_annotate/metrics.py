@@ -43,9 +43,10 @@ def _parse_timestamp(value: object) -> datetime | None:
 
 
 def _read_object(path: Path) -> dict:
+    from .store import read_json
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):
+        value = read_json(path, {})
+    except RecursionError:
         return {}
     return value if isinstance(value, dict) else {}
 

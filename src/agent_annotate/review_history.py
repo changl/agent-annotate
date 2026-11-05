@@ -1,9 +1,7 @@
 """Read-only document history and immutable submitted-review snapshots."""
 from __future__ import annotations
 
-import fcntl
 import json
-import os
 import re
 from bisect import bisect_right
 from datetime import datetime
@@ -46,23 +44,8 @@ def _available(directory, version):
 
 def save_round(directory: Path, event: dict) -> None:
     """A page copy carries its review history even after its bus is pruned."""
-    from .consolidate import refuse_if_moved
-    refuse_if_moved(directory)
-    path = directory / "rounds.ndjson"
-    with path.open("a+", encoding="utf-8") as source:
-        fcntl.flock(source.fileno(), fcntl.LOCK_EX)
-        source.seek(0)
-        for line in source:
-            try:
-                old = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(old, dict) and old.get("id") == event["id"]:
-                return
-        source.seek(0, 2)
-        source.write(json.dumps(event, ensure_ascii=False) + "\n")
-        source.flush()
-        os.fsync(source.fileno())
+    from .store import append_round
+    append_round(directory, event)
 
 
 def history_buses(bus: Path | None, archive: Path | None) -> list[Path]:

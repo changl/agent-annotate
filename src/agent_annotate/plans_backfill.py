@@ -15,7 +15,7 @@ from .approval_catalog import _bundle, _digest, _pin_images, item_id, promote, r
 from .categories import _atomic_bytes, safe_path
 from .consolidate import inactive, refuse_if_moved
 from .review_history import _events, _time
-from .sync_server import _locked_store
+from .store import transaction as _locked_store
 
 
 def _hash(body):

@@ -141,12 +141,12 @@ def cmd_names(args) -> int:
     import contextlib
     import datetime
     import hashlib
-    import os
 
     from .cli import STATE_DIR, _flock, _registry_entries
     from .consolidate import refuse_if_moved
     from .project_state import load_project
-    from .sync_server import _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_bytes
 
     def unique_fields(pairs):
         result = {}
@@ -237,12 +237,7 @@ def cmd_names(args) -> int:
                 for path, original, encoded in changes:
                     if (path.read_bytes() if path.exists() else None) != original:
                         raise ValueError(f"metadata changed during migration: {path}; backups retained")
-                    temporary = path.with_name(path.name + ".names.tmp")
-                    try:
-                        temporary.write_bytes(encoded)
-                        os.replace(temporary, path)
-                    finally:
-                        temporary.unlink(missing_ok=True)
+                    write_bytes(path, encoded)
             result = {"dry_run": not args.apply, "pages": pages, "unresolved": unresolved,
                       "changed_files": len(changes), "backups": backups}
             if args.json:

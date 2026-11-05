@@ -1571,16 +1571,14 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)          # servers read versions/<vN>.html live
+    from .store import write_text
+    write_text(path, text)          # servers read versions/<vN>.html live
 
 
 def _write_files(slug_dir: Path, version: str, label: str, source: Path,
                  source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None,
                  picked: bool = False) -> list[str]:
-    from .sync_server import _locked_store
+    from .store import transaction as _locked_store
     slug_dir.mkdir(parents=True, exist_ok=True)
     with _locked_store(slug_dir):
         return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes, picked)
@@ -1611,7 +1609,8 @@ def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
     # Reports can have no decision cards, so the server may never write this
     # store before the next publish gate reads it. Initialize valid JSON while
     # leaving any existing feedback (including a damaged store) untouched.
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
     with _locked_store(slug_dir):
         if not (slug_dir / "comments.json").exists():
             _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})

@@ -247,9 +247,8 @@ def _bus_emit(bus_file, event: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"ts": _now_iso()}
         payload.update(event)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(redact_share_links(payload), ensure_ascii=False,
-                                separators=(",", ":")) + "\n")
+        from .store import append_line
+        append_line(path, json.dumps(redact_share_links(payload), ensure_ascii=False, separators=(",", ":")) + "\n")
     except Exception:
         pass
 
@@ -896,34 +895,14 @@ def _available_versions(slug_dir: Path) -> list[str]:
 
 
 def _read_meta(slug_dir: Path) -> dict:
-    path = slug_dir / "current.meta.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    from .store import read_meta
+    return read_meta(slug_dir)
 
 
 def _write_meta_locked(slug_dir: Path, mutate) -> None:
-    """Re-read + mutate + write current.meta.json under the server's own lock.
-
-    The sync server caches content stamps into this file while it runs, so a
-    read-modify-write here would silently drop whatever it wrote in between.
-    It takes `current.meta.json.lock`; so must we.
-    """
-    path = slug_dir / "current.meta.json"
-    lock_path = path.with_suffix(".json.lock")
-    with open(lock_path, "a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            meta = _read_meta(slug_dir)
-            mutate(meta)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    """Re-read + mutate + write current.meta.json under the server's own lock."""
+    from .store import update_meta
+    update_meta(slug_dir, mutate)
 
 
 def _ensure_current_symlink(slug_dir: Path) -> tuple[str | None, list[str]]:
@@ -1158,7 +1137,8 @@ def _run_gate(record: dict, args):
     )
     if candidate and report.fully_verified:
         from .review_versions import draft_path, require_draft
-        from .sync_server import _atomic_write_json, _locked_store
+        from .store import transaction as _locked_store
+        from .store import write_json as _atomic_write_json
         directory = Path(record["slug_dir"])
         with _locked_store(directory):
             require_draft(_read_meta(directory), candidate)
@@ -2093,7 +2073,8 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
 
 def _withdraw_unasked(slug_dir: Path, new_version: str, cards: list[dict] | None = None) -> list[str]:
     """A Review version keeps only the unanswered agent questions it poses again."""
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
 
     if not (slug_dir / "comments.json").exists():
         return []
@@ -2171,7 +2152,8 @@ def cmd_publish_version(args) -> int:
     from .review_versions import draft_path, require_draft, stage
     version = args.version
     from .review_versions import read_draft
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
     try:
         with _locked_store(slug_dir):
             require_draft(_read_meta(slug_dir), version)
@@ -3354,7 +3336,8 @@ def cmd_close(args) -> int:
     else:
         stamp = _now_iso()
         try:
-            from .sync_server import _atomic_write_json, _locked_store
+            from .store import transaction as _locked_store
+            from .store import write_json as _atomic_write_json
             with _locked_store(store_path.parent):
                 store = _read_store_file(store_path)
                 for cid in ids:
@@ -4067,7 +4050,7 @@ def cmd_copy(args) -> int:
 
 def _consolidate_run(consolidate, directory: Path, target: tuple[str, str], sources: list, planned: dict):
     """Freeze, read again, write, verify; on any failure undo this run only."""
-    from .sync_server import _locked_store
+    from .store import transaction as _locked_store
     marked, created = [], False
     try:
         # The marker is written under each page's store lock, so a write
@@ -4098,7 +4081,8 @@ def cmd_archive(args) -> int:
     """Freeze or restore a page without stopping its server or changing its URL."""
     from .categories import category_counts
     from .consolidate import ARCHIVE_MARKER, MARKER, _all_comments, comment_counts
-    from .sync_server import _locked_store, _validate_store
+    from .store import transaction as _locked_store
+    from .sync_server import _validate_store
     resolved = _resolve_scoped_slug(args.slug, getattr(args, "project", None))
     if not resolved:
         return 2

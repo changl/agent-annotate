@@ -14,7 +14,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from contextlib import ExitStack, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,22 +25,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _atomic(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
-    try:
-        with os.fdopen(fd, "w") as stream:
-            json.dump(value, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        Path(name).unlink(missing_ok=True)
+from .store import write_journal as _atomic  # noqa: E402
 
 
 def _orca(*args: str) -> dict:
