@@ -109,7 +109,7 @@ def check(page: Path, writes: int, versions: int) -> list[str]:
     meta = json.loads((page / "current.meta.json").read_text())
     store = json.loads((page / "comments.json").read_text())
     read_state = json.loads((page / "read-state.json").read_text()) if (page / "read-state.json").exists() else {}
-    rounds = {json.loads(line)["id"] for line in (page / "rounds.ndjson").read_text().splitlines() if line.strip()}
+    rounds = {json.loads(line)["id"] for line in (page / "rounds.ndjson").read_text().split("\n") if line.strip()}
     comments = {c.get("text") for c in store["anchors"].get(ANCHOR, [])}
     replies = {r.get("text") for c in store["anchors"].get(ANCHOR, []) for r in c.get("replies") or []}
     stamps = set((meta.get("content_stamps") or {}))

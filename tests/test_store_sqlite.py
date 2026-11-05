@@ -167,3 +167,27 @@ def test_events_after_from_page_db_matches_the_bus_file(tmp_path):
         pass
     assert [(r["bus_offset"], r["event"]) for r in store.events_after(page, bus)] == [
         (r["bus_offset"], r["event"]) for r in store.events_after(None, bus)]
+
+
+def test_a_round_holding_a_line_separator_round_trips(tmp_path):
+    fixture = _imported(tmp_path)
+    store.append_round(fixture["page"], {"id": "r3", "text": "one two\u0085three"})
+    conn = store.connect(fixture["page"] / "page.db")
+    assert store.export_texts(conn)["rounds.ndjson"] == (fixture["page"] / "rounds.ndjson").read_text()
+    assert _rows(fixture, "SELECT count(*) FROM rounds") == [(3,)]
+    conn.close()
+    assert _diff(fixture) == []
+
+
+def test_the_row_cache_never_trusts_the_callers_dict(tmp_path):
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    data = store.read_comments(page)
+    for text in ("first", "second", "third"):     # the server keeps and mutates one store dict
+        data["anchors"]["d:q1"][0]["text"] = text
+        store.write_bytes(page / "comments.json", json.dumps(data).encode(), value=data)
+        assert json.loads(_rows(fixture, "SELECT body_json FROM items WHERE id = 'a1'")[0][0])["text"] == text
+    (page / "comments.json").write_text(json.dumps({**data, "anchors": {}}))   # a foreign write empties it
+    store.write_bytes(page / "comments.json", json.dumps(data).encode(), value=data)
+    assert _rows(fixture, "SELECT count(*) FROM items") == [(5,)]
+    assert _diff(fixture) == []
