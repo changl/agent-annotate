@@ -141,8 +141,14 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
         for path in list(bus_cache):
             if path not in buses:
                 del bus_cache[path]
+    from .store import backend, events_after
+    indexed = bus is not None and backend(directory) == "sqlite"
     for path in buses:
-        for event in _bus_rounds(path, bus_cache) if bus_cache is not None else _events(path):
+        if indexed and path == bus:
+            found = [row["event"] for row in events_after(directory, bus, types=("round_submitted",))]
+        else:
+            found = _bus_rounds(path, bus_cache) if bus_cache is not None else _events(path)
+        for event in found:
             if event.get("event") != "round_submitted":
                 continue
             identifier = event.get("round_id") or str(event.get("ts")) + ":" + str(event.get("by"))

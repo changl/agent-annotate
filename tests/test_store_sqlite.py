@@ -126,7 +126,8 @@ def test_the_suite_runs_on_sqlite():
     modules = ["test_fast_writes.py", "test_decision_api.py", "test_categories_api.py", "test_plan_topics.py",
                "test_project_state.py", "test_publish_version.py", "test_pagegen.py", "test_explicit_send.py",
                "test_meta_stamp_safety.py", "test_close_retire.py", "test_ask_numbers.py", "test_delete_comment.py",
-               "test_answer_later.py", "test_comment_carryover.py", "test_version_ready.py"]
+               "test_answer_later.py", "test_comment_carryover.py", "test_version_ready.py",
+               "test_cli_reads.py", "test_review_history.py", "test_history_cache.py"]
     log = paths.STATE_DIR.parent / "sqlite-guard.log"
     log.write_text("")
     env = {**os.environ, "ANNOTATE_TEST_SQLITE": "1", "ANNOTATE_WRITE_GUARD": str(log),
@@ -148,3 +149,21 @@ def test_snapshot_reads_the_db_and_is_cached_until_a_commit(tmp_path):
     assert second is not first and second.meta["current"] == "v3"
     assert [r["id"] for r in second.rounds()] == ["r1", "r2"]
     assert second.comments["anchors"]["d:q1"][0]["id"] == "a1"
+
+
+def test_events_after_from_page_db_matches_the_bus_file(tmp_path):
+    fixture = _imported(tmp_path)
+    page, bus = fixture["page"], fixture["bus"]
+    bus.write_bytes(bus.read_bytes()[:fixture["ends"][2]])
+    store.append_line(bus, '{"event": "round_submitted", "round_id": "r9"}\n')   # not copied in yet
+    for after in (0, fixture["ends"][0], fixture["ends"][1], fixture["ends"][2]):
+        for kwargs in ({}, {"types": ("round_submitted", "session_push")}, {"exclude": ("comment_created",)}):
+            assert store.events_after(page, bus, after, **kwargs) == store.events_after(None, bus, after, **kwargs)
+    assert [row["event"]["event"] for row in store.events_after(page, bus)] == [
+        "comment_created", "session_push", "round_submitted"]
+    bus.write_text('{"event": "rewritten"}\n')   # rewritten in place: page.db no longer follows it
+    assert [row["event"]["event"] for row in store.events_after(page, bus)] == ["rewritten"]
+    with store.transaction(page):
+        pass
+    assert [(r["bus_offset"], r["event"]) for r in store.events_after(page, bus)] == [
+        (r["bus_offset"], r["event"]) for r in store.events_after(None, bus)]

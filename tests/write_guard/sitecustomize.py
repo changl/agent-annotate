@@ -42,6 +42,10 @@ def _check(op, path) -> None:
     if not _record(path):
         return
     frame, ours = sys._getframe(2), None
+    while frame is not None and ("/pathlib/" in frame.f_code.co_filename or frame.f_code.co_filename.endswith("/pathlib.py")):
+        frame = frame.f_back
+    if frame is not None and "/tests/" in frame.f_code.co_filename.replace(os.sep, "/"):
+        return  # a test writing its own fixture, even when called back from annotate code
     while frame is not None:
         name = frame.f_code.co_filename.replace(os.sep, "/")
         if name.endswith("agent_annotate/store.py") or "/agent_annotate/hooks/" in name or "/shutil.py" in name:

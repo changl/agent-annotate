@@ -2520,7 +2520,12 @@ def cmd_inbox(args) -> int:
 
     events: list[dict] = []
     new_offset = offset
-    if not historical and bus_file.exists():
+    from .store import backend, events_after
+    if not historical and bus_file.exists() and record.get("slug_dir") and backend(record["slug_dir"]) == "sqlite":
+        rows = events_after(record["slug_dir"], bus_file, offset)  # indexed: no scan of the whole bus
+        events = [row["event"] for row in rows]
+        new_offset = rows[-1]["bus_offset"] if rows else offset
+    elif not historical and bus_file.exists():
         size = bus_file.stat().st_size
         with bus_file.open("r", encoding="utf-8") as f:
             f.seek(min(offset, size))

@@ -82,30 +82,33 @@ class Snapshot:
 class DbSnapshot(Snapshot):
     """The records as page.db holds them at one data_version."""
 
-    def __init__(self, slug_dir, texts: dict[str, str]):
+    def __init__(self, slug_dir, values: dict):
         super().__init__(slug_dir)
-        self.texts = texts
+        self.texts = values
         self._parsed: dict[str, object] = {}
 
     def _value(self, name: str, default):
         if name not in self._parsed:
-            text = self.texts.get(name)
+            value = self.texts.get(name)
             try:
-                self._parsed[name] = json.loads(text) if text is not None else default
+                self._parsed[name] = json.loads(value) if isinstance(value, str) else default if value is None else value
             except ValueError:
                 self._parsed[name] = default
         return self._parsed[name]
 
+    # Shared by every reader until the next commit: read, never mutate.
     @property
     def comments(self) -> dict:
-        from .sync_server import _validate_store
-        value = self._value("comments.json", None)
-        return _validate_store(json.loads(json.dumps(value))) if isinstance(value, dict) else json.loads(json.dumps(_EMPTY_STORE))
+        if "comments" not in self._parsed:
+            from .sync_server import _validate_store
+            value = self._value("comments.json", None)
+            self._parsed["comments"] = _validate_store(value) if isinstance(value, dict) else json.loads(json.dumps(_EMPTY_STORE))
+        return self._parsed["comments"]
 
     @property
     def meta(self) -> dict:
         value = self._value("current.meta.json", {})
-        return json.loads(json.dumps(value)) if isinstance(value, dict) else {}
+        return value if isinstance(value, dict) else {}
 
     def sidecar(self, name: str, default=None):
         return self._value(SIDECARS[name], default)
@@ -141,7 +144,7 @@ def snapshot(slug_dir) -> Snapshot:
         if cached is None or current != version:
             conn.execute("BEGIN")
             try:
-                cached = DbSnapshot(slug_dir, export_texts(conn))
+                cached = DbSnapshot(slug_dir, export_values(conn)[0])
             finally:
                 conn.execute("COMMIT")
         _SNAPSHOTS[key] = (conn, current, cached)
@@ -163,25 +166,72 @@ def read_lines(path):
         return
 
 
-def events_after(bus_file, seq: int = 0, *, types=None, exclude=None) -> list[dict]:
-    """Bus events after line `seq` (1-based line numbers count every line)."""
+def events_after(slug_dir, bus_file, after: int = 0, *, types=None, exclude=None) -> list[dict]:
+    """Bus events whose line ends after byte `after`, oldest first, as
+    {"seq", "bus_offset", "event"}. On page.db the indexed events table
+    answers, plus any complete lines appended since it last copied the bus;
+    otherwise the bus file is read. Unterminated and unparsable lines are skipped."""
+    if slug_dir is not None and backend(slug_dir) == "sqlite":
+        found = _db_events_after(slug_dir, bus_file, after, types, exclude)
+        if found is not None:
+            return found
     out = []
     try:
-        with open(bus_file, encoding="utf-8") as stream:
-            for number, line in enumerate(stream, 1):
-                if number <= seq:
-                    continue
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                name = event.get("event")
-                if (types and name not in types) or (exclude and name in exclude):
-                    continue
-                out.append({**event, "seq": number})
-    except OSError:
+        with open(bus_file, "rb") as stream:
+            data = stream.read()
+    except (OSError, TypeError):
+        return out
+    seq = 0
+    for offset, event, _ in _bus_lines(data):
+        if event is None:
+            continue
+        seq += 1
+        if offset > after and _wanted(event, types, exclude):
+            out.append({"seq": seq, "bus_offset": offset, "event": event})
+    return out
+
+
+def _wanted(event: dict, types, exclude) -> bool:
+    name = event.get("event")
+    return (not types or name in types) and not (exclude and name in exclude)
+
+
+def _db_events_after(slug_dir, bus_file, after: int, types, exclude) -> list[dict] | None:
+    key = str(Path(slug_dir).resolve() / DB_NAME)
+    with _SNAPSHOT_LOCK:
+        conn, version, cached = _SNAPSHOTS.get(key, (None, None, None))
+        if conn is None:
+            conn = connect(key)
+            _SNAPSHOTS[key] = (conn, None, None)
+        conn.execute("BEGIN")
+        try:
+            bus = _meta_value(conn, "bus_file")
+            state = _bus_follows(conn, bus) if bus and bus_file and Path(bus).resolve() == Path(bus_file).resolve() else None
+            if state is None:
+                return None  # not the bus page.db follows, or it was rewritten: read the file
+            reset, seq, last = state
+            where, args = "seq > ? AND bus_offset > ?", [reset, after]
+            if types:
+                where += f" AND type IN ({', '.join('?' * len(types))})"
+                args += list(types)
+            if exclude:
+                where += f" AND (type IS NULL OR type NOT IN ({', '.join('?' * len(exclude))}))"
+                args += list(exclude)
+            rows = conn.execute(f"SELECT seq, bus_offset, data_json FROM events WHERE {where} ORDER BY seq", args).fetchall()
+        finally:
+            conn.execute("COMMIT")
+    out = [{"seq": s, "bus_offset": o, "event": json.loads(d)} for s, o, d in rows]
+    try:
+        with open(bus, "rb") as stream:
+            if stream.seek(0, 2) >= last:
+                stream.seek(last)
+                for offset, event, _ in _bus_lines(stream.read()):
+                    if event is None:
+                        continue
+                    seq += 1
+                    if last + offset > after and _wanted(event, types, exclude):
+                        out.append({"seq": seq, "bus_offset": last + offset, "event": event})
+    except (OSError, TypeError):
         pass
     return out
 
@@ -599,6 +649,7 @@ CREATE TABLE events(
   data_json TEXT NOT NULL);
 CREATE INDEX events_type ON events(type, seq);
 CREATE INDEX events_item ON events(item, seq);
+CREATE INDEX events_offset ON events(bus_offset);
 CREATE TABLE cursors(
   kind TEXT NOT NULL CHECK (kind IN ('inbox','hook','monitor','delivery')),
   reader TEXT NOT NULL, seq INTEGER NOT NULL, bus_offset INTEGER NOT NULL,
@@ -685,7 +736,10 @@ class Sources:
             self._read(f".review-drafts/{draft.name}")
         self.journal_path = self.state / "deliveries" / (project or "") / f"{self.slug}.json"
         self.journal = self.journal_path.read_text(encoding="utf-8") if project and self.journal_path.is_file() else None
-        self.bus_bytes = self.bus.read_bytes() if self.bus and self.bus.is_file() else b""
+        self.bus_bytes, self.bus_inode = b"", None
+        if self.bus and self.bus.is_file():
+            with open(self.bus, "rb") as stream:
+                self.bus_bytes, self.bus_inode = stream.read(), os.fstat(stream.fileno()).st_ino
 
     def _read(self, name: str) -> None:
         path = self.dir / name
@@ -933,6 +987,10 @@ def build(conn, sources: Sources) -> dict:
     conn.executemany("INSERT INTO numbers VALUES (?,?,?,?)", numbers)
     conn.executemany("INSERT INTO approved_plans VALUES (?,?,?)", plans)
     conn.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", events)
+    if events and sources.bus_inode is not None:
+        import hashlib
+        end, line = events[-1][6], events[-1][7].encode("utf-8") + b"\n"
+        _set_meta(conn, "bus_check", _compact([sources.bus_inode, end - len(line), end, hashlib.sha256(line).hexdigest()]))
     conn.executemany("INSERT INTO cursors VALUES (?,?,?,?)", cursors)
     conn.executemany("INSERT INTO deliveries VALUES (?,?,?,?,?)", deliveries)
     conn.executemany("INSERT INTO rounds VALUES (?,?,?,?)", rounds)
@@ -955,12 +1013,12 @@ def _meta_value(conn, key: str):
     return row[0] if row else None
 
 
-def export_texts(conn) -> dict[str, str]:
-    """Every page record file the DB holds, as the text the JSON backend keeps."""
+def export_values(conn) -> tuple[dict, dict[str, dict]]:
+    """Every record file the DB holds: comments and meta as values, the rest as text;
+    and each file's layout."""
     layout = {key[len("layout:"):]: json.loads(value)
               for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'layout:%'")}
-    raw = dict((key[4:], value) for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'raw:%'"))
-    out: dict[str, str] = {}
+    out: dict = {}
     frame = _meta_value(conn, "comments_frame")
     if frame is not None:
         grouped: dict[tuple, list] = {}
@@ -977,7 +1035,7 @@ def export_texts(conn) -> dict[str, str]:
                 store[key] = {plan_id: plans[plan_id] for plan_id in value}
             else:
                 store[key] = value["\x00value"]
-        out["comments.json"] = _dump(store, layout.get("comments.json", {"separators": [",", ":"]}))
+        out["comments.json"] = store
     page = conn.execute("SELECT owner_json, meta_json FROM page").fetchone()
     if page:
         history = [json.loads(entry) for (entry,) in
@@ -985,7 +1043,7 @@ def export_texts(conn) -> dict[str, str]:
         meta = {}
         for key, value in json.loads(page[1]).items():
             meta[key] = history if value == _HISTORY else json.loads(page[0]) if value == _OWNER else value
-        out["current.meta.json"] = _dump(meta, layout.get("current.meta.json", {"indent": 2}))
+        out["current.meta.json"] = meta
     for n, entry in conn.execute("SELECT n, entry_json FROM versions WHERE state = 'draft' ORDER BY n"):
         out[f".review-drafts/v{n}.json"] = entry
     for name, body in conn.execute("SELECT name, body_json FROM sidecars"):
@@ -993,7 +1051,16 @@ def export_texts(conn) -> dict[str, str]:
     lines = [body for (body,) in conn.execute("SELECT body_json FROM rounds ORDER BY seq")]
     if lines:
         out["rounds.ndjson"] = "\n".join(lines) + ("\n" if _meta_value(conn, "rounds_nl") == "1" else "")
-    return {**out, **raw}
+    out.update((key[4:], value) for key, value in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'raw:%'"))
+    return out, layout
+
+
+def export_texts(conn) -> dict[str, str]:
+    """Every page record file the DB holds, as the text the JSON backend keeps."""
+    values, layout = export_values(conn)
+    defaults = {"comments.json": {"separators": [",", ":"]}, "current.meta.json": {"indent": 2}}
+    return {name: value if isinstance(value, str) else _dump(value, layout.get(name, defaults[name]))
+            for name, value in values.items()}
 
 
 def export_journal(conn) -> str | None:
@@ -1193,6 +1260,32 @@ def catch_up_bus(slug_dir, conn=None) -> int:
             conn.close()
 
 
+def _bus_follows(conn, bus) -> tuple[int, int, int] | None:
+    """(reset seq, last seq, copied offset) when the bus file still extends
+    what page.db copied (same file, same last line); None when it was
+    rewritten, truncated or replaced."""
+    reset = int(_meta_value(conn, "bus_reset_seq") or 0)
+    newest = conn.execute("SELECT seq, bus_offset FROM events WHERE seq > ? AND bus_offset IS NOT NULL "
+                          "ORDER BY seq DESC LIMIT 1", (reset,)).fetchone()
+    seq, last = newest or (reset, 0)
+    check = _meta_value(conn, "bus_check")
+    try:
+        with open(bus, "rb") as stream:
+            stat = os.fstat(stream.fileno())
+            if not check:
+                return (reset, max(seq, reset), last) if stat.st_size >= last else None
+            inode, start, end, digest = json.loads(check)
+            if inode != stat.st_ino or end != last or stat.st_size < end:
+                return None
+            stream.seek(start)
+            import hashlib
+            if hashlib.sha256(stream.read(end - start)).hexdigest() != digest:
+                return None
+    except OSError:
+        return None
+    return reset, max(seq, reset), last
+
+
 def _catch_up(conn, bus: str) -> int:
     moved = 0
     pending = conn.execute("SELECT seq, data_json FROM events WHERE bus_offset IS NULL ORDER BY seq").fetchall()
@@ -1200,24 +1293,35 @@ def _catch_up(conn, bus: str) -> int:
         append_line(bus, text + "\n")
         conn.execute("UPDATE events SET bus_offset = ? WHERE seq = ?", (Path(bus).stat().st_size, seq))
         moved += 1
-    reset = int(_meta_value(conn, "bus_reset_seq") or 0)
-    seq = conn.execute("SELECT coalesce(max(seq), 0) FROM events").fetchone()[0]
-    start = conn.execute("SELECT coalesce(max(bus_offset), 0) FROM events WHERE seq > ?", (reset,)).fetchone()[0]
+    state = _bus_follows(conn, bus)
+    if state is None:  # rewritten or replaced (prune-bus): earlier events stay, the new file starts over
+        seq = (conn.execute("SELECT seq FROM events ORDER BY seq DESC LIMIT 1").fetchone() or (0,))[0]
+        _set_meta(conn, "bus_reset_seq", str(seq))
+        start = 0
+    else:
+        _, seq, start = state
     rows = []
     try:
         with open(bus, "rb") as stream:
-            if stream.seek(0, 2) < start:  # the bus was pruned or replaced: follow the new file
-                conn.execute("INSERT OR REPLACE INTO meta VALUES ('bus_reset_seq', ?)", (str(seq),))
-                start = 0
+            inode = os.fstat(stream.fileno()).st_ino
             stream.seek(start)
             tail = stream.read()
-        for offset, event, text in _bus_lines(tail):
-            if event is not None:
-                seq += 1
-                rows.append(_event_row(seq, start + offset, event, text))
-        conn.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", rows)
     except OSError:
-        pass
+        return moved
+    line_start = None
+    for offset, event, text in _bus_lines(tail):
+        if event is not None:
+            seq += 1
+            rows.append(_event_row(seq, start + offset, event, text))
+            line_start = start + offset - len(text.encode("utf-8")) - 1
+    conn.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", rows)
+    if rows:
+        import hashlib
+        end = rows[-1][6]
+        line = rows[-1][7].encode("utf-8") + b"\n"
+        _set_meta(conn, "bus_check", _compact([inode, line_start, end, hashlib.sha256(line).hexdigest()]))
+    elif state is None:
+        _set_meta(conn, "bus_check", None)
     return moved + len(rows)
 
 

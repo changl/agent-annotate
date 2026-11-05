@@ -98,8 +98,12 @@ if os.environ.get("ANNOTATE_TEST_SQLITE"):
         directory = Path(slug_dir)
         if (_plain_backend(directory) == "json" and (directory / "comments.json").is_file()
                 and os.access(directory, os.W_OK) and not any(directory.glob("page.db*"))):
+            from agent_annotate import cli as _cli
+            found = [(p, s, r) for p, s, r in _cli._registry_entries()
+                     if Path(r.get("slug_dir") or "").resolve() == directory.resolve()]
+            project, slug, record = found[0] if found else (None, None, {})
             try:
-                _store.import_page(directory)
+                _store.import_page(directory, project=project, slug=slug, bus_file=record.get("bus_file"))
             except (OSError, ValueError):
                 return "json"
         return _plain_backend(directory)
