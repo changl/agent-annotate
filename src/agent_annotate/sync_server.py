@@ -2363,9 +2363,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
                                 fresh["origin_item_id"] = item_id(prior)
                                 # The reviewer set this question aside; asking it
-                                # again in a new version keeps it set aside.
-                                if _is_set_aside(prior):
-                                    fresh["answer_later"] = prior["answer_later"]
+                                # again in a new version keeps it set aside. Older
+                                # copies count too: before 2.29.0 a re-ask dropped the mark.
+                                for c in reversed(lineage):
+                                    if (c.get("decision") or {}).get("verdict") or c.get("answer_later") is False:
+                                        break
+                                    if _is_set_aside(c):
+                                        fresh["answer_later"] = c["answer_later"]
+                                        break
                                 if publication and _can_withdraw(prior):
                                     prior["status"] = "addressed_by_agent"
                                     prior["response_text"] = f"Asked again in {version}."
@@ -2839,8 +2844,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if not _is_set_aside({**c, "answer_later": True}) or c.get("status") in ("archived", "addressed_by_agent", "resolved_in_version"):
                     return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
                 c["answer_later"] = {"ts": _now_iso(), "by": author}
-            elif c.pop("answer_later", None) is None:
+            elif not c.get("answer_later"):
                 return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+            else:
+                c["answer_later"] = False  # brought back on purpose: a later re-ask must not restore an older mark
             self._v2_save(store)
         print(f"  POST /api/comments/{comment_id}/answer-later → {payload['on']} by {author}", flush=True)
         self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")

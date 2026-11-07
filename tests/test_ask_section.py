@@ -172,6 +172,18 @@ def test_a_question_set_aside_stays_set_aside_when_asked_again(round_server, tmp
     carried = [c for c in json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"] if c["version"] == "v3"]
     assert len(carried) == 1 and carried[0]["origin_id"] == first["id"] and carried[0].get("answer_later")
 
+    def republish(change):
+        store = json.loads((directory / "comments.json").read_text())
+        change(store["anchors"]["d:q1"][-1])
+        (directory / "comments.json").write_text(json.dumps(store))
+        assert pagegen.cmd_new(args) == 0
+        return json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"][-1]
+
+    # A copy made before the fix lost the mark; the next re-ask finds it on an older copy.
+    assert republish(lambda c: c.pop("answer_later"))["answer_later"] == first["answer_later"]
+    # Brought back on purpose (the route stores False): a re-ask leaves it in front of the reviewer.
+    assert not republish(lambda c: c.__setitem__("answer_later", False)).get("answer_later")
+
 
 def test_kept_sections_render_from_the_page_copies_of_their_images(tmp_path):
     from test_pagegen_images import png
