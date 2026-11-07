@@ -36,7 +36,7 @@ def test_set_aside_is_persisted_without_telling_the_agent(server):  # noqa: F811
     # A reload (any device) reads the same store.
     assert _call(httpd, "GET", "/comments.json", author=REVIEWER)[1]["anchors"]["s:a"][0]["answer_later"]
     assert _set_aside(httpd, later["id"], on=False)[0] == 200
-    assert "answer_later" not in _store(slug_dir)["anchors"]["s:a"][0]
+    assert _store(slug_dir)["anchors"]["s:a"][0]["answer_later"] is False  # off on purpose; a re-ask keeps it off
 
 
 def test_only_an_unanswered_question_can_be_set_aside(server):  # noqa: F811

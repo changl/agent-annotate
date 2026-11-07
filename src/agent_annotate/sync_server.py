@@ -89,7 +89,6 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 
 import argparse
 import difflib
-import fcntl
 import gzip
 import hashlib
 import http.server
@@ -99,12 +98,10 @@ import os
 import re
 import socket
 import sys
-import tempfile
 import threading
 import tomllib
 import urllib.parse
 import uuid
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -113,7 +110,7 @@ from .extract import ExtractionError, build_content_document, has_canvas_sentine
 from .hooks.decision_state import is_set_aside as _is_set_aside
 from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
-from .submitted import comment_view, commit, copy_view, draft_event, human, remember, store_view
+from .submitted import comment_view, commit, copy_view, human, remember, store_view
 from .updates import runtime_manifest
 
 RUNTIME_MANIFEST = runtime_manifest()
@@ -245,46 +242,10 @@ def _asset_bytes(path: Path) -> bytes:
 # ────────────────────────────────────────────────────────────────────────────
 # V2 storage helpers (file lock + shape coercion)
 # ────────────────────────────────────────────────────────────────────────────
-_STORE_LOCK = threading.RLock()
-_STORE_LOCAL = threading.local()
-
-
-@contextmanager
-def _locked_store(directory, *, write=True):
-    """Serialize HTTP and direct agent storage writes across threads/processes."""
-    from .categories import safe_path
-    with _STORE_LOCK:
-        path = safe_path(directory, ".comments.json.lock")
-        held = getattr(_STORE_LOCAL, "held", set())
-        if path in held:
-            yield
-            return
-        try:
-            if write:
-                path.parent.mkdir(parents=True, exist_ok=True)
-            lock = path.open("a+" if write else "r")
-        except FileNotFoundError:
-            if write:
-                raise
-            lock = None
-        except OSError:
-            # A read-only page dir (an archive or snapshot served for viewing)
-            # has no writer to serialize against: reads go ahead unlocked and
-            # any write fails on its own.
-            if os.access(path.parent, os.W_OK):
-                raise
-            lock = None
-        if lock is None:
-            yield
-            return
-        with lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            _STORE_LOCAL.held = held | {path}
-            try:
-                yield
-            finally:
-                _STORE_LOCAL.held = held
-
+from .store import _STORE_LOCAL, _STORE_LOCK  # noqa: E402,F401  (tests inspect the held locks)
+from .store import bus_append as _bus_append  # noqa: E402
+from .store import transaction as _locked_store  # noqa: E402
+from .store import write_json as _atomic_write_json  # noqa: E402
 
 
 class ReviewHTTPServer(http.server.ThreadingHTTPServer):
@@ -682,27 +643,11 @@ def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) ->
 
 
 def _load_v2_store(path: Path) -> dict:
-    if not path.exists():
-        return {"schema_version": 2, "anchors": {}, "archived": {}}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    from .store import read_json
+    raw = read_json(path)
+    if raw is None:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     return _validate_store(raw)
-
-
-def _atomic_write_json(path: Path, data: dict) -> None:
-    from .consolidate import refuse_if_moved
-    refuse_if_moved(path.parent)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            json.dump(data, output, indent=2, ensure_ascii=False)
-            os.fchmod(output.fileno(), mode)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -786,24 +731,6 @@ def compute_content_stamps(content_html: str) -> dict:
 # ────────────────────────────────────────────────────────────────────────────
 # NDJSON bus
 # ────────────────────────────────────────────────────────────────────────────
-def _bus_append(bus_dir: Path | None, slug: str, event: dict) -> None:
-    if not bus_dir:
-        return
-    bus_dir.mkdir(parents=True, exist_ok=True)
-    f = bus_dir / f"{slug}.ndjson"
-    event = dict(event)
-    if draft_event(event):
-        event["deferred"] = True
-    event.setdefault("ts", _now_iso())
-    event.setdefault("slug", slug)
-    line = json.dumps(event, ensure_ascii=False) + "\n"
-    with f.open("a", encoding="utf-8") as fh:
-        fh.write(line)
-        if event.get("event") == "session_push" and event.get("round"):
-            fh.flush()
-            os.fsync(fh.fileno())
-
-
 def _monitor_project(bus_dir: Path | None) -> str:
     return bus_dir.name if bus_dir else "default"
 
@@ -1594,8 +1521,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return snapshot[1]
 
     def _v2_save(self, store: dict) -> None:
-        from .categories import _atomic_bytes
-        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode())
+        from .store import write_bytes as _atomic_bytes
+        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode(), value=store)
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
@@ -1910,20 +1837,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         completely; this removes the long read-to-write gap that made it easy
         to hit.
         """
-        path = self._meta_path()
-        lock_path = path.with_suffix(".json.lock")
-        with open(lock_path, "a+") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            try:
-                fresh = self._read_meta()
-                stamps = fresh.setdefault("content_stamps", {})
-                for old in stamps.values():  # drop the unread per-section hashes older pages carry
-                    if isinstance(old, dict):
-                        old.pop("sections", None)
-                stamps[version] = computed
-                _atomic_write_json(path, fresh)
-            finally:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        from .store import update_meta
+
+        def mutate(fresh):
+            stamps = fresh.setdefault("content_stamps", {})
+            for old in stamps.values():  # drop the unread per-section hashes older pages carry
+                if isinstance(old, dict):
+                    old.pop("sections", None)
+            stamps[version] = computed
+
+        update_meta(self.artifact_dir, mutate, read=self._read_meta, durable=True)
 
     def _v2_serve_content(self, parsed, *, plan_id=None, plan_version=None):
         """GET /content?v=vN — serve the chrome-free extracted content doc
@@ -2275,7 +2198,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             try:
                 require_draft(meta, version)
                 if not ready and draft_path(self.artifact_dir, version).exists():
-                    raise ValueError("publish Review cards as a complete round with new --publish --ask")
+                    raise ValueError("Review cards go live with their version · fix: annotate publish PAGE --from page.md")
             except ValueError as exc:
                 raise DecisionRequestError(str(exc), 409) from exc
         if human(author):
@@ -2439,6 +2362,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 prior = lineage[-1]
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
                                 fresh["origin_item_id"] = item_id(prior)
+                                # The reviewer set this question aside; asking it
+                                # again in a new version keeps it set aside. Older
+                                # copies count too: before 2.29.0 a re-ask dropped the mark.
+                                for c in reversed(lineage):
+                                    if (c.get("decision") or {}).get("verdict") or c.get("answer_later") is False:
+                                        break
+                                    if _is_set_aside(c):
+                                        fresh["answer_later"] = c["answer_later"]
+                                        break
                                 if publication and _can_withdraw(prior):
                                     prior["status"] = "addressed_by_agent"
                                     prior["response_text"] = f"Asked again in {version}."
@@ -2461,10 +2393,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         self._v2_save(store)
                         activate(self.artifact_dir, version)
                     except (OSError, ValueError):
-                        from .categories import _atomic_bytes
+                        from .store import write_bytes as _atomic_bytes
                         for path, data in ((self._store_path(), old_store), (self._meta_path(), old_meta)):
                             if data is None:
-                                path.unlink(missing_ok=True)
+                                from .store import remove
+                                remove(path)
                             else:
                                 _atomic_bytes(path, data)
                         current = self.artifact_dir / "current.html"
@@ -2911,8 +2844,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if not _is_set_aside({**c, "answer_later": True}) or c.get("status") in ("archived", "addressed_by_agent", "resolved_in_version"):
                     return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
                 c["answer_later"] = {"ts": _now_iso(), "by": author}
-            elif c.pop("answer_later", None) is None:
+            elif not c.get("answer_later"):
                 return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+            else:
+                c["answer_later"] = False  # brought back on purpose: a later re-ask must not restore an older mark
             self._v2_save(store)
         print(f"  POST /api/comments/{comment_id}/answer-later → {payload['on']} by {author}", flush=True)
         self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")

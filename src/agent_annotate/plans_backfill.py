@@ -15,7 +15,7 @@ from .approval_catalog import _bundle, _digest, _pin_images, item_id, promote, r
 from .categories import _atomic_bytes, safe_path
 from .consolidate import inactive, refuse_if_moved
 from .review_history import _events, _time
-from .sync_server import _locked_store
+from .store import transaction as _locked_store
 
 
 def _hash(body):
@@ -403,7 +403,8 @@ def restore_page(directory, backup):
         for name, info in manifest["files"].items():
             path = safe_path(directory, name)
             if info["before"] is None:
-                path.unlink(missing_ok=True)
+                from .store import remove
+                remove(path)
             else:
                 _atomic_bytes(path, safe_path(backup, name).read_bytes())
 

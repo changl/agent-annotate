@@ -43,9 +43,10 @@ def _parse_timestamp(value: object) -> datetime | None:
 
 
 def _read_object(path: Path) -> dict:
+    from .store import read_json
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):
+        value = read_json(path, {})
+    except RecursionError:
         return {}
     return value if isinstance(value, dict) else {}
 
@@ -109,7 +110,16 @@ def _quality(slug_dir: object, aggregate: dict) -> None:
             quality["warnings"] += len(warnings)
 
 
-def _rounds(path: Path, aggregate: dict, since: datetime, until: datetime) -> dict[str, datetime]:
+def _indexed_events(slug_dir: object, path: Path) -> Iterator[tuple[dict, datetime]] | None:
+    """The page's bus events from page.db when it has one (no scan of the bus file)."""
+    from .store import backend, events_after
+    if not isinstance(slug_dir, str) or not slug_dir or backend(slug_dir) != "sqlite":
+        return None
+    return ((row["event"], timestamp) for row in events_after(slug_dir, path)
+            if (timestamp := _parse_timestamp(row["event"].get("ts"))) is not None)
+
+
+def _rounds(path: Path, aggregate: dict, since: datetime, until: datetime, events=None) -> dict[str, datetime]:
     parents: dict[str, str] = {}
     times: dict[str, datetime] = {}
 
@@ -119,7 +129,7 @@ def _rounds(path: Path, aggregate: dict, since: datetime, until: datetime) -> di
             key = parents[key]
         return key
 
-    for event, timestamp in _events(path):
+    for event, timestamp in events if events is not None else _events(path):
         if draft_event(event):
             continue
         in_window = since <= timestamp < until
@@ -258,7 +268,8 @@ def collect_metrics(since: datetime, until: datetime, state_dir: Path | str = ST
                     or not isinstance(record, dict) or inactive(record)):
                 continue
             aggregate["active_pages"] += 1
-            round_times = _rounds(bus_root / project / f"{slug}.ndjson", aggregate, since, until)
+            bus = bus_root / project / f"{slug}.ndjson"
+            round_times = _rounds(bus, aggregate, since, until, _indexed_events(record.get("slug_dir"), bus))
             _deliveries(state_dir / "deliveries" / project / f"{slug}.json", aggregate, round_times, since, until)
             _quality(record.get("slug_dir"), aggregate)
         for key in _COUNT_KEYS:

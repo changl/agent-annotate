@@ -2,7 +2,7 @@
 
 Author page.md with built-in Markdown; `annotate new --example` prints a complete example. Review, Library, Findings and Plans share the project page; History preserves published versions and submitted rounds. Do not copy servers or styles into the project.
 
-Publish page and cards together with `annotate new DIR --from page.md --version vN --publish --ask` (omit `--ask` when there are no cards). Generation alone stages a draft. Failed checks or cards leave the previous version visible; retry the draft. A shown version cannot be rewritten, republished or extended with `annotate ask`: use the next version, optionally `--fixes vN` for a follow-up fix. The metadata History entry exposes `fixes`.
+Publish page and cards together with `annotate publish SLUG --from page.md`: annotate picks the next version (one past every shown or staged one) and numbers new cards. `annotate publish SLUG --from part.md --section Results` replaces one `##` section (matched by heading or `s:results`) of the newest version; a part without its own `##` keeps the heading, and other sections stay as they are with their open questions. The stored `source/vN.md` names images by the page's own copies, so the part file needs only its own pictures. `--stage` stages without showing; `annotate publish SLUG --version vN` shows a staged version. Failed checks or cards leave the previous version visible and print one `not live: … · fix: …` line. A shown version cannot be rewritten, republished or extended with `annotate ask`: use the next version, optionally `--fixes vN` for a follow-up fix. The metadata History entry exposes `fixes`. `annotate new DIR --from page.md --publish` does the same as `publish --from`.
 
 ## Document
 
@@ -12,12 +12,11 @@ Use lowercase ASCII kebab-case directory slugs from the initial name; `-YYYYMMDD
 Parent page references derive the target's name; omit duplicate labels. Slugs are route/CLI identities, never display names.
 Markdown `title`, version labels and Plan titles describe their documents/revisions; they never implicitly rename an existing page. Keep `page.md`, `source/vN.md`, `versions/vN.html`.
 
-Front matter accepts `title`, `version` and `label`. A requested full-plan review also uses `full_plan: true` and `other_files_required: none` (or the file list); retain the complete plan in later versions, with cards in a final `## Questions for reviewer` section.
+Front matter accepts `title`, `label` and, rarely, `version`. A requested full-plan review also uses `full_plan: true` and `other_files_required: none` (or the file list); retain the complete plan in later versions (`--section` does this), with JSON cards in a final `## Questions for reviewer` section.
 
 ````markdown
 ---
 title: Checkout
-version: v1
 label: Design review
 ---
 
@@ -53,13 +52,22 @@ Tables: at most 5 columns. Column 1 is a short row label (at most 4 words). Numb
 
 ## Cards
 
+One `ask` fence per card, placed after the block it asks about:
+
 ````markdown
-```cards
-[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Use one-step payment?","context":"The receipt remains visible in the comparison.","recommendation":"one-step","options":[{"id":"one-step","label":"One step","consequence":"Payment and receipt share a screen."},{"id":"keep","label":"Keep current","consequence":"Payment stays on a separate screen."}],"evidence":[{"label":"Checkout comparison","anchor":"cmp:checkout"}]}}]
+```ask
+Use one-step payment?
+The receipt remains visible in the comparison.
++ One step: Payment and receipt share a screen.
+- Keep current: Payment stays on a separate screen.
+see: cmp:checkout
+impact: high
 ```
 ````
 
-Use positive, ascending, stable numbers and matching `d:qN` anchors. `prompt` is required; context, recommendation (option ID), options and evidence explain the decision. Options accept strings or `{id,label,consequence,style?}`; style is `primary|default|danger`. Optional `impact`: `low|medium|high`; `blocking`: boolean; `catalog: true` only when the card approves a plan or design, which files the answer under Plans > Approved plans (other answers stay in Review history). Evidence entries use `{label,anchor}` and must exist in this version. Cards render after their last evidence target, so put the sections that carry open questions first and completed work or supporting detail after. At least one evidence anchor is required; every cited anchor must exist in this version, and a card cannot cite its own decision anchor. Explicit bulk approvals are refused before writing.
+The first line is the question; plain lines before the options are context. `+ Label: consequence` marks the recommended option (at most one), `- Label: consequence` the others; the option ID is the label in kebab-case. Optional trailing lines: `see:` with one or more anchors (default: the enclosing section), `impact: low|medium|high`, `blocking: yes`, and `catalog: yes` only when the card approves a plan or design, which files the answer under Plans > Approved plans (other answers stay in Review history). annotate numbers new cards after every number on the page and writes the number into the stored source; `#12 Use one-step payment?` keeps question 12 when you rewrite its section. Every cited anchor must exist in this version; a card cannot cite itself, and bulk approvals are refused. Cards render after their last evidence target, so put the sections that carry open questions first and completed work or supporting detail after.
+
+Older JSON `cards` fences still work with their rules: positive, ascending, stable `number`s with matching `d:qN` anchors, `prompt` required, options as strings or `{id,label,consequence,style?}` (style `primary|default|danger`), `recommendation` an option ID, at least one `evidence` `{label,anchor}`, in a final `## Questions for reviewer` section on a full plan. `annotate ask SLUG --from cards.json` takes the same JSON.
 
 The reviewer can choose, answer in words, or attach explanations. Clicks remain pending until Send. Submitted snapshots preserve prompts and answers even if a later version changes a question. Reviewer confirmation belongs to the reviewer.
 

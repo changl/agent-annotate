@@ -85,3 +85,27 @@ def _assert_sandboxed(monkeypatch):
     for name in ("STATE_DIR", "BUS_ROOT", "SETTINGS_JSON", "SHIM_PATH"):
         value = str(getattr(paths, name))
         assert str(_SANDBOX) in value, f"paths.{name} escaped the test sandbox: {value}"
+
+
+if os.environ.get("ANNOTATE_TEST_SQLITE"):
+    # Stage 5c check (tests/test_store_sqlite.py runs it): every page a test
+    # touches is imported into page.db first, so the suite runs on SQLite.
+    from agent_annotate import store as _store
+
+    _plain_backend = _store.backend
+
+    def _forced_backend(slug_dir):
+        directory = Path(slug_dir)
+        if (_plain_backend(directory) == "json" and (directory / "comments.json").is_file()
+                and os.access(directory, os.W_OK) and not any(directory.glob("page.db*"))):
+            from agent_annotate import cli as _cli
+            found = [(p, s, r) for p, s, r in _cli._registry_entries()
+                     if Path(r.get("slug_dir") or "").resolve() == directory.resolve()]
+            project, slug, record = found[0] if found else (None, None, {})
+            try:
+                _store.import_page(directory, project=project, slug=slug, bus_file=record.get("bus_file"))
+            except (OSError, ValueError):
+                return "json"
+        return _plain_backend(directory)
+
+    _store.backend = _forced_backend

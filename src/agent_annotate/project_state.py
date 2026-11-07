@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -242,13 +241,13 @@ def load_project(slug_dir: Path | str) -> dict:
 
 def save_project(slug_dir: Path | str, data: Any) -> dict:
     """Validate then atomically replace project.json with a fresh update timestamp."""
-    from .cli import _flock
     from .consolidate import refuse_if_moved
+    from .store import page_lock
     refuse_if_moved(slug_dir)
     validate_project(data)
     directory = Path(slug_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    with _flock(directory / "project.json.lock"):
+    with page_lock(directory, directory / "project.json.lock"):
         return _save_project(directory, data)
 
 
@@ -266,23 +265,8 @@ def _save_project(slug_dir: Path | str, data: Any) -> dict:
     encoded = _serialize(normalized)
     slug_dir = Path(slug_dir)
     slug_dir.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix=".project.", suffix=".tmp", dir=slug_dir, delete=False) as target:
-            temporary = Path(target.name)
-            target.write(encoded)
-            target.flush()
-            os.fsync(target.fileno())
-        os.replace(temporary, slug_dir / "project.json")
-        temporary = None
-        directory_fd = os.open(slug_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    from .store import write_bytes
+    write_bytes(slug_dir / "project.json", encoded)
     return normalized
 
 

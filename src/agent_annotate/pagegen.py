@@ -130,12 +130,12 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
     while i < len(lines) and lines[i].strip() != "---":
         i += 1
     if i >= len(lines):
-        raise PageGenError("front matter opened with `---` but never closed")
+        raise PageGenError("front matter opened with `---` but never closed · fix: end it with a `---` line")
     for raw in lines[start:i]:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         if ":" not in raw:
-            raise PageGenError(f"front matter line is not `key: value`: {raw.strip()!r}")
+            raise PageGenError(f"front matter line {raw.strip()!r} is not `key: value` · fix: write `key: value` or remove the line")
         key, _, value = raw.partition(":")
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -192,10 +192,10 @@ def parse_blocks(body: str) -> list[dict]:
                 buf.append(lines[i])
                 i += 1
             if i >= n:
-                raise PageGenError(f"fenced block opened with ```{lang} was never closed")
+                raise PageGenError(f"fenced block opened with ```{lang} was never closed · fix: close it with a ``` line")
             i += 1
             text = "\n".join(buf)
-            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "details", "project", "compare")
+            blocks.append({"kind": lang, "raw": text} if lang in ("cards", "ask", "details", "project", "compare")
                           else {"kind": "code", "lang": lang, "text": text})
             continue
 
@@ -253,6 +253,352 @@ def parse_blocks(body: str) -> list[dict]:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Plain-text decision cards
+#
+#     ```ask
+#     Use one-step payment?                 prompt; `#19012 Use…` keeps question #19012
+#     The receipt remains visible.          context (any plain lines before the options)
+#     + One step: Payment and receipt …     the recommended option (at most one `+`)
+#     - Keep current: Payment stays …       another option; id = slugify(label)
+#     see: cmp:checkout, s:plan             evidence (default: the enclosing section)
+#     impact: high                          also blocking: yes, catalog: yes
+#     ```
+# ────────────────────────────────────────────────────────────────────────────
+_ASK_NUMBER = re.compile(r"^#(\d+)\s+(.*\S)$")
+_ASK_OPTION = re.compile(r"^([+-])\s+(.*\S)$")
+_ASK_KEY = re.compile(r"^(see|impact|blocking|catalog):\s*(.*)$", re.IGNORECASE)
+_ASK_YES = {"yes": True, "true": True, "no": False, "false": False}
+
+
+def parse_ask(raw: str) -> dict:
+    """An ```ask fence → today's card dict (`decision_request` and, with `#N`, its number)."""
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    if not lines:
+        raise PageGenError("an ask card is empty · fix: put the question on the fence's first line")
+    prompt, rest = lines[0], lines[1:]
+    card: dict = {"source_kind": "ask"}
+    numbered = _ASK_NUMBER.match(prompt)
+    if numbered:
+        card["number"], prompt = int(numbered.group(1)), numbered.group(2)
+        if card["number"] < 1:
+            raise PageGenError(f"ask card {prompt!r}: #0 is not a question number · fix: use the number the page shows")
+    if _ASK_OPTION.match(prompt) or _ASK_KEY.match(prompt):
+        raise PageGenError(f"ask card starts with {prompt!r} · fix: put the question on the fence's first line")
+    dr: dict = {"prompt": prompt}
+    context, options, recommended, keys = [], [], [], False
+    for line in rest:
+        option = _ASK_OPTION.match(line)
+        key = _ASK_KEY.match(line) if options else None
+        if option and not keys:
+            # The first colon followed by a space ends the label, so "10:30 start" stays whole.
+            split = re.match(r"(.*?):(?:\s+|$)(.*)", option.group(2))
+            label, consequence = (split.group(1).strip(), split.group(2)) if split else (option.group(2), "")
+            oid = slugify(label)
+            if not label:
+                raise PageGenError(f"ask card {prompt!r}: an option has no label · fix: write {option.group(1)} Label: consequence")
+            if any(o["id"] == oid for o in options):
+                raise PageGenError(f"ask card {prompt!r}: two options are named {label!r} · fix: give each option its own label")
+            options.append({"id": oid, "label": label, "consequence": consequence.strip()})
+            if option.group(1) == "+":
+                recommended.append(oid)
+        elif key:
+            keys = True
+            name, value = key.group(1).lower(), key.group(2).strip()
+            if name == "see":
+                anchors = [a for a in re.split(r"[\s,]+", value) if a]
+                if not anchors:
+                    raise PageGenError(f"ask card {prompt!r}: see: names no anchor · fix: see: s:<section> or another anchor on this page")
+                dr["evidence"] = [{"label": a, "anchor": a} for a in anchors]
+            elif name == "impact":
+                if value.lower() not in ("low", "medium", "high"):
+                    raise PageGenError(f"ask card {prompt!r}: impact {value!r} · fix: impact: low, medium or high")
+                dr["impact"] = value.lower()
+            elif value.lower() not in _ASK_YES:
+                raise PageGenError(f"ask card {prompt!r}: {name} {value!r} · fix: {name}: yes or no")
+            else:
+                dr[name] = _ASK_YES[value.lower()]
+        elif options:
+            raise PageGenError(f"ask card {prompt!r}: {clip(line, 60)!r} comes after the options · fix: "
+                               "context goes before the options; after them only see:, impact:, blocking:, catalog:")
+        else:
+            context.append(line)
+    if len(recommended) > 1:
+        raise PageGenError(f"ask card {prompt!r} recommends {len(recommended)} options · fix: mark one option with +")
+    if context:
+        dr["context"] = " ".join(context)
+    if recommended:
+        dr["recommendation"] = recommended[0]
+    if options:
+        dr["options"] = options
+    card["decision_request"] = dr
+    return card
+
+
+class _Regenerate(Exception):
+    """Another publish took a reserved number, or the picked version, before the locked write."""
+
+
+class VersionTaken(PageGenError):
+    """The picked version was taken while a merged (`--section`) source was built on the version before it."""
+
+
+def _taken_numbers(slug_dir: Path, version: str) -> set[int]:
+    """Every number the page shows (archived and legacy included) or another draft reserved."""
+    from .cli import _item_numbers
+    try:
+        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        store = {}
+    taken = {n for n in _item_numbers(store if isinstance(store, dict) else {}).values() if type(n) is int}
+    for path in (slug_dir / ".review-drafts").glob("v*.json"):
+        if path.stem == version:
+            continue  # the draft this generation replaces
+        try:
+            taken.update(n for n in json.loads(path.read_text(encoding="utf-8")).get("reserved") or [] if type(n) is int)
+        except (OSError, ValueError, AttributeError):
+            pass
+    return taken
+
+
+def _reserve_numbers(slug_dir: Path, version: str, blocks: list[dict]) -> list[int]:
+    """Numbers for the page's unnumbered ask cards: one past everything taken or on this page."""
+    explicit, count = set(), 0
+    for block in blocks:
+        if block["kind"] == "ask":
+            number = parse_ask(block["raw"]).get("number")
+            if number:
+                explicit.add(number)
+            else:
+                count += 1
+        elif block["kind"] == "cards":
+            try:
+                data = json.loads(block["raw"])
+            except ValueError:
+                continue  # render names the broken fence
+            data = data.get("cards") if isinstance(data, dict) else data
+            explicit.update(c["number"] for c in data or [] if isinstance(c, dict) and type(c.get("number")) is int)
+    if not count:
+        return []
+    start = max(_taken_numbers(slug_dir, version) | explicit, default=0) + 1
+    return list(range(start, start + count))
+
+
+def _number_ask_fences(text: str, numbers: list[int]) -> str:
+    """Write each allocated number into its fence, so the stored source re-poses the same question."""
+    lines, todo, i = text.split("\n"), iter(numbers), 0
+    while i < len(lines):
+        fence = _FENCE.match(lines[i].strip())
+        i += 1
+        if not fence:
+            continue
+        first = None
+        while i < len(lines) and not _FENCE.match(lines[i].strip()):
+            if fence.group(1).lower() == "ask" and first is None and lines[i].strip():
+                first = i
+            i += 1
+        i += 1
+        if first is not None and not _ASK_NUMBER.match(lines[first].strip()):
+            indent = lines[first][:len(lines[first]) - len(lines[first].lstrip())]
+            lines[first] = f"{indent}#{next(todo)} {lines[first].lstrip()}"
+    return "\n".join(lines)
+
+
+_COMPARE_IMAGE = re.compile(r"^(\s*(?:current|proposed):\s*)([^|\s]+)(.*)$", re.IGNORECASE)
+
+
+def _image_refs(text: str, refs: dict[str, str]) -> str:
+    """Replace image paths (image lines and compare lines) by the page's own copies, so the stored source
+    renders again without the author's files."""
+    lines, fenced = text.split("\n"), None
+    for i, line in enumerate(lines):
+        fence = _FENCE.match(line.strip())
+        if fence:
+            fenced = None if fenced is not None else fence.group(1).lower()
+            continue
+        image = _IMAGE.match(line.strip()) if fenced is None else None
+        if image and image.group(2) in refs:
+            at = line.rfind(image.group(2))  # the path, not alt text that repeats it
+            lines[i] = line[:at] + refs[image.group(2)] + line[at + len(image.group(2)):]
+        pair = _COMPARE_IMAGE.match(line) if fenced == "compare" else None
+        if pair and pair.group(2) in refs:
+            lines[i] = pair.group(1) + refs[pair.group(2)] + pair.group(3)
+    return "\n".join(lines)
+
+
+_COPY = r'assets/[0-9a-f]{12}-[^"]+'
+
+
+def _shown_images(slug_dir: Path, base: str, sections: list[tuple[str, str]]) -> dict[str, str]:
+    """{image path: page copy} for kept sections of a page whose stored source still names the author's files.
+
+    Each section is matched with its rendered copy in the base version or the archive page that holds
+    it; a path maps when exactly one copy in that section carries its file name.
+    """
+    rendered: dict[str, str] = {}
+    for page in [slug_dir / "versions" / f"{base}.html",
+                 *sorted((slug_dir / "plans").glob("archive-*/versions/v*.html"), reverse=True)]:
+        try:
+            for m in _SECTION_RE.finditer(page.read_text(encoding="utf-8")):
+                rendered.setdefault(m.group(1), m.group(2))
+        except OSError:
+            continue
+    refs: dict[str, str] = {}
+    unclear: set[str] = set()
+    for anchor, block in sections:
+        html_section = rendered.get(anchor, "")
+        copies = {None: set(re.findall(_COPY, html_section))}  # a compare cell also matches on its role
+        for role, cell in re.findall(r'<figure class="aa-cmp-cell" data-role="(current|proposed)">(.*?)</figure>',
+                                     html_section, re.DOTALL):
+            copies.setdefault(role, set()).update(re.findall(_COPY, cell))
+        for b in parse_blocks(block):
+            paths = [(b["path"], None)] if b["kind"] == "image" else []
+            if b["kind"] == "compare":
+                paths = [(item[0], role) for pair in parse_compare(b["raw"])[1] for item, role in zip(pair, ROLES)]
+            for path, role in paths:
+                if path.startswith(("assets/", "attachments/")):
+                    continue  # already the page's own copy
+                found = {c for c in copies.get(role, copies[None]) if c.endswith("-" + _asset_stem(Path(path).name))}
+                copy = found.pop() if len(found) == 1 else None
+                if copy is None or refs.setdefault(path, copy) != copy:
+                    unclear.add(path)
+    return {path: copy for path, copy in refs.items() if path not in unclear}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# `--section NAME`: replace one `##` block of the newest source
+# ────────────────────────────────────────────────────────────────────────────
+def _h2_blocks(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(first line, line after the block, heading text) for each `##` outside fences."""
+    starts, fenced = [], False
+    for i, line in enumerate(lines):
+        if _FENCE.match(line.strip()):
+            fenced = not fenced
+            continue
+        heading = None if fenced else _HEADING.match(line.strip())
+        if heading and len(heading.group(1)) == 2:
+            starts.append((i, heading.group(2).strip()))
+    ends = [i for i, _ in starts[1:]] + [len(lines)]
+    return [(start, end, text) for (start, text), end in zip(starts, ends)]
+
+
+def _closed_numbers(slug_dir: Path) -> set[int]:
+    """Numbers of questions the page holds that are answered or closed (none of their rows is still open)."""
+    from .cli import _iter_comments
+    from .sync_server import _can_withdraw
+    try:
+        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    seen, open_ = set(), set()
+    for _, comment in _iter_comments(store if isinstance(store, dict) else {}, include_archived=True):
+        number = comment.get("number")
+        if type(number) is int:
+            seen.add(number)
+            if _can_withdraw(comment):
+                open_.add(number)
+    return seen - open_
+
+
+def _keep_open_cards(lines: list[str], closed: set[int]) -> tuple[list[str], list[int]]:
+    """Drop answered questions from kept sections; return the lines and the numbers still asked."""
+    out, kept, i = [], [], 0
+    while i < len(lines):
+        fence = _FENCE.match(lines[i].strip())
+        if not fence or fence.group(1).lower() not in ("ask", "cards"):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = i + 1
+        while end < len(lines) and not _FENCE.match(lines[end].strip()):
+            end += 1
+        inner = lines[i + 1:end]
+        if fence.group(1).lower() == "ask":
+            number = parse_ask("\n".join(inner)).get("number")
+            if number not in closed:
+                out += lines[i:end + 1]
+                kept += [number] if number else []
+        else:
+            try:
+                data = json.loads("\n".join(inner))
+            except ValueError:
+                data = None  # left as it is; generation names the broken fence
+            cards = data.get("cards") if isinstance(data, dict) else data
+            if not isinstance(cards, list):
+                out += lines[i:end + 1]
+            else:
+                still = [c for c in cards if not (isinstance(c, dict) and c.get("number") in closed)]
+                kept += [c["number"] for c in still if isinstance(c, dict) and type(c.get("number")) is int]
+                if still == cards:
+                    out += lines[i:end + 1]
+                elif still:
+                    out += [lines[i], json.dumps(still, ensure_ascii=False), lines[end] if end < len(lines) else "```"]
+        i = end + 1
+    return out, kept
+
+
+def _front_matter(meta: dict) -> str:
+    return "---\n" + "".join(f"{key}: {value}\n" for key, value in meta.items()) + "---\n" if meta else ""
+
+
+def section_source(slug_dir: Path, text: str, name: str) -> dict:
+    """The newest source with one `##` block replaced by `text`.
+
+    The base is `source/<current>.md`, or the newest staged draft when it is newer.
+    A file without its own `##` keeps the original heading. Other sections keep
+    their open questions (carried with the same number) and drop answered ones.
+    """
+    from .cli import _read_meta
+    from .review_versions import draft_path
+    current = _read_meta(slug_dir).get("current")
+    candidates = [v for v in [current, *(p.stem for p in (slug_dir / ".review-drafts").glob("v*.json"))]
+                  if isinstance(v, str) and re.fullmatch(r"v\d+", v) and (slug_dir / "source" / f"{v}.md").is_file()
+                  and (v == current or draft_path(slug_dir, v).is_file())]
+    if not candidates:
+        raise PageGenError("--section needs an earlier version from markdown · fix: publish the whole page with --from first")
+    base = max(candidates, key=lambda v: int(v[1:]))
+    base_meta, base_body = parse_front_matter((slug_dir / "source" / f"{base}.md").read_text(encoding="utf-8"))
+    part_meta, part_body = parse_front_matter(text)
+    lines = base_body.split("\n")
+    blocks = _h2_blocks(lines)
+    used: set[str] = set()
+    anchors = []
+    for _, _, heading in blocks:  # the renderer's `s:<slug>` anchors, `-2` for a repeated heading
+        anchor, k = f"s:{slugify(heading)}", 2
+        while anchor in used:
+            anchor, k = f"s:{slugify(heading)}-{k}", k + 1
+        used.add(anchor)
+        anchors.append(anchor)
+    hits = [(b, anchor) for b, anchor in zip(blocks, anchors) if name.strip().lower() in (b[2].lower(), anchor)]
+    if not hits:
+        from difflib import get_close_matches
+        names = [b[2] for b in blocks]  # a long page names the closest few, not its 80 headings
+        shown = names if len(names) <= 8 else get_close_matches(name, names, n=5, cutoff=0.3) or names[:5]
+        more = f" (+{len(names) - len(shown)} more)" if len(names) > len(shown) else ""
+        raise PageGenError(f'no section "{name}" on {base} · fix: --section one of '
+                           + (", ".join(shown) + more or "none; publish the whole page"))
+    if len(hits) > 1:
+        raise PageGenError(f'{len(hits)} sections are named "{name}" on {base} · fix: --section one of '
+                           + ", ".join(anchor for _, anchor in hits))
+    (start, end, heading), _ = hits[0]
+    part = part_body.strip("\n").split("\n")
+    if not _h2_blocks(part):
+        part = [lines[start], ""] + part
+    closed = _closed_numbers(slug_dir)
+    before, kept_before = _keep_open_cards(lines[:start], closed)
+    after, kept_after = _keep_open_cards(lines[end:], closed)
+    shown = _shown_images(slug_dir, base, [(anchor, "\n".join(lines[s:e])) for (s, e, _), anchor in zip(blocks, anchors)
+                                           if s != start])
+    if shown:  # kept sections render from the page's own image copies, not the author's files
+        before = _image_refs("\n".join(before), shown).split("\n")
+        after = _image_refs("\n".join(after), shown).split("\n")
+    meta = {k: v for k, v in base_meta.items() if k not in ("version", "label")}
+    meta.update(part_meta)
+    body = "\n".join(before + part + [""] + after)
+    return {"text": _front_matter(meta) + body, "base": base, "current": current,
+            "section": heading, "kept": kept_before + kept_after}
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Images and the current-vs-proposed block
 #
 # Decision #16: the reviewer judges pictures inline, without clicking.
@@ -285,31 +631,31 @@ def parse_compare(raw: str) -> tuple[str, list[tuple[tuple[str, str], tuple[str,
         key, sep, value = s.partition(":")
         key, value = key.strip().lower(), value.strip()
         if not sep or key not in ("title", "layout", "current", "proposed"):
-            raise PageGenError(f"compare line must be `current:`, `proposed:`, `title:` or `layout:`: {s!r}")
+            raise PageGenError(f"compare line must be `current:`, `proposed:`, `title:` or `layout:`: {s!r} · fix: start it with one of them")
         if key == "title":
             title = value
         elif key == "layout":
             if value.lower() not in ("side", "stack", "auto"):
-                raise PageGenError(f"compare layout must be side, stack or auto (got {value!r})")
+                raise PageGenError(f"compare layout must be side, stack or auto (got {value!r}) · fix: layout: side")
             layout = None if value.lower() == "auto" else value.lower()
         else:
             path, _, caption = value.partition("|")
             item = (path.strip(), caption.strip())
             if not item[0]:
-                raise PageGenError(f"compare `{key}:` needs an image path: {s!r}")
+                raise PageGenError(f"compare `{key}:` needs an image path: {s!r} · fix: {key}: shots/name.png | Caption")
             if key == "current":
                 if pending:
-                    raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+                    raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it · fix: add `proposed: <image>` after it")
                 pending = item
             else:
                 if not pending:
-                    raise PageGenError(f"compare `proposed: {item[0]}` needs a `current:` line before it")
+                    raise PageGenError(f"compare `proposed: {item[0]}` needs a `current:` line before it · fix: add `current: <image>` before it")
                 pairs.append((pending, item))
                 pending = None
     if pending:
-        raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it")
+        raise PageGenError(f"compare `current: {pending[0]}` has no `proposed:` line after it · fix: add `proposed: <image>` after it")
     if not pairs:
-        raise PageGenError("a compare fence needs at least one `current:` / `proposed:` pair")
+        raise PageGenError("a compare fence needs at least one `current:` / `proposed:` pair · fix: add both lines")
     return title, pairs, layout
 
 
@@ -331,9 +677,9 @@ class ImageStore:
         if ref in self.cache:
             return self.cache[ref]
         if re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)", ref):
-            raise PageGenError(f"image must be a local file, not a URL: {ref}")
+            raise PageGenError(f"image must be a local file, not a URL: {ref} · fix: save it and use its local path")
         if Path(ref).suffix.lower() not in IMAGE_SUFFIXES:
-            raise PageGenError(f"image must be a .png, .jpg, .gif or .webp file: {ref}")
+            raise PageGenError(f"image must be a .png, .jpg, .gif or .webp file: {ref} · fix: convert it to PNG or JPEG")
         path = Path(ref).expanduser()
         candidates = [path] if path.is_absolute() else []
         if not path.is_absolute() and self.base_dir:
@@ -342,13 +688,13 @@ class ImageStore:
             candidates.append(self.page_dir / path)
         found = next((c for c in candidates if c.is_file()), None)
         if found is None:
-            raise PageGenError(f"image not found: {ref}")
+            raise PageGenError(f"image not found: {ref} · fix: use a path relative to the markdown file")
         if found.stat().st_size > MAX_IMAGE_BYTES:
-            raise PageGenError(f"image is over 10 MB: {ref}")
+            raise PageGenError(f"image is over 10 MB: {ref} · fix: shrink it below 10 MB")
         data = found.read_bytes()
         size = image_size(data)
         if size is None:
-            raise PageGenError(f"not a readable PNG, JPEG, GIF or WebP image: {ref}")
+            raise PageGenError(f"not a readable PNG, JPEG, GIF or WebP image: {ref} · fix: export it again as PNG or JPEG")
         src = None
         if self.page_dir:
             try:
@@ -358,8 +704,7 @@ class ImageStore:
             except ValueError:
                 pass
         if src is None:
-            stem = re.sub(r"[^A-Za-z0-9_.-]", "-", found.name).replace("..", "-").strip(".-")[:80] or "image"
-            name = hashlib.sha256(data).hexdigest()[:12] + "-" + stem
+            name = hashlib.sha256(data).hexdigest()[:12] + "-" + _asset_stem(found.name)
             self.staged[name] = data
             src = "assets/" + name
         self.cache[ref] = (src, size)
@@ -373,6 +718,10 @@ class ImageStore:
                 tmp = target.with_name(target.name + ".tmp")
                 tmp.write_bytes(data)
                 os.replace(tmp, target)
+
+
+def _asset_stem(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", name).replace("..", "-").strip(".-")[:80] or "image"
 
 
 def _img(src: str, size: tuple[int, int] | None, alt: str) -> str:
@@ -433,9 +782,10 @@ class Renderer:
 
     def __init__(self, title: str, skip_cards: bool = False,
                  structural: set[str] | None = None,
-                 images: ImageStore | None = None) -> None:
+                 images: ImageStore | None = None, ask_numbers: list[int] | None = None) -> None:
         self.title = title
         self.skip_cards = skip_cards
+        self.ask_numbers = iter(ask_numbers or ())
         self.images = images or ImageStore(None, None)
         # Anchors the prose owns, collected by a first pass. A card may name one
         # (that is how a card is pinned to a table row); it must never mint a
@@ -520,7 +870,7 @@ class Renderer:
     # ── blocks ─────────────────────────────────────────────────────────────
     def para(self, text: str) -> None:
         if _INLINE_IMAGE.search(text):
-            raise PageGenError(f"put each image on its own line: {clip(text, 80)!r}")
+            raise PageGenError(f"put each image on its own line: {clip(text, 80)!r} · fix: move the image out of the sentence")
         self.ensure_section()
         aid = self._unique(f"s:{self.section_slug}:p{self._next('p:' + self.section_slug)}")
         self.reg(aid, text, "para", parent=self.parent)
@@ -568,10 +918,10 @@ class Renderer:
         self.ensure_section()
         summary, _, body = raw.strip().partition("\n")
         if not summary.strip():
-            raise PageGenError("a details fence needs a summary on its first line")
+            raise PageGenError("a details fence has no summary · fix: put the summary on its first line")
         blocks = parse_blocks(body)
-        if any(b["kind"] in ("cards", "project", "details", "heading") for b in blocks):
-            raise PageGenError("details holds paragraphs, lists, tables or KPIs; keep headings and cards outside")
+        if any(b["kind"] in ("cards", "ask", "project", "details", "heading") for b in blocks):
+            raise PageGenError("a details fence holds a heading, card or project · fix: move headings and cards outside it")
         aid = self._unique(f"s:{self.section_slug}:details{self._next('details:' + self.section_slug)}")
         self.reg(aid, summary, "details", parent=self.parent)
         self.parts.append(f'<details class="aa-details" data-anchor-id="{aid}"><summary>{inline(summary)}</summary>')
@@ -592,7 +942,7 @@ class Renderer:
             cls = fields[2].lower() if len(fields) > 2 and fields[2] else ""
             if cls not in ("bad", "warn", "ok", ""):
                 raise PageGenError(
-                    f"kpi tone must be bad, warn or ok (got {cls!r} in {tile!r})")
+                    f"kpi tone must be bad, warn or ok (got {cls!r} in {tile!r}) · fix: end the tile with | bad, | warn or | ok")
             aid = self._unique(f"kpi:{slugify(label or value, 40)}")
             self.reg(aid, f"{value} {label}", "kpi", parent=self.parent)
             cells.append(
@@ -637,25 +987,36 @@ class Renderer:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise PageGenError(f"```cards block is not valid JSON: {exc}") from exc
+            raise PageGenError(f"```cards block is not valid JSON ({exc}) · fix: correct the JSON or write ```ask cards") from exc
         if isinstance(data, dict):
             data = data.get("cards")
         if not isinstance(data, list) or not data:
             raise PageGenError(
-                '```cards block must hold a JSON array of '
-                '{anchor_id, text, decision_request} objects')
+                '```cards block is not a list of cards · fix: a JSON array of '
+                '{anchor_id, text, decision_request} objects, or ```ask cards')
         rendered = []
         for card in data:
             if not isinstance(card, dict):
-                raise PageGenError("each entry in a ```cards block must be an object")
+                raise PageGenError("a ```cards entry is not an object · fix: make each entry {anchor_id, text, decision_request}")
             rendered.append(self._card(card))
         self.parts.append(f'<div class="cards">{"".join(rendered)}</div>')
+
+    def ask_block(self, raw: str) -> None:
+        self.ensure_section()
+        card = parse_ask(raw)
+        dr = card["decision_request"]
+        dr.setdefault("evidence", [{"label": self.section_title, "anchor": self.section}])
+        # Without reserved numbers (a comparison render) an unnumbered card keeps a d:<n> anchor.
+        number = card.get("number") or next(self.ask_numbers, None)
+        if number:
+            card["number"], card["anchor_id"] = number, f"d:q{number}"
+        self.parts.append(f'<div class="cards">{self._card(card)}</div>')
 
     def _card(self, card: dict) -> str:
         dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
         text = re.sub(r"\s+", " ", (card.get("text") or dr.get("prompt") or "")).strip()
         if not text:
-            raise PageGenError("a card has neither `text` nor `decision_request.prompt`")
+            raise PageGenError("a card has neither `text` nor `decision_request.prompt` · fix: give it a prompt")
         self.card_n += 1
         wanted = (card.get("anchor_id") or "").strip()
         bound_to = None
@@ -755,6 +1116,8 @@ class Renderer:
             self.table(block["header"], block["rows"])
         elif kind == "cards" and not self.skip_cards:
             self.cards_block(block["raw"])
+        elif kind == "ask" and not self.skip_cards:
+            self.ask_block(block["raw"])
         elif kind == "details":
             self.details(block["raw"])
         elif kind == "image":
@@ -768,7 +1131,7 @@ class Renderer:
 
 
 def render(meta: dict, blocks: list[dict],
-           images: ImageStore | None = None) -> tuple[str, dict, list[dict]]:
+           images: ImageStore | None = None, ask_numbers: list[int] | None = None) -> tuple[str, dict, list[dict]]:
     """Two passes: one to learn which anchors the prose owns, one to render.
 
     Without the first pass a card that names `tbl:columns:row:tier` before the
@@ -780,8 +1143,12 @@ def render(meta: dict, blocks: list[dict],
     images = images or ImageStore(None, None)
     prepass = Renderer(title, skip_cards=True, images=images)
     prepass.run(blocks)
-    renderer = Renderer(title, structural=set(prepass.used), images=images)
+    renderer = Renderer(title, structural=set(prepass.used), images=images, ask_numbers=ask_numbers)
     renderer.run(blocks)
+    for card in renderer.cards:  # `see:` may name content further down; label it from the whole page
+        if card.get("source_kind") == "ask":
+            for item in card["decision_request"]["evidence"]:
+                item["label"] = (renderer.registry.get(item["anchor"]) or {}).get("name") or item["label"]
     return renderer.canvas, renderer.registry, renderer.cards
 
 
@@ -803,21 +1170,28 @@ def lint(canvas: str, registry: dict) -> list[str]:
         if stray.strip():
             problems.append(
                 f"text between </style> and the first element: {clip(stray, 80)!r} "
-                "— CSS and anything else must live inside the <style> block")
+                "· fix: keep CSS inside the <style> block")
 
     anchors = _ANCHOR_ATTR.findall(canvas)
     seen: set[str] = set()
     for aid in anchors:
         if aid in seen:
-            problems.append(f"duplicate anchor id: {aid!r}")
+            problems.append(f"duplicate anchor id: {aid!r} · fix: rename one of the two headings, rows or captions")
         seen.add(aid)
     if not anchors:
-        problems.append("no anchors — nothing on this page can be commented on")
+        problems.append("no anchors — nothing on this page can be commented on · fix: add a ## section with text")
     for aid in sorted(seen - set(registry)):
-        problems.append(f"anchor {aid!r} is rendered but missing from ANCHOR_REGISTRY")
+        problems.append(f"anchor {aid!r} is rendered but missing from ANCHOR_REGISTRY · fix: report this annotate bug with the page.md")
     for aid in sorted(set(registry) - seen):
-        problems.append(f"anchor {aid!r} is registered but not rendered")
+        problems.append(f"anchor {aid!r} is registered but not rendered · fix: report this annotate bug with the page.md")
     return problems
+
+
+def _first_problem(problems: list[str]) -> str:
+    """One line: the first problem, how many follow, then its fix."""
+    head, _, fix = problems[0].partition(" · fix: ")
+    more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
+    return f"{head}{more} · fix: {fix}"
 
 
 def _is_later_version(version: str) -> bool:
@@ -831,15 +1205,17 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
         return []
     problems = []
     if str(meta.get("full_plan") or "").strip().lower() != "true":
-        problems.append("later versions require front matter `full_plan: true`")
+        problems.append("a full plan needs `full_plan: true` · fix: set `full_plan: true` in the front matter")
     if not str(meta.get("other_files_required") or "").strip():
         problems.append(
-            "later versions require `other_files_required: none` or an explicit file list")
+            "a full plan names no other files · fix: add `other_files_required: none` or the file list")
 
     card_blocks = [i for i, block in enumerate(blocks) if block.get("kind") == "cards"]
+    # Numbered by annotate and citing their own section, ask cards may sit anywhere; JSON cards keep every rule.
+    cards = [card for card in cards if card.get("source_kind") != "ask"]
     if cards:
         if len(card_blocks) != 1:
-            problems.append("later versions require exactly one ```cards block")
+            problems.append("a full plan has several ```cards blocks · fix: merge them into one, or write ```ask cards")
         elif card_blocks:
             prior_h2 = next((
                 block for block in reversed(blocks[:card_blocks[0]])
@@ -847,41 +1223,41 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
             ), None)
             if not prior_h2 or slugify(prior_h2.get("text", "")) not in {"questions-for-reviewer", "questions-for-chang"}:
                 problems.append(
-                    "the ```cards block must be in one final `## Questions for reviewer` section")
+                    "the ```cards block is outside `## Questions for reviewer` · fix: move it into that final section, or write ```ask cards")
 
         seen: set[int] = set()
         previous = 0
         for card in cards:
             number = card.get("number")
             if isinstance(number, bool) or not isinstance(number, int) or number < 1:
-                problems.append("every later-version card needs a positive integer `number`")
+                problems.append("a JSON card has no `number` · fix: add a positive `number`, or write ```ask cards (annotate numbers them)")
                 continue
             if number in seen:
-                problems.append(f"duplicate card number {number}")
+                problems.append(f"duplicate card number {number} · fix: give each card its own number")
             if number <= previous:
-                problems.append("card numbers must be strictly increasing")
+                problems.append("card numbers must be strictly increasing · fix: order the cards by number")
             seen.add(number)
             previous = number
 
             expected_anchor = f"d:q{number}"
             if card.get("anchor_id") != expected_anchor:
                 problems.append(
-                    f"card #{number} must use anchor_id {expected_anchor!r}; "
-                    "link plan locations through decision_request.evidence")
+                    f"card #{number} has anchor_id {card.get('anchor_id')!r} · fix: use {expected_anchor!r}; "
+                    "cite plan locations in decision_request.evidence")
             prompt = str((card.get("decision_request") or {}).get("prompt") or "")
             if re.match(r"^\s*(?:Q(?:uestion)?\s*\d+|#\s*\d+)", prompt, re.IGNORECASE):
                 problems.append(
-                    f"card #{number} prompt repeats a number; the `number` badge is canonical")
+                    f"card #{number} prompt repeats a number · fix: drop the number from the prompt")
             evidence = (card.get("decision_request") or {}).get("evidence")
             if not isinstance(evidence, list) or not evidence:
                 problems.append(
-                    f"card #{number} needs decision_request.evidence linking to the plan")
+                    f"card #{number} cites no evidence · fix: add decision_request.evidence with an anchor on this page")
             else:
                 for item in evidence:
                     anchor = item.get("anchor") if isinstance(item, dict) else None
                     if not anchor or anchor not in registry:
                         problems.append(
-                            f"card #{number} evidence anchor {anchor!r} is not on this page")
+                            f"card #{number} cites {anchor!r}, not on this page · fix: cite an anchor on this page")
     return problems
 
 
@@ -1052,7 +1428,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     meta, body = parse_front_matter(text)
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
-            raise PageGenError(f"unknown front-matter key {key!r}")
+            raise PageGenError(f"unknown front-matter key {key!r} · fix: use one of {', '.join(FRONT_MATTER_KEYS)}")
     meta["title"] = title or meta.get("title") or plan_id.replace("-", " ").capitalize()
     meta["slug"] = f"plan:{plan_id}"
     meta.setdefault("date", datetime.date.today().isoformat())
@@ -1061,7 +1437,7 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
     canvas, registry, _cards = render(meta, blocks, images)
     problems = lint(canvas, registry)
     if problems:
-        raise PageGenError("plan rejected by lint: " + "; ".join(problems))
+        raise PageGenError("plan: " + _first_problem(problems))  # fix: passes through
     if page_dir is not None:
         images.copy_into(page_dir)
     # The HTTP plan route supplies the actual version; no Review version is embedded.
@@ -1070,14 +1446,15 @@ def render_plan(text: str, plan_id: str, *, title: str | None = None,
 
 def generate(source: Path, slug_dir: Path, version: str | None = None,
              label: str | None = None, *, title: str | None = None,
-             fixes: str | None = None) -> dict:
-    """Parse, render, lint and write every file a publishable page needs."""
-    text = source.read_text(encoding="utf-8")
+             fixes: str | None = None, text: str | None = None, _attempt: int = 0) -> dict:
+    """Parse, render, lint and write every file a publishable page needs (`text` replaces the file's)."""
+    merged = text is not None
+    text = source.read_text(encoding="utf-8") if text is None else text
     meta, body = parse_front_matter(text)
     for key in meta:
         if key not in FRONT_MATTER_KEYS:
             raise PageGenError(
-                f"unknown front-matter key {key!r} — known keys: "
+                f"unknown front-matter key {key!r} · fix: use one of "
                 f"{', '.join(FRONT_MATTER_KEYS)}")
     meta.setdefault("title", slug_dir.name.replace("-", " ").strip().capitalize())
     meta.setdefault("slug", slug_dir.name)
@@ -1088,16 +1465,18 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         try:
             title = validate_name(title)
         except ValueError as exc:
-            raise PageGenError(str(exc)) from exc
-    version = version or meta.get("version") or "v1"
+            raise PageGenError(str(exc)) from exc  # fix: passes through
+    from .review_versions import next_version
+    picked = not (version or meta.get("version"))  # picked here, so a concurrent publish may take it first
+    version = version or meta.get("version") or next_version(slug_dir)
     if not re.fullmatch(r"v\d+", version):
-        raise PageGenError(f"version must look like v1, v2, v3 (got {version!r})")
+        raise PageGenError(f"version must look like v1, v2, v3 (got {version!r}) · fix: --version v2, or leave it out for the next one")
     from .cli import _read_meta
     from .review_versions import require_draft
     try:
         require_draft(_read_meta(slug_dir), version)
     except ValueError as exc:
-        raise PageGenError(str(exc)) from exc
+        raise PageGenError(str(exc)) from exc  # fix: passes through
     label = label or meta.get("label") or f"generated from {source.name}"
 
     blocks = parse_blocks(body)
@@ -1106,23 +1485,24 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if project_blocks:
         from .project_state import validate_project
         if len(project_blocks) > 1:
-            raise PageGenError("use one project fence for persistent project modules")
+            raise PageGenError("the page has several project fences · fix: merge them into one")
         try:
             project_data = validate_project(json.loads(project_blocks[0]["raw"]))
         except ValueError as exc:
-            raise PageGenError(f"project fence: {exc}") from exc
+            raise PageGenError(f"project fence: {exc} · fix: correct the project JSON") from exc
     images = ImageStore(source.parent, slug_dir)
-    canvas, registry, cards = render(meta, blocks, images)
+    reserved = _reserve_numbers(slug_dir, version, blocks)
+    canvas, registry, cards = render(meta, blocks, images, reserved)
     from .decision_quality import card_refusal, page_anchors
     anchors = page_anchors(canvas)
     for card in cards:
         refusal = card_refusal(card, anchors)
         if refusal:
-            raise PageGenError(f"card {card['anchor_id']!r}: {refusal}")
+            raise PageGenError(f'card "{first_sentence(card["text"])}" {refusal}')  # fix: passes through
     problems = lint(canvas, registry)
     problems += _round_contract_problems(meta, blocks, cards, registry, version)
     if problems:
-        raise PageGenError("page rejected by lint:\n  " + "\n  ".join(problems))
+        raise PageGenError(_first_problem(problems))  # fix: passes through
 
     unchanged: list[str] = []
     previous = _previous_sections(slug_dir, version, meta["title"])
@@ -1148,11 +1528,21 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     from .page_names import page_name, set_page_name
     # Resolve legacy titles before an in-place regeneration replaces their HTML.
     initial_name = page_name(slug_dir, fallback=meta["title"])
+    stats = {"sections": layout["sections"], "screenshots": layout["screenshots"]}
+    if reserved:
+        stats["reserved"] = reserved
     try:
-        prior = _write_files(slug_dir, version, label, source, text, html_out, cards,
-                             {"sections": layout["sections"], "screenshots": layout["screenshots"]}, fixes)
+        stored = _image_refs(_number_ask_fences(text, reserved), {ref: src for ref, (src, _) in images.cache.items()})
+        prior = _write_files(slug_dir, version, label, source, stored, html_out, cards, stats, fixes, picked)
     except ValueError as exc:
-        raise PageGenError(str(exc)) from exc
+        raise PageGenError(str(exc)) from exc  # fix: passes through
+    except _Regenerate as moved:
+        if moved.args and merged:  # rebuild on the newer source, or the other publish's section is lost
+            raise VersionTaken(f"{version} was taken · fix: rerun the same command") from None
+        if _attempt >= 2:
+            raise PageGenError("numbers kept colliding with another publish · fix: rerun the same command") from None
+        return generate(source, slug_dir, None if picked else version, label, title=title, fixes=fixes, text=text,
+                        _attempt=_attempt + 1)
     name = set_page_name(slug_dir, title, initial_name=initial_name)
     if project_data is not None:
         from .project_state import save_project
@@ -1168,6 +1558,8 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
         "fixes": fixes,
         "anchors": len(registry),
         "cards": len(cards),
+        "reserved": reserved,
+        "picked": picked,
         "warnings": warnings,
         "unchanged_sections": unchanged,
         "layout": layout,
@@ -1179,29 +1571,33 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)          # servers read versions/<vN>.html live
+    from .store import write_text
+    write_text(path, text)          # servers read versions/<vN>.html live
 
 
 def _write_files(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
-    from .sync_server import _locked_store
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None,
+                 picked: bool = False) -> list[str]:
+    from .store import transaction as _locked_store
     slug_dir.mkdir(parents=True, exist_ok=True)
     with _locked_store(slug_dir):
-        return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes)
+        return _write_files_locked(slug_dir, version, label, source, source_text, html_out, cards, stats, fixes, picked)
 
 
 def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
-                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None) -> list[str]:
+                 source_text: str, html_out: str, cards: list[dict], stats: dict | None = None, fixes: str | None = None,
+                 picked: bool = False) -> list[str]:
     from .cli import _read_meta
 
     slug_dir.mkdir(parents=True, exist_ok=True)
     existing_meta = _read_meta(slug_dir)
     prior = sorted(h.get("version") for h in (existing_meta.get("history") or [])
                    if isinstance(h, dict) and h.get("version"))
-    from .review_versions import stage
+    from .review_versions import draft_path, shown, stage
+    if set((stats or {}).get("reserved") or ()) & _taken_numbers(slug_dir, version):
+        raise _Regenerate
+    if picked and (shown(existing_meta, version) or draft_path(slug_dir, version).exists()):
+        raise _Regenerate(version)  # another publish staged or showed this version since it was picked
     stage(slug_dir, version, label, fixes, stats or {})
 
     _atomic_write(slug_dir / "versions" / f"{version}.html", html_out)
@@ -1213,7 +1609,8 @@ def _write_files_locked(slug_dir: Path, version: str, label: str, source: Path,
     # Reports can have no decision cards, so the server may never write this
     # store before the next publish gate reads it. Initialize valid JSON while
     # leaving any existing feedback (including a damaged store) untouched.
-    from .sync_server import _atomic_write_json, _locked_store
+    from .store import transaction as _locked_store
+    from .store import write_json as _atomic_write_json
     with _locked_store(slug_dir):
         if not (slug_dir / "comments.json").exists():
             _atomic_write_json(slug_dir / "comments.json", {"schema_version": 2, "anchors": {}, "archived": {}})
@@ -1237,8 +1634,12 @@ current: shots/checkout-current.png | Today
 proposed: shots/checkout-proposed.png | One-step pay
 ```
 
-```cards
-[{"number":1,"anchor_id":"d:q1","decision_request":{"prompt":"Ship the one-step checkout?","context":"Checks passed; the preview matches the proposed screen.","recommendation":"ship","options":[{"id":"ship","label":"Ship","consequence":"Preview becomes public."},{"id":"hold","label":"Hold","consequence":"Keep the current checkout."}],"evidence":[{"label":"Checkout, current vs proposed","anchor":"cmp:checkout"}]}}]
+```ask
+Ship the one-step checkout?
+Checks passed; the preview matches the proposed screen.
++ Ship: Preview becomes public.
+- Hold: Keep the current checkout.
+see: cmp:checkout
 ```
 
 ## Progress
@@ -1257,13 +1658,13 @@ def cmd_new(args) -> int:
         sys.stdout.write(EXAMPLE)
         return 0
     if not args.slug_dir or not args.from_file:
-        print("ERROR: `new` needs a <slug-dir> and --from <page.md> "
+        print("ERROR: `new` has no page or markdown · fix: annotate new <slug-dir> --from <page.md> "
               "(or --example on its own)", file=sys.stderr)
         return 2
 
     source = Path(args.from_file).expanduser()
     if not source.is_file():
-        print(f"ERROR: markdown source not found: {source}", file=sys.stderr)
+        print(f"ERROR: markdown {source} not found · fix: check the --from path", file=sys.stderr)
         return 2
     slug_dir = Path(args.slug_dir).expanduser().resolve()
     from .cli import _moved_page, _slug_project
@@ -1274,62 +1675,85 @@ def cmd_new(args) -> int:
     try:
         reason = exception_reason(args)
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
         return 2
     if not reason:
         duplicate = duplicate_page(slug_dir, getattr(args, "project", None))
         if duplicate:
             print(duplicate_message(duplicate), file=sys.stderr)
             return 2
-    try:
-        result = generate(source, slug_dir, args.version, args.label, title=getattr(args, "title", None),
-                          fixes=getattr(args, "fixes", None))
-    except PageGenError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
-        print(f"ERROR: could not write the page: {exc}", file=sys.stderr)
-        return 1
+    from .cli import NUMBERS_TAKEN, VERSION_TAKEN
+    version, auto = args.version, None
+    for _attempt in range(3):  # a number or version another publish took first regenerates the draft
+        text = None
+        if getattr(args, "section", None):  # (again) on the newest source: another publish may have landed
+            try:
+                merged = section_source(slug_dir, source.read_text(encoding="utf-8"), args.section)
+            except PageGenError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
+                return 1
+            text = merged["text"]
+            args.section_title, args.kept = merged["section"], merged["kept"]
+            args.section_base = merged["base"] if merged["base"] != merged["current"] else None
+        try:
+            result = generate(source, slug_dir, version, args.label, title=getattr(args, "title", None),
+                              fixes=getattr(args, "fixes", None), text=text)
+        except VersionTaken:
+            continue  # merge again on the version that was staged first
+        except PageGenError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)  # fix: passes through
+            return 1
+        except OSError as exc:
+            print(f"ERROR: could not write the page ({exc}) · fix: check the page folder is writable and rerun", file=sys.stderr)
+            return 1
 
-    slug, version = page_slug, result["version"]
-    print(f"  wrote          {result['html']}")
-    print(f"  anchors        {result['anchors']}")
-    print(f"  cards          {result['cards']}"
-          + (f" → {result['cards_json']}" if result["cards"] else ""))
-    print(f"  source copy    {result['source_copy']}")
-    print(f"  version        {version} ({result['label']})"
-          + (f"; earlier: {', '.join(result['prior_versions'])}"
-             if result["prior_versions"] else ""))
-    layout = result.get("layout") or {}
-    if layout.get("folded"):
-        print(f"  earlier        {len(layout['folded'])} finished topics folded into Earlier updates")
-    for archive in layout.get("archived") or []:
-        print(f"  archived       {archive['topics']} finished topics → {archive['id']} ({archive['title']})")
-    if layout.get("already_archived"):
-        print(f"  archived       {len(layout['already_archived'])} topics already in an archive page left out")
-    if layout.get("returned"):
-        print(f"  returned       {len(layout['returned'])} archived topics changed and are back on the page")
-    for warning in result.get("warnings") or []:
-        print(f"  WARN           {warning}")
+        slug, version = page_slug, result["version"]
+        print(f"  wrote          {result['html']}")
+        print(f"  anchors        {result['anchors']}")
+        print(f"  cards          {result['cards']}"
+              + (f" → {result['cards_json']}" if result["cards"] else ""))
+        print(f"  source copy    {result['source_copy']}")
+        print(f"  version        {version} ({result['label']})"
+              + (f"; earlier: {', '.join(result['prior_versions'])}"
+                 if result["prior_versions"] else ""))
+        layout = result.get("layout") or {}
+        if layout.get("folded"):
+            print(f"  earlier        {len(layout['folded'])} finished topics folded into Earlier updates")
+        for archive in layout.get("archived") or []:
+            print(f"  archived       {archive['topics']} finished topics → {archive['id']} ({archive['title']})")
+        if layout.get("already_archived"):
+            print(f"  archived       {len(layout['already_archived'])} topics already in an archive page left out")
+        if layout.get("returned"):
+            print(f"  returned       {len(layout['returned'])} archived topics changed and are back on the page")
+        for warning in result.get("warnings") or []:
+            print(f"  WARN           {warning}")
 
-    args.candidate_version = version
-    args.ready = True
-    if args.publish:
-        if result["cards"] and not args.ask:
-            print("ERROR: this page has cards; publish the complete round with --publish --ask", file=sys.stderr)
-            return 2
+        args.candidate_version = version
+        args.ready = True
+        args.ask = bool(result["cards"])  # a page with cards is always published as its whole round
+        if not args.publish:
+            from shlex import quote
+            print("  staged; publish the complete round:")
+            print(f"    {_inv()} publish {quote(str(slug_dir))} --version {version}")
+            return 0
         rc = _call_publish(slug_dir, args)
         if rc:
             return rc
         if result["cards"]:
-            return _call_ask(slug, result["cards_json"], version, args)
-        return _call_publish_version(slug_dir, version, result["label"], args)
-    from shlex import quote
-    print("  staged; publish the complete round:")
-    print(f"    {_inv()} new {slug_dir} --from {quote(str(source))} --version {version} --publish"
-          + (" --ask" if result["cards"] else ""))
-    rc = 0
-    return rc
+            rc = _call_ask(slug, result["cards_json"], version, args, bool(result["reserved"]))
+        else:
+            rc = _call_publish_version(slug_dir, version, result["label"], args)
+        auto = result["picked"] if auto is None else auto
+        if rc == VERSION_TAKEN and auto:
+            version = None  # the next version, on top of the one that landed
+        elif rc == VERSION_TAKEN:
+            print(f"not live: {version} is not newer than the version shown now · fix: leave out --version",
+                  file=sys.stderr)
+            return 2
+        elif rc != NUMBERS_TAKEN:
+            return rc
+    print("not live: numbers kept colliding with another publish · fix: rerun the same command", file=sys.stderr)
+    return 2
 
 
 def _publish_namespace(slug_dir: Path, args) -> argparse.Namespace:
@@ -1359,15 +1783,15 @@ def _call_publish_version(slug_dir: Path, version: str, label: str, args) -> int
     from .cli import cmd_publish_version
     return cmd_publish_version(argparse.Namespace(
         slug_dir=str(slug_dir), version=version, label=label,
-        project=getattr(args, "project", None), prepared=True))
+        project=getattr(args, "project", None), prepared=True, newest=True))
 
 
-def _call_ask(slug: str, cards_json: Path, version: str, args) -> int:
+def _call_ask(slug: str, cards_json: Path, version: str, args, renumber: bool = False) -> int:
     from .cli import cmd_ask
     return cmd_ask(argparse.Namespace(
         slug=slug, from_file=str(cards_json), version=version,
         project=getattr(args, "project", None), author=None, json=False,
-        ready=getattr(args, "ready", False)))
+        ready=getattr(args, "ready", False), renumber=renumber, newest=True))
 
 
 def add_parser(sub) -> None:
@@ -1377,13 +1801,13 @@ def add_parser(sub) -> None:
     sp.add_argument("slug_dir", nargs="?", default=None)
     sp.add_argument("--from", dest="from_file", default=None, metavar="page.md",
                     help="the markdown document (front matter + prose + ```cards)")
-    sp.add_argument("--version", default=None, help="vN (default: front matter, else v1)")
+    sp.add_argument("--version", default=None, help="vN (default: front matter, else the next version)")
     sp.add_argument("--fixes", default=None, metavar="vN", help="this new version fixes an earlier visible version")
     sp.add_argument("--label", default=None, help="version label for the rail")
     sp.add_argument("--title", default=None, help="stable page name; version titles stay in Markdown")
     sp.add_argument("--publish", action="store_true", help="run `publish` on the result")
     sp.add_argument("--ask", action="store_true",
-                    help="seed the ```cards round before making the version visible")
+                    help="accepted for old commands; a page with cards always publishes its round")
     sp.add_argument("--example", action="store_true",
                     help="print a complete example document and exit")
     sp.add_argument("--project", default=None)

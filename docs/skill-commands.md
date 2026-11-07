@@ -16,6 +16,56 @@ options:
   --json
 ```
 
+## publish
+
+```text
+usage: annotate publish [-h] [--from page.md] [--stage] [--version VERSION]
+                        [--fixes vN] [--label LABEL] [--section NAME]
+                        [--title TITLE] [--exception REASON] [--standalone]
+                        [--project PROJECT] [--port PORT]
+                        [--transport {funnel,local,tailscale,cloudflare,cloudflare_tailscale}]
+                        [--hostname HOSTNAME] [--public]
+                        [--path-prefix PATH_PREFIX] [--skip-js-lint]
+                        [--no-verify] [--verify-timeout VERIFY_TIMEOUT]
+                        [--json] [--verbose]
+                        slug_dir
+
+positional arguments:
+  slug_dir              page directory; with --from or --version also SLUG or
+                        PROJECT/SLUG
+
+options:
+  -h, --help            show this help message and exit
+  --from page.md        generate the next version from this markdown and make
+                        it live
+  --stage               with --from: stage the version without showing it
+  --version VERSION     with --from: the version to write; alone: show this
+                        staged version
+  --fixes vN            this new version fixes an earlier visible version
+  --label LABEL         version label for the rail
+  --section NAME        with --from: replace this ## section (heading or s:
+                        anchor) of the newest version
+  --title TITLE         stable page name, independent of revision title
+  --exception REASON    explicit reason for a second project page
+  --standalone          alias for --exception standalone
+  --project PROJECT
+  --port PORT
+  --transport {funnel,local,tailscale,cloudflare,cloudflare_tailscale}
+  --hostname HOSTNAME
+  --public              also add a Cloudflare route, for a reviewer outside
+                        the tailnet
+  --path-prefix PATH_PREFIX
+  --skip-js-lint        EMERGENCY ONLY: skip inline JS syntax check (not
+                        recommended)
+  --no-verify           EMERGENCY ONLY: print the URL without proving the page
+                        renders
+  --verify-timeout VERIFY_TIMEOUT
+                        seconds to wait for each verification stage (default
+                        45)
+  --json
+  --verbose             receipt with the page link
+```
+
 ## new
 
 ```text
@@ -34,13 +84,13 @@ options:
   -h, --help            show this help message and exit
   --from page.md        the markdown document (front matter + prose +
                         ```cards)
-  --version VERSION     vN (default: front matter, else v1)
+  --version VERSION     vN (default: front matter, else the next version)
   --fixes vN            this new version fixes an earlier visible version
   --label LABEL         version label for the rail
   --title TITLE         stable page name; version titles stay in Markdown
   --publish             run `publish` on the result
-  --ask                 seed the ```cards round before making the version
-                        visible
+  --ask                 accepted for old commands; a page with cards always
+                        publishes its round
   --example             print a complete example document and exit
   --project PROJECT
   --exception REASON    explicit reason for a second project page

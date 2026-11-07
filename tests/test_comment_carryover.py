@@ -393,7 +393,7 @@ def _mock_ready_publish(monkeypatch, directory):
     from agent_annotate.review_versions import activate
     monkeypatch.setattr(pagegen, "_call_publish", lambda *args: 0)
     monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *args: ("test", directory.name, {"slug_dir": str(directory)}))
-    def commit(record, version, items, author):
+    def commit(record, version, items, author, *flags, **options):
         activate(directory, version)
         return 0
     monkeypatch.setattr(cli, "_commit_review", commit)

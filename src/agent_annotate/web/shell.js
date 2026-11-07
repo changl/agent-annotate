@@ -392,10 +392,16 @@ async function pollJson(url, quiet) {
 // STORE is what the page shows; LIVE is the store as the server last sent it.
 // Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
 let LIVE = null;
+let storeAsked = 0, storeTaken = 0;
 async function pollStore() {
+  const asked = ++storeAsked;
   try {
     const got = await pollJson('./comments.json?view=poll');
     if (!got.ok) return false;
+    // The 8 s poll and a read after Save can overlap; an older read that
+    // answers last would put the card back as it was before the save.
+    if (asked < storeTaken) return true;
+    storeTaken = asked;
     if (!got.same || !LIVE) LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
     return true;
   } catch { return false; }
