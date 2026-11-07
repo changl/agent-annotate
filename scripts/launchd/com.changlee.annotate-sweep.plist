@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hourly sweep on M1, report only (no apply). Install: copy scripts/sweep.py to
+     ~/.local/share/annotate-sweeps/sweep.py and this file to ~/Library/LaunchAgents/, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.changlee.annotate-sweep.plist
+     Stop: launchctl bootout gui/$(id -u)/com.changlee.annotate-sweep and remove the file. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.changlee.annotate-sweep</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-I</string>
+        <string>/Users/changlee/.local/share/annotate-sweeps/sweep.py</string>
+        <string>all</string>
+        <string>--beads-dir</string>
+        <string>/Users/changlee/projects/agent-annotate/codex</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/changlee/Library/Logs/annotate-sweep.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/changlee/Library/Logs/annotate-sweep.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/changlee/.local/bin:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/changlee</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

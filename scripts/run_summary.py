@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Render an Orca Run, its Beads and leases into a digest of at most 40 lines.
 
-  run_summary.py RUN [--beads-dir DIR]
+  run_summary.py RUN [--beads-dir DIR] [--extra FILE ...]
 
 A coordinator reads this instead of carrying run history in context, and a fresh
 session reads it when the old one recycles (docs/orchestration-recycle.md).
 Sources: orca orchestration run-show / task-list / worker-list / gate-list,
 `bd list --status in_progress` and `bd ready` (run in --beads-dir, default cwd),
-leases and status.log under $ORCA_RUNS_DIR/<run> (default ~/.local/state/orca-runs).
+leases and status.log under $ORCA_RUNS_DIR/<run> (default ~/.local/state/orca-runs),
+and the summary lines (up to the first blank line) of each --extra file; the hourly
+sweep's ~/.local/share/annotate-sweeps/latest.txt is read by default.
 """
 import argparse
 import collections
@@ -20,6 +22,7 @@ from pathlib import Path
 
 MAX_LINES = 40
 LIST = 6  # items listed per section; the rest are counted
+SWEEP = Path.home() / ".local/share/annotate-sweeps/latest.txt"
 
 
 def run_json(argv, cwd=None):
@@ -45,7 +48,7 @@ def listed(rows, fmt):
     return out
 
 
-def render(run, orca, beads, leases, status_lines, now):
+def render(run, orca, beads, leases, status_lines, now, extra=()):
     lines = []
     show = orca.get("run") or {}
     lines.append(f"Run {run}: {clip(show.get('objective'), 90)}")
@@ -78,9 +81,18 @@ def render(run, orca, beads, leases, status_lines, now):
     lines.append(f"Status log: {len(status_lines)} line(s)" + (", last:" if status_lines else ""))
     for s in status_lines[-3:]:
         lines.append(f"  {(s.get('t') or '')[11:16]}Z {s.get('dispatch') or s.get('from')}: {clip(s.get('subject'), 60)}")
+    for source in extra:
+        lines += [clip(line, 100) for line in source[:LIST]]
     if len(lines) > MAX_LINES:
         lines = lines[: MAX_LINES - 1] + [f"(digest cut at {MAX_LINES} lines)"]
     return lines
+
+
+def summary_lines(path):
+    try:
+        return Path(path).expanduser().read_text().split("\n\n", 1)[0].splitlines()
+    except OSError:
+        return []
 
 
 def collect(run, beads_dir):
@@ -113,8 +125,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run")
     parser.add_argument("--beads-dir", default=None)
+    parser.add_argument("--extra", nargs="*", default=[str(SWEEP)], help="one-line sources (default: the sweep)")
     args = parser.parse_args(argv)
-    print("\n".join(render(args.run, *collect(args.run, args.beads_dir), now=int(time.time()))))
+    extra = [lines for lines in map(summary_lines, args.extra) if lines]
+    print("\n".join(render(args.run, *collect(args.run, args.beads_dir), now=int(time.time()), extra=extra)))
     return 0
 
 

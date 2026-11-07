@@ -660,7 +660,7 @@ def test_new_example_prints_a_document_that_generate_accepts(tmp_path):
     proc = _cli("new", "--example")
     assert proc.returncode == 0, proc.stderr
     # Open questions first: the example's card leads, completed work follows.
-    assert proc.stdout.index("```cards") < proc.stdout.index("## Progress")
+    assert proc.stdout.index("```ask") < proc.stdout.index("## Progress")
     src = tmp_path / "page.md"
     src.write_text(proc.stdout, encoding="utf-8")
     with pytest.raises(PageGenError, match="image not found: shots/checkout-current.png"):
@@ -680,7 +680,6 @@ def test_new_json_preserves_the_anchor_count_and_the_next_commands(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "anchors        3" in json.loads(proc.stdout)["output"]
     assert "publish " in proc.stdout
-    assert "--publish --ask" in proc.stdout
     assert "--version v1" in proc.stdout
 
 
@@ -699,13 +698,12 @@ def test_new_reports_a_lint_failure_on_stderr_with_a_nonzero_exit(tmp_path):
     assert not (tmp_path / "slug" / "versions").exists()
 
 
-def test_new_default_output_is_one_linked_line(tmp_path):
+def test_new_default_output_is_one_line_naming_the_show_command(tmp_path):
     source = tmp_path / "page.md"
     source.write_text("## Result\n\nChecks passed.\n")
     result = _cli("new", str(tmp_path / "receipt"), "--from", str(source))
     assert result.returncode == 0, result.stderr
-    assert len(result.stdout.splitlines()) == 1
-    assert "/receipt/current.html" in result.stdout
+    assert result.stdout.startswith("v1 staged · show it: ") and result.stdout.endswith(f" publish {tmp_path / 'receipt'} --version v1\n")
 
 
 def test_full_plan_accepts_reviewer_heading_without_a_persons_name(tmp_path):

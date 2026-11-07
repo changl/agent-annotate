@@ -367,18 +367,9 @@ def collect_slugs():
         sd = info.get("slug_dir")
         store, meta = None, None
         if sd and os.path.isdir(sd):
-            cj = os.path.join(sd, "comments.json")
-            if os.path.exists(cj):
-                try:
-                    store = json.load(open(cj, encoding="utf-8"))
-                except Exception:
-                    store = None
-            mj = os.path.join(sd, "current.meta.json")
-            if os.path.exists(mj):
-                try:
-                    meta = json.load(open(mj, encoding="utf-8"))
-                except Exception:
-                    meta = None
+            from .store import read_json
+            store = read_json(os.path.join(sd, "comments.json"))
+            meta = read_json(os.path.join(sd, "current.meta.json"))
         if isinstance(store, dict):
             from .submitted import store_view
             store = store_view(store)

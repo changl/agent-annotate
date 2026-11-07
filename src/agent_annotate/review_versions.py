@@ -14,11 +14,24 @@ def shown(meta, version):
 
 def require_draft(meta, version):
     if not isinstance(version, str) or not re.fullmatch(r'v[0-9]+', version):
-        raise ValueError('version must look like v1, v2, v3')
+        raise ValueError('version is not vN · fix: --version v2 (or leave it out for the next one)')
     if shown(meta, version):
         numbers = [int(h['version'][1:]) for h in meta.get('history', [])
                    if isinstance(h, dict) and re.fullmatch(r'v[0-9]+', str(h.get('version', '')))]
-        raise ValueError(f'{version} is already visible and immutable; use v{max([int(version[1:]), *numbers]) + 1}')
+        raise ValueError(f'{version} is already visible and immutable; use v{max([int(version[1:]), *numbers]) + 1}'
+                         ' · fix: leave out --version and the next one is picked')
+
+
+def next_version(directory):
+    """One past every version the page shows, has staged or holds as a file; v1 for a new page."""
+    from .cli import _read_meta
+    directory = Path(directory)
+    meta = _read_meta(directory) if directory.is_dir() else {}
+    names = [meta.get('current'), *(h.get('version') for h in meta.get('history') or [] if isinstance(h, dict))]
+    names += [p.stem for p in (directory / '.review-drafts').glob('v*.json')]
+    names += [p.name[:-5] for p in (directory / 'versions').glob('v*.html')]
+    numbers = [int(v[1:]) for v in names if isinstance(v, str) and re.fullmatch(r'v[0-9]+', v)]
+    return f'v{max(numbers, default=0) + 1}'
 
 
 def draft_path(directory, version):
@@ -33,17 +46,17 @@ def read_draft(directory, version):
 
 def stage(directory, version, label, fixes, stats):
     from .cli import _read_meta
-    from .sync_server import _atomic_write_json
+    from .store import write_json
     meta = _read_meta(directory)
     require_draft(meta, version)
     if fixes is not None and (not shown(meta, fixes) or int(fixes[1:]) >= int(version[1:])):
-        raise ValueError('--fixes must name an earlier visible review version')
+        raise ValueError('--fixes names no earlier shown version · fix: --fixes one of the versions in History')
     data = {'version': version, 'label': label, 'preview': secrets.token_urlsafe(24), **stats}
     if fixes is not None:
         data['fixes'] = fixes
     path = draft_path(directory, version)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_json(path, data)
+    write_json(path, data)
     return data
 
 
@@ -57,7 +70,8 @@ def fingerprint(directory, version):
 
 def activate(directory, version, label=None):
     """Caller holds the comment-store lock, after every card was validated."""
-    from .cli import _now_iso, _write_meta_locked
+    from .cli import _now_iso
+    from .store import remove, update_meta
     data = read_draft(directory, version)
     link = directory / '.current.html.ready'
     link.unlink(missing_ok=True)
@@ -65,14 +79,14 @@ def activate(directory, version, label=None):
 
     def mutate(meta):
         require_draft(meta, version)
-        entry = {k: v for k, v in data.items() if k not in ('preview', 'verified', 'fingerprint')}
+        entry = {k: v for k, v in data.items() if k not in ('preview', 'verified', 'fingerprint', 'reserved')}
         entry.update(ts=_now_iso(), label=label if label is not None else data['label'])
         meta.setdefault('history', []).append(entry)
         meta['current'] = version
 
-    _write_meta_locked(directory, mutate)
+    update_meta(directory, mutate)
     os.replace(link, directory / 'current.html')
-    draft_path(directory, version).unlink(missing_ok=True)
+    remove(draft_path(directory, version))
 
 
 def preview_version(directory, route):

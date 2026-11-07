@@ -32,25 +32,27 @@ def card_refusal(card: dict, anchors: set[str]) -> str | None:
     # ponytail: explicit approval language only; extend from real missed examples.
     if any(re.search(r"\b(?:accept|approve|confirm)[\s_-]+(?:(?:these|those|them)\s+)?(?:all|both)\b", text, re.I)
            for text in texts):
-        return "ask for one decision instead of approving several items at once"
+        return "asks to approve several items at once · fix: ask one decision per card"
     action = r"\b(?:accept|approve|confirm)\b"
     counted = r"(?:[2-9]|[1-9][0-9]+)\s+(?:items|recommendations|rows)\b"
     if (any(re.search(action + r"\s+(?:(?:the|these|those|following|remaining|proposed)\s+){0,2}" + counted, text, re.I)
             for text in texts)
             or (re.search(action, texts[0], re.I) and any(
                 re.fullmatch(r"\s*(?:all\s+)?" + counted + r"[.?!]?\s*", text, re.I) for text in texts[1:]))):
-        return "ask for one decision instead of approving several items at once"
+        return "asks to approve several items at once · fix: ask one decision per card"
     evidence = request.get("evidence")
     if not isinstance(evidence, list) or not evidence:
-        return "cite at least one evidence anchor from the target version"
+        return "cites no evidence; it needs at least one anchor from the target version · fix: cite an anchor on this page"
     for item in evidence:
         anchor = item.get("anchor") if isinstance(item, dict) else None
         if (not isinstance(anchor, str) or anchor not in anchors
                 or (anchor == card.get("anchor_id") and anchor.startswith("d:"))):
             candidates = sorted(a for a in anchors if not a.startswith("d:"))
             closest = get_close_matches(str(anchor or ""), candidates, n=3, cutoff=0.2)
-            hint = "; closest: " + ", ".join(closest) if closest else ""
-            return f"evidence anchor {anchor!r} must identify visible content in the target version{hint}"
+            fix = "cite one of " + ", ".join(closest) if closest else "cite an anchor on this page"
+            if anchor in anchors:
+                return f"cites its own card {anchor}, not visible content · fix: {fix}"
+            return f"cites {anchor}, not on this page · fix: {fix}"
 
     return None
 

@@ -111,8 +111,14 @@ build_server()
 print('Installed wheel import, assets, identity, MCP and schemas passed')
 """
         subprocess.run([sys.executable, "-I", "-c", smoke, str(installed), version, build_id], check=True)
-    (destination / "SHA256SUMS").write_text(f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}\n")
+    shutil.copy2(root / "scripts/rollout.py", destination / "rollout.py")  # other Macs fetch and hash-check it
+    (destination / "SHA256SUMS").write_text(checksums(wheel))
     return wheel
+
+
+def checksums(wheel):
+    files = (wheel, wheel.parent / "rollout.py")
+    return "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in files)
 
 
 def main():
@@ -131,10 +137,10 @@ def main():
     elif release_needed(tag, build_id):
         wheel = args.dist / f"agent_annotate-{version}-py3-none-any.whl"
         verify_wheel(wheel, ROOT, build_id)
-        expected = f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}\n"
-        if (args.dist / "SHA256SUMS").read_text() != expected:
-            raise ValueError("Wheel checksum does not match the updater manifest")
-        subprocess.run(["gh", "release", "create", tag, str(wheel), str(args.dist / "SHA256SUMS"),
+        if ((args.dist / "SHA256SUMS").read_text() != checksums(wheel)
+                or (args.dist / "rollout.py").read_bytes() != (ROOT / "scripts/rollout.py").read_bytes()):
+            raise ValueError("Wheel or rollout.py checksum does not match the updater manifest")
+        subprocess.run(["gh", "release", "create", tag, str(wheel), str(args.dist / "rollout.py"), str(args.dist / "SHA256SUMS"),
                         "--repo", os.environ["REPOSITORY"], "--target", build_id, "--generate-notes"], check=True)
 
 

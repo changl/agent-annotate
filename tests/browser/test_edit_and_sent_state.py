@@ -91,6 +91,44 @@ def _evidence_on_timeout(page, item, what):
         page.remove_listener("requestfailed", on_done)
 
 
+def test_an_older_store_read_landing_late_keeps_the_saved_edit(tmp_path):
+    """agent-annotate-pla: the 8 s poll and the read after Save overlapped; the
+    older answer landed last and put the note back as it was before the save."""
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, _):
+        frame = page.frame_locator("#content-frame")
+        item = frame.locator('[data-strip-item="question-11"]')
+        decision = "() => window.AnnotateDocs.comments().find(c => c.id === 'question-11').decision || {}"
+        saved = f"t => {{ const d = ({decision})(); return !d.pending && (d.text || '').includes(t); }}"
+        item.locator("textarea").fill("Change the time to 10:30")
+        item.locator(".annotate-decision-btns button").last.click()  # Answer in words
+        page.wait_for_function(saved, arg="Change the time to 10:30")
+        # A store read starts now, before the edit; its answer is held back.
+        page.evaluate("""() => {
+            const real = window.fetch;
+            window.fetch = async (u, o) => {
+                if (!(window.__hold && String(u).includes('comments.json'))) return real(u, o);
+                // A full answer, as when the store changed since the last read.
+                const r = await real(u, { ...o, headers: {} });
+                const body = await r.text();
+                await new Promise(go => { window.__release = go; });
+                return new Response(body, { status: r.status, headers: r.headers });
+            };
+            window.__hold = true;
+            window.__late = window.AnnotateDocs.refreshStore();
+            window.__hold = false;
+        }""")
+        page.wait_for_function("() => window.__release")
+        frame.locator(".annotate-sfold-bar button").click()
+        item.locator(".annotate-folded-row").click()
+        item.locator(".annotate-answer-note").first.locator(".annotate-note-edit-btn").click()
+        item.locator("textarea.annotate-note-edit").fill("Change the time to 10:30 and leave the roll-out time blank")
+        item.locator(".annotate-note-save").click()
+        page.wait_for_function(saved, arg="roll-out time blank")
+        page.evaluate("async () => { window.__release(); await window.__late; }")  # the older answer lands last
+        assert "roll-out time blank" in page.evaluate(f"() => ({decision})().text")
+
+
 def test_notes_add_up_and_every_one_reaches_the_agent(tmp_path):
     """#2659: a second worded answer replaced the first, and only the second was sent."""
     directory = _directory(tmp_path)
