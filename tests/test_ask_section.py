@@ -150,6 +150,29 @@ def test_section_publish_carries_open_questions_with_their_numbers(round_server,
     assert cli._short_receipt(args, record) == "v3 live · Results replaced · 1 card #2 · 1 kept"
 
 
+def test_a_question_set_aside_stays_set_aside_when_asked_again(round_server, tmp_path, monkeypatch):  # noqa: F811
+    """Chang #234: "answer later" questions came back on every new version."""
+    directory, httpd = round_server
+    _publish_flow(directory, httpd, monkeypatch)
+    page = tmp_path / "page.md"
+    page.write_text("---\ntitle: Checkout\n---\n\n## Results\n\nOld.\n\n## Plan\n\nPay.\n\n"
+                    "```ask\nUse one-step payment?\n+ One step: Shared screen.\n- Keep current: Separate.\n```\n")
+    args = argparse.Namespace(slug_dir=str(directory), from_file=str(page), version=None,
+                              label=None, project="test", publish=True, ask=False)
+    assert pagegen.cmd_new(args) == 0
+    store = json.loads((directory / "comments.json").read_text())
+    first = store["anchors"]["d:q1"][0]
+    first["answer_later"] = {"ts": "2026-11-07T07:00:00Z", "by": "chang@example.com"}  # as the server's answer-later route stores it
+    (directory / "comments.json").write_text(json.dumps(store))
+    part = tmp_path / "results.md"
+    part.write_text("Measured.\n")
+    args = argparse.Namespace(slug_dir=str(directory), from_file=str(part), version=None, section="Results",
+                              label=None, project="test", publish=True, ask=False, cmd="publish")
+    assert pagegen.cmd_new(args) == 0
+    carried = [c for c in json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"] if c["version"] == "v3"]
+    assert len(carried) == 1 and carried[0]["origin_id"] == first["id"] and carried[0].get("answer_later")
+
+
 def test_kept_sections_render_from_the_page_copies_of_their_images(tmp_path):
     from test_pagegen_images import png
     page, work = tmp_path / "page", tmp_path / "agent-worktree"

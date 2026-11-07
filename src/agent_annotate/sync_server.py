@@ -2362,6 +2362,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 prior = lineage[-1]
                                 fresh["origin_id"] = prior.get("origin_id") or prior["id"]
                                 fresh["origin_item_id"] = item_id(prior)
+                                # The reviewer set this question aside; asking it
+                                # again in a new version keeps it set aside.
+                                if _is_set_aside(prior):
+                                    fresh["answer_later"] = prior["answer_later"]
                                 if publication and _can_withdraw(prior):
                                     prior["status"] = "addressed_by_agent"
                                     prior["response_text"] = f"Asked again in {version}."
