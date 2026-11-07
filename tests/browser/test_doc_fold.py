@@ -117,4 +117,4 @@ def test_an_answer_later_question_folds_at_its_place_and_opens_to_bring_it_back(
     item.locator('[data-decision-action="later"][data-later="1"]').wait_for()
     assert frame.locator(Q11 + ".annotate-folded").count() == 0
     page.wait_for_timeout(500)
-    assert "answer_later" not in json.loads((directory / "comments.json").read_text())["anchors"]["d:q11"][0]
+    assert json.loads((directory / "comments.json").read_text())["anchors"]["d:q11"][0].get("answer_later") is False
