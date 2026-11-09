@@ -882,15 +882,16 @@ function statusLabel(c, cls) {
   return 'Done';
 }
 
-// Every comment on the page (all documents and tabs).
+// Every comment on the page (all documents and tabs), read-only.
+// Canonical records already have their anchor; counts need no copies of them.
 function flattenStore(includeArchived) {
   const all = [];
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
-    for (const c of items) all.push(Object.assign({}, c, { anchor_id: aid }));
+    for (const c of items) all.push(c.anchor_id === aid ? c : { ...c, anchor_id: aid });
   }
   if (includeArchived) {
     for (const [aid, items] of Object.entries(STORE.archived || {})) {
-      for (const c of items) all.push(Object.assign({}, c, { anchor_id: aid }));
+      for (const c of items) all.push(c.anchor_id === aid ? c : { ...c, anchor_id: aid });
     }
   }
   return all;
@@ -1828,9 +1829,11 @@ function renderCounts() {
   if (window.AA) window.AA.changed();
 }
 
-function renderDrawer() { return withIdIndex(renderDrawerNow); }
-function renderDrawerNow() {
+let drawerGroups = null;
+function renderDrawer(id, previousId) { return withIdIndex(() => renderDrawerNow(id, previousId)); }
+function renderDrawerNow(id, previousId) {
   if (DOC !== VIEW_DOC) return;
+  if (!drawerGroups || drawerGroups.doc !== DOC || drawerGroups.version !== CURRENT_VERSION) id = null;
   renderCounts();
   const listEl = document.getElementById('comment-list');
   const empty = document.getElementById('drawer-empty');
@@ -1869,29 +1872,39 @@ function renderDrawerNow() {
 
   // v9o: a card holding unsent text stays open with its box, even after the
   // agent answered or resolved it meanwhile (its section opens too).
-  for (const c of flattenAll(false)) {
+  for (const c of id ? [findCommentById(id)].filter(Boolean) : flattenAll(false)) {
     if (!hasUnsentText(c)) continue;
     cardExpanded[c.id] = true;
   }
 
-  const groups = { later: [], needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
+  const groups = id ? drawerGroups.groups : { later: [], needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
   // Feedback given on earlier versions stays listed, collapsed under
   // "Earlier feedback", instead of vanishing when a version is published.
   const earlier = (c) => !inScope(c) && !isNewerThanViewed(c);
-  for (const c of flattenAll(false)) {
-    // Unsent text stays in view after a version switch, not in Earlier feedback.
-    if (inScope(c) || hasUnsentText(c)) groups[sectionOf(c)].push(c);
-    else if (earlier(c)) groups.earlier.push(c);
-  }
-  for (const [aid, items] of Object.entries(STORE.archived || {})) {
-    for (const c of items) {
-      const item = Object.assign({}, c, { anchor_id: aid });
-      if (docOf(item) !== DOC) continue;
-      if (inScope(item)) groups.archived.push(item);
-      else if (earlier(item)) groups.earlier.push(item);
+  if (id) {
+    for (const key of SECTION_ORDER) groups[key] = groups[key].filter(c => c.id !== id && c.id !== previousId);
+    const c = findCommentById(id);
+    if (c && docOf(c) === DOC && !isNewerThanViewed(c)) {
+      const key = inScope(c) || hasUnsentText(c) ? (c.status === 'archived' ? 'archived' : sectionOf(c)) : 'earlier';
+      groups[key].push(c);
+    }
+  } else {
+    for (const c of flattenAll(false)) {
+      // Unsent text stays in view after a version switch, not in Earlier feedback.
+      if (inScope(c) || hasUnsentText(c)) groups[sectionOf(c)].push(c);
+      else if (earlier(c)) groups.earlier.push(c);
+    }
+    for (const [aid, items] of Object.entries(STORE.archived || {})) {
+      for (const c of items) {
+        const item = Object.assign({}, c, { anchor_id: aid });
+        if (docOf(item) !== DOC) continue;
+        if (inScope(item)) groups.archived.push(item);
+        else if (earlier(item)) groups.earlier.push(item);
+      }
     }
   }
-  SECTION_ORDER.forEach(k => groups[k].sort(byContentOrder));
+  drawerGroups = { doc: DOC, version: CURRENT_VERSION, groups };
+  SECTION_ORDER.forEach(k => { if (!id || groups[k].some(c => c.id === id)) groups[k].sort(byContentOrder); });
 
   const anything = SECTION_ORDER.some(k => groups[k].length);
   if (!anything) {
@@ -1903,34 +1916,48 @@ function renderDrawerNow() {
   empty.style.display = 'none';
   listEl.style.display = 'block';
 
-  listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(k => {
+  const sectionHtml = k => {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
     const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'is-orange' : 'badge-ghost';
     return `<section class="sec sec-${k}" data-section="${k}">
       <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
-      <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open ? groups[k].map(renderCItem).join('') : ''}</div>
+      <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open && !id ? groups[k].map(renderCItem).join('') : ''}</div>
     </section>`;
-  }).join('');
+  };
+  if (!id) listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(sectionHtml).join('');
+  else {
+    const old = listEl.querySelector('[data-comment-id="' + cssEsc(previousId || id) + '"]');
+    let patched = null;
+    for (const key of SECTION_ORDER) {
+      let section = listEl.querySelector('[data-section="' + key + '"]');
+      if (!groups[key].length) { if (section) section.remove(); continue; }
+      if (!section) {
+        const t = document.createElement('template');
+        t.innerHTML = sectionHtml(key);
+        section = t.content.firstElementChild;
+        const next = SECTION_ORDER.slice(SECTION_ORDER.indexOf(key) + 1).map(k => listEl.querySelector('[data-section="' + k + '"]')).find(Boolean);
+        listEl.insertBefore(section, next || null);
+      }
+      section.querySelector('.sec-hdr .badge').textContent = groups[key].length;
+      const index = groups[key].findIndex(c => c.id === id);
+      if (index === -1) continue;
+      const body = section.querySelector('.sec-body');
+      // A confirmed post keeps every other card (and its focused editor) alive.
+      if (!body.hidden) {
+        const fresh = document.createElement('div');
+        fresh.innerHTML = renderCItem(groups[key][index]);
+        wireRailCards(fresh, listEl);
+        const next = groups[key].slice(index + 1).map(c => body.querySelector('[data-comment-id="' + cssEsc(c.id) + '"]')).find(Boolean);
+        patched = fresh.firstElementChild;
+        body.insertBefore(patched, next || null);
+      }
+    }
+    if (old) old.remove();
+    if (patched) syncExcerptClamps(patched);
+  }
 
-  listEl.querySelectorAll('.reply-ta').forEach(ta => {
-    const draft = DRAFTS[ta.dataset.replyFor];
-    if (draft) ta.value = draft;
-  });
-  listEl.querySelectorAll('.decision-say-ta').forEach(ta => {
-    const draft = DRAFTS['say:' + ta.dataset.decisionSayTa];
-    if (draft) ta.value = draft;
-    syncSayHint(ta);
-  });
-  listEl.querySelectorAll('.note-edit-ta').forEach(ta => {
-    const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
-    const n = cardNotes(findCommentById(ta.dataset.noteEdit) || {}).find(n => n.key === ta.dataset.key);
-    ta.value = DRAFTS['note:' + k] || (n && n.text) || '';
-  });
-  listEl.querySelectorAll('.edit-ta').forEach(ta => {
-    const c = findCommentById(ta.dataset.editFor);
-    ta.value = DRAFTS['edit:' + ta.dataset.editFor] || (c && c.text) || '';
-  });
+  if (!id) wireRailCards(listEl);
   if (focusedTa) {
     const ta = listEl.querySelector(focusedTa);
     if (ta) {
@@ -1939,22 +1966,43 @@ function renderDrawerNow() {
     }
   }
 
-  listEl.querySelectorAll('[data-section-toggle]').forEach(btn => btn.addEventListener('click', () => {
+  listEl.querySelectorAll('[data-section-toggle]').forEach(btn => { btn.onclick = () => {
     setSectionOpen(btn.dataset.sectionToggle, !sectionOpen(btn.dataset.sectionToggle));
     renderDrawer();
-  }));
-  Array.from(listEl.querySelectorAll('[data-action="goto"]')).forEach(btn => {
+  }; });
+  if (drawerBodyEl) drawerBodyEl.scrollTop = savedScrollTop;
+}
+
+function wireRailCards(root, scope = root) {
+  root.querySelectorAll('.reply-ta').forEach(ta => {
+    const draft = DRAFTS[ta.dataset.replyFor];
+    if (draft) ta.value = draft;
+  });
+  root.querySelectorAll('.decision-say-ta').forEach(ta => {
+    const draft = DRAFTS['say:' + ta.dataset.decisionSayTa];
+    if (draft) ta.value = draft;
+    syncSayHint(ta);
+  });
+  root.querySelectorAll('.note-edit-ta').forEach(ta => {
+    const k = ta.dataset.noteEdit + '|' + ta.dataset.key;
+    const n = cardNotes(findCommentById(ta.dataset.noteEdit) || {}).find(n => n.key === ta.dataset.key);
+    ta.value = DRAFTS['note:' + k] || (n && n.text) || '';
+  });
+  root.querySelectorAll('.edit-ta').forEach(ta => {
+    const c = findCommentById(ta.dataset.editFor);
+    ta.value = DRAFTS['edit:' + ta.dataset.editFor] || (c && c.text) || '';
+  });
+  Array.from(root.querySelectorAll('[data-action="goto"]')).forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       markRead([findCommentById(btn.dataset.id)].filter(Boolean));
       goToCommentLocation(btn.dataset.anchor, btn.dataset.version, btn.dataset.id);
     });
   });
-  wireCardActions(listEl);
-  wireDecisionActions(listEl);
-  wireNoteActions(listEl);
-  syncExcerptClamps(listEl);
-  if (drawerBodyEl) drawerBodyEl.scrollTop = savedScrollTop;
+  wireCardActions(root, scope);
+  wireDecisionActions(root, scope);
+  wireNoteActions(root, scope);
+  if (root.isConnected) syncExcerptClamps(root);
 }
 
 // ── Go-to-location: cross-version-aware, with unresolvable feedback ────
@@ -2677,13 +2725,13 @@ function wireNoteActions(root, scope = root) {
     }
     if (action === 'cancel') { delete editingNote[k]; typeDraft('note:' + k, ''); return renderDrawer(); }
     if (action === 'save') {
-      const ta = root.querySelector('[data-note-edit="' + cssEsc(id) + '"][data-key="' + cssEsc(key) + '"]');
+      const ta = scope.querySelector('[data-note-edit="' + cssEsc(id) + '"][data-key="' + cssEsc(key) + '"]');
       const text = (ta && ta.value || '').trim();
       if (!text) return;
       btn.disabled = true;
       delete editingNote[k];
       setDraft('note:' + k, '');
-      if (!(await saveNote(root, id, key, text))) {
+      if (!(await saveNote(scope, id, key, text))) {
         setDraft('note:' + k, text);
         editingNote[k] = true;
         renderDrawer();
@@ -2895,16 +2943,16 @@ function openDocBtn(c, extraAttr) {
 // state: re-sync read state to the post-action sig (otherwise their own reply
 // or reopen would flag the card as NEW activity). Must run AFTER the store
 // refresh so the sig reflects the post-action comment, then re-render.
-function markReadAfterAction(commentId) {
+function markReadAfterAction(commentId, onlyCard = false) {
   const c = findCommentById(commentId);
   if (c && c.status !== 'archived') {
     markRead([c]);
-    renderDrawer();
-    sendCommentCountsToFrame();
+    renderDrawer(onlyCard ? commentId : null);
+    sendCommentCountsToFrame(onlyCard ? c.anchor_id : null, onlyCard ? commentId : null);
   }
 }
 
-function wireCardActions(root) {
+function wireCardActions(root, scope = root) {
   // U-14: each card is a named, focusable group; Enter opens it.
   // U-04: hovering a card outlines what it is about in the document.
   root.querySelectorAll('.citem').forEach(card => {
@@ -2917,7 +2965,7 @@ function wireCardActions(root) {
       if (e.key !== 'Enter' || e.target !== card) return;
       e.preventDefault();
       card.click();
-      const next = root.querySelector('[data-comment-id="' + cssEsc(c.id) + '"]');
+      const next = scope.querySelector('[data-comment-id="' + cssEsc(c.id) + '"]');
       if (next) next.focus();
     });
     const hover = on => {
@@ -2967,9 +3015,9 @@ function wireCardActions(root) {
     e.stopPropagation();
     const id = btn.dataset.id;
     openMenuId = openMenuId === id ? null : id;
-    root.querySelectorAll('.citem-menu').forEach(m => { m.hidden = m.dataset.menuFor !== openMenuId; });
-    root.querySelectorAll('[data-action="menu"]').forEach(b => b.setAttribute('aria-expanded', b.dataset.id === openMenuId ? 'true' : 'false'));
-    const first = openMenuId && root.querySelector('.citem-menu[data-menu-for="' + cssEsc(openMenuId) + '"] button');
+    scope.querySelectorAll('.citem-menu').forEach(m => { m.hidden = m.dataset.menuFor !== openMenuId; });
+    scope.querySelectorAll('[data-action="menu"]').forEach(b => b.setAttribute('aria-expanded', b.dataset.id === openMenuId ? 'true' : 'false'));
+    const first = openMenuId && scope.querySelector('.citem-menu[data-menu-for="' + cssEsc(openMenuId) + '"] button');
     if (first) first.focus();
   }));
   const closeMenuThen = (fn) => async (e) => {
@@ -3045,7 +3093,7 @@ function wireCardActions(root) {
     e.stopPropagation();
     const id = btn.dataset.id;
     const c = findCommentById(id);
-    const ta = root.querySelector('[data-edit-for="' + cssEsc(id) + '"]');
+    const ta = scope.querySelector('[data-edit-for="' + cssEsc(id) + '"]');
     const text = (ta && ta.value || '').trim();
     if (!c || !text) return;
     btn.disabled = true;
@@ -3065,7 +3113,7 @@ function wireCardActions(root) {
   root.querySelectorAll('[data-action="reply"]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const id = btn.dataset.id;
-    const ta = root.querySelector('[data-reply-for="' + cssEsc(id) + '"]');
+    const ta = scope.querySelector('[data-reply-for="' + cssEsc(id) + '"]');
     const text = (ta && ta.value || '').trim();
     const c = storedComment(id);
     if (!text || !c) { if (ta) ta.focus(); return; }
@@ -3099,7 +3147,7 @@ function wireCardActions(root) {
     const stored = findCommentById(id);
     if (stored && posted.id === id) keepConfirmed(stored.anchor_id, posted);
     else adoptLive(id); // the answer was lost; the server's copy has the reply
-    markReadAfterAction(id);
+    markReadAfterAction(id, true);
     renderVersionRail();
     document.dispatchEvent(new CustomEvent('annotate:store'));
   }));
@@ -3492,7 +3540,9 @@ async function savePopover() {
   markRead([findCommentById(created.id)]);
   setActiveTab('feedback');
   renderVersionRail();
-  focusSidebarCard(created.id);
+  highlightedCommentId = created.id;
+  renderDrawer(created.id, temp.id);
+  sendCommentCountsToFrame(at.anchorId, created.id);
   document.dispatchEvent(new CustomEvent('annotate:store'));
 }
 
@@ -3562,7 +3612,17 @@ function keepConfirmed(anchorId, comment) {
     else if (!(store === STORE && storedComment(c.id))) (store.anchors[anchorId] = list).push(c);
   }
   for (const apply of pendingEdits.values()) apply();
-  computeNumbers();
+  // Keep existing labels; only the server can assign the new post's number.
+  if (Number.isInteger(c.number) && c.number > 0) {
+    if (parseInt(NUM_MAP[c.id], 10) !== c.number) NUM_MAP[c.id] = c.number;
+    // Concurrent posts can confirm in a different order from their provisional labels.
+    for (const pending of pendingEdits.keys()) {
+      if (!pending.id || NUM_MAP[pending.id] !== c.number) continue;
+      NUM_MAP[pending.id] = Math.max(...Object.values(NUM_MAP).map(n => parseInt(n, 10))) + 1;
+      renderDrawer(pending.id);
+      sendCommentCountsToFrame(pending.anchor_id, pending.id);
+    }
+  } else computeNumbers();
 }
 function dropPendingComment(c) {
   pendingEdits.delete(c);
@@ -3570,7 +3630,7 @@ function dropPendingComment(c) {
   const i = list ? list.indexOf(c) : -1;
   if (i !== -1) list.splice(i, 1);
   if (list && !list.length) delete STORE.anchors[c.anchor_id];
-  computeNumbers();
+  delete NUM_MAP[c.id];
 }
 
 // ── Re-pin: correct a mis-anchored comment ───────────────────────────
@@ -4561,12 +4621,13 @@ function wireBridge() {
   });
 }
 
-function sendCommentCountsToFrame() {
+function sendCommentCountsToFrame(onlyAnchor, commentId) {
   const frame = document.getElementById('content-frame');
   if (!frame || !frame.contentWindow || DOC !== VIEW_DOC) return;
   const counts = {};
   const pins = {};
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
+    if (onlyAnchor && aid !== onlyAnchor) continue;
     // F9: unresolved decision cards get a pin + strip on whichever version
     // is being viewed (adapter.js skips the strip if the anchor no longer
     // exists in this version's document).
@@ -4610,7 +4671,7 @@ function sendCommentCountsToFrame() {
   // must never show a question as open when the rail says it is not.
   const cardStates = {};
   const noteCard = (c, archived) => {
-    if (docOf(c) !== DOC || isNewerThanViewed(c)) return;
+    if ((onlyAnchor && c.anchor_id !== onlyAnchor) || docOf(c) !== DOC || isNewerThanViewed(c)) return;
     if (!c.decision_request) return;
     const prev = cardStates[c.anchor_id];
     if (prev && !prev.archived) return; // a live card beats an archived copy
@@ -4618,14 +4679,16 @@ function sendCommentCountsToFrame() {
     cardStates[c.anchor_id] = { state: cls, label: statusLabel(c, cls), archived };
   };
   for (const [aid, items] of Object.entries(STORE.anchors || {})) {
+    if (onlyAnchor && aid !== onlyAnchor) continue;
     items.forEach(c => noteCard(Object.assign({}, c, { anchor_id: aid }), false));
   }
   for (const [aid, items] of Object.entries(STORE.archived || {})) {
+    if (onlyAnchor && aid !== onlyAnchor) continue;
     (Array.isArray(items) ? items : []).forEach(c =>
       noteCard(Object.assign({}, c, { anchor_id: aid, status: 'archived' }), true));
   }
   const board = boardLink();
-  postToFrame({ type: 'annotate:comment-counts', counts, pins, cardStates,
+  postToFrame({ type: 'annotate:comment-counts', onlyAnchor, commentId, counts, pins, cardStates,
     board: board ? { url: board.url, prefix: PROJECT.board.prefix } : null });
 }
 
