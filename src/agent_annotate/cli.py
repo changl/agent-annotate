@@ -5433,6 +5433,13 @@ def build_parser(*, all_commands=False):
     sp_workspace.add_argument("--root", default=None, help="project folder containing existing review pages")
     sp_workspace.add_argument("--json", action="store_true")
     sp_workspace.set_defaults(func=cmd_workspace)
+    from .board_followups import cmd_board
+    sp_board = sub.add_parser("board", help="list durable board follow-ups or record a judgement")
+    sp_board.add_argument("slug")
+    sp_board.add_argument("--project", default=None)
+    sp_board.add_argument("--settle", nargs=2, metavar=("KEY", "verdict"))
+    sp_board.add_argument("--json", action="store_true")
+    sp_board.set_defaults(func=cmd_board)
     from .page_names import cmd_names
     sp_names = sub.add_parser("names", help="migrate canonical page names with backups (operator only)")
     sp_names.add_argument("--from", dest="from_file", required=True, metavar="names.json")

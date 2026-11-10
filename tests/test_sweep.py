@@ -25,7 +25,9 @@ def sweep(tmp_path, monkeypatch):
     monkeypatch.delenv("ANNOTATE_OWNERSHIP_MANIFEST", raising=False)
     monkeypatch.setenv("ANNOTATE_SWEEP_DIR", str(tmp_path / "sweeps"))
     monkeypatch.setenv("ANNOTATE_BUS_ROOT", str(tmp_path / "bus"))
-    return load("sweep")
+    module = load("sweep")
+    monkeypatch.setattr(module, "boards", lambda now: ("boards: baseline", []))
+    return module
 
 
 def test_unset_ownership_preserves_baseline_bytes(sweep, monkeypatch, capsys):
@@ -33,7 +35,7 @@ def test_unset_ownership_preserves_baseline_bytes(sweep, monkeypatch, capsys):
     for name in ("beads", "disk", "sessions"):
         monkeypatch.setattr(sweep, name, lambda *a, n=name: (f"{n}: baseline", [f"{n} item"]))
     assert sweep.main(["all"]) == 0
-    lines = b"beads: baseline\ndisk: baseline\nsessions: baseline\n"
+    lines = b"beads: baseline\nboards: baseline\ndisk: baseline\nsessions: baseline\n"
     assert capsys.readouterr().out.encode() == lines
     stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(NOW)).encode()
     assert (sweep.OUT / "latest.txt").read_bytes() == (
@@ -145,13 +147,13 @@ def test_main_writes_latest_and_run_summary_shows_it(sweep, tmp_path, monkeypatc
     monkeypatch.setattr(sweep, "beads", lambda d, now: ("beads: 1 open · 0 ready · 0 in progress over 24 h · 0 closed without proof", ["bead x"]))
     monkeypatch.setattr(sweep, "sessions", lambda apply: ("sessions: 0 finished worktrees (PR merged, bead closed, clean tree) · 0 removed", []))
     assert sweep.main(["all"]) == 0
-    assert len(capsys.readouterr().out.splitlines()) == 3
+    assert len(capsys.readouterr().out.splitlines()) == 4
     latest = tmp_path / "sweeps/latest.txt"
     run_summary = load("run_summary")
     shown = run_summary.summary_lines(latest)
-    assert shown[0].startswith("sweep ") and shown[1].startswith("beads: ") and len(shown) == 4
+    assert shown[0].startswith("sweep ") and shown[1].startswith("beads: ") and len(shown) == 5
     lines = run_summary.render("run_t", {}, None, [], [], now=0, extra=[shown])
-    assert lines[-3].startswith("beads: ") and "bead x" not in "\n".join(lines)
+    assert lines[-4].startswith("beads: ") and "bead x" not in "\n".join(lines)
 
 
 def test_plist_is_hourly_report_only():

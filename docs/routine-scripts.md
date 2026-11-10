@@ -35,9 +35,10 @@ Rollback reinstalls the old wheel and restores the skills tarball. It restarts o
 | Command | Prints |
 |---|---|
 | `sweep.py beads` | `beads: 2 open · 2 ready · 1 in progress over 24 h · 0 closed without proof` |
+| `sweep.py boards` | One line per discovered board, with counts, action mode and open follow-ups |
 | `sweep.py disk` | `disk: 293 GiB free · buses 0.0 GiB · 29 quiet buses over 30 days` |
 | `sweep.py sessions [--apply]` | `sessions: 0 finished worktrees (PR merged, bead closed, clean tree) · 0 removed` |
-| `sweep.py all` | the three lines |
+| `sweep.py all` | all checks, including every discovered board |
 
 Each run writes its summary lines, a blank line and the judgment items (stale beads, quiet buses, finished worktrees) to `~/.local/share/annotate-sweeps/latest.txt`. `run_summary.py` shows those summary lines by default (`--extra FILE …` for other sources).
 
@@ -48,5 +49,13 @@ Each run writes its summary lines, a blank line and the judgment items (stale be
 - `git status` is clean.
 
 Main worktrees and the deny list in the code (`rebex-library-performance`) are never inspected. A merged, clean worktree that names no bead is listed for a coordinator to decide.
+
+`boards` reads owned pages from the annotate registry and runs `bd where --json` in the owner's worktree, falling back to the page's repository. It chooses the newest owned page per board. A board writes only if its exact `bd where` path is listed on a line in `$ANNOTATE_SWEEP_DIR/apply-boards.txt` (default `~/.local/share/annotate-sweeps`). `--apply` does not enable board writes. Missing liveness sources prevent worker resets.
+
+FLD's two automatic rules are retained: reopen a blocked bead only when its BLOCKED BY note names only beads and every note/dependency blocker is closed; reset an in-progress bead after two hourly observations at least 55 minutes apart without a live assignee or ctx/term in any note line. Human, lead and orchestrator assignees, including the repository's git user.name, are guarded. Each change adds one `SWEEP-AUTO` note and reads the result back. Merge proof, owner cards and blocker sorting only report. FLD retains its four merge-proof repositories and latest dated sweep notes; other boards check the owner's repository.
+
+Each board has settled delta state in the sweep directory and findings/actions/summary receipts in `boards/TIMESTAMP/BOARD-HASH/`. Model judgement items persist in the selected page's `board-followups.json`, atomically replaced, until `annotate board PROJECT/SLUG --settle KEY "verdict"` appends a verdict to `board-verdicts.ndjson`. `annotate board PROJECT/SLUG` lists the open items and settle commands on one line; `--json` returns the full records. A verdict matches a key and evidence fingerprint, so changed evidence reopens the item. Round delivery, per-turn notices and session start add at most three follow-ups plus a link command for the rest; zero open items adds nothing. Nothing wakes a model.
+
+For a read-only rehearsal, set both `ANNOTATE_SWEEP_DIR` and `ANNOTATE_BOARD_FOLLOWUPS_ROOT` to empty temporary directories, then run `sweep.py boards`. The latter redirects all follow-up files to `ROOT/PROJECT/SLUG`; keep `apply-boards.txt` absent. No page.db or comments.json writes are made by the board sweep or verdict command. The sweep remains standalone Python, including under `python3 -I`.
 
 **Timer.** `scripts/launchd/com.changlee.annotate-sweep.plist` runs `sweep.py all` hourly, report only. Install steps are in its header comment. It is not loaded until Chang says yes. To stop it, run `launchctl bootout` and remove the file.

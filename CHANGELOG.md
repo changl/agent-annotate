@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Board follow-ups survive handoffs and new sessions. `sweep.py boards` (also in `all`) discovers each owned page's Beads board, carries FLD's guarded rules across projects, and saves judgement items beside the page without touching comments or page.db. `annotate board SLUG` lists them; `--settle KEY "verdict"` records a decision against the current evidence fingerprint. Changed evidence reopens the item. Round delivery, per-turn notices and session start show at most three items and their settle commands, with no added text when none are open. Board writes stay off unless the board's exact path is in `apply-boards.txt`; each write has a SWEEP-AUTO note and readback. No new timer or model wake-up.
+
 ## 2.30.0
 
 - Rollout can move pages to `page.db` inside each verified restart: stop, import and diff, start, verify capabilities and read the latest round. Small pages go first; M1's FLD stays on JSON until an explicit move. A failed migration keeps the page on JSON and names it in the Mac's receipt. `--hold-json SLUG` keeps a page on JSON across applies; `--move-page SLUG` moves just that page later. Imports refuse paths under `/Volumes`. `doctor` and `doctor --versions` report each page's backend and any hold or refusal reason. Rollback turns databases off before installing the previous wheel; JSON exports continue in this release.

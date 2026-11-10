@@ -17,6 +17,8 @@ annotate project my-project/workspace --from project.json
 annotate inbox my-project/workspace --unread
 annotate resolve my-project/workspace 1 2 3
 annotate cards my-project/workspace --category findings --json
+annotate board my-project/workspace
+annotate board my-project/workspace --settle sort-other:my-bead "keep blocked: needs a device"
 annotate ask my-project/workspace --from cards.json --category findings --set design --json
 annotate finding my-project/workspace --fixed 11 --proof evidence.png --note "Verified" --json
 annotate plan my-project/workspace rollout --from plan.md --title "Rollout" --json

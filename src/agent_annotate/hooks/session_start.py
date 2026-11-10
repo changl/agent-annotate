@@ -38,7 +38,9 @@ def notice(cwd: Path, session_id: str | None = None) -> str | None:
     if not url:
         return None
     waiting = waiting_count(Path(record["slug_dir"]))
-    return f"annotate: this project's page {page_name(record)} {url} · {waiting} waiting on you"
+    from agent_annotate.board_followups import clause
+    return (f"annotate: this project's page {page_name(record)} {url} · {waiting} waiting on you"
+            + clause(record, selected[0], selected[1]))
 
 
 def waiting_count(directory: Path) -> int:
