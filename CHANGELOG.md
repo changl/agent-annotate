@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.31.1
 
 - Board judgement runs in a separate worker; a submitted round is only the trigger. The round prompt asks the owner to have a separate worker run `annotate board`, settle each listed item and report one line. Round prompts, per-turn notices and session start no longer list stored follow-ups, so the owner's context carries one line instead of up to three items. Stored follow-ups and settling are unchanged.
 
