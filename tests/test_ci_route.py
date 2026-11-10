@@ -114,3 +114,14 @@ def test_fast_gate_and_explicit_local_never_consult_the_route(monkeypatch, steps
     assert steps[0][1:4] == ["-m", "ruff", "check"]
     assert steps[-1][1:4] == ["-m", "pytest", "-q"]
     assert ("tests" in steps[-1]) == ("--full" in argv)
+
+
+@pytest.mark.parametrize("enabled", [True, False, "true", None])
+def test_auto_target_requires_explicit_repo_opt_in(repo, enabled):
+    root, head, config, env = repo
+    settings = {**READY, "repos": {"agent-annotate": {"source": "/x", "auto_target": enabled}}}
+    config.write_text(json.dumps(settings))
+    route = ci.full_route(root, env, config)
+    assert ("--target" in route) is (enabled is True)
+    if enabled is True:
+        assert route[-2:] == ["--target", "auto"]
