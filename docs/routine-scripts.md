@@ -54,7 +54,7 @@ Main worktrees and the deny list in the code (`rebex-library-performance`) are n
 
 ## Board judgement on turns: `annotate board`
 
-`annotate board PROJECT/SLUG` checks that page's Beads board, performs the two guarded fixes, saves durable follow-ups and lists open items with their settle commands. It runs only when the agent invokes it on a turn. Hooks never run the check: round delivery adds `check the board: annotate board PROJECT/SLUG` when local routing shows a board; round delivery, per-turn notices and session start also show up to three stored follow-ups and a command for the rest. No board timer or model wake-up exists, and `scripts/sweep.py` does not check boards.
+`annotate board PROJECT/SLUG` checks that page's Beads board, performs the two guarded fixes, saves durable follow-ups and lists open items with their settle commands. It runs only when invoked; hooks never run it. A submitted round is the trigger: when local routing shows a board, round delivery adds one line asking the owner to have a separate worker run `annotate board PROJECT/SLUG`, settle each listed item and report one line, so judgement stays out of the owner's context. Stored follow-ups are never listed in round prompts, per-turn notices or session start. No board timer or model wake-up exists, and `scripts/sweep.py` does not check boards.
 
 Board discovery reads owned pages and runs `bd where --json` in each owner's worktree, falling back to the page's repository. It chooses the newest owned page per board unless `$ANNOTATE_STATE_DIR/board-pages.txt` pins that board to an owned, active page. Each line is `<board path> <project/slug>`, for example:
 

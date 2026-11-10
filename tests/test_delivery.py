@@ -548,32 +548,26 @@ def test_cleared_current_binding_never_falls_back_to_old_terminal(estate):
     assert not any(call[:2] == ("terminal", "send") for call in estate["calls"])
 
 
-@pytest.mark.parametrize("count", [0, 1, 5])
-def test_round_prompt_board_clause_zero_or_three_plus_more(estate, tmp_path, count):
+def test_round_prompt_without_board_has_no_board_line(estate, tmp_path):
     from test_board_followups import seed_items
 
-    from agent_annotate.board_followups import clause
     page = tmp_path / "page"
-    seed_items(page, count)
+    seed_items(page, 5)
     estate["record"].update(slug_dir=str(page), owner_target=_target())
     _write_registry(estate, estate["record"])
     _append(estate, _round())
     _dispatch(estate)
     sent = next(args for args in estate["calls"] if args[:2] == ("terminal", "send"))
     prompt = sent[sent.index("--text") + 1]
-    suffix = clause(estate["record"], _PROJECT, _SLUG)
-    assert bool(suffix) == bool(count)
-    assert prompt.endswith(suffix or "reply in chat with one line and the URL.")
-    assert prompt.count("--settle") == min(count, 3)
-    assert (f"+2 more: annotate board {_PROJECT}/{_SLUG}" in prompt) == (count == 5)
+    assert prompt.endswith("reply in chat with one line and the URL.")
 
 
 @pytest.mark.parametrize("count", [0, 1, 5])
-def test_round_prompts_check_board_without_running_it(estate, tmp_path, monkeypatch, count):
+def test_round_prompts_worker_board_check_without_running_it(estate, tmp_path, monkeypatch, count):
     from test_board_followups import seed_items
 
     from agent_annotate import board_checks
-    from agent_annotate.board_followups import check_clause, clause
+    from agent_annotate.board_followups import check_clause
     page = tmp_path / "page"
     seed_items(page, count)
     (tmp_path / ".beads").mkdir()
@@ -584,6 +578,6 @@ def test_round_prompts_check_board_without_running_it(estate, tmp_path, monkeypa
     _dispatch(estate)
     sent = next(args for args in estate["calls"] if args[:2] == ("terminal", "send"))
     prompt = sent[sent.index("--text") + 1]
-    assert prompt.endswith(clause(estate["record"], _PROJECT, _SLUG) + check_clause(estate["record"], _PROJECT, _SLUG))
-    assert prompt.count("check the board: annotate board proj/demo") == 1
-    assert prompt.count("--settle") == min(count, 3)
+    assert prompt.endswith("reply in chat with one line and the URL." + check_clause(estate["record"], _PROJECT, _SLUG))
+    assert prompt.count("have a separate worker (not this session) run annotate board proj/demo") == 1
+    assert "--settle" not in prompt and "aa-0" not in prompt

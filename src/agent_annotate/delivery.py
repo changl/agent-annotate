@@ -339,8 +339,8 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
                   "Act on every answer and note; show results on the page; "
                   "withdraw questions that no longer apply; "
                   "reply in chat with one line and the URL.")
-        from .board_followups import check_clause, clause
-        prompt += clause(record, project, slug) + check_clause(record, project, slug)
+        from .board_followups import check_clause
+        prompt += check_clause(record, project, slug)
         row.update(state="attempting", attempted_at=_now())
         _atomic(journal, state)
         try:
