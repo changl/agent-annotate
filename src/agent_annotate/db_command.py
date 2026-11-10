@@ -9,6 +9,19 @@ from pathlib import Path
 from . import store
 
 
+def storage_lines() -> list[str]:
+    from .cli import _registry_entries
+    lines = []
+    for project, slug, record in _registry_entries():
+        directory = Path(record.get("slug_dir") or "")
+        backend = "page.db" if record.get("slug_dir") and store.backend(directory) == "sqlite" else "JSON"
+        reason = record.get("db_hold") or record.get("db_reason") or ""
+        if backend == "JSON" and directory.resolve().is_relative_to(Path("/Volumes")):
+            reason = "page.db refused under /Volumes"
+        lines.append(f"storage {project}/{slug}: {backend}" + (f" ({reason})" if backend == "JSON" and reason else ""))
+    return lines
+
+
 def _pages(args) -> list[tuple[str, str, dict]]:
     from .cli import _registry_entries
     entries = [(p, s, r) for p, s, r in _registry_entries() if Path(r.get("slug_dir") or "").is_dir()]

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_annotate import cli, deployment
+from agent_annotate import cli, deployment, store
 
 MANIFEST = {"package_version": "2.20.0", "build_id": "new-build", "assets": {"shell.js": "new-sha"}}
 REAL_VERIFY = deployment._verify_server
@@ -109,6 +109,96 @@ def test_restart_preserves_owner_comments_routes_and_exact_port(estate, monkeypa
     assert estate.spawns[0][:4] == [str(estate.new), "-I", "-m", "agent_annotate.sync_server"]
     assert "--strict-port" in estate.spawns[0]
     assert (Path(current["slug_dir"]) / "comments.json").read_text() == '{"keep":"reviewer history"}'
+
+
+def prepare_store(estate, monkeypatch):
+    page = Path(estate.records["review"]["slug_dir"])
+    (page / "comments.json").write_text('{"schema_version": 2, "anchors": {}, "archived": {}}')
+    (page / "current.meta.json").write_text('{"current": "v1", "history": []}')
+    monkeypatch.setattr(deployment, "_latest_round", lambda record: {"rounds": []})
+    monkeypatch.setattr(store, "_refuse_network_volume", lambda directory: None)
+    return page
+
+
+def test_rollout_imports_only_after_stop_then_verifies_latest_round(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    original = store.import_page
+    def import_stopped(*args, **kwargs):
+        assert estate.stops == [10] and not estate.processes
+        return original(*args, **kwargs)
+    monkeypatch.setattr(store, "import_page", import_stopped)
+    def latest(record):
+        assert store.backend(page) == "sqlite" and len(estate.processes) == 1
+        return {"rounds": [{"id": "latest"}]}
+    monkeypatch.setattr(deployment, "_latest_round", latest)
+    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    assert result["storage"]["diff"] == 0
+    assert result["storage"]["backend"] == "page.db"
+    assert result["storage"]["latest_round"] == {"rounds": [{"id": "latest"}]}
+    assert cli._load_state_for_project("reviews")["slugs"]["review"]["db_reason"] == ""
+
+
+def test_rollout_hold_persists_until_explicit_move(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    first = deployment.restart_record("reviews", "review", estate.new, storage="migrate", hold_json=True)
+    assert first["storage"] == {"backend": "json", "reason": "held for this rollout", "latest_round": {"rounds": []}}
+    assert deployment.restart_record("reviews", "review", estate.new, storage="migrate")["storage"]["backend"] == "json"
+    moved = deployment.restart_record("reviews", "review", estate.new, storage="migrate", move=True)
+    assert moved["storage"]["backend"] == "page.db" and store.backend(page) == "sqlite"
+    assert "db_hold" not in cli._load_state_for_project("reviews")["slugs"]["review"]
+
+
+def test_rollout_failed_import_stays_on_json(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    def refuse(*args, **kwargs):
+        raise store.Refused("import refused", ["cursor is mid-line"])
+    monkeypatch.setattr(store, "import_page", refuse)
+    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    assert result["ok"] and store.backend(page) == "json"
+    assert "cursor is mid-line" in result["storage"]["reason"]
+    assert len(estate.spawns) == 1
+
+
+def test_rollout_failed_database_read_restarts_on_json(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    def latest(record):
+        if store.backend(page) == "sqlite":
+            raise OSError("latest round unavailable")
+        return {"rounds": []}
+    monkeypatch.setattr(deployment, "_latest_round", latest)
+    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    assert result["storage"]["backend"] == "json" and store.backend(page) == "json"
+    assert "latest round unavailable" in result["storage"]["reason"]
+    assert len(estate.spawns) == 2 and estate.stops == [10, 101]
+
+
+def test_rollout_failed_database_start_restarts_on_json(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    spawn = deployment._spawn
+    def fail_database(record, argv):
+        if store.backend(page) == "sqlite":
+            raise OSError("database start failed")
+        return spawn(record, argv)
+    monkeypatch.setattr(deployment, "_spawn", fail_database)
+    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    assert result["storage"]["backend"] == "json" and store.backend(page) == "json"
+    assert "database start failed" in result["storage"]["reason"]
+    assert len(estate.spawns) == 1
+
+
+def test_rollout_db_off_prepares_an_old_runtime(estate, monkeypatch):
+    page = prepare_store(estate, monkeypatch)
+    deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    result = deployment.restart_record("reviews", "review", estate.old, storage="off")
+    assert result["storage"] == {"backend": "json", "reason": "db off"}
+    assert store.backend(page) == "json" and list(page.glob("page.db.off-*"))
+
+
+def test_latest_round_rejects_an_invalid_success_body(estate, monkeypatch):
+    import io
+    monkeypatch.setattr(deployment.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(b'{"rounds": {}}'))
+    with pytest.raises(deployment.DeploymentError, match="no rounds list"):
+        deployment._latest_round(estate.records["review"])
 
 
 def test_stale_registry_pid_uses_reconciled_server_only(estate):

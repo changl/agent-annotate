@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## 2.30.0
+
+- Rollout can move pages to `page.db` inside each verified restart: stop, import and diff, start, verify capabilities and read the latest round. Small pages go first; M1's FLD stays on JSON until an explicit move. A failed migration keeps the page on JSON and names it in the Mac's receipt. `--hold-json SLUG` keeps a page on JSON across applies; `--move-page SLUG` moves just that page later. Imports refuse paths under `/Volumes`. `doctor` and `doctor --versions` report each page's backend and any hold or refusal reason. Rollback turns databases off before installing the previous wheel; JSON exports continue in this release.
+- The sweep includes M1's optional ownership-report hook. With `ANNOTATE_OWNERSHIP_MANIFEST` unset its output is unchanged; a failing helper records `ownership: error`. The helper and LaunchAgent environment remain local to M1.
+
 ## 2.29.0
 
 - A question you set aside with "Answer later" stays set aside when the agent asks it again in a new version. Each new version posted a fresh copy of every open question, and the copy lost the mark, so set-aside questions came back on every version (Chang #234). A question that lost its mark that way gets it back the next time it is asked. Turning Answer later off is remembered, so a re-ask keeps it in front of you.

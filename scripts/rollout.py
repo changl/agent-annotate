@@ -4,6 +4,8 @@
   rollout.py plan VERSION --mac M1          read-only: what apply would do
   rollout.py apply VERSION --mac M1         install, sync skills, restart pages, check, log
   rollout.py rollback --mac M1              back to the version the last apply replaced
+  rollout.py apply VERSION --mac M1 --hold-json SLUG   keep a page on JSON across applies
+  rollout.py apply VERSION --mac M1 --move-page SLUG   move just that held page later
   rollout.py status                         every Mac's version from here
   ... --mac M5 --approval "card #212"       another Mac, through an Orca environment terminal
 
@@ -84,7 +86,8 @@ def last_line(proc):
 
 INSPECT = r"""
 import json
-from agent_annotate import __version__, cli, deployment, version_guard
+from pathlib import Path
+from agent_annotate import __version__, cli, deployment, store, version_guard
 from agent_annotate.consolidate import inactive
 from agent_annotate.paths import CONFIG_DIR
 entries, pages = cli._registry_entries(), []
@@ -93,6 +96,10 @@ for project, slug, record in entries:
         continue
     record = {**record, "project": project}
     row = {"project": project, "slug": slug, "port": record.get("port"), "base": record.get("public_base_path") or ""}
+    directory = record.get("slug_dir")
+    row["backend"] = store.backend(directory) if directory else "json"
+    comments = Path(directory or "") / "comments.json"
+    row["bytes"] = comments.stat().st_size if comments.is_file() else 0
     try:
         row["action"] = "restart" if deployment._identity(record)["pid"] else "not running"
     except Exception as exc:
@@ -106,7 +113,8 @@ print(json.dumps({"version": __version__, "pages": pages, "skills": skills}))
 """
 
 RESTART = ("import json, sys; from agent_annotate.deployment import restart_record; "
-           "print(json.dumps(restart_record(sys.argv[1], sys.argv[2]), default=str))")
+           "print(json.dumps(restart_record(sys.argv[1], sys.argv[2], "
+           "**(json.loads(sys.argv[3]) if len(sys.argv) > 3 else {})), default=str))")
 
 
 def inspect():
@@ -133,10 +141,17 @@ def sync_skills():
     run([PYTHON, "-I", "-m", "agent_annotate.cli", "sync-skills"], timeout=120, step="skills")
 
 
-def restart(project, slug):
-    proc = run([PYTHON, "-I", "-c", RESTART, project, slug], timeout=120)
+def restart(project, slug, **options):
+    proc = run([PYTHON, "-I", "-c", RESTART, project, slug, json.dumps(options)], timeout=600)
     if proc.returncode:
         raise Failed(f"restart {slug}", last_line(proc))
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def disable_databases(pages):
+    for project, slug, _port, _base in pages:
+        run([PYTHON, "-I", "-m", "agent_annotate.cli", "db", "off", f"{project}/{slug}"],
+            timeout=600, step=f"db off {slug}")
 
 
 def doctor():
@@ -197,6 +212,8 @@ def backup(info):
             tar.add(path, arcname=str(i))
     record = {"version": info["version"], "wheel_url": asset_url(info["version"], wheel_name(info["version"])),
               "skills": skills, "pages": [[p["project"], p["slug"], p["port"], p["base"]] for p in info["restarts"]]}
+    if info.get("page_db"):
+        record["page_db"] = True
     (folder / "backup.json").write_text(json.dumps(record, indent=1) + "\n")
     return folder, record
 
@@ -239,6 +256,8 @@ def log(entry):
 
 def restore(folder, record, pages):
     """Old wheel, skills tarball, restart `pages`, check. Returns 'doctor ok' or raises Failed."""
+    if record.get("page_db"):
+        disable_databases(pages)  # Release N exports current JSON before the old runtime is installed.
     install(record["wheel_url"])
     restore_skills(folder, record["skills"])
     for project, slug, _port, _base in pages:
@@ -247,8 +266,28 @@ def restore(folder, record, pages):
     return "doctor ok"
 
 
-def apply(mac, target, approval):
+def apply(mac, target, approval, hold_json=(), move_page=None):
     info = plan(mac, target)
+    migrate = vtuple(target) >= (2, 30, 0)
+    if (hold_json or move_page) and not migrate:
+        return 2, f"{mac} refused: page.db rollout needs 2.30.0 or later"
+    requested = set(hold_json) | ({move_page} if move_page else set())
+    known = {p["slug"] for p in info["pages"]} | {f"{p['project']}/{p['slug']}" for p in info["pages"]}
+    if requested - known:
+        return 2, f"{mac} refused: unknown page(s): {', '.join(sorted(requested - known))}"
+    if mac == "M1" and not (move_page and move_page.split("/")[-1] == "fld-stack-round8"):
+        if any(p["slug"] == "fld-stack-round8" and p.get("backend") != "sqlite" for p in info["pages"]):
+            hold_json = [*hold_json, "fld-stack-round8"]
+    if migrate:
+        info["restarts"].sort(key=lambda p: p.get("bytes", 0))
+    if move_page:
+        info["restarts"] = [p for p in info["restarts"] if move_page in (p["slug"], f"{p['project']}/{p['slug']}")]
+        if len(info["restarts"]) != 1:
+            return 2, f"{mac} refused: {move_page} is not one restartable page"
+        page = info["restarts"][0]
+        if any(held in (page["slug"], f"{page['project']}/{page['slug']}") for held in hold_json):
+            return 2, f"{mac} refused: cannot hold and move {move_page}"
+    info["page_db"] = migrate
     if info["problem"]:
         return 1, f"{mac} FAILED at preflight ({info['problem']}) · nothing changed"
     old = info["version"]
@@ -259,13 +298,21 @@ def apply(mac, target, approval):
         return 1, f"{mac} FAILED at preflight ({detail}) · nothing changed"
     folder, record = backup(info)
     touched = []
+    json_pages = []
     try:
         install(asset_url(target, wheel_name(target)))
         sync_skills()
         for page in record["pages"]:
             touched.append(page)  # a refused restart still respawns the old argv on the new venv
-            restart(page[0], page[1])
-        check(target, record["pages"])
+            if migrate:
+                held = page[1] in hold_json or f"{page[0]}/{page[1]}" in hold_json
+                result = restart(page[0], page[1], storage="migrate", hold_json=held, move=bool(move_page))
+                storage = result["storage"]
+                if storage["backend"] == "json":
+                    json_pages.append(f"{page[1]} ({storage['reason']})")
+            else:
+                restart(page[0], page[1])
+        check(target, [] if migrate else record["pages"])  # Each migrated restart already proved its runtime over loopback.
     except Failed as exc:
         try:
             state = f"rolled back to {old} · {restore(folder, record, touched)}"
@@ -277,6 +324,9 @@ def apply(mac, target, approval):
         return 1, line
     line = (f"{mac} {target} ok · {len(record['pages'])} pages restarted · {len(info['skips'])} skipped · "
             f"doctor ok · rollback kept: {old}")
+    if migrate:
+        json_pages += [f"{p['slug']} ({REASONS.get(p['action'], p['action'])})" for p in info["skips"]]
+        line += " · JSON: " + (", ".join(json_pages) or "none")
     log({"mac": mac, "action": "apply", "from": old, "to": target, "approval": approval,
          "result": "ok", "backup": str(folder), "line": line})
     return 0, line
@@ -342,7 +392,7 @@ def status():
     return 0, " · ".join(parts)
 
 
-def remote(mac, command, version, approval, worktree):
+def remote(mac, command, version, approval, worktree, hold_json=(), move_page=None):
     """Run `rollout.py COMMAND --local` on another Mac in an Orca terminal; print its line."""
     if not approval:
         return 2, f"refused: {mac} needs Chang's yes · ask on the page, then add --approval \"card #N\""
@@ -354,6 +404,10 @@ def remote(mac, command, version, approval, worktree):
     folder = "~/.local/share/annotate-rollout"
     marker = "ROLLOUT-END-" + uuid.uuid4().hex[:12]
     script = f"python3 -I {folder}/rollout.py {command}" + (f" {version}" if version else "")
+    for slug in hold_json:
+        script += " --hold-json " + shlex.quote(slug)
+    if move_page:
+        script += " --move-page " + shlex.quote(move_page)
     fetch_step = ""
     if version:
         fetch_step = (f"mkdir -p {folder}/v{version} && cd {folder}/v{version} && "
@@ -415,7 +469,14 @@ def main(argv=None):
     parser.add_argument("--approval", default="", help="Chang's yes, e.g. \"card #212\"; required for another Mac")
     parser.add_argument("--local", action="store_true", help="run here (what the remote side receives)")
     parser.add_argument("--worktree", help="Orca worktree selector on the other Mac")
+    parser.add_argument("--hold-json", action="append", default=[], metavar="SLUG",
+                        help="keep this page on JSON until --move-page (repeatable)")
+    parser.add_argument("--move-page", metavar="SLUG", help="migrate only this held page on a later apply")
     args = parser.parse_args(argv)
+    if (args.hold_json or args.move_page) and args.command != "apply":
+        parser.error("--hold-json and --move-page apply only to apply")
+    if any(c in slug for slug in [*args.hold_json, args.move_page or ""] for c in "$`\n\r"):
+        parser.error("page names may not contain $, backticks or newlines")
     if args.command == "status":
         code, line = status()
         print(line)
@@ -429,7 +490,8 @@ def main(argv=None):
         print(f"refused: this Mac is {here}, not {args.mac}")
         return 2
     if not args.local and args.mac != here:
-        code, line = remote(args.mac, args.command, args.version, args.approval, args.worktree)
+        code, line = remote(args.mac, args.command, args.version, args.approval, args.worktree,
+                            args.hold_json, args.move_page)
     elif os.environ.get("UV_TOOL_DIR") and not os.environ.get("UV_TOOL_BIN_DIR"):
         code, line = 2, "refused: UV_TOOL_DIR without UV_TOOL_BIN_DIR would replace the live annotate launcher"
     elif args.command == "plan":
@@ -439,7 +501,7 @@ def main(argv=None):
         except Failed as exc:
             code, line = 1, f"{args.mac} FAILED at {exc.step} ({exc.detail})"
     elif args.command == "apply":
-        code, line = apply(args.mac, args.version, args.approval)
+        code, line = apply(args.mac, args.version, args.approval, args.hold_json, args.move_page)
     else:
         code, line = rollback(args.mac, args.approval)
     print(line)
