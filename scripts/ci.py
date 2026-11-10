@@ -113,7 +113,8 @@ def full_route(root=ROOT, env=os.environ, config=None):
     if not wm_test:
         raise SystemExit("ci.py --full: the wm-test route is ready but wm-test is not on PATH")
     sha = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    return [wm_test, "agent-annotate", "full", "--sha", sha, "--config", str(config)]
+    target = ["--target", "auto"] if settings["repos"]["agent-annotate"].get("auto_target") is True else []
+    return [wm_test, "agent-annotate", "full", "--sha", sha, "--config", str(config), *target]
 
 
 def full_chunks(root=ROOT):
