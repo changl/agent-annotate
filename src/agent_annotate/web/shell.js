@@ -898,7 +898,7 @@ function flattenStore(includeArchived) {
 }
 // The comments of the document whose state is loaded (DOC).
 function flattenAll(includeArchived) {
-  return flattenStore(includeArchived).filter(c => docOf(c) === DOC && (!c.withdrawn || strandedSay(c)));
+  return flattenStore(includeArchived).filter(c => docOf(c) === DOC && (!c.withdrawn || strandedSay(c) || replyDraft(c)));
 }
 
 function withdrawnQuestions() {
@@ -1736,6 +1736,14 @@ function userNeedsSend(c) {
 function sayDraft(c) {
   return (DRAFTS['say:' + c.id] || '').trim();
 }
+function replyDraft(c) {
+  return (DRAFTS[c.id] || '').trim();
+}
+// Publication gives a reissued question a new id; typed words follow its number.
+function feedbackTarget(c) {
+  return flattenAll(false).find(next => next.number && next.number === c.number &&
+    next.version === latestVersion() && !next.withdrawn && next.status !== 'archived') || c;
+}
 // Clear a card's comment draft everywhere it is shown (rail, summary, body
 // strip), so a re-render cannot read the old text back out of a box.
 function clearSayDraft(id) {
@@ -1775,7 +1783,7 @@ function isChangingAnswer(c) {
 function sectionOf(c) {
   if (pageReadOnly()) return 'archived';
   if (c.status === 'archived') return 'archived';
-  if (isRoundPending(c) || userNeedsSend(c) || strandedSay(c)) return 'ready';
+  if (isRoundPending(c) || userNeedsSend(c) || strandedSay(c) || replyDraft(c)) return 'ready';
   if (isSetAside(c)) return 'later';
   const cls = classify(c);
   return cls === 'review' ? 'needs' : cls === 'waiting' ? 'waiting' : 'done';
@@ -1791,7 +1799,7 @@ function sendPlan() {
   for (const c of flattenAll(false)) {
     if (hasSayDraft(c)) answers.push(c);
     else if (isRoundPending(c)) round.push(c);
-    else if (needsPush(c) || strandedSay(c)) push.push(c);
+    else if (needsPush(c) || strandedSay(c) || replyDraft(c)) push.push(c);
   }
   return { round, answers, push };
 }
@@ -4054,7 +4062,8 @@ function wireHeader() {
 function needsPush(c) {
   // The server's _comment_needs_push: a pending reopen goes with the round.
   if (c.round_pending || (c.decision && c.decision.round_pending)) return false;
-  if (c.status !== 'open' && !(c.status === 'user_confirmed' && (c.replies || []).some(r => !isAgentAuthor(r.author) && noteUnsent(c, r)))) return false;
+  if (c.status === 'archived') return false;
+  if (c.status !== 'open' && !cardNotes(c).some(n => n.pending)) return false;
   const flaggedAt = c.flagged_at ? new Date(c.flagged_at).getTime() : 0;
   let latest = !isAgentAuthor(c.author) && c.created_at ? new Date(c.created_at).getTime() : 0;
   if (c.edited_at && !isAgentAuthor(c.edited_by || c.author)) latest = Math.max(latest, new Date(c.edited_at).getTime());
@@ -4066,6 +4075,12 @@ function needsPush(c) {
   if (!latest) return false;
   if (!c.flagged_for_session) return true;
   return latest > flaggedAt;
+}
+function sendCommentText(c) {
+  const notes = cardNotes(c).filter(n => n.pending).map(n => n.text);
+  if (sayIsNew(c)) notes.push(sayDraft(c));
+  if (replyDraft(c)) notes.push(replyDraft(c));
+  return notes.join('\n\n') || c.text;
 }
 // "x of n decided" counts the rail's Needs you set (the strip badge's filter)
 // plus what the reviewer has answered there and not sent yet. A card answered
@@ -4185,10 +4200,9 @@ function renderSummaryInto(list, editable) {
     </div>`;
   };
   const commentRow = (c) => {
-    if (hasDecisionRequest(c) && !strandedSay(c)) return decisionRow(c);
     const num = NUM_MAP[c.id];
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
-    const text = strandedSay(c) ? sayDraft(c) : last ? last.text : c.text;
+    const text = sendCommentText(c);
     const key = strandedSay(c) || last ? (isAgentAuthor(c.author) ? firstLine(c.text) : 'Reply') : 'Comment';
     return `<div class="sum-row rl-row" data-sum-id="${escAttr(c.id)}">
       <div class="rl-k"><span class="rl-num">${num ? '#' + num : ''}</span><span class="rl-q">${esc(key)}</span></div>
@@ -4288,7 +4302,7 @@ function sendItems() {
   const items = [...p.round, ...p.answers, ...p.push].map(c => {
     const last = (c.replies || []).filter(r => !isAgentAuthor(r.author)).slice(-1)[0];
     const label = hasDecisionRequest(c) ? displayPrompt(c) : firstLine(last ? last.text : c.text);
-    const answer = hasSayDraft(c) ? sayDraft(c) : decisionAnswer(c) ? answerLabel(c).text : '';
+    const answer = p.push.includes(c) ? sendCommentText(c) : hasSayDraft(c) ? sayDraft(c) : decisionAnswer(c) ? answerLabel(c).text : '';
     // UI-2: `kind` says which call carries the line (the round or the push)
     // and `id` lets a failed draft drop its line; neither goes to the server.
     return { label: '#' + (NUM_MAP[c.id] || '') + ' · ' + label, answer, kind: p.push.includes(c) ? 'push' : 'round', id: c.id };
@@ -4305,12 +4319,17 @@ async function prepareDocCore() {
   const items = sendItems();
   let ok = true;
   const failed = [];
-  for (const c of flattenAll(false).filter(hasSayDraft)) {
-    const r = await apiDecision(c.id, 'comment', sayDraft(c));
+  for (const c of flattenAll(false).filter(c => hasSayDraft(c) || strandedSay(c))) {
+    const target = feedbackTarget(c);
+    const r = isUnresolvedDecision(target)
+      ? await apiDecision(target.id, 'comment', sayDraft(c)) : await apiReply(target.id, sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
-  for (const c of flattenAll(false).filter(strandedSay)) {
-    if (await apiReply(c.id, sayDraft(c))) clearSayDraft(c.id); else { ok = false; failed.push(c.id); }
+  for (const c of flattenAll(false).filter(replyDraft)) {
+    if (await apiReply(feedbackTarget(c).id, replyDraft(c))) {
+      setDraft(c.id, '');
+      document.querySelectorAll('[data-reply-for="' + cssEsc(c.id) + '"]').forEach(ta => { ta.value = ''; });
+    } else { ok = false; failed.push(c.id); }
   }
   const gf = gfDraft();
   if (gf) {
@@ -5087,6 +5106,7 @@ async function init() {
   document.getElementById('comment-list').addEventListener('input', (e) => {
     if (e.target && e.target.classList && e.target.classList.contains('reply-ta')) {
       typeDraft(e.target.dataset.replyFor, e.target.value || '');
+      updateSendState();
     }
   });
   // UI-23: "Show more" / "Show less" under a long comment.
