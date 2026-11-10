@@ -317,6 +317,33 @@ def _mark_notes_sent(comment: dict, now: str, authors: set[str] | None = None) -
             r["sent_at"] = now
 
 
+def _carry_unsent_feedback(prior: dict, fresh: dict) -> None:
+    """A reissued number keeps unsent words; choices stay with their evidence."""
+    if type(prior.get("number")) is not int or prior["number"] != fresh.get("number"):
+        return
+    decision = prior.get("decision") or {}
+    answer = decision.get("round_pending") and decision.get("verdict") == "comment"
+    if answer and fresh.get("decision"):
+        return
+    notes = [r for r in _reviewer_notes(prior) if _note_unsent(prior, r)]
+    if answer:
+        notes += [r for r in prior.get("replies", []) if r not in notes
+                  and _note_unsent(prior, r) and r.get("author") == decision.get("by")
+                  and r.get("ts") == decision.get("ts")
+                  and str(r.get("text", "")).startswith("💬 Answer in words: " + str(decision.get("text") or ""))]
+    if not notes and not answer:
+        return
+    remember(fresh, decision.get("by") if answer else notes[0]["author"])
+    fresh.setdefault("replies", []).extend(notes)
+    prior["replies"] = [r for r in prior.get("replies", []) if r not in notes]
+    if answer:
+        submitted = comment_view(prior) or {}
+        prior["decision"] = submitted.get("decision")
+        fresh["decision"] = decision
+        prior.update(status="user_confirmed" if submitted.get("status") == "user_confirmed" else "addressed_by_agent",
+                     response_text=f"Asked again in {fresh['version']}.")
+
+
 def _push_answers(comments: list[dict], authors: set[str] | None = None) -> list[dict]:
     """History answers for pushed comments: every unsent human word on each."""
     from .categories import comment_category
@@ -356,7 +383,9 @@ def _comment_needs_push(comment: dict, authors: set[str] | None = None) -> bool:
     decision = comment.get("decision") if isinstance(comment.get("decision"), dict) else {}
     if comment.get("round_pending") or decision.get("round_pending"):
         return False
-    if comment.get("status") != "open" and not (comment.get("status") == "user_confirmed" and _unsent_notes(comment, authors)):
+    if comment.get("status") == "archived":
+        return False
+    if comment.get("status") != "open" and not _unsent_notes(comment, authors):
         return False
     if authors is not None and human(comment.get("author")) and comment.get("author") not in authors and not comment.get("flagged_for_session"):
         return False
@@ -2374,6 +2403,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 if publication and _can_withdraw(prior):
                                     prior["status"] = "addressed_by_agent"
                                     prior["response_text"] = f"Asked again in {version}."
+                                if publication:
+                                    for prior in lineage:
+                                        _carry_unsent_feedback(prior, fresh)
                         _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1

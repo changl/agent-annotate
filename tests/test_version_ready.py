@@ -135,6 +135,49 @@ def test_ready_fix_round_trips_in_metadata_api(round_server, tmp_path):
     assert _ready(httpd, draft, [_card()])[0] == 409
 
 
+def test_reissued_number_carries_private_notes_without_moving_a_pending_choice(round_server, tmp_path):
+    directory, httpd = round_server
+    prior = dict(_card(), id="prior", version="v1", author="agent:test", status="open",
+                 decision={"verdict": "select", "option_id": "yes", "text": "Yes", "by": "reviewer@example.com",
+                           "ts": "2026-11-10T01:00:00Z", "round_pending": True, "evidence": {"version": "v1"}},
+                 replies=[{"author": author, "ts": "2026-11-10T01:00:00Z", "text": text, "sent_at": None}
+                          for author, text in [("reviewer@example.com", "☑ Selected: Yes"),
+                                               ("reviewer@example.com", "PRIVATE first note"),
+                                               ("other@example.com", "PRIVATE second note")]])
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"d:q1": [prior]}, "archived": {}}))
+    _, draft = _stage_round(directory, tmp_path)
+    assert _ready(httpd, draft, [_card()])[0] == 200
+    stored = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+    old, fresh = stored
+    assert old["decision"] == prior["decision"]
+    assert old["replies"] == prior["replies"][:1]
+    assert fresh["replies"] == prior["replies"][1:]
+    assert not fresh.get("decision")
+    assert "PRIVATE" not in json.dumps(_http(httpd, "GET", "/api/comments")[1])
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_carrying_a_text_answer_keeps_already_sent_replies_from_the_same_second(confirmed):
+    decision = {"verdict": "comment", "text": "PRIVATE", "round_pending": True,
+                "by": "reviewer@example.com", "ts": "2026-11-10T01:00:00Z"}
+    sent = {"author": decision["by"], "ts": decision["ts"], "text": "💬 Answer in words: PRIVATE",
+            "sent_at": "2026-11-10T01:00:00Z"}
+    pending = {**sent, "sent_at": None}
+    prior = {"id": "old", "number": 1, "author": "agent:test", "decision": decision, "replies": [sent, pending]}
+    if confirmed:
+        prior["agent_snapshot"] = {"status": "user_confirmed", "decision": {"verdict": "accept"}}
+    fresh = {"id": "new", "number": 1, "version": "v2", "author": "agent:test"}
+    sync_server._carry_unsent_feedback(prior, fresh)
+    assert prior["replies"] == [sent]
+    if confirmed:
+        assert prior["status"] == "user_confirmed" and prior["decision"] == {"verdict": "accept"}
+    else:
+        assert not prior.get("decision")
+    assert fresh["replies"] == [pending]
+    assert fresh["decision"] == decision
+    assert "PRIVATE" not in json.dumps(fresh["agent_snapshot"])
+
+
 def test_server_card_failure_keeps_previous_round_and_store(round_server, tmp_path):
     directory, httpd = round_server
     _, draft = _stage_round(directory, tmp_path, cards=[_card(), _card(2)])

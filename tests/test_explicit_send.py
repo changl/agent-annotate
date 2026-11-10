@@ -75,14 +75,22 @@ def _events_before(bus, size):
     return [json.loads(line) for line in bus.read_bytes()[:size].splitlines()]
 
 
-def test_note_on_an_accepted_card_waits_for_send_and_is_not_stranded(server):  # noqa: F811
+@pytest.mark.parametrize("status", [None, "addressed_by_agent", "resolved_in_version"])
+def test_note_on_an_accepted_card_waits_for_send_and_is_not_stranded(server, status):  # noqa: F811
     httpd, directory, bus = server
     _, card = _call(httpd, "POST", "/api/comments", _card())
     route = f"/api/comments/{card['id']}"
-    _call(httpd, "POST", route + "/decision", {"verdict": "accept"}, author="r@x")
+    _call(httpd, "POST", route + "/decision", {"verdict": "reject" if status else "accept"}, author="r@x")
     _call(httpd, "POST", "/api/rounds/submit", {}, author="r@x")
     count = len(_events(bus, "session_push"))
     _call(httpd, "POST", route + "/reply", {"text": "A note after acceptance"}, author="r@x")
+    if status:
+        patch = {"status": status}
+        if status == "resolved_in_version":
+            (directory / "versions").mkdir()
+            (directory / "versions/v1.html").write_text('<p data-anchor-id="s:a">Evidence</p>')
+            patch.update(resolved_in_version="v1", resolution_anchor_id="s:a")
+        assert _call(httpd, "PUT", route, patch)[0] == 200
     assert len(_events(bus, "session_push")) == count
     assert "A note after acceptance" not in json.dumps(_call(httpd, "GET", "/api/comments")[1])
     _, result = _call(httpd, "POST", "/api/rounds/submit", {}, author="r@x")
