@@ -22,9 +22,35 @@ def load(name):
 
 @pytest.fixture
 def sweep(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANNOTATE_OWNERSHIP_MANIFEST", raising=False)
     monkeypatch.setenv("ANNOTATE_SWEEP_DIR", str(tmp_path / "sweeps"))
     monkeypatch.setenv("ANNOTATE_BUS_ROOT", str(tmp_path / "bus"))
     return load("sweep")
+
+
+def test_unset_ownership_preserves_baseline_bytes(sweep, monkeypatch, capsys):
+    monkeypatch.setattr(sweep.time, "time", lambda: NOW)
+    for name in ("beads", "disk", "sessions"):
+        monkeypatch.setattr(sweep, name, lambda *a, n=name: (f"{n}: baseline", [f"{n} item"]))
+    assert sweep.main(["all"]) == 0
+    lines = b"beads: baseline\ndisk: baseline\nsessions: baseline\n"
+    assert capsys.readouterr().out.encode() == lines
+    stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(NOW)).encode()
+    assert (sweep.OUT / "latest.txt").read_bytes() == (
+        b"sweep " + stamp + b"\n" + lines + b"\nbeads item\ndisk item\nsessions item\n")
+    assert not (sweep.OUT / "ownership-latest.json").exists()
+
+
+def test_failing_ownership_helper_writes_error(sweep, tmp_path, monkeypatch, capsys):
+    helper = tmp_path / "fails.py"
+    helper.write_text("raise SystemExit(1)\n")
+    monkeypatch.setenv("ANNOTATE_OWNERSHIP_MANIFEST", str(helper))
+    for name in ("beads", "disk", "sessions"):
+        monkeypatch.setattr(sweep, name, lambda *a, n=name: (f"{n}: baseline", []))
+    assert sweep.main(["all"]) == 1
+    assert "ownership: error " in capsys.readouterr().out
+    assert "ownership: error " in (sweep.OUT / "latest.txt").read_text()
+    assert '"status": "error"' in (sweep.OUT / "ownership-latest.json").read_text()
 
 
 def stamp(hours_ago):
