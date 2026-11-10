@@ -34,6 +34,7 @@ for _name, _path in _SANDBOX_ENV.items():
 os.environ["ANNOTATE_VERSION_GUARD"] = "0"
 # The live board (Bead Me Up Scotty, bd) is machine estate too; board tests use a fake bd.
 os.environ["ANNOTATE_BOARD_API"] = "http://127.0.0.1:9"
+os.environ["ANNOTATE_BOARD_DRY_RUN"] = "1"
 os.environ.pop("ANNOTATE_BD", None)
 (_SANDBOX / "config").mkdir(parents=True)
 (_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\nport_base = 18700\n')

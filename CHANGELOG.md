@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Board follow-ups survive handoffs and new sessions. `sweep.py boards` (also in `all`) discovers each owned page's Beads board, carries FLD's guarded rules across projects, and saves judgement items beside the page without touching comments or page.db. `annotate board SLUG` lists them; `--settle KEY "verdict"` records a decision against the current evidence fingerprint. Changed evidence reopens the item. Round delivery, per-turn notices and session start show at most three items and their settle commands, with no added text when none are open. Board writes stay off unless the board's exact path is in `apply-boards.txt`; each write has a SWEEP-AUTO note and readback. No new timer or model wake-up.
+- Board follow-ups survive handoffs and new sessions. `annotate board SLUG` checks that page's Beads board on an agent turn, performs FLD's guarded reopen/reset fixes on every board, and lists durable judgement items with settle commands. `--settle KEY "verdict"` records a decision without running the check; changed evidence reopens it. Board checks never run on a timer or in hooks: the hourly sweep is unchanged, and round delivery asks the agent to check the board. Delivery, per-turn notices and session start show at most three stored follow-ups plus a command for the rest. The reset guard includes ORCH assignees and requires the same missing-worker flag to persist for at least 55 minutes between turns. `board-pages.txt` beside annotate state pins a board's cards and follow-ups to an explicit page. Checks serialize per board, retain receipts, and fall back to stored items on failure. Writes use the same rules everywhere; `ANNOTATE_BOARD_DRY_RUN=1` is for tests/rehearsals. No comments.json or page.db writes are made.
 
 ## 2.30.0
 

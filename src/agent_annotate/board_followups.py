@@ -51,12 +51,60 @@ def clause(record: dict, project: str, slug: str) -> str:
     return "; board follow-ups: " + "; ".join(lines)
 
 
+def has_board(record: dict, project: str, slug: str) -> bool:
+    """Local routing hints only: delivery must never spawn a board check."""
+    from . import paths
+    try:
+        pins = (paths.STATE_DIR / "board-pages.txt").read_text().splitlines()
+        if any(len(parts := line.split(maxsplit=1)) == 2 and parts[1] == project + "/" + slug for line in pins):
+            return True
+    except OSError:
+        pass
+    dest = directory(record, project, slug)
+    try:
+        if dest and json.loads((dest / "board-followups.json").read_text()).get("board"):
+            return True
+    except (OSError, ValueError, AttributeError):
+        pass
+    worktree = (record.get("owner_target") or {}).get("worktree") or ""
+    roots = [record.get(k) for k in ("repo_dir", "workspace_root", "slug_dir")]
+    if "::" in worktree:
+        roots.append(worktree.split("::", 1)[1])
+    for root in filter(None, roots):
+        for parent in (Path(root), *Path(root).parents):
+            if parent == Path.home():
+                break
+            if (parent / ".beads").exists():
+                return True
+            try:
+                dotgit = parent / ".git"
+                if dotgit.is_file() and (value := dotgit.read_text().strip()).startswith("gitdir: "):
+                    common = (parent / value[8:]).resolve()
+                    if (common / "commondir").is_file():
+                        common = (common / (common / "commondir").read_text().strip()).resolve()
+                    if (common.parent / ".beads").exists():
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+def check_clause(record: dict, project: str, slug: str) -> str:
+    return f"; check the board: annotate board {shlex.quote(project + '/' + slug)}" if has_board(record, project, slug) else ""
+
+
 def cmd_board(args) -> int:
     from .cli import _flock, _resolve_slug, _session_id
     found = _resolve_slug(args.slug, args.project)
     if not found:
         return 1
     project, slug, record = found
+    error = None
+    if not args.settle:
+        from .board_checks import check_page
+        board, error = check_page(project, slug, record)
+        if board:
+            project, slug, record = board["project"], board["slug"], board["record"]
     dest = directory(record, project, slug)
     if dest is None:
         print("ERROR: page has no directory", file=sys.stderr)
@@ -78,6 +126,9 @@ def cmd_board(args) -> int:
         print(json.dumps(row, ensure_ascii=False) if args.json else f"settled {key}")
     else:
         items = open_items(record, project, slug)
-        print(json.dumps(items, ensure_ascii=False) if args.json else
+        result = {"items": items, "error": "board check failed: " + error} if error else items
+        print(json.dumps(result, ensure_ascii=False) if args.json else
               "; ".join(f"{item['line']} ({item['settle']})" for item in items) or "board: no open follow-ups")
-    return 0
+        if error and not args.json:
+            print("board check failed: " + error, file=sys.stderr)
+    return int(bool(error))

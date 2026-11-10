@@ -35,10 +35,9 @@ Rollback reinstalls the old wheel and restores the skills tarball. It restarts o
 | Command | Prints |
 |---|---|
 | `sweep.py beads` | `beads: 2 open · 2 ready · 1 in progress over 24 h · 0 closed without proof` |
-| `sweep.py boards` | One line per discovered board, with counts, action mode and open follow-ups |
 | `sweep.py disk` | `disk: 293 GiB free · buses 0.0 GiB · 29 quiet buses over 30 days` |
 | `sweep.py sessions [--apply]` | `sessions: 0 finished worktrees (PR merged, bead closed, clean tree) · 0 removed` |
-| `sweep.py all` | all checks, including every discovered board |
+| `sweep.py all` | the three lines |
 
 Each run writes its summary lines, a blank line and the judgment items (stale beads, quiet buses, finished worktrees) to `~/.local/share/annotate-sweeps/latest.txt`. `run_summary.py` shows those summary lines by default (`--extra FILE …` for other sources).
 
@@ -50,12 +49,23 @@ Each run writes its summary lines, a blank line and the judgment items (stale be
 
 Main worktrees and the deny list in the code (`rebex-library-performance`) are never inspected. A merged, clean worktree that names no bead is listed for a coordinator to decide.
 
-`boards` reads owned pages from the annotate registry and runs `bd where --json` in the owner's worktree, falling back to the page's repository. It chooses the newest owned page per board. A board writes only if its exact `bd where` path is listed on a line in `$ANNOTATE_SWEEP_DIR/apply-boards.txt` (default `~/.local/share/annotate-sweeps`). `--apply` does not enable board writes. Missing liveness sources prevent worker resets.
-
-FLD's two automatic rules are retained: reopen a blocked bead only when its BLOCKED BY note names only beads and every note/dependency blocker is closed; reset an in-progress bead after two hourly observations at least 55 minutes apart without a live assignee or ctx/term in any note line. Human, lead and orchestrator assignees, including the repository's git user.name, are guarded. Each change adds one `SWEEP-AUTO` note and reads the result back. Merge proof, owner cards and blocker sorting only report. FLD retains its four merge-proof repositories and latest dated sweep notes; other boards check the owner's repository.
-
-Each board has settled delta state in the sweep directory and findings/actions/summary receipts in `boards/TIMESTAMP/BOARD-HASH/`. Model judgement items persist in the selected page's `board-followups.json`, atomically replaced, until `annotate board PROJECT/SLUG --settle KEY "verdict"` appends a verdict to `board-verdicts.ndjson`. `annotate board PROJECT/SLUG` lists the open items and settle commands on one line; `--json` returns the full records. A verdict matches a key and evidence fingerprint, so changed evidence reopens the item. Round delivery, per-turn notices and session start add at most three follow-ups plus a link command for the rest; zero open items adds nothing. Nothing wakes a model.
-
-For a read-only rehearsal, set both `ANNOTATE_SWEEP_DIR` and `ANNOTATE_BOARD_FOLLOWUPS_ROOT` to empty temporary directories, then run `sweep.py boards`. The latter redirects all follow-up files to `ROOT/PROJECT/SLUG`; keep `apply-boards.txt` absent. No page.db or comments.json writes are made by the board sweep or verdict command. The sweep remains standalone Python, including under `python3 -I`.
-
 **Timer.** `scripts/launchd/com.changlee.annotate-sweep.plist` runs `sweep.py all` hourly, report only. Install steps are in its header comment. It is not loaded until Chang says yes. To stop it, run `launchctl bootout` and remove the file.
+
+
+## Board judgement on turns: `annotate board`
+
+`annotate board PROJECT/SLUG` checks that page's Beads board, performs the two guarded fixes, saves durable follow-ups and lists open items with their settle commands. It runs only when the agent invokes it on a turn. Hooks never run the check: round delivery adds `check the board: annotate board PROJECT/SLUG` when local routing shows a board; round delivery, per-turn notices and session start also show up to three stored follow-ups and a command for the rest. No board timer or model wake-up exists, and `scripts/sweep.py` does not check boards.
+
+Board discovery reads owned pages and runs `bd where --json` in each owner's worktree, falling back to the page's repository. It chooses the newest owned page per board unless `$ANNOTATE_STATE_DIR/board-pages.txt` pins that board to an owned, active page. Each line is `<board path> <project/slug>`, for example:
+
+```text
+/Users/changlee/.local/share/beads/clients/fld/.beads reviews/fld-stack-round8
+```
+
+A pin changes which page supplies owner cards and receives follow-ups; the board's repository and merge-proof lookup stay the same. An invalid page pin skips that board and reports the reason. Unpinned boards keep discovery.
+
+Every board uses the same rules, with writes enabled. A blocked bead reopens only when its BLOCKED BY note names only beads and every note/dependency blocker is closed. An in-progress bead resets only when it was first flagged at least 55 minutes before this check and is still flagged, with no live assignee or ctx/term in any note line; any number of checks can occur between those observations, and clearing the flag restarts the clock. Human, lead and orchestrator assignees are guarded (`LEAD|ORCH|^m1[a-z]$`, FLD's skip names, and git user.name). A missing liveness source blocks resets. Every write adds one `SWEEP-AUTO` note and reads back its result. Merge proof, owner cards and blocker sorting only report. FLD retains its four merge-proof repositories and latest dated sweep notes; other boards use the owner's repository.
+
+Checks take a per-board lock and keep settled delta state and findings/actions/summary receipts under `$ANNOTATE_STATE_DIR/board-checks/`. Follow-ups live in `board-followups.json` beside the selected page, atomically replaced. `annotate board PROJECT/SLUG --settle KEY "verdict"` appends a decision against the current fingerprint to `board-verdicts.ndjson`, without running a check; changed evidence reopens it. List and settle print one line; `--json` returns full records. A failed or timed-out check still lists stored items and adds one `board check failed: <reason>` line (or an error field with `--json`), exiting nonzero. Neither file is a page store record, and neither command writes comments.json or page.db.
+
+For a read-only rehearsal, copy the registry JSON files into a temporary `ANNOTATE_STATE_DIR`, put any page pins there, set `ANNOTATE_BOARD_DRY_RUN=1`, and set `ANNOTATE_BOARD_FOLLOWUPS_ROOT` to a second temporary directory. Follow-up output then goes to `ROOT/PROJECT/SLUG`; state, locks and receipts stay under the temporary state root. There is no apply-list file or per-board write gate.

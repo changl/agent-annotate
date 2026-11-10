@@ -2,14 +2,12 @@
 """FLD safety fixtures, unchanged apart from the board prefix and sweep import."""
 import copy
 import datetime
-import importlib.util
 import json
-import pathlib
+from pathlib import Path
 
-HERE = pathlib.Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("bsc", HERE.parent / "scripts/sweep.py")
-bsc = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(bsc)
+from agent_annotate import board_checks as bsc
+
+HERE = Path(__file__).resolve().parent
 FIXTURE = json.loads((HERE / "fixtures/board_sweep_checks.json").read_text())
 NOW = bsc.parse_ts("2026-11-10T06:05Z")
 NOBODY = {"names": set(), "ctxs": set(), "terms": set()}
@@ -113,3 +111,24 @@ def test_card_numbers():
     assert bsc.card_numbers("owner B3 HOLD cards2748-2751") == ["2748", "2749", "2750", "2751"]
     assert bsc.card_numbers("Chang card #37518, d:q2876, card 2962") == ["2876", "2962", "37518"]
 
+
+
+def test_rule2_orchestrator_guard_never_resets():
+    f = run([{"id": "FLD-orch", "status": "in_progress", "assignee": "FLD-M1-ORCH", "notes": ""},
+             {"id": "FLD-gone", "status": "in_progress", "assignee": "GONE", "notes": ""}])
+    assert [row["id"] for row in f["in_progress_guarded"]] == ["FLD-orch"]
+    _, state = bsc.plan(f, None, [], 0, NOW)
+    planned, _ = bsc.plan(f, state, [], 0, NOW + datetime.timedelta(hours=1))
+    assert [action["bead"] for action in planned["actions"]] == ["FLD-gone"]
+
+
+def test_reset_age_survives_many_turns_without_a_timer():
+    f = run([{"id": "FLD-gone", "status": "in_progress", "assignee": "GONE", "notes": ""}])
+    planned, state = bsc.plan(f, None, [], 0, NOW)
+    assert planned["actions"] == []
+    for minutes in (1, 10, 20, 54):
+        planned, state = bsc.plan(f, state, [], 0, NOW + datetime.timedelta(minutes=minutes))
+        assert planned["actions"] == []
+        assert state["since"]["reset:FLD-gone"] == bsc.iso(NOW)
+    planned, _ = bsc.plan(f, state, [], 0, NOW + datetime.timedelta(minutes=55))
+    assert [action["bead"] for action in planned["actions"]] == ["FLD-gone"]

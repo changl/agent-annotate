@@ -5434,7 +5434,7 @@ def build_parser(*, all_commands=False):
     sp_workspace.add_argument("--json", action="store_true")
     sp_workspace.set_defaults(func=cmd_workspace)
     from .board_followups import cmd_board
-    sp_board = sub.add_parser("board", help="list durable board follow-ups or record a judgement")
+    sp_board = sub.add_parser("board", help="check the page's board and list follow-ups, or record a judgement")
     sp_board.add_argument("slug")
     sp_board.add_argument("--project", default=None)
     sp_board.add_argument("--settle", nargs=2, metavar=("KEY", "verdict"))

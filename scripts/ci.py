@@ -39,7 +39,7 @@ TESTS = (
     "tests/test_review_access.py",
     "tests/test_reviewer_authoring_boundary.py",
     "tests/test_delivery.py",
-    "tests/test_board_sweep_rules.py",
+    "tests/test_board_checks_rules.py",
     "tests/test_board_followups.py",
     "tests/test_sweep.py",
     "tests/test_explicit_send.py",
