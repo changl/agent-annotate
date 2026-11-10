@@ -1645,7 +1645,7 @@ def _publish(args) -> int:
             from .workspace import add_membership, membership
             if existing:
                 for field in ("workspace_key", "workspace_root", "workspace_repos", "workspace_folders",
-                              "workspace_selected_at"):
+                              "workspace_selected_at", "db_hold", "db_reason"):
                     if field in existing:
                         record[field] = existing[field]
                 repos, folders = membership(existing)

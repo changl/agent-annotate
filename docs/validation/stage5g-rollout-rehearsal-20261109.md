@@ -38,7 +38,7 @@ M1 2.30.0 ok · 1 pages restarted · 1 skipped · doctor ok · rollback kept: 2.
 
 Raw receipts and per-page traces: `/tmp/aa-stage5g-41wQYw/results.json`. Rehearsal driver: `/tmp/aa-stage5g-rehearse.py`. `/tmp/aa-stage5g-41wQYw/cleanup.json` confirms zero remaining sandbox servers and zero browsers started. Only page copies and the sandbox registry were changed; no Rebex worktree, FLD source, live page, live registry, sweep installation, LaunchAgent or other Mac was changed.
 
-For release N, the coordinator runs the full suite, merges the PRs, builds/releases 2.30.0, then applies on M1. FLD is held automatically on M1; additional pages can be held with repeatable `--hold-json SLUG`. Holds persist in the page registry. After seven days with 0 differences and 0 `store_foreign_write`, the operator can move FLD with one command:
+For release N, the coordinator runs the full suite, merges the PRs, builds/releases 2.30.0, then applies on M1. FLD is held automatically on M1; additional pages can be held with repeatable `--hold-json SLUG`. Holds persist in the page registry, including when a page is republished or revived. After seven days with 0 differences and 0 `store_foreign_write`, the operator can move FLD with one command:
 
 ```sh
 python3 scripts/rollout.py apply 2.30.0 --mac M1 --move-page reviews/fld-stack-round8
@@ -48,4 +48,4 @@ That command is the operator's explicit release of the hold; it does not measure
 
 Release N+1 remains separate: first verify the seven-day soak, zero foreign writes and `doctor --versions` showing every page on N. Only then retire JSON exports and `.lock` files, keeping bus exports and `db export` for rollback. M5 and M1Max16 need separate approval, and M5 follows M1 FLD's seven-day soak; no other Mac was contacted here.
 
-Focused validation: **83 passed** across `tests/test_rollout.py`, `tests/test_deployment.py`, `tests/test_store_db.py` and `tests/test_version_guard.py`, with `PYTHONPATH=/Users/changlee/orca/workspaces/codex/aa-stage5g/src` and the shared venv's Python. Ruff passed for the changed Python files; `git diff --check` passed. The separate ownership-hook PR has **9 passing sweep tests**. The full suite, release-wheel validation, live migration and seven-day soak were not run here.
+Focused validation: **84 passed** across `tests/test_rollout.py`, `tests/test_deployment.py`, `tests/test_store_db.py` and `tests/test_version_guard.py`, plus the focused publish-hold persistence test in `tests/test_publish_gate.py`, with `PYTHONPATH=/Users/changlee/orca/workspaces/codex/aa-stage5g/src` and the shared venv's Python. Ruff passed for the changed Python files; `git diff --check` passed. The separate ownership-hook PR has **9 passing sweep tests**. The full suite, release-wheel validation, live migration and seven-day soak were not run here.
