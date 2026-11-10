@@ -11,7 +11,6 @@ import pytest
 from agent_annotate import board_checks as checks_module
 from agent_annotate import board_followups as followups
 from agent_annotate import cli
-from agent_annotate.hooks.check_comment_bus import _slug_line
 
 NOW = datetime.datetime(2026, 11, 10, 6, 5, tzinfo=datetime.timezone.utc)
 
@@ -145,19 +144,6 @@ def test_board_git_user_guard_and_dynamic_prefix(checks):
     assert f["blocked_with_closed_blocker"][0]["id"] == "rebex-a"
     assert f["in_progress_guarded"][0]["id"] == "rebex-human"
     assert f["in_progress_without_live_worker"] == []
-
-
-@pytest.mark.parametrize("count", [0, 1, 5])
-def test_per_turn_clause_zero_or_three_plus_more(tmp_path, count):
-    b = board(tmp_path)
-    seed_items(Path(b["record"]["slug_dir"]), count)
-    baseline = _slug_line("p", "s", 1, [], {}, False, record={"slug_dir": "/does-not-exist"})
-    actual = _slug_line("p", "s", 1, [], {}, False, record=b["record"])
-    expected = followups.clause(b["record"], "p", "s")
-    assert actual == baseline + expected
-    assert actual.count('--settle') == min(count, 3)
-    assert ("+2 more: annotate board p/s" in actual) == (count == 5)
-    assert bool(expected) == bool(count)
 
 
 def seed_items(directory, count):
@@ -431,4 +417,6 @@ def test_board_presence_reads_only_local_metadata_and_pins(tmp_path, monkeypatch
     assert not followups.has_board({"slug_dir": str(tmp_path / "unknown")}, "p", "unknown")
     (state / "board-pages.txt").write_text("/central/.beads reviews/coordinator\n")
     assert followups.has_board({"slug_dir": str(tmp_path / "separate")}, "reviews", "coordinator")
-    assert followups.check_clause({}, "reviews", "coordinator") == "; check the board: annotate board reviews/coordinator"
+    assert followups.check_clause({}, "reviews", "coordinator") == (
+        "; board: have a separate worker (not this session) run annotate board reviews/coordinator, "
+        "settle each listed item and report one line")

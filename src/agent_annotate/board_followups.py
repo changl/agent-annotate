@@ -41,16 +41,6 @@ def open_items(record: dict, project: str, slug: str) -> list[dict]:
     return [item for item in items if (item["key"], item["fingerprint"]) not in settled]
 
 
-def clause(record: dict, project: str, slug: str) -> str:
-    items = open_items(record, project, slug)
-    if not items:
-        return ""
-    lines = [f"{item['line']} ({item['settle']})" for item in items[:3]]
-    if len(items) > 3:
-        lines.append(f"+{len(items) - 3} more: annotate board {shlex.quote(project + '/' + slug)}")
-    return "; board follow-ups: " + "; ".join(lines)
-
-
 def has_board(record: dict, project: str, slug: str) -> bool:
     """Local routing hints only: delivery must never spawn a board check."""
     from . import paths
@@ -90,7 +80,9 @@ def has_board(record: dict, project: str, slug: str) -> bool:
 
 
 def check_clause(record: dict, project: str, slug: str) -> str:
-    return f"; check the board: annotate board {shlex.quote(project + '/' + slug)}" if has_board(record, project, slug) else ""
+    # Judgement stays out of the owner's context (card 243): the round only triggers a worker.
+    return (f"; board: have a separate worker (not this session) run annotate board {shlex.quote(project + '/' + slug)}, "
+            "settle each listed item and report one line") if has_board(record, project, slug) else ""
 
 
 def cmd_board(args) -> int:

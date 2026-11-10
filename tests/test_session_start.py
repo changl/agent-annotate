@@ -206,15 +206,9 @@ def test_session_start_passes_the_payload_session_to_owner_refresh(estate, monke
     assert calls == [("resumed", {("project", "main"): estate.record})]
 
 
-@pytest.mark.parametrize("count", [0, 1, 5])
-def test_session_start_board_clause_zero_or_three_plus_more(estate, count):
+def test_session_start_never_lists_board_items(estate):
     from test_board_followups import seed_items
 
-    from agent_annotate.board_followups import clause
     baseline = session_start.notice(estate.repo)
-    seed_items(estate.page, count)
-    suffix = clause(estate.record, "project", "main")
-    actual = session_start.notice(estate.repo)
-    assert actual == baseline + suffix
-    assert actual.count("--settle") == min(count, 3)
-    assert ("+2 more: annotate board project/main" in actual) == (count == 5)
+    seed_items(estate.page, 5)
+    assert session_start.notice(estate.repo) == baseline
