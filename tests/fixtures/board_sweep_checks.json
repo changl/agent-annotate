@@ -1,0 +1,418 @@
+{
+ "source": "live bd export 2026-11-10T05:0xZ; the 19 blocked_with_closed_blocker rows of windmill-sweep/0505 (all judged keep-blocked by AUDIT-1220Z); first note line + blocks deps; referenced beads with status only",
+ "false_positive_ids": [
+  "FLD-1aiv.6",
+  "FLD-k1ap",
+  "FLD-dkkz.4",
+  "FLD-1aiv.7",
+  "FLD-etqv.6",
+  "FLD-6n6.294",
+  "FLD-fbf",
+  "FLD-6n6.225",
+  "FLD-1jrx",
+  "FLD-6n6.312",
+  "FLD-ejj0",
+  "FLD-0okr.14",
+  "FLD-0ocl.9",
+  "FLD-m5gw",
+  "FLD-zldk",
+  "FLD-k5mw",
+  "FLD-ciy",
+  "FLD-6n6.235",
+  "FLD-v4a.69"
+ ],
+ "beads": [
+  {
+   "id": "FLD-1aiv.6",
+   "status": "blocked",
+   "notes": "BLOCKED BY: card 3029 (schedule the purge-deletion-records / remind-stuck-sign-ins jobs; undecided in raw-52/inbox.json) + the retained-UGC basis / real-Apple revocation proof in the older lines | UNBLOCKS WHEN: the jobs are scheduled under 3029 and the older proofs exist | OWNER: Chang (3029), then m1d. DONE: FLD-1aiv.6.6 closed 06:32Z (privacy sentence live: WEB-PRIVACY-DEPLOY-2 Railway fld-web tester deployment 6e17a9a8 @ hotfix 137842f, worker_done 06:32:32Z; fld-web main 368f93b itself is NOT deployed). Launch outcome: deleted members' data is removed on the agreed schedule. Supersession: CURRENT | BEAD-SWEEP-52 2026-11-02T07:09Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-1aiv.10"
+    }
+   ]
+  },
+  {
+   "id": "FLD-k1ap",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang's iPhone phone session (card 2962; TF92 open/send/offline-recovery rows) | UNBLOCKS WHEN: the iPhone rows pass on TF92 in that session | 2026-11-04. FLD-0ocl.24 CLOSED 18:32Z (tester release live). Android rows on Play vc96: K1AP-ANDROID-VC96 (M5Max, Opus 5.5 medium; R/bead-sweep/specs-86/K1AP-ANDROID-VC96.md) on m1d TEST GO + OPS window. Owner-held, note only. Supersession: CURRENT (cards 2524, 3100, 22599) | BEAD-SWEEP-86 2026-11-04T19:15Z (FLD-0ocl.24 close_reason NEXT line) | BEAD-SWEEP-86 2026-11-04T19:19Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.1"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.2"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.3"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.4"
+    }
+   ]
+  },
+  {
+   "id": "FLD-dkkz.4",
+   "status": "blocked",
+   "notes": "BLOCKED BY: owner B3 HOLD cards2748-2751 | UNBLOCKS WHEN: Chang approves the member-versus-HQ mechanics on reviews/fld-stack-round8 and m1c admits the exact B3 candidate; e84ea998 remains unmerged | 2026-10-31T04:41:40.689027+00:00",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-dkkz.3"
+    }
+   ]
+  },
+  {
+   "id": "FLD-1aiv.7",
+   "status": "blocked",
+   "notes": "BLOCKED BY: FLD-i5ba (burst cause found 13:58Z: pg pool + home N+1, then write admission; fix capsule I5BA-FIX, R/bead-sweep/specs-105/I5BA-FIX.md) | UNBLOCKS WHEN: the same 150 rps x 60 s burst passes (errors < 1%, p95 < 1000 ms) on the i5ba fix branch and m1d confirms the Supabase 2 CPU / 1 GB cap; tester monitoring/restore/rollback evidence follows | 2026-11-05 | Supersession: CURRENT (card 3100) (R/i5ba-burst-profile/report-b.md 13:58:26Z) | BEAD-SWEEP-105 2026-11-05T14:06Z | BEAD-SWEEP-105 2026-11-05T14:07Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    }
+   ]
+  },
+  {
+   "id": "FLD-etqv.6",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang's iPhone phone session (card 2962; TF92 Events -> event chat entry row) | UNBLOCKS WHEN: the iPhone row passes in that session | 2026-11-04. FLD-0ocl.24 CLOSED 18:32Z (no longer a blocker); web and Android rows PASS. Supersession: CURRENT (owner L456; cards 2524, 3100) | BEAD-SWEEP-86 2026-11-04T19:15Z (FLD-0ocl.24 close_reason) | BEAD-SWEEP-86 2026-11-04T19:19Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0dyt"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.1"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.3"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.4"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.5"
+    }
+   ]
+  },
+  {
+   "id": "FLD-6n6.294",
+   "status": "blocked",
+   "notes": "BLOCKED BY: UI freeze (since 11-01 06:00Z only UI-LEAD builds UI); E2EE DM design approved 2026-10-16 (cards 1989-1994, decision rows L364-L369) | UNBLOCKS WHEN: m1d puts the E2EE DM build into a UI-LEAD round or Chang lifts the freeze | 2026-11-04. FLD-0ocl.24 CLOSED 18:32Z. Supersession: CURRENT (L59, L358, cards 1989-1994) | BEAD-SWEEP-86 2026-11-04T19:15Z (6n6.294 note 2026-10-16T19:00Z) | BEAD-SWEEP-86 2026-11-04T19:19Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.1"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.3"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.4"
+    }
+   ]
+  },
+  {
+   "id": "FLD-fbf",
+   "status": "blocked",
+   "notes": "BLOCKED BY: a signed release-candidate iPhone build from fld-ios main (merges 2 cvnr and 3 36ou LANDED: main 1db829a8, IOS-MERGES-2 08:50Z; no upload) + UI-LEAD booking the CarPlay frames (UI freeze) | UNBLOCKS WHEN: m1d has the signed RC from current fld-ios main (after IOS-MERGES-3) and UI-LEAD books the frames; then one M5Max phone session runs End on the CarPlay host | OWNER: m1d (RC), UI-LEAD (frames). Supersession: CURRENT (card 1653) | BEAD-SWEEP-54 2026-11-02T16:02Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-f46.26"
+    }
+   ]
+  },
+  {
+   "id": "FLD-6n6.225",
+   "status": "blocked",
+   "notes": "BLOCKED BY (NOT M1MAX16): UI freeze + no CarPlay capture on either Mac (m1d 16:17Z) | UNBLOCKS WHEN: UI-LEAD books the authenticated tall-shape CarPlay capture into Chang's car-frame phone window | OWNER: UI-LEAD. Card 1653 \"Yes, now\" keeps it CURRENT | BEAD-SWEEP-55 2026-11-02T17:06Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-f46.26"
+    }
+   ]
+  },
+  {
+   "id": "FLD-1jrx",
+   "status": "blocked",
+   "notes": "BLOCKED BY (NOT M1MAX16): UI freeze: the 200% turn-box builds (iPhone fld-ios worker/ios-large-text-turnbox e2766cb8, Android worker/droid-large-text-turnbox 10248194) sat on finished G2/G10 and are in no live queue; Android large text is also FLD-6n6.323 (Play96 frames) | UNBLOCKS WHEN: UI-LEAD takes the 200% turn box in a round (one worker, with 6n6.323) and sends the gates to GR-2N/GR-21 | OWNER: UI-LEAD. The REROUTE-FIX-*/LARGE-TEXT-TURNBOX-DESIGN workers are long finished. Supersession: CURRENT (card 2823 + 2883 graphical shields) | BEAD-SWEEP-55 2026-11-02T17:06Z",
+   "dependencies": []
+  },
+  {
+   "id": "FLD-6n6.312",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang's iPhone phone session (card 2962; CarPlay rejoin alert + maneuver subline on the owner iPhone) | UNBLOCKS WHEN: that session runs the CarPlay row on TF92 | 2026-11-04. FLD-0ocl.24 CLOSED 18:32Z. Owner-held, note only. Supersession: CURRENT | BEAD-SWEEP-86 2026-11-04T19:15Z (6n6.312 note) | BEAD-SWEEP-86 2026-11-04T19:19Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    }
+   ]
+  },
+  {
+   "id": "FLD-ejj0",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang root sitting at the M1Max16 (paste line (1) = bootstrap 3aebd479) | UNBLOCKS WHEN: Chang is at the M1Max16; then CI-CUTOVER-EXEC-5 from RUN/reports/ci-cutover-exec-4/checkpoint.md re-claims this (set ME= in ports.sh) -> T5, T6, B2, B4/T3. CI-CUTOVER-EXEC-4 settled BLOCKED 04:10Z: nothing ran as root, job_runtime.py still 99e8e4ed, M1Max16 unchanged. Launch outcome: native phone CI on the M1Max16 (D2). Supersession: CURRENT (card 5411) | BEAD-SWEEP-67 2026-11-03T05:03Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-znmg"
+    }
+   ]
+  },
+  {
+   "id": "FLD-0okr.14",
+   "status": "blocked",
+   "notes": "BLOCKED BY (NOT M1MAX16): one CarPlay capture from the real iPhone session (no CarPlay sim on Xcode 27.1, card 2962), booked by UI-LEAD (UI freeze), on the same RC build as FLD-fbf | UNBLOCKS WHEN: UI-LEAD books the car-frame round | OWNER: UI-LEAD. Code done: fix 34c8a02e is an ancestor of fld-ios main 1be6da36 (gh compare behind 0, ~05:04Z; TF92 landed 04:04Z) | BEAD-SWEEP-50 2026-11-02T05:08Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0okr.15"
+    }
+   ]
+  },
+  {
+   "id": "FLD-0ocl.9",
+   "status": "blocked",
+   "notes": "BLOCKED BY: C6.10 quiet window (7 consecutive days of zero legacy /member-chat/session calls on tester) | UNBLOCKS WHEN: tester logs show 7 days at zero after TF92 da23f426 / Play vc96 distribution, earliest 2026-11-11T18:32Z | 2026-11-04. FLD-0ocl.24 CLOSED 18:32Z. Supersession: CURRENT (card 2524 lane P4) | BEAD-SWEEP-86 2026-11-04T19:15Z (FLD-0ocl.24 close_reason) | BEAD-SWEEP-86 2026-11-04T19:19Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.11"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.19"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.3"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.4"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.5"
+    }
+   ]
+  },
+  {
+   "id": "FLD-m5gw",
+   "status": "blocked",
+   "notes": "BLOCKED BY: fld-android 3d12bfe9 (G1: rallies isolate + event loading placeholder; placeholder is UI, UI freeze) not on fld-android main 25647d5a (Play96 4d200ebc status 57867222920 + C2 status 57868600914, PLAY96-LAND-2 18:38Z); STAGING-REPLAY-V4 holds UC4/03-07 on it | UNBLOCKS WHEN: UI-LEAD carries 3d12bfe9 onto main and UC4/03:android replays (57ee needs the 418 root cause from its FldEvents logcat) | OWNER: UI-LEAD, m1d. Supersession: CURRENT | BEAD-SWEEP-57 2026-11-02T19:05Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-tvui"
+    }
+   ]
+  },
+  {
+   "id": "FLD-zldk",
+   "status": "blocked",
+   "notes": "BLOCKED BY: owner phones not reachable on the M5Max (19:23Z: iPhone 00008140-000265AE2602801C 'unavailable' to devicectl under Xcode and Xcode-27; adb lists only emulators; Chang told in chat) | UNBLOCKS WHEN: the Xcode 27 lane (lane.py) shows the iPhone and adb lists the Pixel on the M5Max; then ZLDK-SHARE-PREVIEW (R/bead-sweep/specs-87/ZLDK-SHARE-PREVIEW.md, m1d TEST-chat GO) posts the feedback URL + one FLD event URL in a TEST chat on iOS 92 and Android 96 with screenshots | 2026-11-04. Builds hold 2dbb0d7f (TF92 da23f426) and 378852f6 (vc96 e795b2c4); feedback URL og:image 200 (hero); neither app has an event-share action. Supersession: CURRENT (tester feedback 82) | BEAD-SWEEP-87 2026-11-04T20:12Z (R/tester-postcutover-readback/report.md:23-45; pending.txt 19:25Z) | BEAD-SWEEP-87 2026-11-04T20:14Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.1"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.10"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.11"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.3"
+    }
+   ]
+  },
+  {
+   "id": "FLD-k5mw",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang card 35259 (page v692: GO to register real Shopify webhook subscriptions on the FLD commerce app to api-staging and deliver one real store event; provider write) | UNBLOCKS WHEN: Chang answers 35259; then capsule K5MW-REAL-WEBHOOK (Opus 5.5 medium, M5Max). Owner-held, note only | Supersession: CURRENT | BEAD-SWEEP-89 2026-11-04T22:12Z (pending.txt 21:30Z (card 35259 on v692); R/shopify-sample/report.md) | BEAD-SWEEP-89 2026-11-04T22:14Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0ocl.24"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-f46.29"
+    }
+   ]
+  },
+  {
+   "id": "FLD-ciy",
+   "status": "blocked",
+   "notes": "BLOCKED BY (NOT M1MAX16): UI freeze + no CarPlay capture on either Mac (m1d 16:17Z) | UNBLOCKS WHEN: UI-LEAD books the remaining physical-host CarPlay catalogue rows into Chang's car-frame phone window | OWNER: UI-LEAD. Card 1653 \"Yes, now\" keeps it CURRENT | BEAD-SWEEP-55 2026-11-02T17:06Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-f46.26"
+    }
+   ]
+  },
+  {
+   "id": "FLD-6n6.235",
+   "status": "blocked",
+   "notes": "BLOCKED BY (NOT M1MAX16): CarPlay N0-N3 needs a CarPlay display: no CarPlay simulator on Xcode 27.1 (CARPLAY-CLICK 06:04Z Nov 1) -> real iPhone session (card 2962), UI-LEAD schedules | OWNER: UI-LEAD | MOVES WHEN: a UI-LEAD car-frame round | M1MAX16-BLOCKED-AUDIT 2026-11-02T02:24Z (stamp corrected from 03:00Z by BEAD-SWEEP-48: written 02:24Z per bd updated_at)",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-f46.28"
+    }
+   ]
+  },
+  {
+   "id": "FLD-v4a.69",
+   "status": "blocked",
+   "notes": "BLOCKED BY: Chang being ready for one 10-minute SMS code window (owner) | UNBLOCKS WHEN: Chang says ready; then one new worker sends one code and Chang replies with it within 10 min | OWNER: m1d asks Chang. PHONE-SIGNIN-PROOF stopped 03:30Z (worker_done 03:31:11Z): send proven (api-dev /otp, Twilio Verify VA..7145, Chang got the text), verify unproven (code expired), dev Twilio state restored; DEV-PHONE-USER-CLEANUP deleted the one DEV phone user (03:37:56Z). Launch outcome: members can sign in with a phone text code | BEAD-SWEEP-49 2026-11-02T04:12Z",
+   "dependencies": [
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-0d1.14"
+    },
+    {
+     "type": "blocks",
+     "depends_on_id": "FLD-pq1"
+    }
+   ]
+  },
+  {
+   "id": "FLD-0d1.14",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0dyt",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.1",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.10",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.11",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.19",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.2",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.24",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.3",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.4",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0ocl.5",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-0okr.15",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-1aiv.10",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-1aiv.6.6",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-6n6.323",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-dkkz.3",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-f46.26",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-f46.28",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-f46.29",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-i5ba",
+   "status": "open"
+  },
+  {
+   "id": "FLD-pq1",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-tvui",
+   "status": "closed"
+  },
+  {
+   "id": "FLD-znmg",
+   "status": "closed"
+  }
+ ]
+}

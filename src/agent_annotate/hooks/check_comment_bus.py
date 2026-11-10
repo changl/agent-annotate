@@ -321,7 +321,7 @@ def _bus_append(bus_path: str, slug: str, event: dict) -> None:
 
 
 def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
-               round_submitted: bool, name: str = "Untitled page") -> str:
+               round_submitted: bool, name: str = "Untitled page", record: dict | None = None) -> str:
     """One notice line: what happened, what is still open, how to read it."""
     verdict_bits = []
     seen = set()
@@ -358,7 +358,8 @@ def _slug_line(project: str, slug: str, count: int, events: list, cards: dict,
     if round_submitted:
         line = "ROUND SUBMITTED: " + line
 
-    return line
+    from agent_annotate.board_followups import clause
+    return line + clause(record or _load_registry().get((project, slug), {}), project, slug)
 
 
 def _scan(session_id: str) -> list:
@@ -475,7 +476,7 @@ def _scan(session_id: str) -> list:
             if events:
                 cards = _load_cards(record.get("slug_dir") or "")
                 lines.append(_slug_line(project, slug, len(events), events,
-                                        cards, round_submitted, page_name(record)))
+                                        cards, round_submitted, page_name(record), record))
                 _bus_append(bus_path, slug, {
                     "event": "notice_emitted",
                     "session_id": session_id,

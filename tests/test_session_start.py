@@ -204,3 +204,17 @@ def test_session_start_passes_the_payload_session_to_owner_refresh(estate, monke
     monkeypatch.setattr(session_start.select, "select", lambda *args: ([session_start.sys.stdin], [], []))
     assert session_start.main() == 0
     assert calls == [("resumed", {("project", "main"): estate.record})]
+
+
+@pytest.mark.parametrize("count", [0, 1, 5])
+def test_session_start_board_clause_zero_or_three_plus_more(estate, count):
+    from test_board_followups import seed_items
+
+    from agent_annotate.board_followups import clause
+    baseline = session_start.notice(estate.repo)
+    seed_items(estate.page, count)
+    suffix = clause(estate.record, "project", "main")
+    actual = session_start.notice(estate.repo)
+    assert actual == baseline + suffix
+    assert actual.count("--settle") == min(count, 3)
+    assert ("+2 more: annotate board project/main" in actual) == (count == 5)

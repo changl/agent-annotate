@@ -16,6 +16,7 @@ from pathlib import Path
 _SANDBOX = Path(tempfile.mkdtemp(prefix="agent-annotate-tests-"))
 _SANDBOX_ENV = {
     "ANNOTATE_STATE_DIR": _SANDBOX / "state",
+    "ANNOTATE_SWEEP_DIR": _SANDBOX / "sweeps",
     "ANNOTATE_BUS_ROOT": _SANDBOX / "bus",
     "ANNOTATE_CONFIG_DIR": _SANDBOX / "config",
     "ANNOTATE_DATA_DIR": _SANDBOX / "data",
@@ -33,11 +34,13 @@ for _name, _path in _SANDBOX_ENV.items():
 os.environ["ANNOTATE_VERSION_GUARD"] = "0"
 # The live board (Bead Me Up Scotty, bd) is machine estate too; board tests use a fake bd.
 os.environ["ANNOTATE_BOARD_API"] = "http://127.0.0.1:9"
+os.environ["ANNOTATE_BOARD_DRY_RUN"] = "1"
 os.environ.pop("ANNOTATE_BD", None)
 (_SANDBOX / "config").mkdir(parents=True)
 (_SANDBOX / "config" / "projects.toml").write_text('[defaults]\ntransport = "local"\nport_base = 18700\n')
 os.environ.pop("ANNOTATE_STATE_ROOT", None)
 os.environ.pop("ANNOTATE_PROJECTS_TOML", None)
+os.environ.pop("ANNOTATE_BOARD_FOLLOWUPS_ROOT", None)
 # A real session id would make the CLI stamp this developer's session into
 # sandbox records; the tests set their own where it matters.
 for _name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID",
