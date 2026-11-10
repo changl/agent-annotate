@@ -1645,7 +1645,7 @@ def _publish(args) -> int:
             from .workspace import add_membership, membership
             if existing:
                 for field in ("workspace_key", "workspace_root", "workspace_repos", "workspace_folders",
-                              "workspace_selected_at"):
+                              "workspace_selected_at", "db_hold", "db_reason"):
                     if field in existing:
                         record[field] = existing[field]
                 repos, folders = membership(existing)
@@ -5194,12 +5194,16 @@ def _deliver_to_codex(thread_id: str, record: dict, project: str, slug: str, ev:
 def cmd_check_versions(args) -> int:
     """Compare the launcher, skills, Codex plugin and live pages with the
     installed release. Exit 1 on any difference; read-only."""
+    from .db_command import storage_lines
     from .version_guard import check, format_lines
     result = check()
+    result["storage"] = storage_lines()
     if getattr(args, "json", False):
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         for line in format_lines(result):
+            print(line)
+        for line in result["storage"]:
             print(line)
         if result["ok"]:
             print(result["summary"])
@@ -5261,6 +5265,9 @@ def cmd_doctor(args) -> int:
         hard = name in ("state_dir", "bus_root", "web_assets", "hook_script")
         failed = failed or (hard and not ok)
         print(f"{'PASS' if ok else ('FAIL' if hard else 'WARN')}  {name:<15} {detail}")
+    from .db_command import storage_lines
+    for line in storage_lines():
+        print(line)
     return 1 if failed else 0
 
 

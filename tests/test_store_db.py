@@ -146,6 +146,28 @@ def test_db_off_sets_the_db_aside(tmp_path):
     assert store.backend(fixture["page"]) == "json"
 
 
+def test_db_refuses_volumes_before_any_filesystem_probe(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: pytest.fail("must refuse before df"))
+    with pytest.raises(ValueError, match="refused under /Volumes"):
+        store._refuse_network_volume(Path("/Volumes/share/review"))
+
+
+def test_doctor_storage_reports_each_backend_and_reason(tmp_path, monkeypatch):
+    from agent_annotate import cli
+    from agent_annotate.db_command import storage_lines
+    fixture = _page(tmp_path)
+    _import(fixture)
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [
+        ("proj", "db", {"slug_dir": str(fixture["page"])}),
+        ("proj", "hold", {"slug_dir": str(tmp_path / "hold"), "db_hold": "held for this rollout"}),
+        ("proj", "refused", {"slug_dir": "/Volumes/share/page"}),
+        ("proj", "failed", {"slug_dir": str(tmp_path / "failed"), "db_reason": "cursor is mid-line"})])
+    assert storage_lines() == ["storage proj/db: page.db", "storage proj/hold: JSON (held for this rollout)",
+                               "storage proj/refused: JSON (page.db refused under /Volumes)",
+                               "storage proj/failed: JSON (cursor is mid-line)"]
+
+
 def test_db_commands_print_one_line_each(monkeypatch, capsys):
     from agent_annotate import cli, paths
     fixture = _page(paths.STATE_DIR.parent)  # cursors and the journal under the sandbox state

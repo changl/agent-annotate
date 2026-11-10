@@ -79,6 +79,17 @@ def test_publish_title_is_stable_until_explicitly_renamed(published, monkeypatch
     assert published.saved["demo"]["url"] == PUBLIC_URL
 
 
+def test_republish_preserves_storage_hold_and_reason(published, monkeypatch):
+    previous = {"slug_dir": str(published.slug_dir), "port": 18790,
+                "db_hold": "held for this rollout", "db_reason": "held for this rollout"}
+    monkeypatch.setattr(cli, "_load_state_for_project", lambda project: {"project": project, "slugs": {"demo": previous}})
+    monkeypatch.setattr(cli, "_is_process_alive", lambda pid: False)
+    monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(("origin", PASS, "ok")))
+    assert cli.cmd_publish(_args(published.slug_dir)) == 0
+    assert published.saved["demo"]["db_hold"] == previous["db_hold"]
+    assert published.saved["demo"]["db_reason"] == previous["db_reason"]
+
+
 def test_a_failing_stage_suppresses_the_url_and_exits_nonzero(published, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_verify_published", lambda *a, **k: _report(
         ("origin", FAIL, "connection refused"),
