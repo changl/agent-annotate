@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Show more reveals the complete evidence excerpt in question cards, in the rail and document. A 1,200-character cut in JavaScript could leave a quoted card's context ending mid-word even after expansion, as on FLD usage-audit card 53 (agent-annotate-j8g). The existing two-/four-line previews and Show less behavior stay the same.
+
 ## 2.30.0
 
 - Rollout can move pages to `page.db` inside each verified restart: stop, import and diff, start, verify capabilities and read the latest round. Small pages go first; M1's FLD stays on JSON until an explicit move. A failed migration keeps the page on JSON and names it in the Mac's receipt. `--hold-json SLUG` keeps a page on JSON across applies; `--move-page SLUG` moves just that page later. Imports refuse paths under `/Volumes`. `doctor` and `doctor --versions` report each page's backend and any hold or refusal reason. Rollback turns databases off before installing the previous wheel; JSON exports continue in this release.
