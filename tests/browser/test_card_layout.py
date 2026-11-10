@@ -337,6 +337,45 @@ def test_question_citing_a_subheading_follows_its_content(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+@pytest.mark.parametrize("width", [1400, 390, 820, 1024], ids=["desktop", "phone", "ipad-portrait", "ipad-landscape"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_long_decision_context_is_fully_readable(tmp_path, monkeypatch, width, theme):
+    context = CONTEXT + " A later orchestrator must read the entire explanation before changing the hourly sweep again."
+    assert len(context) >= 240
+    monkeypatch.setitem(CARDS[0]["decision_request"], "context", context)
+    slug_dir = _page(tmp_path)
+    process, base = _serve(tmp_path, slug_dir)
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
+            try:
+                for size in (1, 2):
+                    page = browser.new_page(viewport={"width": width, "height": 900})
+                    page.add_init_script(
+                        f"localStorage.setItem('annotate:theme', '{theme}');"
+                        f"localStorage.setItem('annotate:text-size', '{size}')"
+                    )
+                    page.goto(base + "#feedback=card-1", wait_until="networkidle")
+                    rail = page.locator('.citem[data-comment-id="card-1"] .decision-context')
+                    body = page.frame_locator("#content-frame").locator(
+                        '[data-strip-item="card-1"] .annotate-decision-context'
+                    )
+                    for text in (rail, body):
+                        if text == body:
+                            page.evaluate("window.AnnotateDocs.setMobileSheetOpen(false)")
+                        playwright.expect(text).to_be_visible()
+                        playwright.expect(text).to_have_text(context)
+                        assert text.evaluate("el => el.clientHeight > 0 && el.scrollHeight <= el.clientHeight + 1")
+                        assert text.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+                    page.close()
+            finally:
+                browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_card_layout_and_unchanged_sections(tmp_path):
     slug_dir = _page(tmp_path)
     process, base = _serve(tmp_path, slug_dir)
