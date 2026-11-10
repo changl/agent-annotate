@@ -326,7 +326,8 @@ def apply(mac, target, approval, hold_json=(), move_page=None):
     line = (f"{mac} {target} ok · {len(record['pages'])} pages restarted · {len(info['skips'])} skipped · "
             + ("doctor ok · release rollback kept" if action == "move" else f"doctor ok · rollback kept: {old}"))
     if migrate:
-        json_pages += [f"{p['slug']} ({REASONS.get(p['action'], p['action'])})" for p in info["skips"]]
+        json_pages += [f"{p['slug']} ({REASONS.get(p['action'], p['action'])})" for p in info["skips"]
+                       if p.get("backend") == "json"]
         line += " · JSON: " + (", ".join(json_pages) or "none")
     log({"mac": mac, "action": action, "from": old, "to": target, "approval": approval,
          "result": "ok", "backup": str(folder), "line": line})

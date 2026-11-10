@@ -55,6 +55,7 @@ class FakeMac:
     def inspect(self):
         pages = [{"project": "proj", "slug": s, "port": self.ports[s], "base": "", "action": "restart"} for s in self.pages]
         pages.append({"project": "proj", "slug": "memory", "port": 18719, "base": "",
+                      "backend": "json",
                       "action": "page registry lacks a valid directory, current document or port"})
         return {"version": self.version, "pages": pages, "skills": [str(p) for p in self.skills]}
 
@@ -168,6 +169,18 @@ def test_unknown_or_unrestartable_move_does_nothing(rollout, tmp_path):
     for options in ({"hold_json": ["typo"]}, {"move_page": "memory"}, {"move_page": "missing"}):
         assert rollout.apply("M1", "2.30.0", "", **options)[0] == 2
     assert not mac.calls
+
+
+def test_receipt_does_not_call_an_existing_skipped_database_json(rollout, tmp_path):
+    mac = FakeMac(tmp_path, rollout)
+    inspect = mac.inspect
+    def stopped_database():
+        result = inspect()
+        result["pages"][-1]["backend"] = "sqlite"
+        return result
+    rollout.inspect = stopped_database
+    code, line = rollout.apply("M1", "2.30.0", "")
+    assert code == 0 and "1 skipped" in line and line.endswith("JSON: none")
 
 
 def test_m1_defaults_to_holding_fld_and_sorts_small_pages_first(rollout, tmp_path):
