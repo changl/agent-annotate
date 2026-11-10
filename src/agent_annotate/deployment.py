@@ -134,13 +134,13 @@ def _verify_server(record: dict, pid: int, expected: dict | None) -> dict:
     return {"anchors": rendered.anchors, "runtime": expected, "browser_verified": False}
 
 
-def _page_storage(record: dict, mode: str, hold: bool, move: bool) -> dict:
+def _page_storage(record: dict, hold: bool, move: bool) -> dict:
     directory = Path(record["slug_dir"])
     if hold:
         record["db_hold"] = "held for this rollout"
     elif move:
         record.pop("db_hold", None)
-    reason = record.get("db_hold") if mode == "migrate" else "db off"
+    reason = record.get("db_hold")
     if reason:
         if store.backend(directory) == "sqlite":
             store.db_off(directory)
@@ -180,7 +180,7 @@ def _latest_round(record: dict) -> dict:
 
 def _restart(project: str, slug: str, python: Path, expected: dict | None,
              *, argv: list[str] | None = None, provenance: dict | None = None,
-             mount: str | None = None, storage: str | None = None,
+             mount: str | None = None, migrate_db: bool = False,
              hold_json: bool = False, move: bool = False) -> dict:
     with cli._flock(cli._state_lock_path(project)):
         state = cli._load_state_for_project(project)
@@ -193,7 +193,7 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
         _stop(record, before)  # Immediate second fresh process/listener proof.
         started = None
         try:
-            storage_result = _page_storage(record, storage, hold_json, move) if storage else None
+            storage_result = _page_storage(record, hold_json, move) if migrate_db else None
             if mount is not None:
                 record["public_base_path"] = mount
             command = argv or _arguments(record, python)
@@ -205,7 +205,7 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
             try:
                 started = _spawn(record, command)
                 proof = _verify_server(record, started, expected)
-                if storage == "migrate":
+                if migrate_db:
                     latest = _latest_round(record)
                     storage_result["latest_round"] = latest
             except Exception as exc:
@@ -240,7 +240,7 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
                     if candidate["pid"] not in (None, started):
                         raise DeploymentError("replacement identity changed; foreign process left alone")
                     _stop(record, candidate, listening=False)
-                if storage and store.backend(record["slug_dir"]) == "sqlite":
+                if migrate_db and store.backend(record["slug_dir"]) == "sqlite":
                     store.db_off(record["slug_dir"])
                 if before["pid"] is not None:
                     restored = _spawn(original, before["argv"])
@@ -256,12 +256,10 @@ def _restart(project: str, slug: str, python: Path, expected: dict | None,
 
 
 def restart_record(project: str, slug: str, python: Path | None = None, *, mount: str | None = None,
-                   storage: str | None = None, hold_json: bool = False, move: bool = False) -> dict:
-    if storage not in (None, "migrate", "off"):
-        raise ValueError(f"unknown storage action: {storage}")
+                   migrate_db: bool = False, hold_json: bool = False, move: bool = False) -> dict:
     python = Path(python) if python is not None else Path(sys.executable)
     return _restart(project, slug, python, _target_manifest(python), mount=mount,
-                    storage=storage, hold_json=hold_json, move=move)
+                    migrate_db=migrate_db, hold_json=hold_json, move=move)
 
 
 def _restore_stopped(project: str, slug: str, original: dict) -> None:

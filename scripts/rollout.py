@@ -306,7 +306,7 @@ def apply(mac, target, approval, hold_json=(), move_page=None):
             touched.append(page)  # a refused restart still respawns the old argv on the new venv
             if migrate:
                 held = page[1] in hold_json or f"{page[0]}/{page[1]}" in hold_json
-                result = restart(page[0], page[1], storage="migrate", hold_json=held, move=bool(move_page))
+                result = restart(page[0], page[1], migrate_db=True, hold_json=held, move=bool(move_page))
                 storage = result["storage"]
                 if storage["backend"] == "json":
                     json_pages.append(f"{page[1]} ({storage['reason']})")

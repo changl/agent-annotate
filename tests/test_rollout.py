@@ -83,7 +83,7 @@ class FakeMac:
         self._maybe_fail(f"restart {slug}")
         self.pages[slug] = self.version
         if options:
-            assert options["storage"] == "migrate"
+            assert options["migrate_db"] is True
             if options["hold_json"]:
                 self.holds.add(slug)
             elif options["move"]:

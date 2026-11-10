@@ -131,7 +131,7 @@ def test_rollout_imports_only_after_stop_then_verifies_latest_round(estate, monk
         assert store.backend(page) == "sqlite" and len(estate.processes) == 1
         return {"rounds": [{"id": "latest"}]}
     monkeypatch.setattr(deployment, "_latest_round", latest)
-    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    result = deployment.restart_record("reviews", "review", estate.new, migrate_db=True)
     assert result["storage"]["diff"] == 0
     assert result["storage"]["backend"] == "page.db"
     assert result["storage"]["latest_round"] == {"rounds": [{"id": "latest"}]}
@@ -140,10 +140,10 @@ def test_rollout_imports_only_after_stop_then_verifies_latest_round(estate, monk
 
 def test_rollout_hold_persists_until_explicit_move(estate, monkeypatch):
     page = prepare_store(estate, monkeypatch)
-    first = deployment.restart_record("reviews", "review", estate.new, storage="migrate", hold_json=True)
+    first = deployment.restart_record("reviews", "review", estate.new, migrate_db=True, hold_json=True)
     assert first["storage"] == {"backend": "json", "reason": "held for this rollout", "latest_round": {"rounds": []}}
-    assert deployment.restart_record("reviews", "review", estate.new, storage="migrate")["storage"]["backend"] == "json"
-    moved = deployment.restart_record("reviews", "review", estate.new, storage="migrate", move=True)
+    assert deployment.restart_record("reviews", "review", estate.new, migrate_db=True)["storage"]["backend"] == "json"
+    moved = deployment.restart_record("reviews", "review", estate.new, migrate_db=True, move=True)
     assert moved["storage"]["backend"] == "page.db" and store.backend(page) == "sqlite"
     assert "db_hold" not in cli._load_state_for_project("reviews")["slugs"]["review"]
 
@@ -153,7 +153,7 @@ def test_rollout_failed_import_stays_on_json(estate, monkeypatch):
     def refuse(*args, **kwargs):
         raise store.Refused("import refused", ["cursor is mid-line"])
     monkeypatch.setattr(store, "import_page", refuse)
-    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    result = deployment.restart_record("reviews", "review", estate.new, migrate_db=True)
     assert result["ok"] and store.backend(page) == "json"
     assert "cursor is mid-line" in result["storage"]["reason"]
     assert len(estate.spawns) == 1
@@ -166,7 +166,7 @@ def test_rollout_failed_database_read_restarts_on_json(estate, monkeypatch):
             raise OSError("latest round unavailable")
         return {"rounds": []}
     monkeypatch.setattr(deployment, "_latest_round", latest)
-    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    result = deployment.restart_record("reviews", "review", estate.new, migrate_db=True)
     assert result["storage"]["backend"] == "json" and store.backend(page) == "json"
     assert "latest round unavailable" in result["storage"]["reason"]
     assert len(estate.spawns) == 2 and estate.stops == [10, 101]
@@ -180,7 +180,7 @@ def test_rollout_failed_database_start_restarts_on_json(estate, monkeypatch):
             raise OSError("database start failed")
         return spawn(record, argv)
     monkeypatch.setattr(deployment, "_spawn", fail_database)
-    result = deployment.restart_record("reviews", "review", estate.new, storage="migrate")
+    result = deployment.restart_record("reviews", "review", estate.new, migrate_db=True)
     assert result["storage"]["backend"] == "json" and store.backend(page) == "json"
     assert "database start failed" in result["storage"]["reason"]
     assert len(estate.spawns) == 1
@@ -188,9 +188,11 @@ def test_rollout_failed_database_start_restarts_on_json(estate, monkeypatch):
 
 def test_rollout_db_off_prepares_an_old_runtime(estate, monkeypatch):
     page = prepare_store(estate, monkeypatch)
-    deployment.restart_record("reviews", "review", estate.new, storage="migrate")
-    result = deployment.restart_record("reviews", "review", estate.old, storage="off")
-    assert result["storage"] == {"backend": "json", "reason": "db off"}
+    deployment.restart_record("reviews", "review", estate.new, migrate_db=True)
+    from agent_annotate.db_command import cmd_db
+    monkeypatch.setattr(cli, "_registry_entries", lambda: [("reviews", "review", estate.records["review"])])
+    assert cmd_db(SimpleNamespace(db_action="off", slug="review")) == 0
+    deployment.restart_record("reviews", "review", estate.old)
     assert store.backend(page) == "json" and list(page.glob("page.db.off-*"))
 
 
