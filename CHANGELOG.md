@@ -4,6 +4,7 @@
 
 - Rollout can move pages to `page.db` inside each verified restart: stop, import and diff, start, verify capabilities and read the latest round. Small pages go first; M1's FLD stays on JSON until an explicit move. A failed migration keeps the page on JSON and names it in the Mac's receipt. `--hold-json SLUG` keeps a page on JSON across applies; `--move-page SLUG` moves just that page later. Imports refuse paths under `/Volumes`. `doctor` and `doctor --versions` report each page's backend and any hold or refusal reason. Rollback turns databases off before installing the previous wheel; JSON exports continue in this release.
 - The sweep includes M1's optional ownership-report hook. With `ANNOTATE_OWNERSHIP_MANIFEST` unset its output is unchanged; a failing helper records `ownership: error`. The helper and LaunchAgent environment remain local to M1.
+- Saving a comment or reply redraws only its own card and its pins, not the whole rail. On a copy of FLD (2,388 cards), the main-thread time after each confirmed post fell from 136 ms to 35 ms (median of 7 posts, headless Chrome; docs/validation/kbv-confirmed-posts-20261109.md).
 
 ## 2.29.0
 
