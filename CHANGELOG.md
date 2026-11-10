@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Browser coverage checks that 240+ character decision context stays fully readable in the card and document, in both themes at desktop, phone and iPad widths with normal and 200% text. FLD usage-audit card 53's reported cutoff was not reproduced; its existing evidence excerpt expands with Show more (agent-annotate-j8g).
+- Show more reveals the complete evidence excerpt in question cards, in the rail and document. A 1,200-character cut in JavaScript could leave a quoted card's context ending mid-word even after expansion, as on FLD usage-audit card 53 (agent-annotate-j8g). The existing two-/four-line previews and Show less behavior stay the same.
 
 ## 2.30.0
 

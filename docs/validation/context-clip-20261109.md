@@ -1,91 +1,100 @@
-# Card 53 context audit — agent-annotate-j8g
+# Card 53 context cutoff — agent-annotate-j8g
 
-The reported mid-word context cutoff was **not reproduced** on main `b0043a5`.
-This change adds regression coverage and changes no rendering behavior. After
-the initial reproduction attempt, the coordinator explicitly authorized a
-regression-only PR if the additional surfaces also passed.
+**Reproduced:** FLD card 53's expanded evidence quote ends at
+`could turn the 6-hour swee…` on main `b0043a5`. The adapter cuts its text to
+1,200 characters before the existing Show more control receives it. Its section
+quote includes the static card, repeating the card's 236-character context;
+the character boundary falls inside that repeated context. Expanding the CSS
+clamp cannot recover characters already removed by JavaScript.
 
-## Sandbox and reproduction
+The fix removes the character cap and the associated early traversal cutoff
+in `adapter.js::excerptText`. `excerptMap` already limits extraction to the
+anchors question cards cite and caches the result; its callers and the shared
+renderer require no changes. The existing two-line rail / four-line document
+previews, `.is-open`, Show more and Show less continue to control presentation.
+Long evidence now produces a larger excerpt message; previews remain clamped.
+
+## Sandbox reproduction
 
 The registry entry for project `FLD usage audit`, slug `page`, located the source
 at `/Users/changlee/projects/FastLane Drive/planning/operations/usage-audit-2026-11-06/page`.
 Its directory was copied to `/tmp/annotate-j8g-evidence/page`. Only the copy was
-served, on loopback port 18700, using this worktree's `src` through `PYTHONPATH`
-and temporary state/config/data/bus directories. The live directory and server
-were never changed or contacted.
+served, on loopback ports in **18700–18799**, using this worktree's `src` through
+`PYTHONPATH` and temporary state/config/data/bus directories. The live directory
+and server were never changed or contacted.
 
 Card 53 (`e4e8e90603a7`, anchor `d:q53`) had since been resolved in v40.
 The copy's current version was restored to v39, and only the copied card's
 answer/resolution fields were cleared. A second pass supplied a pending worded
-answer in the copy, owned by the sandbox reviewer, to inspect answered and
-collapsed states without sending anything. Copied SQLite files were removed
-before serving so the sandbox used the copied JSON records.
+answer owned by the sandbox reviewer to inspect answered and collapsed states
+without sending anything. Copied SQLite files were removed before serving so
+the sandbox used the copied JSON records.
 
-The actual stored decision context is **236 characters**, ending
-`could turn the 6-hour sweep back on.`; it is not truncated in the parser or
-stored data. In Chrome at normal text size its rail element has equal visible
-and scroll heights: **50/50 px at 1400 px**, **66/66 px at 390 px**.
+The expanded quote is exactly **1,200 characters** before the fix. The ending
+matches the reviewer's report. The standalone `.decision-context` was never
+clamped: normal-text visible/scroll heights were 50/50 px at 1400 px and
+66/66 px at 390 px. Checking DOM overflow alone initially missed the loss; the
+expanded screenshots and the actual quoted text exposed it.
 
-## Surfaces checked
+## Other surfaces checked
 
-Chrome and Playwright WebKit were each checked at widths **1400, 390, 820 and
-1024 px**, in **light and dark**, with **100% and 200%** text, both unanswered
-and answered: **64 cases, zero errors**. Desktop/phone viewport heights were
-1000/844 px; the iPad-sized views were 820×1180 and 1024×768.
+The baseline audit recorded **64 cases**: Chrome and Playwright WebKit at widths
+**1400, 390, 820 and 1024 px**, **light and dark**, **100% and 200%** text, both
+unanswered and answered. Desktop/phone heights were 1000/844 px; iPad-sized
+views were 820×1180 and 1024×768.
 
-| Surface | Finding | Existing route to full text |
-| --- | --- | --- |
-| Unanswered rail card / Needs you list | `.decision-context` has no clamp or overflow; all 236 characters fit | Already shown in full |
-| Question card in the document | `.annotate-decision-context` has no clamp or overflow | Already shown in full |
-| Rail evidence excerpt | `.decision-excerpt-text` clamps to two lines (33 px at normal text size); this is evidence, not the decision context | Visible Show more expands to 314 px desktop / 363 px phone; Show less restores the clamp |
-| Document evidence excerpt | `.annotate-excerpt-text` uses the established four-line clamp and disclosure | Show more / Show less |
-| Collapsed answered rail card | `.citem-line-q` uses a one-line ellipsis on the **question**, with no context in this state | Card or pencil expands the full question; Choose reopens the full decision context |
-| Expanded answered card | Shows question and worded answer; does not render decision context | Choose reopens the full decision context |
-| Send / Finish review dialog | Card 53 uses `.rl-q` with no clamp, not `.sum-q`; its full question is readable in both Answers and Not in this Send | Question is already shown in full; context is not part of these summary rows |
+| Surface | Finding |
+| --- | --- |
+| Unanswered rail / Needs you card | Standalone `.decision-context` is complete; the section's `.decision-excerpt-text` loses its tail in JavaScript, even after Show more |
+| Document card | Standalone `.annotate-decision-context` is complete; `.annotate-excerpt-text` receives the same shortened evidence |
+| Collapsed answered rail card | `.citem-line-q` ellipsizes the question; card or pencil expands it fully |
+| Expanded answered card | Shows question and worded answer; Choose reopens complete decision context |
+| Send / Finish review | Card 53 uses unclamped `.rl-q`, not `.sum-q`; question is complete in Answers and Not in this Send; context is not part of these rows |
 
-`.sum-q` is currently used for a different document's general-feedback preview,
-not card 53's question or context. That preview provides Edit. No new expansion
-pattern or runtime change was justified by these observations.
+`.sum-q` currently serves another document's general-feedback preview and
+provides Edit. No parser, summary, context-style or disclosure changes are needed.
 
-## Evidence and checks
+## Browser regression and evidence
 
-All screenshots and full per-case DOM geometry receipts are retained under
-`/tmp/annotate-j8g-evidence/` on the worker's Mac:
+`test_long_decision_context_is_fully_readable` puts 240+ characters of context
+after **4,000+ characters of evidence**, beyond both old JavaScript cutoffs.
+It checks exact standalone context on both surfaces, clicks the existing
+Show more, asserts the entire context survives in the quote, and checks the
+expanded text's layout. It covers four widths, both themes, and 100%/200% text.
 
-| View | Initially clamped evidence | After existing Show more |
-| --- | --- | --- |
-| Desktop light | `before-desktop-light.png` | `expanded-desktop-light.png` |
-| Desktop dark | `before-desktop-dark.png` | `expanded-desktop-dark.png` |
-| Phone light | `before-phone-light.png` | `expanded-phone-light.png` |
-| Phone dark | `before-phone-dark.png` | `expanded-phone-dark.png` |
+Before the fix, `[light-desktop]` fails after Show more because its quote still
+ends at 1,200 characters and omits the context:
+`1 failed in 17.70s`. Log: `/tmp/annotate-j8g-evidence/fails-before.log`.
 
-These are before/after **interaction** screenshots of unchanged code, not
-before/after a bug fix. The 200% text context and summary captures use
-`{unanswered,answered}-{chrome,webkit}-{1400,390,820,1024}-{light,dark}-2-{context,summary}.png`.
-Raw geometry receipts: `unanswered-surfaces.json`, `answered-surfaces.json`.
-Runners: `/tmp/annotate-j8g-reproduce.py`, `/tmp/annotate-j8g-surfaces.py`.
+After the fix, the complete card-layout browser module passes:
+**12 passed in 123.05s**. Log: `/tmp/annotate-j8g-evidence/card-layout-after.log`.
 
-`test_long_decision_context_is_fully_readable` uses a 240+ character context,
-asserts the exact full text and nonzero unclipped layout on both card surfaces,
-and opens/closes the real phone feedback sheet before measuring each surface.
-It covers the four widths and both themes at 100% and 200% text:
-**8 passed, 4 deselected in 83.74s**. It passes on the unchanged rendering code;
-there is no claim of a fails-before reproduction.
-The other existing card-layout browser tests also pass:
-**4 passed, 8 deselected in 43.00s**.
-
-The required fast gate used the worktree venv on `PATH` and the absolute worktree
-`src` as `PYTHONPATH`: `python3 scripts/ci.py` exited 0. Ruff passed and every
-JavaScript syntax check passed; the fast-suite tail is:
+Final `python3 scripts/ci.py` used the worktree venv on `PATH` and its absolute
+`src` as `PYTHONPATH`, with the suite's temporary state roots. It exited 0;
+Ruff and all JavaScript syntax checks passed. Fast-suite tail:
 
 ```text
 ..................................                                       [100%]
-1468 passed, 7 skipped in 177.65s (0:02:57)
+1468 passed, 7 skipped in 176.01s (0:02:56)
 ```
 
-Fast-gate log: `/tmp/annotate-j8g-evidence/fast-suite.log`.
-The full suite was not run.
+Log: `/tmp/annotate-j8g-evidence/fast-suite-after.log`.
+
+All screenshots and per-case baseline DOM/text receipts are retained under
+`/tmp/annotate-j8g-evidence/` on the worker's Mac. For each of
+`desktop-light`, `desktop-dark`, `phone-light`, `phone-dark`:
+
+- `before-expanded-{view}.png`: old Show more still ends mid-word.
+- `after-expanded-{view}.png`: the fixed quote contains the full context and following options.
+- `before-{view}.png` / `after-{view}.png`: collapsed previews.
+- `before-expanded-document-{view}.png` / `after-expanded-document-{view}.png`: expanded document evidence.
+
+The before runner uses a temporary source copy with the original adapter from
+`git show b0043a5:src/agent_annotate/web/adapter.js`; after uses this worktree.
+No working-tree source was reverted for screenshots. Initial matrix captures
+use `{unanswered,answered}-{chrome,webkit}-{width}-{theme}-2-{context,summary}.png`;
+raw receipts are `unanswered-surfaces.json`, `answered-surfaces.json`.
+Runners: `/tmp/annotate-j8g-reproduce.py`, `/tmp/annotate-j8g-surfaces.py`.
 
 All test/reproduction servers and browsers are stopped by their runners.
-The original reviewer's browser state and screenshot were unavailable, so the
-historical cutoff remains unverified. No live-page test, deployment or merge.
+No full-suite run, live-page test, deployment or merge.

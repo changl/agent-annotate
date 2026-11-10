@@ -1162,7 +1162,6 @@ function evidenceOf(dr) {
 // reviewer scrolling to find it. Block boundaries become line breaks, table
 // cells are joined with " | ", and everything this file injected (strips,
 // pins, markers, state chips) is left out.
-const EXCERPT_MAX = 1200;
 const EXCERPT_SKIP_SEL = '.aa-img-bar, .aa-img-zoom, .aa-full, [data-annotate-strip], [data-annotate-back], .annotate-embed-note,.bpin, .bpin-inline, #badge-layer, #annotate-strip-layer, .annotate-card-state, .annotate-unchanged-bar, script, style, template, noscript';
 const EXCERPT_BLOCK_TAG = /^(p|div|section|article|aside|header|footer|li|ul|ol|tr|table|thead|tbody|tfoot|caption|h1|h2|h3|h4|h5|h6|pre|blockquote|dl|dt|dd|figure|figcaption|br|hr)$/i;
 
@@ -1170,7 +1169,6 @@ function excerptText(el) {
   if (!el) return '';
   let out = '';
   const walk = (node) => {
-    if (out.length > EXCERPT_MAX * 3) return;
     if (node.nodeType === 3) { out += node.nodeValue; return; }
     if (node.nodeType !== 1) return;
     if (node.matches && node.matches(EXCERPT_SKIP_SEL)) return;
@@ -1182,11 +1180,11 @@ function excerptText(el) {
     if (block) out += '\n';
   };
   walk(el);
-  const text = out.split('\n')
+  // CSS clamps the preview; keep every word for Show more.
+  return out.split('\n')
     .map(line => line.replace(/[ \t \r]+/g, ' ').replace(/(\s*\|\s*)+$/, '').trim())
     .filter(Boolean)
     .join('\n');
-  return text.length > EXCERPT_MAX ? text.slice(0, EXCERPT_MAX - 1).trimEnd() + '…' : text;
 }
 
 // "Columns › status": where the quoted text lives, from the anchor registry.

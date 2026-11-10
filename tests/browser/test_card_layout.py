@@ -340,10 +340,14 @@ def test_question_citing_a_subheading_follows_its_content(tmp_path):
 @pytest.mark.parametrize("width", [1400, 390, 820, 1024], ids=["desktop", "phone", "ipad-portrait", "ipad-landscape"])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_long_decision_context_is_fully_readable(tmp_path, monkeypatch, width, theme):
-    context = CONTEXT + " A later orchestrator must read the entire explanation before changing the hourly sweep again."
+    context = CONTEXT.replace("`", "") + " A later orchestrator must read the entire explanation before changing the hourly sweep again."
     assert len(context) >= 240
     monkeypatch.setitem(CARDS[0]["decision_request"], "context", context)
-    slug_dir = _page(tmp_path)
+    monkeypatch.setitem(CARDS[0]["decision_request"], "evidence", [
+        {"label": "Audit context", "anchor": "s:migration-sketch"},
+    ])
+    # The old excerpt cap lost context after 1,200 characters, even after Show more.
+    slug_dir = _page(tmp_path, "Earlier audit evidence. " * 180 + "\n\n" + context)
     process, base = _serve(tmp_path, slug_dir)
     try:
         with playwright.sync_playwright() as runner:
@@ -367,6 +371,13 @@ def test_long_decision_context_is_fully_readable(tmp_path, monkeypatch, width, t
                         playwright.expect(text).to_have_text(context)
                         assert text.evaluate("el => el.clientHeight > 0 && el.scrollHeight <= el.clientHeight + 1")
                         assert text.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+                        card = text.locator("..")
+                        more = card.locator(".decision-excerpt-more, .annotate-excerpt-more").first
+                        more.click()
+                        playwright.expect(more).to_have_text("Show less")
+                        excerpt = card.locator(".decision-excerpt-text, .annotate-excerpt-text").first
+                        playwright.expect(excerpt).to_contain_text(context)
+                        assert excerpt.evaluate("el => el.scrollHeight <= el.clientHeight + 1")
                     page.close()
             finally:
                 browser.close()
