@@ -291,6 +291,7 @@ def apply(mac, target, approval, hold_json=(), move_page=None):
     if info["problem"]:
         return 1, f"{mac} FAILED at preflight ({info['problem']}) · nothing changed"
     old = info["version"]
+    action = "move" if move_page and old == target else "apply"
     try:
         preflight(target)
     except (Failed, OSError) as exc:
@@ -319,15 +320,15 @@ def apply(mac, target, approval, hold_json=(), move_page=None):
         except Failed as again:
             state = f"rollback to {old} FAILED at {again.step} ({again.detail}); backup {folder}"
         line = f"{mac} FAILED at {exc.step} ({exc.detail}) · {state}"
-        log({"mac": mac, "action": "apply", "from": old, "to": target, "approval": approval,
+        log({"mac": mac, "action": action, "from": old, "to": target, "approval": approval,
              "result": "failed", "backup": str(folder), "line": line})
         return 1, line
     line = (f"{mac} {target} ok · {len(record['pages'])} pages restarted · {len(info['skips'])} skipped · "
-            f"doctor ok · rollback kept: {old}")
+            + ("doctor ok · release rollback kept" if action == "move" else f"doctor ok · rollback kept: {old}"))
     if migrate:
         json_pages += [f"{p['slug']} ({REASONS.get(p['action'], p['action'])})" for p in info["skips"]]
         line += " · JSON: " + (", ".join(json_pages) or "none")
-    log({"mac": mac, "action": "apply", "from": old, "to": target, "approval": approval,
+    log({"mac": mac, "action": action, "from": old, "to": target, "approval": approval,
          "result": "ok", "backup": str(folder), "line": line})
     return 0, line
 

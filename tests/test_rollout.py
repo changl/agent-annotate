@@ -152,6 +152,17 @@ def test_page_db_failed_mac_check_disables_before_old_wheel(rollout, tmp_path):
     mac.assert_old()
 
 
+def test_later_move_preserves_the_release_rollback(rollout, tmp_path):
+    mac = FakeMac(tmp_path, rollout)
+    assert rollout.apply("M1", "2.30.0", "", hold_json=["p2"])[0] == 0
+    code, line = rollout.apply("M1", "2.30.0", "", move_page="p2")
+    assert code == 0 and "release rollback kept" in line
+    assert rollout.entries()[-1]["action"] == "move"
+    assert rollout.rollback("M1", "")[0] == 0
+    assert set(mac.backends.values()) == {"json"}
+    mac.assert_old()
+
+
 def test_unknown_or_unrestartable_move_does_nothing(rollout, tmp_path):
     mac = FakeMac(tmp_path, rollout)
     for options in ({"hold_json": ["typo"]}, {"move_page": "memory"}, {"move_page": "missing"}):
