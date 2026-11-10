@@ -74,8 +74,8 @@ Fast-gate tail after rebasing onto main at `4aec53d`
 
 ```text
 All checks passed!
-............                                                             [100%]
-1518 passed, 7 skipped in 180.39s (0:03:00)
+.............                                                            [100%]
+1519 passed, 7 skipped in 180.49s (0:03:00)
 ```
 
 Existing browser regressions (`test_explicit_send_browser.py`,
@@ -85,6 +85,8 @@ in 450.08 seconds. The skips require Playwright WebKit, which is not installed.
 After rebase, all **17 new browser cases passed** in 212.80 seconds (the
 16-case matrix plus the superseded-choice regression). The saved-answer rerun
 also passed all four cases in 50.08 seconds.
+The final publication/privacy/round API selection passed all 38 tests in
+15.59 seconds.
 
 The whole browser suite and physical-device Safari were not run. Live rollout,
 a real owner-terminal canary, and merge are left to the coordinator.
