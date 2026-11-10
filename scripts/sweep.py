@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
 
 DENY = ("/Users/changlee/orca/workspaces/codex/rebex-library-performance",)
@@ -147,6 +148,20 @@ def sessions(apply):
     return line, items
 
 
+def atomic_write(path, output):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix="." + path.name + "-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(output)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("check", choices=("beads", "disk", "sessions", "all"))
@@ -166,8 +181,29 @@ def main(argv=None):
     OUT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(now))
     (OUT / "latest.txt").write_text("\n".join([f"sweep {stamp}", *lines, "", *items]) + "\n")
+    exit_code = 0
+    if args.check == "all" and os.environ.get("ANNOTATE_OWNERSHIP_MANIFEST"):
+        ownership_status = "ok"
+        try:
+            subprocess.run([sys.executable, "-I", os.environ["ANNOTATE_OWNERSHIP_MANIFEST"],
+                            "--out", str(OUT / "ownership-latest.json")], check=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            exit_code = 1
+            ownership_status = "error"
+            try:
+                atomic_write(OUT / "ownership-latest.json", json.dumps({"schema": "ownership-manifest/1",
+                             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                             "status": "error", "error": str(exc), "macs": {}, "held": True}) + "\n")
+            except OSError as write_error:
+                print(f"ownership error artifact failed: {write_error}", file=sys.stderr)
+            print(f"ownership manifest failed: {exc}", file=sys.stderr)
+        lines.append(f"ownership: {ownership_status} {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+        try:
+            atomic_write(OUT / "latest.txt", "\n".join([f"sweep {stamp}", *lines, "", *items]) + "\n")
+        except OSError as write_error:
+            print(f"ownership summary update failed: {write_error}", file=sys.stderr)
     print("\n".join(lines))
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

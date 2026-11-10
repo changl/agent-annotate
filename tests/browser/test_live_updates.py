@@ -18,6 +18,7 @@ A confirmed post (agent-annotate-kbv) puts the server's answer in place with
 one render, instead of rereading the whole store and rendering three times.
 """
 
+import re
 import socket
 from contextlib import contextmanager
 
@@ -157,13 +158,22 @@ def test_a_backgrounded_ipad_tab_comes_back_to_the_same_page_and_the_refresh_but
         assert _box(page, "rail").input_value() == TYPED
 
 
-WATCH = """() => {
+WATCH = """kind => {
     window.__stats = { storeReads: 0, railRenders: 0, frameRenders: 0 };
     const real = window.__realFetch || (window.__realFetch = window.fetch);
     window.fetch = (url, opts) => {
         if (String(url).includes('comments.json')) window.__stats.storeReads++;
         const post = opts && opts.method === 'POST' && /api\\/comments(\\/[^/?]+\\/reply)?(\\?|$)/.test(String(url));
         return real(url, opts).then(r => post ? new Promise(res => setTimeout(() => {
+            const frame = document.getElementById('content-frame').contentDocument;
+            window.__posted = document.querySelector('#comment-list .citem.is-pending') || document.querySelector('#comment-list [data-comment-id="reply-card"]');
+            const ownId = window.__posted.dataset.commentId;
+            const ownAnchor = kind === 'comment' ? 's:checks' : 's:checks:p1';
+            window.__kept = [
+                ...[...document.querySelectorAll('#comment-list .citem')].filter(el => el.dataset.commentId !== ownId),
+                ...[...frame.querySelectorAll('[data-strip-item]')].filter(el => el.dataset.stripItem !== ownId),
+                ...[...frame.querySelectorAll('[data-pin-anchor]')].filter(el => el.dataset.pinAnchor !== ownAnchor),
+            ];
             window.__stats = { storeReads: 0, railRenders: 0, frameRenders: 0, answered: true }; res(r); }, 600)) : r);
     };
     new MutationObserver(ms => { window.__stats.railRenders += ms.filter(m => m.target.id === 'comment-list').length; })
@@ -175,13 +185,13 @@ WATCH = """() => {
 
 
 @pytest.mark.parametrize("kind", ["comment", "reply"])
-def test_a_confirmed_post_renders_once_without_rereading_the_store(tmp_path, kind):
+def test_a_confirmed_post_updates_only_its_own_card_without_rereading_the_store(tmp_path, kind):
     directory = _directory(tmp_path)
     with _open(tmp_path, directory, "chrome") as (page, base):
-        page.evaluate(WATCH)
+        page.evaluate(WATCH, kind)
         if kind == "comment":
             page.frame_locator("#content-frame").locator('[data-anchor-id="s:checks"] h2').click(position={"x": 10, "y": 5})
-            page.locator("#pop-ta").fill("A new note")
+            page.locator("#pop-ta").fill("A new note " + "Some details. " * 100)
             page.locator("#pop-save").click()
             settled = "#comment-list .citem.is-pending"
         else:
@@ -193,7 +203,22 @@ def test_a_confirmed_post_renders_once_without_rereading_the_store(tmp_path, kin
         page.wait_for_timeout(500)
         stats = page.evaluate("() => window.__stats")
         assert stats["storeReads"] == 0, stats
-        assert stats["railRenders"] == 1 and stats["frameRenders"] == 1, stats
+        assert stats["railRenders"] == 0 and stats["frameRenders"] == 1, stats
+        assert page.evaluate("() => window.__kept.length > 0 && window.__kept.every(el => el.isConnected)")
+        assert page.locator("#comment-list .citem" if kind == "comment" else "#comment-list .thread-reply",
+                            has_text="A new note" if kind == "comment" else "A reply").count() == 1
+        assert page.evaluate("() => !window.__posted.isConnected")
+        # Actions on the replacement must still find their live card and editor.
+        if kind == "reply":
+            page.locator('#comment-list [data-reply-for="reply-card"]').fill("Another reply")
+            page.locator('[data-action="reply"][data-id="reply-card"]').click()
+            page.locator('#comment-list .thread-reply:not(.is-pending)', has_text="Another reply").wait_for()
+        else:
+            card = page.locator('#comment-list .citem', has_text="A new note")
+            assert card.locator('.citem-txt-more').is_visible()
+            card.locator('[data-action="menu"]').click()
+            assert card.locator('.citem-menu').is_visible()
+            card.locator('[data-action="menu"]').click()
         # What a refresh brings is what is on screen.
         page.evaluate("() => window.AnnotateDocs.reload()")
         page.wait_for_timeout(300)
@@ -201,3 +226,33 @@ def test_a_confirmed_post_renders_once_without_rereading_the_store(tmp_path, kin
                              has_text="A new note" if kind == "comment" else "A reply")
         assert shown.count() == 1
         assert page.evaluate("() => document.getElementById('aa-fresh').dataset.state") == "idle"
+
+
+def test_posts_confirming_out_of_order_keep_numbers_unique_and_existing_labels_stable(tmp_path):
+    directory = _directory(tmp_path)
+    with _open(tmp_path, directory, "chrome") as (page, base):
+        labels = page.evaluate("() => Object.fromEntries(AnnotateDocs.comments().map(c => [c.id, AnnotateDocs.number(c.id)]))")
+        page.evaluate(r"""() => {
+            const real = window.fetch;
+            window.fetch = async (url, opts) => {
+                if (opts?.method === 'POST' && /api\/comments(\?|$)/.test(String(url)) &&
+                    JSON.parse(opts.body).text === 'First post') await new Promise(resolve => window.__first = resolve);
+                return real(url, opts);
+            };
+        }""")
+        for anchor, text in [("s:checks", "First post"), ("s:checks:p1", "Second post")]:
+            page.frame_locator("#content-frame").locator(f'[data-anchor-id="{anchor}"]').first.click(position={"x": 10, "y": 5})
+            page.locator("#pop-ta").fill(text)
+            page.locator("#pop-save").click()
+        page.wait_for_function("() => AnnotateDocs.comments().some(c => c.text === 'Second post' && !c.pending)")
+        cards = page.locator('#comment-list .citem').filter(
+            has=page.locator('.citem-txt', has_text=re.compile(r"^(First|Second) post$")))
+        numbers = cards.locator('[data-num-for]').all_text_contents()
+        assert len(numbers) == len(set(numbers)) == 2
+        page.evaluate("window.__first()")
+        page.wait_for_function("() => !document.querySelector('#comment-list .citem.is-pending')")
+        assert page.evaluate("""labels => Object.entries(labels).every(([id, n]) => AnnotateDocs.number(id) === n) &&
+            AnnotateDocs.comments().filter(c => /^(First|Second) post$/.test(c.text)).every(c => AnnotateDocs.number(c.id) === c.number)
+        """, labels)
+        numbers = cards.locator('[data-num-for]').all_text_contents()
+        assert len(numbers) == len(set(numbers)) == 2

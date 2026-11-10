@@ -604,14 +604,17 @@ function clampPinLeft(left, wrapperRect, granular, width) {
   return Number.isFinite(maxLeft) && left > maxLeft ? Math.max(inset, maxLeft) : left;
 }
 
-function renderBadges() {
+function renderBadges(onlyAnchor) {
   ensurePinStyle();
-  document.querySelectorAll('.bpin-inline').forEach(p => p.remove());
+  const selector = onlyAnchor ? '[data-pin-anchor="' + cssEsc(onlyAnchor) + '"]' : '';
+  document.querySelectorAll('.bpin-inline' + selector).forEach(p => p.remove());
   const layer = ensureBadgeLayer();
-  layer.innerHTML = '';
+  if (onlyAnchor) layer.querySelectorAll(selector).forEach(p => p.remove());
+  else layer.innerHTML = '';
 
   positionBackPill();
   for (const [anchorId, count] of Object.entries(latestCounts)) {
+    if (onlyAnchor && anchorId !== onlyAnchor) continue;
     if (!count) continue;
     const el = displayAnchorEl(anchorId);
     if (!el) continue;
@@ -2287,6 +2290,19 @@ function wireBridge() {
       closeViewer();
       scrollToAnchor(data.anchorId, data.target || null, data.back || null);
     } else if (data.type === 'annotate:comment-counts') {
+      if (data.onlyAnchor) {
+        const aid = data.onlyAnchor;
+        latestCounts[aid] = (data.counts || {})[aid] || 0;
+        latestPins[aid] = (data.pins || {})[aid] || [];
+        if (data.cardStates && data.cardStates[aid]) latestCardStates[aid] = data.cardStates[aid];
+        const old = document.querySelector('[data-strip-item="' + cssEsc(data.commentId) + '"]');
+        const api = cardApi();
+        const fresh = old && api && api.stripCard(document, data.commentId, lastExcerpts);
+        if (fresh) { old.replaceWith(fresh); syncAllExcerptClamps(fresh); }
+        renderBadges(aid);
+        viewerPins(aid);
+        return;
+      }
       latestCounts = data.counts || {};
       latestPins = data.pins || {};
       latestCardStates = data.cardStates || {};
@@ -3207,8 +3223,8 @@ function scaleSource(img, pct) {
 
 let viewer = null; // {box, img, big, aid, id, css, stage, frame, pins, pct, scrollY, imgTop}
 
-function viewerPins() {
-  if (!viewer) return;
+function viewerPins(onlyAnchor) {
+  if (!viewer || (onlyAnchor && viewer.aid !== onlyAnchor)) return;
   const { pins, aid, id, css } = viewer;
   pins.querySelectorAll('.bpin').forEach(p => p.remove());
   (latestPins[aid] || []).forEach(en => {

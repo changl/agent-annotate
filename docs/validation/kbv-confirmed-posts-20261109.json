@@ -1,0 +1,86 @@
+{
+  "bead": "agent-annotate-kbv",
+  "baseline_ref": "82a81caa9501747678453a9a418464f3498903ef",
+  "candidate_source_ref": "5a821bfff314897e9404b05839a1aac4a064a099",
+  "source_sha256": {
+    "src/agent_annotate/web/shell.js": "96ec3def7c10612349880780de8ee075fdaf4728b42fb5a619c3ebef312b83f8",
+    "src/agent_annotate/web/adapter.js": "be6a719f7bf52a52dba021db6870b78ceb540340035cc783cdfb8883beb0181a"
+  },
+  "machine": "M1Max.local",
+  "chrome": "156.0.8078.81",
+  "fixture": {
+    "version": "v729",
+    "versions": 721,
+    "live_cards": 2388,
+    "archived_cards": 71,
+    "comments_sha256": "6b73c75e71decf9992b5d2a6e881694ccbcedc52f2594d0446d6bc014ba76179",
+    "meta_sha256": "a88e6e4498f85321f5c25aae6bd41bf47ade1616a5b74550aa1113cf7d4097af"
+  },
+  "port": 18771,
+  "before": {
+    "label": "baseline-final",
+    "samples_ms": [
+      138.042,
+      111.475,
+      113.161,
+      143.159,
+      134.769,
+      143.286,
+      136.013
+    ],
+    "median_ms": 136.013,
+    "chrome": "156.0.8078.81",
+    "cards": 2388,
+    "method": "CDP Performance.TaskDuration delta from release of held real POST response after optimistic paint through settled confirmation plus 1000ms; real headless Chrome, loopback-only FLD copy, 7 posts"
+  },
+  "after": {
+    "label": "candidate-final",
+    "samples_ms": [
+      31.75,
+      28.876,
+      34.97,
+      28.962,
+      84.966,
+      47.444,
+      47.298
+    ],
+    "median_ms": 34.97,
+    "chrome": "156.0.8078.81",
+    "cards": 2388,
+    "method": "CDP Performance.TaskDuration delta from release of held real POST response after optimistic paint through settled confirmation plus 1000ms; real headless Chrome, loopback-only FLD copy, 7 posts"
+  },
+  "fast_gate": {
+    "passed": 1462,
+    "skipped": 2,
+    "ruff": "passed",
+    "js_syntax": "7 passed"
+  },
+  "browser_runs": {
+    "browser": {
+      "tests": 50,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "live-final": {
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "cards-final": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "unique_browser_cases": 53,
+  "limits": [
+    "Full suite left to coordinator",
+    "Normal periodic polling enabled; one candidate one-second window exceeded 50ms; median is under 50ms",
+    "Baseline differs from historical 312ms because this is a fresh 2388-live-card snapshot and current Chrome",
+    "No release, install, rollout, live-page writes, other-Mac access, memory or skill changes"
+  ],
+  "local_artifacts": "/tmp/aa-kbv-measure"
+}

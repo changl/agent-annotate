@@ -1196,6 +1196,8 @@ def _record_fingerprints(conn, slug_dir: Path, sources: Sources) -> None:
 
 def _refuse_network_volume(slug_dir: Path) -> None:
     """WAL needs shared memory that network shares do not give."""
+    if slug_dir.resolve().is_relative_to(Path("/Volumes")):
+        raise ValueError(f"{slug_dir.name}: {DB_NAME} refused under /Volumes; the page stays on JSON")
     import subprocess
     try:
         out = subprocess.run(["df", "-P", str(slug_dir)], capture_output=True, text=True, timeout=10).stdout
