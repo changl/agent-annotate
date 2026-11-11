@@ -630,6 +630,18 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+function safeEvidenceUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const raw = value.trim();
+  if (raw.startsWith('//') || /^(?:\/(?:Users|home|tmp|private|var|Volumes|opt)\/|[A-Za-z]:\\)/.test(raw)) return null;
+  const scheme = raw.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
+  if (scheme && !/^https?$/i.test(scheme[1])) return null;
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (scheme && (!parsed.host || !/^https?:$/.test(parsed.protocol))) return null;
+  } catch { return null; }
+  return raw;
+}
 function fmtTs(iso) {
   if (!iso) return '';
   try {
@@ -1026,12 +1038,17 @@ function renderDecisionMeta(dr) {
 }
 function renderDecisionEvidence(dr) {
   const ev = Array.isArray(dr.evidence)
-    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
+    ? dr.evidence.filter(e => e && typeof e === 'object' &&
+        ((typeof e.anchor === 'string' && e.anchor) || safeEvidenceUrl(e.url)))
     : [];
   if (!ev.length) return '';
-  const links = ev.map(e =>
-    `<button type="button" class="decision-evidence-link" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" title="Scroll to ${escAttr(e.anchor)} in the document">${esc(e.label || e.anchor)}</button>`
-  ).join('');
+  const links = ev.map(e => {
+    if (typeof e.anchor === 'string' && e.anchor) {
+      return `<button type="button" class="decision-evidence-link" data-decision-action="evidence" data-anchor="${escAttr(e.anchor)}" title="Scroll to ${escAttr(e.anchor)} in the document">${esc(e.label || e.anchor)}</button>`;
+    }
+    const url = safeEvidenceUrl(e.url);
+    return `<a class="decision-evidence-link" data-decision-url="1" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" title="Open evidence in a new tab">${esc(e.label || url)}</a>`;
+  }).join('');
   return `<div class="decision-evidence"><span class="decision-evidence-lbl">Evidence:</span>${links}</div>`;
 }
 function renderDecisionPending(c) {
@@ -1430,6 +1447,9 @@ function wireDecisionActions(root) {
   root.querySelectorAll('[data-decision-action="evidence"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     goToEvidence(btn.dataset.anchor);
+  }));
+  root.querySelectorAll('a[data-decision-url]').forEach(link => link.addEventListener('click', (e) => {
+    e.stopPropagation();
   }));
   root.querySelectorAll('[data-decision-action="note-toggle"]').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();

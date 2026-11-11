@@ -105,6 +105,19 @@ function normText(s) {
   return String(s || '').replace(/\s+/g, ' ').trim();
 }
 
+function safeEvidenceUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const raw = value.trim();
+  if (raw.startsWith('//') || /^(?:\/(?:Users|home|tmp|private|var|Volumes|opt)\/|[A-Za-z]:\\)/.test(raw)) return null;
+  const scheme = raw.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
+  if (scheme && !/^https?$/i.test(scheme[1])) return null;
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (scheme && (!parsed.host || !/^https?:$/.test(parsed.protocol))) return null;
+  } catch { return null; }
+  return raw;
+}
+
 // ── Granular target capture (W3C-style multi-selector, pragmatic subset) ──
 // At comment-creation click time, record WHERE inside the registered anchor
 // the user actually clicked: the innermost meaningful element, described
@@ -1372,10 +1385,11 @@ function buildDecisionItemEl(entry) {
     item.appendChild(sayForm);
   }
 
-  // v2.19: evidence links → scroll + flash the referenced anchor in THIS
-  // document (same scrollToAnchor path the shell's "Go to location" uses).
+  // Evidence is either a document anchor (scroll + flash in THIS document)
+  // or a reviewer-accessible URL (open in a new tab).
   const ev = Array.isArray(dr.evidence)
-    ? dr.evidence.filter(e => e && typeof e === 'object' && typeof e.anchor === 'string' && e.anchor)
+    ? dr.evidence.filter(e => e && typeof e === 'object' &&
+        ((typeof e.anchor === 'string' && e.anchor) || safeEvidenceUrl(e.url)))
     : [];
   if (ev.length) {
     const row = document.createElement('div');
@@ -1385,13 +1399,26 @@ function buildDecisionItemEl(entry) {
     lbl.textContent = 'Evidence:';
     row.appendChild(lbl);
     for (const e of ev) {
-      const a = document.createElement('button');
-      a.type = 'button';
-      a.className = 'annotate-decision-evidence-link';
-      a.textContent = e.label || e.anchor;
-      a.title = 'Scroll to ' + e.anchor;
-      a.addEventListener('click', () => scrollToAnchor(e.anchor, null));
-      row.appendChild(a);
+      if (typeof e.anchor === 'string' && e.anchor) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'annotate-decision-evidence-link';
+        button.textContent = e.label || e.anchor;
+        button.title = 'Scroll to ' + e.anchor;
+        button.addEventListener('click', () => scrollToAnchor(e.anchor, null));
+        row.appendChild(button);
+      } else {
+        const url = safeEvidenceUrl(e.url);
+        const link = document.createElement('a');
+        link.className = 'annotate-decision-evidence-link';
+        link.textContent = e.label || url;
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.title = 'Open evidence in a new tab';
+        link.addEventListener('click', event => event.stopPropagation());
+        row.appendChild(link);
+      }
     }
     item.appendChild(row);
   }

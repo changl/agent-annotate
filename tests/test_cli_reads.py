@@ -259,6 +259,26 @@ def test_ask_rejects_a_card_without_anchor(served, tmp_path, capsys):
     assert "has no anchor_id" in capsys.readouterr().err
 
 
+def test_ask_warns_but_still_posts_when_evidence_is_not_reviewer_accessible(
+        served, tmp_path, capsys):
+    cards = tmp_path / "cards.json"
+    cards.write_text(json.dumps([{
+        "anchor_id": "s:a",
+        "text": "Use the screenshot at /Users/chang/Desktop/proof.png.",
+        "decision_request": {"prompt": "Ship it?"},
+    }]))
+    args = SimpleNamespace(slug="live", project=None, from_file=str(cards), version=None,
+                           author="agent:test", json=True)
+
+    assert cli.cmd_ask(args) == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out.strip().splitlines()[-1])
+    assert result["created"] == 1
+    assert len(result["warnings"]) == 2
+    assert "cites local path" in captured.err
+    assert "mentions a screenshot/image" in captured.err
+
+
 def test_addressed_goes_through_the_api_with_session_header(served, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-agent")
     code, comment = cli._api(served.record, "POST", "/api/comments",

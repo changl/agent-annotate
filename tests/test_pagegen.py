@@ -318,7 +318,8 @@ def test_v2_requires_one_numbered_question_section_and_renders_scope(tmp_path):
         "```cards\n"
         "[{\"number\":14,\"anchor_id\":\"d:q14\",\"text\":\"Choose the home.\","
         "\"decision_request\":{\"prompt\":\"Which workspace should hold it?\","
-        "\"evidence\":[{\"label\":\"Plan\",\"anchor\":\"s:plan\"}]}}]\n"
+        "\"evidence\":[{\"label\":\"Plan\",\"anchor\":\"s:plan\"},"
+        "{\"label\":\"Screenshot\",\"url\":\"https://example.test/proof.png\"}]}}]\n"
         "```\n",
         version="v2",
         full_plan="true",
@@ -331,8 +332,44 @@ def test_v2_requires_one_numbered_question_section_and_renders_scope(tmp_path):
 
     assert cards[0]["number"] == 14
     assert '<span class="item-num">#14</span>' in html
+    assert ('href="https://example.test/proof.png" target="_blank" '
+            'rel="noopener noreferrer">Screenshot</a>') in html
     assert "Complete plan" in html
     assert "No other files required" in html
+
+
+def test_card_evidence_warnings_flag_local_paths_and_unlinked_screenshots(tmp_path):
+    src = tmp_path / "page.md"
+    src.write_text(_doc(
+        "## Decision\n\n```cards\n"
+        '[{"anchor_id":"d:q1","text":"Review the screenshot at '
+        '/Users/chang/Desktop/proof.png before deciding.",'
+        '"decision_request":{"prompt":"Ship it?"}}]\n'
+        "```\n"
+    ), encoding="utf-8")
+
+    result = generate(src, tmp_path / "slug")
+
+    assert len(result["warnings"]) == 2
+    assert any("cites local path" in warning for warning in result["warnings"])
+    assert any("mentions a screenshot/image" in warning for warning in result["warnings"])
+
+
+def test_clickable_visual_evidence_satisfies_the_screenshot_warning(tmp_path):
+    src = tmp_path / "page.md"
+    src.write_text(_doc(
+        "## Decision\n\n```cards\n"
+        '[{"anchor_id":"d:q1","text":"Review the screenshot before deciding.",'
+        '"decision_request":{"prompt":"Ship it?","evidence":'
+        '[{"label":"Screenshot","url":"./evidence/proof.png"}]}}]\n'
+        "```\n"
+    ), encoding="utf-8")
+
+    result = generate(src, tmp_path / "slug")
+
+    assert result["warnings"] == []
+    html = result["html"].read_text(encoding="utf-8")
+    assert 'href="./evidence/proof.png" target="_blank"' in html
 
 
 @pytest.mark.parametrize(

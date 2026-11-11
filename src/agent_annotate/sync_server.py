@@ -115,6 +115,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .evidence import is_safe_evidence_url
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, STATE_DIR, WEB_DIR
 
@@ -244,7 +245,8 @@ def _comment_needs_push(comment: dict) -> bool:
 # v2.19 schema (all optional except prompt):
 #   prompt, context, recommendation, options (strings or {id,label,
 #   consequence,style}), consequences {accept,reject}, evidence [{label,
-#   anchor}], impact low|medium|high, blocking bool, requested_at (server-set).
+#   anchor|url}], impact low|medium|high, blocking bool, requested_at
+#   (server-set).
 # The serialized cap is enforced HERE and surfaced as HTTP 413 — the old
 # 2048-byte check silently dropped an oversized request and still returned
 # 200, which left agents believing a card had been posed when it had not.
@@ -309,7 +311,30 @@ def _normalize_decision_request(dr: Any) -> dict:
     if "evidence" in out and out["evidence"] is not None:
         ev = out["evidence"]
         if not isinstance(ev, list) or any(not isinstance(e, dict) for e in ev):
-            raise DecisionRequestError("decision_request.evidence must be a list of {label, anchor}")
+            raise DecisionRequestError(
+                "decision_request.evidence must be a list of {label, anchor|url}")
+        normalized_evidence = []
+        for item in ev:
+            label = item.get("label")
+            if label is not None and not isinstance(label, str):
+                raise DecisionRequestError("decision_request.evidence label must be a string")
+            anchor = item.get("anchor")
+            url = item.get("url")
+            has_anchor = isinstance(anchor, str) and bool(anchor.strip())
+            has_url = isinstance(url, str) and bool(url.strip())
+            if has_anchor == has_url:
+                raise DecisionRequestError(
+                    "each decision_request.evidence item needs exactly one of anchor or url")
+            fresh = {"label": label.strip()} if isinstance(label, str) and label.strip() else {}
+            if has_anchor:
+                fresh["anchor"] = anchor.strip()
+            else:
+                if not is_safe_evidence_url(url):
+                    raise DecisionRequestError(
+                        "decision_request.evidence url must be http(s) or page-relative")
+                fresh["url"] = url.strip()
+            normalized_evidence.append(fresh)
+        out["evidence"] = normalized_evidence
     if "impact" in out and out["impact"] is not None and out["impact"] not in _DECISION_IMPACTS:
         raise DecisionRequestError("decision_request.impact must be low|medium|high")
     if "blocking" in out and out["blocking"] is not None and not isinstance(out["blocking"], bool):

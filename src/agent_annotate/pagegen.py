@@ -29,6 +29,7 @@ import re
 import sys
 from pathlib import Path
 
+from .evidence import card_evidence_warnings, is_safe_evidence_url
 from .paths import WEB_DIR
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ CSS = """<style>
 .aa .card .opts li{margin:2px 0}
 .aa .card .q{color:#6B7280;font-style:italic;font-size:12.5px;margin:6px 0 0}
 .aa .card-ref{font-size:12px}
+.aa .card-evidence{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:7px 0;font-size:12.5px}
+.aa .card-evidence-label{font-weight:600;color:#4B5563}
 .aa .reco{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0}
 .aa .chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:#E0E7FF;color:#3730A3;border:1px solid #C7D2FE;margin-left:6px}
 .aa .chip.blocking{background:#FEE2E2;color:#991B1B;border-color:#FECACA}
@@ -523,6 +526,24 @@ class Renderer:
             parts.append(f'<p class="ctx">{inline(rest)}</p>')
         if dr.get("context"):
             parts.append(f'<p class="ctx">{inline(str(dr["context"]))}</p>')
+        evidence = dr.get("evidence") if isinstance(dr.get("evidence"), list) else []
+        evidence_links = []
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("anchor") or item.get("url") or "Evidence")
+            anchor = item.get("anchor")
+            url = item.get("url")
+            if isinstance(anchor, str) and anchor:
+                evidence_links.append(
+                    f'<a href="#{E(anchor, quote=True)}">{E(label)}</a>')
+            elif is_safe_evidence_url(url):
+                evidence_links.append(
+                    f'<a href="{E(url.strip(), quote=True)}" target="_blank" '
+                    f'rel="noopener noreferrer">{E(label)}</a>')
+        if evidence_links:
+            parts.append('<div class="card-evidence"><span class="card-evidence-label">'
+                         'Evidence:</span>' + "".join(evidence_links) + '</div>')
         reco = dr.get("recommendation")
         options = dr.get("options") or []
         opts = []
@@ -693,10 +714,23 @@ def _round_contract_problems(meta: dict, blocks: list[dict], cards: list[dict],
                     f"card #{number} needs decision_request.evidence linking to the plan")
             else:
                 for item in evidence:
-                    anchor = item.get("anchor") if isinstance(item, dict) else None
-                    if not anchor or anchor not in registry:
+                    if not isinstance(item, dict):
+                        problems.append(
+                            f"card #{number} evidence must be an object with anchor or url")
+                        continue
+                    anchor = item.get("anchor")
+                    url = item.get("url")
+                    has_anchor = isinstance(anchor, str) and bool(anchor.strip())
+                    has_url = isinstance(url, str) and bool(url.strip())
+                    if has_anchor == has_url:
+                        problems.append(
+                            f"card #{number} evidence needs exactly one of anchor or url")
+                    elif has_anchor and anchor not in registry:
                         problems.append(
                             f"card #{number} evidence anchor {anchor!r} is not on this page")
+                    elif has_url and not is_safe_evidence_url(url):
+                        problems.append(
+                            f"card #{number} evidence url must be http(s) or page-relative")
     return problems
 
 
@@ -809,6 +843,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
     warnings = _full_plan_warnings(slug_dir, version, blocks)
+    warnings += card_evidence_warnings(cards)
 
     html_out = build_html(meta, canvas, registry, version)
     prior = _write_files(slug_dir, version, label, source, text, html_out, cards)

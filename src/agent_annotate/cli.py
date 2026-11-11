@@ -72,6 +72,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
+from .evidence import card_evidence_warnings
 from .pagegen import add_parser as _add_new_parser
 from .paths import (
     BUS_OFFSET_ROOT,
@@ -2115,6 +2116,10 @@ def cmd_ask(args) -> int:
               "{anchor_id, text, decision_request} objects", file=sys.stderr)
         return 2
 
+    evidence_warnings = card_evidence_warnings(cards)
+    for warning in evidence_warnings:
+        print(f"WARN: {warning}", file=sys.stderr)
+
     version = args.version
     if not version and record.get("slug_dir"):
         version = _read_meta(Path(record["slug_dir"])).get("current")
@@ -2207,7 +2212,8 @@ def cmd_ask(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps({"slug": slug, "route": route, "ids": ids,
                           "created": created, "updated": updated,
-                          "version": version}, ensure_ascii=False))
+                          "version": version, "warnings": evidence_warnings},
+                         ensure_ascii=False))
         return 0
     print(f"  {project}/{slug}: {created} created, {updated} updated "
           f"({route} route, version {version or 'default'})")

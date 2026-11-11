@@ -113,6 +113,41 @@ def test_create_accepts_decision_request_in_one_call(server):
     assert requested[0]["has_context"] is True and requested[0]["options_n"] == 2
 
 
+def test_create_accepts_reviewer_accessible_evidence_urls(server):
+    httpd, slug_dir, _ = server
+    evidence = [
+        {"label": "Diagram", "anchor": "s:diagram"},
+        {"label": "Screenshot", "url": " https://example.test/proof.png "},
+        {"label": "Local proof", "url": "./evidence/proof.html"},
+    ]
+    status, comment = _call(httpd, "POST", "/api/comments", _card(evidence=evidence))
+
+    assert status == 201
+    assert comment["decision_request"]["evidence"] == [
+        {"label": "Diagram", "anchor": "s:diagram"},
+        {"label": "Screenshot", "url": "https://example.test/proof.png"},
+        {"label": "Local proof", "url": "./evidence/proof.html"},
+    ]
+    assert _store(slug_dir)["anchors"]["s:a"][0]["decision_request"]["evidence"] == (
+        comment["decision_request"]["evidence"])
+
+
+@pytest.mark.parametrize("evidence", [
+    [{"label": "Local", "url": "/Users/chang/proof.png"}],
+    [{"label": "Script", "url": "javascript:alert(1)"}],
+    [{"label": "Malformed", "url": "https://[bad"}],
+    [{"label": "Both", "anchor": "s:a", "url": "https://example.test/a"}],
+    [{"label": "Neither"}],
+])
+def test_create_rejects_unsafe_or_ambiguous_evidence(server, evidence):
+    httpd, slug_dir, _ = server
+    status, error = _call(httpd, "POST", "/api/comments", _card(evidence=evidence))
+
+    assert status == 400
+    assert "evidence" in error["error"]
+    assert _store(slug_dir)["anchors"] == {}
+
+
 def test_create_preserves_explicit_item_number(server):
     httpd, slug_dir, _ = server
     payload = _card()

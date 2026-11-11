@@ -61,7 +61,10 @@ separate commands for a page built by hand.
 
 `cards.json` is a list of `{anchor_id, text, decision_request}`; each
 `decision_request` carries the prompt, the context, a recommendation, what
-each option costs, evidence anchors, impact and blocking. Cards that
+each option costs, clickable evidence anchors or URLs, impact and blocking.
+Everything needed to decide belongs inline or behind one of those links;
+`new` and `ask` warn about local file paths and unlinked screenshot/image
+references. Cards that
 recommend get answered; cards that only ask mostly do not. The schema is in
 [decision-cards.md](src/agent_annotate/skills/claude/references/decision-cards.md).
 

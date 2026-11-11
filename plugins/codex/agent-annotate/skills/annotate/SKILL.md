@@ -93,11 +93,16 @@ absent from the registry surface as "Comments without anchor".
     "recommendation": "accept",
     "options": [{"id": "accept", "label": "Rename", "consequence": "One dual-write week."},
                 {"id": "reject", "label": "Keep status", "consequence": "Ambiguous through v3."}],
-    "evidence": [{"label": "status column", "anchor": "tbl:items:col:status"}],
+    "evidence": [{"label": "status column", "anchor": "tbl:items:col:status"},
+                 {"label": "migration screenshot", "url": "./evidence/migration.png"}],
     "impact": "medium", "blocking": true}}]
 ```
 
 Every card states the context, a recommendation, and what each option costs.
+Everything the reviewer needs to decide must be inline or behind a clickable
+`evidence` item: use `anchor` for page evidence and `url` for HTTP(S) or
+page-relative evidence. Never cite an author-machine file path. `new` and
+`ask` warn on local paths and unlinked screenshot/image references.
 Cards that recommend are answered 74% of the time; cards that only ask, 34%.
 `text` defaults to `prompt`. Every verdict answers a card: `accept` closes it;
 `reject`, `changes`, `select`, and free-text `comment` leave it waiting on the

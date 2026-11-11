@@ -17,7 +17,7 @@ Validated identically by `POST /api/comments`, `PUT /api/comments/<id>` and
 | `recommendation` | `"accept"` \| `"reject"` \| `"changes"` \| option id \| `null` | no | Puts a "Recommended" badge on that button. |
 | `options` | list | no | Strings (any subset of `accept`/`reject`/`changes`; `comment` is the pre-D2 spelling of `changes` and still parses) **or** objects `{id, label, consequence, style}`. `id` must be a non-empty string. `style` is `primary`/`default`/`danger`. Defaults to `["accept", "reject", "changes"]`. |
 | `consequences` | `{accept, reject, changes}` | no | Shortcut when `options` are strings. |
-| `evidence` | `[{label, anchor}]` | no | `anchor` is a `data-anchor-id` on the page. Rendered as a link that scrolls to it and flashes it. |
+| `evidence` | `[{label, anchor|url}]` | no | Each item has exactly one target. `anchor` is a `data-anchor-id` on the page and scrolls/flashes it. `url` is HTTP(S) or page-relative and opens in a new tab. |
 | `impact` | `low`\|`medium`\|`high` | no | Anything else is HTTP 400. |
 | `blocking` | bool | no | Renders a chip. |
 | `requested_at` | ISO ts | server-set | Stamped on every create/update. Drives `latency_s`. |
@@ -70,6 +70,15 @@ ask are answered 34% of the time. The rule for every card:
 2. `recommendation` names the option you would take.
 3. Each option says what it costs — `consequence` on the option object, or the
    `consequences` shortcut.
+4. Everything needed to decide is in the card or behind an evidence link the
+   reviewer can click. A path on the author's computer is not evidence.
+
+`annotate new` and `annotate ask` warn when card text cites an absolute local
+filesystem path, or mentions a screenshot/image without a clickable URL or an
+image-labelled page anchor. These are warnings because prose detection is
+heuristic; the card is still generated/posed. The API separately rejects
+unsafe URL schemes, local filesystem URLs, and evidence items with both or
+neither `anchor`/`url`.
 
 An unanswerable card is worse than no card: it burns a review round.
 
@@ -88,7 +97,7 @@ overlay where neither is possible, e.g. inside `<svg>`).
 | `options` | One button each, wrapping to as many lines as the label needs. Object options render `label`; `style` sets primary/default/danger. |
 | `consequence` / `consequences` | One line under its own button. Buttons switch to a column layout when any consequence is present. |
 | `impact`, `blocking` | Chips beside the title. |
-| `evidence` | Links. A click scrolls to the anchor and flashes it, using the same highlight mechanism as pin hover. |
+| `evidence` | Clickable links. An `anchor` scrolls to and flashes page evidence; a `url` opens reviewer-accessible evidence in a new tab. |
 
 Unanswered cards also mark their page pin in pulsing indigo, so a reviewer can
 find a pending decision without opening the drawer. Under Accept/Reject there

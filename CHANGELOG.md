@@ -6,6 +6,14 @@ this repository.
 
 ## Unreleased
 
+- **Decision evidence must be reviewable from the card.** Chang, 2026-09-26
+  (`rebex-decisions` q14): `evidence` now accepts either a page `anchor` or a
+  reviewer-accessible `url`, and both render as clickable links in the rail,
+  generated card, and inline body strip. `annotate new` and `annotate ask`
+  warn when a card cites an absolute local path or mentions a screenshot/image
+  without a clickable URL or image-labelled page anchor. Unsafe URL schemes,
+  local filesystem paths, and evidence items with both/neither target are
+  rejected by the server. Needs a page-server restart.
 - **One number per item; answered and withdrawn items leave "Needs my
   review".** Chang, 2026-09-23 (the fourth report): one item showed as `#19`,
   `v5` and `d:q19` at once, and a card he had replied to still asked for his

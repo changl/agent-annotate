@@ -186,6 +186,43 @@ def test_a_pre_d2_server_still_shows_free_text_answer(tmp_path):
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+def test_evidence_links_render_in_the_rail_and_inline_card(tmp_path):
+    evidence_card = dict(CARD, decision_request={
+        "prompt": "Ship the rename?",
+        "requested_at": "2026-09-17T09:00:00Z",
+        "evidence": [
+            {"label": "Overview", "anchor": "s:overview:introduction"},
+            {"label": "Screenshot", "url": "https://example.test/proof.png"},
+        ],
+    })
+    process, base, _ = _serve(
+        tmp_path, card=evidence_card, anchor="s:overview:introduction")
+    try:
+        with playwright.sync_playwright() as runner:
+            browser, page = _open(runner, base)
+
+            rail_link = page.locator('.decision-evidence a[data-decision-url]')
+            rail_link.wait_for(state="visible")
+            assert rail_link.inner_text() == "Screenshot"
+            assert rail_link.get_attribute("href") == "https://example.test/proof.png"
+            assert rail_link.get_attribute("target") == "_blank"
+            assert page.locator(
+                '.decision-evidence [data-decision-action="evidence"]').inner_text() == "Overview"
+
+            frame = page.frame_locator("#content-frame")
+            inline_link = frame.locator('.annotate-decision-evidence a')
+            inline_link.wait_for(state="visible")
+            assert inline_link.inner_text() == "Screenshot"
+            assert inline_link.get_attribute("href") == "https://example.test/proof.png"
+            assert inline_link.get_attribute("target") == "_blank"
+            assert frame.locator('.annotate-decision-evidence button').inner_text() == "Overview"
+            browser.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 def test_resolved_prior_round_card_is_history_not_v2_outstanding_work(tmp_path):
     process, base, slug_dir = _serve(tmp_path, card=RESOLVED_PRIOR_CARD)
     try:
