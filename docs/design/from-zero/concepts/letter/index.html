@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The letter</title>
+<style>
+:root{
+  --serif:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --ph:48px;
+}
+/* Two hands on one page: the counterpart writes in black type, the person answers in blue ink.
+   Grey pencil is what goes ahead if he says nothing. Red appears in one place only: the thing that cannot wait. */
+html[data-theme=light]{
+  --desk:#d9d5ca; --wall:radial-gradient(120% 70% at 50% -10%,#fbf4e2 0%,rgba(251,244,226,0) 62%),linear-gradient(165deg,#e8e2d5,#cdd3d6);
+  --paper:#faf7f0; --paper2:#f1ede3; --text:#1d1c1a; --soft:#57534b; --faint:#8b867b; --rule:#ddd7c9;
+  --ink:#2340b8; --wash:#e7ebf9; --onink:#fff; --pencil:#66625a;
+  --alarm:#a3271a; --awash:#f8e6e1; --onalarm:#fff;
+  --glass:rgba(255,255,255,.5); --gedge:rgba(255,255,255,.8);
+  --thing:#fff; --shadow:0 1px 2px rgba(40,30,10,.08),0 14px 40px rgba(40,30,10,.13); --veil:rgba(217,213,202,.9);
+}
+html[data-theme=dark]{
+  --desk:#0e0e0d; --wall:radial-gradient(120% 70% at 50% 112%,#2b2219 0%,rgba(43,34,25,0) 62%),linear-gradient(165deg,#1a1b1d,#0b0c0e);
+  --paper:#1c1b19; --paper2:#252320; --text:#ebe5d9; --soft:#aea89c; --faint:#7f796e; --rule:#37342f;
+  --ink:#a9bcff; --wash:#222943; --onink:#10121c; --pencil:#a39d91;
+  --alarm:#ff9a82; --awash:#3b201b; --onalarm:#1c0d09;
+  --glass:rgba(255,255,255,.06); --gedge:rgba(255,255,255,.11);
+  --thing:#e6e1d5; --shadow:0 0 0 1px #34312c; --veil:rgba(8,8,8,.82);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font:17px/1.52 var(--serif);color:var(--text);background:var(--desk);-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}
+p{margin:0 0 10px}
+:focus{outline:none}
+:focus-visible{outline:2.5px solid var(--ink);outline-offset:3px;border-radius:8px}
+[inert]{pointer-events:none}
+.ic{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.lab,.runin,.kick{font:600 11.5px/1.3 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--soft)}
+.his{color:var(--ink);font-style:italic}
+.unless{color:var(--pencil);font-style:italic;font-size:16px}
+.small{font-size:14px}
+
+/* ---------- the device ---------- */
+#stage{position:fixed;inset:0 0 var(--ph) 0;overflow:hidden;background:var(--wall)}
+.lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;padding:52px 16px 18px}
+.ghost{display:none}
+.clock{text-align:center;font-family:var(--sans)}
+.date{font-size:17px;font-weight:500}
+.time{font-size:88px;font-weight:300;line-height:1.02;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-bottom:22px}
+.corner{flex:1;width:100%;max-width:372px;display:flex;flex-direction:column;gap:10px;min-height:0}
+
+/* the glance: the face of silence */
+.glance{display:flex;align-items:stretch;border-radius:22px;background:var(--glass);border:1px solid var(--gedge);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.gmain{flex:1;display:flex;gap:12px;align-items:center;padding:14px 16px;min-height:76px;border-radius:22px}
+.gt{display:flex;flex-direction:column;gap:1px}
+.gt b{font:600 19px/1.25 var(--serif)}
+.gt span{font:400 14.5px/1.35 var(--sans);color:var(--soft)}
+.gt small{font:400 14.5px/1.35 var(--sans);color:var(--soft)}
+.gi{width:26px;display:grid;place-items:center;flex:none}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);display:block}
+.glance.letter{background:var(--paper);border-color:transparent;box-shadow:var(--shadow)}
+.glance.letter .gi{color:var(--ink)}
+.glance.alarm .dot{background:var(--alarm)}
+.ghear{width:56px;display:grid;place-items:center;border-left:1px solid var(--rule);color:var(--ink);border-radius:0 22px 22px 0}
+
+.slip{border-radius:22px;padding:16px 18px;background:var(--paper);box-shadow:var(--shadow)}
+.slip p{font-size:17px}
+.slip.alarm{box-shadow:0 0 0 2px var(--alarm),var(--shadow)}
+.slip.alarm .lab{color:var(--alarm)}
+.slip .lab{margin-bottom:6px}
+
+.say{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:8px}
+.say button{width:68px;height:68px;border-radius:50%;background:var(--glass);border:1px solid var(--gedge);display:grid;place-items:center;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.say button .ic{width:28px;height:28px}
+.say span{font:13.5px var(--sans);color:var(--text)}
+.say.on button{background:var(--ink);color:var(--onink);border-color:transparent;animation:pulse 1.1s ease-in-out infinite}
+
+/* ---------- buttons are places to make a mark ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 22px;border-radius:999px;font:600 16px/1.2 var(--sans);border:1.5px solid var(--ink);color:var(--ink);background:transparent;text-align:center}
+.btn.pri{background:var(--ink);color:var(--onink)}
+.btn.quiet{border-color:transparent;color:var(--soft);font-weight:500;padding:0 12px}
+.btn.sm{min-height:44px;padding:0 16px;font-size:15px}
+.btn.alarm{background:var(--alarm);border-color:var(--alarm);color:var(--onalarm)}
+.btn .ic{width:19px;height:19px}
+.acts{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+.type{display:flex;gap:8px;flex:1 1 220px;min-width:0}
+.type input{flex:1;min-width:0;min-height:44px;border-radius:999px;border:1.5px solid var(--faint);background:transparent;padding:0 16px;font:16px var(--sans)}
+.type input::placeholder{color:var(--soft);opacity:1}
+
+/* ---------- the letter ---------- */
+.wrap{position:absolute;inset:0;overflow:auto;background:var(--paper)}
+.sheet{max-width:640px;margin:0 auto;padding:10px 20px 56px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:48px;font:600 12px var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--soft)}
+.tr{display:flex;gap:2px}
+.tbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;min-width:44px;padding:0 10px;border-radius:999px;font:600 12px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--soft)}
+.lead{font-size:22px;line-height:1.36;margin:10px 0 4px;text-wrap:pretty}
+.told{margin-top:22px;padding-top:14px;border-top:1px solid var(--rule)}
+.told .lab{margin-bottom:6px}
+.item{position:relative;border-top:1px solid var(--rule);margin-top:22px;padding-top:6px;scroll-margin-top:8px}
+.item.folded,.item.done{margin-top:12px}
+.item.lit{border-top-color:var(--ink)}
+.hd{display:flex;align-items:center;justify-content:space-between;min-height:44px}
+.side{min-height:44px;padding:0 0 0 14px;font:500 14px var(--sans);color:var(--soft);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.kick .n{font-family:var(--serif);font-weight:400;font-size:15px;margin-right:.6em;color:var(--text);letter-spacing:0}
+.item h2,.fold .h{font:600 25px/1.2 var(--serif);margin:0 0 12px;text-wrap:balance}
+.item h2 small,.fold .h small{font:italic 400 17px var(--serif);color:var(--soft)}
+.item.done h2{font-size:19px;font-weight:500;color:var(--soft);margin-bottom:6px}
+/* a letter folds: one thing lies open, the rest wait as a line each */
+.fold{display:block;width:100%;position:relative;padding:12px 30px 8px 0;border-radius:6px}
+.fold .kick{display:block}
+.fold .h{display:block;font-size:20px;margin:5px 0 2px}
+.fold .gist{display:block;font-size:16px;line-height:1.4;color:var(--soft)}
+.fold .gist.unless{color:var(--pencil)}
+.fold>.ic{position:absolute;right:0;top:50%;margin-top:-11px;color:var(--soft)}
+.runin{margin-right:.7em}
+.ln .runin{display:block;margin:4px 0 2px}
+.ln ol{margin:0 0 4px;padding-left:1.35em}
+.said .when{font:13px var(--sans);color:var(--soft);white-space:nowrap}
+.q{font-size:19px;line-height:1.4}
+.inkline{display:flex;gap:10px;align-items:flex-start;color:var(--ink);font-style:italic;margin:0 0 4px}
+.inkline .ic{stroke-width:2.4;margin-top:1px}
+.ask{border-left:2.5px solid var(--ink);padding:2px 0 2px 14px;margin:12px 0 0}
+.ps{margin-top:16px;padding-top:12px;border-top:1px dashed var(--rule)}
+
+/* touch a line to mark it */
+.mk{cursor:pointer;border-radius:6px;padding:3px 6px;margin-left:-6px;margin-right:-6px;transition:background .15s;position:relative}
+li>.mk{display:block;padding-top:9px;padding-bottom:9px}
+.mk:hover,.mk.on{background:var(--wash)}
+.mk.cut{text-decoration:line-through;text-decoration-color:var(--ink);text-decoration-thickness:2px;color:var(--soft)}
+.mk.noted{box-shadow:inset 3px 0 0 var(--ink);padding-left:12px}
+.note{display:flex;gap:8px;align-items:flex-start;color:var(--ink);font:italic 16px/1.4 var(--serif);margin:0 0 10px}
+.note .ic{width:18px;height:18px;margin-top:2px}
+.note .side{margin:-11px 0 -11px auto;font-style:normal;padding:0 0 0 10px}
+.gen{margin:10px 0 0}
+.note b{font:600 12px/20px var(--sans);font-style:normal;min-width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--onink);text-align:center}
+.panel{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1.5px solid var(--ink);border-radius:18px;padding:10px;margin:4px 0 12px;background:var(--paper)}
+
+/* options: printed on the page, one already circled in pencil */
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
+.opt{min-height:52px;padding:2px 0;border-radius:14px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+.ol{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:5px 20px;border:1px solid var(--faint);border-radius:48% 52% 55% 45%/58% 64% 36% 42%;font:600 16px/1.2 var(--sans)}
+.ol em{font:italic 400 12.5px var(--serif);color:var(--pencil)}
+.opt.pencil .ol{border:1.5px dashed var(--pencil)}
+.opt.inked .ol{border:2.5px solid var(--ink);color:var(--ink);transform:rotate(-1.5deg)}
+.opt.inked .ol em{color:var(--ink)}
+.opts.draw{display:grid;grid-template-columns:1fr 1fr}
+.opts.draw .opt{border:1px solid var(--faint);padding:8px 8px 10px}
+.opts.draw .ol{min-height:40px}
+.mini{display:flex;gap:6px;align-items:flex-end;width:100%;padding:10px 8px 8px;border-radius:8px;background:var(--paper2)}
+.mini i{flex:1;font:600 12px/1.2 var(--sans);font-style:normal;text-align:center;padding:8px 2px;border-radius:6px;border:1px solid var(--rule);color:var(--soft)}
+.mini i.big{flex:1.5;padding:14px 2px;border:1.5px solid var(--text);color:var(--text);font-size:14px;background:var(--paper)}
+.mini small{display:block;font-weight:400;font-size:11px}
+.fork{margin:14px 0 4px}
+.fork .of{font:600 13px var(--sans);color:var(--soft)}
+.fork .q{font-size:17px;margin-bottom:4px}
+
+details{margin:0 0 10px}
+summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;font:500 15px var(--sans);color:var(--soft);list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"";width:7px;height:7px;border-right:1.8px solid currentColor;border-bottom:1.8px solid currentColor;transform:rotate(-45deg);transition:transform .15s;flex:none;margin:0 4px 0 2px}
+details[open]>summary::before{transform:rotate(45deg)}
+details ul,details ol{margin:0 0 6px;padding-left:1.3em;font-size:16px}
+
+.foot{border-top:1px solid var(--rule);margin-top:30px;padding-top:18px}
+.end{font-size:22px;line-height:1.35;margin-bottom:4px}
+.links{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:10px}
+.link{min-height:44px;display:inline-flex;align-items:center;font:500 15px var(--sans);color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.keys{display:none}
+
+/* ---------- the enclosure: the thing itself, in its own colours ---------- */
+.peek{display:flex;width:100%;align-items:center;gap:12px;margin:4px 0 12px;padding:12px 14px;border-radius:10px;background:var(--thing);color:#1b1b1b;box-shadow:var(--shadow);font:14px/1.4 var(--sans)}
+.peek b{display:block;font-size:15px}
+.peek span{color:#57534b}
+.peek .go{margin-left:auto;display:inline-flex;align-items:center;gap:2px;font-weight:600;font-size:15px;color:#2340b8}
+.thing{position:absolute;inset:0;overflow:auto;background:var(--desk);padding:0 12px}
+.wrap.has-thing>.sheet{display:none}
+.tbar{display:flex;align-items:center;min-height:52px;margin:0 -4px}
+.thing h3{font:600 22px/1.2 var(--serif);margin:0 4px 2px}
+.thing h3 small{font:italic 400 16px var(--serif);color:var(--soft)}
+.hint{font:14.5px var(--sans);color:var(--soft);margin:0 4px 10px}
+.obj{--ink:#2340b8;--wash:#e7ebf9;--onink:#fff;--soft:#57534b;--pencil:#66625a;--rule:#dedad0;--paper:#fff;--paper2:#f4f2ec;--text:#1b1b1b;
+  background:var(--thing);color:#1b1b1b;border-radius:10px;padding:16px 14px;box-shadow:var(--shadow);font:15px/1.5 var(--sans)}
+.thing .obj{padding:14px 11px}
+html[data-theme=dark] .obj{--rule:#cbc5b6;--paper2:#d9d3c5}
+.obj.inline{margin:6px 0 12px}
+.obj p{margin:0 0 8px}
+.tfoot{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 4px 14px;margin-top:12px;background:var(--desk);border-top:1px solid var(--rule)}
+.file{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--rule);font-size:13px;color:var(--soft)}
+.file b{font:600 13.5px var(--mono);color:#1b1b1b}
+.csv{width:100%;border-collapse:collapse;table-layout:fixed;font:12.5px/1.3 var(--sans);font-variant-numeric:tabular-nums}
+.csv th:nth-child(1){width:13%}.csv th:nth-child(2){width:26%}.csv th:nth-child(3){width:21%}.csv th:nth-child(4){width:19%}.csv th:nth-child(5){width:21%}
+.csv th{font-weight:600;text-align:left;color:var(--soft);font-size:12px;padding:10px 3px 6px}
+.csv td{padding:0 3px;height:44px;border-top:1px solid var(--rule);vertical-align:middle}
+.csv td:first-child{white-space:nowrap;color:var(--soft)}
+.csv .r{text-align:right;white-space:nowrap}
+.csv tr.mk{display:table-row}
+.csv tr.sum td{font-weight:650;font-size:12px;border-top:2px solid #1b1b1b;color:#1b1b1b}
+.csv tr.more td{color:var(--soft);font-style:italic}
+.csv tr.new td{background:var(--wash)}
+.csv tr.aux td{height:auto;border-top:0;padding:0 4px}
+.csv tr.cut td{text-decoration:line-through;text-decoration-color:var(--ink);color:var(--soft)}
+.pinno{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1.5px dashed var(--pencil);font:600 11px var(--sans);color:var(--pencil);vertical-align:1px}
+.mail-h{font-size:13px;color:var(--soft);border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:10px}
+.mail-h b{color:#1b1b1b;font-weight:600}
+.pair{display:grid;grid-template-columns:1fr auto 1fr;gap:6px 8px;align-items:start;padding:8px 0;border-top:1px solid var(--rule);font-size:14px}
+.pair:first-child{border-top:0}
+.pair s{color:var(--soft)}
+.pair b{font-weight:600}
+.figs{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+.fig b{display:block;font:600 30px/1.1 var(--serif)}
+.fig span{font-size:13px;color:var(--soft)}
+.fig.was b{color:var(--soft);font-weight:400;text-decoration:line-through;text-decoration-thickness:1.5px}
+.pins{position:relative;cursor:crosshair}
+.pindot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:var(--ink);color:var(--onink);font:700 13px/26px var(--sans);text-align:center;box-shadow:0 0 0 3px rgba(255,255,255,.9)}
+.pindot::after{content:"";position:absolute;inset:-9px}
+.sk{width:230px;max-width:100%;margin:4px auto 6px;padding:18px 16px 16px;border:1.5px dashed #8b867b;border-radius:26px;text-align:center;font:14px/1.4 var(--sans);color:#3d3a35}
+.sk .t{font-size:12px;color:#66625a}
+.sk .h{font:600 17px/1.3 var(--sans);margin:10px 0 12px}
+.sk .stars{display:flex;justify-content:center;gap:6px;margin-bottom:14px}
+.sk .stars svg{width:30px;height:30px;fill:none;stroke:#66625a;stroke-width:1.5;stroke-dasharray:3 2}
+.sk .box{border:1.5px dashed #8b867b;border-radius:10px;padding:14px 8px;color:#66625a;font-size:13px;margin-bottom:12px}
+.sk .go{border:1.5px dashed #3d3a35;border-radius:999px;padding:9px;font-weight:600;margin-bottom:8px}
+.walk{display:flex;gap:10px;justify-content:center}
+.walk .sk{width:auto;flex:1;min-width:0;margin:0;padding:12px 6px;border-radius:14px;font-size:12px}
+.walk .sk .h{font-size:13px;margin:6px 0 8px}
+.walk .sk .box,.walk .sk .go{padding:6px 2px;font-size:11.5px;margin-bottom:6px}
+
+/* ---------- read aloud ---------- */
+.voice{position:absolute;inset:0;overflow:auto;background:var(--paper);padding:10px 22px 32px;display:flex;flex-direction:column}
+.bars{display:flex;gap:5px;align-items:center;height:36px;margin:22px 0 14px}
+.bars i{width:5px;border-radius:3px;background:var(--ink);height:12px;animation:bar 1.2s ease-in-out infinite}
+.bars i:nth-child(2){animation-delay:.15s}.bars i:nth-child(3){animation-delay:.3s}.bars i:nth-child(4){animation-delay:.45s}
+.spoken{font-size:25px;line-height:1.38;text-wrap:pretty;margin-bottom:22px}
+.ears{display:flex;flex-direction:column;gap:10px;margin-top:auto}
+.ears .btn{min-height:60px;font:italic 600 19px var(--serif)}
+.vlog{margin-top:16px}
+
+/* ---------- the glance unfolded, the week, behind ---------- */
+.rows{margin:0;padding:0;list-style:none}
+.rows li{display:flex;flex-direction:column;padding:11px 0;border-top:1px solid var(--rule)}
+.rows b{font:600 18px/1.3 var(--serif)}
+.rows span{font:14.5px/1.4 var(--sans);color:var(--soft)}
+.grp{margin:22px 0 2px}
+.big{font:600 30px/1.2 var(--serif);margin:8px 0 2px;text-wrap:balance}
+.led{font-size:19px;line-height:1.45;margin:0 0 6px}
+.led b{font-weight:600}
+.ledger details{border-top:1px solid var(--rule);margin:0}
+.ledger summary{font:400 18px/1.4 var(--serif);color:var(--text);padding:9px 0;min-height:48px}
+.ledger details>:not(summary){font-size:16px;color:var(--soft);padding-left:21px}
+.ledger details>ol{padding-left:42px}
+.ledger details>p:last-child,.ledger details>ol:last-child{padding-bottom:10px}
+
+/* ---------- the desk: a corner of the screen, and a sheet beside the thing ---------- */
+@media (min-width:1040px){
+  body{font-size:18px;line-height:1.56}
+  .lock{display:block;padding:0}
+  .ghost{display:block;position:absolute;left:5%;top:12%;width:50%;height:70%;border-radius:12px;background:var(--glass);border:1px solid var(--gedge);padding:34px 30px;color:var(--text)}
+  .ghost i{display:block;height:10px;border-radius:5px;background:currentColor;opacity:.09;margin-bottom:16px}
+  .clock{position:absolute;left:24px;top:16px;display:flex;gap:10px;align-items:baseline}
+  .date,.time{font-size:14px;font-weight:500;line-height:1.4;margin:0;letter-spacing:0}
+  .corner{position:absolute;right:20px;top:14px;width:348px;max-width:none}
+  .gmain{min-height:64px}
+  .say{flex-direction:row-reverse;justify-content:flex-start;margin-top:0;padding-top:0}
+  .say button{width:46px;height:46px}
+  .say button .ic{width:22px;height:22px}
+  .wrap{display:flex;flex-direction:row-reverse;justify-content:flex-start;align-items:flex-start;gap:20px;padding:14px 20px 20px;overflow:hidden;background:transparent;pointer-events:none}
+  .wrap>*{pointer-events:auto}
+  .sheet{flex:0 0 600px;min-width:0;max-width:none;max-height:100%;overflow:auto;margin:0;background:var(--paper);border-radius:6px;box-shadow:var(--shadow);padding:20px 44px 48px 128px}
+  .wrap.has-thing>.sheet{display:block}
+  .thing{position:static;flex:0 1 620px;min-width:0;max-height:100%;border-radius:10px;background:var(--desk);box-shadow:var(--shadow);padding:6px 20px 0}
+  .lock[inert] .corner{visibility:hidden}
+  .tbar{display:none}
+  .thing h3{margin-top:14px}
+  .tfoot{display:none}
+  .lead{font-size:25px;margin-top:14px}
+  .item{margin-top:32px;padding-top:20px}
+  .kick .n{position:absolute;left:-96px;top:8px;width:84px;text-align:right;margin:0;font:300 46px/1 var(--serif);color:var(--faint)}
+  .item.lit .kick .n{color:var(--ink)}
+  .item p,.item .ln{position:relative}
+  .item .runin{position:absolute;left:-110px;top:.55em;width:98px;text-align:right;margin:0}
+  .item .mk>.runin{left:-104px}
+  .ln .runin{display:inline}
+  .voice{left:auto;right:20px;top:14px;bottom:20px;width:520px;border-radius:6px;box-shadow:var(--shadow);padding:20px 44px 40px}
+  .keys{display:block;font:13px var(--sans);color:var(--soft);margin-top:18px}
+  .keys kbd{font:600 12px var(--mono);border:1px solid var(--rule);border-radius:5px;padding:1px 6px}
+}
+
+/* ---------- prototype control: not part of the design ---------- */
+#proto{position:fixed;left:0;right:0;bottom:0;height:var(--ph);display:flex;align-items:center;gap:6px;padding:0 8px;z-index:9;
+  font:12px var(--mono);color:#e9e9e9;background:repeating-linear-gradient(135deg,#26262a 0 10px,#2e2e33 10px 20px);border-top:2px dashed #8d8d96}
+#proto .tag{display:none;white-space:nowrap;color:#c9c9d2}
+#proto button,#proto select{min-height:36px;min-width:40px;padding:0 8px;border:1px solid #6d6d76;border-radius:4px;background:#17171a;color:#f0f0f0;font:12px var(--mono);text-align:center}
+#proto select{flex:1;min-width:0;text-overflow:ellipsis}
+#proto :focus-visible{outline:2px solid #fff;outline-offset:1px}
+#pnote{position:fixed;left:8px;right:8px;bottom:calc(var(--ph) + 8px);z-index:9;padding:12px 14px;border:2px dashed #8d8d96;border-radius:6px;background:#1c1c20;color:#eee;font:12.5px/1.5 var(--mono);max-width:720px}
+#pnote b{color:#fff}
+@media (min-width:1040px){#proto .tag{display:inline}#proto select{flex:0 1 420px}#pnote{left:auto;right:12px}}
+
+/* only what has just appeared moves; everything else holds still */
+.wrap.new,.voice.new,.slip.new,.thing.new{animation:rise .26s ease-out}
+.inkline.new,.note.new,.ask.new,.ps.new,.panel.new,.opt.inked.new .ol{animation:ink .35s ease-out}
+.inkline.new .ic path{stroke-dasharray:34;animation:draw .45s ease-out}
+@keyframes draw{from{stroke-dashoffset:34}to{stroke-dashoffset:0}}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes ink{from{opacity:0}to{opacity:1}}
+@keyframes pulse{50%{box-shadow:0 0 0 14px rgba(120,140,220,.18)}}
+@keyframes bar{50%{height:34px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+html.still *{animation:none!important;transition:none!important}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="pnote" hidden></div>
+<nav id="proto" aria-label="Prototype control, not part of the design">
+  <span class="tag">PROTOTYPE CONTROL · not the design</span>
+  <button id="pv" aria-label="Previous moment">◀</button>
+  <select id="pm" aria-label="Moment in the test week"></select>
+  <button id="nx" aria-label="Next moment">next ▶</button>
+  <button id="pn" aria-expanded="false" aria-controls="pnote">notes</button>
+  <button id="pt" aria-label="Theme">auto</button>
+</nav>
+<script>
+'use strict';
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const isDesk=()=>matchMedia('(min-width:1040px)').matches;
+const svg=d=>`<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const I={
+  tick:svg('<path d="M4 13.5c2.2 1.6 3.6 3.3 5 5.6C11.6 13 15 8.6 20 4.6"/>'),
+  mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>'),
+  ear:svg('<path d="M4 10v4h3l5 4V6L7 10H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  x:svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  back:svg('<path d="M14.5 5.5L8 12l6.5 6.5"/>'),
+  fwd:svg('<path d="M9.5 5.5L16 12l-6.5 6.5"/>'),
+  sheet:svg('<path d="M6 3.5h8.5L18 7v13.5H6zM14.5 3.5V7H18M9 11.5h6M9 15h6"/>'),
+  pen:svg('<path d="M4 20l1-4L16.5 4.5l3 3L8 19l-4 1zM14.5 6.5l3 3"/>'),
+  moon:svg('<path d="M19 14.5A8 8 0 0 1 9.5 5a8 8 0 1 0 9.5 9.5z"/>'),
+};
+const star='<svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2L12 16.9 6.4 20l1.3-6.2L3 9.5l6.3-.7z"/></svg>';
+
+/* ---------- state ---------- */
+const S={m:0,view:'lock',stack:[],letter:null,thing:null,ans:{},marks:{},panel:null,park:null,tele:null,heard:null,listening:false,open:{},voice:null,theme:'auto',said:[],fx:null,tried:false};
+
+/* ---------- the test week, moment by moment ---------- */
+const M=[
+ {k:'tue',day:'Tuesday',date:'17 November',time:'8:30',title:'The morning letter',ev:'1',letter:'tue',next:()=>'tomorrow’s letter: about 2 things',
+  note:'<b>8:30, the hour he chose.</b> No sound and no banner: the glance simply becomes the letter. He opens it when he sits down. Grey pencil is what goes ahead if he says nothing; his own marks are blue.'},
+ {k:'say',day:'Tuesday',date:'17 November',time:'12:40',title:'Saying it on the move',ev:'2',script:'The reminder texts go out too late, people miss their lesson.',next:()=>'tomorrow’s letter: about '+(S.heard?3:2)+' things',
+  note:'<b>He is walking.</b> He holds the button and speaks. No project, no form. Voice is simulated here: press the microphone and it “hears” the scenario’s words.'},
+ {k:'quiet',day:'Tuesday',date:'17 November',time:'4:50',title:'An afternoon he never sees',ev:'3, 6',next:()=>'tomorrow’s letter: about 4 things',
+  note:'<b>Unseen by him.</b> The Driving app’s helpers raised 17 questions: his earlier rulings answered 11, 3 that can be undone went ahead, 3 wait for tomorrow’s letter. One helper went silent for 40 minutes; a watcher that does none of the work restarted it, and “shows Thursday” still holds. Nothing buzzed. The only trace: tomorrow’s count went from 3 to 4.'},
+ {k:'wed',day:'Wednesday',date:'18 November',time:'8:30',title:'A flood, a send-back, a dead question',ev:'3, 4, 9',letter:'wed',next:()=>'tomorrow’s letter: about 3 things',
+  note:'<b>Yesterday’s flood is one item, already answered in pencil (the dashed “I’d say”).</b> The email sketch is the send-back: open it, touch a paragraph, cut it or say what is wrong. The microphone “hears” the scenario’s words on the greeting line.'},
+ {k:'tele',day:'Wednesday',date:'18 November',time:'1:10',title:'Something that cannot wait',ev:'8',tele:true,next:()=>'tomorrow’s letter: about 3 things',
+  note:'<b>The only thing in this design that makes a sound.</b> It may buzz only when all three hold: only he can do it, it cannot wait for the next letter, and missing it loses something named. It buzzes once. Its cause, and what was changed, go in the weekly page.'},
+ {k:'thu',day:'Thursday',date:'19 November',time:'8:30',title:'A slipped promise, not now, trust earned',ev:'7, 5, 10',letter:'thu',next:()=>'tomorrow’s letter: about 2 things',
+  note:'<b>A promise slipped overnight:</b> he is told once, in one line. He parks the ratings sketch until the sign-up work is done. Accepting the third wording change brings a P.S.'},
+ {k:'away',day:'Saturday',date:'21 November',time:'10:15',title:'Away',ev:'12',letter:'mon',next:()=>'',
+  note:'<b>Friday’s letter was never opened.</b> No reminder was sent and nothing piled up. There is still exactly one letter, rewritten in place. Pencilled choices (the dashed “I’d say”) went ahead at their stated times; what needs his eyes waits; nothing new was started.'},
+ {k:'mon',day:'Monday',date:'23 November',time:'8:30',title:'Back after three days, and a miss',ev:'12, 11',letter:'mon',next:()=>'tomorrow’s letter: about 2 things',
+  note:'<b>Three days away, one letter.</b> About a minute of reading to be current, nine to be clear. The miss is first because it changes what he is shown from now on.'},
+ {k:'week',day:'Monday',date:'23 November',time:'8:41',title:'The week',ev:'13',open:'week',next:()=>'tomorrow’s letter: about 2 things',
+  note:'<b>Once a week, the back page of the letter.</b> Every line opens in place. It is where the counterpart accounts for itself.'},
+ {k:'behind',day:'Monday',date:'23 November',time:'8:45',title:'Curiosity',ev:'14',open:'behind',next:()=>'tomorrow’s letter: about 2 things',
+  note:'<b>One level down.</b> Reached from the glance or the week when he is curious. Never pushed, never needed.'},
+];
+
+/* ---------- what stands where (the glance, unfolded) ---------- */
+// each goal: [his words, project, state per moment]. Empty slot = unchanged. A pair = [before today's letter is answered, after].
+// L in your letter · M moving · P parked · D done
+const G=[
+ ['Faster sign-up','Driving app',['M:being built · shows Thursday',,,,,'M:being built · shows tomorrow, not today','L:ready · in your letter',['L:ready · in today’s letter','D:done · accepted today','signup']]],
+ ['Invoice export','Billing tool',[['L:ready · in today’s letter','D:done · accepted today','invoice'],,,'D:done · accepted Tuesday',,,'L:was wrong, now corrected · in your letter',['L:corrected · in today’s letter','D:done · accepted again today','miss']]],
+ ['Price page','Billing tool',[['L:your call · in today’s letter','M:being built · shows next Tuesday','price'],,,,,,,'M:being checked · shows tomorrow']],
+ ['Driver ratings','Driving app',[['L:said back · in today’s letter','M:sketch being drawn · Thursday’s letter','ratings'],,,,,['L:sketch · in today’s letter','P:parked until Faster sign-up is done · your call','sketch'],,['P:parked until Faster sign-up is done · your call','M:back in tomorrow’s letter, as you said','signup']]],
+ ['Reminder texts','Driving app',[,()=>S.heard?'M:heard at 12:40 · said back in tomorrow’s letter':null,'M:heard at 12:40 · said back in tomorrow’s letter',['L:said back · in today’s letter','M:being built · shows Wednesday','remind'],,,,'M:being checked · shows Wednesday']],
+ ['Move photos to cheaper storage','Driving app',['M:being checked · shows tomorrow',,,['L:ready · in today’s letter','D:done · accepted today','photos'],,'D:done · accepted Wednesday']],
+ ['New welcome email','Shop site',['M:sketch ready · tomorrow’s letter',,,['L:sketch · in today’s letter','M:second sketch being written · tomorrow’s letter','email'],,['L:second sketch · in today’s letter','D:done · goes to new customers tomorrow','email2'],'D:done · going to new customers']],
+ ['Speed up the test run','Tools',['M:being built · shows Friday',,,,,,'L:ready · in your letter',['L:ready · in today’s letter','D:done · accepted today','tests']]],
+ ['Sign-up error messages, reworded','Driving app',['M:being reworded · shows Thursday',,,,,['L:ready · in today’s letter','D:done · accepted today','wording']]],
+ ['Sales tax for two new states','Shop site',['P:parked until the accountant replies · your call']],
+ ['Fix wrong totals on the weekly report','Billing tool',['D:done without you · on the weekly page']],
+];
+function standing(){
+  return G.map(g=>{let v=null;
+    for(let i=0;i<=S.m;i++){let x=g[2][i]; if(x===undefined) continue;
+      if(typeof x==='function') x=x();
+      if(Array.isArray(x)){ const it=findItem(x[2]); x=i<S.m||isDone(it)||(pencilOnly(it)&&letterDone(M[i].letter))?x[1]:x[0]; }
+      v=x;}
+    return v&&{name:g[0],proj:g[1],grp:v[0],txt:v.slice(2)};}).filter(Boolean);
+}
+
+/* ---------- the letters ---------- */
+const PARK=['tomorrow’s letter','Monday'];
+const L={
+ tue:{lead:()=>'Good morning. Three things need you, about eight minutes. Everything else is moving and needs nothing.',
+  sayLead:'Tuesday. Three things, about eight minutes. Two we can do by voice. One needs your eyes, and keeps.',
+  next:'Tomorrow’s letter: about 2 things.',
+  items:[
+   {id:'ratings',kind:'agree',goal:'Driver ratings',min:3,gist:'I say back what you said on Monday night.',said:['Monday night, by voice','Let learners rate their instructor after a lesson.'],
+    lines:[['heard','I heard','After each lesson the learner gives one to five stars and, if they like, a line of words. You want to see which instructors people love, and which they do not.'],
+     ['done','Done means',['A learner can rate within a minute of the lesson ending.','An instructor sees their own average.','You see every rating, newest first.']],
+     ['mine','I’ll decide','Wording, where the stars sit, how often to ask.'],
+     ['yours','Only you','How it looks. I will bring a sketch first. And one question:'],
+     ['not','Not doing','Public ratings. Replies from instructors.'],
+     ['next','Next','A sketch in Thursday’s letter, then silence until it is built. You will hear from me three times: this, the sketch, the result.']],
+    fork:{id:'who',q:'Can an instructor see who gave a rating?',opts:['No','Yes'],pencil:0},
+    after:()=>'Go. The sketch comes in Thursday’s letter.',
+    say:'Driver ratings. I heard: after each lesson the learner gives one to five stars, and a line of words if they like. Instructors see their own average, never who said what. I will bring a sketch on Thursday. Say go, or leave it for your eyes.'},
+   {id:'invoice',kind:'look',goal:'Invoice export',min:4,gist:'Ready. All 6 “done” lines pass. Needs your eyes.',thing:'invoice',openLabel:'Open the file',
+    text:['It is ready. All 6 “done” lines pass, checked by a helper who did not build it.','I assumed two things: dates are in your time zone, and one file a month.'],
+    keeps:'Until you accept, it goes to nobody.',after:()=>'Accepted. It goes to the accountant on the 1st of each month.',
+    say:'Invoice export is ready and passes all six checks. It needs your eyes, so it keeps until you are at a screen.'},
+   {id:'price',kind:'decide',goal:'Price page',min:1,gist:'Yearly first, or monthly? I’d say yearly; it goes ahead at 5 pm.',q:'Yearly price first, or monthly?',draw:true,opts:['Yearly first','Monthly first'],pencil:0,
+    why:'I’d say yearly: it is the one you want most people to take.',
+    unless:'Unless you mark otherwise by 5 pm, I go with yearly. It can be swapped later.',
+    say:'The price page. Yearly price first, or monthly? I would say yearly, and I go with yearly at five unless you say.'}]},
+ note:{label:'A note · Tuesday 12:41',lead:()=>'You asked me to say it back now. One thing, about two minutes.',next:'It will not be repeated in tomorrow’s letter once you have marked it.',items:[]},
+ wed:{lead:()=>'Good morning. Four things, about nine minutes.',
+  sayLead:'Wednesday. Four things, about nine minutes. Three we can do by voice. The email sketch needs your eyes.',
+  next:'Tomorrow’s letter: about 3 things.',
+  told:['I have withdrawn a question from last week: which colour for the old sign-up button. The new sign-up has no such button. Nothing to do.'],
+  items:[
+   {id:'forks',kind:'forks',goal:'Three questions on the Driving app',min:3,gist:'Only you can settle them. I’d say an answer to each; they go ahead tomorrow.',
+    intro:'Yesterday afternoon the work raised 17 questions. Your earlier rulings answered 11. I went ahead on 3 that can be undone. These 3 are yours.',
+    more:['The other 14','<p>Went ahead, and can be undone:</p><ul><li>The code we text is 4 digits, not 6.</li><li>The first-lesson picker shows 3 days, not a calendar.</li><li>The old photo storage is kept for 30 days as a fallback.</li></ul><p>Answered by your earlier rulings, 11 in all. For example: “never ask for what we do not use” removed 4 fields; “plain words on every button” settled 3 labels.</p>'],
+    subs:[{id:'f1',of:'Faster sign-up',q:'Sign up with a phone number only, no email? If someone loses their number, you would have to let them back in by hand.',opts:['Phone only','Ask for email too'],pencil:0},
+     {id:'f2',of:'Faster sign-up',q:'Show the lesson price before sign-up, or after? Before is more honest, and loses perhaps 1 sign-up in 10.',opts:['Before','After'],pencil:0},
+     {id:'f3',of:'Move photos to cheaper storage',q:'Lesson photos nobody has opened in two years: keep them, or delete them for good? Deleting saves $40 a month and cannot be undone.',opts:['Keep','Delete for good'],pencil:0}],
+    unless:'Unless you mark otherwise by tomorrow’s letter, all three go ahead as I’d say. I only ever suggest the side that can be undone.',
+    say:'Three questions on the Driving app. I would say: sign up with a phone number only; show the price before sign-up; keep the old photos. All three can be undone, and go ahead tomorrow unless you say. Say yes to all three, or leave it for your eyes.'},
+   {id:'email',kind:'look',goal:'New welcome email',sub:'a first sketch',min:3,gist:'For tone and length. Needs your eyes.',thing:'email1',openLabel:'Open the email',
+    text:['A first sketch, for tone and length.'],keeps:'Nothing is sent to customers until you accept.',
+    rule:'emails to customers are short and sound like a neighbour',backAfter:'A new sketch comes in tomorrow’s letter.',
+    after:()=>'Accepted. It goes to new customers from tomorrow.',
+    say:'The welcome email sketch needs your eyes. It keeps, and nothing is sent until you accept.'},
+   {id:'remind',kind:'agree',goal:'Reminder texts',min:2,gist:'I say back what you said on Tuesday at 12:40.',said:['Tuesday at 12:40, walking','The reminder texts go out too late, people miss their lesson.'],
+    lines:[['heard','I heard','Learners get the reminder too close to the lesson to act on it. You want it early enough that they turn up. I took this to be the Driving app’s lesson reminders, not the shop’s order texts.'],
+     ['done','Done means',['A reminder goes out the evening before, and again two hours before.','No learner gets more than two texts for one lesson.','Missed lessons fall from today’s 1 in 9. I report the number after two weeks.']],
+     ['mine','I’ll decide','The exact times and the wording.'],
+     ['yours','Only you','Nothing I can see yet.'],
+     ['not','Not doing','Emails or calls. How lessons are booked.'],
+     ['next','Next','Silence, then the result next Wednesday. You will hear from me twice: this, and the result.']],
+    after:()=>'Go. Silence until the result, next Wednesday.',
+    say:'Reminder texts. I heard: learners get the reminder too late to act on it. I will send one the evening before and one two hours before, never more than two, and report missed lessons after two weeks. Say go, or leave it for your eyes.'},
+   {id:'photos',kind:'look',goal:'Photos are on cheaper storage',sub:'first of its kind',min:1,gist:'Done and checked. $212 a month becomes $61.',voiceOk:true,
+    text:['Done and checked: all 5 “done” lines pass, and every photo opens as before. There is nothing here for your eyes but the bill.'],
+    inline:()=>`<div class="figs"><div class="fig"><b>$61</b><span>a month, from December</span></div><div class="fig was"><b>$212</b><span>a month, until now</span></div></div>`,
+    keeps:'Shown because it is the first storage move I have done for you. Accept it, and the next one is done and reported.',
+    after:()=>'Accepted. The next storage move is done and reported.',
+    say:'Photos are on cheaper storage, checked, and every photo opens as before. The bill goes from two hundred and twelve dollars a month to sixty-one. Say accept, or leave it for your eyes.'}]},
+ thu:{lead:()=>'Good morning. Three things, about six minutes.',
+  sayLead:'Thursday. Three things, about six minutes. One promise moved: Faster sign-up shows tomorrow, not today, because a computer was off all night. All three things need your eyes, and keep.',
+  next:'Tomorrow’s letter: about 2 things.',
+  told:['Faster sign-up shows tomorrow, not today. One of the computers was off all night; it is on again. Nothing else moved.'],
+  items:[
+   {id:'sketch',kind:'look',goal:'Driver ratings',sub:'the sketch',min:2,gist:'The sketch you asked for. Needs your eyes.',thing:'ratings',openLabel:'Open the sketch',acceptLabel:'Build it like this',
+    text:['The sketch you asked for. It is a drawing, not built.'],keeps:'Nothing is built until you say so.',parks:[...PARK,'Faster sign-up is done'],
+    rule:'screens for learners follow these marks',backAfter:'A new sketch comes in tomorrow’s letter.',after:()=>'Build it like this. Silence until it is ready.',
+    say:'The Driver ratings sketch needs your eyes. It keeps.'},
+   {id:'email2',kind:'look',goal:'New welcome email',sub:'second sketch',min:2,gist:'31 words; the first was 122. Needs your eyes.',
+    text:['You cut two paragraphs and asked for a neighbour’s voice. This one is 31 words. The first was 122.'],
+    inline:()=>emailHTML('i:email2',true),rule:'emails to customers are short and sound like a neighbour',backAfter:'A new sketch comes in tomorrow’s letter.',
+    keeps:'Accept, and it goes to new customers from tomorrow.',after:()=>'Accepted. It goes to new customers from tomorrow.',
+    say:'The second welcome email needs your eyes. It keeps.'},
+   {id:'wording',kind:'look',goal:'Sign-up error messages, reworded',min:2,gist:'Three messages in plain words. Needs your eyes.',
+    text:['Three messages a new learner can meet, in plain words.'],
+    inline:()=>[['Invalid input in field 2.','That phone number looks too short.'],['Authentication token expired.','That code is too old. We have sent a new one.'],['Error 409.','You already have an account. Sign in instead?']]
+      .map((p,i)=>`<div class="pair"><s>${p[0]}</s><span aria-hidden="true">→</span><div>${mk('i:wording','w'+i,`<b>${p[1]}</b>`,{tag:'div',cut:1})}</div></div>`).join(''),
+    rule:'messages to learners follow these marks',backAfter:'New wording comes in tomorrow’s letter.',after:()=>'Accepted. They go out with tomorrow’s release.',
+    ps:{id:'trust',text:'That is three wording changes in a row you accepted first time: the price page buttons, the invoice footer, and these. From now on I would make wording changes and list them on the weekly page, without showing you first. One miss brings them back.',
+     opts:['Yes: do and report','Keep showing me'],unless:'If you leave this, I keep showing you.'},
+    say:'The reworded sign-up messages need your eyes. They keep.'}]},
+ mon:{lead:mo=>mo.k==='away'?'This letter has waited since Friday. Nothing is lost by that: three things, about nine minutes, whenever you sit down.':'Welcome back. You were away three days and nothing is lost. This is one letter, not three: three things, about nine minutes.',
+  sayLead:'Welcome back. Three days away, one letter. One choice went ahead as I said it would: the price page says two months free. Three things need your eyes, and keep. The first is a miss of mine.',
+  next:'Tomorrow’s letter: about 2 things. Driver ratings comes back when you accept Faster sign-up, as you said.',
+  toldLab:'While you were away',
+  told:['Went ahead as I said it would, Friday at 5 pm: the price page says “2 months free”, not “17% off”. Touch this line to overturn it.','I started nothing new while things waited on you, so nothing has gone stale.'],
+  items:[
+   {id:'miss',kind:'miss',goal:'Invoice export',sub:'which you accepted on Tuesday',min:4,gist:'It was wrong. It went to nobody. Corrected; look again.',thing:'invoice2',openLabel:'Open the corrected file',acceptLabel:'Accept the corrected file',
+    text:['It was wrong. A refund made after the month closed was left out, so October read $194.40 too high. You could not have seen that by looking: I had no check against the bank.','October’s file had gone to nobody.','What I changed: “the total matches the bank” is now a done line for everything that touches money, and billing exports are shown to you every time again.'],
+    keeps:'Until you accept, it goes to nobody.',rule:'billing files follow these marks',backAfter:'A corrected file comes in tomorrow’s letter.',after:()=>'Accepted again. Billing exports stay shown every time until they have earned it back.',
+    say:'A miss of mine. The invoice export you accepted on Tuesday was wrong: a refund made after the month closed was left out. It went to nobody. It is corrected, there is now a check against the bank, and I am showing it to you again. It needs your eyes.'},
+   {id:'signup',kind:'look',goal:'Faster sign-up',min:3,gist:'Ready since Friday. 3 screens, about 40 seconds.',thing:'signup',openLabel:'Open the walk-through',
+    text:['Ready since Friday. All 5 “done” lines pass. Sign-up is 3 screens and about 40 seconds. It was 7 screens and over 2 minutes.'],
+    keeps:'Until you accept, new learners keep the old sign-up.',rule:'screens for learners follow these marks',backAfter:'The fix comes in tomorrow’s letter.',
+    after:()=>'Accepted. It goes out tonight. Driver ratings comes back in tomorrow’s letter, as you said.',
+    say:'Faster sign-up is ready: three screens, about forty seconds. It needs your eyes.'},
+   {id:'tests',kind:'look',goal:'Speed up the test run',sub:'first of its kind',min:2,gist:'6 minutes; it was 19. Same tests, all passing.',voiceOk:true,
+    text:['The same 1,412 tests, all passing. I ran it ten times to be sure.'],
+    inline:()=>`<div class="figs"><div class="fig"><b>6 min</b><span>the full run, now</span></div><div class="fig was"><b>19 min</b><span>before</span></div></div>`,
+    keeps:'Shown because it is the first of its kind. Accept it, and the next is done and reported.',after:()=>'Accepted. The next speed-up is done and reported.',
+    say:'The test run takes six minutes; it took nineteen. Same tests, all passing. Say accept, or leave it for your eyes.'}]},
+};
+L.note.items=[L.wed.items[2]];
+const VERB={agree:'Agree',look:'Look',decide:'Decide',forks:'Decide',miss:'A miss'};
+function findItem(id){for(const k in L) for(const it of L[k].items){ if(it.id===id) return it; if(it.fork&&it.fork.id===id) return it.fork; if(it.ps&&it.ps.id===id) return it.ps; if(it.subs){const s=it.subs.find(s=>s.id===id); if(s) return s;} } return null;}
+function isDone(it){ const a=S.ans[it.id]; if(it.kind==='forks') return !!a||it.subs.every(s=>S.ans[s.id]); return !!a&&!(a.a==='back'&&!a.scope); }
+function pencilOnly(it){ return !isDone(it)&&!S.ans[it.id]&&((it.kind==='decide'&&it.pencil!=null)||it.kind==='forks'); }
+function letterDone(k){ return !k||L[k].items.every(it=>isDone(it)||pencilOnly(it)); }
+const scopeOf=it=>it.thing?'t:'+it.thing:'i:'+it.id;
+const marksOf=sc=>S.marks[sc]||(S.marks[sc]=[]);
+const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+
+/* ---------- marking: touch the thing where it is wrong ---------- */
+function panelHTML(o,m){
+  return `<span class="panel" data-new="panel-${S.panel.sc}-${S.panel.k}" role="group" aria-label="Your mark">
+   ${m&&m.kind!=='pin'?`<button class="btn sm" data-act="unmark" data-fid="p-un">Rub out this mark</button>`:''}
+   ${o.cut&&!m?`<button class="btn sm" data-act="cut" data-fid="p-cut">${o.cutLabel||'Cut this'}</button>`:''}
+   <button class="btn sm" data-act="speak" data-fid="p-say">${I.mic} Say what is wrong</button>
+   <form class="type" data-form="note"><input name="t" aria-label="Or type what is wrong" placeholder="${S.tried?'voice is simulated here: type it':'or type it'}" autocomplete="off"><button class="btn sm">Mark</button></form>
+   ${m&&m.kind==='pin'?`<button class="btn sm quiet" data-act="pin-keep">Just here</button><button class="btn sm quiet" data-act="unmark">Rub out</button>`:`<button class="btn sm quiet" data-act="panel-x">Close</button>`}</span>`;
+}
+function mk(sc,k,inner,o={}){
+  const m=marksOf(sc).find(x=>x.k===k), on=S.panel&&S.panel.sc===sc&&S.panel.k===k, tag=o.tag||'p';
+  const at=`class="mk${m?(m.kind==='cut'?' cut':' noted'):''}${on?' on':''}${o.cls?' '+o.cls:''}" tabindex="0" role="button" data-act="mark" data-sc="${sc}" data-k="${k}" data-fid="mk-${sc}-${k}"${o.say?` data-say="${esc(o.say)}"`:''}${o.cut?' data-cut="1"':''}`;
+  const extra=(m&&m.kind==='note'?`<span class="note" data-new="n-${sc}-${k}">${I.pen}<span>${esc(m.text)}</span></span>`:'')+(on?panelHTML(o,m):'');
+  if(tag==='tr') return `<tr ${at}>${inner}</tr>`+(extra?`<tr class="aux"><td colspan="5">${extra}</td></tr>`:'');
+  if(tag==='li') return `<li><span ${at}>${inner}</span>${extra}</li>`;
+  return `<${tag} ${at}>${inner}</${tag}>${extra}`;
+}
+function pinsHTML(sc,inner,say){
+  const ms=marksOf(sc).filter(m=>m.kind==='pin'), on=S.panel&&S.panel.sc===sc&&S.panel.pin;
+  return `<div class="pins" data-act="pin" data-sc="${sc}"${say?` data-say="${esc(say)}"`:''}>${inner}${ms.map((m,i)=>`<button class="pindot" style="left:${m.x}%;top:${m.y}%" data-act="pin-open" data-k="${m.k}" aria-label="Your mark ${i+1}">${i+1}</button>`).join('')}</div>
+  ${ms.map((m,i)=>`<p class="note" data-new="n-${sc}-${m.k}"><b>${i+1}</b><span>${esc(m.text||'Here.')}</span></p>`).join('')}${on?panelHTML({},ms.find(m=>m.k===S.panel.k)):''}`;
+}
+// a remark about the whole thing, for when there is no one spot to point at (and for the keyboard)
+function wholeHTML(sc,say){
+  const ms=marksOf(sc).filter(m=>m.k.startsWith('gen')), on=S.panel&&S.panel.sc===sc&&S.panel.gen;
+  return `<div class="gen" data-sc="${sc}"${say?` data-say="${esc(say)}"`:''}>${ms.map(m=>`<p class="note" data-new="n-${sc}-${m.k}">${I.pen}<span>${esc(m.text)}</span><button class="side" data-act="gen-x" data-k="${m.k}">Rub out</button></p>`).join('')}
+   ${on?panelHTML({}):`<button class="btn sm quiet" data-act="gen-add" data-sc="${sc}" data-fid="gen-add">${I.mic} Say what is wrong with the whole thing</button>`}</div>`;
+}
+function setNote(p,text){ const ms=marksOf(p.sc); let m=ms.find(x=>x.k===p.k); if(!m){m={k:p.k,kind:'note'};ms.push(m);} if(m.kind==='cut') m.kind='note'; m.text=text; S.panel=null; S.fx=p.pin||p.gen?'.tfoot .btn, .item.lit .acts .btn':`[data-fid="mk-${p.sc}-${p.k}"]`; }
+
+/* ---------- the things themselves ---------- */
+function invoiceHTML(sc,fixed){
+  const rows=[['03 Oct','Harbour Dental','1,240.00','99.20','1,339.20'],['05 Oct','Lena Park','180.00','14.40','194.40'],['06 Oct','Northside Cycles','640.00','51.20','691.20'],['09 Oct','Okafor &amp; Sons','2,150.00','172.00','2,322.00'],['12 Oct','Marta Ruiz','95.00','7.60','102.60'],['14 Oct','Greenway School','3,400.00','272.00','3,672.00']];
+  const cells=r=>r.map((c,j)=>`<td class="${j>1?'r':''}">${c}</td>`).join('');
+  let h=`<div class="file"><b>invoices-2026-10.csv</b> <span>${fixed?'44 rows':'43 invoices'} · October 2026</span></div>
+  <table class="csv"><thead><tr><th>Date</th><th>Customer</th><th class="r">Net</th><th class="r">Tax</th><th class="r">Total</th></tr></thead><tbody>`;
+  rows.forEach((r,i)=>h+=mk(sc,'r'+i,cells(r),{tag:'tr',cut:1}));
+  h+=`<tr class="more"><td colspan="5">36 more rows, the same way</td></tr>`+mk(sc,'r9',cells(['31 Oct','Pine Street Cafe','410.00','32.80','442.80']),{tag:'tr',cut:1});
+  if(fixed) h+=mk(sc,'ref',cells(['02 Nov','Refund · Lena Park','−180.00','−14.40','−194.40']),{tag:'tr',cls:'new',cut:1});
+  const sum=fixed?['October, after refunds','38,435.00','3,074.80','41,509.80']:['October, 43 invoices','38,615.00','3,089.20','41,704.20'];
+  h+=mk(sc,'sum',`<td colspan="2">${sum[0]}</td>`+sum.slice(1).map(c=>`<td class="r">${c}</td>`).join(''),{tag:'tr',cls:'sum'});
+  return h+'</tbody></table>';
+}
+const DONE6=['Every paid invoice of the month is in the file.','Net plus tax equals the total on every row.','The last row equals the sum of the rows.','It opens in the accountant’s spreadsheet with no warning.','One row for each invoice, none twice.','Customer names are spelled as on the invoice.'];
+function emailHTML(sc,second){
+  if(second) return `<div class="mail-h"><b>From</b> The shop &nbsp; <b>Subject</b> You’re in</div>`+
+    ['Hello Sam,','Thanks for signing up. Here is 10% off your first order: WELCOME10.','If anything goes wrong, just reply to this email. A person will answer.','Everyone at the shop'].map((t,i)=>mk(sc,'p'+i,t,{cut:1})).join('');
+  const ps=[['Dear Valued Customer,','Too stiff. Write like a neighbour, not a bank.'],['We are delighted to confirm that your account has been successfully created. Thank you for choosing to register with us.'],
+   ['Your account provides access to a comprehensive range of features, including order tracking, saved addresses, wish lists and personalised recommendations tailored to your preferences.'],
+   ['Please be advised that you may update your communication preferences at any time by visiting the Account Settings section of our website.'],
+   ['As a token of our appreciation, please find below a discount code entitling you to 10% off your first order: WELCOME10.'],
+   ['Should you require any assistance, our Customer Service team is available Monday to Friday, 9 am to 5 pm.'],['Yours sincerely,<br>The Customer Experience Team']];
+  return `<div class="mail-h"><b>From</b> The shop &nbsp; <b>To</b> a new customer<br>${mk(sc,'subj','<b>Subject</b> Your account has been successfully created',{tag:'span',cut:1})}</div>`+ps.map((p,i)=>mk(sc,'p'+i,p[0],{cut:1,say:p[1]})).join('');
+}
+const TH={
+ invoice:{title:'Invoice export',what:'the file itself',html:sc=>invoiceHTML(sc,false),
+  under:sc=>`<div class="lab" style="margin:16px 4px 4px">I assumed</div>${mk(sc,'a1','Dates are in your time zone.')}${mk(sc,'a2','One file a month.')}${det('d6','All 6 “done” lines pass','<ol>'+DONE6.map(d=>`<li>${d}</li>`).join('')+'</ol><p>Checked by a helper who did not build it.</p>')}`},
+ email1:{title:'New welcome email',what:'as a new customer would get it',say:'Too long, and too stiff. Write like a neighbour, not a bank.',html:sc=>emailHTML(sc,false)},
+ ratings:{title:'Driver ratings',what:'a sketch, not built',hint:'Touch the spot that is wrong.',
+  html:sc=>pinsHTML(sc,`<div class="sk"><div class="t">Lesson finished · 4:00 pm</div><div class="h">How was your lesson with Dana?</div><div class="stars">${star.repeat(5)}</div><div class="box">Anything to add? You can skip this.</div><div class="go">Send</div><div class="t">Not now</div></div>`,'The stars are too small for a thumb.')},
+ signup:{title:'Faster sign-up',what:'the three screens, in order',hint:'Touch the spot that is wrong.',
+  html:sc=>pinsHTML(sc,`<div class="walk"><div class="sk"><div class="t">1</div><div class="h">Your phone number</div><div class="box">07…</div><div class="go">Next</div></div><div class="sk"><div class="t">2</div><div class="h">The code we texted you</div><div class="box">– – – –</div><div class="go">Next</div></div><div class="sk"><div class="t">3</div><div class="h">Pick your first lesson</div><div class="box">Thu 4 pm</div><div class="box">Fri 10 am</div><div class="go">Book</div></div></div>`,'Say what the lesson costs on the last screen.'),
+  under:()=>`${det('d5','All 5 “done” lines pass','<ol><li>A new learner can sign up in under a minute.</li><li>Three screens, no more.</li><li>Nothing is asked that is not used.</li><li>The first lesson can be booked without leaving sign-up.</li><li>People who signed up the old way can still sign in.</li></ol><p>Checked by a helper who did not build it.</p>')}
+   <p style="margin:6px 4px 0"><button class="link" data-act="try">Try the real thing on this phone</button></p>${S.open.try?`<p class="unless small" style="margin:0 4px">The real sign-up would open here, outside the letter. A thing that moves cannot be enclosed: come back and touch the screen that was wrong.</p>`:''}`},
+ invoice2:{title:'Invoice export',what:'the corrected file',html:sc=>invoiceHTML(sc,true),
+  under:()=>`<p class="hint" style="margin-top:12px">The shaded row was missing on Tuesday.</p>${det('d7','All 7 “done” lines pass, one of them new','<ol>'+DONE6.map(d=>`<li>${d}</li>`).join('')+'<li><b>New:</b> the month’s total matches the bank to the cent.</li></ol><p>Checked by a helper who did not build it.</p>')}`},
+};
+function det(id,sum,body){return `<details data-d="${id}"${S.open[id]?' open':''}><summary>${sum}</summary>${body}</details>`;}
+const btn=(a,label,cls='')=>`<button class="btn ${cls}" data-act="${a}" data-fid="${a}">${label}</button>`;
+
+/* ---------- drawing the letter ---------- */
+function optsHTML(o,draw){
+  const a=S.ans[o.id];
+  const mini=n=>{const y='<i class="X">$190<small>a year</small></i>',m='<i class="X">$19<small>a month</small></i>';
+    return `<span class="mini" aria-hidden="true">${n===0?y.replace('X','big')+m.replace('X',''):m.replace('X','big')+y.replace('X','')}</span>`;};
+  return `<div class="opts${draw?' draw':''}" role="group" aria-label="${esc(o.q||'')}">`+o.opts.map((t,n)=>
+    `<button class="opt${o.pencil===n?' pencil':''}${a&&a.v===n?' inked':''}"${a&&a.v===n?` data-new="opt-${o.id}-${n}"`:''} data-act="opt:${o.id}:${n}" data-fid="opt:${o.id}:${n}" aria-pressed="${!!(a&&a.v===n)}">${draw?mini(n):''}<span class="ol">${o.pencil===n?'<em>I’d say</em>':''}${t}</span></button>`).join('')+'</div>';
+}
+function bodyHTML(it){
+  const sc='i:'+it.id; let h='';
+  if(it.kind==='agree'){
+    h+=`<p class="said"><span class="runin">You said</span><q class="his">${it.said[1]}</q> <span class="when">${it.said[0]}</span></p>`;
+    for(const [k,lab,val] of it.lines){
+      if(Array.isArray(val)) h+=`<div class="ln"><span class="runin">${lab}</span><ol>${val.map((v,j)=>mk(sc,k+j,v,{tag:'li'})).join('')}</ol></div>`;
+      else h+=mk(sc,k,`<span class="runin">${lab}</span>${val}`);
+      if(k==='yours'&&it.fork) h+=`<p class="q" style="font-size:17px;margin-bottom:0">${it.fork.q}</p>`+optsHTML(it.fork);
+    }
+    h+=`<p class="unless small">Touch any line to change it.</p>`;
+  }
+  if(it.kind==='look'||it.kind==='miss'){
+    h+=it.text.map(t=>`<p>${t}</p>`).join('');
+    if(it.inline) h+=`<div class="obj inline">${it.inline()}</div>`;
+    if(it.thing&&!(S.thing&&S.thing.item===it.id)){const T=TH[it.thing]; h+=`<button class="peek" data-act="thing:${it.id}" data-fid="peek-${it.id}"><span><b>${T.title}</b><span>${T.what}</span></span><span class="go">Open${I.fwd}</span></button>`;}
+    if(it.keeps) h+=`<p class="unless">${it.keeps}</p>`;
+  }
+  if(it.kind==='decide') h+=`<p class="q">${it.q}</p>${optsHTML(it,it.draw)}<p>${it.why}</p><p class="unless">${it.unless}</p>`;
+  if(it.kind==='forks'){
+    h+=`<p>${it.intro}</p>${det('m-'+it.id,it.more[0],it.more[1])}`;
+    it.subs.forEach(s=>h+=`<div class="fork"><div class="of">${s.of}</div><p class="q">${s.q}</p>${optsHTML(s)}</div>`);
+    h+=`<p class="unless">${it.unless}</p>`;
+  }
+  return h;
+}
+function actsHTML(it){
+  const id=it.id,n=marksOf(scopeOf(it)).length; let h='';
+  if(it.kind==='agree') h=btn('go:'+id,n?`Go, with my ${plural(n,'change')}`:'Go','pri');
+  if(it.kind==='look'||it.kind==='miss') h=n?btn('back:'+id,`Send back · ${plural(n,'mark')}`,'pri'):btn('accept:'+id,it.acceptLabel||'Accept',it.thing&&!(S.thing&&S.thing.item===id)?'':'pri');
+  if(it.kind==='forks') h=btn('signitem:'+id,it.subs.some(s=>S.ans[s.id])?'Yes to the rest':'Yes to all three','pri');
+  return h&&`<div class="acts">${h}</div>`;
+}
+function parkHTML(it){
+  const ps=it.parks||PARK;
+  return `<div class="ask" data-new="park-${it.id}"><p class="q">Park “${it.goal}” until…</p><div class="acts" style="margin-top:6px">${ps.map((p,i)=>btn(`until:${it.id}:${i}`,p[0].toUpperCase()+p.slice(1))).join('')}</div>
+   <div class="acts"><form class="type" data-form="until" data-id="${it.id}"><input name="t" aria-label="Or say when" placeholder="or say when" autocomplete="off"><button class="btn sm">Park</button></form>${btn('park-x','Never mind','quiet sm')}</div></div>`;
+}
+function doneHTML(it){
+  const a=S.ans[it.id]; let lines=[];
+  if(a&&a.a==='park') lines=[`Not now. Parked until ${esc(a.until)}. It comes back by itself; nothing to remember.`];
+  else if(it.kind==='forks') lines=it.subs.map(s=>`${s.of}: ${s.opts[S.ans[s.id].v].toLowerCase()}.`);
+  else if(a.a==='opt') lines=[`${it.opts[a.v]}${a.by==='sign'?', as I’d said':''}.`];
+  else if(a.a==='back') lines=[`Sent back with ${plural(a.n,'mark')}${a.scope==='always'?', and a rule from now on: '+it.rule:', for this one only'}. ${it.backAfter}`];
+  else { const n=it.kind==='agree'?marksOf('i:'+it.id).length:0; lines=[it.after().replace(/^Go\./,n?`Go, with your ${plural(n,'change')}.`:'Go.')]; if(it.fork) lines.push(`${it.fork.q} ${it.fork.opts[S.ans[it.fork.id].v]}.`); }
+  let h=lines.map((l,j)=>`<p class="inkline" data-new="ink-${it.id}-${j}">${I.tick}<span>${l}</span></p>`).join('');
+  if(it.ps&&a.a==='accept'){
+    const t=S.ans[it.ps.id];
+    h+=`<div class="ps" data-new="ps-${it.id}"><p><span class="runin">P.S.</span>${it.ps.text}</p>${t?`<p class="inkline" data-new="ink-${it.ps.id}">${I.tick}<span>${t.v===0?'Yes. Wording changes are done and reported from now on.':'Keep showing me.'}</span></p>`:`<div class="acts" style="margin-top:6px">${btn('opt:trust:0',it.ps.opts[0],'pri')}${btn('opt:trust:1',it.ps.opts[1])}</div><p class="unless small" style="margin-top:8px">${it.ps.unless}</p>`}</div>`;
+  }
+  return h;
+}
+function askHTML(it){
+  const ms=marksOf(scopeOf(it)), cuts=ms.filter(m=>m.kind==='cut').length, notes=ms.filter(m=>m.text).map(m=>`“${esc(m.text)}”`);
+  const what=[cuts?`cut ${plural(cuts,'part')}`:'',notes.length?`said ${notes.join(' and ')}`:''].filter(Boolean).join(' and ')||`made ${plural(ms.length,'mark')}`;
+  return `<div class="ask" data-new="ask-${it.id}"><p>You ${what}${/”$/.test(what)?'':'.'}</p><p class="q">Here only, or always?</p><div class="acts" style="margin-top:6px">${btn(`scope:${it.id}:here`,'Here only')}${btn(`scope:${it.id}:always`,'Always')}</div>
+   <p class="unless small" style="margin-top:8px">Always would mean: ${it.rule}. Asked once. If you leave it, I take it as here only.</p></div>`;
+}
+function itemHTML(it,i){
+  const a=S.ans[it.id], done=isDone(it), lit=S.thing&&S.thing.item===it.id, id=it.id;
+  const kick=`<span class="n">${i+1}</span>${VERB[it.kind]}`, name=`${it.goal}${it.sub?` <small>${it.sub}</small>`:''}`;
+  if(!done&&S.cur!==id) return `<section class="item folded" id="it-${id}"><button class="fold" data-act="cur:${id}" data-fid="cur:${id}" aria-expanded="false"><span class="kick">${kick}</span><span class="h">${name}</span><span class="gist${pencilOnly(it)?' unless':''}">${it.gist}</span>${I.fwd}</button></section>`;
+  let body, side=`<button class="side" data-act="park:${id}" data-fid="park:${id}">Not now…</button>`;
+  if(done){ body=doneHTML(it); side=`<button class="side" data-act="take:${id}" data-fid="take:${id}">Take back</button>`; }
+  else if(a&&a.a==='back') body=askHTML(it);
+  else body=bodyHTML(it)+(S.park===id?parkHTML(it):actsHTML(it));
+  return `<section class="item${done?' done':''}${lit?' lit':''}" id="it-${id}"><div class="hd"><div class="kick">${kick}</div>${side}</div><h2>${name}</h2>${body}</section>`;
+}
+function letterHTML(){
+  const Lt=L[S.letter], mo=M[S.m], left=Lt.items.filter(it=>!isDone(it)), need=left.filter(it=>!pencilOnly(it));
+  let h=`<div class="top"><span>${Lt.label||mo.day+' '+mo.date}</span><span class="tr"><button class="tbtn" data-act="hear" data-fid="hear">${I.ear}Hear it</button><button class="tbtn" data-act="close" data-fid="close" aria-label="Put the letter down">${I.x}</button></span></div>
+   <p class="lead" id="lead" tabindex="-1">${Lt.lead(mo)}</p>`;
+  if(Lt.told) h+=`<div class="told"><div class="lab">${Lt.toldLab||'Told, not asked'}</div>${Lt.told.map((t,i)=>mk('l:'+S.letter,'told'+i,t,/overturn/.test(t)?{cut:1,cutLabel:'Overturn this'}:{})).join('')}</div>`;
+  Lt.items.forEach((it,i)=>h+=itemHTML(it,i));
+  h+='<footer class="foot">';
+  if(!left.length) h+=`<p class="end" id="end" tabindex="-1">That is all. Nothing else needs you.</p><p class="unless">Your marks are your reply. Each took effect as you made it.</p>`;
+  else if(!need.length) h+=`<p class="end" id="end" tabindex="-1">Only what I’d say is left.</p><div class="acts" style="margin:8px 0 10px">${btn('sign','Yes to it: go ahead now','pri')}</div><p class="unless">Or put the letter down. Each goes ahead at the time written beside it.</p>`;
+  h+=`<p>${Lt.next}</p>`;
+  S.said.forEach(t=>h+=`<p class="inkline">${I.tick}<span>“${esc(t)}” I have it. Said back in the next letter.</span></p>`);
+  if(S.footType) h+=`<div class="acts" style="margin:4px 0 8px"><form class="type" data-form="say"><input name="t" aria-label="Say or type what you want" placeholder="voice is simulated here: type it" autocomplete="off"><button class="btn sm">Give</button></form></div>`;
+  h+=`<div class="links"><button class="link" data-act="say-foot" data-fid="say-foot">${I.mic}&nbsp;Say something else you want</button>${S.letter==='mon'?`<button class="link" data-act="week">The week, overleaf</button>`:''}<button class="link" data-act="standing">Where everything stands</button><button class="link" data-act="close">Put the letter down</button></div>
+   <p class="keys"><kbd>Tab</kbd> moves · <kbd>Enter</kbd> marks · <kbd>J</kbd> <kbd>K</kbd> next, previous · <kbd>T</kbd> to the thing · <kbd>Esc</kbd> puts it down</p></footer>`;
+  return h;
+}
+function thingHTML(){
+  const T=TH[S.thing.id], it=findItem(S.thing.item), sc='t:'+S.thing.id, n=marksOf(sc).length;
+  return `<aside class="thing" data-scroll="thing" data-new="thing-${S.thing.id}" aria-label="${T.title}, ${T.what}">
+   <div class="tbar"><button class="btn sm quiet" data-act="thing-x" data-fid="thing-x">${I.back} The letter</button></div>
+   <h3 tabindex="-1" id="th">${T.title} <small>${T.what}</small></h3><p class="hint">${T.hint||'Touch what is wrong.'}</p>
+   <div class="obj">${T.html(sc)}</div>${wholeHTML(sc,T.say)}${T.under?T.under(sc):''}
+   <div class="tfoot">${n?btn('back:'+it.id,`Send back · ${plural(n,'mark')}`,'pri'):btn('accept:'+it.id,it.acceptLabel||'Accept','pri')}${btn('park:'+it.id,'Not now…','quiet')}</div></aside>`;
+}
+
+/* ---------- the lock screen and the corner of the desk ---------- */
+function glance(){
+  const mo=M[S.m], Lt=mo.letter&&L[mo.letter];
+  if(mo.tele&&!S.tele) return {kind:'alarm',act:'standing',l1:'One thing cannot wait.',l2:'Before 3 pm · nothing else needs you'};
+  if(Lt){ const left=Lt.items.filter(it=>!isDone(it)), need=left.filter(it=>!pencilOnly(it)), min=left.reduce((s,it)=>s+it.min,0);
+    if(need.length) return {kind:'letter',act:'open-letter',l1:mo.k==='away'?'Your letter is waiting':mo.day+'’s letter',l2:`${plural(left.length,'thing')}${left.length<Lt.items.length?' left':''} · about ${plural(min,'minute')}`,l3:mo.k==='away'?'It keeps. Nothing is lost.':''};
+    if(left.length) return {kind:'quiet',act:'standing',l1:'Nothing needs you.',l2:`${left.length} I’d say ${left.length===1?'goes':'go'} ahead at the time written`,l3:'Checked 1 min ago'};
+  }
+  const st=standing(), n=g=>st.filter(x=>x.grp===g).length;
+  const nx=mo.next(); return {kind:'quiet',act:'standing',l1:'Nothing needs you.',l2:`${n('M')} moving · ${n('P')} parked · checked 1 min ago`,l3:nx[0].toUpperCase()+nx.slice(1)};
+}
+function slipHTML(){
+  const mo=M[S.m];
+  if(mo.tele){
+    if(S.tele==='signed') return `<div class="slip" data-new="s-signed" role="status"><div class="lab">Done</div><p>Signed in. The release goes at 3 pm.</p><p class="unless small" style="margin:0">Why this buzzed, and what I changed so it does not happen again, is on the weekly page.</p></div>`;
+    if(S.tele==='slipped') return `<div class="slip" data-new="s-slipped" role="status"><div class="lab">Done</div><p style="margin:0">The release goes next Wednesday. Nothing else changes.</p></div>`;
+    return `<div class="slip alarm" data-new="s-tele" role="alert"><div class="lab">Cannot wait for a letter · before 3 pm</div><p>The Driving app release needs you to sign in to the app store. Only you can.</p><p class="unless">If it is not done by 3 pm, the release goes next Wednesday instead.</p>
+     <div class="acts" style="margin-top:10px">${btn('tele:signed',S.tele==='checking'?'Checking it is you…':'Sign in now','pri alarm')}${btn('tele:slipped','Let it go next week','quiet')}</div>
+     <p class="unless small" style="margin:10px 0 0">Not in your letter because the store ended your sign-in at noon. First buzz in three weeks.</p></div>`;
+  }
+  if(S.listening) return `<div class="slip" data-new="s-listen" role="status"><div class="lab">Listening</div><p class="his" style="margin:0">${mo.script?esc(mo.script.slice(0,24))+'…':'…'}</p></div>`;
+  if(S.heard&&S.heard.m===S.m) return `<div class="slip" data-new="s-heard" role="status"><div class="lab">I have it</div><p><q class="his">${esc(S.heard.text)}</q></p><p class="unless">I will say it back in ${mo.script?'tomorrow’s':'the next'} letter. Nothing to remember.</p>
+     <div class="acts" style="margin-top:8px">${mo.script?btn('note-letter','Say it back now'):''}${btn('say-not','That is not what I said','quiet')}</div></div>`;
+  if(S.typing) return `<div class="slip" data-new="s-type"><div class="lab">Say what you want</div><form class="type" data-form="heard"><input name="t" aria-label="Type what you want" placeholder="voice is simulated: type it" autocomplete="off"><button class="btn sm pri">Give</button></form></div>`;
+  return '';
+}
+function lockHTML(){
+  const mo=M[S.m], g=glance();
+  return `<div class="lock"${S.view!=='lock'?' inert aria-hidden="true"':''}>
+   <div class="ghost" aria-hidden="true"><i style="width:38%"></i><i style="width:82%"></i><i style="width:74%"></i><i style="width:79%"></i><i style="width:46%"></i><i style="width:0"></i><i style="width:80%"></i><i style="width:68%"></i><i style="width:77%"></i><i style="width:31%"></i></div>
+   <div class="clock"><div class="date">${mo.day} ${mo.date}</div><div class="time">${mo.time}</div></div>
+   <div class="corner">
+    <div class="glance ${g.kind}"><button class="gmain" data-act="${g.act}" data-fid="glance"><span class="gi">${g.kind==='letter'?I.sheet:'<i class="dot"></i>'}</span><span class="gt"><b>${g.l1}</b><span>${g.l2}</span>${g.l3?`<small>${g.l3}</small>`:''}</span></button>${g.kind==='letter'?`<button class="ghear" data-act="hear" data-fid="ghear" aria-label="Read it to me">${I.ear}</button>`:''}</div>
+    ${slipHTML()}
+    <div class="say${S.listening?' on':''}"><button data-act="say" data-fid="say" aria-label="Hold, and say what you want">${I.mic}</button><span>${S.listening?'Listening…':'Hold, and say what you want'}</span></div>
+   </div></div>`;
+}
+
+/* ---------- the glance unfolded, the week, behind ---------- */
+const topBar=t=>`<div class="top"><span>${t}</span><span class="tr"><button class="tbtn" data-act="close" data-fid="close" aria-label="Close">${I.x}</button></span></div>`;
+function standingHTML(){
+  const g=glance(), st=standing(), grp={L:'In your letter',M:'Moving, and needs nothing',P:'Parked, your call',D:'Done'};
+  const mo=M[S.m], inL=mo.letter?L[mo.letter].items.filter(it=>!isDone(it)).length:0;
+  let h=topBar('Where everything stands')+`<p class="big" id="lead" tabindex="-1">${g.kind==='letter'?plural(inL,'thing')+(inL===1?' waits':' wait')+' in your letter.':g.l1}</p><p class="unless">Checked a minute ago by a watcher that does none of the work. If I could not see the work, this would say so.</p>`;
+  for(const k of 'LMPD'){ const rs=st.filter(x=>x.grp===k); if(!rs.length) continue;
+    h+=`<div class="lab grp">${grp[k]}</div><ul class="rows">${rs.map(r=>`<li><b>${r.name}</b><span>${r.txt} · ${r.proj}</span></li>`).join('')}</ul>`; }
+  return h+`<p class="unless" style="margin-top:22px">Your letter comes at 8:30 on weekdays, is kept under ten minutes, and never holds more than seven things. Say so if you want it otherwise.</p><div class="links"><button class="link" data-act="behind">Behind this: who is working where</button></div>`;
+}
+function weekHTML(){
+  const d=(id,s,b)=>det('w-'+id,s,b);
+  return topBar('The week · 17 to 23 November')+`<div class="ledger">
+   <p class="big" id="lead" tabindex="-1">7 goals done.</p>
+   <p class="led">Each reached you <b>2 times</b>, typically, as planned.</p>
+   <p class="led"><b>37 minutes</b> of your time. Last week: 52.</p>
+   <p class="led" style="margin-bottom:18px">I asked you <b>7 questions</b>. Last week: 14.</p>
+   ${d('gls','The 7, and how many times each reached you','<ul><li>Fix wrong totals on the weekly report: none. Done without you; a kind of work you trust.</li><li>Sign-up error messages: 1.</li><li>Move photos to cheaper storage: 2.</li><li>Speed up the test run: 2.</li><li>New welcome email: 3, as planned.</li><li>Invoice export: 3, planned 2.</li><li>Faster sign-up: 3, planned 2.</li></ul>')}
+   ${d('dec','I decided 31 things for you. 2 are worth a look','<p>19 followed your earlier rulings. 12 were my own judgement. The two:</p><ol>'+['Sign-up keeps the “I agree to the terms” tick. It costs one tap; the law needs it.','Profile pictures moved to the cheaper storage too. They open about half a second slower.'].map((t,i)=>mk('w:dec','d'+i,t,{tag:'li',cut:1,cutLabel:'Overturn this'})).join('')+'</ol><p>Touch either to overturn it.</p>')}
+   ${d('rul','I learned 4 rules from your answers','<ol>'+['Emails to customers are short and sound like a neighbour.','Yearly before monthly, wherever both prices show.','Sign-up asks for nothing we can get later.','Wording changes are done and reported.'].map((t,i)=>mk('w:rul','r'+i,t,{tag:'li',cut:1,cutLabel:'Strike this rule'})).join('')+'</ol><p>Touch a rule to strike it.</p>')}
+   ${d('bak','1 result was sent back','<p>The welcome email, Wednesday. Too long, and it sounded like a bank. My mistake: I copied the tone of your invoices. The second sketch was accepted.</p>')}
+   ${d('mis','1 result you accepted was wrong','<p>Invoice export. A refund made after the month closed was left out. I had no check against the bank; now everything that touches money has one. It went to nobody.</p>')}
+   ${d('buz','I buzzed you once','<p>Wednesday, 1:10 pm: the app store sign-in. The store ended your sign-in at noon and the release was at 3. What I changed: I test every sign-in three days before a release, and ask in a letter.</p>')}
+   ${d('abv','2 goals reached you more often than planned','<p>Faster sign-up: 3 for 2. Two forks the agreement did not foresee; sign-up agreements now ask what a new person must give.</p><p>Invoice export: 3 for 2. The miss.</p>')}
+   ${d('stl','2 stalls. You were told of one','<p>Tuesday: a helper went silent for 40 minutes. A watcher restarted it and “shows Thursday” held, so you were not told.</p><p>Wednesday night: a computer was off. “Shows Thursday” became Friday. You were told once.</p>')}
+   ${d('wdr','1 question withdrawn','<p>The colour of the old sign-up button. The new sign-up has no such button.</p>')}
+   ${d('tru','What I may now do without showing you','<p>Wider: wording changes, storage moves, test speed-ups. Narrower: billing exports are shown every time again.</p><p>You kept what I’d say 6 times in 6. Last week: 8 in 10.</p>')}
+   </div><div class="links" style="margin-top:18px"><button class="link" data-act="behind">Behind this: who is working where</button></div>`;
+}
+function behindHTML(){
+  const d=(id,s,b)=>det('b-'+id,s,b);
+  return topBar('Behind the letter')+`<div class="ledger">
+   <p class="big" id="lead" tabindex="-1">27 helpers on 3 computers.</p>
+   <p class="led" style="margin-bottom:18px">One computer is asleep. Nothing is waiting on it.</p>
+   <div class="lab" style="margin-bottom:6px">Who is working where · open one for what it has cost</div>
+   ${d('pp','Price page · 5 helpers on the first computer','<p>So far: 22 hours of helper time, $31, 1 minute of yours. It has reached you once, of 2 planned.</p>')}
+   ${d('rt','Reminder texts · 6 helpers on the second computer','<p>So far: 17 hours of helper time, $24, 3 minutes of yours. It has reached you once, of 2 planned.</p>')}
+   ${d('ie','Invoice export, the correction · 3 helpers on the first computer','<p>In all: 29 hours of helper time, $40, 9 minutes of yours. It reached you 3 times, where 2 were planned: the miss.</p>')}
+   ${d('ck','Checking, never by the makers · 8 helpers on both','<p>Every result is checked by a helper who did not make it. This week: 61 checks, 9 sent back before you saw anything.</p>')}
+   ${d('wt','Watching for stalls, keeping the record · 5 helpers on the first computer','<p>They do none of the work. They caught 1 stall this week, after 40 minutes.</p>')}
+   ${d('dr','Driver ratings · nobody, parked','<p>So far: 6 hours of helper time, $8, 5 minutes of yours. It comes back tomorrow, as you said.</p>')}
+   ${d('fs','Faster sign-up · finished','<p>In all: 41 hours of helper time, $58, 11 minutes of yours. It reached you 3 times, where 2 were planned.</p>')}
+   ${d('sl','The third computer · asleep since Thursday','<p>Nothing is waiting on it. If something were, you would have been told once, with the new date.</p>')}
+   </div>`;
+}
+function voiceSteps(){
+  const Lt=L[S.letter], st=[{say:Lt.sayLead||Lt.lead(M[S.m]),ears:[['next','Go on']]}];
+  Lt.items.filter(it=>!isDone(it)).forEach(it=>{
+    let ears=[];
+    if(it.kind==='agree') ears=[['go:'+it.id,'Go']];
+    if(it.kind==='decide') ears=it.opts.map((o,n)=>[`opt:${it.id}:${n}`,o]);
+    if(it.kind==='forks') ears=[['signitem:'+it.id,'Yes to all three']];
+    if(it.voiceOk) ears=[['accept:'+it.id,'Accept']];
+    st.push({say:it.say,ears:[...ears,['next',ears.length?'Leave it for my eyes':'Go on']]});
+  });
+  return st;
+}
+function voiceHTML(){
+  const v=S.voice, end=v.i>=v.steps.length, st=v.steps[v.i], left=L[S.letter].items.filter(it=>!isDone(it)&&!pencilOnly(it)).length;
+  const say=end?(left?`That is all I can do by voice. ${plural(left,'thing')} wait${left===1?'s':''} for your eyes, and ${left===1?'keeps':'keep'}.`:'That is all. Nothing else needs you.'):st.say;
+  return `<div class="voice" data-new="v-voice" role="dialog" aria-label="The letter, read aloud">${topBar('The letter, read aloud')}
+   <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></div><p class="spoken" id="lead" tabindex="-1" aria-live="polite">${say}</p>
+   ${v.log.length?`<p class="his vlog">You said: ${v.log.join(' · ')}</p>`:''}
+   <div class="ears">${end?btn('close','Done','pri'):`<div class="lab">You can say</div>`+st.ears.map(([a,lab],i)=>`<button class="btn${i===0&&st.ears.length>1?' pri':''}" data-act="v" data-v="${a}" data-fid="v${i}">“${lab}”</button>`).join('')}</div></div>`;
+}
+function speak(t){ try{ const ss=window.speechSynthesis; if(!ss) return; ss.cancel(); const v=ss.getVoices().find(v=>v.localService&&/^en/i.test(v.lang)); if(!v) return; const u=new SpeechSynthesisUtterance(t); u.voice=v; ss.speak(u);}catch(e){} }
+
+/* ---------- render ---------- */
+function render(){
+  const st=$('#stage'), sc={}, fid=document.activeElement&&document.activeElement.dataset?document.activeElement.dataset.fid:null;
+  st.querySelectorAll('[data-scroll]').forEach(e=>sc[e.dataset.scroll]=e.scrollTop);
+  let h=lockHTML();
+  if(S.view==='letter') h+=`<div class="wrap two${S.thing?' has-thing':''}" data-scroll="wrap" data-new="v-letter"><article class="sheet" data-scroll="sheet" aria-label="The letter">${letterHTML()}</article>${S.thing?thingHTML():''}</div>`;
+  if(S.view==='standing'||S.view==='week'||S.view==='behind') h+=`<div class="wrap" data-scroll="wrap" data-new="v-${S.view}"><article class="sheet" data-scroll="sheet">${{standing:standingHTML,week:weekHTML,behind:behindHTML}[S.view]()}</article></div>`;
+  if(S.view==='voice') h+=voiceHTML();
+  const old=new Set([...st.querySelectorAll('[data-new]')].map(e=>e.dataset.new));
+  st.innerHTML=h;
+  st.querySelectorAll('[data-new]').forEach(e=>{ if(!old.has(e.dataset.new)) e.classList.add('new'); });
+  st.querySelectorAll('[data-scroll]').forEach(e=>{ if(sc[e.dataset.scroll]) e.scrollTop=sc[e.dataset.scroll]; });
+  let f=S.fx?$(S.fx,st):null; if(!f&&fid) f=st.querySelector(`[data-fid="${CSS.escape(fid)}"]`);
+  const top=S.top&&$(S.top,st);
+  if(f){ f.focus({preventScroll:!S.fx||!!top}); if(S.fx&&!top) f.scrollIntoView({block:'nearest'}); }
+  if(top) top.scrollIntoView({block:'start'});
+  S.fx=S.top=null;
+  $('#pm').value=S.m; $('#pnote').innerHTML=`<b>${M[S.m].day} ${M[S.m].time} · ${M[S.m].title} · scenario event ${M[S.m].ev}</b><br>${M[S.m].note}`;
+}
+function go(v){ S.stack.push(S.view); S.view=v; S.fx='#lead'; }
+// on the desk the thing lies open beside the letter without being asked for
+function autoThing(){ if(!isDesk()||S.view!=='letter') return; const it=L[S.letter].items.find(x=>x.id===S.cur&&!isDone(x)&&x.thing&&!S.ans[x.id]); S.thing=it?{id:it.thing,item:it.id}:null; }
+function firstOpen(){ const it=L[S.letter].items.find(x=>!isDone(x)); S.cur=it?it.id:null; }
+// one mark folds the thing and unfolds the next: no tap is spent on moving
+function after(it){ S.park=null; if(S.thing&&S.thing.item===it.id) S.thing=null;
+  const its=(L[S.letter]||{items:[]}).items, i=its.indexOf(it), nx=[...its.slice(i+1),...its.slice(0,Math.max(i,0))].find(x=>!isDone(x));
+  S.cur=nx?nx.id:null; autoThing();
+  if(isDone(it)&&it.ps&&!S.ans[it.ps.id]&&S.ans[it.id].a==='accept') S.fx=`#it-${it.id} .ps .btn`;
+  else if(nx){ S.fx=`#it-${nx.id} .acts .btn, #it-${nx.id} .peek, #it-${nx.id} .opt`; S.top=`#it-${nx.id}`; }
+  else S.fx='#end, .foot .btn'; }
+function setMoment(i){ i=Math.max(0,Math.min(M.length-1,i)); Object.assign(S,{m:i,stack:[],view:'lock',thing:null,panel:null,park:null,listening:false,typing:false,voice:null,letter:M[i].letter||null});
+  if(M[i].open){ S.stack=['lock']; S.view=M[i].open; S.letter='mon'; } if(window.speechSynthesis) speechSynthesis.cancel();
+  $('#pnote').hidden=!(M[i].k==='quiet'||M[i].k==='away'); $('#pn').setAttribute('aria-expanded',!$('#pnote').hidden); render(); }
+
+function act(a,el,ev){
+  const [n,id,arg]=a.split(':'), it=id&&findItem(id);
+  switch(n){
+    case 'open-letter': S.letter=M[S.m].letter; go('letter'); firstOpen(); autoThing(); break;
+    case 'note-letter': S.letter='note'; go('letter'); firstOpen(); break;
+    case 'cur': S.cur=id; S.park=null; S.panel=null; autoThing(); S.fx=`#it-${id} .acts .btn, #it-${id} .peek, #it-${id} .opt`; S.top=`#it-${id}`; break;
+    case 'close': if(window.speechSynthesis) speechSynthesis.cancel(); S.view=S.stack.pop()||'lock'; S.thing=null; S.panel=null; S.park=null; S.voice=null; if(S.view==='lock') S.letter=M[S.m].letter||null; S.fx=S.view==='lock'?'[data-fid=glance]':'#lead'; break;
+    case 'standing': case 'week': case 'behind': go(n); break;
+    case 'hear': if(!S.letter) S.letter=M[S.m].letter; go('voice'); S.voice={i:0,log:[],steps:voiceSteps()}; speak(S.voice.steps[0].say); break;
+    case 'v': { const v=el.dataset.v; if(v!=='next'){ S.voice.log.push(el.textContent); act(v,el); } S.voice.i++; S.thing=null; S.fx='#lead'; const s=S.voice.steps[S.voice.i]; if(s) speak(s.say); return render(); }
+    case 'go': S.ans[id]={a:'go'}; if(it.fork&&!S.ans[it.fork.id]) S.ans[it.fork.id]={a:'opt',v:it.fork.pencil,by:'go'}; S.panel=null; after(it); break;
+    case 'accept': S.ans[id]={a:'accept'}; S.panel=null; after(it); break;
+    case 'back': S.ans[id]={a:'back',scope:null,n:marksOf(scopeOf(it)).length}; S.thing=null; S.panel=null; S.fx=`#it-${id} .ask .btn`; break;
+    case 'scope': S.ans[id].scope=arg; after(it); break;
+    case 'opt': { S.ans[id]={a:'opt',v:+arg,by:'you'}; const par=L[S.letter]&&L[S.letter].items.find(x=>x.id===id||(x.subs&&x.subs.some(s=>s.id===id))); if(par&&isDone(par)) after(par); break; }
+    case 'signitem': it.subs.forEach(s=>{ if(!S.ans[s.id]) S.ans[s.id]={a:'opt',v:s.pencil,by:'sign'}; }); after(it); break;
+    case 'sign': L[S.letter].items.forEach(x=>{ if(x.kind==='forks') x.subs.forEach(s=>{ if(!S.ans[s.id]) S.ans[s.id]={a:'opt',v:s.pencil,by:'sign'}; }); else if(pencilOnly(x)) S.ans[x.id]={a:'opt',v:x.pencil,by:'sign'}; }); S.cur=null; S.fx='#end'; break;
+    case 'park': S.park=id; S.cur=id; S.panel=null; if(!isDesk()) S.thing=null; S.fx=`#it-${id} .ask .btn`; break;
+    case 'park-x': S.park=null; break;
+    case 'until': S.ans[id]={a:'park',until:(it.parks||PARK)[+arg]}; after(it); break;
+    case 'take': delete S.ans[id]; if(it.subs) it.subs.forEach(s=>delete S.ans[s.id]); if(it.fork) delete S.ans[it.fork.id]; if(it.ps) delete S.ans[it.ps.id]; S.cur=id; autoThing(); S.fx=`#it-${id} .acts .btn, #it-${id} .peek, #it-${id} .opt`; break;
+    case 'thing': S.thing={id:it.thing,item:id}; S.cur=id; S.panel=null; S.park=null; S.fx='#th'; break;
+    case 'thing-x': S.fx=`[data-fid="peek-${S.thing&&S.thing.item}"]`; S.thing=null; S.panel=null; break;
+    case 'try': S.open.try=true; break;
+    case 'mark': { const p={sc:el.dataset.sc,k:el.dataset.k}; S.panel=S.panel&&S.panel.sc===p.sc&&S.panel.k===p.k?null:p; S.tried=false; if(S.panel) S.fx='.panel .btn'; break; }
+    case 'pin': { if(!ev) break; const r=el.getBoundingClientRect(), k='pin'+Date.now(); marksOf(el.dataset.sc).push({k,kind:'pin',x:+((ev.clientX-r.left)/r.width*100).toFixed(1),y:+((ev.clientY-r.top)/r.height*100).toFixed(1),text:''}); S.panel={sc:el.dataset.sc,k,pin:true}; S.fx='.panel .btn'; break; }
+    case 'gen-add': S.panel={sc:el.dataset.sc,k:'gen'+Date.now(),gen:true}; S.tried=false; S.fx='.panel .btn'; break;
+    case 'gen-x': { const ms=marksOf(el.closest('.gen').dataset.sc), i=ms.findIndex(m=>m.k===el.dataset.k); if(i>=0) ms.splice(i,1); break; }
+    case 'pin-open': S.panel={sc:el.closest('.pins').dataset.sc,k:el.dataset.k,pin:true}; S.fx='.panel .btn'; break;
+    case 'pin-keep': S.panel=null; S.fx='.tfoot .btn'; break;
+    case 'cut': marksOf(S.panel.sc).push({k:S.panel.k,kind:'cut'}); S.fx=`[data-fid="mk-${S.panel.sc}-${S.panel.k}"]`; S.panel=null; break;
+    case 'unmark': { const ms=marksOf(S.panel.sc), i=ms.findIndex(m=>m.k===S.panel.k); if(i>=0) ms.splice(i,1); S.panel=null; break; }
+    case 'panel-x': S.fx=`[data-fid="mk-${S.panel.sc}-${S.panel.k}"]`; S.panel=null; break;
+    case 'speak': { const p=S.panel, src=document.querySelector(p.pin?`.pins[data-sc="${p.sc}"]`:p.gen?`.gen[data-sc="${p.sc}"]`:`[data-sc="${p.sc}"][data-k="${p.k}"]`), say=src&&src.dataset.say;
+      if(say) setNote(p,say); else { S.tried=true; S.fx='.panel input'; } break; }
+    case 'say': { const mo=M[S.m]; if(!mo.script){ S.typing=!S.typing; S.fx='.slip input'; break; } S.listening=true; S.heard=null; render();
+      return setTimeout(()=>{ if(!S.listening) return; S.listening=false; S.heard={text:mo.script,m:S.m}; render(); },1500); }
+    case 'say-not': S.heard=null; S.typing=true; S.fx='.slip input'; break;
+    case 'say-foot': S.footType=true; S.fx='.foot .type input'; break;
+    case 'tele': if(arg||id==='slipped'){ S.tele='slipped'; break; } S.tele='checking'; render(); return setTimeout(()=>{ S.tele='signed'; render(); },900);
+  }
+  render();
+}
+function form(kind,f){
+  const t=f.t.value.trim(); if(!t) return;
+  if(kind==='note') setNote(S.panel,t);
+  if(kind==='until'){ const it=findItem(f.dataset.id); S.ans[it.id]={a:'park',until:t}; after(it); }
+  if(kind==='say') S.said.push(t);
+  if(kind==='heard'){ S.typing=false; S.heard={text:t,m:S.m}; }
+  render();
+}
+const stage=$('#stage');
+stage.addEventListener('click',e=>{ const el=e.target.closest('[data-act]'); if(!el||el.closest('[inert]')) return; if(el.dataset.act==='tele:signed'&&S.tele==='checking') return; act(el.dataset.act,el,e); });
+stage.addEventListener('submit',e=>{ e.preventDefault(); form(e.target.dataset.form,e.target); });
+stage.addEventListener('toggle',e=>{ if(e.target.dataset&&e.target.dataset.d) S.open[e.target.dataset.d]=e.target.open; },true);
+document.addEventListener('keydown',e=>{
+  const typing=/INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+  if(e.key==='Escape'){ if(S.panel){S.panel=null;return render();} if(S.park){S.park=null;return render();} if(S.thing&&!isDesk()) return act('thing-x'); if(S.view!=='lock') return act('close'); }
+  if(typing||e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.key==='['||e.key===']') return setMoment(S.m+(e.key===']'?1:-1));
+  if((e.key==='Enter'||e.key===' ')&&e.target.matches('[role=button]')){ e.preventDefault(); return e.target.click(); }
+  if(S.view==='letter'&&e.key==='t'&&S.thing){ const inThing=!!document.activeElement.closest('.thing'), to=inThing?stage.querySelector('.item.lit .acts .btn'):stage.querySelector('.thing .mk, .thing .btn'); if(to) to.focus(); return; }
+  if(S.view==='letter'&&(e.key==='j'||e.key==='k')){ const its=[...stage.querySelectorAll('.sheet .item')], cur=its.findIndex(x=>x.contains(document.activeElement)), nx=its[Math.max(0,Math.min(its.length-1,cur+(e.key==='j'?1:-1)))];
+    if(nx){ const b=nx.querySelector('.acts .btn')||nx.querySelector('.peek,.opt,.fold,.side'); if(b){ b.focus(); nx.scrollIntoView({block:'nearest'}); } } }
+});
+
+/* ---------- prototype control ---------- */
+$('#pm').innerHTML=M.map((m,i)=>`<option value="${i}">${i+1}/${M.length} · ${m.day.slice(0,3)} ${m.time} · ${m.title} (event ${m.ev})</option>`).join('');
+$('#pm').onchange=e=>setMoment(+e.target.value);
+$('#pv').onclick=()=>setMoment(S.m-1); $('#nx').onclick=()=>setMoment(S.m+1);
+$('#pn').onclick=()=>{ const n=$('#pnote'); n.hidden=!n.hidden; $('#pn').setAttribute('aria-expanded',!n.hidden); };
+function applyTheme(){ document.documentElement.dataset.theme=S.theme==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):S.theme; $('#pt').textContent=S.theme; }
+$('#pt').onclick=()=>{ S.theme={auto:'light',light:'dark',dark:'auto'}[S.theme]; applyTheme(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',applyTheme);
+matchMedia('(min-width:1040px)').addEventListener('change',()=>{ autoThing(); render(); });
+
+/* ---------- the week as he would walk it; used for screenshots and for the self-check ---------- */
+const PATH={tue:['go:ratings','thing:invoice','accept:invoice','opt:price:0'],
+ wed:['signitem:forks','thing:email','#cut:p2','#cut:p3','#say:p0','back:email','scope:email:always','go:remind','accept:photos'],
+ thu:['thing:sketch','park:sketch','until:sketch:2','accept:email2','accept:wording','opt:trust:0'],
+ mon:['thing:miss','accept:miss','thing:signup','accept:signup','accept:tests']};
+function walk(k,upto){ S.letter=k; S.view='letter'; S.stack=['lock']; firstOpen(); (upto==null?PATH[k]:PATH[k].slice(0,upto)).forEach(a=>{
+  if(a[0]==='#'){ const [c,key]=a.slice(1).split(':'), sc='t:email1'; if(c==='cut') marksOf(sc).push({k:key,kind:'cut'}); else marksOf(sc).push({k:key,kind:'note',text:'Too stiff. Write like a neighbour, not a bank.'}); }
+  else act(a); }); }
+// drives the real buttons in the order a person would press them, and counts the presses
+function domWalk(k){
+  let taps=0; const click=sel=>{ const el=stage.querySelector(sel); console.assert(el,'nothing to press: '+sel+' in '+k); if(el){ el.click(); taps++; } };
+  setMoment(M.findIndex(m=>m.k===k)); click('[data-act="open-letter"]');
+  for(const a of PATH[k]){
+    if(a[0]==='#'){ const [c,key]=a.slice(1).split(':'); click(`.thing [data-k="${key}"]`); click(c==='cut'?'[data-act="cut"]':'[data-act="speak"]'); }
+    else if(a.startsWith('thing:')){ if(!S.thing) click(`[data-fid="peek-${a.slice(6)}"]`); }
+    else click(`[data-act="${a}"]`);
+  }
+  console.assert(L[k].items.every(isDone)&&stage.querySelector('#end'),'letter not finished by its path: '+k);
+  return taps;
+}
+function selfCheck(){
+  const out={}, words=h=>{ const d=document.createElement('div'); d.innerHTML=h; d.querySelectorAll('details>:not(summary),.keys,form').forEach(x=>x.remove()); return d.textContent.trim().split(/\s+/).filter(Boolean).length; };
+  const evs=new Set(M.flatMap(m=>m.ev.split(',').map(s=>+s))); out.events=[...Array(14)].map((_,i)=>i+1).filter(n=>!evs.has(n)); console.assert(!out.events.length,'events missing',out.events);
+  out.read={}; out.taps={};
+  for(const k of ['tue','wed','thu','mon']){ S.m=M.findIndex(m=>m.k===k); S.letter=k; S.cur=null;
+    // every word of the letter with each thing unfolded once (the folded one-line gists are not counted twice)
+    out.read[k]=words(letterHTML())+L[k].items.reduce((s,it)=>s+words(bodyHTML(it)+actsHTML(it))-words(it.gist),0);
+    L[k].items.forEach(it=>{ if(it.thing){ console.assert(TH[it.thing],'no thing',it.thing); out.read['thing:'+it.thing]=words(TH[it.thing].html('x:'+it.thing)); } });
+    out.taps[k]=domWalk(k); }
+  out.sentBack=S.ans.email&&S.ans.email.a==='back'&&S.ans.email.scope==='always'&&marksOf('t:email1').length===3; console.assert(out.sentBack,'send-back');
+  out.parked=S.ans.sketch&&S.ans.sketch.until; out.trust=S.ans.trust&&S.ans.trust.v===0; console.assert(out.parked==='Faster sign-up is done'&&out.trust,'thursday');
+  S.m=4; out.read.telegram=words(slipHTML()); out.read.week=words(weekHTML()); out.read.behind=words(behindHTML()); S.m=9; out.read.standing=words(standingHTML());
+  out.minutes=['tue','wed','thu','mon'].map(k=>L[k].items.reduce((s,it)=>s+it.min,0));
+  out.goals=standing().length; out.done=standing().filter(g=>g.grp==='D').length; console.assert(out.goals===11&&out.done===7,'eleven goals stand at the end, seven of them done, as the week page says');
+  document.body.insertAdjacentHTML('beforeend',`<pre id="check">${JSON.stringify(out)}</pre>`); return out;
+}
+
+// the paths the week does not take: voice, the buzz, saying it, a pointed mark, a whole-thing remark, the keys
+async function smoke(){
+  const errs=[], ok=(c,m)=>{ if(!c) errs.push(m); }, wait=ms=>new Promise(r=>setTimeout(r,ms));
+  window.onerror=m=>{ errs.push('error: '+m); };
+  const click=sel=>{ const el=stage.querySelector(sel); ok(el,'nothing to press: '+sel); if(el) el.click(); }, key=k=>document.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true}));
+  const fresh=m=>{ Object.assign(S,{ans:{},marks:{},said:[],tele:null,heard:null}); setMoment(m); };
+  fresh(1); click('[data-act="say"]'); await wait(1700); ok(S.heard&&/reminder/.test(S.heard.text),'saying it is heard'); click('[data-act="note-letter"]'); click('[data-act="go:remind"]'); ok(S.ans.remind,'said back now, and agreed');
+  fresh(4); click('[data-act="tele:signed"]'); await wait(1100); ok(S.tele==='signed','the one buzz is answered in one press'); ok(glance().kind==='quiet','silence returns after it');
+  fresh(0); click('[data-act="hear"]'); click('[data-v="next"]'); click('[data-v="go:ratings"]'); click('[data-v="next"]'); click('[data-v="opt:price:0"]'); ok(S.ans.ratings&&S.ans.price&&!S.ans.invoice,'by voice: two answered, the one for the eyes kept'); click('.voice .btn'); ok(S.view==='lock'&&glance().kind==='letter','the letter still waits for his eyes');
+  fresh(3); click('[data-act="open-letter"]'); click('[data-act="cur:email"]'); if(!S.thing) click('[data-fid="peek-email"]'); click('[data-act="gen-add"]'); click('[data-act="speak"]'); ok(marksOf('t:email1').length===1,'a remark about the whole thing'); click('[data-act="back:email"]'); click('[data-act="scope:email:here"]'); ok(S.ans.email.scope==='here','here only');
+  click('[data-act="take:email"]'); ok(!S.ans.email&&S.cur==='email','taken back');
+  fresh(5); click('[data-act="open-letter"]'); if(!S.thing) click('[data-fid="peek-sketch"]'); const pins=stage.querySelector('.pins'), r=pins.getBoundingClientRect(); pins.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+r.width/2,clientY:r.top+r.height/3})); click('[data-act="speak"]'); ok(marksOf('t:ratings').some(m=>m.kind==='pin'&&m.text),'a pointed mark on a picture, with words');
+  ['j','k','t','t','Escape','Escape','Escape'].forEach(key); ok(S.view==='lock','Esc puts the letter down');
+  click('[data-act="open-letter"]'); click('[data-act="standing"]'); click('[data-act="behind"]'); key('Escape'); key('Escape'); key('Escape'); ok(S.view==='lock','back out of behind');
+  key(']'); ok(S.m===6,'next moment');
+  document.body.insertAdjacentHTML('beforeend',`<pre id="smoke">${errs.length?esc(JSON.stringify(errs)):'smoke ok'}</pre>`);
+}
+
+/* ---------- start (the hash is only for looking at one state: #m=3&v=letter&t=dark&d=marks) ---------- */
+(function(){
+  const q=new URLSearchParams(location.hash.slice(1));
+  if(q.get('t')) S.theme=q.get('t'); applyTheme(); if(q.has('still')) document.documentElement.classList.add('still');
+  if(q.has('check')){ selfCheck(); smoke(); return; }
+  setMoment(+(q.get('m')||0));
+  const mo=M[S.m], d=q.get('d'), v=q.get('v');
+  if(d==='heard') S.heard={text:mo.script,m:S.m};
+  if(d==='signed') S.tele='signed';
+  if(mo.letter&&d){ const n={done:null,marks:5,ask:6,park:2,ps:5}[d]; if(n!==undefined) walk(mo.letter,n); if(d==='marks'){ S.thing={id:'email1',item:'email'}; } }
+  if(v==='letter'&&S.view==='lock') act('open-letter'); else if(v==='voice') act('hear'); else if(v&&v!=='letter'&&v!=='lock') { S.view='lock'; S.stack=[]; act(v); }
+  if(q.get('th')){ const it=L[S.letter].items.find(x=>x.thing===q.get('th')); if(it){ S.thing={id:it.thing,item:it.id}; S.cur=it.id; } }
+  if(q.get('cur')){ S.cur=q.get('cur'); autoThing(); }
+  (q.get('a')||'').split(',').filter(Boolean).forEach(x=>{ const [id,v]=x.split(':'); S.ans[id]={a:'opt',v:+v,by:'you'}; });
+  (q.get('o')||'').split(',').filter(Boolean).forEach(id=>S.open[id]=true);
+  (q.get('ans')||'').split(',').filter(Boolean).forEach(x=>{ const [id,v]=x.split(':'); S.ans[id]={a:v}; if(S.cur===id) firstOpen(); });
+  if(q.get('pan')){ const [sc,k]=q.get('pan').split('|'); S.panel={sc,k,gen:k==='gen'}; }
+  if(q.has('listen')) S.listening=true; if(q.has('typing')) S.typing=true;
+  if(d==='pin'){ marksOf('t:ratings').push({k:'pin1',kind:'pin',x:50,y:38,text:'The stars are too small for a thumb.'}); S.thing={id:'ratings',item:'sketch'}; S.cur='sketch'; }
+  if(q.get('vi')&&S.voice) S.voice.i=+q.get('vi');
+  if(q.get('note')) $('#pnote').hidden=false; if(q.has('nonote')) $('#pnote').hidden=true;
+  render();
+})();
+</script>
+</body>
+</html>
