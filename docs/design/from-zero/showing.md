@@ -4,16 +4,18 @@ For Chang, 12 Nov 2026. About twenty minutes: six to read this page, twelve to c
 
 Open `concepts/side-by-side.html` in a browser. It shows each design at phone and desk width at once.
 
+**Nothing you will click is live.** Every screen is a drawing. The checks, the watching, the recordings and everything the phone does are stand-ins, and each prototype says so on its face. No phone has been used.
+
 ## Only you can judge
 
 Three decisions. Nothing is built until you give the second one.
 
-**1. Which feel?** Two designers built the same structure from different starting points. Both are finished enough to click.
+**1. Which feel?** Two designers built the same structure from different starting points, and three critics walked both.
 
-- *Sitting-based* (`v2-sitting`): compact and structured. The leaner of the two.
-- *Letter-based* (`v2-letter`): warmer, reads like a letter, with a worked example in each say-back. About a quarter more reading.
+- *Letter-based* (`v2-letter`): reads like a letter in an open book. Two critics would put it first: it is the one that does not look like work software, and its receipts can be trusted. It is the longer read.
+- *Sitting-based* (`v2-sitting`): compact, a set of cards. One critic would put it first: it is the leaner, and it showed your consequential choices earliest.
 
-I would build the sitting-based one and borrow the letter's warmth in its wording. This is taste, so it is yours. It can be changed later at the cost of a restyle.
+Each has since taken the other's best point. I would build the letter-based one and hold it to the sitting's word count. This is taste, so it is yours. It can be changed later at the cost of a restyle.
 
 **2. Go on stage 1, and where?** Stage 1 is the check before showing, with the meter: two to four days of building to first real use, on private work that can be undone. I would run it first on the building of this system itself, in the agent-annotate repository, which is where you chose to try the thin coordinator earlier. Each later stage is then built through the earlier one. Second, the commerce project. Third, the vehicle project, where your load is highest and the risk of disturbing live work is highest too. This waits for your go because building is not cheap to undo.
 
@@ -51,15 +53,20 @@ So the method changed:
 
 ## What you would see
 
-Click in this order.
+In the viewer, pick a design along the top. Each prototype has a selector of named moments along its own top edge: choose the moment named below. About twelve minutes.
 
-1. **The sitting-based design, phone side.** Your lock screen is the doorway: what has gathered, how long it will take, how fresh that is, and hold-to-say. Press "next" along the top to walk the test week.
-2. **The same design, desk side.** An open book: the sitting on the left page; on the right, every goal of every project in a fixed place, or the thing you are looking at.
-3. **The showing sheet** (`v2-showing`). Pick "Faster sign-up": a recording of the exact build that was checked, what is yours to judge in one line, what someone else already proved, and what is not proved. Then press "Mark it for me" and "It comes back".
-4. **Coming back** (`v2-return`). After five days away with forty goals in flight. Then the wrong rule, and "what you've let me do".
-5. **The letter-based design**, for the other feel.
+| | Pick | Then choose | Look for |
+|---|---|---|---|
+| 1 | Letter-based | "Tue 8:30 · The morning" | The lock card on the phone. On the desk, the letter on the left page and the thing itself on the right. Two things told, one to look at. |
+| 2 | Letter-based | "Tue 12:40 · Saying it on the move" | One spoken sentence, and what comes back. |
+| 3 | The showing sheet | "A · Faster sign-up" | A recording of the exact thing that was checked. What is yours to judge, in one line. What is not checked. Press "Mark it for me", then "It comes back". |
+| 4 | The showing sheet | "B · Price page", then "I · Thursday's Driving app release" | One page at two widths. Then the pause before something that cannot be undone; press "Change it after the check" and try to release it. |
+| 5 | Letter-based | "Thu 8:30 · A bad day", then "Thu 9:55 · Two goals it cannot see", then "Thu 1:10 · The one thing that cannot wait" | What a bad day costs you. What it says when it cannot see. The one interruption. |
+| 6 | Coming back | "1 · Back after five days", then "4 · A rule that turned out wrong", then "9 · Stop" | Forty goals sorted by what they cost. A wrong rule with everything it touched. Stopping one goal, one project, everything. |
+| 7 | Letter-based | "Fri 8:30 · The week" | The week's account. |
+| 8 | Sitting-based | "Tue 08:30 · The morning sitting" | The same Tuesday morning in the other feel. |
 
-What neither design can show honestly, and says so on the screen: how something feels in the hand, sound, a real drive, and what users do after a release. "Try it on your phone" is drawn; bringing your marks back from the phone is not.
+What no design can show honestly, and says so on the screen: how something feels in the hand, sound, a real drive, and what users do after a release.
 
 ## What would be built
 

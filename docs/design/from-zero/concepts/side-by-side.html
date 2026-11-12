@@ -28,12 +28,12 @@
 <header>
   <h1>The designs</h1>
   <nav aria-label="Which design">
-    <button data-d="v2-sitting">Sitting-based</button>
     <button data-d="v2-letter">Letter-based</button>
+    <button data-d="v2-sitting">Sitting-based</button>
     <button data-d="v2-showing">The showing sheet</button>
     <button data-d="v2-return">Coming back</button>
   </nav>
-  <p class="note">Phone on the left, desk on the right. Each has its own "next" control along its top: that control is for stepping through the test week and is not part of the design. <a id="open" href="#">Open this one on its own</a>.</p>
+  <p class="note">Nothing here is live: every screen is a drawing. Phone on the left, desk on the right. Each has its own selector of named moments along its edge: that control is for stepping through the test week and is not part of the design. <a id="open" href="#">Open this one on its own</a>.</p>
 </header>
 <main>
   <figure><figcaption>Phone, 390 wide</figcaption><iframe id="phone" title="Phone view"></iframe></figure>
@@ -52,6 +52,6 @@
   }
   buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.d)));
   const wanted = location.hash.slice(1);
-  show(buttons.some(b => b.dataset.d === wanted) ? wanted : 'v2-sitting');
+  show(buttons.some(b => b.dataset.d === wanted) ? wanted : 'v2-letter');
 </script>
 </html>
