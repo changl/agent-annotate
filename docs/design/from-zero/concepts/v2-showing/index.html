@@ -30,20 +30,8 @@ html[data-theme=dark] .proto{color:#EADFAE;background:repeating-linear-gradient(
 .proto .nar{flex-basis:100%}
 @media (max-width:899px){.proto .tag,.proto .wide{display:none}}
 
-/* ---------- host placeholder: NOT part of the showing ---------- */
 .frame{padding:0}
-.hostbar{display:flex;align-items:center;gap:8px;margin:8px 10px 0;padding:6px 10px;border:1px dashed var(--ink3);border-radius:8px;font:12px/1.3 var(--mono);color:var(--ink2)}
-.hostcol{display:none}
-@media (min-width:900px){
-  body{background:var(--desk)}
-  .frame{display:grid;grid-template-columns:200px minmax(0,1fr);gap:22px;max-width:1260px;margin:0 auto;padding:22px 20px 60px}
-  .hostbar{display:none}
-  .hostcol{display:block;align-self:start;position:sticky;top:60px;padding:14px;border:1px dashed var(--ink3);border-radius:10px;font:12px/1.5 var(--mono);color:var(--ink2);min-height:420px;
-    background:repeating-linear-gradient(-45deg,transparent 0 9px,rgba(127,127,127,.06) 9px 18px)}
-  .hostcol b{display:block;margin-bottom:10px;letter-spacing:.08em}
-  .hostcol i{display:block;height:9px;margin:9px 0;border-radius:3px;background:var(--rule)}
-  .hostcol .on{background:var(--ink3)}
-}
+@media (min-width:900px){body{background:var(--desk)}.frame{max-width:1240px;margin:0 auto;padding:22px 20px 60px}}
 
 /* ---------- the sheet: the showing, with its own edges ---------- */
 .sheet{position:relative;background:var(--paper);border:1px solid var(--rule2);border-radius:14px;box-shadow:var(--shadow);margin:10px 8px 24px;overflow:clip}
@@ -51,6 +39,7 @@ html[data-theme=dark] .proto{color:#EADFAE;background:repeating-linear-gradient(
 .sh-head{padding:14px 18px 12px;border-bottom:1px solid var(--rule)}
 .sh-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font:600 11.5px/1.3 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
 .sh-top .ver{color:var(--rubric)}
+.sh-top>span:last-child{white-space:nowrap}
 .sh-goal{font:400 25px/1.15 var(--serif);margin:6px 0 8px;letter-spacing:-.005em}
 .seal{display:flex;align-items:flex-start;gap:8px;font-size:13.5px;line-height:1.35;color:var(--ink2)}
 .seal .stamp{flex:none;width:18px;height:18px;margin-top:-1px;border-radius:50%;border:1.5px solid var(--ink2);position:relative}
@@ -65,7 +54,7 @@ html[data-theme=dark] .proto{color:#EADFAE;background:repeating-linear-gradient(
 .rail{padding:14px 18px 8px;border-top:1px solid var(--rule)}
 @media (min-width:900px){.stage{padding:18px 20px 16px;min-height:520px}.rail{border-top:0;border-left:1px solid var(--rule);padding:16px 18px}}
 .hint{font-size:13.5px;color:var(--ink2)}
-.stage-hint{position:absolute;left:12px;top:10px;z-index:3;padding:3px 9px;border-radius:12px;background:var(--rubric);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
+.stage-hint{display:table;margin:0 0 10px;padding:3px 9px;border-radius:12px;background:var(--rubric);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
 html[data-theme=dark] .stage-hint{color:#15171B}
 
 /* rail sections */
@@ -76,25 +65,28 @@ html[data-theme=dark] .stage-hint{color:#15171B}
 .judge.ph .r-h{display:block;margin-bottom:1px}
 .judge.none{font-family:var(--sans);font-size:15px;color:var(--ink2)}
 .dots{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px}
-.dot{width:30px;height:30px;border-radius:50%;border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);font:600 13px/1 var(--sans);display:grid;place-items:center;cursor:pointer;padding:0}
+.dot{width:44px;height:44px;border-radius:50%;border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);font:600 13px/1 var(--sans);display:grid;place-items:center;cursor:pointer;padding:0}
 .dot.not{background:transparent;color:var(--ink);border-style:dashed}
 .dot[aria-pressed=true]{box-shadow:0 0 0 3px var(--wash),0 0 0 4.5px var(--rubric)}
 .plist{list-style:none;margin:0;padding:0}
 .plist li{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:14.5px;line-height:1.35}
 .plist .n{flex:none;width:18px;height:18px;border-radius:50%;background:var(--ink);color:var(--paper);font:600 11px/18px var(--sans);text-align:center}
 .plist .n.not{background:transparent;color:var(--ink);border:1.3px dashed var(--ink);line-height:15.5px}
-.plist button{all:unset;cursor:pointer;flex:1}
-.plist button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.plist li{padding:0}
+.prow{display:flex;gap:8px;align-items:center;width:100%;min-height:44px;padding:0;border:0;background:none;text-align:left;font:14.5px/1.35 var(--sans);cursor:pointer;color:inherit}
+.prow[aria-pressed=true] .tx{text-decoration:underline;text-decoration-color:var(--rubric);text-underline-offset:3px}
+.prow .tx{flex:1}
+
 .plist .at{flex:none;font-size:12.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
 .sumline{font-size:14px;color:var(--ink2);margin:0}
 .pdetail{margin:8px 0 0;padding:10px 12px;border-left:3px solid var(--ink);background:var(--paper2);border-radius:0 8px 8px 0;font-size:14.5px}
 .pdetail .lnk{margin-right:12px}
 details.raw{margin-top:6px}
-details.raw summary{cursor:pointer;color:var(--ink2);font-size:13.5px;min-height:32px;display:flex;align-items:center}
+details.raw summary{cursor:pointer;color:var(--ink2);font-size:13.5px;min-height:44px;display:flex;align-items:center}
 details.raw pre{margin:4px 0 0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--ink);background:var(--box);padding:8px 10px;border-radius:6px}
 .lnk{min-height:44px;padding:0;border:0;background:none;color:var(--ink2);font:500 14.5px var(--sans);cursor:pointer;text-decoration:underline;text-decoration-color:var(--ink3);text-underline-offset:4px}
 .lnk:hover{color:var(--ink)}
-.inl{display:inline-block;min-height:0;padding:12px 2px;margin:-12px 0}
+.inl{display:inline-block;min-height:0;min-width:44px;padding:14px 2px;margin:-14px 0;text-align:center}
 .fork{padding:10px 12px;border:1px solid var(--rule2);border-radius:10px;background:var(--paper2)}
 .fork .q{font-weight:600;margin:0 0 4px}
 .fork .wait{margin:8px 0 0;padding-top:6px;border-top:1px dashed var(--rule2);font-size:13.5px;color:var(--ink2)}
@@ -124,6 +116,9 @@ html[data-theme=dark] .pin{color:#15171B;box-shadow:0 0 0 2px #15171B}
 @media (min-width:900px){.bar{border-top:1px solid var(--rule);padding:12px 0 4px;background:none}}
 .b{min-height:46px;padding:0 16px;border-radius:10px;border:1.5px solid var(--ink);background:none;font:600 15.5px var(--sans);cursor:pointer}
 .b.pri{background:var(--btn);color:var(--btnt);border-color:var(--btn)}
+.b.full{flex-basis:100%}
+.caveat{display:block;flex-basis:100%;width:100%;min-height:44px;margin:0 0 4px;padding:8px 12px;border:0;border-left:3px dashed var(--ink2);border-radius:0 8px 8px 0;background:var(--paper2);text-align:left;font:14.5px/1.4 var(--sans);color:var(--ink);cursor:pointer}
+.caveat b{font-weight:600}
 .b.red{background:var(--rubric);color:#fff;border-color:var(--rubric)}
 html[data-theme=dark] .b.red{color:#15171B}
 .b:disabled{opacity:.45;cursor:not-allowed}
@@ -144,7 +139,7 @@ html[data-theme=dark] .b.red{color:#15171B}
 .backband{margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--paper2);border:1px solid var(--rule2)}
 .backband .t{font-weight:600}
 .seg{display:inline-flex;border:1px solid var(--rule2);border-radius:9px;overflow:hidden;margin-top:6px}
-.seg button{min-height:36px;padding:0 12px;border:0;background:none;font:500 13.5px var(--sans);cursor:pointer}
+.seg button{min-height:44px;padding:0 12px;border:0;background:none;font:500 13.5px var(--sans);cursor:pointer}
 .seg button[aria-pressed=true]{background:var(--btn);color:var(--btnt)}
 .ribbon{position:absolute;right:12px;top:10px;z-index:3;padding:3px 9px;border-radius:12px;background:var(--ink);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
 
@@ -162,7 +157,7 @@ html[data-theme=dark] .hold{color:#15171B}
 .scrub{display:flex;align-items:center;gap:10px;margin-top:12px}
 .scrub .play{flex:none;width:44px;height:44px;border-radius:50%;border:0;background:var(--btn);color:var(--btnt);cursor:pointer;display:grid;place-items:center}
 .track{position:relative;flex:1;height:44px}
-.track input{position:absolute;left:0;right:0;top:12px;width:100%;margin:0;accent-color:var(--ink)}
+.track input{position:absolute;left:0;right:0;top:0;height:44px;width:100%;margin:0;accent-color:var(--ink);background:transparent}
 .tick{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;font:700 10.5px/1 var(--sans);color:var(--ink);pointer-events:none}
 .tick::after{content:"";display:block;width:1.5px;height:8px;margin:2px auto 0;background:var(--ink)}
 .tick.m{color:var(--rubric);top:auto;bottom:0}
@@ -295,12 +290,11 @@ html[data-theme=dark] .hold{color:#15171B}
   <button id="pBack">▸ It comes back</button>
   <button id="pChange" class="wide">Change it after the check</button>
   <button id="pTheme" aria-label="Switch light or dark">◐</button>
+  <span class="wide">Shown alone. In use it sits inside the letter or the sitting, which supplies the way back, the timing and the voice.</span>
   <span id="pNar" class="nar"></span>
 </header>
 <div id="checkOut"></div>
 <div class="frame">
-  <div class="hostbar" aria-hidden="true">host · ‹ back to the sitting · 2 of 3</div>
-  <aside class="hostcol" aria-label="Host placeholder, not part of the showing"><b>THE HOST</b>letter or sitting<i class="on"></i><i></i><i style="width:70%"></i><i></i><i style="width:55%"></i></aside>
   <main id="app"></main>
 </div>
 <script>
@@ -319,15 +313,15 @@ const PAUSE='<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
 /* ======================= the twelve kinds, one real example each ======================= */
 const SH=[
 {id:'A1',kind:'A',word:'Phone app · a journey',goal:'Faster sign-up',budget:'about 1 min',
- seal:'<b>Checked by someone else</b> · build 214 on an iPhone 13 · recorded 16:10',
- seal2:'<b>Checked again by someone else</b> · build 215 on an iPhone 13 · recorded 17:40',
+ seal:'<b>Checked by someone else</b> · this exact build, on an iPhone 13 · recorded 16:10',
+ seal2:'<b>Checked again by someone else</b> · the new build, on an iPhone 13 · recorded 17:40',
  judge:'Does it feel quick enough to book on the spot?',
  dur:90,speed:3,
  done:[{t:'Three screens, not seven',at:0,tg:'steps',how:'Counted from the recording: steps 1 to 3, then booked.'},
    {t:'Booked in under 2 minutes',at:84,tg:'booked',how:'Twenty people new to the app: median 1 min 30 s, slowest 2 min 10 s.'},
    {t:'Nothing you need is lost',at:84,tg:'saved',how:'Name, email and first lesson read back from the school’s records after booking.'},
    {t:'Next stays above the keyboard',at:14,tg:'next1',how:'Frame at 0:14: keyboard up, Next visible. Same on three phone sizes.'},
-   {t:'Old phones',not:true,how:'Not proved: no iPhone 8 or older to test on. I’ll borrow one before release.'}],
+   {t:'Old phones',not:true,how:'Not checked: no iPhone 8 or older to test on. I’ll borrow one before release.'}],
  raw:`Checker’s report · Faster sign-up · build 214 · 16:10
 Started from your words and the 4 done lines, not from the maker’s notes.
 1 steps: 3 (was 7) ............................ pass
@@ -336,21 +330,21 @@ Started from your words and the 4 done lines, not from the maker’s notes.
 4 keyboard: Next visible on SE, 13, 15 Max .... pass
 Not tried: iPhone 8 or older (none available)`,
  reasons:['Wrong words…','Missing…','Shouldn’t be here','Say it…'],
- hand:'Opens this same build 214 on your phone. Shake the phone to mark something; it comes back here, on build 214.',
+ hand:'Opens this same build on your phone. Shake the phone to mark something; it comes back here, tied to this build.',
  canned:[{at:26,tg:'slot0',label:'“Sat 21 Nov · 9:00”',why:'Missing',said:'Show who teaches each lesson'},{at:56,tg:'payNow',label:'“Pay now”',why:'Say it…',said:'Pay at the lesson should come first'}],
  answers:[{note:'Each lesson now says who teaches it.'},{note:'“Pay at the lesson” is now first.'}],
  nar:'A three-screen journey in the phone app, recorded by the checker on the exact build. Play or scrub it. Mark freezes the frame; tap any control in it.'},
 {id:'A2',kind:'A',word:'In the car · a route',goal:'Test-practice route from Elm Street',budget:'about 1 min',
- seal:'<b>Checked by someone else</b> · route v3 · simulator with eight Saturdays of 9 am traffic · 17:05',
- seal2:'<b>Checked again by someone else</b> · route v4 · simulator · 18:20',
+ seal:'<b>Checked by someone else</b> · this route, in the simulator with eight Saturdays of 9 am traffic · 17:05',
+ seal2:'<b>Checked again by someone else</b> · the new route, in the simulator · 18:20',
  judge:'Is it a fair test for a nervous learner?',
  dur:1080,speed:36,
  done:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Every road on the route checked against the road map: all single carriageway.'},
    {t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 (Mill Road) and 11:40 (Ridge Way).'},
    {t:'One hill start',at:470,tg:'hill',how:'Park Rise, 7:50. Gradient 1 in 9.'},
    {t:'About 18 minutes at 9 am Saturday',at:1080,tg:'route',how:'Eight past Saturdays: 16 to 21 minutes, median 18.'},
-   {t:'Driven in a real car',not:true,how:'Not proved: simulator only. Saturday’s first lesson is the real test; the teacher will mark anything wrong.'}],
- done2:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Checked again for version 4: all single carriageway.'},{t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 and 12:10.'},{t:'One hill start',at:450,tg:'hill',how:'Park Rise, 7:30.'},{t:'About 19 minutes at 9 am Saturday',at:1140,tg:'route',how:'Eight past Saturdays: 17 to 22 minutes, median 19.'},{t:'Driven in a real car',not:true,how:'Not proved: simulator only.'}],
+   {t:'Driven in a real car',not:true,how:'Not checked: simulator only. Saturday’s first lesson is the real test; the teacher will mark anything wrong.'}],
+ done2:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Checked again for the new route: all single carriageway.'},{t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 and 12:10.'},{t:'One hill start',at:450,tg:'hill',how:'Park Rise, 7:30.'},{t:'About 19 minutes at 9 am Saturday',at:1140,tg:'route',how:'Eight past Saturdays: 17 to 22 minutes, median 19.'},{t:'Driven in a real car',not:true,how:'Not checked: simulator only.'}],
  raw:`Checker’s report · practice route v3 · 17:05
 Road types: 14 roads, 0 motorway, 0 dual carriageway .. pass
 Roundabouts: 2 (Mill Rd 3:20, Ridge Way 11:40) ........ pass
@@ -362,14 +356,14 @@ Not tried: a real car; roadworks after Friday unknown`,
  answers:[{note:'Now goes by Church Lane instead. Adds a minute: 19 in all.'}],
  nar:'A route that plays over time. The car moves along it; the turns follow. In Mark, tap any spot on the route: the mark keeps the place and the minute.'},
 {id:'B',kind:'B',word:'Web page · two widths',goal:'Price page',budget:'about 45 s',
- seal:'<b>Checked by someone else</b> · preview b41, as served, both widths · 15:30',
- seal2:'<b>Checked again by someone else</b> · preview b42, both widths · 16:55',
+ seal:'<b>Checked by someone else</b> · the page as served, at both widths · 15:30',
+ seal2:'<b>Checked again by someone else</b> · the new page, at both widths · 16:55',
  judge:'Does yearly-first feel pushy?',
  done:[{t:'Yearly shows first',tg:'tog',how:'On load, both widths, the yearly price is selected.'},
    {t:'Fits both widths, nothing cut off',tg:'h1',how:'390 and 1280 wide: no sideways scroll, no text cut off, all buttons at least 44 px.'},
    {t:'Start opens checkout',tg:'go',how:'Clicked Start at both widths: the checkout opened with the yearly plan.'},
    {t:'Tax included, as on the shop',tg:'tax',how:'Price matches the shop’s tax-inclusive price list.'},
-   {t:'Paying',not:true,how:'Not proved: the preview takes no card. A real payment is tried after release, with a $1 refunded order.'}],
+   {t:'Paying',not:true,how:'Not checked: the preview takes no card. A real payment is tried after release, with a $1 refunded order.'}],
  raw:`Checker’s report · price page · preview b41 · 15:30
 yearly selected on load (390, 1280) ...... pass
 overflow-x 0px; min target 44px .......... pass
@@ -381,14 +375,14 @@ Not tried: card payment (preview has none)`,
  answers:[{note:'Smaller on the phone: 34 instead of 44.'},{note:'Now reads “Invite your accountant”.'}],
  nar:'The served page at both agreed widths. Use it: switch monthly, press Start. In Mark, tap any element at either width; the mark keeps which width.'},
 {id:'C',kind:'C',word:'Words',goal:'New welcome email',budget:'about 30 s',
- seal:'<b>Checked by someone else</b> · version 3, the exact text · test-sent 11:02',
- seal2:'<b>Checked again by someone else</b> · version 4 · test-sent 12:10',
+ seal:'<b>Checked by someone else</b> · the exact text that will be sent · test-sent 11:02',
+ seal2:'<b>Checked again by someone else</b> · the new text · test-sent 12:10',
  judge:'Does it sound like you?',
  done:[{t:'Under 80 words',tg:'body',how:'33 words.'},
    {t:'First name filled in',tg:'body',how:'From the test customer “Sam”.'},
    {t:'Links work',tg:'links',how:'Help and Unsubscribe opened from both test inboxes.'},
    {t:'Looks right on phone and desk mail',tg:'body',how:'Rendered in two mail apps, phone and desk.'},
-   {t:'Older desk mail programs',not:true,how:'Not proved: not tried in mail programs older than 2022.'}],
+   {t:'Older desk mail programs',not:true,how:'Not checked: not tried in mail programs older than 2022.'}],
  raw:`Checker’s report · welcome email v3 · 11:02
 words 33 (limit 80) ................ pass
 merge field first_name → “Sam” ..... pass
@@ -407,7 +401,7 @@ Not tried: mail programs before 2022`,
    {t:'Clear at the smallest size',tg:'s40',how:'At 40 px the L and the road are still told apart; checked on a phone screen.'},
    {t:'No see-through parts',tg:'icon',how:'No transparency: the store refuses icons with it.'},
    {t:'All six sizes from one drawing',tg:'sizes',how:'Every size made from the same drawing; fingerprints listed.'},
-   {t:'Android',not:true,how:'Not proved: Android icons are not part of this.'}],
+   {t:'Android',not:true,how:'Not checked: Android icons are not part of this.'}],
  raw:`Checker’s report · app icon · 12:15
 colour: 100% of brand pixels #1F5C4A ...... pass
 legibility at 40 px (on device) .......... pass
@@ -432,20 +426,20 @@ undo on shop copy: 12/12 restored ............ pass`,
  reasons:['Wrong price…','Leave this one','Say it…'],
  under:'If you say nothing, nothing changes on 1 December.',okLabel:'Yes, these prices from 1 Dec',
  nar:'Only the changed rows, plus what a customer will see, read back from the live shop. In Mark, tap a row or a single price.'},
-{id:'F',kind:'F',word:'Behind the app · nothing to see',goal:'Move photos to cheaper storage',budget:'about 30 s',
+{id:'F',kind:'F',word:'Behind the app',goal:'Move photos to cheaper storage',budget:'about 30 s',
  seal:'<b>Checked by someone else</b> · the live app, all 48,210 photos · 06:40',
  judge:'',judgeNone:'Nothing here to judge by eye. Only you: is 0.1 s slower worth $148 a month?',
  done:[{t:'Every photo moved',tg:'count',how:'48,210 of 48,210, counted and fingerprinted.'},
    {t:'Same pictures, byte for byte',tg:'p0',how:'300 picked at random: identical before and after.'},
    {t:'Still private',tg:'deny',how:'A student opening another student’s photo is refused, as before.'},
    {t:'Open in under a second',tg:'speed',how:'Median 0.4 s (was 0.3 s); slowest 1.3 s, for photos older than two years.'},
-   {t:'The bill',not:true,how:'Not proved: $64 a month is from the price list. The first real bill comes 1 December.'}],
+   {t:'The bill',not:true,how:'Not checked: $64 a month is from the price list. The first real bill comes 1 December.'}],
  raw:`Checker’s report · photo storage · 06:40
 count: 48,210 / 48,210; fingerprints match ... pass
 300 random: byte-identical ................... pass
 access: other student’s photo → refused ...... pass
 open time: median 0.4 s (was 0.3), max 1.3 s . pass
-Not proved: monthly cost (estimate only)`,
+Not checked: monthly cost (estimate only)`,
  reasons:['Wrong','Too slow','Say it…'],
  under:'The old storage stays, read-only, for 30 days. Deleting it waits for you.',
  nar:'Nothing to look at, so the showing is sameness: the same photos before and after, the same refusal, and the count. Tap any pair or number to mark it.'},
@@ -455,7 +449,7 @@ Not proved: monthly cost (estimate only)`,
  done:[{t:'The same tests ran',tg:'same',how:'1,904 before and after; the two lists are identical.'},
    {t:'Same results',tg:'same',how:'Both ways: 1,904 pass, 0 fail, 0 skipped.'},
    {t:'Faster every time, not once',tg:'runs',how:'Ten runs each way. Slowest new run 6:31; fastest old run 18:40.'},
-   {t:'On the laptop',not:true,how:'Not proved: the laptop was asleep.'}],
+   {t:'On the laptop',not:true,how:'Not checked: the laptop was asleep.'}],
  raw:`Checker’s report · test run speed · 09:10
 test list: 1,904 = 1,904, identical ........ pass
 results: 1904 pass / 0 fail / 0 skip, both .. pass
@@ -469,13 +463,13 @@ Not tried: laptop (asleep)`,
  done:[{t:'Goes at 6 pm the evening before',tg:'s0',how:'Woke at 18:00:00 your time, last night and the night before.'},
    {t:'Late bookings get one at once',tg:'s4',how:'A lesson booked at 21:10 got its text at 21:10:05.'},
    {t:'No one gets two',tg:'s3',how:'The run was repeated: 0 second texts.'},
-   {t:'A failed run is noticed',tg:'s5',how:'Text service switched off for one test run: it tried three times, then the watch knew in 2 minutes.'},
-   {t:'Fewer missed lessons',not:true,how:'Not proved yet: we will know in four weeks.'}],
+   {t:'A failed run is noticed',tg:'s5',how:'Text service switched off for one test run: it tried three times, then raised the alarm within 2 minutes.'},
+   {t:'Fewer missed lessons',not:true,how:'Not checked yet: we will know in four weeks.'}],
  raw:`Checker’s report · reminder job · 18:00
 trigger 18:00:00 Europe/London (2 nights) ..... pass
 late booking 21:10 → text 21:10:05 ........... pass
 rerun: duplicates 0 .......................... pass
-service off: 3 tries, watch alerted 18:32 ..... pass
+service off: 3 tries, alarm raised 18:32 ..... pass
 Not yet: missed-lesson rate (4 weeks)`,
  reasons:['Wrong time','Missing','Twice','Say it…'],
  act:{label:'Switch on for real',said:'Text the 46 students who have a lesson tomorrow, tonight at 18:00, and every evening after.',
@@ -483,26 +477,26 @@ Not yet: missed-lesson rate (4 weeks)`,
    confirm:'Correct. Switch it on.',receipt:'Switched on at 17:12. Tonight’s run: 46 texts at 18:00. Switch off any time.',stop:'Switch it off',stopped:'Switched off at 17:20. No texts will go out. Nothing had been sent yet.'},
  nar:'A job with nothing to look at is shown as one real run, from waking to effect to the next run, plus a planted failure. Switching it on for real is a separate, said-back step.'},
 {id:'I',kind:'I',word:'Release · cannot be undone',goal:'Thursday’s Driving app release',budget:'about 1 min',
- seal:'<b>Exactly this build: 2.4 (214)</b> · fingerprint 7f3a 91c0 · used on two phones by someone else · 10:20',
+ seal:'<b>Exactly the build you saw on Friday</b> · used on two phones by someone else · 10:20',
  judge:'',
  done:[{t:'Installed from the store and used',tg:'used',how:'Two phones: installed from the test channel, signed up, booked, opened photos.'},
    {t:'People on 2.3 keep working',tg:'old',how:'The server answers both versions; a 2.3 phone booked a lesson after the switch.'},
    {t:'Data kept on update',tg:'data',how:'A phone with 2.3 and 40 lessons updated: all 40 still there.'},
-   {t:'iPhone 8 and older',not:true,how:'Not proved: none to test on. 2% of your users.'}],
+   {t:'iPhone 8 and older',not:true,how:'Not checked: none to test on. 2% of your users.'}],
  raw:`Checker’s report · release 2.4 (214) · 10:20
 store test channel install, 2 phones ........ pass
 2.3 client against new server: booking ok .... pass
 update 2.3 → 2.4 with 40 lessons: 40 kept .... pass
 Not tried: iPhone 8 or older (2% of users)`,
- act:{label:'Release',said:'Release Driving app 2.4 (214) to 1 in 10 iPhone users today at 14:00, and to everyone by Monday.',
-   cant:['Once a phone has updated, it keeps 2.4. We can only send a newer version.'],can:['Until Monday I can stop it reaching the other 9 in 10.','Your yes is for build 214 only. If anything in it changes, I ask again.'],
+ act:{label:'Release',said:'Release Driving app 2.4 to 1 in 10 iPhone users today at 14:00, and to everyone by Monday.',
+   cant:['Once a phone has updated, it keeps 2.4. We can only send a newer version.'],can:['Until Monday I can stop it reaching the other 9 in 10.','Your yes is for this exact build only. If anything in it changes, I ask again.'],
    confirm:'Correct. Release it.',receipt:'Released at 14:02. 318 phones have it, no crashes so far. Everyone else gets it by Monday.',stop:'Stop it reaching anyone else',stopped:'Stopped at 14:20. The 318 phones that have 2.4 keep it; nobody else gets it until you say.'},
  nar:'The pause before something that cannot be undone: the exact build, what is in it, to whom, said back in one sentence, confirmed by holding. Afterwards, the receipt and the way to stop the rest.'},
 {id:'J',kind:'J',word:'Proof',goal:'Refunds can’t be paid twice',budget:'about 30 s',
- seal:'<b>Checked by someone else</b> · billing b40, then b41 · 10:15',
+ seal:'<b>Checked by someone else</b> · the old billing, then the fixed one · 10:15',
  judge:'',judgeNone:'Nothing to judge by eye. Only you: refunds made at the bank’s own website are not covered. Accept that?',
- done:[{t:'Fails on the old build',tg:'before',how:'Build b40: pressing Refund twice paid $89 twice.'},
-   {t:'Passes on the new build',tg:'after',how:'Build b41: the second press says “Already refunded”.'},
+ done:[{t:'Fails on the old build',tg:'before',how:'Before the fix: pressing Refund twice paid $89 twice.'},
+   {t:'Passes on the new build',tg:'after',how:'After the fix: the second press says “Already refunded”.'},
    {t:'The check can fail',tg:'planted',how:'A copy built to pay twice was planted: the check caught it.'},
    {t:'Three of four ways covered',tg:'cover',how:'Double press, two staff at once, network retry.'},
    {t:'Refunds at the bank’s website',not:true,how:'Not covered: they never pass through your app.'}],
@@ -536,7 +530,7 @@ Not covered: Colorado city taxes`,
    {t:'The six in use are kept',tg:'keep',how:'Each kept for the reason shown.'},
    {t:'The archive restores',tg:'arch',how:'Restored on a copy: 214 of 214 sign in.'},
    {t:'The app still signs in',tg:'arch',how:'A fresh phone signed up and in at 08:40.'},
-   {t:'Spreadsheets outside the app',not:true,how:'Not proved: I can’t see your accountant’s spreadsheets.'}],
+   {t:'Spreadsheets outside the app',not:true,how:'Not checked: I can’t see your accountant’s spreadsheets.'}],
  raw:`Checker’s report · test account cleanup · 08:20
 214 accounts: 0 payments, all helper-made ..... pass
 6 kept: reviewer ×2, yours, checker ×2, demo .. pass
@@ -635,7 +629,7 @@ function vp(w,scale,vh){const W=w==='phone'?390:1280,H=vh;
 function stageB(){
   const d=desk();let h;
   if(d){const v=S.bView||'both';h=`<div style="text-align:center;margin-bottom:10px"><div class="seg" role="group" aria-label="Which width">${[['both','Side by side'],['phone','Phone, larger'],['desk','Desk, larger']].map(([k,t])=>`<button data-act="bview" data-v="${k}" aria-pressed="${v===k}">${t}</button>`).join('')}</div></div>
-    <div class="webs">${v==='both'?vp('phone',.45,780)+vp('desk',.33,760):v==='phone'?vp('phone',.9,640):vp('desk',.48,820)}</div>`;}
+    <div class="webs">${v==='both'?vp('phone',.5,780)+vp('desk',.46,760):v==='phone'?vp('phone',.95,640):vp('desk',.6,820)}</div>`;}
   else h=`<div style="text-align:center;margin-bottom:10px"><div class="seg" role="group" aria-label="Width">${['phone','desk'].map(w=>`<button data-act="bw" data-v="${w}" aria-pressed="${S.bWidth===w}">${w==='phone'?'Phone width':'Desk width'}</button>`).join('')}</div></div>
     <div class="webs">${S.bWidth==='phone'?vp('phone',.8,700):vp('desk',.26,860)}</div>`;
   return h+`<p class="foot">${S.mode==='look'?'This is the page itself: switch the price, press Start.':'Tap any element, at either width.'}${S.checkout?' <button class="lnk inl" data-act="backpage">Back to the page</button>':''}</p>`;}
@@ -710,7 +704,7 @@ function stageG(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;const X=v=>2
 
 /* H: one real run of a job, plus a planted failure */
 function stageH(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
-  const steps=[['18:00:00','Woke on time, your time zone','good'],['18:00:04','Found 46 lessons tomorrow',''],['18:00:09','Wrote 46 texts',''],['18:00:31','Delivered 46 of 46 to the test phones','good'],['21:10:05','A lesson booked at 21:10 got its text at once','good'],['18:30:00','Text service switched off on purpose: tried 3 times, then the watch knew at 18:32','bad'],['tonight','Next run at 18:00','']];
+  const steps=[['18:00:00','Woke on time, your time zone','good'],['18:00:04','Found 46 lessons tomorrow',''],['18:00:09','Wrote 46 texts',''],['18:00:31','Delivered 46 of 46 to the test phones','good'],['21:10:05','A lesson booked at 21:10 got its text at once','good'],['18:30:00','Text service switched off on purpose: tried 3 times, then raised the alarm at 18:32','bad'],['tonight','Next run at 18:00','']];
   const row=k=>tg('s'+k,'the step “'+steps[k][1]+'”',`<span class="tm">${steps[k][0]}</span><span class="${steps[k][2]}">${steps[k][1]}</span>`,ev==='s'+k?'ev-hl':'','li');
   return `<p class="colh">Last night’s run</p><ol class="trace">${[0,1,2,3,6].map(row).join('')}</ol><p class="colh" style="margin-top:10px">Tried on purpose</p><ol class="trace">${[4,5].map(row).join('')}</ol>
    <div class="sms">${tg('text','the text','<small>Text, as received on the test phone · 18:00</small><div class="bub">Hi Sam, your driving lesson is tomorrow at 9:00 with Priya. Reply C to cancel.</div>','','div')}</div>`;}
@@ -719,20 +713,20 @@ function stageH(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
 function stageI(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
   return `<div class="rel"><h4>What is in it</h4>
    <div class="ln"><span>Faster sign-up</span><span style="color:#555">you saw it Fri</span></div><div class="ln"><span>New app icon</span><span style="color:#555">you saw it Wed</span></div><div class="ln"><span>Photos from cheaper storage</span><span style="color:#555">you saw it Wed</span></div>
-   <h4>The build</h4><div class="ln"><span>Driving app 2.4 (214)</span><span class="fp">7f3a 91c0</span></div>
+   <h4>The build</h4><div class="ln"><span>Driving app 2.4</span><span style="color:#555">exactly the one you saw on Friday</span></div>
    <h4>To whom</h4><div class="ln"><span>iPhone users of the Driving app</span><span>3,180 people</span></div>
    <h4>Tried by the checker</h4>
    <div class="ln ${ev==='used'?'tg ev-hl':''}"><span>Installed from the store, used on two phones</span><span>10:20</span></div>
    <div class="ln ${ev==='old'?'tg ev-hl':''}"><span>A 2.3 phone still books lessons</span><span>10:24</span></div>
    <div class="ln ${ev==='data'?'tg ev-hl':''}"><span>40 lessons kept through the update</span><span>10:31</span></div>
    <h4>Cannot be undone</h4><div class="ln"><span>Once a phone has updated, it keeps 2.4. Only a newer version can replace it.</span></div>
-   <h4>Can be</h4><div class="ln"><span>${S.aud==='all'?'Nothing: everyone gets it at once.':'Until Monday I can stop it reaching the other 9 in 10.'}</span></div><div class="ln"><span>Your yes is for build 214 only. If anything in it changes, I ask again.</span></div></div>`;}
+   <h4>Can be</h4><div class="ln"><span>${S.aud==='all'?'Nothing: everyone gets it at once.':'Until Monday I can stop it reaching the other 9 in 10.'}</span></div><div class="ln"><span>Your yes is for this exact build only. If anything in it changes, I ask again.</span></div></div>`;}
 
 /* J: the failing case, then the same case passing */
 function stageJ(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
   const col=(id,h,rows,cls)=>`<div class="${ev===id?'tg ev-hl':''}"><p class="colh">${h}</p><ol class="trace">${rows.map((r,k)=>tg(id+k,'“'+r[1]+'”',`<span class="tm">${r[0]}</span><span class="${r[2]||''}">${r[1]}</span>`,'','li')).join('')}</ol></div>`;
   return `<p class="foot" style="margin:0 0 8px">Staff press Refund twice, half a second apart, for an $89 lesson.</p>
-   <div class="cols">${col('before','Old build b40',[['0.0 s','Refund $89 paid'],['0.5 s','Refund $89 paid again','bad']])}${col('after','New build b41',[['0.0 s','Refund $89 paid'],['0.5 s','“Already refunded”','good']])}</div>
+   <div class="cols">${col('before','Before the fix',[['0.0 s','Refund $89 paid'],['0.5 s','Refund $89 paid again','bad']])}${col('after','After the fix',[['0.0 s','Refund $89 paid'],['0.5 s','“Already refunded”','good']])}</div>
    <ol class="trace" style="margin-top:10px">${tg('planted','the planted failure','<span class="tm">check</span><span class="good">A copy built to pay twice was planted. The check caught it.</span>',ev==='planted'?'ev-hl':'','li')}
    ${tg('cover','what is covered','<span class="tm">covers</span><span>Double press · two staff at once · network retry</span>',ev==='cover'?'ev-hl':'','li')}
    ${tg('uncov','what is not covered','<span class="tm">not</span><span class="bad">Refunds made at the bank’s own website</span>','','li')}</ol>`;}
@@ -775,19 +769,20 @@ function rail(){const s=sh();
   if(s.act&&(S.mode==='act'||S.mode==='done'))return h+actRail();
   if(desk()&&(s.judge||s.judgeNone))h+=`<div class="r-sec"><p class="r-h">Yours to judge</p><p class="judge ${s.judge?'':'none'}">${s.judge||s.judgeNone}</p></div>`;
   if(s.fork)h+=forkHTML();
-  h+=`<div class="r-sec"><p class="r-h">Proved to work · by someone else</p>`;
-  if(desk()){h+=`<ul class="plist">${DN.map((d,k)=>`<li><span class="n ${d.not?'not':''}">${k+1}</span><button data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}">${d.not?'<span style="color:var(--ink2)">Not proved: </span>':''}${d.t}</button>${d.at!==undefined?`<span class="at">${mmss(d.at)}</span>`:''}</li>`).join('')}</ul>`;}
-  else{h+=`<div class="dots">${DN.map((d,k)=>`<button class="dot ${d.not?'not':''}" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}" aria-label="${d.not?'Not proved: ':''}${esc(d.t)}">${k+1}</button>`).join('')}</div>
-    <p class="sumline">${proved.length} proved${not.length?' · not proved: '+not.map(d=>lc(d.t)).join(', '):''}</p>`;}
-  if(S.proof!==null){const d=DN[S.proof];h+=`<div class="pdetail"><b>${S.proof+1}. ${d.not?'Not proved: ':''}${d.t}</b><br>${d.how}
+  const all=not.length?`${NUM[proved.length]} pass`:`all ${NUM[proved.length]} pass`; /* the gap is said once, above the yes */
+  h+=`<div class="r-sec"><p class="r-h">Done lines · ${all}</p>`;
+  if(desk()){h+=`<ul class="plist">${DN.map((d,k)=>d.not?'':`<li><button class="prow" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}"><span class="n">${k+1}</span><span class="tx">${d.t}</span>${d.at!==undefined?`<span class="at">${mmss(d.at)}</span>`:''}</button></li>`).join('')}</ul>`;}
+  else{h+=`<div class="dots">${DN.map((d,k)=>d.not?'':`<button class="dot" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}" aria-label="${esc(d.t)}">${k+1}</button>`).join('')}</div>
+    <p class="sumline">Tap a number to see where it was checked.</p>`;}
+  if(S.proof!==null){const d=DN[S.proof];h+=`<div class="pdetail"><b>${d.not?'Not checked: ':(S.proof+1)+'. '}${d.t}</b><br>${d.how}
     ${S.proof===0?`<details class="raw"><summary>The checker’s own words</summary><pre>${esc(s.raw)}</pre></details>`:''}</div>`;}
   h+=`</div>`;
   if(s.hand&&S.mode==='look')h+=`<div class="r-sec"><button class="lnk" data-act="hand" aria-expanded="${S.hand}">Try it in your hand</button>${S.hand?`<p class="hint" style="margin:0">${s.hand}</p>`:''}</div>`;
   if(S.marks.length&&S.mode!=='back')h+=`<div class="r-sec"><p class="r-h">Your marks</p>${marksList()}</div>`;
   if(s.under&&S.mode==='look')h+=`<p class="hint">${s.under}</p>`;
   return h;}
-function marksList(){return `<ul class="marks">${S.marks.map((m,k)=>`<li><span class="pin">${k+1}</span><span><b>${m.why==='Say it…'?esc(m.said):m.why+(m.said?': '+esc(m.said):'')}</b><span class="anc">on ${esc(m.label)}${m.at!==undefined?' at '+mmss(m.at):''}${m.w?' · '+m.w+' width':''} · ${verLabel()}</span></span>${S.mode==='mark'?`<button class="lnk inl" data-act="unmark" data-n="${k}" aria-label="Take back mark ${k+1}">Take back</button>`:''}</li>`).join('')}</ul>`;}
-function verLabel(){return {A1:'build 214',A2:'route v3',B:'preview b41',C:'version 3'}[sh().id]||'as checked';}
+function marksList(){return `<ul class="marks">${S.marks.map((m,k)=>`<li><span class="pin">${k+1}</span><span><b>${m.why==='Say it…'?esc(m.said):m.why+(m.said?': '+esc(m.said):'')}</b><span class="anc">on ${esc(m.label)}${m.at!==undefined?' at '+mmss(m.at):''}${m.w?' · '+m.w+' width':''}</span></span>${S.mode==='mark'?`<button class="lnk inl" data-act="unmark" data-n="${k}" aria-label="Take back mark ${k+1}">Take back</button>`:''}</li>`).join('')}</ul>`;}
+function verLabel(){return 'the first version';}
 function backBand(){const s=sh(),n=S.marks.length;
   return `<div class="backband"><span class="t">Your ${NUM[n]} mark${n>1?'s':''}: ${n>1?'all':''} dealt with</span>
    <ul class="marks" style="margin-top:6px">${S.marks.map((m,k)=>`<li><span class="pin done">${k+1} ✓</span><span>${s.answers[k].note}${m.said?`<span class="anc">You said: ${esc(m.said)}</span>`:''}
@@ -798,11 +793,11 @@ function forkHTML(){const f=sh().fork;
    <p class="wait">${f.wait}</p></div>`;}
 function actRail(){const a=sh().act;
   if(S.mode==='done')return `<div class="r-sec"><p class="r-h">Done</p><div class="receipt">${S.stopped?a.stopped:a.receipt}</div>${S.stopped?'':`<div class="bar" style="padding-left:0;padding-right:0;border:0"><button class="b" data-act="stopact">${a.stop}</button></div>`}</div>`;
-  const said=sh().id==='I'&&S.aud==='all'?'Release Driving app 2.4 (214) to all 3,180 iPhone users today at 14:00.':a.said;
+  const said=sh().id==='I'&&S.aud==='all'?'Release Driving app 2.4 to all 3,180 iPhone users today at 14:00.':a.said;
   return `<div class="r-sec"><p class="r-h">Before this goes out · said back</p><p class="saidback">${said}</p>
    ${sh().id==='I'?`<label class="opt"><input type="radio" name="aud" value="tenth" data-act="aud" ${S.aud!=='all'?'checked':''}> <span><b>1 in 10 today, everyone by Monday</b><br><span class="hint">I’d say this: it can be stopped until Monday.</span></span></label><label class="opt"><input type="radio" name="aud" value="all" data-act="aud" ${S.aud==='all'?'checked':''}> <span><b>Everyone today</b><br><span class="hint">3,180 people at once; nothing to stop.</span></span></label>`
      :`<p class="r-h" style="margin-top:12px">Cannot be undone</p><ul class="cant">${a.cant.map(x=>`<li>${x}</li>`).join('')}</ul><p class="r-h" style="margin-top:10px">Can be</p><ul class="cant">${a.can.map(x=>`<li>${x}</li>`).join('')}</ul>`}
-   ${sh().done.some(d=>d.not)?`<p class="hint" style="margin-top:8px">Still not proved: ${sh().done.filter(d=>d.not).map(d=>lc(d.t)).join(', ')}.</p>`:''}</div>`;}
+   ${sh().done.some(d=>d.not)?`<p class="hint" style="margin-top:8px">Still not checked: ${sh().done.filter(d=>d.not).map(d=>lc(d.t)).join(', ')}.</p>`:''}</div>`;}
 
 /* ======================= the answer bar ======================= */
 function bar(){const s=sh();
@@ -815,20 +810,20 @@ function bar(){const s=sh();
   if(s.act&&S.mode==='act')return `<div class="bar"><button class="hold" data-act="hold" data-k="hold" aria-label="${esc(s.act.confirm)} Press and hold"><span class="fill" style="width:${S.hold*100}%"></span><span>${s.act.confirm}</span> <small style="position:relative;font-weight:500;opacity:.85">· press and hold</small></button><button class="b" data-act="look" style="flex:1">Not yet</button></div>`;
   if(S.mode==='done')return '';
   if(s.id==='I')return `<div class="bar"><button class="b red" data-act="toact" style="flex:1">Release…</button><button class="b" data-act="mark">Something’s wrong</button></div>`;
-  const ok=!S.changed;const ver={A1:S.mode==='back'?'build 215':'build 214',A2:S.mode==='back'?'route v4':'route v3',B:S.mode==='back'?'b42':'b41',C:S.mode==='back'?'version 4':'version 3'}[s.id];
-  const unp=s.done.filter(d=>d.not);
+  const ok=!S.changed,DN=doneOf();
+  const unp=DN.map((d,k)=>[d,k]).filter(([d])=>d.not);
   const dk=desk();
-  return `<div class="bar ${dk?'stack':''}">${dk?'':`<button class="b" data-act="mark" data-k="mark">Mark</button>`}
-   <button class="b pri ${dk?'':'grow'}" data-act="accept" ${ok?'':'disabled'}>${ok?(s.okLabel||'Looks right'):'Can’t accept: changed after the check'}${ver&&ok&&dk?' <small>· '+ver+'</small>':''}</button>
+  const cav=unp.length&&ok?unp.map(([d,k])=>`<button class="caveat" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}"><b>Not checked: ${lc(d.t)}.</b> Your yes does not cover it.</button>`).join(''):'';
+  return `<div class="bar ${dk?'stack':''}">${cav}${dk?'':`<button class="b" data-act="mark" data-k="mark">Mark</button>`}
+   <button class="b pri ${dk?'':'grow'}" data-act="accept" ${ok?'':'disabled'}>${ok?(s.okLabel||'Looks right'):'Can’t accept: changed after the check'}</button>
    ${dk?`<button class="b" data-act="mark" data-k="mark">Mark what’s wrong</button>`:''}
-   ${s.act?`<button class="b red" data-act="toact">${s.act.label}…</button>`:''}
-   ${unp.length&&ok?`<p class="under">Your yes does not cover: ${unp.map(d=>lc(d.t)).join(', ')}.</p>`:''}</div>`;}
+   ${s.act?`<button class="b red ${dk?'':'full'}" data-act="toact">${s.act.label}…</button>`:''}</div>`;}
 
 /* ======================= render ======================= */
 function render(){
   const s=sh(),d=desk(),ae=document.activeElement,keep=S.focus||(ae&&ae.dataset&&ae.dataset.k);
-  const sealTxt=S.changed?`Changed after it was checked: build 216 arrived at 16:31. Checking it again, about 10 minutes. Until then there is nothing to accept.`:(S.mode==='back'&&s.seal2?s.seal2:s.seal);
-  const head=`<div class="sh-head"><div class="sh-top"><span>${s.word}</span><span>${S.mode==='back'?'<span class="ver">Second version · </span>':''}${s.budget}</span></div>
+  const sealTxt=S.changed?`Changed after it was checked: a newer build arrived at 16:31. Checking it again, about 10 minutes. Until then there is nothing to accept.`:(S.mode==='back'&&s.seal2?s.seal2:s.seal);
+  const head=`<div class="sh-head"><div class="sh-top"><span>${S.mode==='back'?'<span class="ver">Second version</span>':s.word}</span><span>${s.budget}</span></div>
     <h2 class="sh-goal" tabindex="-1" data-k="goal">${s.goal}</h2><div class="seal ${S.changed?'broken':''}"><span class="stamp" title="What you see is what was checked" aria-hidden="true"></span><span>${sealTxt}</span></div>
     ${!d&&(s.judge||s.judgeNone)&&!(s.act&&(S.mode==='act'||S.mode==='done'))?`<p class="judge ph ${s.judge?'':'none'}"><span class="r-h">Yours to judge</span>${s.judge||s.judgeNone}</p>`:''}</div>`;
   const stage=`<div class="stage ${S.mode==='mark'?'marking':''}" id="stage">${S.mode==='mark'?`<span class="stage-hint">${s.dur?'Frozen at '+mmss(S.t)+'. ':''}Tap what’s wrong.</span>`:''}${S.compare!==null&&S.mode==='back'?`<span class="ribbon">Before · ${verLabel()}</span>`:''}<div id="thing">${STAGE[s.id]()}</div>${s.dur?scrub():''}</div>`;
@@ -869,7 +864,7 @@ function act(a,d,el,ev){const s=sh();
   case 'sendback':S.scope=true;break;
   case 'send':S.mode='sent';S.scope=false;break;
   case 'accept':S.mode='accepted';app.innerHTML=`<article class="sheet"><div class="sh-head"><div class="sh-top"><span>${s.word}</span></div><h2 class="sh-goal">${s.goal}</h2>
-    <div class="seal"><span class="stamp"></span><span><b>You said it looks right</b> (${verLabel()}). That is your judgement; the proof stays the checker’s. <button class="lnk inl" data-act="look">Take back</button></span></div></div></article>`;return;
+    <div class="seal"><span class="stamp"></span><span><b>You said it looks right.</b> That is your judgement of this exact version; the checking stays the checker’s. <button class="lnk inl" data-act="look">Take back</button></span></div></div></article>`;return;
   case 'toact':S.mode='act';S.hold=0;break;
   case 'stopact':S.stopped=true;break;
   case 'fork':S.fork=d.v||null;break;
@@ -951,6 +946,13 @@ function runCheck(){
         if(m==='changed'&&!sheet.querySelector('.seal.broken'))errs.push('seal not broken');
         if(m==='changed'&&!sheet.querySelector('[data-act=accept][disabled]')&&s.id!=='I')errs.push('accept still possible after change');
         if(m==='proof'&&!sheet.querySelector('.pdetail'))errs.push('proof line does not open');
+        /* guard: no word of the method on his screen */
+        const bad=sheet.innerText.match(/\b(par|cycles?|gate|counterpart|ledger|sittings?|watcher|forks?|slice|backbrief)\b|\bthe watch\b/gi);
+        if(bad)errs.push('method word on screen: '+[...new Set(bad.map(x=>x.toLowerCase()))].join(', '));
+        /* guard: every control at least 44 by 44 px. Exempt, on purpose: the parts of the thing itself he points at (words, map, page elements) */
+        const small=[...sheet.querySelectorAll('button,[role=button],input,select,summary,label.opt,a')].filter(el=>el.type!=='radio'&&!el.closest('[data-tg],[data-w],[data-map],[data-pic],.vp'))
+          .filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&(r.width<43.5||r.height<43.5);});
+        if(small.length)errs.push('control under 44 px: '+small.slice(0,4).map(el=>((el.getAttribute('aria-label')||el.textContent||el.tagName).trim().slice(0,28))+' '+Math.round(el.getBoundingClientRect().width)+'×'+Math.round(el.getBoundingClientRect().height)).join(' | '));
         if(m==='back'||m==='act')extra.push(s.id+' '+m+' '+words(sheet));
         if(m==='look'){const all=words(sheet);const avail=all+s.done.reduce((a,d)=>a+d.how.split(/\s+/).length,0)+s.raw.split(/\s+/).length;tally.push([s.id,all,avail]);}
       }

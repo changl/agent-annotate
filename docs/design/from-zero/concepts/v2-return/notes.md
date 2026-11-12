@@ -2,7 +2,7 @@
 
 **What I built.** One component, nine moments, 26 states, in `index.html`. Every state is two facing pages: on the left what is so, on the right what he can do about it. On the phone they stack, and nothing is pinned over the content, so an answer cannot be reached before the thing it answers. `#check` walks every state and 15 side paths and reports on screen. It also fails on any word of the method, any control under 44 px, any sideways scroll, anything that waits only to be agreed, and "nothing needs you" shown while work is unseen or waiting. `#count` counts. `#m=3&s=2&t=dark` opens one state.
 
-**Revision 3 of the method is folded in.** Work starts on what I heard and does not wait for him. So after five days nothing waits to be agreed: what waits is a look, a choice inside a look, or a "go?" before something that cannot be undone or where I am in real doubt. What went ahead is told in three kinds, each with its own way back: choices (Undo), finished results that had nothing for him to judge (Undo, with who checked them and what is not proved), and work begun on what I heard that he has not read (every line still open to "this is wrong", with what a late correction costs).
+**Revision 3 of the method is folded in.** Work starts on what I heard and does not wait for him. So after five days nothing waits to be agreed: what waits is a look, a choice inside a look, or a "go?" before something that cannot be undone or where I am in real doubt. What went ahead is told in three kinds, each with its own way back: choices (Undo), finished results that had nothing for him to judge (Undo, with who checked them and what was not checked), and work begun on what I heard that he has not read (every line still open to "this is wrong", with what a late correction costs).
 
 | Moment | What he gets | What it needs from its host |
 |---|---|---|
@@ -14,12 +14,12 @@
 | 6 Trust for a kind | The offer, what it rests on, its terms; the one in five as a real look; the loss after a miss, with everything that kind did unshown read again. | A showing that can be marked "the one in five". |
 | 7 The one interruption | A lock-screen card with the act, a refusal and "why now". If missed: two tries, then a plain statement of the loss. Afterwards an account, and one question: was it right to interrupt you? | The lock screen. A second device for the second try. |
 | 8 I cannot see the work | Whole: the phone says so by itself; what is safe, what is not known, what happens next, two ways round. Half: "I cannot vouch for 9 of your 40", the nine hatched. The way back from each says what was found. | Goal lines that can take "not seen since". A lock-screen line that can change on a timer set when it was last refreshed. |
-| 9 Stop | On every goal, every project, and at the foot. One touch; then what it did, what was already out of hand, what is left half-way, and "change what I heard" line by line. Stop while blind says which computers answered. | A stop control on its goal lines and its foot, wired round the counterpart. |
+| 9 Stop | On every goal, every project, and at the foot (beside the list on the desk, so "stop everything" is in view at once). One touch; then what it did, what was already out of hand, what is left half-way, and "change what I heard" line by line. Stop while blind says which computers answered. | A stop control on its goal lines and its foot, wired round the counterpart. |
 
-**Taken from each piece.** Sitting: the oversized return split into "now" and dated remainders, with minutes; his words in serif and mine in sans. Letter: the phone working out staleness by itself; a refusal on the interruption; the checker's doubt in the checker's words; take back beside the thing. Picture: doubt marked only on the goals it touches, hatched; a moved date struck through on its own goal; two facing pages on the desk; rules he gave kept apart from guesses. Thread: undo on every receipt and on every choice made for him; the record that does not pass through me; the consequence written inside the answer. v2-showing: the seal that names exactly what was checked, by whom and when; done lines as dots, dashed for not proved; "your yes does not cover"; the act said back before it goes. v2-sitting: told, not asked, with a random one kept as a real look; the say-back as something told, open line by line.
+**Taken from each piece.** Sitting: the oversized return split into "now" and dated remainders, with minutes; his words in serif and mine in sans. Letter: the phone working out staleness by itself; a refusal on the interruption; the checker's doubt in the checker's words; take back beside the thing. Picture: doubt marked only on the goals it touches, hatched; a moved date struck through on its own goal; two facing pages on the desk; rules he gave kept apart from guesses. Thread: undo on every receipt and on every choice made for him; the record that does not pass through me; the consequence written inside the answer. v2-showing: one line that names exactly what was checked, by whom and when; the act said back before it goes. v2-sitting: told, not asked, with a random one kept as a real look; the say-back as something told, open line by line. After the craft critique: one verb, "checked"; "Not checked: …" said once and before the answer, with no dots to decode and no caveat under the buttons; "needs your go" for "Go?"; nothing fades in; `&nonote` hides the prototype bar.
 
 **The three problems.**
-1. *Showing a thing that moves*: not answered here; it was not my part. The joints are ready for v2-showing's sheet: every look in my lists is one of its showings, my results carry its seal and its "not proved", and my trace ties a wrong result to what was built on it and to what already left, which that sheet leaves to its host.
+1. *Showing a thing that moves*: not answered here; it was not my part. The joints are ready for v2-showing's sheet: every look in my lists is one of its showings, my results carry its check line and what was not checked, and my trace ties a wrong result to what was built on it and to what already left, which that sheet leaves to its host.
 2. *Coming back*: answered for five days away, a thin week, a bad day, a wrong rule and a lost grant. Each is a bounded page that ends in one or two prepared choices. He is never asked to keep the rule book: rules lapse unused, and a rule used outside the case it came from comes to him with its uses already sorted.
 3. *Rhythm*: partly. There are no fixed hours. "Goes ahead" is a clock time. "Cannot wait" means cannot wait until the day I next expect him, which is learnt from him and shown. An interruption is tried twice, on two devices, then stops and is accounted for. Pulling one thing early is drawn only as moving it into "now".
 
@@ -30,14 +30,14 @@
 | Places to look | 1: the host's doorway. Its first sentence is on the lock screen. | the same |
 | Interruptions | 1 (the sign-in), tried at most twice | |
 | Held in his head | 0 things. 0 fixed hours. One soft habit: opening it at all. | |
-| Words he must read to act | 1,497 (return 318, thin week 154, bad day 432, wrong rule 275, trust 298, interruption 20) | 707 |
-| Words merely available | 2,509, with every fold, answer, say-back and receipt | 1,840 (the allowed page alone is 889) |
+| Words he must read to act | 1,520 (return 322, thin week 154, bad day 432, wrong rule 275, trust 317, interruption 20) | 734 |
+| Words merely available | 2,471, with every fold, answer, say-back and receipt | 1,844 (the allowed page alone is 889) |
 | Typed / spoken | 0 / 0 ("stop everything" is 2 if he says it) | |
 | Taps | 16 | 2 |
 | Decisions | 11 only his; 1 acceptance of what a check had passed, the one in five | 1 only his |
 | Minutes | about 14 (200 words a minute, 3 s a tap, 30 s a decision) | about 4 |
 
-Off the path: the allowed page, the missed interruption and its account, the five blind states, the five stop states. Revision 3 added 37 must-read words to the return and removed one acceptance.
+Off the path: the allowed page, the missed interruption and its account, the five blind states, the five stop states. Revision 3 added about 40 must-read words to the return and removed one acceptance.
 
 **Three weakest points.**
 1. The return is bounded for each opening, not in total. Had all forty goals finished while he was away, the same page would offer eight openings. It names the debt and stops it growing. It cannot shrink it.

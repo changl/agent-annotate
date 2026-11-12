@@ -69,6 +69,12 @@ html[data-theme=light] .btn.warn{color:#fff}
 .card.buzz{border:2px solid #b5651d}
 .card .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .card .btn{min-height:44px;font-size:15px}
+.card .warnhead{color:#8A5300;font-weight:700;letter-spacing:.04em}
+.card .looknow{color:#2340A8;font-weight:600;margin-top:6px}
+html[data-theme=dark] .card{background:rgba(30,32,36,.94);color:#ECE8DF;box-shadow:0 0 0 1px #34363d,0 10px 30px rgba(0,0,0,.4)}
+html[data-theme=dark] .card .t2{color:#B7B2A7} html[data-theme=dark] .card .age{color:#9B968B}
+html[data-theme=dark] .card.blind{background:rgba(45,38,23,.96)} html[data-theme=dark] .card.buzz{border-color:#E7B566}
+html[data-theme=dark] .card .warnhead{color:#E7B566} html[data-theme=dark] .card .looknow{color:#A9B8FF}
 .lockmic{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:8px;font:500 14px var(--sans);opacity:.92;background:none;border:0;color:inherit}
 .lockmic i{width:66px;height:66px;border-radius:33px;background:rgba(255,255,255,.14);display:grid;place-items:center}
 .heardcard{border-left:4px solid #2340A8}
@@ -78,7 +84,7 @@ html[data-theme=light] .btn.warn{color:#fff}
 /* the sheet */
 .wrap{max-width:640px;margin:0 auto;min-height:calc(100vh - var(--bar));background:var(--paper)}
 .sheet{padding:18px 20px 150px}
-.head .lab{display:flex;justify-content:space-between;gap:8px}
+.head .lab{display:flex;justify-content:space-between;gap:8px;text-transform:none;letter-spacing:0;font:italic 15px/1.3 var(--serif)}
 .head h1{font:500 29px/1.15 var(--serif);margin:6px 0 4px}
 .head .sub{color:var(--ink2);margin:0 0 12px}
 .told{margin:4px 0 14px;padding:0;list-style:none}
@@ -97,7 +103,9 @@ html[data-theme=light] .btn.warn{color:#fff}
 .allowd p{margin:2px 0;font-size:15.5px}
 .allowd .lab{display:inline-block;min-width:78px}
 .proj h3 .stopl{font:600 13px var(--sans);letter-spacing:0;text-transform:none;margin-left:8px}
-.seal{font:500 14px/1.4 var(--sans);color:var(--ink2);margin:0 0 8px}
+.seal{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;background:none;border:0;padding:6px 0;min-height:44px;font:500 15px/1.4 var(--sans);color:var(--ink2);margin:0 0 4px}
+.seal .what{font-size:14px;color:var(--ink2)}
+.seal .sealmark{margin-top:2px;flex:none}
 .seal b{color:var(--ink)} .sealmark{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:9px;border:1.5px solid var(--ink2);font-size:11px;vertical-align:1px}
 .dots{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 0 4px;border-top:1px solid var(--rule)}
 .dots .lab{margin-right:4px}
@@ -208,6 +216,7 @@ html[data-theme=light] .btn.warn{color:#fff}
 html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 .tag{display:flex;justify-content:space-between;gap:8px;font:500 12px/1.3 var(--sans);color:#55555b;padding:8px 12px;background:#f6f6f3;border-bottom:1px solid #ececec}
 .marking .tag{background:#FFF3CF}
+.tag .hint{font:italic 600 14.5px/1.3 var(--serif);color:#2340A8}
 .marking [data-b]{cursor:pointer;outline:1.5px dashed rgba(35,64,168,.45);outline-offset:-2px;border-radius:5px}
 .pinarea{position:relative}
 .marking .pinarea{cursor:crosshair}
@@ -301,6 +310,7 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 .heard{font:italic 20px/1.4 var(--serif);color:var(--blue);margin:4px 0 10px}
 .bigmic{width:80px;height:80px;border-radius:40px;border:0;background:var(--blue);color:var(--on-blue);display:grid;place-items:center;margin:8px auto;position:relative}
 .bigmic.on::before{content:"";position:absolute;inset:-9px;border-radius:50px;border:2px solid var(--blue);animation:pulse 1.2s ease-out infinite}
+.inote{font:italic 16px/1.4 var(--serif);color:var(--blue);margin:6px 0 8px;padding-left:10px;border-left:2px solid var(--blue)}
 .toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:70;display:flex;gap:10px;align-items:center;background:var(--ink);color:var(--paper);border-radius:22px;padding:6px 6px 6px 16px;font:500 14.5px/1.3 var(--sans);width:max-content;max-width:calc(100% - 32px);animation:toast 6s var(--ease) both}
 .toast button{min-height:44px;border-radius:18px;border:1px solid currentColor;background:none;color:inherit;padding:0 12px;font:600 14px var(--sans)}
 
@@ -348,7 +358,11 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
   .lpage .sheet{padding:22px 26px 0}
   .lpage{position:sticky;top:calc(var(--bar) + 22px);max-height:calc(100vh - var(--bar) - 44px);overflow:auto}
   .rpage h1{font:500 30px/1.15 var(--serif);margin:0 0 6px}
-  .rpage{position:sticky;top:calc(var(--bar) + 22px);padding:20px 24px;min-height:520px;max-height:calc(100vh - var(--bar) - 44px);overflow:auto}
+  .rpage{position:sticky;top:calc(var(--bar) + 22px);padding:20px 24px;height:calc(100vh - var(--bar) - 44px);overflow:auto}
+  .spread.solo{grid-template-columns:minmax(0,560px);justify-content:center}
+  .rpage .phone{width:280px;min-height:500px}
+  .rpage .mail{font-size:16.5px}
+  .lpage .sheet .bar:not(.inline){background:var(--paper);border-top:1px solid var(--rule);margin-top:8px}
   .rpage .thing{margin:0}
   .bar{position:sticky;bottom:0;background:linear-gradient(to top,var(--paper) 75%,transparent);padding:14px 0 4px;justify-content:flex-start}
   .bar .btn{flex:0 0 auto;min-width:140px;padding:0 18px}
@@ -411,16 +425,16 @@ I.remindersSay = {goal:'Reminder texts', said:['Today 12:40, walking','The remin
 
 /* what reaches his sittings: looks, his decisions inside the showing, and the rare go */
 I.invoiceLook = {kind:'look', verb:'Look', gid:'invoice', mins:3, judge:'Is this the file your accountant expects?', thing:'records',
-  proof:{seal:'the October file, made 07:02', at:'07:12', lines:[['One file a month, every invoice in it','r0'],['Totals match the billing screen to the cent','r2'],['Opens in Excel and Numbers'],['Refunds are negative lines','r3'],['Tax has its own column'],['A year exports in 6 seconds']], un:['invoices across two months'], words:'I had October only. No invoice spanned two months, so that case was not tried.'},
+  proof:{seal:'the October file', at:'07:12', lines:[['One file a month, every invoice in it','r0'],['Totals match the billing screen to the cent','r2'],['Opens in Excel and Numbers'],['Refunds are negative lines','r3'],['Tax has its own column'],['A year exports in 6 seconds']], un:['invoices across two months'], words:'I had October only. No invoice spanned two months, so that case was not tried.'},
   assumed:'your time zone; one file a month.', acceptLabel:'Yes, this file', rcpt:'Accepted.', dec:'his'};
 I.priceDecide = {kind:'decide', verb:'Decide', gid:'price', mins:1, judge:'Which price do visitors see first?', priceCards:true,
   choices:[{opts:['Yearly first','Monthly first'], rec:0, why:'I’d say yearly: 7 in 10 customers pay yearly.', dflt:['go','after your 5 pm look','you left the page’s layout to me']}],
   rcpt:'Yearly first.', dec:'his'};
-I.signupSlice = {kind:'decide', verb:'Decide', gid:'signup', mins:2, sub:'First slice: the first two screens work.', judge:'Two choices are yours. Which way should each go?', thing:'slice',
+I.signupSlice = {kind:'decide', verb:'Decide', gid:'signup', mins:2, sub:'The first two screens work. The third waits for you.', judge:'Two choices are yours.', thing:'slice',
   proof:{seal:'build 4.10 on an iPhone 13', at:'16:50', lines:[['Name and phone on one screen'],['Nothing asked twice']]},
   choices:[
-   {q:'The licence number', alts:[['At sign-up','<b>Your details</b><i>Name</i><i>Licence number</i>'],['Before the first lesson','<b>Before your first lesson</b><i>Licence number</i><small>asked when booking</small>']], rec:1, why:'Asking at sign-up is what makes it slow.', dflt:['wait','','it changes what instructors check']},
-   {q:'Under-18s', alts:[['Parent’s email required','<b>Under 18?</b><i>Parent’s email</i>'],['Not asked','<b>Under 18?</b><small>no question</small>']], rec:0, why:'Your terms promise a parent’s consent.', dflt:['wait','','it’s a promise to families']}],
+   {q:'The licence number', opts:['At sign-up','Before the first lesson'], rec:1, why:'Asking at sign-up is what makes it slow.', dflt:['wait','','it changes what instructors check']},
+   {q:'Under-18s', opts:['Parent’s email required','Not asked'], rec:0, why:'Your terms promise a parent’s consent.', dflt:['wait','','it’s a promise to families']}],
   settled:true, rcpt:'Licence before the first lesson; parent’s email required.', dec:'his'};
 I.emailLook = {kind:'look', verb:'Look', gid:'welcome', mins:3, judge:'Is this how you greet a new customer?', sub:'Second sketch', thing:'email', ver:2,
   proof:{seal:'sketch 2', at:'16:40', lines:[['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]},
@@ -440,12 +454,12 @@ I.wordBook = {kind:'look', verb:'Look', gid:'release', mins:.5, judge:'Is the ne
 I.emailV3 = {kind:'look', verb:'Look', gid:'welcome', mins:1, judge:'Did your marks land?', sub:'Second version', thing:'email', ver:3,
   proof:{seal:'sketch 3', at:'07:30', lines:[['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]}, chips:['Too long','Wrong tone','Cut this','Wrong fact'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.invoiceMiss = {kind:'act', verb:'My miss', vcls:'red', gid:'invoice', mins:3, judge:'How should it be put right?', thing:'recordsFixed', miss:true,
-  proof:{seal:'the October file, fixed 15:58', at:'16:05', lines:[['No invoice in two files (new)'],['Tried on 37 two-month invoices from last year'],['The six earlier checks, run again']]},
+  proof:{seal:'the fixed October file', at:'16:05', lines:[['No invoice in two files (new)'],['Tried on 37 two-month invoices from last year'],['The six earlier checks, run again']]},
   aud:{opts:['Send the fixed pack with this note','Replace it; I’ll tell her myself'], rec:0, why:'A note to a real person can’t be unsent.'},
   said:o=>o===1?'Replace the October file and the pack. Nothing is sent in your name.':'Send your accountant the fixed pack: “October had four invoices counted twice. The corrected pack is attached: $37,232.60, not $38,412.60. Nothing else changed.”',
   holdLabel:'Correct. Do it.', rcpt:'Fixed pack sent with your note.', rcpt2:'Replaced. Nothing sent in your name.', dec:'his'};
 I.release = {kind:'act', verb:'Can’t be undone', vcls:'amber', gid:'release', mins:2, judge:'Who should get it, and when?', thing:'release',
-  proof:{seal:'build 4.11, installed and used on 3 phones', at:'16:20', lines:[['Installs over 4.10, data kept'],['Sign-in, booking and photos used on 3 real phones'],['Crash fixed on Android 11']], un:['tablets']},
+  proof:{seal:'build 4.11, used on 3 real phones', at:'16:20', lines:[['Installs over 4.10, data kept'],['Sign-in, booking and photos used on 3 real phones'],['Crash fixed on Android 11']], un:['tablets']},
   aud:{opts:['1 in 10 today, everyone by Monday','Everyone today'], rec:0, why:'I’d say 1 in 10 first: it can be stopped until Monday.'},
   said:o=>o===1?'Release Driving app 4.11 to all 3,400 students today.':'Release Driving app 4.11 to 1 in 10 students today, and to everyone by Monday.',
   holdLabel:'Correct. Release it.', rcpt:'Released 4.11 to 1 in 10 at 17:04. <button class="link inl" data-act="undo1">Stop the rest</button>', rcpt2:'Released 4.11 to everyone at 17:04. No undo.', dec:'his'};
@@ -457,9 +471,9 @@ I.signupJourney = {kind:'look', verb:'Look', gid:'signup', mins:3, judge:'Does s
   picks:'Went ahead inside what you allowed: phone number optional; it remembers the last instructor.',
   chips:['Too slow here','Confusing','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.pricePage = {kind:'look', verb:'Look', gid:'price', mins:2, judge:'Does it read right on a phone and on a desk?', thing:'web',
-  proof:{seal:'the page as served at 07:55, both widths', at:'07:58', lines:[['Nothing cut off at either width'],['Yearly first, as decided'],['Prices match the billing tool'],['Start goes to checkout']]}, chips:['Too small','Wrong order','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
+  proof:{seal:'the page as served, both widths', at:'07:58', lines:[['Nothing cut off at either width'],['Yearly first, as decided'],['Prices match the billing tool'],['Start goes to checkout']]}, chips:['Too small','Wrong order','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.ratingsBack = Object.assign({}, I.ratingsSketch, {sub:'Back from parking: sign-up is done', notnow:false});
-I.taxGo = {kind:'agree', verb:'Go?', vcls:'amber', gid:'tax', mins:2, judge:'Start on this?',
+I.taxGo = {kind:'agree', verb:'Waits for your go', vcls:'amber', gid:'tax', mins:2, judge:'Start on this?',
   said:['Two weeks ago','We need to charge sales tax in Texas and Ohio now.'], fact:'Your accountant replied: start 1 January, with the rates in the attached table.',
   heard:'From 1 January, orders to Texas or Ohio show the right tax before payment.',
   done:['Tax shows before payment.','Rates come from the accountant’s table.','A monthly total per state, in the accountant’s pack.'],
@@ -494,7 +508,7 @@ const sb = k => `<b>Started: ${I[k].goal}.</b> ${I[k].short} <button class="link
 /* ============ the moments of the stress week ============ */
 const M = [
  {when:'Tue 17 Nov 08:30', title:'The morning sitting', ev:'1', view:'lock', day:'Tuesday 17 November', clock:'8:30',
-  card:{t1:'1 thing · about 3 minutes', t2:'Gathered for your 8:30.', age:'Seen 2 min ago'},
+  card:{t1:'One thing, about 3 minutes', t2:'Gathered for your 8:30.', age:'Seen 2 min ago'},
   told:[['dec', sb('ratingsSay')],['dec',`<b>Price page</b>: yearly first goes ahead at 5 pm; you left layout to me. <button class="link inl" data-act="change">Change</button>`]],
   items:['invoiceLook'], next:'5 pm: 1 thing so far.', you:['invoice'], st:{totals:{dt:'done Mon',nt:'Done without you: a kind you trust.'},price:{dt:'5 pm',nt:'Yearly first, inside what you allowed.'},ratings:{dt:'sketch Wed',nt:'Started.'}},
   path:['open','accept'], note:'Driver ratings was said last night; the say-back arrived as the work started and waits for nothing. The price fork is inside what he allowed and can be switched back, so it is told with Change. Only the invoice file needs his eye.'},
@@ -507,13 +521,13 @@ const M = [
   items:['signupSlice','emailLook'], st:{signup:{old:'Thu',dt:'Fri',nt:'A computer was off overnight.'},reminders:{dt:'Fri'}},
   path:[], note:'Behind: 17 questions arrive. 11 are settled by his earlier answers, 3 go ahead inside what he allowed, 3 are gathered into showings. Three helpers stall: two are restarted and keep their dates; one cannot, so Faster sign-up moves from Thursday to Friday. His phone stays dark.', alt:'stand'},
  {when:'Tue 17:00', title:'The afternoon sitting', ev:'3, 4, 7', view:'lock', day:'Tuesday 17 November', clock:'17:00',
-  card:{t1:'2 things · about 5 minutes', t2:'Gathered for your 5 pm.', age:'Seen 1 min ago'},
+  card:{t1:'Two things, about 5 minutes', t2:'Gathered for your 5 pm.', age:'Seen 1 min ago'},
   told:[['','<b>Faster sign-up</b>: <s>Thursday</s> Friday. A computer was off overnight.']],
   items:['signupSlice','emailLook'], next:'Tomorrow 8:30: 4 things so far.', you:['signup','welcome'], st:{signup:{old:'Thu',dt:'Fri'}},
   path:['open','pick:0:1','pick:1:0','b:p1','c:Wrong tone','b:p2','c:Cut this','sendback','always'],
   note:'The forks that are his come inside the first slice of sign-up, each shown as both versions. The other 14 are one tap away. On the email he touches what is wrong; each mark gets a note in his ink.'},
  {when:'Wed 18 Nov 08:30', title:'Not now; a random real look; his marks come back', ev:'5, 9, 10', view:'lock', day:'Wednesday 18 November', clock:'8:30',
-  card:{t1:'4 things · about 5 minutes', t2:'Gathered for your 8:30.', age:'Seen 3 min ago'},
+  card:{t1:'Four things, about 5 minutes', t2:'Gathered for your 8:30.', age:'Seen 3 min ago'},
   told:[['grey','Last week’s question about the old CSV button no longer matters: the new export replaced that page.']],
   items:['ratingsSketch','photosItem','emailV3','wordBook'], next:'Tomorrow 5 pm.', you:['ratings','photos','welcome','release'], st:{signup:{old:'Thu',dt:'Fri'}},
   path:['open','notnow','park0','pick0','accept','accept'], note:'“Not now” parks the ratings sketch, and the choice gathered into it, until sign-up is done. The photo move is done and checked; only the deletion is his. The second email version shows each of his marks where he put it. One told result is picked at random and shown as a real look.'},
@@ -524,12 +538,12 @@ const M = [
   card:{t1:'I can’t see 2 of your goals.', t2:'Since 15:15. The other 38 were seen 1 min ago.', age:'Back by 16:00'}, items:[], st:{signup:{old:'Thu',dt:'Fri',hatch:1},reminders:{dt:'Fri',hatch:1}},
   path:[], note:'The helper that checks two goals stopped at 15:15; another is bringing it back. The card never says “Nothing needs you” while it can’t see. Only those two lines are hatched.', alt:'stand'},
  {when:'Thu 19 Nov 17:00', title:'A miss, a release, trust', ev:'11, 10 · built on a bad result · can’t be undone', view:'lock', day:'Thursday 19 November', clock:'17:00',
-  card:{t1:'3 things · about 6 minutes', t2:'First: something I got wrong.', age:'Seen 1 min ago'},
+  card:{t1:'Three things, about 6 minutes', t2:'First: something I got wrong.', age:'Seen 1 min ago'},
   told:[['done',`Changed: “Invoice” is now “Receipt” on the payment screen. ${und()}`],['grey','Yesterday 15:15 to 15:52 I couldn’t see 2 goals. Nothing was missed.']],
   items:['invoiceMiss','release','wordTrust'], next:'Tomorrow 8:30: 2 things so far.', you:['invoice','pack','release','wordpay'], st:{pack:{dt:'paused',nt:'Built on the wrong file. Rebuilt; not sent.'},signup:{old:'Thu',dt:'Fri'}},
   path:['open','hold','hold','pick0'], note:'The miss comes first, with what was built on it. The release is said back in one sentence that changes with who gets it, and is confirmed by holding. Trust is offered because three wording changes stayed as they were.'},
  {when:'Fri 20 Nov 08:30', title:'Things that move', ev:'7 · journey · two widths', view:'lock', day:'Friday 20 November', clock:'8:30',
-  card:{t1:'2 things · about 5 minutes', t2:'Faster sign-up kept Friday.', age:'Seen 2 min ago'},
+  card:{t1:'Two things, about 5 minutes', t2:'Faster sign-up kept Friday.', age:'Seen 2 min ago'},
   told:[['done',`Running from Monday: the reminder texts. ${see('remindersFx')} ${und('Stop')}`]],
   items:['signupJourney','pricePage'], next:'Monday 8:30.', you:['signup','price'], st:{},
   path:['open','accept','accept'], note:'Sign-up is a recording of the exact build; each numbered dot jumps to the moment it proves. Touching the recording pins a moment. “Try it on your phone” opens the same build, and marks come back here. The price page is judged at both widths, with “Use it” and “Mark” kept apart.'},
@@ -540,17 +554,17 @@ const M = [
   card:{t1:'Away, by the look of it.', t2:'2 things held for when you’re back. Nothing new starts.', age:'Seen 3 min ago'}, items:[], st:{ratings:{dt:'when you’re back',nt:'Back from parking: sign-up is done.'},tax:{dt:'when you’re back',nt:'Your accountant replied.'}},
   path:[], note:'He never said he was away. After two sittings unopened, I slowed down: things he allowed and can undo go ahead; everything else holds; nothing new that needs him starts. No buzz.'},
  {when:'Thu 26 Nov 08:30', title:'Back after five days', ev:'12, 13', view:'lock', day:'Thursday 26 November', clock:'8:30',
-  card:{t1:'Welcome back · 2 things now', t2:'About 4 minutes; 2 more at 5 pm.', age:'Seen 2 min ago'},
-  ret:{need:4, changed:9, ok:27, lines:[['Went wrong','nothing.'],['Couldn’t see','Sunday 15:10 to 17:40, everything. When I could again, all 23 were where they were.'],['Decided for you',`6 choices inside what you allowed, each undoable until Monday. <button class="link inl" data-act="stand">See them</button>`],['Running',`the reminder texts; missed lessons 31 → 12. ${see('remindersFx')} ${und('Stop')}`],['Faster',`the test run, 11 → 4 minutes. ${see('testrun')} ${und()}`]]},
+  card:{t1:'Welcome back. Two things now.', t2:'About 4 minutes; 2 more at 5 pm.', age:'Seen 2 min ago'},
+  ret:{need:4, changed:9, ok:27, lines:[['Went wrong','nothing.'],['Couldn’t see','Sunday 15:10 to 17:40, everything. When I could again, all 23 were where they were.'],['Done and out','Faster sign-up, the price page, the photo move.'],['Decided for you',`6 choices on 4 goals, inside what you allowed, each undoable until Monday. <button class="link inl" data-act="stand">See them</button>`],['Running',`the reminder texts; missed lessons 31 → 12. ${see('remindersFx')} ${und('Stop')}`],['Faster',`the test run, 11 → 4 minutes. ${see('testrun')} ${und()}`]]},
   items:['ratingsBack','taxGo','giftQ','returnsLook'], split:2, week:true, next:'5 pm: 2 things, about 4 minutes.', you:['ratings','tax','gift','returns'], st:{},
   path:['open','pick0','accept','go'], note:'Four lines bring him current. The ratings sketch comes back with its gathered choice. Sales tax waits for his go because it changes what customers pay. Then his week, to read.'},
  {when:'Thu 3 Dec 18:20', title:'A week he looked in twice', ev:'stress · skipped sittings', view:'lock', day:'Thursday 3 December', clock:'18:20',
-  card:{t1:'4 things · about 7 minutes', t2:'2 now, the rest tomorrow. Oldest since Monday.', age:'Seen 1 min ago'},
+  card:{t1:'Four things, about 7 minutes', t2:'2 now, the rest tomorrow. Oldest since Monday.', age:'Seen 1 min ago'},
   told:[['','You’ve looked in twice this week, so I’ve slowed down: 6 new things are held, not started. <button class="link inl" data-act="carry">Carry on with them</button>']],
   items:['shipLook','refundDecide','calendarLook','zoomLook'], split:2, splitAt:'Tomorrow 8:30', next:'Tomorrow 8:30: 2 things, about 5 minutes.', you:['ship','refund','calendar','zoom'], st:{}, held:6,
   path:['open','accept','pick0'], note:'He skipped most sittings. New work that would need him was not started, and he is told so once. What has gathered is more than this evening allows, so it splits: 2 now, the rest tomorrow, or “Do them now”.'},
  {when:'Wed 16 Dec 08:30', title:'Day 30: a rule was wrong', ev:'stress · day 30', view:'lock', day:'Wednesday 16 December', clock:'8:30',
-  card:{t1:'2 things · about 3 minutes', t2:'First: one of my rules was wrong.', age:'Seen 2 min ago'},
+  card:{t1:'Two things, about 3 minutes', t2:'First: one of my rules was wrong.', age:'Seen 2 min ago'},
   told:[['','Wording changes come to you again: on Monday “Receipt” left 14 customers unsure what they had paid. The 9 made without you since 19 Nov were read again; one more was put back.']],
   items:['ruleWrong','refundAct'], next:'5 pm. Nothing gathers yet.', you:['tax'], st:{tax:{dt:'10 Dec · done'}},
   path:['open','pick0','hold'], note:'Thirty rules, one wrong: a rule he gave for one page, widened by guess. It shows where it came from and what it decided, and has already stopped itself. Repaying customers is money: said back and held.'},
@@ -567,7 +581,9 @@ const st = i=>(S.st[i]=S.st[i]||{picks:{}, marks:{}, pins:[], stage:'main'});
 const left = ()=>S.items.map((x,i)=>i).filter(i=>!S.out[i]);
 const minsOf = ids=>Math.max(1,Math.round(ids.reduce((a,i)=>a+S.items[i].mins,0)));
 const retH = m=>`Five days. ${m.ret.changed+m.ret.ok} of your 40 goals need nothing from you.`;
-const sizeOf = ids=>{ const n = ids.length, m = minsOf(ids); return `${n} thing${n>1?'s':''} · about ${m} minute${m>1?'s':''}`; };
+const NUMW = ['No','One','Two','Three','Four','Five','Six','Seven','Eight','Nine'];
+const greet = m=>{ const h = +String(m.clock).split(':')[0]; return h<12 ? 'Good morning.' : h<17 ? 'Good afternoon.' : 'Good evening.'; };
+const sizeOf = ids=>{ const n = ids.length, m = minsOf(ids); return `${greet(M[S.m])} ${NUMW[n]||n} thing${n>1?'s':''}, about ${m} minute${m>1?'s':''}.`; };
 const goalName = it=>it.goal || (it.gid ? GN[it.gid].name : '');
 const mic = (z=20)=>`<svg width="${z}" height="${z}" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 1 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.5a1 1 0 1 1 2 0A8 8 0 0 1 13 19.4V22h-2v-2.6A8 8 0 0 1 4 11.5a1 1 0 1 1 2 0 6 6 0 0 0 12 0Z"/></svg>`;
 
@@ -576,6 +592,8 @@ function load(mi, keep){
   S.items = (m.items||[]).map(k=>Object.assign({key:k}, I[k]));
   S.out = {}; S.st = {}; S.cur = 0; S.overlay = null; S.say = null; S.toast = null; S.marks = false; S.limit = m.split || null;
   S.view = m.view; S.h1 = null; S.buzzMissed = false; S.allowSel = null; S.dot = null; S.hl = null; S.sbfix = {}; S.signed = false; S.ps = null; S.jt = 0; S.ww = 'phone'; S.wmode = 'use'; S.wprice = 'yearly'; S.v3 = 'new'; S.tried = false;
+  if (S.items.some(x=>x.thing==='slice')) S.jt = 2; // open on the screen his choices change
+  if (isDesk() && m.view==='lock' && m.items.length && !m.buzz && !m.card.look){ S.view = 'sheet'; S.cur = left()[0]; S.h1 = m.ret ? retH(m) : sizeOf(left().filter(i=>!S.limit || i<S.limit)); } // on the desk he has already chosen to look
   if (!keep) render();
 }
 
@@ -585,8 +603,12 @@ function render(){
   document.documentElement.dataset.theme = t;
   proto();
   const v = {lock:rLock, sheet:rSheet, stand:rStand, goal:rGoal, behind:rBehind, allow:rAllow, stopped:rStopped, blindall:rBlindAll}[S.view];
-  $('#app').innerHTML = v() + rOverlay() + (S.toast?`<div class="toast" role="status"><span>${S.toast.t}</span>${S.toast.undo!=null?`<button data-act="undo">Undo</button>`:''}</div>`:'');
-  S.toast = null;
+  $('#app').innerHTML = v() + rOverlay();
+  if (S.toast){ const a = S.noteAt && $(S.noteAt), blk = a && a.closest('li, p, .proj, .verbs, .line, .opts, .fork, .card, .gl, .sheetov');
+    const html = `<p class="inote" role="status">${S.toast.t}</p>`;
+    if (blk && blk.tagName==='LI') blk.insertAdjacentHTML('beforeend', html); else if (blk) blk.insertAdjacentHTML('afterend', html);
+    else { const h = $('#app h1, #app h2'); if (h) h.insertAdjacentHTML('afterend', html); } }
+  S.toast = null; S.noteAt = null;
   if (S.focus){ const f=$(S.focus); if(f) f.focus({preventScroll:true}); S.focus=null; }
 }
 function proto(){
@@ -604,24 +626,24 @@ function glanceCard(m){
   const t2 = done ? `Next: ${m.next}` : c.t2;
   const cls = (m.blind || m.blindAll) ? 'card blind' : 'card';
   const tap = m.blindAll ? 'blindall' : m.blind ? 'stand' : (m.items.length && !done) ? 'open' : 'stand';
-  return `<button class="${cls}" data-act="${tap}"><div class="age">${c.age}</div><div class="t1">${t1}</div><div class="t2">${t2}</div>${c.look&&n?`<div class="t2" style="color:#2340A8;font-weight:600;margin-top:6px">Look now ›</div>`:''}</button>`;
+  return `<button class="${cls}" data-act="${tap}"><div class="age">${c.age}</div><div class="t1">${t1}</div><div class="t2">${t2}</div>${c.look&&n?`<div class="t2 looknow">Look now ›</div>`:''}</button>`;
 }
 function buzzCard(){
   if (S.buzzMissed) return `<div class="card"><div class="age">Seen 1 min ago</div><div class="t1">3:00 passed. Thursday’s release now goes next Thursday.</div><div class="t2">Nothing else was lost. I tried twice: 1:10 on this phone, 2:30 on your desk. I won’t try again.</div></div>`;
   if (S.signed) return `<div class="card"><div class="t1">Signed in, 13:12.</div><div class="t2">Thursday’s release can go. I count this as my miss: I could have asked at 8:30. Sign-ins due within 2 days now come at 8:30 or 5 pm.</div><div class="acts"><button class="btn" data-act="buzzok">Fine</button></div></div>`;
-  return `<div class="card buzz" role="alert"><div class="age" style="color:#8A5300;font-weight:700;letter-spacing:.04em">CAN’T WAIT UNTIL 5 PM · BEFORE 3 PM</div><div class="t1">Sign in to the app store, so Thursday’s release can go.</div><div class="t2">If not, it goes next Thursday. Not at 8:30 because the store ended your sign-in at noon. If I miss you, I try your desk once at 2:30, then stop.</div><div class="acts"><button class="btn pri" data-act="signin">Sign in now</button><button class="btn" data-act="buzzlater">Let it go next week</button></div></div>`;
+  return `<div class="card buzz" role="alert"><div class="age warnhead">CAN’T WAIT UNTIL 5 PM · BEFORE 3 PM</div><div class="t1">Sign in to the app store, so Thursday’s release can go.</div><div class="t2">If not, it goes next Thursday. Not at 8:30 because the store ended your sign-in at noon. If I miss you, I try your desk once at 2:30, then stop.</div><div class="acts"><button class="btn pri" data-act="signin">Sign in now</button><button class="btn" data-act="buzzlater">Let it go next week</button></div></div>`;
 }
 function rLock(){
   const m = M[S.m];
   const phone = `<div class="lockwrap"><div class="lock" role="region" aria-label="His phone’s lock screen"><div class="ld">${m.day}</div><div class="lt">${m.clock}</div>
     ${m.buzz && S.signed!=='done'?buzzCard():glanceCard(m)}
     <button class="lockmic" data-act="say" aria-label="Hold, and say what you want"><i>${mic(26)}</i>Say it</button></div></div>`;
-  const desk = `<div class="spread desktop"><section class="lpage cover" aria-label="The glance">${coverDesk(m)}</section><section class="rpage" aria-label="Where everything stands"><div data-opt>${standBody(true)}</div></section></div>`;
+  const desk = `<div class="spread desktop solo"><section class="lpage cover" aria-label="The glance">${coverDesk(m)}</section></div>`;
   return phone + desk;
 }
 function coverDesk(m){
   const c = m.card, n = left().length;
-  return `<div class="lab">${m.day} · ${m.clock} · ${c.age}</div>
+  return `<div class="lab" style="text-transform:none;letter-spacing:0;font:italic 15px/1.3 var(--serif)">${m.day}, ${m.clock}. ${c.age}.</div>
    ${m.buzz && S.signed!=='done'?`<div style="margin-top:14px">${buzzCard()}</div>`:`<h1 style="${m.blind?'color:var(--amber)':''}">${c.t1}</h1><p class="small" style="font-size:16px">${c.t2}</p>
    ${m.items.length&&!m.blind?`<div class="bar" style="position:static;padding:10px 0"><button class="btn pri" data-act="open">${c.look?'Look now':'Open'}<kbd>⏎</kbd></button></div>`:''}`}
    <div class="say"><button class="saybtn" data-act="say"><i>${mic()}</i>Say what you want<kbd>S</kbd></button></div>`;
@@ -633,22 +655,22 @@ function rSheet(){
   const lim = S.limit || null;
   const nowIds = n.filter(i=>!lim || i < lim);
   const head = `<header class="head"><div class="lab"><span>${(m.card||{}).age||''}</span></div>
-    <h1 id="sh-h" tabindex="-1">${S.h1 || (m.ret ? retH(m) : sizeOf(nowIds))}</h1>
+    <h1 id="sh-h" tabindex="-1">${!n.length && !m.ret ? greet(m) : (S.h1 || (m.ret ? retH(m) : sizeOf(nowIds)))}</h1>
     ${m.ret&&!doneN?retHtml(m.ret):''}
     ${m.told&&!S.toldSeen?`<ul class="told">${m.told.map(([c,t])=>`<li class="${c}">${t}</li>`).join('')}</ul>`:''}</header>`;
   let list = '<ol class="order">', thingHtml = '', bar = '';
   S.items.forEach((it,i)=>{
     if (lim && i===lim) list += `<li class="splitlab"><span class="lab">${m.splitAt||'At 5 pm'} · about ${minsOf(n.filter(j=>j>=lim))} minutes</span> <button class="link inl" data-act="pullall">Do them now</button></li>`;
-    if (S.out[i]) list += `<li class="fold done"><span class="n">✓</span><span><span class="v">${it.verb}</span><span class="g">${goalName(it)}</span></span><span></span><span class="r">${S.out[i].r}${S.out[i].undo!==false?` <button class="link inl" data-act="undo" data-i="${i}">Undo</button>`:''}</span></li>`;
+    if (S.out[i]) list += `<li class="fold done"><span class="n">✓</span><span><span class="g">${goalName(it)}</span></span><span></span><span class="r">${S.out[i].r}${S.out[i].undo!==false?` <button class="link inl" data-act="undo" data-i="${i}">Undo</button>`:''}</span></li>`;
     else if (i===S.cur && n.length && !(lim && i>=lim)){ const b = rItem(it, st(i), i); list += `<li>${b.main}</li>`; thingHtml = b.thing; bar = b.bar; }
-    else list += `<li><button class="fold ${lim&&i>=lim?'later':''}" data-act="goto" data-i="${i}" style="width:100%;background:none;border:0;border-bottom:1px solid var(--rule);text-align:left"><span class="n">${i+1}</span><span><span class="v ${it.vcls||''}">${it.verb}</span><span class="g">${goalName(it)}</span></span><span class="m">${it.mins<1?'30 sec':Math.round(it.mins)+' min'}</span>${lim&&i>=lim&&it.wait?`<span class="wc">${it.wait}</span>`:''}</button></li>`;
+    else list += `<li><button class="fold ${lim&&i>=lim?'later':''}" data-act="goto" data-i="${i}" style="width:100%;background:none;border:0;border-bottom:1px solid var(--rule);text-align:left"><span class="n" aria-hidden="true">·</span><span>${it.vcls?`<span class="v ${it.vcls}">${it.verb}</span>`:''}<span class="g">${goalName(it)}</span></span><span class="m">${it.mins<1?'30 sec':Math.round(it.mins)+' min'}</span>${lim&&i>=lim&&it.wait?`<span class="wc">${it.wait}</span>`:''}</button></li>`;
   });
   list += '</ol>';
   const fin = !n.length || (lim && !nowIds.length);
   const end = (fin ? endNote(m, lim) : '') + (fin && m.week ? `<section class="weekblk">${weekHtml()}</section>` : '');
   const desk = isDesk();
   const leftHtml = `<div class="sheet">${head}${list}${end}${desk?bar:''}${!n.length||(lim&&!nowIds.length)?`<div class="say"><button class="saybtn" data-act="say"><i>${mic()}</i>Say what you want<kbd>S</kbd></button></div>`:''}</div>`;
-  if (desk) return `<div class="spread"><section class="lpage" aria-label="What needs you">${leftHtml}</section><section class="rpage" aria-label="The thing itself">${thingHtml || `<div data-opt>${standBody(true)}</div>`}</section></div>`;
+  if (desk) return `<div class="spread"><section class="lpage" aria-label="What needs you">${leftHtml}</section><section class="rpage" aria-label="The thing itself">${thingHtml || ''}</section></div>`;
   return `<div class="wrap">${leftHtml}</div>${bar}`;
 }
 function retHtml(t){
@@ -665,8 +687,9 @@ function endNote(m, lim){
 
 /* each item: main text (left page), the thing (right page on the desk, inline on the phone), and its answers */
 function rItem(it, s, i){
-  const kick = `<div class="kick"><span class="v ${it.vcls||''}">${it.verb}</span><span class="small">${it.gid?PROJ[GN[it.gid].p]:''}</span></div><h2 id="goal" tabindex="-1">${goalName(it)}</h2>${it.sub?`<p class="small">${it.sub}</p>`:''}`;
-  const seal = it.proof && it.proof.seal ? `<p class="seal"><span class="sealmark" aria-hidden="true">✓</span> <b>Checked by someone else</b> · ${it.proof.seal} · ${it.proof.at}</p>` : '';
+  const kick = `${it.vcls?`<div class="kick"><span class="v ${it.vcls}">${it.verb}</span></div>`:''}<h2 id="goal" tabindex="-1">${goalName(it)}</h2>${it.sub?`<p class="small">${it.sub}</p>`:''}`;
+  const pf = it.proof && it.proof.seal, pn = pf ? it.proof.lines.length : 0;
+  const seal = pf ? `<button class="seal" data-act="proof" data-i="${i}"><span class="sealmark" aria-hidden="true">✓</span><span><b>Checked by someone else: ${pn===1?'it passes':`all ${pn} pass`}.</b> <span class="what">${it.proof.seal}, at ${it.proof.at} ›</span></span></button>` : '';
   const judge = it.none ? `<p class="judge none">${it.none}</p>` : it.judge ? `<p class="judge"><span class="lab">${it.kind==='act'?'Yours to decide':'Yours to judge'}</span>${it.judge}</p>` : '';
   let pre = '', body = '', bar = '', thing = '';
   if (it.kind==='agree'){
@@ -685,17 +708,16 @@ function rItem(it, s, i){
   if (it.thing && it.kind!=='agree') thing = T[it.thing](it, s, i);
   if (it.picks) body += `<p class="small">${it.picks} <button class="link inl" data-act="undo1">Undo either</button></p>`;
   if (it.assumed) body += `<p class="assumed">Assumed: ${it.assumed}</p>`;
-  if (it.proof && it.proof.seal) body += dotsHtml(it, i);
   if (it.trust) body += `<ul class="limits"><li>1 in 5 still comes here, at random.</li><li>If one is changed back, all come back.</li><li>Never prices, terms or customer emails.</li></ul>`;
   if (it.kind==='act'){
     const o = s.picks.aud ?? (it.aud ? it.aud.rec : 0);
     if (it.aud) body += `<div class="fork"><div class="opts" role="group">${it.aud.opts.map((x,j)=>`<button class="opt" data-act="aud" data-o="${j}" aria-pressed="${o===j}">${x}${j===it.aud.rec?'<span class="rec">I’d say this</span>':''}</button>`).join('')}</div><p class="why">${it.aud.why}</p></div>`;
-    body += `<div class="lab" style="margin-top:8px">Said back before it goes</div><p class="saidback">${it.said(o)}</p>${it.proof.un?`<p class="notcov">Still not proved: ${it.proof.un.join(', ')}. Your yes is for ${it.proof.seal.split(',')[0]} only.</p>`:''}`;
+    body += `<div class="lab" style="margin-top:8px">Said back before it goes</div><p class="saidback">${it.said(o)}</p>${it.proof.un?`<p class="notcov">Not checked: ${it.proof.un.join(', ')}. Your yes covers ${it.proof.seal.split(',')[0]} only.</p>`:''}`;
   }
   if (it.priceCards) body += priceCards(it, s);
   else if (it.choices) body += it.choices.map((c,ci)=>forkHtml(it,s,c,ci)).join('');
   if (it.settled) body += `<button class="proofline" data-act="settled"><span style="flex:1">14 others settled: 11 by your earlier answers, 3 inside what you allowed.</span><span class="more">See ›</span></button>`;
-  if (it.kind==='look' && it.proof && it.proof.un) body += `<p class="notcov">Your yes does not cover: ${it.proof.un.join(', ')}.</p>`;
+  if (it.kind==='look' && it.proof && it.proof.un) body += `<p class="notcov">Not checked: ${it.proof.un.join(', ')}. Your yes doesn’t cover it.</p>`;
   // the answers
   if (S.marks && S.cur===i){
     const nm = Object.keys(s.marks).length + s.pins.length;
@@ -705,11 +727,10 @@ function rItem(it, s, i){
   } else if (it.kind==='rule'){
     bar = '';
   } else if (it.kind==='decide'){
-    if (it.choices.length>1){ const rest = it.choices.filter((c,ci)=>s.picks[ci]==null).length; bar = barHtml(`<button class="btn pri" data-act="decided">${rest?`Done; ${rest} wait${rest>1?'':'s'}`:'Done'}<kbd>⏎</kbd></button><button class="btn" data-act="notnow">Not now<kbd>N</kbd></button>`); }
+    if (it.choices.length>1){ const rest = it.choices.filter((c,ci)=>s.picks[ci]==null).length; bar = barHtml(`${rest<it.choices.length?`<button class="btn pri" data-act="decided">Done; the other waits<kbd>⏎</kbd></button>`:''}<button class="btn" data-act="notnow">Not now<kbd>N</kbd></button>`); }
     else bar = barHtml(`<button class="btn" data-act="notnow">Not now<kbd>N</kbd></button>`);
   } else if (it.kind==='look'){
-    const ver = it.proof && it.proof.seal ? it.proof.seal.split(',')[0].replace(/^the /,'') : '';
-    bar = barHtml(`<button class="btn pri" data-act="accept">${it.acceptLabel||'Accept'}${ver&&it.acceptLabel==='Looks right'?` <small class="ver">· ${ver}</small>`:''}<kbd>⏎</kbd></button>${it.thing==='web'?`<button class="btn" data-act="mark">Mark<kbd>M</kbd></button>`:''}${it.notnow?`<button class="btn" data-act="notnow">Not now<kbd>N</kbd></button>`:''}`);
+    bar = barHtml(`<button class="btn pri" data-act="accept">${it.acceptLabel||'Accept'}<kbd>⏎</kbd></button>${it.thing==='web'?`<button class="btn" data-act="mark">Mark<kbd>M</kbd></button>`:''}${it.notnow?`<button class="btn" data-act="notnow">Not now<kbd>N</kbd></button>`:''}`);
   }
   if (it.kind==='act' && bar){ body += bar.replace('<div class="bar">','<div class="bar inline">'); bar = ''; } // the irreversible answer sits after the sentence it answers, never pinned above it
   const desk = isDesk();
@@ -775,14 +796,14 @@ function markBar(it, s){
   if (!S.marks) return '';
   return `<div class="markbar"><button class="link inl" data-act="whole" style="color:#2340A8">${mic(16)} Or say what’s wrong with the whole thing</button></div>`;
 }
-function thingWrap(it, s, tag, inner){ const cur = S.items[S.cur]===it; if (cur && it.chips && it.thing!=='web' && !S.marks && tag) tag = tag.replace(/<span>[^<]*<\/span>$/, '<span>touch what’s wrong</span>'); return `<figure class="thing ${S.marks&&cur?'marking':''}">${tag?`<div class="tag">${tag}</div>`:''}${cur?markBar(it,s):''}${inner}</figure>`; }
+function thingWrap(it, s, tag, inner){ const cur = S.items[S.cur]===it; if (cur && it.chips && it.thing!=='web' && !S.marks && tag) tag = tag.replace(/<span>[^<]*<\/span>$/, '<span class="hint">✎ Touch what’s wrong</span>'); return `<figure class="thing ${S.marks&&cur?'marking':''}">${tag?`<div class="tag">${tag}</div>`:''}${cur?markBar(it,s):''}${inner}</figure>`; }
 T.records = (it,s)=>{
   const rows=[['02 Oct','1041','Hill Driving School','480.00'],['05 Oct','1042','A. Patel','144.00'],['11 Oct','1043','Northside Motors','1,140.00'],['18 Oct','1044','J. Okafor, refund','−72.00'],['29 Oct','1045','Hill Driving School','480.00']];
-  return thingWrap(it,s,'<span>October · invoices file</span><span>made 07:02 · 217 lines</span>',`<table class="tbl"><thead><tr><th>Date</th><th>Customer</th><th class="r">Total</th></tr></thead><tbody>${rows.map((r,j)=>blk(s,'r'+j,`<td>${r[0]}</td><td>${r[2]}<span class="sub">Invoice ${r[1]}</span></td><td class="r">$${r[3]}</td>`,'tr')).join('')}</tbody><tfoot><tr><td colspan="3" style="font-weight:600">…212 more · Total $38,412.60</td></tr></tfoot></table>`);
+  return thingWrap(it,s,'<span>October · invoices file</span><span>217 lines</span>',`<table class="tbl"><thead><tr><th>Date</th><th>Customer</th><th class="r">Total</th></tr></thead><tbody>${rows.map((r,j)=>blk(s,'r'+j,`<td>${r[0]}</td><td>${r[2]}<span class="sub">Invoice ${r[1]}</span></td><td class="r">$${r[3]}</td>`,'tr')).join('')}</tbody><tfoot><tr><td colspan="3" style="font-weight:600">…212 more · Total $38,412.60</td></tr></tfoot></table>`);
 };
 T.recordsFixed = (it,s)=>{
   const rows=[['28 Oct','Ridge Fleet, Oct–Nov','420.00'],['30 Oct','Eastgate Academy, Oct–Nov','310.00'],['31 Oct','M. Rossi, Oct–Nov','230.00'],['31 Oct','Hill Driving School, Oct–Nov','220.00']];
-  return thingWrap(it,s,'<span>October · fixed file</span><span>made 15:58 · 213 lines</span>',`<table class="tbl"><thead><tr><th>Date</th><th>Customer</th><th class="r">Total</th></tr></thead><tbody>${rows.map(r=>`<tr class="gone"><td><s>${r[0]}</s></td><td><s>${r[1]}</s><span class="sub">Now only in November</span></td><td class="r"><s>$${r[2]}</s></td></tr>`).join('')}</tbody><tfoot><tr><td colspan="3" style="font-weight:600">October total $37,232.60 · was $38,412.60</td></tr></tfoot></table>`);
+  return thingWrap(it,s,'<span>October · fixed file</span><span>213 lines</span>',`<table class="tbl"><thead><tr><th>Date</th><th>Customer</th><th class="r">Total</th></tr></thead><tbody>${rows.map(r=>`<tr class="gone"><td><s>${r[0]}</s></td><td><s>${r[1]}</s><span class="sub">Now only in November</span></td><td class="r"><s>$${r[2]}</s></td></tr>`).join('')}</tbody><tfoot><tr><td colspan="3" style="font-weight:600">October total $37,232.60 · was $38,412.60</td></tr></tfoot></table>`);
 };
 const MAIL2 = ['Hello there, and a huge, heartfelt welcome! We are absolutely thrilled to have you on board, and we simply can’t wait to show you everything we have in store.','At our shop we believe every purchase is a journey. That’s why our dedicated team works tirelessly, day and night, to source the finest goods from trusted makers.','As a valued member you can look forward to early access to new arrivals, members-only offers and our monthly newsletter, packed with tips.','Your first order ships free. Use the code HELLO at checkout.','Once again, welcome aboard! We’re so excited to be part of your journey. Warmest wishes, The Team'];
 const MAIL3 = ['Hello, and welcome to Fernway.','Your first order ships free: use the code HELLO at checkout.','If anything isn’t right, just reply to this email. A person reads every one.','Fernway'];
@@ -800,7 +821,13 @@ function pinsHtml(s){ return s.pins.map((p,j)=>`<span class="pin" style="left:${
 function pinNotes(s){ return s.pins.map((p,j)=>(p.c.length||p.t)?`<div class="mnote"><span class="pn">${j+1}</span>${p.time?esc(p.time)+' · ':''}${esc([...p.c,p.t].filter(Boolean).join(' · '))}</div>`:'').join('') + (S.marks && String(S.active).startsWith('pin') ? editor() : ''); }
 T.sketch = (it,s)=>thingWrap(it,s,'<span>Sketch · the student’s phone, after a lesson</span><span>not built</span>',
   `<div class="stage pinarea" data-pin="1"><div class="phone"><h4>How was your lesson with Sam?</h4><div class="stars">★★★★☆</div><div class="fld">Anything for the school? (only they see it)</div><div class="cta">Send</div><div class="muted">Not now</div></div>${pinsHtml(s)}</div>${pinNotes(s)}`);
-T.slice = (it,s)=>thingWrap(it,s,'<span>First slice · build 4.10</span><span>2 of 3 screens</span>',`<div class="screens"><div class="scr"><b>Your name and phone</b><i>Maya Lund</i><i>Phone (optional)</i><u>Next</u></div><div class="scr"><b>Email and a password</b><i>maya@…</i><i>••••••••</i><u>Next</u></div><div class="scr" style="opacity:.5"><b>Not built yet</b><i>waits for your two choices</i></div></div>`);
+function sliceScreen(j, s){
+  const lic = s.picks[0], par = s.picks[1];
+  return [['Name and phone','<h4>Your name and phone</h4><div class="fld">Maya Lund</div><div class="fld">Phone (optional)</div><div class="cta">Next</div>'],
+   ['Email','<h4>Email and a password</h4><div class="fld">maya@…</div><div class="fld">••••••••</div><div class="cta">Next</div>'],
+   ['Last screen', `<h4>${lic===0?'Your licence':'Nearly there'}</h4>${lic===0?'<div class="fld">Licence number</div>':''}${par===0?'<div class="fld">Parent’s email, if under 18</div>':''}${lic==null&&par==null?'<div class="muted" style="text-align:left">Your two choices draw this screen.</div>':''}${lic===1?'<div class="muted" style="text-align:left">Licence asked before the first lesson.</div>':''}<div class="cta">Start learning</div>`]][j];
+}
+T.slice = (it,s)=>thingWrap(it,s,'<span>The first two screens, and the one your choices change</span><span></span>',`<div class="stage"><div class="phone">${sliceScreen(S.jt, s)[1]}</div></div><div class="timeline"><div class="steps">${[0,1,2].map(j=>`<button data-act="jt" data-v="${j}" aria-current="${j===S.jt}">${sliceScreen(j, s)[0]}</button>`).join('')}</div></div>`);
 T.calendar = (it,s)=>thingWrap(it,s,'<span>Sketch · booking a lesson</span><span>not built</span>',`<div class="stage pinarea" data-pin="1"><div class="cal">${['Mon','Tue','Wed','Thu','Fri'].map((d,j)=>`<div><b>${d}</b>${[9,11,14,16].map((h,k)=>`<i class="${(j+k)%3?'free':''}">${h}:00</i>`).join('')}</div>`).join('')}</div>${pinsHtml(s)}</div>${pinNotes(s)}`);
 T.jobmini = ()=>{ const g=['#b9c9d6,#7d97ab','#d9c7a5,#a88d5f','#a9c2a0,#6f8f68','#c9b8d0,#8c7a98','#d7b3a4,#a3725e','#b5c7c3,#6f8d88'];
   return `<figure class="thing"><div class="tag"><span>What the move did</span><span>done and checked</span></div><div class="bignum"><b>48,210 photos moved</b><span>$62 → $21 a month. Nothing lost.</span></div><div class="tiles">${g.map(c=>`<i style="background:linear-gradient(135deg,${c})"></i>`).join('')}</div></figure>`; };
@@ -866,16 +893,17 @@ function standBody(compact){
     : `<h1>Where everything stands</h1><p class="small">40 goals. Seen ${((m.card||{}).age||'2 min ago').replace('Seen ','')}. Each stays in its place.</p>`;
   const projects = PROJ.map((p,pi)=>{
     const gs = G.filter(g=>g[2]===pi).map(g=>GN[g[0]]);
-    const show = gs.filter(g=>(m.st||{})[g.id] || (m.you||[]).includes(g.id) || S.expand===pi);
+    const open = S.expand===pi, marked = gs.filter(g=>(m.st||{})[g.id] || (m.you||[]).includes(g.id));
+    const show = open ? gs : marked.concat(gs.filter(g=>!marked.includes(g) && !/done/.test(g.next)).slice(0, Math.max(0, 2 - marked.length)));
     const rest = gs.length - show.length;
-    return `<div class="proj"><h3><span>${p}</span><span>${gs.length} <button class="link inl stopl" data-act="stop" data-v="project" data-p="${pi}">Stop</button></span></h3>${show.map(g=>lineFor(g,m)).join('')}${rest?`<button class="more" data-act="expand" data-v="${pi}">${show.length?'and ':''}${rest} more, on their dates ›</button>`:''}</div>`;
+    return `<div class="proj"><h3><span>${p}</span><span>${gs.length}</span></h3>${show.map(g=>lineFor(g,m)).join('')}${rest?`<button class="more" data-act="expand" data-v="${pi}">and ${rest} more ›</button>`:''}${open?`<button class="gl" data-act="stop" data-v="project" data-p="${pi}"><span class="nm" style="font-family:var(--sans);font-size:16px">Stop ${p}</span><span class="dt">›</span></button>`:''}</div>`;
   }).join('');
   const held = m.held ? `<div class="proj"><h3><span>Held until you have time</span><span>${m.held}</span></h3><p class="small">Not started, because you’ve had less time this week. <button class="link inl" data-act="carry">Carry on with them</button></p></div>` : '';
   return `${head}${projects}${held}<div class="proj">${[['allow','What you’ve let me do'],['behind','Who is working where'],['stop','Stop everything']].map(([a,t])=>`<button class="gl" data-act="${a}" data-v="all"><span class="nm" style="font-family:var(--sans);font-size:16px">${t}</span><span class="dt">›</span></button>`).join('')}</div>`;
 }
 function rStand(){ return `<div class="wrap"><section class="page"><button class="back" data-act="back">‹ Back</button>${standBody(false)}</section></div>`; }
 const REC = {
-  signup:{h:'31 h of helper time', c:'$36', y:'7 min of yours', life:[['Mon 16','Agreed.'],['Tue 17','2 forks came to you; 14 settled.'],['Wed 18','A computer was off. Thu became Fri; you were told once.'],['Fri 20','Shown as a recording of build 4.12. Accepted.'],['Sat 21','Released in 4.12.']], allow:['Screen details','The order of the steps']}
+  signup:{h:'31 h of helper time', c:'$36', y:'7 min of yours', life:[['Mon 16','Started.'],['Tue 17','2 choices came to you; 14 settled without you.'],['Wed 18','A computer was off. Thu became Fri; you were told once.'],['Fri 20','Shown as a recording of build 4.12. Accepted.'],['Sat 21','Released in 4.12.']], allow:['Screen details','The order of the steps']}
 };
 function rGoal(){
   const g = GN[S.goal], r = REC[S.goal] || {h:'—', c:'—', y:'—', life:[['','Its record opens here.']], allow:['Details you left to me']};
@@ -887,8 +915,8 @@ function rGoal(){
 }
 function rBehind(){
   return `<div class="wrap"><section class="page"><button class="back" data-act="stand">‹ Where everything stands</button><h1>Who is working where</h1><p class="small">23 helpers on 3 computers. The laptop is asleep.</p>
-   <div class="proj"><h3><span>The desk computer</span><span>14</span></h3>${[['signup','Faster sign-up','2'],['ratings','Driver ratings','3'],['price','Price page','2']].map(([g,n,c])=>`<button class="gl" data-act="goal" data-g="${g}"><span class="nm">${n}</span><span class="dt">${c}</span></button>`).join('')}<p class="small">Checking for everyone (4), the watch (1), 2 others.</p></div>
-   <div class="proj"><h3><span>The one on the shelf</span><span>9</span></h3><p>Sales tax (3), Accountant’s monthly pack (2), the second watch (1), 3 others.</p></div>
+   <div class="proj"><h3><span>The desk computer</span><span>14</span></h3>${[['signup','Faster sign-up','2'],['ratings','Driver ratings','3'],['price','Price page','2']].map(([g,n,c])=>`<button class="gl" data-act="goal" data-g="${g}"><span class="nm">${n}</span><span class="dt">${c}</span></button>`).join('')}<p class="small">Checking for everyone (4), watching for stalls (1), 2 others.</p></div>
+   <div class="proj"><h3><span>The one on the shelf</span><span>9</span></h3><p>Sales tax (3), Accountant’s monthly pack (2), watching the first one (1), 3 others.</p></div>
    <div class="proj"><h3><span>The laptop</span><span>0</span></h3><p class="small">Asleep since Sunday. Nothing waits on it.</p></div></section></div>`;
 }
 const ALLOW = [
@@ -933,7 +961,7 @@ function rOverlay(){
   const o = S.overlay; if (!o) return '';
   const wrap = (h,inner)=>`<div class="scrim" data-act="close"></div><div class="sheetov" role="dialog" aria-modal="true" aria-label="${h}">${inner}</div>`;
   if (o==='proof'){ const it = S.items[S.proofI], p = it.proof;
-    return wrap('The checks', `<h2>Checked by someone else · ${p.seal} · ${p.at}</h2>${p.un?`<ul class="chk">${p.un.map(x=>`<li class="un">Not proved: ${x}</li>`).join('')}</ul>`:''}<ul class="chk">${p.lines.map(x=>`<li>${x[0]}</li>`).join('')}</ul>${p.words?`<div class="lab">In the checker’s own words</div><p class="quote">${p.words}</p>`:''}<p><button class="link" data-act="ctl" data-v="Your question goes to the checker directly, not through me.">Ask the checker yourself</button></p><button class="btn" data-act="close" style="width:100%">Close</button>`); }
+    return wrap('The checks', `<h2>Checked by someone else: ${p.seal}, at ${p.at}</h2>${p.un?`<ul class="chk">${p.un.map(x=>`<li class="un">Not checked: ${x}</li>`).join('')}</ul>`:''}<ul class="chk">${p.lines.map(x=>`<li>${x[0]}${typeof x[1]==='number'?` <button class="link inl" data-act="jump" data-v="${x[1]}">See it at ${FRAMES[x[1]][0]}</button>`:''}</li>`).join('')}</ul>${p.words?`<div class="lab">In the checker’s own words</div><p class="quote">${p.words}</p>`:''}<p><button class="link" data-act="ctl" data-v="Your question goes to the checker directly, not through me.">Ask the checker yourself</button></p><button class="btn" data-act="close" style="width:100%">Close</button>`); }
   if (o==='park'){ const it = S.items[S.cur];
     return wrap('Not now', `<h2>Not now. Back when…</h2>${(it.park||[{b:'Tomorrow morning',s:'',r:'Parked until tomorrow.'},{b:'Monday',s:'',r:'Parked until Monday.'}]).map((p,j)=>`<button class="orow ${p.rec?'rec':''}" data-act="park" data-o="${j}"><b>${p.b}</b>${p.s?`<span>${p.s}</span>`:''}</button>`).join('')}<p class="small">It comes back by itself. Nothing for you to remember.</p><button class="btn" data-act="close" style="width:100%">Cancel</button>`); }
   if (o==='settled') return wrap('Settled without you', `<h2>14 settled without you</h2><ul class="chk"><li>Password rules as in the billing tool: your answer in September</li><li>One confirmation email, not two: your answer, fewest messages</li><li>Error messages in plain words: your rule</li><li>…and 8 more by your earlier answers</li></ul><div class="lab">Inside what you allowed; undo any at the showing</div><ul class="chk"><li>Phone number optional</li><li>Remembers the last instructor</li><li>The sign-up button in your app’s green</li></ul><button class="btn" data-act="close" style="width:100%">Close</button>`);
@@ -954,7 +982,7 @@ function rOverlay(){
 
 /* ============ behaviour ============ */
 function toast(t, undo){ S.toast = {t, undo}; }
-function finish(r, undo, tt){ const i = S.cur; S.out[i] = {r, undo}; S.marks = false; S.active = null; S.lastUndo = i; toast(tt || r.replace(/<[^>]+>/g,''), undo===false ? null : i); advance(); }
+function finish(r, undo){ const i = S.cur; S.out[i] = {r, undo}; S.marks = false; S.active = null; S.lastUndo = i; advance(); } // the folded receipt is the answer's only notice
 function advance(){
   const n = left(); S.marks = false;
   if (!n.length){ S.cur = -1; go('sheet', '#sh-h'); return; }
@@ -970,10 +998,11 @@ function act(a, d, ev){
     case 'goto': S.cur = +d.i; S.marks = false; go('sheet', '#goal'); break;
     case 'go': finish(it.rcpt + (Object.keys(s.marks).length?' With your change.':'')); break;
     case 'accept': if (it.ps && !S.ps){ S.ps = 'show'; S.out[S.cur] = null; render(); break; } finish(it.rcpt); break;
-    case 'pick': s.picks[+d.c] = +d.o;
+    case 'pick': s.picks[+d.c] = +d.o; if (it.thing==='slice') S.jt = 2;
       if ((it.kind==='decide'||it.kind==='rule') && it.choices.every((c,ci)=>s.picks[ci]!=null)){ const c = it.choices[0]; const r = it.choices.length>1 ? it.rcpt : (c.opts ? c.opts[+d.o] : c.alts[+d.o][0]) + (it.gid==='photos' && +d.o===0 ? ': old copies go on 17 December.' : '.'); render(); setTimeout(()=>finish(r), 380); }
       else render(); break;
     case 'aud': s.picks.aud = +d.o; render(); break;
+    case 'jump': S.jt = +d.v; S.overlay = null; render(); break;
     case 'dot': { const i = +d.i, j = +d.j, x = S.items[i], l = x.proof.lines[j]; S.dot = (S.dot && S.dot.i===i && S.dot.j===j) ? null : {i, j}; S.hl = null; if (l && typeof l[1]==='number') { S.jt = l[1]; } else if (l && l[1]) S.hl = l[1]; render(); } break;
     case 'sbopen': S.sbk = d.k; S.sbfix = {}; S.overlay = 'sb'; render(); break;
     case 'sbfix': S.sbfix = S.sbfix || {}; if (S.sbfix[d.k]==null) S.sbfix[d.k] = ''; else delete S.sbfix[d.k]; render(); break;
@@ -1054,6 +1083,7 @@ document.addEventListener('click', e=>{
     S.active = 'pin'+(s.pins.length-1); render(); return;
   }
   const t = e.target.closest('[data-act]'); if (!t || t.disabled || !t.dataset.act) return;
+  S.noteAt = `[data-act="${t.dataset.act}"]` + ['k','v','g','i','o','c','p','n'].filter(k=>t.dataset[k]!=null).map(k=>`[data-${k}="${CSS.escape(t.dataset[k])}"]`).join('');
   act(t.dataset.act, t.dataset, e);
 });
 document.addEventListener('input', e=>{
@@ -1133,6 +1163,7 @@ async function runCheck(){
         if (step.startsWith('b:')) sel = `[data-b="${step.slice(2)}"]`;
         if (step.startsWith('c:')) sel = `[data-act="chip"][data-v="${step.slice(2)}"]`;
         if (step.startsWith('goal:')) sel = `[data-act="goal"][data-g="${step.slice(5)}"]`;
+        if (step==='open' && S.view==='sheet') continue;
         const el = $(sel); if (!el) throw new Error(`${step}: nothing matches ${sel} (view ${S.view})`);
         const cur = S.items[S.cur];
         if (['go','accept','decided','act','park0'].includes(step) && !(step==='accept' && cur && cur.kind==='read') || (step.startsWith('pick') && cur && cur.choices) || step==='ps0' || step==='sendback' || step==='signin' || step==='always' || step==='hold'){ dec++; if (cur && cur.dec==='acc') acc++; else his++; }
@@ -1167,7 +1198,8 @@ async function runCheck(){
     load(11); act('open',{}); side.push('return bar adds up: '+(M[11].ret.need+M[11].ret.changed+M[11].ret.ok===40)+', later things costed: '+$$('.fold .wc').length); audit(M[11],'return',fails);
     act('see',{k:'remindersFx'}); side.push('a told result opens: '+!!$('.sheetov .sms')); act('close',{});
     load(0); act('open',{}); act('sbopen',{k:'ratingsSay'}); act('sbfix',{k:'d0'}); side.push('say-back line can be fixed: '+!!$('.sbin')); act('sbclose',{});
-    load(8); act('open',{}); act('dot',{i:'0',j:'2'}); side.push('a dot jumps to its moment: frame '+S.jt);
+    load(8); if (S.view!=='sheet') act('open',{}); act('proof',{i:'0'}); act('jump',{v:'2'}); side.push('a checked line jumps to its moment: frame '+S.jt);
+    load(3); if (S.view!=='sheet') act('open',{}); act('goto',{i:0}); act('pick',{c:'0',o:'0'}); side.push('a choice redraws the screen it changes: '+/Licence number/.test($('#app').innerText));
     load(4); act('open',{}); act('goto',{i:2}); side.push('marks come back in place: '+$$('.okpin').length);
     load(0); act('open',{}); act('change',{}); side.push('price can be changed: '+$$('.sheetov [data-act="pickprice"]').length); act('close',{});
     load(11); act('open',{}); act('pick',{c:'0',o:'0'}); act('accept',{}); act('go',{}); side.push('week read at the end of the first part: '+!!$('.weekblk'));

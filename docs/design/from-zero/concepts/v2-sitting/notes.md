@@ -26,6 +26,8 @@
 - **Blind and buzz:** whole-blind (the phone works it out itself) and half-blind (only the unseen lines hatched). The buzz is tried at most twice, then it stops and says what was lost.
 - **Stop:** for one goal, one project, or everything. Each says what it did and what was already out of hand.
 
+**After the craft critique:** no pop-up notices (a receipt sits in the flow under what it answers); proof as words ("Checked by someone else: all 6 pass", the exact thing beside it, "Not checked: …" just above the yes); short buttons; a greeting instead of a count; no verb tags or numbered queue; dark lock cards; the desk opens on the sheet with the thing at full height; the sign-up choices redraw the screen they change; marking shown as "✎ Touch what's wrong".
+
 ## From round 1's concepts
 
 - **Sitting:** "Yours to judge" first; the split when more has gathered than he has time for; "Not now" with a latest date; five verbs on each goal.
@@ -46,10 +48,10 @@
 | Places he must look | 1 (card → sheet), plus the app store to sign in | same |
 | Interruptions | 1, tried at most twice | 1 |
 | Held in his head | 0 things; 1 habit: glance at the card | same |
-| Words read to act | 3,092 (desk 3,063) | 2,429 |
+| Words read to act | 3,124 (desk 2,978) | 2,466 (desk 2,361) |
 | Words merely available | full say-backs, checker's sheets (~80 each), where everything stands, the allowed and stop pages | — |
 | Typed / spoken | 0 / 11 | 0 / 11 |
-| Taps | 40 | 33 |
+| Taps | 40 (desk 32: the desk opens straight to the sheet) | 33 (desk 27) |
 | Decisions | 22, all only his; 0 acceptances of what a check had passed | 18, all only his |
 | Minutes (critics' model) | about 22 | about 18 |
 
