@@ -77,7 +77,21 @@ html[data-theme=dark] .sec::after{display:none}
 .item.s-w::before,.item.s-u::before{content:"";position:absolute;left:-16px;top:13px;width:3px;height:21px;border-radius:2px;background:var(--rubric)}
 html[data-theme=dark] .item.s-w .row,html[data-theme=dark] .item.s-u .row{background:linear-gradient(90deg,var(--wash),transparent 85%)}
 .item.s-p .w{font-style:italic;color:var(--ink2)}
-.item.s-p .when,.item.s-d .w,.item.s-d .when{color:var(--ink2)}
+.item.s-p .when,.item.s-d .w,.item.s-d .when,.item.s-x .w,.item.s-x .when{color:var(--ink2)}
+.item.s-x .w{font-style:italic}
+.item.unk .row{background:repeating-linear-gradient(-45deg,transparent 0 7px,var(--hover) 7px 14px)}
+.item.unk .when{font-style:italic;color:var(--ink2)}
+.head.stale{color:var(--ink)}
+/* links inside running text: full-size hit area without stretching the line */
+.entry .lnk,.dfl .lnk,.answered .lnk{display:inline-block;min-height:0;padding:12px 2px;margin:-12px 0 -12px 4px}
+.dfl{margin:10px 0 0;padding:8px 12px 6px;border:1px solid var(--rule2);border-radius:8px;font-size:15px;line-height:1.45}
+.dfl.out{border-style:dashed}
+.dfl-k{display:block;font:600 11px/1.7 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+.dfl-b{display:block;margin-top:2px;color:var(--ink2);font-size:14px}
+details.ev{margin:12px 0 0;border-top:1px solid var(--rule)}
+details.ev summary{display:flex;align-items:center;min-height:44px;cursor:pointer;color:var(--ink2);font:500 15px var(--sans)}
+details.ev summary:hover{color:var(--ink)}
+.raw{margin:0 0 8px;padding:10px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--paper2);font:12.5px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
 .item.open .row .w{text-decoration:underline;text-decoration-color:var(--rubric);text-decoration-thickness:2px;text-underline-offset:4px}
 .note{position:relative;margin:-2px 0 8px;font:italic 14.5px/1.45 var(--sans);color:var(--ink2)}
 .note::before{content:"";position:absolute;left:-15px;top:.55em;width:5px;height:5px;border-radius:50%;background:var(--ink)}
@@ -250,7 +264,9 @@ html[data-theme=dark] .doc .h::after{display:none}
   .row{min-height:40px;padding:9px 0 6px}
   .row .w{font-size:18px}
   .sec{margin-top:14px}
-  .head .say{position:static;padding:0;background:none;width:270px}
+  .head .say{position:static;padding:0;background:none;width:250px}
+  .head .fresh{display:block;margin-top:4px}
+  .head .sep{display:none}
   .head .say input{height:40px;font-size:15px;letter-spacing:0;text-transform:none;font-weight:400;color:var(--ink)}
   .head .mic{width:40px;height:40px}
   .page.pic .heard{position:static;margin:12px 0 6px;box-shadow:none;background:var(--hover);border-color:var(--rule)}
@@ -298,6 +314,14 @@ const LONG={'Wed':'on Wednesday','Thu':'on Thursday','Fri':'on Friday','17:00':'
 const KIND={agree:'what I heard',look:'ready to see',decide:'your choice',multi:'your choices',urgent:'can’t wait',trust:'your choice'};
 
 const kv=(l,v)=>`<div class="kv"><span class="lbl">${l}</span><div class="val">${v}</div></div>`;
+/* What happens on silence. A default may act only inside authority he already gave; otherwise it waits for him. */
+function dfl(text,inside,basis,key){
+  const gone=key&&S.revoked[key];
+  return `<div class="dfl ${inside&&!gone?'in':'out'}"><span class="dfl-k">If you say nothing · ${inside&&!gone?'mine to do':'it waits for you'}</span><span>${gone?'It waits for you.':text}</span>
+  <span class="dfl-b">${gone?'You took that back. This kind of choice now waits for you.':inside?`Inside what you’ve let me do: ${basis}. ${key?`<button class="lnk" data-act="revoke" data-val="${key}" data-k="rv-${key}">Take that back</button>`:''}`:basis}</span></div>`;}
+/* The original evidence behind a summary, unedited, and a way around me. */
+function ev(id,items,checker){return items.map(([t,raw],i)=>`<details class="ev" data-det="${id}-${i}" ${S.det[id+'-'+i]?'open':''}><summary>${t}</summary><div class="raw">${raw}</div>
+  ${checker&&i===0?`<button class="lnk" data-act="askcheck" data-val="${checker}" data-k="ask-${id}">Ask the checker yourself</button>`:''}</details>`).join('');}
 
 /* ---------- the things that come to him ---------- */
 const C={
@@ -309,27 +333,55 @@ ratingsAgree:{goal:'ratings',type:'agree',kind:'Is this what you meant?',min:3,
      only:'How the screen feels. I’ll bring a sketch first.',
      not:'Showing ratings to students. Tying ratings to pay.',
      next:'A sketch on Thursday morning. Quiet until then.'},
+  ev:[['Your voice note, word for word (0:21)','“Okay, so, driver ratings. Let students rate their teacher after each lesson. I want to know who’s good. Not some public thing, I don’t want teachers getting dragged. Just for me, and maybe the teachers can see their own.”']],
   until:['signup-done','monday','two-weeks'],
   after:{ratings:R('q','Thu','sketch')}},
 invoiceLook:{goal:'invoice',type:'look',kind:'Ready to see',min:3,reasons:['Wrong','Something’s missing','Say it…'],
   body:id=>`<p class="lead">October’s invoices as one file for your accountant. Someone other than its maker checked it: all six “done” lines pass.</p>
   ${fileHTML(id,S.step[id]==='more'?INV.concat(INV_MORE):INV,'invoices-october.csv · 212 invoices')}
   <details class="checks"><summary>The six “done” lines, all passing</summary><ol><li>One line per invoice, none missing.</li><li>Totals match the billing tool to the cent.</li><li>Tax in its own column.</li><li>Opens in your accountant’s software.</li><li>One file per month.</li><li>Refunds shown as minus amounts.</li></ol></details>
-  ${kv('I assumed',pt(id,'a0','Dates are in your time zone.')+pt(id,'a1','One file a month, made on the 1st.'))}`,
+  ${kv('I assumed',pt(id,'a0','Dates are in your time zone.')+pt(id,'a1','One file a month, made on the 1st.'))}
+  ${kv('Not checked',pt(id,'n0','Invoices made late on a month’s last evening: none in the sample.'))}`,
+  ev:[['The checker’s own report, unedited',`Checker’s report · Invoice export · Tue 17 Nov 07:52
+Against: billing tool, October, 212 invoices
+1 one line per invoice ........ pass  212/212
+2 totals to the cent .......... pass  $48,912.40 both
+3 tax in its own column ....... pass
+4 opens in accountant’s app ... pass  test import, no warnings
+5 one file per month .......... pass
+6 refunds as minus ............ pass  3 refunds
+Not checked: invoices made after 19:00 on a month’s last day (none in sample)`]],checker:'invoice',
   after:{invoice:R('d','done')}},
 priceDecide:{goal:'price',type:'decide',kind:'Your choice',min:2,
   body:()=>`<p class="q">On the price page, show the yearly price first, or the monthly?</p>
   <div class="duo"><div class="mini"><span class="cap">Yearly first</span><span class="big">$190<small> a year</small></span><span class="small">two months free · or $19 a month</span></div>
   <div class="mini"><span class="cap">Monthly first</span><span class="big">$19<small> a month</small></span><span class="small">or $190 a year</span></div></div>
   <p class="advice"><b>I’d say yearly:</b> 7 in 10 of your customers already pay yearly.</p>
-  <p class="dflt">If I don’t hear by 5 pm today, I go with yearly. You can still change it when you see the page.</p>`,
+  ${dfl('At 5 pm I go with yearly. You can still change it when you see the page.',true,'page choices that can be undone, since 3 Nov','pagechoices')}`,
   choices:[['Yearly','pri'],['Monthly','']],until:['monday','two-weeks'],
   after:{price:R('q','Fri')}},
 signupChoices:{goal:'signup',type:'multi',kind:'Your choices',min:4,
-  ctx:'17 questions came up this afternoon. Your earlier answers settled 11. Three could be undone, so I went ahead; you’ll see them with the result. These three can’t be undone.',
-  qs:[{q:'Delete the 2,140 sign-ups left unfinished for over a year? They can’t be brought back.',adv:'<b>I’d say delete them.</b>',dflt:'If you don’t say: I keep them, and ask again with the result.',opts:['Delete them','Keep them']},
-      {q:'Text the 380 people who began signing up this month but stopped? A text can’t be taken back.',adv:'<b>I’d say don’t:</b> they never agreed to texts.',dflt:'If you don’t say: nothing is sent.',opts:['Don’t text','Text them']},
-      {q:'When you accept the new sign-up, move everyone to it at once? About 30 people part-way through the old one would lose what they typed.',adv:'<b>I’d say yes,</b> at 2 am that night, when almost no one signs up.',dflt:'If you don’t say: both stay up side by side.',opts:['Yes, at 2 am','Keep both']}],
+  ctx:'17 questions came up this afternoon. Your earlier answers settled 11. Three could be undone and were inside what you’ve let me do, so I went ahead; you’ll see them with the result. These three can’t be undone.',
+  qs:[{q:'Delete the 2,140 sign-ups left unfinished for over a year? They can’t be brought back.',adv:'<b>I’d say delete them.</b>',dflt:['Nothing is deleted, and I ask again with the result.','Not mine to do: it can’t be undone, and silence isn’t a yes.'],opts:['Delete them','Keep them']},
+      {q:'Text the 380 people who began signing up this month but stopped? A text can’t be taken back.',adv:'<b>I’d say don’t:</b> they never agreed to texts.',dflt:['No text goes out.','Not mine to do: a text can’t be taken back.'],opts:['Don’t text','Text them']},
+      {q:'When you accept the new sign-up, move everyone to it at once? About 30 people part-way through the old one would lose what they typed.',adv:'<b>I’d say yes,</b> at 2 am that night, when almost no one signs up.',dflt:['Both stay up side by side, and the switch waits for you.','Not mine to do: people would lose what they typed.'],opts:['Yes, at 2 am','Keep both']}],
+  ev:[['All 17 questions, and how each was settled',` 1 Button colour on step 2 ....... your rule: house colours (2 Oct)
+ 2 Keep “remember me” ticked ...... your rule: as on the shop site
+ 3 Country list order ............ your rule: yours first
+ 4 Error message wording ......... your rule: plain, no blame
+ 5 Email check: now or later ..... your rule: never block a sign-up
+ 6 Date format ................... your rule: as the app
+ 7 Terms link placement .......... your rule: under the button
+ 8 Logo on every step ............ your rule: first step only
+ 9 Name: one box or two .......... your rule: one box
+10 Lesson list order ............. your rule: soonest first
+11 Back button on each step ...... your rule: always
+12 Password optional, email link . went ahead: can be undone
+13 Name and email on one screen .. went ahead: can be undone
+14 “How did you hear” moved later  went ahead: can be undone
+15 Delete 2,140 unfinished ....... asked you
+16 Text 380 who stopped .......... asked you
+17 Switch everyone at once ....... asked you`]],
   after:{signup:R('q','Thu')}},
 remindersAgree:{goal:'reminders',type:'agree',kind:'Is this what you meant?',min:2,
   a:{said:'The reminder texts go out too late, people miss their lesson.',when:'Today 12:40, walking',
@@ -361,6 +413,12 @@ photosLook:{goal:'photos',type:'look',kind:'Ready to see',min:2,reasons:['Wrong'
   <div class="thumbs" aria-hidden="true"><span></span><span></span><span></span></div>
   <p class="cap2">Three photos picked at random and opened in the app.</p>
   ${kv('I assumed',pt(id,'a0','Photos older than two years take about a second longer to open. Few people open them.'))}`,
+  ev:[['The checker’s own report, unedited',`Checker’s report · Move photos · Wed 18 Nov 06:40
+48,210 of 48,210 photos in new storage (count and checksums)
+300 picked at random, opened in the app: 300 load
+  median 0.4 s (was 0.3 s); older than 2 years 1.3 s
+Old storage kept read-only for 30 days.
+Deleting it after that can’t be undone: it will wait for your OK.`]],checker:'photos',
   after:{photos:R('d','done')}},
 releaseUrgent:{goal:'photos',type:'urgent',kind:'Can’t wait',min:1,title:'The Driving app release',
   body:()=>`<p class="lead">The app store wants you to sign in again before it takes today’s release, which carries your photo move.</p>
@@ -368,12 +426,25 @@ releaseUrgent:{goal:'photos',type:'urgent',kind:'Can’t wait',min:1,title:'The 
   ${kv('Why now','The store asked at 13:40, without warning. Its review closes at 3 pm; the next is in a week.')}`,
   after:{photos:R('d','in review')},afterNotes:{photos:'You signed in at 13:55. The release is with the store for review.'}},
 wordingTrust:{goal:null,type:'trust',kind:'About how I work',min:1,title:'Wording changes',
-  body:()=>`<p class="lead">You accepted the last three wording changes just as I first showed them: the sign-up button, the price page heading, and the invoice email subject.</p>
-  <p class="q">From now on, shall I make wording changes and list them in your week, instead of showing them first?</p>
-  <p class="advice"><b>I’d say yes.</b> One that you send back puts them all back to being shown.</p>
-  <p class="dflt">If you don’t say: I keep showing them.</p>`,
+  body:()=>`<p class="lead">Wording changes have held up. You accepted the last three as first shown, and all twelve since October still stand; none came back later.</p>
+  <p class="q">Shall I make wording changes without showing them first, and list them in your week?</p>
+  <ul class="ul"><li>I’d still show you one in five, picked at random.</li><li>It stops by itself if one comes back, or if the app’s voice or audience changes.</li><li>Never for words that can’t be taken back once out: texts, emails, prices, legal pages.</li></ul>
+  <p class="advice"><b>I’d say yes.</b></p>
+  ${dfl('I keep showing them.',false,'I never widen what I may do on silence.')}`,
+  ev:[['All twelve wording changes, and what became of each',`06 Oct booking page “Reserve” → “Book” ........ accepted as shown, stands
+09 Oct receipt footer names the shop .......... accepted as shown, stands
+14 Oct lesson card “Instructor” → “Teacher” .... accepted as shown, stands
+16 Oct reminder sender “Lesson reminder” ....... accepted as shown, stands
+21 Oct error “Invalid” → “Check this” .......... accepted as shown, stands
+23 Oct price table “Annual” → “Yearly” ......... accepted as shown, stands
+28 Oct empty list “No data” → “No lessons yet” . accepted as shown, stands
+30 Oct account page heading ................... accepted as shown, stands
+04 Nov help link “FAQ” → “Help” ............... accepted as shown, stands
+12 Nov sign-up button “Start” → “Book your first lesson” . accepted as shown
+13 Nov price page heading ..................... accepted as shown
+14 Nov invoice email subject .................. accepted as shown`]],
   choices:[['Yes, go ahead','pri'],['Not yet','']],
-  afterSub:'From now on, wording changes go ahead and are listed in your week.'},
+  afterSub:'From now on, wording changes go ahead; one in five is still shown to you at random.'},
 welcomeSketch2:{goal:'welcome',type:'look',sketch:true,kind:'A sketch to see',min:2,reasons:['Too long','Too stiff','Cut this','Say it…'],
   body:id=>`<p class="lead">The second sketch, short and warm by your rule from Tuesday. 33 words; the first had 104.</p>
   <div class="mail"><div class="from">From Corner Shop · to a new customer</div>
@@ -395,8 +466,15 @@ signupLook:{goal:'signup',type:'look',kind:'Ready to see',min:4,reasons:['Wrong'
   body:id=>`<p class="lead">Sign-up is three screens, not seven. Twenty test sign-ups took 1 min 30 s on average, down from 4 min 10 s. All four “done” lines pass.</p>
   <div class="screens" aria-label="The three sign-up screens"><div class="scr"><b>1 of 3</b>Name and email<i></i><i></i><em>Next</em></div><div class="scr"><b>2 of 3</b>Pick a first lesson<i></i><i></i><em>Next</em></div><div class="scr"><b>3 of 3</b>Pay now or at the lesson<i></i><em>Book</em></div></div>
   ${kv('As you chose','Old unfinished sign-ups deleted. No texts sent. Everyone moves over at 2 am tonight.')}
-  ${kv('I went ahead on',pt(id,'g0','A password is optional: students can sign in with an emailed link.')+pt(id,'g1','“How did you hear about us?” moved to after the first lesson.')+pt(id,'g2','Name and email share one screen.'))}
-  <p class="hint">Tap any of these to undo it.</p>`,
+  ${kv('I went ahead on',pt(id,'g0','A password is optional: students can sign in with an emailed link.')+pt(id,'g1','“How did you hear about us?” moved to after the first lesson.')+pt(id,'g2','Name and email share one screen.')+'<span class="hint">Tap any of these to undo it.</span>')}
+  ${kv('Waited for you',`<p class="q" style="font-size:16px">May teachers skip the password too?</p>${S.step[id+'-t']?`<p class="answered">✓ ${S.step[id+'-t']}</p>`:`<div class="acts sm"><button class="b" data-act="tq" data-card="${id}" data-val="Teachers too" data-k="tq0">Teachers too</button><button class="b" data-act="tq" data-card="${id}" data-val="Keep teachers’ passwords" data-k="tq1">Keep their passwords</button></div>`}
+  ${dfl('Teachers keep their passwords.',false,'Not mine to do: it changes what teachers agreed to.')}`)}`,
+  ev:[['The checker’s own report, unedited',`Checker’s report · Faster sign-up · Fri 20 Nov 16:10
+20 test sign-ups by people new to the app
+  median 1 min 30 s (was 4 min 10 s); 19 finished
+  1 stopped at payment: card form, not part of this change
+4 done lines: pass
+Not checked: very old phones (none to test on)`]],checker:'signup',
   after:{signup:R('d','done'),ratings:R('q','Wed 25','sketch')},
   afterNotes:{ratings:'Back from parked: Faster sign-up is done. A sketch comes Wednesday the 25th.'}},
 invoiceFixLook:{goal:'invoice',type:'look',kind:'Ready to see',min:3,reasons:['Wrong','Something’s missing','Say it…'],
@@ -404,6 +482,11 @@ invoiceFixLook:{goal:'invoice',type:'look',kind:'Ready to see',min:3,reasons:['W
   ${fileHTML(id,INV_FIX,'invoices-october.csv · 214 invoices')}
   ${kv('Checked','August, September and October, against the billing tool, to the cent. By someone other than the maker.')}
   ${kv('Ready','A corrected October file for your accountant.')}`,
+  ev:[['The checker’s own report, unedited',`Checker’s report · Invoice export fix · Fri 20 Nov 09:05
+Aug 198/198 · Sep 205/205 · Oct 214/214, totals to the cent
+Tried: last evening of each month, 18:00–23:59 your time
+  9 invoices, all in the right month
+Not checked: invoices dated in another time zone (you have none)`]],checker:'invoice',
   after:{invoice:R('d','done')}},
 priceLook:{goal:'price',type:'look',kind:'Ready to see',min:2,reasons:['Wrong','Say it…'],
   body:id=>`<p class="lead">The price page, yearly first, as you chose.</p>
@@ -414,6 +497,9 @@ testsLook:{goal:'tests',type:'look',kind:'Ready to see',min:2,reasons:['Wrong','
   body:id=>`<p class="lead">The full test run takes 6 minutes instead of 19. The same 1,904 tests run; none are skipped.</p>
   <div class="bill"><span class="from">19 min</span><span class="to">6 min</span></div>
   ${kv('I assumed',pt(id,'a0','Tests that use the payment sandbox run last, one at a time.'))}`,
+  ev:[['Both runs side by side, unedited',`Before  19 min 04 s · 1,904 tests · one at a time
+After    6 min 11 s · 1,904 tests · four at a time, payment last
+Same results in both: 1,904 pass, 0 fail, 0 skipped`]],checker:'tests',
   after:{tests:R('d','done')}}
 };
 const INV=[['Oct 3','Harbor Dental','1,200.00','96.00'],['Oct 9','Lin &amp; Ortiz','340.00','27.20'],['Oct 22','Northside Gym','89.00','7.12'],['Oct 31','Bayview Florist','415.00','33.20']];
@@ -432,69 +518,81 @@ const UNTIL={
 
 /* ---------- the test week, moment by moment ---------- */
 const M=[
-{t:'Tue 8:30',day:'Tue 17 Nov',clock:'8:30',ev:'Event 1',
+{t:'Tue 8:30',chk:'8:29',day:'Tue 17 Nov',clock:'8:30',ev:'Event 1',
  nar:'Event 1 · Tuesday morning. He opens the page. Three things need him: agree, look, decide. About eight minutes.',
- rows:{signup:R('q','Thu'),ratings:R('w'),photos:R('q','Wed'),invoice:R('w'),price:R('w'),totals:R('d','done'),welcome:R('q','17:00','sketch'),
+ rows:{signup:R('q','Thu'),ratings:R('w'),photos:R('q','Wed'),invoice:R('w'),price:R('w'),totals:R('d','done'),welcome:R('q','17:00','sketch','Ready since 7:50. Held for 17:00 so this morning stays inside your usual 10 minutes; it will be 9 hours old by then, inside your one-day limit.'),
    tax:R('p','after accountant',null,'Parked by you last week. It comes back by itself when your accountant replies.'),tests:R('q','Fri')},
  cards:['ratingsAgree','invoiceLook','priceDecide'],next:'Next: the welcome email sketch, at 17:00 today.'},
-{t:'Tue 8:38',day:'Tue 17 Nov',clock:'8:38',ev:'Event 1, after',
+{t:'Tue 8:38',chk:'8:37',day:'Tue 17 Nov',clock:'8:38',ev:'Event 1, after',
  nar:'Event 1, after. Done in eight minutes. The page says when it will next have anything for him, so there is nothing to check.',
  rows:{ratings:R('q','Thu','sketch'),invoice:R('d','done'),price:R('q','Fri')},cards:[],next:'Next: the welcome email sketch, at 17:00 today.'},
-{t:'Tue 12:40',day:'Tue 17 Nov',clock:'12:40',ev:'Event 2',
+{t:'Tue 12:40',chk:'12:39',day:'Tue 17 Nov',clock:'12:40',ev:'Event 2',
  nar:'Event 2 · 12:40, walking. He holds the mic and says one sentence. No project, no form. It lands where it belongs.',
  rows:{reminders:R('q','17:00','heard')},isNew:'reminders',
  notes:{reminders:'New. It’s about the Driving app, so it sits here. What I heard comes to you at 17:00.'},
  say:{you:'The reminder texts go out too late, people miss their lesson.',reply:'Got it. That’s the Driving app, so it sits there now. What I heard comes to you at 17:00.'},
  cards:[],next:'Next: the welcome email sketch and what I heard about the reminder texts, at 17:00.'},
-{t:'Tue 15:20',day:'Tue 17 Nov',clock:'15:20',ev:'Event 6',
+{t:'Tue 15:20',chk:'15:19',day:'Tue 17 Nov',clock:'15:20',ev:'Event 6',
  nar:'Event 6 · A helper on “Speed up the test run” went silent for 40 min. A watcher noticed at 15:05 and restarted it from the record. Friday holds. Nothing here changes.',
  rows:{},cards:[],since:['Same as when you looked at 12:41.'],next:'Next: the welcome email sketch and what I heard about the reminder texts, at 17:00.'},
-{t:'Tue 17:00',day:'Tue 17 Nov',clock:'17:00',ev:'Events 3, 4',
+{t:'Tue 17:00',chk:'16:59',day:'Tue 17 Nov',clock:'17:00',ev:'Events 3, 4',
  nar:'Events 3 & 4 · 17 questions came up: 11 settled by his rulings, 3 went ahead (undoable), 3 reach him, at his usual time, on their line. The email sketch is wrong: point at it.',
  rows:{signup:R('w'),reminders:R('w'),welcome:R('w')},
  cards:['signupChoices','remindersAgree','welcomeSketch'],next:'Next: the photo move, tomorrow at 8:30.'},
-{t:'Wed 8:30',day:'Wed 18 Nov',clock:'8:30',ev:'Events 7, 9',
+{t:'Wed 8:30',chk:'8:29',day:'Wed 18 Nov',clock:'8:30',ev:'Events 7, 9',
  nar:'Events 7 & 9 · A computer was off all night: one promise moves, told once, on its own line. Last week’s question died: withdrawn, told, not asked.',
  rows:{signup:R('q','Fri'),reminders:R('q','Wed 25'),welcome:R('q','Thu','sketch'),invoice:null,totals:null,photos:R('w')},
  moved:{signup:'Thu'},
  notes:{signup:'Moved from Thursday. A computer was off all night, so a night’s work is being done again.',photos:'I withdrew last week’s question about keeping old photo links. The app no longer uses them, so it doesn’t matter.'},
  cards:['photosLook'],next:'Next: the Driver ratings sketch, Thursday at 8:30.'},
-{t:'Wed 9:10',day:'Wed 18 Nov',clock:'9:10',ev:'Event 5',
+{t:'Wed 9:10',chk:'9:09',day:'Wed 18 Nov',clock:'9:10',ev:'Event 5',
  nar:'Event 5 · Sign-up slipped to Friday. He taps Driver ratings where it sits and parks it until sign-up is done.',
  rows:{photos:R('d','done')},cards:[],open:'r:ratings',step:{'r:ratings':'until'},next:'Next: the Driver ratings sketch, Thursday at 8:30.',
  nextAfterPark:'Next: the welcome email sketch, Thursday at 8:30.'},
-{t:'Wed 13:52',day:'Wed 18 Nov',clock:'13:52',ev:'Event 8',
+{t:'Wed 13:52',chk:'13:51',day:'Wed 18 Nov',clock:'13:52',ev:'Event 8',
  nar:'Event 8 · The app store wants his sign-in before 3 pm or the release waits a week. The only kind of thing ever pushed: only he can do it, and it can’t wait for a sitting.',
  rows:{ratings:R('p','after sign-up',null,UNTIL['signup-done'].detail),photos:R('u')},cards:['releaseUrgent'],urgent:true,push:true,
  next:'Next: the welcome email sketch, Thursday at 8:30.'},
-{t:'Thu 8:30',day:'Thu 19 Nov',clock:'8:30',ev:'Event 10',
- nar:'Event 10 · Three wording changes in a row were accepted as first shown. The counterpart asks to stop showing that kind.',
+{t:'Thu 8:30',chk:'8:29',day:'Thu 19 Nov',clock:'8:30',ev:'Event 10',
+ nar:'Event 10 · Three wording changes in a row were accepted as first shown, on top of twelve that still stand. Not one acceptance: repeated outcomes. The offer keeps random spot-checks and never covers what can’t be taken back.',
  rows:{photos:null,welcome:R('w')},cards:['wordingTrust','welcomeSketch2'],next:'Next: three results, Friday at 8:30.'},
-{t:'Thu 11:20',day:'Thu 19 Nov',clock:'11:20',ev:'Event 11',
+{t:'Thu 9:55',chk:'9:54',day:'Thu 19 Nov',clock:'9:55',ev:'Watcher down',
+ nar:'Outside evidence · The watcher on the desk computer stopped at 9:14; a second watcher caught it at 9:20 and is bringing it back. He happens to look at 9:55. The page must not say “nothing needs you” on what it cannot see.',
+ rows:{welcome:R('q','Wed 25')},unk:{since:'9:14',rows:['signup','reminders'],next:'10:15'},cards:[],
+ next:'Next: three results, Friday at 8:30.'},
+{t:'Thu 11:20',chk:'11:19',day:'Thu 19 Nov',clock:'11:20',ev:'Event 11',
  nar:'Event 11 · His accountant says October is short. He says one sentence. The export comes back to the place it used to sit, and that kind of work is shown again.',
  rows:{welcome:R('q','Wed 25'),invoice:R('w')},cards:['invoiceFix'],
  notes:{invoice:'Back in its old place. You accepted it on Tuesday; it was wrong.'},
+ since:['This morning two lines went unchecked for 52 minutes, while a watcher was down. Nothing was missed.'],
  say:{you:'The invoice export puts the invoices from the 31st into next month.',reply:'Got it. That’s Invoice export, which you accepted on Tuesday. It’s back in its place, and what I heard is ready now.'},
  next:'Next: four results, Friday at 8:30.'},
-{t:'Mon 8:30',day:'Mon 23 Nov',clock:'8:30',ev:'Event 12',
+{t:'Mon 8:30',chk:'8:29',day:'Mon 23 Nov',clock:'8:30',ev:'Event 12',
  nar:'Event 12 · Back after Friday to Sunday away. Results waited for him; nothing else did. About 30 seconds to be current, then the sitting.',
  rows:{signup:R('w'),invoice:R('w'),price:R('w'),tests:R('w')},cards:['signupLook','invoiceFixLook','priceLook','testsLook'],ledePre:'Welcome back. ',
- since:['Since you looked on Thursday at 11:24, I settled six small things on their defaults. One is worth a look; it’s in your week.','No promise moved.'],
+ since:['Four results waited for you, the oldest since Friday 9:00. That’s one minute over your usual 10; nothing else is held back.','Six small things were inside what you’d let me do, so I settled them. One was not, so it waited: it’s in Faster sign-up. No promise moved.'],
+ sinceEv:[['What I did while you were away, unedited',`Fri 09:12  Reminder texts: sender “Lesson reminder” .... yours: plain names
+Fri 14:30  Price page: tax shown included ............ mine: page choice, can be undone
+Sat 10:05  Welcome email: signed by Priya ............ mine: sender and layout
+Sat 16:40  Test run: payment tests last .............. mine: test order
+Sun 11:20  Driver ratings: kept parked ............... yours: after sign-up
+Sun 15:02  Photos: old storage kept read-only ........ mine: nothing deleted
+Sun 18:02  Sign-up: teachers skip password? .......... not mine: waited for you`]],
  next:'Next: the reminder texts, the welcome email and the Driver ratings sketch, Wednesday at 8:30.'},
-{t:'Mon 8:44',day:'Mon 23 Nov',clock:'8:44',ev:'Event 13',
+{t:'Mon 8:44',chk:'8:43',day:'Mon 23 Nov',clock:'8:44',ev:'Event 13',
  nar:'Event 13 · After the sitting he opens his week, one level down, as he does on Mondays.',
  rows:{signup:R('d','done'),invoice:R('d','done'),price:R('d','done'),tests:R('d','done'),ratings:R('q','Wed 25','sketch')},
  notes:{ratings:'Back from parked: Faster sign-up is done. A sketch comes Wednesday the 25th.'},
  cards:[],page:'week',next:'Next: the reminder texts, the welcome email and the Driver ratings sketch, Wednesday at 8:30.'},
-{t:'Mon 8:50',day:'Mon 23 Nov',clock:'8:50',ev:'Event 14',
+{t:'Mon 8:50',chk:'8:49',day:'Mon 23 Nov',clock:'8:50',ev:'Event 14',
  nar:'Event 14 · Curious, he looks one level down: where the helpers are, and what one thing cost. Never pushed.',
  rows:{},cards:[],page:'behind',costGoal:'invoice',next:'Next: the reminder texts, the welcome email and the Driver ratings sketch, Wednesday at 8:30.'}
 ];
-const SOFAR=[[1,0,0],[2,8,1],[2,8,1],[2,8,1],[2,8,1],[2,17,4],[3,19,4],[3,20,4],[3,22,5],[3,23,5],[3,24,5]];
+const SOFAR=[[1,0,0],[2,8,1],[2,8,1],[2,8,1],[2,8,1],[2,17,4],[3,19,4],[3,20,4],[3,22,5],[3,22,5],[3,23,5],[3,24,5]];
 
 /* ---------- state ---------- */
 const S={m:0,theme:null,open:null,page:'pic',res:{},marks:{},pointing:null,step:{},ovr:{},notes:{},flash:null,subNote:null,
-  heard:null,pushShown:false,costGoal:'invoice',sayDraft:'',seen:{},taken:{},anim:false,focusKey:null,parked:false};
+  heard:null,pushShown:false,costGoal:'invoice',sayDraft:'',seen:{},taken:{},anim:false,focusKey:null,parked:false,revoked:{},det:{},paused:false};
 
 function rows(){const r={};for(let i=0;i<=S.m;i++)for(const [k,v] of Object.entries(M[i].rows||{})){if(v===null)delete r[k];else r[k]=v;}
   for(const [k,v] of Object.entries(S.ovr)){if(v===null)delete r[k];else r[k]=v;}return r;}
@@ -516,7 +614,7 @@ function agreeBody(id){const a=C[id].a;return `<div class="said"><span class="lb
   ${a.mine?kv('I’ll decide',pt(id,'m',a.mine)):''}${a.only?kv('Only you',pt(id,'o',a.only)):''}${a.not?kv('Not doing',pt(id,'x',a.not)):''}
   ${a.chg?kv('From now on',pt(id,'c',a.chg)):''}${kv('Next',pt(id,'t',a.next))}`;}
 function multiBody(id){const c=C[id],st=S.step[id]||{};
-  return `<p class="ctx">${c.ctx}</p>`+c.qs.map((q,n)=>`<div class="mq"><p class="q">${q.q}</p><p class="advice">${q.adv}</p><p class="dflt">${q.dflt}</p>
+  return `<p class="ctx">${c.ctx}</p>`+c.qs.map((q,n)=>`<div class="mq"><p class="q">${q.q}</p><p class="advice">${q.adv}</p>${dfl(q.dflt[0],false,q.dflt[1])}
   ${st[n]?`<p class="answered">✓ ${st[n]}<button class="lnk" data-act="q" data-card="${id}" data-n="${n}" data-val="" data-k="q-${n}-x">change</button></p>`
   :`<div class="acts sm">${q.opts.map((o,j)=>`<button class="b ${j===0?'pri':''}" data-act="q" data-card="${id}" data-n="${n}" data-val="${esc(o)}" data-k="q-${n}-${j}">${o}</button>`).join('')}</div>`}</div>`).join('');}
 function bodyOf(id){const c=C[id];if(c.type==='agree')return agreeBody(id);if(c.type==='multi')return multiBody(id);return c.body(id);}
@@ -540,7 +638,7 @@ function actsFor(id){
 function cardHTML(id,inDesk){const c=C[id];
   const head=inDesk?`<div class="th"><div class="kind">${c.kind}</div><h2 class="${c.goal?'his':''}" tabindex="-1" data-k="thing-h">${c.goal?G[c.goal]:c.title}</h2></div>`
     :`<div class="kindrow"><span class="kind">${c.kind}</span></div>`;
-  return head+bodyOf(id)+actsFor(id);}
+  return head+bodyOf(id)+(c.ev?ev(id,c.ev,c.checker):'')+actsFor(id);}
 function detailOf(id,r){
   if(r.detail)return r.detail;
   if(r.s==='q'){const d=LONG[r.lbl]||r.lbl;
@@ -549,23 +647,43 @@ function detailOf(id,r){
     return `Being made and checked. You’ll see the result ${d}. Nothing needs you until then.`;}
   if(r.s==='d')return 'Done. It moves into your week tomorrow morning.';
   return '';}
-function rowPanel(id){const r=rows()[id],key='r:'+id;
+/* What he has let me decide on each thing: explicit, one tap from its line, each one revocable. */
+const AUTH={signup:['Screen wording and layout','Choices that can be undone, on my advice; you see them with the result'],ratings:['Wording, layout, and the nudge to rate'],
+  photos:['Which storage, within $80 a month'],reminders:['The words of the text'],invoice:['Column order and file name'],price:['Page choices that can be undone, on my advice'],
+  totals:['Report fixes, without showing you first'],welcome:['Layout and who signs it'],tax:[],tests:['How tests are grouped and ordered']};
+const REC={signup:`Sat 14 Nov 10:02  You said: “Sign-up takes forever, make it faster.”
+Mon 16 Nov 08:41  Agreed. Done means: 3 screens or fewer; median under 2 min; nothing you need is lost.
+Tue 17 Nov 17:04  You chose: delete old sign-ups; no texts; switch at 2 am.
+Wed 18 Nov 02:10  Laptop went off. Work stopped.
+Wed 18 Nov 07:55  Watcher moved the work to the desk computer. Promise moved: Thu → Fri.`};
+function confirmBlock(key,id,text,act,yes,no){return `<div class="mq"><p class="q">${text}</p><div class="acts sm"><button class="b pri" data-act="${act}" data-key="${key}" data-val="${id}" data-k="${act}-${id}">${yes}</button><button class="b" data-act="cancel" data-key="${key}">${no}</button></div></div>`;}
+function rowPanel(id){const r=rows()[id],key='r:'+id,st=S.step[key];
   let h=`<p class="lead">${detailOf(id,r)}</p>`;
-  if(S.step[key]==='until')return h+untilBlock(key,id==='ratings'?['signup-done','monday','two-weeks']:['monday','two-weeks']);
-  const b=[];if(r.s==='q')b.push(['notnow','Not now…'],['change','Change something']);
-  if(r.s==='p')b.push(['change','Change something']);
-  if(r.s==='d')b.push(['change','Something’s wrong with it']);
-  return h+`<div class="acts">${b.map(([a,t])=>`<button class="b" data-act="${a}" data-key="${key}" data-val="${id}" data-k="${a}-${id}">${t}</button>`).join('')}<button class="lnk" data-act="cost" data-val="${id}">What it has cost</button></div>`;}
+  if(st==='until')return h+untilBlock(key,id==='ratings'?['signup-done','monday','two-weeks']:['monday','two-weeks']);
+  if(st==='stop')return h+confirmBlock(key,id,`Stop ${G[id]}? Work stops now. Nothing already done is undone, and you can start it again.`,'stopdo','Stop it','Keep going');
+  if(st==='undo')return h+confirmBlock(key,id,`Put ${G[id]} back as it was before? Nothing else changes.`,'undodo','Undo it','Keep it');
+  const b=[];
+  if(r.s==='q')b.push(['change','Change something'],['notnow','Not now…'],['stop','Stop']);
+  if(r.s==='p'||r.s==='x')b.push(['change','Change something']);
+  if(r.s==='d')b.push(['undo','Undo'],['change','Something’s wrong']);
+  const au=AUTH[id]||[];
+  const rec=REC[id]||`${G[id]}\nEvery word you said, the agreement, each check and each choice,\nin order and unedited. Last check by the watcher: ${M[S.m].chk||''}.`;
+  return h+`<div class="acts">${b.map(([a,t])=>`<button class="b" data-act="${a}" data-key="${key}" data-val="${id}" data-k="${a}-${id}">${t}</button>`).join('')}</div>
+  <details class="ev" data-det="au-${id}" ${S.det['au-'+id]?'open':''}><summary>What you’ve let me decide here</summary>
+  ${au.length?au.map((t,i)=>`<div class="entry">${S.revoked[id+i]?`<s>${t}</s> <span class="hint">Taken back: this now waits for you.</span>`:`${t} <button class="lnk" data-act="revoke" data-val="${id+i}" data-k="rv-${id+i}">Take back</button>`}</div>`).join(''):'<p class="hint">Nothing beyond the agreement.</p>'}</details>
+  <details class="ev" data-det="rec-${id}" ${S.det['rec-'+id]?'open':''}><summary>The record, unedited</summary><div class="raw">${rec}</div><button class="lnk" data-act="askcheck" data-val="${id}" data-k="ask-r-${id}">Ask the checker yourself</button></details>
+  <div class="acts sm"><button class="lnk" data-act="cost" data-val="${id}">What it has cost</button></div>`;}
 function whenHTML(id,r){
   if(r.s==='w'||r.s==='u'){const c=cardFor(id);return c?KIND[C[c].type]:'with you';}
-  if(r.s==='d'||r.s==='p')return r.lbl;
+  if(r.s==='d'||r.s==='p'||r.s==='x')return r.lbl;
   const mv=(M[S.m].moved||{})[id];
-  return (mv&&!(id in S.ovr)?`<s>${mv}</s><span class="vh">now </span>`:'')+(r.what==='sketch'?'sketch ':'')+r.lbl;}
+  return (mv&&!(id in S.ovr)?`<s>${mv}</s><span class="vh">now </span>`:'')+(r.what==='sketch'?'sketch ':r.what==='undo'?'undo ':'')+r.lbl;}
 function itemHTML(id,r){
   const card=cardFor(id),key=card?'c:'+card:'r:'+id,open=S.open===key,note=noteFor(id),d=desk();
-  const cls=['item','s-'+r.s,open?'open':'',S.flash===id?'flash':'',(S.anim==='new'&&M[S.m].isNew===id)?'new':''].join(' ');
+  const unk=M[S.m].unk&&M[S.m].unk.rows.includes(id);
+  const cls=['item','s-'+r.s,unk?'unk':'',open?'open':'',S.flash===id?'flash':'',(S.anim==='new'&&M[S.m].isNew===id)?'new':''].join(' ');
   return `<div class="${cls}" id="it-${id}"><button class="row" data-act="row" data-val="${id}" data-k="row-${id}" aria-expanded="${open}">
-    <span class="w">${G[id]}</span><span class="ld" aria-hidden="true"></span><span class="when">${whenHTML(id,r)}</span></button>
+    <span class="w">${G[id]}</span><span class="ld" aria-hidden="true"></span><span class="when">${whenHTML(id,r)}${unk?' · unchecked':''}</span></button>
     ${note?`<p class="note">${note}</p>`:''}
     ${open&&!d?`<div class="panel ${S.anim==='open'?'anim':''}">${card?cardHTML(card,false):rowPanel(id)}</div>`:''}</div>`;}
 function looseHTML(){
@@ -576,7 +694,11 @@ function looseHTML(){
     ${open&&!desk()?`<div class="panel ${S.anim==='open'?'anim':''}">${cardHTML(id,false)}</div>`:''}</div>`;}).join('');}
 function ledeHTML(){
   const m=M[S.m],left=cardsLeft();let h,subs=[];
-  if(left.length){const mins=left.reduce((a,id)=>a+C[id].min,0);
+  if(S.paused){return `<h1 class="lede" tabindex="-1" data-k="lede" aria-live="polite">All work is paused, by you.</h1><div class="start"><button class="b pri" data-act="resume" data-k="resume">Resume</button><p class="sub">Nothing moves until you resume. Nothing was undone; promises move by the time paused.</p></div>`;}
+  if(m.unk){h='I can’t vouch for all of this page.';
+    subs.push(`Two lines are unchecked since ${m.unk.since}: the watcher on the desk computer stopped. A second watcher is bringing it back; next full check by <b class="nx">${m.unk.next}</b>.`);
+    subs.push('Nothing else is waiting for you. The two unchecked lines might be.');}
+  else if(left.length){const mins=left.reduce((a,id)=>a+C[id].min,0);
     if(m.urgent)h=`<span class="red">One thing can’t wait.</span> It’s due before 3 pm.`;
     else h=(left.length===m.cards.length&&m.ledePre?m.ledePre:'')+`${cap(NUMW[left.length])} thing${left.length>1?'s are':' is'} with you, about ${mins} minute${mins>1?'s':''}.`;
     const names=left.map(id=>C[id].goal?`<span class="his">${G[C[id].goal]}</span>`:C[id].title.toLowerCase());
@@ -587,9 +709,10 @@ function ledeHTML(){
     subs.push((S.parked&&m.nextAfterPark?m.nextAfterPark:m.next).replace(/, ([^,]+)\.$/,', <b class="nx">$1</b>.'));}
   if(S.subNote)subs.push(S.subNote);
   (m.since||[]).forEach(s=>subs.push(s));
+  const sev=m.sinceEv?ev('since',m.sinceEv):'';
   const begin=left.length&&!S.open&&!S.pushShown?`<button class="b pri" data-act="begin" data-k="begin">Begin</button>`:'';
   const first=subs.shift();
-  return `<h1 class="lede" tabindex="-1" data-k="lede" aria-live="polite">${h}</h1><div class="start">${begin}<p class="sub">${first}</p></div>${subs.map(s=>`<p class="sub">${s}</p>`).join('')}`;}
+  return `<h1 class="lede" tabindex="-1" data-k="lede" aria-live="polite">${h}</h1><div class="start">${begin}<p class="sub">${first}</p></div>${subs.map(s=>`<p class="sub">${s}</p>`).join('')}${sev}`;}
 function sayHTML(){return `<form class="say" onsubmit="return false"><input id="sayIn" type="text" placeholder="Say what you want…" aria-label="Say what you want" autocomplete="off" value="${esc(S.sayDraft)}" data-k="sayIn"><button type="button" class="mic" data-act="mic" aria-label="Speak" data-k="mic">${MIC}</button></form>`;}
 function heardHTML(){if(!S.heard)return '';
   if(S.heard.listening)return `<div class="heard" role="status"><p class="listening">Listening…</p></div>`;
@@ -602,7 +725,7 @@ function pushHTML(){if(!S.pushShown)return '';
 function picHTML(){
   const m=M[S.m],rs=rows(),d=desk();
   return `<section class="page pic" aria-label="Everything you asked for">
-   <div class="head"><span>${m.day} · ${m.clock}</span>${d?sayHTML():''}</div>${d?heardHTML():''}
+   <div class="head ${m.unk?'stale':''}"><span>${m.day}<span class="fresh"><span class="sep"> · </span>${m.unk?`unchecked since ${m.unk.since}`:`checked ${m.chk}`}</span></span>${d?sayHTML():''}</div>${d?heardHTML():''}
    ${ledeHTML()}${looseHTML()}
    <div class="toc">${SEC.map(([name,ids])=>{const vis=ids.filter(i=>rs[i]);if(!vis.length)return '';
      return `<div class="sec">${name}</div>`+vis.map(i=>itemHTML(i,rs[i])).join('');}).join('')}</div>
@@ -611,34 +734,42 @@ function picHTML(){
 
 /* ---------- one level down ---------- */
 function weekHTML(){
-  if(S.m<11){const [n,mi,q]=SOFAR[S.m];return `<div class="doc"><div class="head"><span>Your week so far</span></div>
+  if(S.m<12){const [n,mi,q]=SOFAR[S.m];return `<div class="doc"><div class="head"><span>Your week so far</span></div>
     <h2>${cap(NUMW[n])} finished, ${mi} minutes of your time.</h2><p class="sub">${q?`${cap(NUMW[q])} question${q>1?'s':''} only you could answer.`:'No questions yet.'} Your week is written up in full on Monday morning.</p></div>`;}
   const fin=[['Fix wrong totals on the weekly report','0 of 0',''],['Move photos to cheaper storage','2 of 2',''],['Speed up the test run','2 of 2',''],
-    ['Faster sign-up','3 of 2','One extra: three choices that couldn’t be undone.'],['Price page','3 of 2','One extra: a choice I should have asked when we agreed.'],
-    ['Invoice export','4 of 2','Two extra: wrong after you accepted it. Below.']];
-  const rules=[['r1','Customer emails are short and warm: first name, no “Dear valued customer”.','Tuesday’s send-back'],['r2','Price pages show the yearly price first.','Tuesday’s choice'],['r3','Wording changes go ahead and are listed here.','Thursday’s answer']];
+    ['Faster sign-up','3 of 2','One extra, worth it: the 17 questions found three things only you could decide.'],['Price page','3 of 2','One extra, my miss: a choice I should have asked when we agreed.'],
+    ['Invoice export','4 of 2','Two extra, my miss: wrong after you accepted it. Below.']];
+  const given=[['g1','Choices that can be undone go ahead on my advice if you’re silent.','3 Nov'],['g2','Report fixes go ahead without being shown.','October'],
+    ['g3','Wording changes go ahead without being shown; one in five is still shown at random.','Thursday'],['g4','Customer emails are short and warm: first name, no “Dear valued customer”.','Tuesday, “always”']];
   const look=[['k1','Sign-up: students can skip the password and sign in by emailed link.'],['k2','Price page: prices include tax, as on your shop site.']];
+  const entry=(k,t,f)=>`<div class="entry">${S.taken[k]?`<s>${t}</s> <span class="hint">Taken back.</span>`:`${t} <span class="hint">${f}</span><button class="lnk" data-act="take" data-val="${k}" data-k="take-${k}">Take back</button>`}</div>`;
   return `<div class="doc"><div class="head"><span>Your week · Tue 17 – Mon 23 Nov</span></div>
   <h2>Six things finished, in 37 minutes of your time.</h2>
-  <p class="sub">Five questions only you could answer; the week before, 14. One reached you between sittings.</p>
+  <p class="sub">Six questions only you could answer; the week before, 14. One reached you between sittings.</p>
   <div class="h">Finished · times you saw it, of planned</div>
   ${fin.map(([w,v,y])=>`<div class="ln"><span class="w">${w}</span><span class="ld"></span><span class="v">${v}</span></div>${y?`<p class="why">${y}</p>`:''}`).join('')}
+  <p class="why">Questions, bad news and things found along the way never count against the work.</p>
   <div class="h">Wrong after you accepted it</div>
-  <p><span class="his">Invoice export:</span> a month’s last evening landed in the next month. Cause: the wrong time zone, and a check that never tried that evening. Changed: every date check tries it now, and exports are shown to you again until three pass in a row.</p>
+  <p><span class="his">Invoice export:</span> a month’s last evening landed in the next month. It was listed under “Not checked”, and I let it pass. Changed: every date check now tries that evening, and exports are shown to you again until three pass in a row.</p>
   <div class="h">Sent back</div>
-  <p><span class="his">New welcome email,</span> first sketch: too long, too stiff. It became the first rule below.</p>
-  <div class="h">Rules learned from your answers</div>
-  ${rules.map(([k,t,f])=>`<div class="entry">${S.taken[k]?`<s>${t}</s> <span class="hint">Taken back.</span>`:`${t} <span class="hint">From ${f}.</span><button class="lnk" data-act="take" data-val="${k}" data-k="take-${k}">Take back</button>`}</div>`).join('')}
+  <p><span class="his">New welcome email,</span> first sketch: too long, too stiff. It became a standing rule, below.</p>
+  <div class="h">Found along the way</div>
+  <p>One test sign-up in twenty stopped at the card form. Not part of “faster”, so I left it. Say if you want it looked at.</p>
+  <div class="h">What you’ve let me do · you said so</div>
+  ${given.map(([k,t,f])=>entry(k,t,'From '+f+'.')).join('')}
+  <div class="h">What I think you prefer · correct me</div>
+  ${entry('i1','Yearly price first on price pages.','From one answer. I’ll ask again on a new kind of page.')}
   <div class="h">Decided for you · 31</div>
-  <p>By your earlier answers or on my advice. Two are worth a look:</p>
+  <p>All inside what you’ve let me do. Two are worth a look:</p>
   ${look.map(([k,t])=>`<div class="entry">${t}${S.seen[k]?' <span class="hint">✓ Looked at.</span>':`<button class="lnk" data-act="seen" data-val="${k}" data-k="seen-${k}">Look</button>`}</div>`).join('')}
+  ${ev('wk',[['All 31, one line each, unedited','Tue 08:41  Driver ratings: star size, house style ............ mine: layout\nTue 13:02  Reminder texts: kept today’s wording ............. mine: words\nTue 15:48  Faster sign-up: password optional (email link) .. mine: can be undone\n…  28 more, each with its reason and who gave the authority']])}
   <div class="h">Everything else</div>
-  <p>Done without you: one report fix, two wording changes.</p>
+  <p>Done without you: one report fix, two wording changes. Spot-checks on wording start this week.</p>
   <p>Withdrawn: one question, on old photo links; the app stopped using them.</p>
   <p>Between sittings: once, the app store sign-in. The store gave no warning; I now renew it a week ahead.</p>
+  <p>Unknown: 52 minutes on Thursday, while a watcher was down. A second watcher caught it in 6 minutes; nothing was missed.</p>
   <p>Promises: one moved, when a computer was off all night. Three stalls were caught and restarted; none moved a promise.</p>
-  <p>Trust: report fixes and wording changes go ahead without you. Exports are shown again.</p>
-  <div class="h">Next week</div><p>About seven things to see, about 30 minutes.</p></div>`;}
+  <div class="h">Next week</div><p>About seven things to see, about 30 minutes; none older than a day when it reaches you.</p></div>`;}
 const COST={signup:['14 h 20 min','$18.40','9 min, 3 visits (planned 2)'],ratings:['1 h 10 min','$1.30','3 min, 1 visit'],photos:['6 h 05 min','$7.10','4 min, 2 visits (planned 2)'],
   reminders:['0 h 40 min','$0.60','2 min, 1 visit'],invoice:['9 h 40 min','$11.80','11 min, 4 visits (planned 2)'],price:['3 h 30 min','$4.20','5 min, 3 visits (planned 2)'],
   totals:['1 h 15 min','$1.40','none'],welcome:['2 h 50 min','$3.10','6 min, 2 visits'],tax:['0 h 30 min','$0.40','1 min, 1 visit'],tests:['7 h 45 min','$8.90','3 min, 2 visits (planned 2)']};
@@ -646,7 +777,8 @@ function behindHTML(){
   const g=S.costGoal,c=COST[g];
   const log=[[3,'Tue 15:05','Speed up the test run','silent 40 minutes; restarted from the record. Friday held.'],
     [5,'Wed 02:10','Faster sign-up','the laptop went off overnight; the work moved to the desk computer in the morning. Thursday became Friday.'],
-    [10,'Sat 11:40','Reminder texts','silent 25 minutes; restarted. Wednesday holds.'],[10,'Sun 16:20','Price page','a checker silent 30 minutes; restarted. Nothing moved.']].filter(x=>S.m>=x[0]);
+    [9,'Thu 09:14','The watcher on the desk computer','stopped. The second watcher caught it at 9:20 and restored it at 10:06; two lines were unchecked for 52 minutes. Nothing was missed.'],
+    [11,'Sat 11:40','Reminder texts','silent 25 minutes; restarted. Wednesday holds.'],[11,'Sun 16:20','Price page','a checker silent 30 minutes; restarted. Nothing moved.']].filter(x=>S.m>=x[0]);
   return `<div class="doc"><div class="head"><span>Behind this · never needed</span></div>
   <h2>27 helpers on three computers.</h2><p class="sub">None of this needs you. It’s here when you’re curious.</p>
   <div class="h">Where they are</div>
@@ -654,6 +786,12 @@ function behindHTML(){
   <div class="machine"><b>The spare computer</b> · 12 helpers: 7 making, 4 checking, 1 watching<div class="on">On <span class="his">Price page</span>, <span class="his">New welcome email</span>, and new checks for <span class="his">Invoice export</span></div></div>
   <div class="machine"><b>The laptop</b> · asleep, lid closed<div class="on">Nothing waits on it. Its work moved to the desk computer.</div></div>
   <p class="hint" style="margin-top:8px">A watcher is a helper whose only job is to notice when another goes quiet. No one checks their own work.</p>
+  <div class="h">Who watches</div>
+  <p>Two watchers, on different computers, check every promise and each other. Last full check: ${M[S.m].chk||M[S.m].unk.since}.</p>
+  <p>If I stop, a backup counterpart picks up from the record, and the top of your page says so.</p>
+  ${S.paused?`<p><b>All work is paused, by you.</b></p><div class="acts sm"><button class="b pri" data-act="resume" data-k="resume">Resume</button></div>`
+   :S.step.pause==='confirm'?`<div class="mq"><p class="q">Pause all 27 helpers now? Nothing is undone; promises move by the time paused.</p><div class="acts sm"><button class="b pri" data-act="pausedo" data-k="pausedo">Pause all work</button><button class="b" data-act="cancel" data-key="pause">Never mind</button></div></div>`
+   :`<div class="acts sm"><button class="b" data-act="pauseall" data-k="pauseall">Pause all work</button></div>`}
   <div class="h">What one thing cost</div>
   <div class="costcard"><span class="his">${G[g]}</span><dl><dt>Helper time</dt><dd>${c[0]}</dd><dt>Spend</dt><dd>${c[1]}</dd><dt>Your time</dt><dd>${c[2]}</dd>
   ${g==='invoice'?'<dt>The miss alone</dt><dd>5 h 10 min, $6.20, 6 of your minutes</dd>':''}</dl></div>
@@ -748,11 +886,21 @@ function act(a,d){
   case 'heardok':S.heard=null;S.focusKey='mic';break;
   case 'push':{S.pushShown=false;const l=cardsLeft();if(l.length){S.open='c:'+l[0];S.anim='open';S.focusKey=desk()?'signin':'row-'+C[l[0]].goal;}break;}
   case 'take':S.taken[d.val]=1;break;
+  case 'revoke':S.revoked[d.val]=1;S.focusKey=null;break;
+  case 'askcheck':S.sayDraft=`To the checker of “${G[d.val]}”: `;S.open=desk()?S.open:null;S.page='pic';render();{const i=$('#sayIn');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}}return;
+  case 'tq':S.step[d.card+'-t']=d.val;break;
+  case 'stop':case 'undo':S.step[d.key]=a;S.focusKey=a+'do-'+d.val;break;
+  case 'stopdo':{const g=d.val;S.step[d.key]=null;S.ovr[g]=R('x','stopped',null,'Stopped by you. Nothing already done was undone. Say “start it again” to restart.');S.notes[g]='Stopped by you. Nothing was undone.';S.flash=g;S.open=null;S.focusKey='row-'+g;break;}
+  case 'undodo':{const g=d.val;S.step[d.key]=null;S.ovr[g]=R('q','17:00','undo','Being put back as it was before. Done by 17:00; nothing else changes.');S.notes[g]='Being put back as it was. Done by 17:00.';S.flash=g;S.open=null;S.focusKey='row-'+g;break;}
+  case 'pauseall':S.step.pause='confirm';break;
+  case 'pausedo':S.paused=true;S.step.pause=null;break;
+  case 'resume':S.paused=false;S.focusKey='lede';break;
   case 'seen':S.seen[d.val]=1;break;
   }
   render();
 }
 app.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b||b.disabled)return;e.preventDefault();act(b.dataset.act,b.dataset);});
+app.addEventListener('toggle',e=>{const k=e.target.dataset&&e.target.dataset.det;if(k)S.det[k]=e.target.open;},true);
 app.addEventListener('input',e=>{if(e.target.id==='sayIn')S.sayDraft=e.target.value;});
 app.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='sayIn'){e.preventDefault();doSay(e.target.value.trim());}});
 document.addEventListener('keydown',e=>{
@@ -764,7 +912,7 @@ document.addEventListener('keydown',e=>{
 /* ---------- prototype controls (outside the design) ---------- */
 function load(i,o={}){
   Object.assign(S,{m:i,res:{},marks:{},pointing:null,step:Object.assign({},M[i].step||{}),ovr:{},notes:{},flash:null,subNote:null,parked:false,
-    heard:M[i].say?{you:M[i].say.you,reply:M[i].say.reply}:null,pushShown:!!M[i].push,page:M[i].page||'pic',costGoal:M[i].costGoal||'invoice',seen:{},taken:{},anim:'new'});
+    heard:M[i].say?{you:M[i].say.you,reply:M[i].say.reply}:null,pushShown:!!M[i].push,page:M[i].page||'pic',costGoal:M[i].costGoal||'invoice',seen:{},taken:{},anim:'new',revoked:{},det:{},paused:false});
   S.open=o.open||M[i].open||(desk()&&M[i].cards.length&&!M[i].push?'c:'+M[i].cards[0]:null);
   if(o.page)S.page=o.page;
   render();window.scrollTo(0,0);
