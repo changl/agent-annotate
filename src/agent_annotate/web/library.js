@@ -36,6 +36,7 @@
     DATA = data;
     copySig = JSON.stringify(DATA);
     ITEMS = DATA.blocks || [];
+    APPROVALS = ITEMS.some(it => it.status || it.revisions.some(r => r.status === 'approved'));
     BY_ID = {};
     ITEMS.forEach(it => { BY_ID[it.id] = it; });
     GROUPS = {};
@@ -55,6 +56,20 @@
   const plainOfDelta = (delta) => ((delta && delta.ops) || []).map(op => typeof op.insert === 'string' ? op.insert : '').join('').replace(/\n+$/, '');
   const latestRev = (it) => it.revisions[it.revisions.length - 1];
   const plainOf = (it) => plainOfDelta(latestRev(it).delta);
+  // Approval: the latest revision is approved and is the block's current one.
+  // Anything newer (an agent's draft, a reviewer's edit) waits for approval.
+  // Only copy that uses approval (a block status or an approved revision)
+  // offers Approve; other pages' Library stays as it was.
+  let APPROVALS = false;
+  const currentRev = (it) => it.revisions.find(r => r.id === it.current) || null;
+  const isApproved = (it) => latestRev(it).status === 'approved' && it.current === latestRev(it).id;
+  // Needs you: what the agent marked as waiting on the reviewer (the tab's
+  // count), and the reviewer's own edit of approved copy not approved yet.
+  const needsApproval = (it) => APPROVALS && !isApproved(it) &&
+    (it.status === 'needs_you' || (latestRev(it).status === 'proposed' && me().includes(latestRev(it).author.id)));
+  const isAgent = (r) => String((r && r.author && r.author.id) || '').startsWith('agent:');
+  const reviewerApproved = (it) => isApproved(it) && it.revisions.length > 1 && !isAgent(latestRev(it));
+  const authorName = (r) => D().whoName({ author: r.author.id, author_name: r.author.name });
   const groupLabel = (it) => GROUPS[it.group || ''] || '';
   // final/ names an item without a row number by its title, else its place,
   // and shows its key in the key line. A block's title is its key when the
@@ -76,6 +91,10 @@
   // The item's status in the copy page's own words: the latest history
   // status, else the imported record's status line, else the block status.
   function statusText(it) {
+    // A reviewer's approval or newer edit is newer than the imported record.
+    const last = latestRev(it);
+    if (APPROVALS && it.status !== 'held' && reviewerApproved(it)) return 'approved by ' + authorName(last) + (last.round_pending ? ' · goes out with Send' : '');
+    if (APPROVALS && it.status !== 'held' && last.status === 'proposed' && it.revisions.length > 1) return 'draft · not approved yet';
     const added = seedHistory(it).filter(h => h.status).slice(-1)[0];
     if (added) return added.status;
     const rec = seedRecord(it);
@@ -86,6 +105,7 @@
     return it.status || '';
   }
   const myPendingRevs = (it) => it.revisions.filter(r => r.round_pending && me().includes(r.author && r.author.id));
+  const myPendingApproval = (it) => { const r = latestRev(it); return isApproved(it) && r.round_pending && me().includes(r.author.id); };
   const myRevs = (it) => it.revisions.filter(r => r.author && me().includes(r.author.id) && r.status === 'proposed');
   function seedComments(it) {
     // The agent's own "held back" reason, shown as the agent's note on the
@@ -111,7 +131,7 @@
   function pendingItems() {
     const d = D(), out = [];
     ITEMS.forEach(it => {
-      if (myPendingRevs(it).length) out.push({ item: it.id, label: labelOf(it), answer: 'Edited' });
+      if (myPendingRevs(it).length) out.push({ item: it.id, label: labelOf(it), answer: myPendingApproval(it) ? 'Approved' : 'Edited' });
       storedComments(it).filter(c => !c.agent && d.needsPush(c.comment)).forEach(c => out.push({ item: it.id, label: labelOf(it) + (c.quote ? ' · “' + c.quote + '”' : ''), answer: 'Comment: ' + c.text.split('\n')[0].slice(0, 60) }));
     });
     const q = questionComment();
@@ -120,7 +140,6 @@
     else if (q && d.needsPush(q)) out.push({ item: null, label: '#' + (d.number(q.id) || '') + ' ' + d.displayPrompt(q), answer: qAnswer(q) || 'Comment', kind: 'push' });
     return out;
   }
-  const isPendingItem = (it) => pendingItems().some(p => p.item === it.id);
   const readKey = (it) => 'copy:' + it.id;
   const isUnread = (it) => { const r = D().readRecord(readKey(it)); return !r || r.sig !== latestRev(it).id; };
   // What counts as unread (as the server's Library count): the agent's note on
@@ -133,6 +152,7 @@
 
   // ── Status words (the copy page's own) ─────────────────────────────────
   function chip(it) {
+    if (myPendingApproval(it)) return '<span class="badge badge-sm is-orange">Approved</span>';
     if (myPendingRevs(it).length) return '<span class="badge badge-sm is-orange">Edited</span>';
     const s = statusText(it);
     if (/^held back/.test(s)) return '<span class="badge badge-sm badge-ghost">Held back</span>';
@@ -157,9 +177,18 @@
     $('#sp-list-count').textContent = 'Copy and policies · ' + items.length + (q ? ' of ' + ITEMS.length : '');
     let html = '';
     const qc = questionComment();
-    const held = items.filter(it => it.question_comment_id);
-    if (qc && !qAnswer(qc) && held.length) html += UI.section('needs', 'Needs you', held.length, `<p class="project-detail">Question #${esc(D().number(qc.id) || '')} covers these ${held.length} held-back lines. Answer it, or edit a line yourself.</p>` + held.map(rowHtml).join(''), { cls: 'sec-needs', badge: 'badge-error', open: openGroups.needs !== false, scope: 'lib' });
-    const ready = items.filter(isPendingItem);
+    const asked = qc && !qAnswer(qc) ? items.filter(it => it.question_comment_id) : [];
+    // Needs you: every draft not approved yet, then the lines an open
+    // question covers.
+    const drafts = items.filter(needsApproval);
+    const needs = drafts.concat(asked.filter(it => !drafts.includes(it)));
+    if (needs.length) {
+      const notes = (drafts.length ? `<p class="project-detail">${drafts.length === 1 ? 'This draft waits' : 'These ' + drafts.length + ' drafts wait'} for your approval. Open one, then approve it as is, or edit it and approve your edit.</p>` : '') +
+        (asked.length ? `<p class="project-detail">Question #${esc(D().number(qc.id) || '')} covers ${asked.length} held-back lines. Answer it, or edit a line yourself.</p>` : '');
+      html += UI.section('needs', 'Needs you', needs.length, notes + needs.map(rowHtml).join(''), { cls: 'sec-needs', badge: 'badge-error', open: openGroups.needs !== false, scope: 'lib' });
+    }
+    const pendingIds = new Set(pendingItems().map(p => p.item));
+    const ready = items.filter(it => pendingIds.has(it.id));
     if (ready.length) html += UI.section('ready', 'Ready to send', ready.length, ready.map(rowHtml).join(''), { badge: 'is-orange', open: openGroups.ready !== false, scope: 'lib' });
     GROUP_ORDER.forEach(g => {
       const rows = items.filter(it => (it.group || '') === g);
@@ -230,6 +259,55 @@
     const s = statusText(it);
     return /^held back/.test(s) ? 'Held back' : /pending review/.test(s) ? 'Pending review' : /^not rendered/.test(s) ? 'Not rendered' : /^approved/.test(s) ? 'Approved' : 'Draft for your edit';
   }
+  // The approval card: a draft shows what changed from the approved text and
+  // one Approve action; approved copy says how to start a new draft.
+  function approvalHtml(it) {
+    const last = latestRev(it);
+    if (!APPROVALS) return '';
+    if (isApproved(it)) {
+      return `<div class="sp-approve is-approved" id="sp-approve"><p class="project-detail">Approved${reviewerApproved(it) ? ' by ' + esc(authorName(last)) + ' · ' + esc(UI.fmtTs(last.created_at)) : ''}. To change it, edit the text below and Save: that starts a new draft for you to approve.</p></div>`;
+    }
+    const cur = currentRev(it);
+    const approvedText = cur && cur.status === 'approved' ? plainOfDelta(cur.delta) : null;
+    const draftText = plainOfDelta(last.delta);
+    const diff = approvedText == null ? '<p class="project-detail">Nothing is approved for this item yet.</p>'
+      : approvedText === draftText ? '<p class="project-detail">Same text as the approved version.</p>'
+      : `<details class="aa-details sp-approve-diff"${draftText.length + approvedText.length < 1200 ? ' open' : ''}><summary>Changes from the approved text</summary><div class="wrap hist-text">${UI.diffWords(approvedText, draftText)}</div></details>`;
+    return `<div class="sp-approve card" id="sp-approve" role="group" aria-label="Approve this draft">
+      <p><b>Draft</b> by ${esc(authorName(last))} · ${esc(UI.fmtTs(last.created_at))} · not approved yet.</p>
+      ${diff}
+      <div class="sp-edit-ft"><span class="gf-hint" id="sp-approve-hint" role="status"></span><button type="button" class="btn btn-sm btn-primary" id="sp-approve-btn">Approve this draft</button></div>
+    </div>`;
+  }
+  function syncApprove() {
+    const b = $('#sp-approve-btn');
+    if (!b) return;
+    const c = editorChanged();
+    b.disabled = c || approving || saving;
+    $('#sp-approve-hint').textContent = c ? 'Save your edit first, then approve it.' : '';
+  }
+  function wireApproval(id) {
+    const button = $('#sp-approve-btn');
+    if (button) button.onclick = () => approve(BY_ID[id]);
+    syncApprove();
+  }
+  let approving = false;
+  async function approve(it) {
+    const last = latestRev(it);
+    approving = true; syncApprove();
+    const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/approve', { revision_id: last.id, request_id: crypto.randomUUID() });
+    approving = false;
+    if (r.status === 409 || (r.status === 400 && /already approved/.test(String(r.data.error || '')))) {
+      await loadCopy(); renderAll();
+      setApproveHint(r.status === 409 ? 'A newer version arrived. Read it, then approve.' : 'Already approved.');
+      return;
+    }
+    if (!r.ok) { syncApprove(); setApproveHint('Could not approve — try again.'); return; }
+    setData(r.data);
+    renderAll();
+    setStatus('Approved · goes out with Send');
+  }
+  function setApproveHint(t) { const h = $('#sp-approve-hint'); if (h) h.textContent = t; else setStatus(t); }
   function renderItem() {
     const it = BY_ID[selected];
     if (!it) { $('#sp-item').innerHTML = '<p class="muted">No copy yet.</p>'; return; }
@@ -246,6 +324,7 @@
       <section><h2>${esc(title)}<span class="chip">${esc(statusLabel(it))}</span></h2>
       <p class="muted"><code>${esc(keyOf(it))}</code> · ${esc(it.where || '')}</p>
       <div class="card"><p class="ctx">${esc(statusText(it))}</p></div>
+      ${approvalHtml(it)}
       <div class="sp-editor-card">
         <div class="sp-toolbar" id="sp-toolbar" role="toolbar" aria-label="Formatting">${toolbarHtml()}</div>
         <div class="sp-editor" id="sp-editor"></div>
@@ -298,8 +377,10 @@
         keepDraft(it.id, withoutMarks(quill.getContents()), editorBase);
         setStatus(staleSeen ? STALE_NOTE : 'Draft kept in this browser.');
       } else { forgetDraft(it.id); setStatus(''); }
+      syncApprove();
     });
     if (draft && editorChanged()) { $('#sp-save').disabled = false; $('#sp-save').classList.add('btn-primary'); $('#sp-discard').disabled = false; }
+    wireApproval(it.id);
     if (draft && isStale()) showStale();
     quill.on('selection-change', (range) => {
       if (!range) return;
@@ -406,9 +487,9 @@
       intent = { id: crypto.randomUUID(), base: latestOf(it.id) || editorBase, content };
       saveIntents[it.id] = intent; UI.local.set('lib:save-intent', saveIntents);
     }
-    saving = true;
+    saving = true; syncApprove();
     const r = await post('./api/copy/' + encodeURIComponent(it.id) + '/revisions', { delta, base_revision: intent.base, request_id: intent.id });
-    saving = false;
+    saving = false; syncApprove();
     if (!r.ok) {
       // Refused outright (not a lost answer): the next Save is a new attempt.
       if (r.status >= 400 && r.status < 500) { delete saveIntents[it.id]; UI.local.set('lib:save-intent', saveIntents); }
@@ -430,6 +511,12 @@
       editorBase = latestOf(it.id); staleSeen = null; baseline = content;
       const c = editorChanged();
       save.disabled = !c; save.classList.toggle('btn-primary', c); $('#sp-discard').disabled = !c;
+    }
+    const approval = $('#sp-approve');
+    if (approval) {
+      approval.outerHTML = approvalHtml(BY_ID[it.id]); wireApproval(it.id);
+      $('#sp-item h2 .chip').textContent = statusLabel(BY_ID[it.id]);
+      $('#sp-item .ctx').textContent = statusText(BY_ID[it.id]);
     }
     renderList(); renderRail(); AA.changed();
     setStatus(typed ? 'Saved · your newer typing is kept as a draft' : 'Saved · goes out with Send');
@@ -494,7 +581,7 @@
     if (nReady) {
       html += UI.section('ready', 'Ready to send', nReady,
         (qReady ? qCard(q) : '') +
-        (lastEdit ? `<div class="citem"><div class="citem-meta"><span class="citem-author">${esc(d.whoName({ author: lastEdit.author.id, author_name: lastEdit.author.name }))}</span><span>${esc(UI.fmtTs(lastEdit.created_at))}</span></div><div class="citem-txt"><b>Edited</b> · see History for the change</div></div>` : '') +
+        (lastEdit ? `<div class="citem"><div class="citem-meta"><span class="citem-author">${esc(d.whoName({ author: lastEdit.author.id, author_name: lastEdit.author.name }))}</span><span>${esc(UI.fmtTs(lastEdit.created_at))}</span></div><div class="citem-txt">${lastEdit.status === 'approved' ? '<b>Approved</b> · the text as it is now' : '<b>Edited</b> · see History for the change'}</div></div>` : '') +
         readyC.map(commentCard).join(''), { badge: 'is-orange', scope: 'lib' });
     }
     const others = commentsOf(it).filter(c => !readyC.some(r => r.id === c.id));
@@ -611,10 +698,13 @@
     const q = question(it);
     // A discarded answer (UI-14) never went out; History leaves it out.
     if (q) (q.decision_history || []).concat(q.decision ? [q.decision] : []).filter(x => x && x.verdict && !x.discarded).forEach(x => entries.push({ ts: x.ts, who: d.whoName({ by: x.by }), kind: 'q', delivery_id: x.delivery_id, text: x.verdict === 'select' ? String(x.text || '').replace(/^Selected:\s*/, '') : (x.text || x.verdict), sent: !x.round_pending, n: d.number(q.id), prompt: d.displayPrompt(q) }));
+    // Reviewer edits; on copy that uses approval also every later agent
+    // draft and approval (the first revision is the seeded "added" entry).
     it.revisions.forEach((r, i) => {
-      if (r.status !== 'proposed') return;
+      if (r.status !== 'proposed' && (i === 0 || !APPROVALS)) return;
       const prev = it.revisions[i - 1];
-      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind: 'edit', delivery_id: revisionDeliveryId(r), text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending });
+      const kind = r.status === 'approved' ? 'approved' : r.status === 'draft' ? 'draft' : 'edit';
+      entries.push({ ts: r.created_at, who: d.whoName({ author: r.author.id, author_name: r.author.name }), kind, delivery_id: revisionDeliveryId(r), text: plainOfDelta(r.delta), prev: prev ? plainOfDelta(prev.delta) : '', prevId: prev ? prev.id : null, sent: !r.round_pending, reviewer: !isAgent(r) });
     });
     storedComments(it).filter(c => !c.agent).forEach(c => entries.push({ ts: c.ts, who: c.name, kind: 'comment', delivery_id: c.comment.delivery_id, text: c.text, quote: c.quote, sent: !d.needsPush(c.comment) }));
     entries.sort((a, b) => (a.ts < b.ts ? 1 : -1));
@@ -625,6 +715,8 @@
       else if (h.kind === 'changed') { head = `<b>${esc(h.who)}</b> · ${esc(h.version)}: ${esc((h.changed || []).join(', '))} changed`; body = esc(h.status || ''); }
       else if (h.kind === 'decision') { head = `<b>${esc(h.who)}</b> · answered copy card #${esc(h.card)}`; body = esc(h.text) + (h.prompt ? `<div class="project-detail">${esc(h.prompt)}</div>` : ''); }
       else if (h.kind === 'response') { head = `<b>${esc(h.who)}</b> · agent response`; body = esc(h.text); }
+      else if (h.kind === 'draft') { head = `<b>${esc(h.who)}</b> · draft`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
+      else if (h.kind === 'approved') { head = `<b>${esc(h.who)}</b> · approved${h.reviewer ? ' · ' + (h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet') : ''}`; body = h.prev === h.text ? 'Approved the draft as is.' : esc(h.text); }
       else if (h.kind === 'edit') { head = `<b>${esc(h.who)}</b> · edited · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = UI.diffWords(h.prev, h.text); actions = h.prevId ? `<button type="button" class="btn btn-ghost btn-xs" data-restore="${esc(h.prevId)}">Restore the earlier text</button>` : ''; }
       else if (h.kind === 'comment') { head = `<b>${esc(h.who)}</b> · comment · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = (h.quote ? '“' + esc(h.quote) + '” ' : '') + esc(h.text); }
       else if (h.kind === 'q') { head = `<b>${esc(h.who)}</b> · answered #${esc(h.n || '')} · ${h.sent ? d.deliveryHtml(h.delivery_id) : 'not sent yet'}`; body = esc(h.text) + `<div class="project-detail">${esc(h.prompt)}</div>`; }

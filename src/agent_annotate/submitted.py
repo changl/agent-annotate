@@ -101,7 +101,17 @@ def store_view(store: dict) -> dict:
 
 
 def copy_view(document: dict) -> dict:
+    from .copy_state import _after_approval
+
     document = deepcopy(document)
     for block in document.get("blocks", []):
+        for revision in reversed(block["revisions"]):
+            if revision.get("round_pending") and "previous" in revision and block["current"] == revision["id"]:
+                previous = revision["previous"]
+                block["current"] = previous["current"]
+                if block.get("status") == _after_approval(previous.get("status")):
+                    block.pop("status", None)
+                    if "status" in previous:
+                        block["status"] = previous["status"]
         block["revisions"] = [r for r in block["revisions"] if not r.get("round_pending")]
     return document

@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Library builds its pending-item membership once per list render, keeping large copy libraries responsive while edits and pending comments remain under Ready to send.
+- Library reviewers can approve the latest draft in one action, or edit approved copy, save a new draft and approve it. Needs you lists waiting drafts; the approval card compares them with approved text, and History includes agent drafts and approvals. Approvals go out with Send; Discard restores an unsent approval without overwriting newer statuses or removing revisions another approval references. Existing revisions stay immutable and held copy stays held.
+
 ## 2.31.1
 
 - Board judgement runs in a separate worker; a submitted round is only the trigger. The round prompt asks the owner to have a separate worker run `annotate board`, settle each listed item and report one line. Round prompts, per-turn notices and session start no longer list stored follow-ups, so the owner's context carries one line instead of up to three items. Stored follow-ups and settling are unchanged.
