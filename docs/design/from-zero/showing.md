@@ -1,5 +1,7 @@
 # The showing
 
+**Start with `look.html`: one day in seven pictures, about two minutes, one question.** This page is the detail behind it, and is not needed to answer.
+
 For Chang, 12 Nov 2026. About twenty minutes: six to read this page, twelve to click through the design, two to decide.
 
 Open `concepts/side-by-side.html` in a browser. It shows each design at phone and desk width at once.
