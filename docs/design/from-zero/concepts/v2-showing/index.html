@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>The showing · prototype</title>
+<style>
+:root{--sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;--serif:ui-serif,"Iowan Old Style","Charter","Georgia",serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+html[data-theme=light]{--desk:#E9E2D4;--paper:#FBF8F2;--paper2:#FFFFFF;--box:#EFE9DE;--ink:#1D1B18;--ink2:#5E584F;--ink3:#B4AC9F;--rule:#E4DCCE;--rule2:#CDC3B2;
+  --rubric:#A0301C;--wash:#F6E5DD;--hover:#F2ECE1;--btn:#1D1B18;--btnt:#FBF8F2;--ok:#2F5D3A;--shadow:0 1px 2px rgba(70,50,20,.06),0 14px 40px rgba(70,50,20,.10)}
+html[data-theme=dark]{--desk:#0B0C0F;--paper:#15171B;--paper2:#1C1F24;--box:#0E1013;--ink:#E8E2D6;--ink2:#A29B8F;--ink3:#4A4B4F;--rule:#24282E;--rule2:#3A3F47;
+  --rubric:#EE8A6D;--wash:#2A1D19;--hover:#1D2025;--btn:#E8E2D6;--btnt:#15171B;--ok:#8FC59B;--shadow:none}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 var(--sans);-webkit-text-size-adjust:100%}
+html[data-theme=dark] body{-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+[tabindex="-1"]:focus{outline:none}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---------- prototype strip: NOT part of the design ---------- */
+.proto{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;padding:4px 8px 5px;font:11px/1.3 var(--mono);color:#3A3214;
+  background:repeating-linear-gradient(-45deg,#F4E7B0 0 8px,#EDDB98 8px 16px);border-bottom:1px dashed #8A7733}
+html[data-theme=dark] .proto{color:#EADFAE;background:repeating-linear-gradient(-45deg,#2D2812 0 8px,#25210D 8px 16px);border-color:#6E6026}
+.proto .tag{font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.proto button,.proto select{min-height:28px;padding:0 7px;border:1px solid currentColor;border-radius:3px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.proto button:disabled{opacity:.4;cursor:default}
+.proto select option{color:#000;background:#fff}
+.proto .nar{flex-basis:100%}
+@media (max-width:899px){.proto .tag,.proto .wide{display:none}}
+
+/* ---------- host placeholder: NOT part of the showing ---------- */
+.frame{padding:0}
+.hostbar{display:flex;align-items:center;gap:8px;margin:8px 10px 0;padding:6px 10px;border:1px dashed var(--ink3);border-radius:8px;font:12px/1.3 var(--mono);color:var(--ink2)}
+.hostcol{display:none}
+@media (min-width:900px){
+  body{background:var(--desk)}
+  .frame{display:grid;grid-template-columns:200px minmax(0,1fr);gap:22px;max-width:1260px;margin:0 auto;padding:22px 20px 60px}
+  .hostbar{display:none}
+  .hostcol{display:block;align-self:start;position:sticky;top:60px;padding:14px;border:1px dashed var(--ink3);border-radius:10px;font:12px/1.5 var(--mono);color:var(--ink2);min-height:420px;
+    background:repeating-linear-gradient(-45deg,transparent 0 9px,rgba(127,127,127,.06) 9px 18px)}
+  .hostcol b{display:block;margin-bottom:10px;letter-spacing:.08em}
+  .hostcol i{display:block;height:9px;margin:9px 0;border-radius:3px;background:var(--rule)}
+  .hostcol .on{background:var(--ink3)}
+}
+
+/* ---------- the sheet: the showing, with its own edges ---------- */
+.sheet{position:relative;background:var(--paper);border:1px solid var(--rule2);border-radius:14px;box-shadow:var(--shadow);margin:10px 8px 24px;overflow:clip}
+@media (min-width:900px){.sheet{margin:0}}
+.sh-head{padding:14px 18px 12px;border-bottom:1px solid var(--rule)}
+.sh-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font:600 11.5px/1.3 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
+.sh-top .ver{color:var(--rubric)}
+.sh-goal{font:400 25px/1.15 var(--serif);margin:6px 0 8px;letter-spacing:-.005em}
+.seal{display:flex;align-items:flex-start;gap:8px;font-size:13.5px;line-height:1.35;color:var(--ink2)}
+.seal .stamp{flex:none;width:18px;height:18px;margin-top:-1px;border-radius:50%;border:1.5px solid var(--ink2);position:relative}
+.seal .stamp::after{content:"";position:absolute;left:5px;top:2px;width:4px;height:8px;border:solid var(--ink2);border-width:0 1.8px 1.8px 0;transform:rotate(45deg)}
+.seal b{color:var(--ink);font-weight:600}
+.seal.broken{color:var(--rubric)}
+.seal.broken .stamp{border-color:var(--rubric);border-style:dashed}
+.seal.broken .stamp::after{display:none}
+.sh-body{display:block}
+@media (min-width:900px){.sh-body{display:grid;grid-template-columns:minmax(0,1fr) 330px}}
+.stage{position:relative;background:var(--box);padding:14px 12px 12px;min-height:200px}
+.rail{padding:14px 18px 8px;border-top:1px solid var(--rule)}
+@media (min-width:900px){.stage{padding:18px 20px 16px;min-height:520px}.rail{border-top:0;border-left:1px solid var(--rule);padding:16px 18px}}
+.hint{font-size:13.5px;color:var(--ink2)}
+.stage-hint{position:absolute;left:12px;top:10px;z-index:3;padding:3px 9px;border-radius:12px;background:var(--rubric);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
+html[data-theme=dark] .stage-hint{color:#15171B}
+
+/* rail sections */
+.r-h{font:600 11px/1.6 var(--sans);letter-spacing:.11em;text-transform:uppercase;color:var(--ink2);margin:0 0 4px}
+.r-sec{margin:0 0 16px}
+.judge{font:400 18px/1.35 var(--serif);margin:0}
+.judge.ph{margin-top:10px;font-size:17px}
+.judge.ph .r-h{display:block;margin-bottom:1px}
+.judge.none{font-family:var(--sans);font-size:15px;color:var(--ink2)}
+.dots{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px}
+.dot{width:30px;height:30px;border-radius:50%;border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);font:600 13px/1 var(--sans);display:grid;place-items:center;cursor:pointer;padding:0}
+.dot.not{background:transparent;color:var(--ink);border-style:dashed}
+.dot[aria-pressed=true]{box-shadow:0 0 0 3px var(--wash),0 0 0 4.5px var(--rubric)}
+.plist{list-style:none;margin:0;padding:0}
+.plist li{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:14.5px;line-height:1.35}
+.plist .n{flex:none;width:18px;height:18px;border-radius:50%;background:var(--ink);color:var(--paper);font:600 11px/18px var(--sans);text-align:center}
+.plist .n.not{background:transparent;color:var(--ink);border:1.3px dashed var(--ink);line-height:15.5px}
+.plist button{all:unset;cursor:pointer;flex:1}
+.plist button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.plist .at{flex:none;font-size:12.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.sumline{font-size:14px;color:var(--ink2);margin:0}
+.pdetail{margin:8px 0 0;padding:10px 12px;border-left:3px solid var(--ink);background:var(--paper2);border-radius:0 8px 8px 0;font-size:14.5px}
+.pdetail .lnk{margin-right:12px}
+details.raw{margin-top:6px}
+details.raw summary{cursor:pointer;color:var(--ink2);font-size:13.5px;min-height:32px;display:flex;align-items:center}
+details.raw pre{margin:4px 0 0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--ink);background:var(--box);padding:8px 10px;border-radius:6px}
+.lnk{min-height:44px;padding:0;border:0;background:none;color:var(--ink2);font:500 14.5px var(--sans);cursor:pointer;text-decoration:underline;text-decoration-color:var(--ink3);text-underline-offset:4px}
+.lnk:hover{color:var(--ink)}
+.inl{display:inline-block;min-height:0;padding:12px 2px;margin:-12px 0}
+.fork{padding:10px 12px;border:1px solid var(--rule2);border-radius:10px;background:var(--paper2)}
+.fork .q{font-weight:600;margin:0 0 4px}
+.fork .wait{margin:8px 0 0;padding-top:6px;border-top:1px dashed var(--rule2);font-size:13.5px;color:var(--ink2)}
+.fork .chosen{font-weight:600;margin:6px 0 0}
+
+/* marks */
+.marks{list-style:none;margin:0;padding:0}
+.marks li{display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--rule);font-size:14.5px;line-height:1.35}
+.marks li:first-child{border-top:0}
+.marks .pin{position:static;flex:none}
+.marks .anc{display:block;font-size:12.5px;color:var(--ink2)}
+.marks .ok{color:var(--ok);font-weight:600}
+.pin{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:var(--rubric);color:#fff;font:700 12px/1 var(--sans);box-shadow:0 0 0 2px #fff}
+html[data-theme=dark] .pin{color:#15171B;box-shadow:0 0 0 2px #15171B}
+.pin.done{background:var(--ok)}
+.tg{position:relative}
+.tg>.pin{position:absolute;right:-8px;top:-9px;z-index:4}
+.marking .tg{cursor:crosshair;outline:1.5px dashed rgba(160,48,28,.55);outline-offset:1px;border-radius:4px}
+.marking .tg:hover,.marking .tg:focus-visible{outline:2px solid #A0301C;background-image:linear-gradient(rgba(160,48,28,.10),rgba(160,48,28,.10))}
+.tg.is-marked{outline:2px solid #A0301C!important;outline-offset:1px;border-radius:4px}
+.tg.is-done{outline:2px solid #2F5D3A!important;outline-offset:1px;border-radius:4px}
+.tg.ev-hl{outline:2.5px solid #1D1B18;outline-offset:2px;border-radius:4px}
+
+/* answer bar */
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--rule);background:var(--paper)}
+@media (max-width:899px){.bar,.sent,.tray{position:sticky;bottom:0;z-index:20;box-shadow:0 -8px 20px rgba(0,0,0,.06)}}
+@media (min-width:900px){.bar{border-top:1px solid var(--rule);padding:12px 0 4px;background:none}}
+.b{min-height:46px;padding:0 16px;border-radius:10px;border:1.5px solid var(--ink);background:none;font:600 15.5px var(--sans);cursor:pointer}
+.b.pri{background:var(--btn);color:var(--btnt);border-color:var(--btn)}
+.b.red{background:var(--rubric);color:#fff;border-color:var(--rubric)}
+html[data-theme=dark] .b.red{color:#15171B}
+.b:disabled{opacity:.45;cursor:not-allowed}
+.b small{font-weight:500;opacity:.8}
+.grow{flex:1}
+.bar.stack{flex-direction:column;align-items:stretch}
+.bar.stack .b{width:100%}
+.tray{padding:10px 14px;border-top:1px solid var(--rule);background:var(--paper2)}
+.tray .q{margin:0 0 8px;font-weight:600;font-size:15px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{min-height:44px;padding:0 15px;border-radius:22px;border:1px solid var(--rule2);background:var(--paper);font:500 15px var(--sans);cursor:pointer}
+.chip:hover{border-color:var(--ink)}
+.say{display:flex;gap:8px;margin-top:8px}
+.say input{flex:1;min-width:0;height:44px;border-radius:22px;border:1px solid var(--rule2);background:var(--paper);padding:0 16px}
+.under{font-size:13px;color:var(--ink2);margin:6px 0 0;flex-basis:100%}
+.sent{padding:12px 14px;border-top:1px solid var(--rule);background:var(--paper2)}
+.sent b{display:block;margin-bottom:2px}
+.backband{margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--paper2);border:1px solid var(--rule2)}
+.backband .t{font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--rule2);border-radius:9px;overflow:hidden;margin-top:6px}
+.seg button{min-height:36px;padding:0 12px;border:0;background:none;font:500 13.5px var(--sans);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--btn);color:var(--btnt)}
+.ribbon{position:absolute;right:12px;top:10px;z-index:3;padding:3px 9px;border-radius:12px;background:var(--ink);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
+
+/* the pause before something that cannot be undone */
+.saidback{font:400 21px/1.35 var(--serif);margin:4px 0 10px;padding:12px 14px;border-left:3px solid var(--rubric);background:var(--paper2);border-radius:0 10px 10px 0}
+.hold{position:relative;overflow:hidden;min-height:52px;padding:0 18px;border-radius:12px;border:0;background:var(--rubric);color:#fff;font:700 16px var(--sans);cursor:pointer;width:100%}
+html[data-theme=dark] .hold{color:#15171B}
+.hold .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(0,0,0,.28)}
+.hold span{position:relative}
+.cant{margin:0;padding:0;list-style:none}
+.cant li{padding:3px 0;font-size:14.5px}
+.receipt{padding:12px 14px;border-radius:10px;border:1px solid var(--rule2);background:var(--paper2)}
+
+/* scrubber */
+.scrub{display:flex;align-items:center;gap:10px;margin-top:12px}
+.scrub .play{flex:none;width:44px;height:44px;border-radius:50%;border:0;background:var(--btn);color:var(--btnt);cursor:pointer;display:grid;place-items:center}
+.track{position:relative;flex:1;height:44px}
+.track input{position:absolute;left:0;right:0;top:12px;width:100%;margin:0;accent-color:var(--ink)}
+.tick{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;font:700 10.5px/1 var(--sans);color:var(--ink);pointer-events:none}
+.tick::after{content:"";display:block;width:1.5px;height:8px;margin:2px auto 0;background:var(--ink)}
+.tick.m{color:var(--rubric);top:auto;bottom:0}
+.tick.m::after{display:none}
+.tick.m::before{content:"";display:block;width:1.5px;height:8px;margin:0 auto 2px;background:var(--rubric)}
+.time{flex:none;font:600 13px var(--sans);font-variant-numeric:tabular-nums;color:var(--ink2);min-width:84px;text-align:right}
+
+/* --- the things themselves keep their own colours in both themes --- */
+.phone{width:248px;margin:0 auto;border-radius:30px;background:#111;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.scr{position:relative;height:440px;border-radius:22px;background:#fff;color:#1A1A1A;overflow:hidden;font:13px/1.35 var(--sans)}
+.scr .appbar{height:40px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-weight:600;color:#1F5C4A;border-bottom:1px solid #EEE}
+.scr .pad{padding:12px 14px}
+.scr h3{font:700 18px/1.2 var(--sans);margin:4px 0 10px}
+.scr .field{display:block;border:1px solid #C9CED3;border-radius:8px;padding:9px 10px;margin:6px 0;min-height:36px;color:#1A1A1A}
+.scr .field.f{border-color:#1F5C4A;box-shadow:0 0 0 2px rgba(31,92,74,.18)}
+.scr .lbl2{font-size:11px;color:#5B6168;margin-top:8px;display:block}
+.scr .cta{display:block;text-align:center;background:#1F5C4A;color:#fff;border-radius:10px;padding:11px;font-weight:700;margin-top:10px}
+.scr .slot{display:block;border:1px solid #D7DBDF;border-radius:10px;padding:10px;margin:6px 0}
+.scr .slot.sel{border-color:#1F5C4A;background:#EEF6F2}
+.scr .slot small{display:block;color:#5B6168}
+.scr .step{font-size:11px;color:#5B6168}
+.scr .kb{position:absolute;left:0;right:0;bottom:0;height:150px;background:#D5D8DD;display:grid;grid-template-columns:repeat(10,1fr);gap:4px;padding:8px 5px}
+.scr .kb i{background:#fff;border-radius:4px}
+.ripple{position:absolute;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;background:rgba(31,92,74,.30);border:2px solid #1F5C4A;z-index:5;pointer-events:none}
+.scr .doneic{width:56px;height:56px;margin:30px auto 10px;border-radius:50%;background:#1F5C4A;position:relative}
+.scr .doneic::after{content:"";position:absolute;left:21px;top:13px;width:12px;height:24px;border:solid #fff;border-width:0 4px 4px 0;transform:rotate(45deg)}
+.map{display:block;width:100%;max-width:560px;margin:0 auto;border-radius:12px;background:#EEF0EA}
+.routewrap{display:block}
+@media (min-width:900px){.routewrap{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:14px;align-items:start}.routewrap .turns{margin:0;font-size:13.5px}}
+.turns{list-style:none;margin:10px auto 0;padding:0;max-width:560px;font-size:14px}
+.turns li{display:flex;gap:10px;padding:4px 8px;border-radius:6px;color:var(--ink2)}
+.turns li.cur{background:var(--paper2);color:var(--ink);font-weight:600}
+.turns .tt{flex:none;width:44px;font-variant-numeric:tabular-nums}
+.webs{display:flex;gap:14px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+.webcol{display:flex;flex-direction:column;align-items:center;gap:6px}
+.webcap{font:600 11.5px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
+.vp{position:relative;overflow:hidden;border:1px solid #C9CED3;border-radius:8px;background:#fff}
+.vp .in .pin{transform:scale(var(--ps));transform-origin:100% 0}
+.vp .in{position:absolute;left:0;top:0;transform-origin:0 0;background:#fff;color:#14213D;font:16px/1.45 var(--sans)}
+.web .nav{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid #E6E8EE;font-weight:700;color:#14213D}
+.web .nav span{font-weight:500;color:#566;margin-left:18px}
+.web .hero{padding:28px 22px}
+.web h1{font:800 34px/1.1 var(--sans);margin:0 0 16px}
+.web .tog{display:inline-flex;border:1px solid #C5CAD6;border-radius:999px;padding:3px;margin:0 0 18px}
+.web .tog span{padding:7px 16px;border-radius:999px;font-weight:600}
+.web .tog .on{background:#14213D;color:#fff}
+.web .price{font:800 44px/1 var(--sans);margin:0 0 6px}
+.web .price.small{font-size:34px}
+.web .price small{font-size:18px;font-weight:600;color:#566}
+.web .free{color:#2B7A4B;font-weight:700;margin:0 0 18px}
+.web ul{margin:0 0 20px;padding-left:20px}
+.web li{margin:6px 0}
+.web .go{display:inline-block;background:#E4572E;color:#fff;font-weight:800;padding:13px 30px;border-radius:10px}
+.web .tax{font-size:14px;color:#566;margin-top:12px}
+.web.wide .hero{display:grid;grid-template-columns:1.2fr 1fr;gap:40px;padding:56px 80px}
+.web.wide .card{border:1px solid #E1E4EC;border-radius:16px;padding:28px}
+.web .checkout{padding:40px 22px;text-align:center}
+.mail{max-width:360px;margin:0 auto;background:#fff;color:#1B1B1B;border-radius:16px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.12);font:15px/1.55 var(--sans)}
+.mail .mh{padding:12px 16px;border-bottom:1px solid #EEE;font-size:13px;color:#555}
+.mail .mh b{display:block;color:#1B1B1B;font-size:16px}
+.mail .mb{padding:14px 16px 18px}
+.mail .mb p{margin:0 0 10px}
+.w{border-radius:3px}
+.marking .w{cursor:text}
+.w.sel{background:#F3D9CE}
+.w.cut{text-decoration:line-through;text-decoration-color:#A0301C;text-decoration-thickness:2px;color:#9A8F87}
+.w.newt{background:#DCEBDD}
+.iconwrap{display:flex;gap:18px;justify-content:center;align-items:flex-end;flex-wrap:wrap}
+.iconbig{position:relative;width:240px;height:240px}
+.iconbig svg{width:100%;height:100%;display:block}
+.iconcap{text-align:center;font:600 11.5px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin-top:6px}
+.home{width:200px;padding:14px 12px;border-radius:22px;background:linear-gradient(160deg,#5B7FA6,#2E4A6A);display:grid;grid-template-columns:repeat(4,1fr);gap:12px 8px}
+.home i{display:block;width:36px;height:36px;border-radius:9px;background:rgba(255,255,255,.55);margin:0 auto}
+.home svg{width:36px;height:36px;display:block;margin:0 auto}
+.home span{display:block;text-align:center;color:#fff;font:9px/1.2 var(--sans);margin-top:3px}
+.sizes{display:flex;gap:10px;align-items:flex-end;justify-content:center;margin-top:14px}
+.sizes svg{display:block}
+.tbl{width:100%;border-collapse:collapse;background:#fff;color:#1A1A1A;border-radius:10px;overflow:hidden;font-size:14px;font-variant-numeric:tabular-nums}
+.tbl th{background:#F1F2F4;text-align:left;font:600 11.5px/1.3 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:#555;padding:8px 10px}
+.tbl td{padding:7px 10px;border-top:1px solid #ECEDEF}
+.tbl td.r,.tbl th.r{text-align:right}
+.tbl .up{color:#8A4A10}
+.tbl tr.flag td{background:#FFF6E6}
+.foot{margin:8px 2px 0;font-size:13.5px;color:var(--ink2)}
+.readback{margin-top:12px;display:flex;gap:12px;align-items:center;background:#fff;color:#1A1A1A;border-radius:10px;padding:10px 12px;font-size:14px}
+.readback .ph{flex:none;width:52px;height:52px;border-radius:8px;background:linear-gradient(135deg,#9DB0A3,#5E7A6E)}
+.pairs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.pair{background:#fff;color:#1A1A1A;border-radius:10px;padding:8px;font-size:12.5px}
+.pair .im{height:70px;border-radius:6px;margin-bottom:6px}
+.pair b{display:block;font-size:13px}
+.pair.deny .im{background:repeating-linear-gradient(45deg,#EEE 0 6px,#F7F7F7 6px 12px);display:grid;place-items:center;color:#A0301C;font-weight:700}
+.big{font:700 44px/1.1 var(--sans);text-align:center;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+.big s{color:var(--ink2);font-weight:500;font-size:30px;margin-right:12px}
+.trace{list-style:none;margin:0;padding:0;background:#fff;color:#1A1A1A;border-radius:10px;overflow:hidden}
+.trace li{display:flex;gap:10px;padding:8px 12px;border-top:1px solid #ECEDEF;font-size:14px}
+.trace li:first-child{border-top:0}
+.trace .tm{flex:none;width:64px;font:600 12.5px var(--mono);color:#555}
+.trace .bad{color:#A0301C;font-weight:600}
+.trace .good{color:#2F5D3A;font-weight:600}
+.sms{max-width:300px;margin:12px auto 0;background:#fff;border-radius:14px;padding:10px 12px;color:#1A1A1A;font-size:14px}
+.sms .bub{background:#E9E9EB;border-radius:16px;padding:9px 12px;margin-top:6px}
+.sms small{color:#777}
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.colh{font:600 12px/1.3 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin:0 0 6px}
+.inv{list-style:none;margin:0;padding:0;background:#fff;color:#1A1A1A;border-radius:10px;overflow:hidden}
+.inv li{padding:8px 12px;border-top:1px solid #ECEDEF;font-size:14px;display:flex;justify-content:space-between;gap:8px}
+.inv li:first-child{border-top:0}
+.inv small{color:#666}
+.rel{background:#fff;color:#1A1A1A;border-radius:12px;padding:12px 14px}
+.rel h4{margin:8px 0 4px;font:600 11.5px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#555}
+.rel h4:first-child{margin-top:0}
+.rel .ln{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid #EEE;font-size:14px}
+.rel .ln:first-of-type{border-top:0}
+.rel .fp{font:12px var(--mono);color:#555}
+.opt{display:flex;gap:10px;align-items:flex-start;min-height:44px;padding:8px 10px;border:1px solid var(--rule2);border-radius:10px;margin:6px 0;cursor:pointer;background:var(--paper2)}
+.opt input{appearance:none;-webkit-appearance:none;flex:none;width:18px;height:18px;margin-top:3px;border:2px solid var(--ink2);border-radius:50%;background:var(--paper2)}
+.opt input:checked{border-color:var(--rubric);background:var(--rubric);box-shadow:inset 0 0 0 3px var(--paper2)}
+
+/* self-check */
+.check{margin:10px;padding:12px;border:2px dashed #8A7733;border-radius:10px;font:12px/1.5 var(--mono);background:var(--paper2);color:var(--ink);overflow-wrap:anywhere}
+.check .f{color:#A0301C;font-weight:700}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="proto" aria-label="Prototype controls, not part of the design">
+  <span class="tag">Prototype</span>
+  <select id="pS" aria-label="Kind of work"></select>
+  <button id="pMark">Mark it for me</button>
+  <button id="pBack">▸ It comes back</button>
+  <button id="pChange" class="wide">Change it after the check</button>
+  <button id="pTheme" aria-label="Switch light or dark">◐</button>
+  <span id="pNar" class="nar"></span>
+</header>
+<div id="checkOut"></div>
+<div class="frame">
+  <div class="hostbar" aria-hidden="true">host · ‹ back to the sitting · 2 of 3</div>
+  <aside class="hostcol" aria-label="Host placeholder, not part of the showing"><b>THE HOST</b>letter or sitting<i class="on"></i><i></i><i style="width:70%"></i><i></i><i style="width:55%"></i></aside>
+  <main id="app"></main>
+</div>
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const app=$('#app');
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const desk=()=>matchMedia('(min-width:900px)').matches;
+const mmss=s=>{s=Math.round(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+const lc=t=>/^(Android|iPhone|Colorado|Texas)/.test(t)?t:t.charAt(0).toLowerCase()+t.slice(1);
+const NUM=['no','one','two','three','four','five','six'];
+const PLAY='<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2l10 6-10 6z" fill="currentColor"/></svg>';
+const PAUSE='<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h4v12H3zM9 2h4v12H9z" fill="currentColor"/></svg>';
+
+/* ======================= the twelve kinds, one real example each ======================= */
+const SH=[
+{id:'A1',kind:'A',word:'Phone app · a journey',goal:'Faster sign-up',budget:'about 1 min',
+ seal:'<b>Checked by someone else</b> · build 214 on an iPhone 13 · recorded 16:10',
+ seal2:'<b>Checked again by someone else</b> · build 215 on an iPhone 13 · recorded 17:40',
+ judge:'Does it feel quick enough to book on the spot?',
+ dur:90,speed:3,
+ done:[{t:'Three screens, not seven',at:0,tg:'steps',how:'Counted from the recording: steps 1 to 3, then booked.'},
+   {t:'Booked in under 2 minutes',at:84,tg:'booked',how:'Twenty people new to the app: median 1 min 30 s, slowest 2 min 10 s.'},
+   {t:'Nothing you need is lost',at:84,tg:'saved',how:'Name, email and first lesson read back from the school’s records after booking.'},
+   {t:'Next stays above the keyboard',at:14,tg:'next1',how:'Frame at 0:14: keyboard up, Next visible. Same on three phone sizes.'},
+   {t:'Old phones',not:true,how:'Not proved: no iPhone 8 or older to test on. I’ll borrow one before release.'}],
+ raw:`Checker’s report · Faster sign-up · build 214 · 16:10
+Started from your words and the 4 done lines, not from the maker’s notes.
+1 steps: 3 (was 7) ............................ pass
+2 time: 20 people, median 1:30, slowest 2:10 .. pass
+3 saved: name, email, lesson read back ........ pass
+4 keyboard: Next visible on SE, 13, 15 Max .... pass
+Not tried: iPhone 8 or older (none available)`,
+ reasons:['Wrong words…','Missing…','Shouldn’t be here','Say it…'],
+ hand:'Opens this same build 214 on your phone. Shake the phone to mark something; it comes back here, on build 214.',
+ canned:[{at:26,tg:'slot0',label:'“Sat 21 Nov · 9:00”',why:'Missing',said:'Show who teaches each lesson'},{at:56,tg:'payNow',label:'“Pay now”',why:'Say it…',said:'Pay at the lesson should come first'}],
+ answers:[{note:'Each lesson now says who teaches it.'},{note:'“Pay at the lesson” is now first.'}],
+ nar:'A three-screen journey in the phone app, recorded by the checker on the exact build. Play or scrub it. Mark freezes the frame; tap any control in it.'},
+{id:'A2',kind:'A',word:'In the car · a route',goal:'Test-practice route from Elm Street',budget:'about 1 min',
+ seal:'<b>Checked by someone else</b> · route v3 · simulator with eight Saturdays of 9 am traffic · 17:05',
+ seal2:'<b>Checked again by someone else</b> · route v4 · simulator · 18:20',
+ judge:'Is it a fair test for a nervous learner?',
+ dur:1080,speed:36,
+ done:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Every road on the route checked against the road map: all single carriageway.'},
+   {t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 (Mill Road) and 11:40 (Ridge Way).'},
+   {t:'One hill start',at:470,tg:'hill',how:'Park Rise, 7:50. Gradient 1 in 9.'},
+   {t:'About 18 minutes at 9 am Saturday',at:1080,tg:'route',how:'Eight past Saturdays: 16 to 21 minutes, median 18.'},
+   {t:'Driven in a real car',not:true,how:'Not proved: simulator only. Saturday’s first lesson is the real test; the teacher will mark anything wrong.'}],
+ done2:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Checked again for version 4: all single carriageway.'},{t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 and 12:10.'},{t:'One hill start',at:450,tg:'hill',how:'Park Rise, 7:30.'},{t:'About 19 minutes at 9 am Saturday',at:1140,tg:'route',how:'Eight past Saturdays: 17 to 22 minutes, median 19.'},{t:'Driven in a real car',not:true,how:'Not proved: simulator only.'}],
+ raw:`Checker’s report · practice route v3 · 17:05
+Road types: 14 roads, 0 motorway, 0 dual carriageway .. pass
+Roundabouts: 2 (Mill Rd 3:20, Ridge Way 11:40) ........ pass
+Hill start: Park Rise 7:50, 1 in 9 .................... pass
+Time at Sat 09:00: 8 samples, 16–21 min, median 18 .... pass
+Not tried: a real car; roadworks after Friday unknown`,
+ reasons:['Avoid this road','Too hard here','Too easy','Say it…'],
+ canned:[{at:380,tg:'pt',x:160,y:120,label:'Station Road, 6:20',why:'Avoid this road',said:'Bus lane until 10 am'}],
+ answers:[{note:'Now goes by Church Lane instead. Adds a minute: 19 in all.'}],
+ nar:'A route that plays over time. The car moves along it; the turns follow. In Mark, tap any spot on the route: the mark keeps the place and the minute.'},
+{id:'B',kind:'B',word:'Web page · two widths',goal:'Price page',budget:'about 45 s',
+ seal:'<b>Checked by someone else</b> · preview b41, as served, both widths · 15:30',
+ seal2:'<b>Checked again by someone else</b> · preview b42, both widths · 16:55',
+ judge:'Does yearly-first feel pushy?',
+ done:[{t:'Yearly shows first',tg:'tog',how:'On load, both widths, the yearly price is selected.'},
+   {t:'Fits both widths, nothing cut off',tg:'h1',how:'390 and 1280 wide: no sideways scroll, no text cut off, all buttons at least 44 px.'},
+   {t:'Start opens checkout',tg:'go',how:'Clicked Start at both widths: the checkout opened with the yearly plan.'},
+   {t:'Tax included, as on the shop',tg:'tax',how:'Price matches the shop’s tax-inclusive price list.'},
+   {t:'Paying',not:true,how:'Not proved: the preview takes no card. A real payment is tried after release, with a $1 refunded order.'}],
+ raw:`Checker’s report · price page · preview b41 · 15:30
+yearly selected on load (390, 1280) ...... pass
+overflow-x 0px; min target 44px .......... pass
+Start → /checkout?plan=yearly ............ pass
+price incl. tax = shop list ($190) ....... pass
+Not tried: card payment (preview has none)`,
+ reasons:['Too big','Too small','Wrong words…','Say it…'],
+ canned:[{w:'phone',tg:'price',label:'the price',why:'Too big',said:'Too loud on the phone'},{w:'desk',tg:'li2',label:'“Your accountant can log in”',why:'Say it…',said:'Say “Invite your accountant”'}],
+ answers:[{note:'Smaller on the phone: 34 instead of 44.'},{note:'Now reads “Invite your accountant”.'}],
+ nar:'The served page at both agreed widths. Use it: switch monthly, press Start. In Mark, tap any element at either width; the mark keeps which width.'},
+{id:'C',kind:'C',word:'Words',goal:'New welcome email',budget:'about 30 s',
+ seal:'<b>Checked by someone else</b> · version 3, the exact text · test-sent 11:02',
+ seal2:'<b>Checked again by someone else</b> · version 4 · test-sent 12:10',
+ judge:'Does it sound like you?',
+ done:[{t:'Under 80 words',tg:'body',how:'33 words.'},
+   {t:'First name filled in',tg:'body',how:'From the test customer “Sam”.'},
+   {t:'Links work',tg:'links',how:'Help and Unsubscribe opened from both test inboxes.'},
+   {t:'Looks right on phone and desk mail',tg:'body',how:'Rendered in two mail apps, phone and desk.'},
+   {t:'Older desk mail programs',not:true,how:'Not proved: not tried in mail programs older than 2022.'}],
+ raw:`Checker’s report · welcome email v3 · 11:02
+words 33 (limit 80) ................ pass
+merge field first_name → “Sam” ..... pass
+links: help 200, unsubscribe 200 ... pass
+render: 2 apps × phone/desk ........ pass
+Not tried: mail programs before 2022`,
+ reasons:['Cut','Wrong tone','Change to…','Say it…'],
+ note:'Accepting does not send it. Sending to customers is its own step later: who, how many, when.',
+ canned:[{sel:[13,20],label:'“and you’ll hear about sales before anyone else”',why:'Cut',said:''},{sel:[25,30],label:'“A real person reads every email.”',why:'Say it…',said:'Say “Priya reads every email.”'}],
+ answers:[{note:'Cut, as you marked.'},{note:'Now reads “Priya reads every email.”'}],
+ nar:'Words in their real place. In Mark, tap a word, then another to stretch the selection, and say what is wrong with it.'},
+{id:'D',kind:'D',word:'Picture',goal:'New app icon',budget:'about 45 s',
+ seal:'<b>Checked by someone else</b> · the six files that ship · 12:15',
+ judge:'Does it still look like us?',
+ done:[{t:'Brand green, exactly',tg:'icon',how:'Every green pixel is #1F5C4A, your brand green.'},
+   {t:'Clear at the smallest size',tg:'s40',how:'At 40 px the L and the road are still told apart; checked on a phone screen.'},
+   {t:'No see-through parts',tg:'icon',how:'No transparency: the store refuses icons with it.'},
+   {t:'All six sizes from one drawing',tg:'sizes',how:'Every size made from the same drawing; fingerprints listed.'},
+   {t:'Android',not:true,how:'Not proved: Android icons are not part of this.'}],
+ raw:`Checker’s report · app icon · 12:15
+colour: 100% of brand pixels #1F5C4A ...... pass
+legibility at 40 px (on device) .......... pass
+alpha channel: none ...................... pass
+sizes 1024/180/120/87/60/40 from icon.svg  pass
+Not part of this: Android`,
+ reasons:['Too thin','Wrong colour','Too busy','Say it…'],
+ nar:'A picture full size, beside the old one and in its real place on a home screen. In Mark, tap the spot that is wrong.'},
+{id:'E',kind:'E',word:'Prices',goal:'New lesson prices from 1 December',budget:'about 1 min',
+ seal:'<b>Checked by someone else</b> · read back from the live shop · 10:42',
+ judge:'Are these the prices you want?',
+ done:[{t:'Each up 5%, to the nearest 50 cents',tg:'rows',how:'All 12 recomputed from the old price by the checker; all match.'},
+   {t:'Only these 12 changed',tg:'others',how:'The other 286 products compared before and after: none changed.'},
+   {t:'Starts 1 Dec at midnight, not before',tg:'readback',how:'Live shop read back: today still shows the old price.'},
+   {t:'Undo puts all 12 back',tg:'rows',how:'Tried on a copy of the shop: undo restored 12 of 12.'}],
+ raw:`Checker’s report · lesson prices · 10:42
+recompute 5% → nearest 0.50: 12/12 match ..... pass
+products changed: 12 of 298 (286 unchanged) .. pass
+live readback today: old prices; scheduled 1 Dec 00:00 .. pass
+undo on shop copy: 12/12 restored ............ pass`,
+ fork:{q:'Gift vouchers already sold at old prices: honour them in full?',adv:'I’d say yes: 23 vouchers, $1,140.',opts:['Honour in full','Charge the difference'],wait:'This waits for you. Money is yours to decide; your silence is not a yes.'},
+ reasons:['Wrong price…','Leave this one','Say it…'],
+ under:'If you say nothing, nothing changes on 1 December.',okLabel:'Yes, these prices from 1 Dec',
+ nar:'Only the changed rows, plus what a customer will see, read back from the live shop. In Mark, tap a row or a single price.'},
+{id:'F',kind:'F',word:'Behind the app · nothing to see',goal:'Move photos to cheaper storage',budget:'about 30 s',
+ seal:'<b>Checked by someone else</b> · the live app, all 48,210 photos · 06:40',
+ judge:'',judgeNone:'Nothing here to judge by eye. Only you: is 0.1 s slower worth $148 a month?',
+ done:[{t:'Every photo moved',tg:'count',how:'48,210 of 48,210, counted and fingerprinted.'},
+   {t:'Same pictures, byte for byte',tg:'p0',how:'300 picked at random: identical before and after.'},
+   {t:'Still private',tg:'deny',how:'A student opening another student’s photo is refused, as before.'},
+   {t:'Open in under a second',tg:'speed',how:'Median 0.4 s (was 0.3 s); slowest 1.3 s, for photos older than two years.'},
+   {t:'The bill',not:true,how:'Not proved: $64 a month is from the price list. The first real bill comes 1 December.'}],
+ raw:`Checker’s report · photo storage · 06:40
+count: 48,210 / 48,210; fingerprints match ... pass
+300 random: byte-identical ................... pass
+access: other student’s photo → refused ...... pass
+open time: median 0.4 s (was 0.3), max 1.3 s . pass
+Not proved: monthly cost (estimate only)`,
+ reasons:['Wrong','Too slow','Say it…'],
+ under:'The old storage stays, read-only, for 30 days. Deleting it waits for you.',
+ nar:'Nothing to look at, so the showing is sameness: the same photos before and after, the same refusal, and the count. Tap any pair or number to mark it.'},
+{id:'G',kind:'G',word:'A tool · a number',goal:'Speed up the test run',budget:'about 30 s',
+ seal:'<b>Checked by someone else</b> · ten runs each way, same computer · 09:10',
+ judge:'',judgeNone:'Nothing to judge by eye. Only you: the desk computer works four times harder for those six minutes. Fine?',
+ done:[{t:'The same tests ran',tg:'same',how:'1,904 before and after; the two lists are identical.'},
+   {t:'Same results',tg:'same',how:'Both ways: 1,904 pass, 0 fail, 0 skipped.'},
+   {t:'Faster every time, not once',tg:'runs',how:'Ten runs each way. Slowest new run 6:31; fastest old run 18:40.'},
+   {t:'On the laptop',not:true,how:'Not proved: the laptop was asleep.'}],
+ raw:`Checker’s report · test run speed · 09:10
+test list: 1,904 = 1,904, identical ........ pass
+results: 1904 pass / 0 fail / 0 skip, both .. pass
+before: 18:40–19:30 (10 runs); after: 5:50–6:31 (10 runs) . pass
+Not tried: laptop (asleep)`,
+ reasons:['Don’t believe it','Try it elsewhere','Say it…'],
+ nar:'A number is shown as its runs: ten before, ten after, on one line, so the spread is visible. The number itself can be marked.'},
+{id:'H',kind:'H',word:'Runs by itself',goal:'Reminder texts go out too late',budget:'about 45 s',
+ seal:'<b>Checked by someone else</b> · one real run last night, to two test phones · 18:00',
+ judge:'Do the texts read right, and is 6 pm right for your students?',
+ done:[{t:'Goes at 6 pm the evening before',tg:'s0',how:'Woke at 18:00:00 your time, last night and the night before.'},
+   {t:'Late bookings get one at once',tg:'s4',how:'A lesson booked at 21:10 got its text at 21:10:05.'},
+   {t:'No one gets two',tg:'s3',how:'The run was repeated: 0 second texts.'},
+   {t:'A failed run is noticed',tg:'s5',how:'Text service switched off for one test run: it tried three times, then the watch knew in 2 minutes.'},
+   {t:'Fewer missed lessons',not:true,how:'Not proved yet: we will know in four weeks.'}],
+ raw:`Checker’s report · reminder job · 18:00
+trigger 18:00:00 Europe/London (2 nights) ..... pass
+late booking 21:10 → text 21:10:05 ........... pass
+rerun: duplicates 0 .......................... pass
+service off: 3 tries, watch alerted 18:32 ..... pass
+Not yet: missed-lesson rate (4 weeks)`,
+ reasons:['Wrong time','Missing','Twice','Say it…'],
+ act:{label:'Switch on for real',said:'Text the 46 students who have a lesson tomorrow, tonight at 18:00, and every evening after.',
+   cant:['A text cannot be taken back once sent.'],can:['You can switch it off at any time; nothing already sent comes back.'],
+   confirm:'Correct. Switch it on.',receipt:'Switched on at 17:12. Tonight’s run: 46 texts at 18:00. Switch off any time.',stop:'Switch it off',stopped:'Switched off at 17:20. No texts will go out. Nothing had been sent yet.'},
+ nar:'A job with nothing to look at is shown as one real run, from waking to effect to the next run, plus a planted failure. Switching it on for real is a separate, said-back step.'},
+{id:'I',kind:'I',word:'Release · cannot be undone',goal:'Thursday’s Driving app release',budget:'about 1 min',
+ seal:'<b>Exactly this build: 2.4 (214)</b> · fingerprint 7f3a 91c0 · used on two phones by someone else · 10:20',
+ judge:'',
+ done:[{t:'Installed from the store and used',tg:'used',how:'Two phones: installed from the test channel, signed up, booked, opened photos.'},
+   {t:'People on 2.3 keep working',tg:'old',how:'The server answers both versions; a 2.3 phone booked a lesson after the switch.'},
+   {t:'Data kept on update',tg:'data',how:'A phone with 2.3 and 40 lessons updated: all 40 still there.'},
+   {t:'iPhone 8 and older',not:true,how:'Not proved: none to test on. 2% of your users.'}],
+ raw:`Checker’s report · release 2.4 (214) · 10:20
+store test channel install, 2 phones ........ pass
+2.3 client against new server: booking ok .... pass
+update 2.3 → 2.4 with 40 lessons: 40 kept .... pass
+Not tried: iPhone 8 or older (2% of users)`,
+ act:{label:'Release',said:'Release Driving app 2.4 (214) to 1 in 10 iPhone users today at 14:00, and to everyone by Monday.',
+   cant:['Once a phone has updated, it keeps 2.4. We can only send a newer version.'],can:['Until Monday I can stop it reaching the other 9 in 10.','Your yes is for build 214 only. If anything in it changes, I ask again.'],
+   confirm:'Correct. Release it.',receipt:'Released at 14:02. 318 phones have it, no crashes so far. Everyone else gets it by Monday.',stop:'Stop it reaching anyone else',stopped:'Stopped at 14:20. The 318 phones that have 2.4 keep it; nobody else gets it until you say.'},
+ nar:'The pause before something that cannot be undone: the exact build, what is in it, to whom, said back in one sentence, confirmed by holding. Afterwards, the receipt and the way to stop the rest.'},
+{id:'J',kind:'J',word:'Proof',goal:'Refunds can’t be paid twice',budget:'about 30 s',
+ seal:'<b>Checked by someone else</b> · billing b40, then b41 · 10:15',
+ judge:'',judgeNone:'Nothing to judge by eye. Only you: refunds made at the bank’s own website are not covered. Accept that?',
+ done:[{t:'Fails on the old build',tg:'before',how:'Build b40: pressing Refund twice paid $89 twice.'},
+   {t:'Passes on the new build',tg:'after',how:'Build b41: the second press says “Already refunded”.'},
+   {t:'The check can fail',tg:'planted',how:'A copy built to pay twice was planted: the check caught it.'},
+   {t:'Three of four ways covered',tg:'cover',how:'Double press, two staff at once, network retry.'},
+   {t:'Refunds at the bank’s website',not:true,how:'Not covered: they never pass through your app.'}],
+ raw:`Checker’s report · double refund · b40 → b41 · 10:15
+b40 double press: 2 refunds × $89 ........ FAIL (expected)
+b41 double press: 1 refund, 2nd refused .. pass
+planted double-pay copy: caught .......... pass
+cases: double press, two staff, retry .... pass
+Not covered: refunds made at the bank`,
+ reasons:['Not enough','Wrong case','Say it…'],
+ nar:'Proof is shown as the failing case and the same case passing, plus a planted failure that shows the check can fail. The uncovered case is named.'},
+{id:'K',kind:'K',word:'A decision',goal:'Sales tax for two new states',budget:'about 2 min',
+ seal:'<b>Checked by someone else</b> · every figure with its source and date · 11:30',
+ judge:'',
+ done:[{t:'Rates match the state sites',tg:'rate',how:'Read on the two state tax sites, 12 Nov.'},
+   {t:'Thresholds match your accountant’s note',tg:'thr',how:'Her note of 3 Nov, page 2.'},
+   {t:'Your sales from the billing tool',tg:'sales',how:'October, by state, from the billing tool.'},
+   {t:'City taxes in Colorado',not:true,how:'Not researched: your accountant handles city taxes.'}],
+ raw:`Checker’s report · sales tax · 11:30
+CO 2.9%, TX 6.25%: state sites, read 12 Nov ...... match
+thresholds $100k: accountant note 3 Nov p.2 ...... match
+Oct sales: CO $41,200; TX $112,600 (billing) ..... match
+Not covered: Colorado city taxes`,
+ fork:{q:'Register in Colorado now, or when sales there pass $100,000?',adv:'I’d say wait: you are at $41,200 a year.',opts:['Wait','Register now'],wait:'This waits for you. Registering can’t easily be undone; your silence is not a yes.'},
+ reasons:['Wrong…','Out of date','Ask the accountant','Say it…'],
+ nar:'A decision is shown as the comparison itself, every figure tied to its source and date. Mark a single cell.'},
+{id:'L',kind:'L',word:'Cleanup',goal:'Clean up old test accounts',budget:'about 45 s',
+ seal:'<b>Checked by someone else</b> · account list 08:20 · archive restored once on a copy',
+ judge:'Anything here you want kept?',
+ done:[{t:'Only test accounts',tg:'rm',how:'None of the 214 ever paid; all made by helpers.'},
+   {t:'The six in use are kept',tg:'keep',how:'Each kept for the reason shown.'},
+   {t:'The archive restores',tg:'arch',how:'Restored on a copy: 214 of 214 sign in.'},
+   {t:'The app still signs in',tg:'arch',how:'A fresh phone signed up and in at 08:40.'},
+   {t:'Spreadsheets outside the app',not:true,how:'Not proved: I can’t see your accountant’s spreadsheets.'}],
+ raw:`Checker’s report · test account cleanup · 08:20
+214 accounts: 0 payments, all helper-made ..... pass
+6 kept: reviewer ×2, yours, checker ×2, demo .. pass
+archive restore on copy: 214/214 sign in ...... pass
+fresh client sign-up 08:40 ..................... pass
+Not seen: spreadsheets outside the app`,
+ reasons:['Keep this one','Why is this here?','Say it…'],
+ okLabel:'Remove the 214',
+ under:'Removed accounts can be brought back from the archive for 30 days. Deleting the archive after that waits for you.',
+ nar:'A cleanup is shown as what goes and what stays, with a restore tried. Tap any row to keep it.'}
+];
+
+/* ======================= state ======================= */
+const S={i:0,mode:'look',t:0,playing:false,marks:[],pend:null,scope:false,proof:null,w:'phone',bWidth:'phone',monthly:false,checkout:false,
+  sel:null,changed:false,compare:null,hand:false,hold:0,fork:null,pre:null,theme:null};
+const per={};
+function sh(){return SH[S.i];}
+function doneOf(){const s=sh();return S.mode==='back'&&s.done2?s.done2:s.done;}
+function reset(){Object.assign(S,{aud:'tenth',stopped:false,mode:'look',t:0,playing:false,marks:[],pend:null,scope:false,proof:null,bWidth:'phone',monthly:false,checkout:false,sel:null,changed:false,compare:null,hand:false,hold:0,fork:null});stopPlay();}
+
+/* mark target helper: any element can be pointed at */
+function tg(id,label,inner,cls='',tag='span',extra=''){
+  const ms=S.marks.map((m,k)=>[m,k]).filter(([m])=>m.tg===id&&matchCtx(m));
+  const back=S.mode==='back';
+  const ev=S.proof!==null&&doneOf()[S.proof]&&doneOf()[S.proof].tg===id;
+  const cl=`tg ${cls} ${ms.length?(back?'is-done':'is-marked'):''} ${ev?'ev-hl':''}`;
+  const a=S.mode==='mark'?`role="button" tabindex="0" data-tg="${id}" data-label="${esc(label)}"`:'';
+  return `<${tag} class="${cl}" ${a} ${extra}>${inner}${ms.map(([m,k])=>`<span class="pin ${back?'done':''}" aria-label="Mark ${k+1}">${k+1}${back?' ✓':''}</span>`).join('')}</${tag}>`;}
+function matchCtx(m){const s=sh();
+  if(s.id==='A1')return frameAt(m.at).scr===frameAt(S.t).scr;
+  if(s.id==='B')return m.w===S.curW;
+  return true;}
+
+/* ======================= stages ======================= */
+/* A1: a recorded journey on the exact build */
+const FR=[{t:0,scr:1},{t:6,scr:1,name:'Sam',f:0},{t:14,scr:1,name:'Sam Lee',email:'sam.lee@mail.com',f:1,kb:1},{t:24,scr:1,name:'Sam Lee',email:'sam.lee@mail.com',tap:'next1'},
+  {t:26,scr:2},{t:51,scr:2,pick:0,tap:'slot0'},{t:53,scr:3},{t:80,scr:3,pick:'later',tap:'payLater'},{t:84,scr:4},{t:90,scr:4}];
+function frameAt(t){let f=FR[0];for(const x of FR)if(x.t<=t)f=x;return f;}
+function rev2(){return S.mode==='back'&&S.compare===null;}
+function stageA1(){
+  const f=frameAt(S.t),r2=rev2();let h='';
+  if(f.scr===1)h=`<div class="pad">${tg('steps','“Step 1 of 3”','Step 1 of 3','step')}<h3>${tg('h1a','the heading','Your name and email')}</h3>
+    <span class="lbl2">Name</span>${tg('name','the name field',f.name||'&nbsp;','field'+(f.f===0?' f':''))}
+    <span class="lbl2">Email</span>${tg('email','the email field',f.email||'&nbsp;','field'+(f.f===1?' f':''))}
+    ${tg('next1','the Next button','Next','cta')}</div>${f.kb?'<div class="kb">'+'<i></i>'.repeat(30)+'</div>':''}`;
+  if(f.scr===2){const sl=[['Sat 21 Nov · 9:00','Priya'],['Sat 21 Nov · 11:00','Tom'],['Sun 22 Nov · 10:00','Priya']];
+    h=`<div class="pad"><span class="step">Step 2 of 3</span><h3>${tg('h2a','the heading','Pick a first lesson')}</h3>
+    ${sl.map((s,k)=>tg('slot'+k,'“'+s[0]+'”',`${s[0]}<small>1 hour · $38${r2?' · with '+s[1]:''}</small>`,'slot'+(f.pick===k?' sel':''))).join('')}
+    ${tg('more','“More times”','More times','slot')}</div>`;}
+  if(f.scr===3){const now=tg('payNow','“Pay now”','Pay now<small>$38 by card</small>','slot'),later=tg('payLater','“Pay at the lesson”','Pay at the lesson<small>Cash or card to your teacher</small>','slot'+(f.pick==='later'?' sel':''));
+    h=`<div class="pad"><span class="step">Step 3 of 3</span><h3>${tg('h3a','the heading','How would you like to pay?')}</h3>${r2?later+now:now+later}${tg('book','the Book button','Book','cta')}</div>`;}
+  if(f.scr===4)h=`<div class="pad" style="text-align:center"><div class="doneic"></div>${tg('booked','“Booked”','<h3>Booked. See you Saturday at 9:00.</h3>','','div')}
+    ${tg('saved','the saved booking','<span class="slot" style="text-align:left">Sam Lee · sam.lee@mail.com<small>Sat 21 Nov · 9:00 · pay at the lesson</small></span>','','div')}</div>`;
+  const rp=f.tap&&Math.abs(S.t-f.t)<2?`<span class="ripple" style="left:${f.tap==='next1'?'50%':'70%'};top:${f.tap==='next1'?'270px':f.tap==='slot0'?'132px':'200px'}"></span>`:'';
+  return `<div class="phone" aria-label="Recording of build ${r2?215:214}, ${mmss(S.t)}"><div class="scr"><div class="appbar"><span>Driving lessons</span><span style="color:#5B6168;font-weight:500">${mmss(S.t)}</span></div>${h}${rp}</div></div>`;}
+
+/* A2: a route that plays over time */
+const RT=[[40,250,0],[40,180,90],[120,180,200],[120,120,320],[200,120,440],[230,90,520],[300,90,640],[330,120,700],[330,200,820],[260,240,920],[180,250,1000],[40,250,1080]];
+const RT2=[[40,250,0],[40,180,90],[120,180,200],[170,150,330],[200,120,450],[230,90,540],[300,90,670],[330,120,730],[330,200,860],[260,240,960],[180,250,1050],[40,250,1140]];
+const TURNS=[[0,'Start at Elm Street test centre'],[90,'Right onto Mill Road'],[200,'Roundabout, second exit'],[320,'Left onto Station Road'],[440,'Hill start on Park Rise'],[640,'Right onto Ridge Way'],[700,'Roundabout, third exit'],[920,'School: 20 mph'],[1080,'Back at the test centre']];
+const TURNS2=[[0,'Start at Elm Street test centre'],[90,'Right onto Mill Road'],[200,'Roundabout, first exit'],[330,'Church Lane'],[450,'Hill start on Park Rise'],[670,'Right onto Ridge Way'],[730,'Roundabout, third exit'],[960,'School: 20 mph'],[1140,'Back at the test centre']];
+function posAt(rt,t){for(let k=1;k<rt.length;k++){if(t<=rt[k][2]){const a=rt[k-1],b=rt[k],u=(t-a[2])/(b[2]-a[2]||1);return [a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u];}}const z=rt[rt.length-1];return [z[0],z[1]];}
+function stageA2(){
+  const r2=rev2(),rt=r2?RT2:RT,turns=r2?TURNS2:TURNS,[cx,cy]=posAt(rt,S.t),line=r=>r.map(p=>p[0]+','+p[1]).join(' ');
+  const pins=S.marks.map((m,k)=>`<g><circle cx="${m.x}" cy="${m.y}" r="11" fill="${S.mode==='back'?'#2F5D3A':'#A0301C'}" stroke="#fff" stroke-width="2"/><text x="${m.x}" y="${m.y+4}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${k+1}</text></g>`).join('');
+  const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const cur=turns.reduce((a,x,k)=>x[0]<=S.t?k:a,0);
+  return `<div class="routewrap"><svg class="map ${S.mode==='mark'?'tgmap':''}" viewBox="0 0 400 300" role="img" aria-label="Map of the route, car at ${mmss(S.t)}" data-map="1" ${S.mode==='mark'?'tabindex="0"':''} style="${S.mode==='mark'?'cursor:crosshair;outline:1.5px dashed rgba(160,48,28,.55)':''}">
+   <rect x="0" y="0" width="400" height="300" fill="#EEF0EA"/>
+   <rect x="250" y="150" width="60" height="50" rx="6" fill="#CFE3C8"/><text x="280" y="180" text-anchor="middle" font-size="9" fill="#55734C">Park</text>
+   ${[60,120,180,240].map(y=>`<line x1="0" y1="${y}" x2="400" y2="${y}" stroke="#fff" stroke-width="7"/>`).join('')}${[40,120,200,280,330].map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="300" stroke="#fff" stroke-width="7"/>`).join('')}
+   <text x="150" y="114" font-size="9" fill="#6A6F6A">Station Rd</text><text x="125" y="200" font-size="9" fill="#6A6F6A">Mill Rd</text><text x="235" y="84" font-size="9" fill="#6A6F6A">Park Rise</text>
+   ${r2?`<polyline points="${line(RT)}" fill="none" stroke="#8C93A3" stroke-width="3" stroke-dasharray="5 5"/>`:''}
+   <polyline points="${line(rt)}" fill="none" stroke="#2C5DCC" stroke-width="${ev==='route'?7:5}" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>
+   <circle cx="120" cy="180" r="${ev==='rb1'?12:8}" fill="none" stroke="#2C5DCC" stroke-width="2.5"/><circle cx="330" cy="120" r="${ev==='rb1'?12:8}" fill="none" stroke="#2C5DCC" stroke-width="2.5"/>
+   <path d="M200 120 L230 90" stroke="#C0661B" stroke-width="${ev==='hill'?8:5}" stroke-linecap="round"/><text x="236" y="104" font-size="9" fill="#C0661B">hill</text>
+   <rect x="250" y="232" width="22" height="16" rx="3" fill="#F2C94C"/><text x="261" y="243" text-anchor="middle" font-size="8" fill="#333">20</text>
+   <rect x="28" y="240" width="24" height="20" rx="4" fill="#14213D"/><text x="40" y="254" text-anchor="middle" font-size="9" fill="#fff">TC</text>
+   <circle cx="${cx}" cy="${cy}" r="8" fill="#14213D" stroke="#fff" stroke-width="3"/>${pins}</svg>
+   <ol class="turns" aria-label="Turns">${turns.map(([t,x],k)=>`<li class="${k===cur?'cur':''}"><span class="tt">${mmss(t)}</span><span>${x}</span></li>`).join('')}</ol></div>`;}
+
+/* B: the served page at two widths */
+function webHTML(w){
+  const r2=rev2(),mo=S.monthly;S.curW=w;
+  if(S.checkout)return `<div class="web"><div class="nav">Corner Billing</div><div class="checkout"><h1 style="font-size:28px">Checkout</h1><p>Yearly plan · $190</p><p style="color:#566">Preview: no payment is taken.</p></div></div>`;
+  const price=tg('price','the price',mo?'$19<small> / month</small>':'$190<small> / year</small>','price'+(r2&&w==='phone'?' small':''),'p');
+  const card=`${tg('tog','the yearly/monthly switch',`<span class="${mo?'':'on'}" data-act="yearly">Yearly</span><span class="${mo?'on':''}" data-act="monthly">Monthly</span>`,'tog')}${price}
+    ${mo?'<p style="margin:0 0 18px;color:#566">or $190 a year</p>':`<p class="free">Two months free</p>`}
+    ${tg('go','the Start button','Start','go','span','data-act="start"')}${tg('tax','“Prices include tax.”','Prices include tax.','tax','p')}`;
+  const list=`<ul>${tg('li0','“Unlimited invoices”','Unlimited invoices','','li')}${tg('li1','“Bank feeds”','Bank feeds','','li')}${tg('li2','“'+(r2?'Invite your accountant':'Your accountant can log in')+'”',r2?'Invite your accountant':'Your accountant can log in','','li')}</ul>`;
+  const h1=tg('h1','the heading','One plan. Everything included.','','h1');
+  return w==='phone'?`<div class="web"><div class="nav">Corner Billing</div><div class="hero">${h1}${card}${list}</div></div>`
+    :`<div class="web wide"><div class="nav">Corner Billing<div><span>Features</span><span>Pricing</span><span>Sign in</span></div></div><div class="hero"><div>${h1}${list}</div><div class="card">${card}</div></div></div>`;}
+function vp(w,scale,vh){const W=w==='phone'?390:1280,H=vh;
+  return `<div class="webcol"><div class="vp" style="width:${Math.round(W*scale)}px;height:${Math.round(H*scale)}px"><div class="in" style="width:${W}px;height:${H}px;transform:scale(${scale});--ps:${(0.9/scale).toFixed(2)}">${webHTML(w)}</div></div><span class="webcap">${w==='phone'?'Phone · 390 wide':'Desk · 1280 wide'}</span></div>`;}
+function stageB(){
+  const d=desk();let h;
+  if(d){const v=S.bView||'both';h=`<div style="text-align:center;margin-bottom:10px"><div class="seg" role="group" aria-label="Which width">${[['both','Side by side'],['phone','Phone, larger'],['desk','Desk, larger']].map(([k,t])=>`<button data-act="bview" data-v="${k}" aria-pressed="${v===k}">${t}</button>`).join('')}</div></div>
+    <div class="webs">${v==='both'?vp('phone',.45,780)+vp('desk',.33,760):v==='phone'?vp('phone',.9,640):vp('desk',.48,820)}</div>`;}
+  else h=`<div style="text-align:center;margin-bottom:10px"><div class="seg" role="group" aria-label="Width">${['phone','desk'].map(w=>`<button data-act="bw" data-v="${w}" aria-pressed="${S.bWidth===w}">${w==='phone'?'Phone width':'Desk width'}</button>`).join('')}</div></div>
+    <div class="webs">${S.bWidth==='phone'?vp('phone',.8,700):vp('desk',.26,860)}</div>`;
+  return h+`<p class="foot">${S.mode==='look'?'This is the page itself: switch the price, press Start.':'Tap any element, at either width.'}${S.checkout?' <button class="lnk inl" data-act="backpage">Back to the page</button>':''}</p>`;}
+
+/* C: words in their real place */
+const WORDS='Hi Sam, | Thanks for joining Corner Shop. Your first order ships free, and you’ll hear about sales before anyone else. | Questions? Just reply. A real person reads every email. | Priya, at Corner Shop'.split(' ');
+function stageC(){
+  const r2=rev2();let k=-1;const cut=new Set(),repl={};
+  if(r2){for(let i=10;i<=18;i++)cut.add(i);repl[21]=1;}
+  const sel=S.sel;const inSel=i=>sel&&i>=Math.min(sel[0],sel[1])&&i<=Math.max(sel[0],sel[1]);
+  const markedW=i=>S.marks.findIndex(m=>m.sel&&i>=m.sel[0]&&i<=m.sel[1]);
+  const paras=[];let cur=[];
+  WORDS.forEach((w,i)=>{if(w==='|'){paras.push(cur);cur=[];return;}cur.push([w,i]);});paras.push(cur);
+  const wordHTML=([w,i])=>{
+    const mk=markedW(i),last=mk>=0&&S.marks[mk].sel[1]===i;
+    if(r2&&mk>=0){const m=S.marks[mk];const pin=last?`<span class="pin done" style="margin-left:3px">${mk+1} ✓</span>`:'';
+      if(m.why==='Cut')return `<span class="w cut">${esc(w)}</span>${pin}`;
+      return `<span class="w cut">${esc(w)}</span>${last?` <span class="w newt">Priya reads every email.</span>`+pin:''}`;}
+    const shown=r2&&i===12?'free.':w;
+    const cls=`w ${inSel(i)?'sel':''} ${mk>=0?(S.marks[mk].why==='Cut'?'cut':'sel'):''}`;
+    const inner=esc(shown)+(last?`<span class="pin" style="margin-left:3px">${mk+1}</span>`:'');
+    return S.mode==='mark'?`<span class="${cls}" role="button" tabindex="0" data-w="${i}">${inner}</span>`:`<span class="${cls}">${inner}</span>`;};
+  const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  return `<div class="mail ${ev==='body'?'tg ev-hl':''}"><div class="mh"><b>Welcome, Sam</b>From Corner Shop · to sam@example.com</div><div class="mb">
+    ${paras.map((p,n)=>`<p>${p.map(wordHTML).filter(Boolean).join(' ')}</p>`).join('')}
+    <p style="font-size:12px;color:#888" class="${ev==='links'?'tg ev-hl':''}"><u>Help</u> · <u>Unsubscribe</u></p></div></div>
+    ${S.mode==='mark'?'<p class="foot" style="text-align:center">Tap a word, then another to stretch the selection.</p>':''}
+    ${sh().note?`<p class="foot" style="text-align:center">${sh().note}</p>`:''}`;}
+
+/* D: a picture, full size, beside the old one and in place */
+function iconSVG(size,old){const g=old?'#3A7D5C':'#1F5C4A';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="${g}"/>
+   ${old?'<circle cx="50" cy="50" r="28" fill="none" stroke="#fff" stroke-width="7"/><text x="50" y="58" text-anchor="middle" font-size="24" font-weight="800" fill="#fff" font-family="sans-serif">DL</text>'
+   :'<path d="M30 22 V70 H62" stroke="#fff" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M58 30 Q74 52 70 80" stroke="#F2C94C" stroke-width="5" fill="none" stroke-dasharray="7 6"/>'}</svg>`;}
+function stageD(){
+  const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const pins=S.marks.map((m,k)=>`<span class="pin" style="position:absolute;left:${m.x}%;top:${m.y}%;transform:translate(-50%,-50%)">${k+1}</span>`).join('');
+  return `<div class="iconwrap"><div><div class="iconbig ${ev==='icon'?'tg ev-hl':''}" data-pic="1" ${S.mode==='mark'?'role="button" tabindex="0" aria-label="The icon: tap the spot that is wrong" style="cursor:crosshair;outline:1.5px dashed rgba(160,48,28,.55);border-radius:24px"':''}>${iconSVG(240,false)}${pins}</div><div class="iconcap">New · full size</div></div>
+   <div><div style="width:110px">${iconSVG(110,true)}</div><div class="iconcap">Today’s</div></div></div>
+   <div style="display:flex;justify-content:center;margin-top:16px"><div><div class="home">${['Mail','Maps','Photos','Notes','Lessons','Music','Bank','Clock'].map(n=>n==='Lessons'?`<div>${iconSVG(36,false)}<span>Lessons</span></div>`:`<div><i></i><span>${n}</span></div>`).join('')}</div><div class="iconcap">In place, real size</div></div></div>
+   <div class="sizes ${ev==='sizes'?'tg ev-hl':''}">${[64,48,40,32,24,20].map((s,k)=>`<div class="${k===5&&ev==='s40'?'tg ev-hl':''}">${iconSVG(s,false)}</div>`).join('')}</div>`;}
+
+/* E: only the changed rows, read back from the live shop */
+const PR=[['Single lesson, 1 h',38,40],['Single lesson, 2 h',72,75.5],['5-lesson pack',180,189],['10-lesson pack',340,357],['Intensive week',610,640.5],['Mock test',45,47.5],['Motorway lesson',42,44],['Refresher, 1 h',38,40],['Pass Plus',160,168],['Gift voucher, 1 h',38,40],['Gift voucher, 5 h',180,189],['Theory pack',24,25]];
+const money=v=>'$'+v.toFixed(2);
+function stageE(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  return `<table class="tbl ${ev==='rows'?'tg ev-hl':''}"><thead><tr><th>Product</th><th class="r">Now</th><th class="r">From 1 Dec</th></tr></thead><tbody>
+   ${PR.map((p,k)=>`<tr>${'<td>'+tg('row'+k,'“'+p[0]+'”',p[0])+'</td>'}<td class="r">${money(p[1])}</td><td class="r">${tg('np'+k,'the new price of '+p[0],money(p[2]),'up')}</td></tr>`).join('')}</tbody></table>
+   <p class="foot ${ev==='others'?'tg ev-hl':''}">The other 286 products: unchanged, compared one by one.</p>
+   <div class="readback ${ev==='readback'?'tg ev-hl':''}"><span class="ph"></span><span><b>5-lesson pack</b><br>$180.00 today · $189.00 from 1 Dec<br><small style="color:#666">As a customer sees it, read back from the live shop at 10:42</small></span></div>`;}
+
+/* F: nothing to see, so sameness */
+function stageF(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const ph=[['linear-gradient(135deg,#9DB0A3,#5E7A6E)','Sam, licence photo'],['linear-gradient(135deg,#C9B08A,#8E6F4C)','Car 3, front'],['linear-gradient(135deg,#8FA3BC,#4E6380)','Jo, lesson 4']];
+  return `<div class="pairs">${ph.map((p,k)=>[0,1].map(n=>tg('p'+k+n,(n?'after: ':'before: ')+p[1],`<div class="im" style="background:${p[0]}"></div><b>${n?'After · new storage':'Before · old storage'}</b>${p[1]} · ${n?'0.4':'0.3'} s`,'pair'+(ev==='p0'&&k===0?' ev-hl':''),'div')).join('')).join('')}
+    ${tg('allow','Sam opens his own photo','<div class="im" style="background:linear-gradient(135deg,#9DB0A3,#5E7A6E)"></div><b>Sam opens his own photo</b>Shown','pair','div')}
+    ${tg('deny','Sam opens Jo’s photo','<div class="im">Refused</div><b>Sam opens Jo’s photo</b>Refused, as before','pair deny'+(ev==='deny'?' ev-hl':''),'div')}</div>
+   <p class="big" style="font-size:30px">${tg('count','the count','48,210 <span style="font-weight:500;color:var(--ink2)">of</span> 48,210','',(ev==='count'?'span':'span'),ev==='count'?'style="outline:2.5px solid var(--ink);outline-offset:3px;border-radius:4px"':'')}</p>
+   <p class="foot" style="text-align:center">${tg('speed','open time','Median open time 0.4 s (was 0.3 s)','',ev==='speed'?'b':'span')} · ${tg('bill','the bill','$212 → $64 a month, from the price list')}</p>`;}
+
+/* G: a number, as its runs */
+const BEF=[1120,1135,1148,1150,1155,1160,1162,1168,1170,1170],AFT=[350,355,360,362,365,370,372,376,385,391];
+function stageG(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;const X=v=>20+v/1200*360;
+  const dots=(a,y,c,p)=>a.map((v,k)=>`<circle cx="${X(v)}" cy="${y+(k%5)*7-14}" r="4" fill="${c}" data-run="${p}${k}"/>`).join('');
+  return `<p class="big">${tg('num','the number','<s>19 min</s>6 min')}</p><p class="foot" style="text-align:center">Median of ten runs each way</p>
+   <div class="${ev==='runs'?'tg ev-hl':''}" style="background:#fff;border-radius:10px;padding:8px;margin-top:10px">
+   <svg viewBox="0 0 400 120" style="width:100%;display:block" role="img" aria-label="Ten runs before, between 18:40 and 19:30; ten runs after, between 5:50 and 6:31">
+    <line x1="20" y1="96" x2="380" y2="96" stroke="#BBB"/>${[0,300,600,900,1200].map(v=>`<line x1="${X(v)}" y1="92" x2="${X(v)}" y2="100" stroke="#BBB"/><text x="${X(v)}" y="114" font-size="10" text-anchor="middle" fill="#666">${v/60} min</text>`).join('')}
+    <text x="${X(1200)}" y="18" font-size="11" text-anchor="end" fill="#555">before · 18:40 to 19:30</text>${dots(BEF,58,'#8C93A3','b')}
+    <text x="${X(370)}" y="18" font-size="11" text-anchor="middle" fill="#1F5C4A">after · 5:50 to 6:31</text>${dots(AFT,58,'#1F5C4A','a')}</svg></div>
+   <p class="foot ${ev==='same'?'tg ev-hl':''}" style="text-align:center">${tg('same','same tests, same results','Both ways: 1,904 tests · all pass · none skipped')}</p>`;}
+
+/* H: one real run of a job, plus a planted failure */
+function stageH(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const steps=[['18:00:00','Woke on time, your time zone','good'],['18:00:04','Found 46 lessons tomorrow',''],['18:00:09','Wrote 46 texts',''],['18:00:31','Delivered 46 of 46 to the test phones','good'],['21:10:05','A lesson booked at 21:10 got its text at once','good'],['18:30:00','Text service switched off on purpose: tried 3 times, then the watch knew at 18:32','bad'],['tonight','Next run at 18:00','']];
+  const row=k=>tg('s'+k,'the step “'+steps[k][1]+'”',`<span class="tm">${steps[k][0]}</span><span class="${steps[k][2]}">${steps[k][1]}</span>`,ev==='s'+k?'ev-hl':'','li');
+  return `<p class="colh">Last night’s run</p><ol class="trace">${[0,1,2,3,6].map(row).join('')}</ol><p class="colh" style="margin-top:10px">Tried on purpose</p><ol class="trace">${[4,5].map(row).join('')}</ol>
+   <div class="sms">${tg('text','the text','<small>Text, as received on the test phone · 18:00</small><div class="bub">Hi Sam, your driving lesson is tomorrow at 9:00 with Priya. Reply C to cancel.</div>','','div')}</div>`;}
+
+/* I: the release, exactly */
+function stageI(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  return `<div class="rel"><h4>What is in it</h4>
+   <div class="ln"><span>Faster sign-up</span><span style="color:#555">you saw it Fri</span></div><div class="ln"><span>New app icon</span><span style="color:#555">you saw it Wed</span></div><div class="ln"><span>Photos from cheaper storage</span><span style="color:#555">you saw it Wed</span></div>
+   <h4>The build</h4><div class="ln"><span>Driving app 2.4 (214)</span><span class="fp">7f3a 91c0</span></div>
+   <h4>To whom</h4><div class="ln"><span>iPhone users of the Driving app</span><span>3,180 people</span></div>
+   <h4>Tried by the checker</h4>
+   <div class="ln ${ev==='used'?'tg ev-hl':''}"><span>Installed from the store, used on two phones</span><span>10:20</span></div>
+   <div class="ln ${ev==='old'?'tg ev-hl':''}"><span>A 2.3 phone still books lessons</span><span>10:24</span></div>
+   <div class="ln ${ev==='data'?'tg ev-hl':''}"><span>40 lessons kept through the update</span><span>10:31</span></div>
+   <h4>Cannot be undone</h4><div class="ln"><span>Once a phone has updated, it keeps 2.4. Only a newer version can replace it.</span></div>
+   <h4>Can be</h4><div class="ln"><span>${S.aud==='all'?'Nothing: everyone gets it at once.':'Until Monday I can stop it reaching the other 9 in 10.'}</span></div><div class="ln"><span>Your yes is for build 214 only. If anything in it changes, I ask again.</span></div></div>`;}
+
+/* J: the failing case, then the same case passing */
+function stageJ(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const col=(id,h,rows,cls)=>`<div class="${ev===id?'tg ev-hl':''}"><p class="colh">${h}</p><ol class="trace">${rows.map((r,k)=>tg(id+k,'“'+r[1]+'”',`<span class="tm">${r[0]}</span><span class="${r[2]||''}">${r[1]}</span>`,'','li')).join('')}</ol></div>`;
+  return `<p class="foot" style="margin:0 0 8px">Staff press Refund twice, half a second apart, for an $89 lesson.</p>
+   <div class="cols">${col('before','Old build b40',[['0.0 s','Refund $89 paid'],['0.5 s','Refund $89 paid again','bad']])}${col('after','New build b41',[['0.0 s','Refund $89 paid'],['0.5 s','“Already refunded”','good']])}</div>
+   <ol class="trace" style="margin-top:10px">${tg('planted','the planted failure','<span class="tm">check</span><span class="good">A copy built to pay twice was planted. The check caught it.</span>',ev==='planted'?'ev-hl':'','li')}
+   ${tg('cover','what is covered','<span class="tm">covers</span><span>Double press · two staff at once · network retry</span>',ev==='cover'?'ev-hl':'','li')}
+   ${tg('uncov','what is not covered','<span class="tm">not</span><span class="bad">Refunds made at the bank’s own website</span>','','li')}</ol>`;}
+
+/* K: the comparison itself, every figure tied to its source */
+function stageK(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const c=(id,lab,v)=>`<td>${tg(id,lab,v,ev&&id.startsWith(ev)?'ev-hl':'')}</td>`;
+  return `<table class="tbl"><thead><tr><th></th><th>Colorado</th><th>Texas</th></tr></thead><tbody>
+   <tr><td>State rate</td>${c('rate1','Colorado rate','2.9%')}${c('rate2','Texas rate','6.25%')}</tr>
+   <tr><td>Register once sales pass</td>${c('thr1','Colorado threshold','$100,000 a year')}${c('thr2','Texas threshold','$500,000 a year')}</tr>
+   <tr><td>Your sales, last 12 months</td>${c('sales1','Colorado sales','$41,200')}${c('sales2','Texas sales','$112,600')}</tr>
+   <tr><td>Must register?</td>${c('must1','Colorado: must register?','Not yet')}${c('must2','Texas: must register?','Not yet')}</tr>
+   <tr><td>Source, read on</td><td style="font-size:12.5px">state site · 12 Nov</td><td style="font-size:12.5px">state site · 12 Nov</td></tr></tbody></table>
+   <p class="foot">Thresholds from your accountant’s note of 3 Nov, page 2. Sales from the billing tool, October.</p>`;}
+
+/* L: what goes and what stays, with a restore tried */
+function stageL(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
+  const rm=[['test-signup-001 … 120','made by helpers, Jul–Sep'],['ui-check-01 … 60','made by helpers, Aug'],['load-test-01 … 34','made by helpers, Sep']];
+  const kp=[['store-review-1, -2','the app store’s reviewers use them'],['you@','your own'],['checker-a, -b','the checkers sign in with them'],['demo@','the website demo']];
+  return `<div class="cols"><div class="${ev==='rm'?'tg ev-hl':''}"><p class="colh">Goes · 214</p><ul class="inv">${rm.map((r,k)=>tg('rm'+k,'“'+r[0]+'”',`<span>${r[0]}<br><small>${r[1]}</small></span>`,'','li')).join('')}</ul></div>
+   <div class="${ev==='keep'?'tg ev-hl':''}"><p class="colh">Stays · 6</p><ul class="inv">${kp.map((r,k)=>tg('kp'+k,'“'+r[0]+'”',`<span>${r[0]}<br><small>${r[1]}</small></span>`,'','li')).join('')}</ul></div></div>
+   <div class="readback ${ev==='arch'?'tg ev-hl':''}"><span class="ph" style="background:linear-gradient(135deg,#C9C2B3,#8E8676)"></span><span><b>Archive of the 214</b><br>Restored once on a copy: 214 of 214 sign in.<br><small style="color:#666">A fresh phone signed up and in at 08:40.</small></span></div>`;}
+
+const STAGE={A1:stageA1,A2:stageA2,B:stageB,C:stageC,D:stageD,E:stageE,F:stageF,G:stageG,H:stageH,I:stageI,J:stageJ,K:stageK,L:stageL};
+
+/* scrubber for things that move: proof ticks above, his marks below */
+function scrub(){const s=sh(),dur=curDur();
+  const by={};doneOf().forEach((d,k)=>{if(!d.not&&d.at!==undefined)(by[d.at]=by[d.at]||[]).push(k+1);});
+  const ticks=Object.entries(by).map(([at,ns])=>`<span class="tick" style="left:${at/dur*100}%">${ns.join(' ')}</span>`).join('');
+  const mt=S.marks.map((m,k)=>m.at===undefined?'':`<span class="tick m" style="left:${m.at/dur*100}%">${k+1}</span>`).join('');
+  return `<div class="scrub"><button class="play" data-act="play" aria-label="${S.playing?'Pause':'Play'} the recording" ${S.mode==='mark'?'disabled':''}>${S.playing?PAUSE:PLAY}</button>
+   <div class="track">${ticks}<input type="range" id="scrub" min="0" max="${dur}" step="1" value="${Math.round(S.t)}" aria-label="Position in the recording" ${S.mode==='mark'?'disabled':''}>${mt}</div>
+   <span class="time">${mmss(S.t)} / ${mmss(dur)}<br><span style="font-weight:500">plays ${s.speed}× fast</span></span></div>`;}
+
+/* ======================= the rail ======================= */
+function rail(){const s=sh();
+  const DN=doneOf(),proved=DN.filter(d=>!d.not),not=DN.filter(d=>d.not);
+  let h='';
+  if(S.mode==='back')h+=backBand();
+  if(s.act&&(S.mode==='act'||S.mode==='done'))return h+actRail();
+  if(desk()&&(s.judge||s.judgeNone))h+=`<div class="r-sec"><p class="r-h">Yours to judge</p><p class="judge ${s.judge?'':'none'}">${s.judge||s.judgeNone}</p></div>`;
+  if(s.fork)h+=forkHTML();
+  h+=`<div class="r-sec"><p class="r-h">Proved to work · by someone else</p>`;
+  if(desk()){h+=`<ul class="plist">${DN.map((d,k)=>`<li><span class="n ${d.not?'not':''}">${k+1}</span><button data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}">${d.not?'<span style="color:var(--ink2)">Not proved: </span>':''}${d.t}</button>${d.at!==undefined?`<span class="at">${mmss(d.at)}</span>`:''}</li>`).join('')}</ul>`;}
+  else{h+=`<div class="dots">${DN.map((d,k)=>`<button class="dot ${d.not?'not':''}" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}" aria-label="${d.not?'Not proved: ':''}${esc(d.t)}">${k+1}</button>`).join('')}</div>
+    <p class="sumline">${proved.length} proved${not.length?' · not proved: '+not.map(d=>lc(d.t)).join(', '):''}</p>`;}
+  if(S.proof!==null){const d=DN[S.proof];h+=`<div class="pdetail"><b>${S.proof+1}. ${d.not?'Not proved: ':''}${d.t}</b><br>${d.how}
+    ${S.proof===0?`<details class="raw"><summary>The checker’s own words</summary><pre>${esc(s.raw)}</pre></details>`:''}</div>`;}
+  h+=`</div>`;
+  if(s.hand&&S.mode==='look')h+=`<div class="r-sec"><button class="lnk" data-act="hand" aria-expanded="${S.hand}">Try it in your hand</button>${S.hand?`<p class="hint" style="margin:0">${s.hand}</p>`:''}</div>`;
+  if(S.marks.length&&S.mode!=='back')h+=`<div class="r-sec"><p class="r-h">Your marks</p>${marksList()}</div>`;
+  if(s.under&&S.mode==='look')h+=`<p class="hint">${s.under}</p>`;
+  return h;}
+function marksList(){return `<ul class="marks">${S.marks.map((m,k)=>`<li><span class="pin">${k+1}</span><span><b>${m.why==='Say it…'?esc(m.said):m.why+(m.said?': '+esc(m.said):'')}</b><span class="anc">on ${esc(m.label)}${m.at!==undefined?' at '+mmss(m.at):''}${m.w?' · '+m.w+' width':''} · ${verLabel()}</span></span>${S.mode==='mark'?`<button class="lnk inl" data-act="unmark" data-n="${k}" aria-label="Take back mark ${k+1}">Take back</button>`:''}</li>`).join('')}</ul>`;}
+function verLabel(){return {A1:'build 214',A2:'route v3',B:'preview b41',C:'version 3'}[sh().id]||'as checked';}
+function backBand(){const s=sh(),n=S.marks.length;
+  return `<div class="backband"><span class="t">Your ${NUM[n]} mark${n>1?'s':''}: ${n>1?'all':''} dealt with</span>
+   <ul class="marks" style="margin-top:6px">${S.marks.map((m,k)=>`<li><span class="pin done">${k+1} ✓</span><span>${s.answers[k].note}${m.said?`<span class="anc">You said: ${esc(m.said)}</span>`:''}
+     <span class="seg" role="group" aria-label="Before or now for mark ${k+1}"><button data-act="cmp" data-n="${k}" aria-pressed="${S.compare===k}">Before</button><button data-act="cmp" data-n="-1" aria-pressed="${S.compare!==k}">Now</button></span></span></li>`).join('')}</ul></div>`;}
+function forkHTML(){const f=sh().fork;
+  return `<div class="r-sec fork"><p class="r-h" style="margin-bottom:2px">Only you</p><p class="q">${f.q}</p><p style="margin:0">${f.adv}</p>
+   ${S.fork?`<p class="chosen">✓ ${esc(S.fork)} <button class="lnk inl" data-act="fork" data-v="">Change</button></p>`:`<div class="chips" style="margin-top:8px">${f.opts.map(o=>`<button class="chip" data-act="fork" data-v="${esc(o)}">${o}</button>`).join('')}</div>`}
+   <p class="wait">${f.wait}</p></div>`;}
+function actRail(){const a=sh().act;
+  if(S.mode==='done')return `<div class="r-sec"><p class="r-h">Done</p><div class="receipt">${S.stopped?a.stopped:a.receipt}</div>${S.stopped?'':`<div class="bar" style="padding-left:0;padding-right:0;border:0"><button class="b" data-act="stopact">${a.stop}</button></div>`}</div>`;
+  const said=sh().id==='I'&&S.aud==='all'?'Release Driving app 2.4 (214) to all 3,180 iPhone users today at 14:00.':a.said;
+  return `<div class="r-sec"><p class="r-h">Before this goes out · said back</p><p class="saidback">${said}</p>
+   ${sh().id==='I'?`<label class="opt"><input type="radio" name="aud" value="tenth" data-act="aud" ${S.aud!=='all'?'checked':''}> <span><b>1 in 10 today, everyone by Monday</b><br><span class="hint">I’d say this: it can be stopped until Monday.</span></span></label><label class="opt"><input type="radio" name="aud" value="all" data-act="aud" ${S.aud==='all'?'checked':''}> <span><b>Everyone today</b><br><span class="hint">3,180 people at once; nothing to stop.</span></span></label>`
+     :`<p class="r-h" style="margin-top:12px">Cannot be undone</p><ul class="cant">${a.cant.map(x=>`<li>${x}</li>`).join('')}</ul><p class="r-h" style="margin-top:10px">Can be</p><ul class="cant">${a.can.map(x=>`<li>${x}</li>`).join('')}</ul>`}
+   ${sh().done.some(d=>d.not)?`<p class="hint" style="margin-top:8px">Still not proved: ${sh().done.filter(d=>d.not).map(d=>lc(d.t)).join(', ')}.</p>`:''}</div>`;}
+
+/* ======================= the answer bar ======================= */
+function bar(){const s=sh();
+  if(S.mode==='mark'){
+    if(S.pend)return `<div class="tray" role="group" aria-label="What is wrong"><p class="q">What’s wrong with ${esc(S.pend.label)}?</p><div class="chips">${s.reasons.map((r,k)=>`<button class="chip" data-act="why" data-v="${esc(r)}" data-k="why${k}">${r}</button>`).join('')}</div>
+      ${S.pend.say?`<div class="say"><input id="sayIn" placeholder="Say it, or type" aria-label="Say what is wrong" autocomplete="off"><button class="b pri" data-act="sayok">Add</button></div>`:''}</div>`;
+    if(S.scope)return `<div class="tray"><p class="q">Just this once, or always?</p><div class="chips"><button class="chip" data-act="send" data-v="once">Just this once</button><button class="chip" data-act="send" data-v="always">Always, for this kind</button></div></div>`;
+    return `<div class="bar"><button class="b" data-act="whole">${desk()?'The whole thing':'Whole thing'}</button><span class="grow"></span><button class="b" data-act="look">${desk()?'Done marking':'Done'}</button>${S.marks.length?`<button class="b red" data-act="sendback" data-k="sendback">Send back · ${S.marks.length}</button>`:''}</div>`;}
+  if(S.mode==='sent')return `<div class="sent" role="status"><b>Sent back with ${NUM[S.marks.length]} mark${S.marks.length>1?'s':''}.</b><span class="hint">It comes back checked again before you see it, by 17:00. Each mark will be answered in place.</span></div>`;
+  if(s.act&&S.mode==='act')return `<div class="bar"><button class="hold" data-act="hold" data-k="hold" aria-label="${esc(s.act.confirm)} Press and hold"><span class="fill" style="width:${S.hold*100}%"></span><span>${s.act.confirm}</span> <small style="position:relative;font-weight:500;opacity:.85">· press and hold</small></button><button class="b" data-act="look" style="flex:1">Not yet</button></div>`;
+  if(S.mode==='done')return '';
+  if(s.id==='I')return `<div class="bar"><button class="b red" data-act="toact" style="flex:1">Release…</button><button class="b" data-act="mark">Something’s wrong</button></div>`;
+  const ok=!S.changed;const ver={A1:S.mode==='back'?'build 215':'build 214',A2:S.mode==='back'?'route v4':'route v3',B:S.mode==='back'?'b42':'b41',C:S.mode==='back'?'version 4':'version 3'}[s.id];
+  const unp=s.done.filter(d=>d.not);
+  const dk=desk();
+  return `<div class="bar ${dk?'stack':''}">${dk?'':`<button class="b" data-act="mark" data-k="mark">Mark</button>`}
+   <button class="b pri ${dk?'':'grow'}" data-act="accept" ${ok?'':'disabled'}>${ok?(s.okLabel||'Looks right'):'Can’t accept: changed after the check'}${ver&&ok&&dk?' <small>· '+ver+'</small>':''}</button>
+   ${dk?`<button class="b" data-act="mark" data-k="mark">Mark what’s wrong</button>`:''}
+   ${s.act?`<button class="b red" data-act="toact">${s.act.label}…</button>`:''}
+   ${unp.length&&ok?`<p class="under">Your yes does not cover: ${unp.map(d=>lc(d.t)).join(', ')}.</p>`:''}</div>`;}
+
+/* ======================= render ======================= */
+function render(){
+  const s=sh(),d=desk(),ae=document.activeElement,keep=S.focus||(ae&&ae.dataset&&ae.dataset.k);
+  const sealTxt=S.changed?`Changed after it was checked: build 216 arrived at 16:31. Checking it again, about 10 minutes. Until then there is nothing to accept.`:(S.mode==='back'&&s.seal2?s.seal2:s.seal);
+  const head=`<div class="sh-head"><div class="sh-top"><span>${s.word}</span><span>${S.mode==='back'?'<span class="ver">Second version · </span>':''}${s.budget}</span></div>
+    <h2 class="sh-goal" tabindex="-1" data-k="goal">${s.goal}</h2><div class="seal ${S.changed?'broken':''}"><span class="stamp" title="What you see is what was checked" aria-hidden="true"></span><span>${sealTxt}</span></div>
+    ${!d&&(s.judge||s.judgeNone)&&!(s.act&&(S.mode==='act'||S.mode==='done'))?`<p class="judge ph ${s.judge?'':'none'}"><span class="r-h">Yours to judge</span>${s.judge||s.judgeNone}</p>`:''}</div>`;
+  const stage=`<div class="stage ${S.mode==='mark'?'marking':''}" id="stage">${S.mode==='mark'?`<span class="stage-hint">${s.dur?'Frozen at '+mmss(S.t)+'. ':''}Tap what’s wrong.</span>`:''}${S.compare!==null&&S.mode==='back'?`<span class="ribbon">Before · ${verLabel()}</span>`:''}<div id="thing">${STAGE[s.id]()}</div>${s.dur?scrub():''}</div>`;
+  const railH=`<div class="rail">${rail()}${d?bar():''}</div>`,lead=!d&&s.act&&(S.mode==='act'||S.mode==='done');
+  app.innerHTML=`<article class="sheet" aria-label="Showing: ${esc(s.goal)}">${head}<div class="sh-body">${lead?railH+stage:stage+railH}</div>${d?'':bar()}</article>`;
+  $('#pNar').textContent=s.nar;$('#pS').value=String(S.i);
+  $('#pBack').disabled=!(S.mode==='sent'&&s.answers);
+  $('#pMark').disabled=!s.canned||S.mode==='back';
+  if(keep){const el=app.querySelector(`[data-k="${keep}"]`);if(el)el.focus({preventScroll:true});}S.focus=null;
+  const sc=$('#scrub');if(sc)sc.addEventListener('input',e=>{S.t=+e.target.value;renderStage();});
+  history.replaceState(null,'',`#s=${s.id}&mode=${S.mode}&theme=${S.theme}`);
+}
+function renderStage(){const th=$('#thing');if(!th)return;th.innerHTML=STAGE[sh().id]();
+  const sc=$('#scrub');if(sc&&document.activeElement!==sc)sc.value=Math.round(S.t);
+  const tl=app.querySelector('.time');if(tl)tl.firstChild.textContent=mmss(S.t)+' / '+mmss(curDur());}
+function curDur(){const s=sh();return S.mode==='back'&&s.id==='A2'?1140:s.dur;}
+
+/* play */
+let timer=null;
+function stopPlay(){if(timer){clearInterval(timer);timer=null;}S.playing=false;}
+function play(){const s=sh(),dur=curDur();if(S.t>=dur)S.t=0;S.playing=true;
+  timer=setInterval(()=>{S.t=Math.min(dur,S.t+s.speed/10);if(S.t>=dur)stopPlay();renderStage();
+    const pb=app.querySelector('[data-act=play]');if(pb){pb.innerHTML=S.playing?PAUSE:PLAY;}},100);}
+
+/* ======================= actions ======================= */
+function addMark(m){S.marks.push(m);S.pend=null;S.sel=null;S.focus='sendback';}
+function act(a,d,el,ev){const s=sh();
+  switch(a){
+  case 'play':if(S.playing)stopPlay();else play();render();return;
+  case 'proof':{const n=+d.n;S.proof=S.proof===n?null:n;const p=doneOf()[n];if(S.proof!==null&&p.at!==undefined){stopPlay();S.t=p.at;}break;}
+  case 'mark':stopPlay();S.mode='mark';S.proof=null;S.focus=null;break;
+  case 'look':S.mode='look';S.pend=null;S.sel=null;S.scope=false;S.hold=0;break;
+  case 'whole':S.pend={tg:'whole',label:'the whole thing',at:s.dur?Math.round(S.t):undefined};S.focus='why0';break;
+  case 'why':{const v=d.v;if(v.endsWith('…')){S.pend.say=true;S.pend.why=v==='Say it…'?v:v.slice(0,-1);S.focus=null;render();const i=$('#sayIn');if(i)i.focus();return;}
+    addMark(Object.assign({},S.pend,{why:v,said:''}));break;}
+  case 'sayok':{const t=($('#sayIn')||{}).value||'';addMark(Object.assign({},S.pend,{why:S.pend.why||'Say it…',said:t.trim()||'(spoken)'}));break;}
+  case 'unmark':S.marks.splice(+d.n,1);break;
+  case 'sendback':S.scope=true;break;
+  case 'send':S.mode='sent';S.scope=false;break;
+  case 'accept':S.mode='accepted';app.innerHTML=`<article class="sheet"><div class="sh-head"><div class="sh-top"><span>${s.word}</span></div><h2 class="sh-goal">${s.goal}</h2>
+    <div class="seal"><span class="stamp"></span><span><b>You said it looks right</b> (${verLabel()}). That is your judgement; the proof stays the checker’s. <button class="lnk inl" data-act="look">Take back</button></span></div></div></article>`;return;
+  case 'toact':S.mode='act';S.hold=0;break;
+  case 'stopact':S.stopped=true;break;
+  case 'fork':S.fork=d.v||null;break;
+  case 'hand':S.hand=!S.hand;break;
+  case 'cmp':{const n=+d.n;S.compare=n<0?null:n;if(S.compare!==null){const m=S.marks[n];if(m.at!==undefined)S.t=m.at;}break;}
+  case 'bw':S.bWidth=d.v;break;
+  case 'bview':S.bView=d.v;break;
+  case 'aud':S.aud=el.value;break;
+  case 'monthly':if(S.mode!=='look')return;S.monthly=true;break;
+  case 'yearly':if(S.mode!=='look')return;S.monthly=false;break;
+  case 'start':if(S.mode!=='look')return;S.checkout=true;break;
+  case 'backpage':S.checkout=false;break;
+  }
+  render();}
+app.addEventListener('click',e=>{
+  if(S.mode==='mark'){
+    const w=e.target.closest('[data-w]');if(w){const i=+w.dataset.w;S.sel=S.pend&&S.pend.sel&&!S.pend.why?[S.selA,i]:(S.selA=i,[i,i]);const a=Math.min(...S.sel),b=Math.max(...S.sel);
+      S.pend={sel:[a,b],label:'“'+WORDS.slice(a,b+1).filter(x=>x!=='|').join(' ')+'”'};render();return;}
+    const map=e.target.closest('[data-map]');if(map){const r=map.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*400,y=(e.clientY-r.top)/r.height*300;
+      let best=null,bd=1e9;for(let t=0;t<=1080;t+=10){const [px,py]=posAt(RT,t),dd=(px-x)**2+(py-y)**2;if(dd<bd){bd=dd;best=[px,py,t];}}
+      S.pend={tg:'pt',x:Math.round(best[0]),y:Math.round(best[1]),at:best[2],label:'the route at '+mmss(best[2])};render();return;}
+    const pic=e.target.closest('[data-pic]');if(pic){const r=pic.getBoundingClientRect();S.pend={tg:'icon',x:Math.round((e.clientX-r.left)/r.width*100),y:Math.round((e.clientY-r.top)/r.height*100),label:'this spot on the icon'};render();return;}
+    const t=e.target.closest('[data-tg]');if(t){const s=sh();S.pend={tg:t.dataset.tg,label:t.dataset.label,at:s.dur?Math.round(S.t):undefined,w:s.id==='B'?(t.closest('.webcol')&&t.closest('.webcol').querySelector('.webcap').textContent.startsWith('Phone')?'phone':'desk'):undefined};S.focus='why0';render();return;}
+  }
+  const b=e.target.closest('[data-act]');if(!b||b.disabled)return;act(b.dataset.act,b.dataset,b,e);});
+app.addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===' ')&&S.mode==='mark'&&e.target.matches('[data-tg],[data-w],[data-map],[data-pic]')){e.preventDefault();
+    if(e.target.matches('[data-map]')){const [x,y]=posAt(RT,S.t);S.pend={tg:'pt',x:Math.round(x),y:Math.round(y),at:Math.round(S.t),label:'the route at '+mmss(S.t)};render();return;}
+    if(e.target.matches('[data-pic]')){S.pend={tg:'icon',x:50,y:50,label:'the middle of the icon'};render();return;}
+    e.target.click();}
+  if(e.key==='Enter'&&e.target.id==='sayIn'){e.preventDefault();act('sayok',{});}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.mode==='mark'){if(S.pend){S.pend=null;S.sel=null;}else S.mode='look';render();}});
+/* press and hold to confirm something that cannot be undone */
+let holdT=null;
+function holdStart(e){const b=e.target.closest('[data-act=hold]');if(!b)return;e.preventDefault();const t0=performance.now();clearInterval(holdT);
+  holdT=setInterval(()=>{S.hold=Math.min(1,(performance.now()-t0)/1200);const f=app.querySelector('.hold .fill');if(f)f.style.width=S.hold*100+'%';if(S.hold>=1){clearInterval(holdT);holdT=null;S.mode='done';render();}},30);}
+function holdEnd(){if(holdT){clearInterval(holdT);holdT=null;S.hold=0;const f=app.querySelector('.hold .fill');if(f)f.style.width='0';}}
+app.addEventListener('pointerdown',holdStart);app.addEventListener('pointerup',holdEnd);app.addEventListener('pointerleave',holdEnd,true);
+app.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&e.target.matches('[data-act=hold]')&&!e.repeat)holdStart(e);});
+app.addEventListener('keyup',e=>{if((e.key===' '||e.key==='Enter')&&e.target.matches('[data-act=hold]'))holdEnd();});
+
+/* ======================= prototype controls ======================= */
+function load(i,mode){S.i=i;reset();if(mode)applyMode(mode);render();window.scrollTo(0,0);}
+function applyMode(m){const s=sh();
+  if(m==='mark'){S.mode='mark';}
+  if(m==='marked'&&s.canned){S.mode='mark';S.marks=s.canned.map(x=>Object.assign({},x));if(s.canned[0].at!==undefined)S.t=s.canned[0].at;}
+  if(m==='sent'&&s.canned){S.marks=s.canned.map(x=>Object.assign({},x));S.mode='sent';}
+  if(m==='back'&&s.canned){S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';if(s.canned[0].at!==undefined)S.t=s.canned[0].at;}
+  if(m==='act'&&s.act)S.mode='act';
+  if(m==='done'&&s.act)S.mode='done';
+  if(m==='changed')S.changed=true;
+  if(m==='proof')S.proof=0;}
+$('#pS').innerHTML=SH.map((s,i)=>`<option value="${i}">${s.kind} · ${s.goal}</option>`).join('');
+$('#pS').addEventListener('change',e=>load(+e.target.value));
+$('#pMark').addEventListener('click',()=>{const s=sh();if(!s.canned)return;S.mode='mark';S.marks=s.canned.map(x=>Object.assign({},x));S.pend=null;if(s.canned[0].at!==undefined)S.t=s.canned[0].at;render();});
+$('#pBack').addEventListener('click',()=>{const s=sh();if(!s.canned)return;S.marks=s.canned.slice(0,Math.max(1,Math.min(S.marks.length,s.canned.length))).map(x=>Object.assign({},x));if(S.marks.length<s.canned.length)S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';S.compare=null;if(S.marks[0].at!==undefined)S.t=S.marks[0].at;render();});
+$('#pChange').addEventListener('click',()=>{S.changed=!S.changed;render();});
+function setTheme(t){S.theme=t;document.documentElement.dataset.theme=t;}
+$('#pTheme').addEventListener('click',()=>{setTheme(S.theme==='dark'?'light':'dark');render();});
+let lastDesk=desk();addEventListener('resize',()=>{if(desk()!==lastDesk){lastDesk=desk();render();}});
+
+/* ======================= #check: run every state and report ======================= */
+function words(el){return (el.innerText.match(/[A-Za-z0-9$£][^\s]*/g)||[]).length;}
+function runCheck(){
+  const rows=[];let pass=0,fail=0;const tally=[],extra=[];
+  SH.forEach((s,i)=>{
+    const modes=['look','proof','mark','marked','sent','back','act','done','changed'].filter(m=>!(['marked','sent','back'].includes(m)&&!s.canned)&&!(['act','done'].includes(m)&&!s.act));
+    modes.forEach(m=>{load(i,m);const sheet=app.querySelector('.sheet');const errs=[];
+      if(!sheet)errs.push('no sheet');else{
+        if(!sheet.querySelector('.seal'))errs.push('no seal');
+        if(!sheet.querySelector('#stage'))errs.push('no thing');
+        if(m!=='done'&&m!=='act'&&!sheet.querySelector('.plist,.dots'))errs.push('no proof');
+        if(sheet.scrollWidth>sheet.clientWidth+2)errs.push('sheet overflows sideways');
+        if(document.documentElement.scrollWidth>innerWidth+2)errs.push('page overflows sideways');
+        if(m==='marked'&&!sheet.querySelector('.pin'))errs.push('mark not shown on the thing');
+        if(m==='back'&&sheet.querySelectorAll('.backband .pin.done').length!==s.canned.length)errs.push('marks not all answered');
+        if(m==='act'&&!sheet.querySelector('.saidback'))errs.push('not said back');
+        if(m==='done'&&!sheet.querySelector('.receipt'))errs.push('no receipt');
+        if(m==='changed'&&!sheet.querySelector('.seal.broken'))errs.push('seal not broken');
+        if(m==='changed'&&!sheet.querySelector('[data-act=accept][disabled]')&&s.id!=='I')errs.push('accept still possible after change');
+        if(m==='proof'&&!sheet.querySelector('.pdetail'))errs.push('proof line does not open');
+        if(m==='back'||m==='act')extra.push(s.id+' '+m+' '+words(sheet));
+        if(m==='look'){const all=words(sheet);const avail=all+s.done.reduce((a,d)=>a+d.how.split(/\s+/).length,0)+s.raw.split(/\s+/).length;tally.push([s.id,all,avail]);}
+      }
+      if(errs.length){fail++;rows.push(`<div class="f">✗ ${s.id} ${m}: ${errs.join('; ')}</div>`);}else{pass++;rows.push(`<div>✓ ${s.id} ${m}</div>`);}});});
+  load(0);
+  const tot=tally.reduce((a,x)=>a+x[1],0);
+  $('#checkOut').innerHTML=`<div class="check" role="status"><b>Self-check at ${innerWidth} px, ${S.theme}: ${pass} states pass, ${fail} fail.</b><br>
+   Words shown to act on (look state), then words available behind it:<br>${tally.map(x=>`${x[0]} ${x[1]} / ${x[2]}`).join(' · ')}<br>Total shown ${tot}. Second versions and pauses: ${extra.join(' · ')}.<br>${rows.join('')}</div>`;
+  window.scrollTo(0,0);}
+
+const hp=new URLSearchParams(location.hash.slice(1));
+setTheme(hp.get('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'));
+const start=Math.max(0,SH.findIndex(s=>s.id===hp.get('s')));
+load(start,hp.get('mode')||null);
+if(hp.get('t')){S.t=+hp.get('t');render();}
+if(hp.has('check'))setTimeout(runCheck,50);
+})();
+</script>
+</body>
+</html>
