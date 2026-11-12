@@ -1,39 +1,36 @@
-## agent-annotate from first principles: summary for Chang
+## agent-annotate from first principles: round 2 for Chang
 
-Full review: `first-principles-review-20261112.md`, same folder. Nothing live was changed.
+Full review: `first-principles-review-20261112.md`, same folder. Sections 6, 7 and 9 are new. Nothing live was changed.
 
-**How to answer.** Reply in the session, for example `1A 2A 3A`, with any words you like. For notes, type them straight into either file where they apply; I read them from the file's changes and revise once per round. This review does not go through an annotate page.
+**How to answer.** Reply in the session, for example `1A 2A 3A`, with any words you like, or type notes straight into either file. This review does not go through an annotate page.
 
-**What it is for.** One place where your decisions enter the build, and the mechanism that carries each one to the right agent once and shows you it was acted on. Running agents is Orca's job, tracking work is Beads' job, routine runs are Windmill's job.
+**Settled by your answers.** A standalone service with an Orca face. Its home is M1 Max, the central brain, and the other Macs connect to it. (This session runs on M1 Max; "this Mac" in round 1 meant it.) First comes the "needs you" list, widened as you asked.
 
-**What it should look like.** A small service that keeps the records, with three thin faces: a command for agents, the web page you use now, and an Orca plug-in that shows a "needs you" count and list across every project.
+**Added: one home page for every project.** Each project is a row: what needs you, the workers on each Mac (working, waiting, idle, stuck), the board, the cost. An analytics tab tracks your targets week by week against a baseline week. No agent writes any of it. Orca already reports every agent on all three Macs to M1 Max; checked today: 5 of 19 working here, 5 of 6 on M5 Max, 0 of 2 on M1 Max 16.
 
-**What I found.**
+**Added: a thin coordinator.**
 
-- This Mac runs 17 separate page servers for 19 pages. The three Macs are on two different releases.
-- Agents have 45 commands to choose from. The tool still takes 6–11% of a coordinator's cost; the goal is 3%.
-- Your side had never been measured. On this project's page: half your answers come within 34 minutes, 4 in 10 take over an hour, and a third are typed in words because the options did not fit. When you do pick an option, it is the recommended one 41 times in 47.
-- An Orca plug-in alone cannot do the job today: it cannot give agents their tools, and it does not reach your phone or browser.
+- Today a coordinator is a memory, a clerk and a judge in one long session. FLD's took 149 turns to deliver 11 rounds in three days. 68% of its cost was re-reading its own context, and 37% was clerk work: waiting, mail, board, dispatch, rollout.
+- Target: memory lives in Beads and the page. A Windmill flow does the clerk work with no tokens. A model is called only to judge, with a small packet. Most parts exist: the Windmill-to-Orca bridge runs every few minutes for tests.
+- No coordinator at all: only for work a script can pass or fail, and only after the numbers hold.
+- Safety: a week in shadow beside the live coordinator first; one project and one kind of work at a time; a coordinator can be restarted from stored state at any moment; a stop rule if progress or quality drops.
 
-**What changes for you, in order.**
+**Your targets, as numbers.** Load 50% lower means three counts each halve: decisions put to you per finished item, words you type per week, places you look (23 page links today, then one). Tokens: at most 5% more per finished item, aiming lower. Quality and progress: reopened items, rework and items finished per week no worse than a baseline week, aiming better.
 
-1. One list of what needs you, in Orca, instead of 23 page links.
-2. Fewer, better-fitting questions; one action to accept every recommendation; a question you answered as a rule is not asked again.
-3. Releases stop needing your approval for each other Mac.
+**One question.** A full build flow in Windmill (tests first, build, verify, second-agent review, your sign-off in a "Needs Chang" inbox) was built on 25 Sep and has one 36-second run on record. What stopped it becoming the normal way? The thin coordinator is the same idea, and I could not find the reason.
 
-**Decision 1. What shape should it take?**
+**Decision 1. Where is the thin coordinator tried first?**
 
-- A (recommended). Standalone service with an Orca plug-in face: works in any browser and for every agent; Orca shows the count and list; if Orca changes its plug-in system, only the small face is redone.
-- B. Orca plug-in only: everything lives in Orca; no phone or browser review; Codex and Windmill cannot get their tools from it today.
-- C. Standalone only, as now: nothing new to build; still a separate place you must remember to check.
+- A (recommended). agent-annotate: smallest, and a miss costs little.
+- B. FLD: largest spend and most data, highest risk.
+- C. Rebex.
 
-**Decision 2. Where should pages live?**
+**Decision 2. Are the target numbers above the right yardsticks?**
 
-- A (recommended). One home on this Mac; the other Macs connect to it: one list, one install per release, no approvals for the other Macs on most releases. If this Mac is off, agents elsewhere queue until it is back.
-- B. Each Mac keeps its own pages, with a shared list: keeps working when this Mac is off; every release still goes to three Macs.
+- A (recommended). Yes, as written.
+- B. Change them: say which.
 
-**Decision 3. What is built first?**
+**Decision 3. What next?**
 
-- A (recommended). The "needs you" list in Orca plus a weekly measure of your review load: one week, changes no data, undone by switching it off. Needs your one-time approval of the plug-in in Orca.
-- B. One page server instead of 17: a larger clean-up, one to two weeks, touches every page; you see no difference.
-- C. Nothing yet: revise this review first.
+- A (recommended). I write the build brief for stage 1 (home page and baseline, two weeks, read-only) for the coordinator. I still build nothing.
+- B. Another round on the review first.
