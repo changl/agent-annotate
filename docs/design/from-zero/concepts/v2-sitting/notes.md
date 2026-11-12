@@ -6,43 +6,48 @@ Below the sheet, never pushed, are three pages: where all 40 goals stand, what h
 
 `index.html` carries the 14 events and the stress cases in 14 moments. The striped bar is not part of the design. `#check` walks every moment through the real buttons and reports on screen. It passes at phone and desk width.
 
-**After the count critique**, four changes:
-- **Results a check already passed** (the photo move, two wording changes, the test run, the reminder texts running) are now told in one line with See and Undo. They are not asked, so they cost no decision and no tap.
-- **The yearly price** sits inside authority he already gave, so it is told with a Change link, not asked.
-- **He no longer declares an absence.** After two unopened sittings, work slows down by itself.
-- **The week's page** is read at the end of the sitting, with nothing to press.
+**Revision 3 of the method, folded in:**
+- **The say-back no longer waits.** It arrives as the work starts, as one told line ("Started: Driver ratings… What I heard"). Any line can be pointed at and fixed at any time.
+- **When it does wait:** only for costly, risky or undoable work, and it says why ("Sales tax… waits for your go, because it changes what customers pay").
+- **His decisions are gathered into the first showing,** each as two concrete alternatives: sign-up's two choices sit inside its first slice; the ratings choice sits on the sketch.
+- **Told, not asked:** applies only when nothing is left for him to judge, the result is undoable, and it is inside what he allowed. One told result is picked at random and comes back as a real look ("Picked at random… so the checks stay honest").
 
 ## What I took from each concept
 
-- **Sitting (the base).** The bounded sitting and its running order. Every item opens with "Only you can judge…". Judgement is kept apart from proof: the proof is one line, "✓ 6 checks, not by the maker", plus "Not tried: …" only when something wasn't tried. Also kept: the five verbs per goal, the honest split when more has gathered than he has time for, and "Not now" with a latest date. Removed: Begin, the progress bar, ✕ and the minute counters.
-- **Letter.** The lock-screen glance, which counts its own age. Hold to say what you want, with "That is not what I said" and "Say it back now". Strike-through, notes and pins in his ink on the thing itself. The buzz copy ("Not in this morning's sitting because…"). The paper-and-ink look.
-- **Picture.** Forty goals in fixed places under four projects. Each project shows only what changed and folds the rest. A moved date is struck through on the goal's own line. Hatched "unseen" lines and "I can't vouch for 2 lines". The two-page desk. "You said so" kept apart from "my guesses".
-- **Thread.** Touching the result marks it, with the note at the mark. Undo on every receipt. A "For example" scene under the done-lines. Plain computer names one level down.
+- **Sitting (the base).** The bounded sitting and its order; "Yours to judge"; judgement kept apart from proof; the five verbs per goal; the split when more has gathered than he has time for; "Not now" with a latest date.
+- **Showing (v2).**
+  - The seal: "Checked by someone else · build 4.12 on an iPhone 13 · 07:40". The yes names the same thing: "Looks right · build 4.12".
+  - Done lines as dots. Dashed means not proved. A dot jumps to its moment or outlines its row.
+  - "Your yes does not cover…".
+  - Marks that come back green in place.
+  - The irreversible act said back in one sentence, which changes with who gets it, then press and hold.
+- **Letter.** The lock-screen glance that ages itself; hold to say; strike-through and pins in his ink; the buzz copy; the paper-and-ink look.
+- **Picture.** Forty goals in fixed places; a moved date struck through on its own line; hatched "unseen" lines; the two-page desk; "you said so" kept apart from "my guesses".
+- **Thread.** Marks made by touching the result, with the note at the mark; Undo on every receipt; plain computer names one level down.
 
 ## The three unsolved problems
 
 **1. Things that move. Answered in part.**
-- Every showing names the exact thing it came from: "Build 4.12 · recorded on a real phone", "As served at 07:55". Marks attach to that thing.
-- **Phone journey:** a recording of the checked build that he can play and scrub. Touching it pins a spot, stamped with the time ("0:14"). "Try it on your phone" opens the same build with a pencil on top, and his marks come back onto the recording.
-- **Web page:** shown at phone and desk width, side by side on the desk. "Use it" and "Mark" are kept apart.
-- **Background job and speed:** what the job did, with times and the one step that can't be undone; ten timed runs before and after.
-- **Release:** shown as the exact act, with the pinned build and no undo.
-- **Marks come back:** the next sketch shows where each mark landed.
-- **Not solved:** feel, timing, sound and car journeys are judged on frames. The phone round trip is drawn, not built.
+- Each showing is sealed to its exact build, page or file, so what he marks is what was checked.
+- **Journey:** a recording he scrubs. A dot jumps to the moment it proves, and a touch pins a moment.
+- **Try it on your phone:** opens the same build, and marks made there come back to the recording.
+- **Web:** both widths; "Use it" kept apart from "Mark".
+- **Job, speed:** the job shows what it did; speed shows ten runs before and ten after.
+- **Release:** said back, pick who gets it, press and hold.
+- **Not solved:** feel, sound and car journeys are judged on frames; the phone round trip is drawn, not built.
 
 **2. Coming back. Answered for one level.**
-- **After five days:** four lines first: nothing went wrong (rechecked at 8:00); done without you (undoable until Monday); what is running; what is faster. Then only the two things that are his to judge, then his week.
-- **When more has gathered than he has time for**, it splits: some now, the rest at his next look, with "Do them now" to pull it in.
-- **A bad result with work built on it** comes first: what used it (paused before sending, rebuilt, not sent) and the fixed file.
-- **A wrong rule** shows where it came from and what it decided, has already stopped itself, and asks one choice. The money it cost is repaid as an exact act.
+- **After five days:** four lines (nothing went wrong, rechecked at 8:00; done without you, undoable; what is running; what is faster), then two things that are his, then his week.
+- **A bad result with work built on it** comes first, tracing what used it.
+- **A wrong rule** shows where it came from and what it decided, and has already stopped itself.
 - **Not solved:** chains deeper than one result built on another.
 
 **3. Rhythm. Answered.**
-- Things gather for the times he usually looks, and the card says so.
-- A default that can go ahead does so only after a sitting in which he could have seen it.
-- **Pulling early:** "Look now", "Do them now", and "next sketch as soon as it's ready".
-- **The one buzz** has its three-part test, says why it wasn't in a sitting, and counts itself as my miss.
-- **Absence** needs no word from him.
+- Things gather for the times he usually looks.
+- A default goes ahead only after a sitting in which he could have seen it.
+- He can pull things early: "Look now", "Do them now".
+- The one buzz has its three-part test and counts itself as my miss.
+- **Absence needs no word from him:** after two unopened sittings, new work slows.
 
 ## Count (phone, `#check`, every visible line counted once per moment)
 
@@ -51,25 +56,25 @@ Below the sheet, never pushed, are three pages: where all 40 goals stand, what h
 | Places he must look | 1 (card → sheet), plus the app store to sign in | same |
 | Interruptions | 1 | 1 |
 | Held in his head | 0 things; 1 habit: glance at the card | same |
-| Words read to act | 2,795 (desk 2,712) | 2,319, including curiosity 221 |
-| Words merely available | where everything stands 91; each proof sheet ~80; See on told results | — |
+| Words read to act | 2,731 (desk 2,704) | 2,274 |
+| Words merely available | full say-backs; where everything stands 76; each checker's sheet ~80 | — |
 | Typed / spoken | 0 / 11 | 0 / 11 |
 | Taps | 39 | 33 |
 | Decisions | 22, all only his; 0 acceptances of what a check had passed | 18, all only his |
-| Minutes (the critics' model) | about 20 | about 17 |
+| Minutes (critics' model) | about 20 | about 17 |
 
-My counter counts every label and button, which is stricter than the critics' rule. In their latest comparison the letter had the least reading, 2,462 words.
+Agreements left the sittings, but the reading barely fell. Their words moved into the showings: two alternatives drawn for each choice, the seal, and the random real look.
 
 ## Three weakest points
 
-1. **Moving things are still shown as recordings.** Recordings and frames stand in for the running build, and timing or feel is corrected by a pin plus words.
-2. **Recovery is one level deep.** A real day 30, with rules and results entangled, would need a trace view I have not drawn.
-3. **Told lines can be over-trusted.** A told line is cheap to read and easy to skim past. It only works while the checks really can fail, and "held, not started" is still a sentence he cannot inspect.
+1. **Moving things are still recordings.** Timing and feel are corrected with a pin plus words.
+2. **Recovery is one level deep.** There is no trace view for entangled rules and results.
+3. **A say-back he never opens can drift unseen.** The told line is short. A wrong "done" line is caught only at the first showing, which revision 3 accepts on the replay's evidence.
 
-## What revision 2 still cannot be drawn
+## What revision 3 still cannot be drawn
 
-- **The checker's direct line** (principle 8). The checker's answer has to land somewhere; I put it in his next sitting, so it waits on his rhythm.
+- **The checker's direct line** (principle 8). Its answer waits for his next sitting.
 - **End dates on rules** (principle 4). Nothing in the record says when a rule should expire.
 - **What was built on what** (principle 11). The record needs to hold which results used which.
-- **When his next sitting is only a guess** (principle 12), the method should say what happens if the guess is wrong. My rule: nothing goes ahead before he has had one sitting to see it.
-- **Told, not asked.** The method's showing step implies a result a check has passed is still put to him for acceptance. It should allow such a result to be told with an undo, before any trust is granted for that kind of work.
+- **Accepting a known gap.** "Your yes does not cover…" has no word in the method; it should be named as a residual he accepts, not a pass.
+- **The random real look** needs a rate per kind of work. The method says "a random one" but not how often.
