@@ -2,7 +2,7 @@
 
 **1,279 messages he typed to helpers on M1 Max (87,672 words), each labelled by two workers separately. About a third were avoidable, and the largest single cause was work reaching him unchecked.**
 
-Source: the frozen M1 Max corpus (1,377 rows marked as typed by him; the labellers judged 98 of those to be machine-written and they are excluded). Two GPT 6.1 Sol workers labelled every row without seeing each other's work. Chat only: answers given on review pages are in `d2-questions.md`. M5 Max is not included yet.
+Source: the frozen M1 Max corpus (1,377 rows marked as typed by him; the labellers judged 98 of those to be machine-written and they are excluded). Two GPT 6.1 Sol workers labelled every row without seeing each other's work. Chat only: answers given on review pages are in `d2-questions.md`. The sections down to "What this changes in the design" cover M1 Max; M5 Max was added afterwards and has its own section near the end, with the two computers added together.
 
 Reproduce: `python3 -I DATA/scripts/compare_labels.py DATA/wave2/m1max-snapshot.jsonl DATA/labels/m1max-a.jsonl DATA/labels/m1max-b.jsonl`, where `DATA` is `/Users/changlee/projects/agent-annotate/shared/agents/from-zero-20261112/`. Every number below comes from that one command.
 
@@ -72,8 +72,36 @@ Of the 448 messages both labellers called avoidable, the part each named (labell
 4. **Rules and defaults are smaller here than expected**, about 55 to 90 messages together. On review pages the picture differs: a quarter of answers there did not need him (`d2-questions.md`).
 5. **More than half is properly his.** New goals carry the most words of all (26,661). The design must make saying a goal cheap and must not treat those words as waste.
 
+## M5 Max, added later the same day
+
+The M5 Max corpus arrived after the sections above were written. Sessions that also exist on M1 Max were dropped, so nothing is counted twice. Two further labellers, working apart, labelled its 1,748 rows; 470 were judged machine-written by one or both and are excluded, leaving **1,278 messages (86,874 words)**. Reproduce with the same script on `DATA/wave2/m5max-new-snapshot.jsonl`, `DATA/labels/m5max-a.jsonl` and `m5max-b.jsonl`.
+
+Agreement between the two labellers: kind 88.2% (kappa 0.86); avoidable 94.1% (kappa 0.88); which part of the method 93.1%.
+
+One caution governs every M5 Max figure. **314 of the rows are one-word prompts to carry on after a rate limit stopped a helper.** Whether he typed each one cannot be proved from the record. If he did, they are the purest case of him being the watch. Figures are given both ways.
+
+| | M1 Max | M5 Max | Both | Both, without the 314 |
+|---|---:|---:|---:|---:|
+| Messages | 1,279 | 1,278 | 2,557 | 2,243 |
+| Avoidable, both labellers | 448 (35%) | 656 (51%) | 1,104 (43%) | 790 (35%) |
+
+Which part of the method would have avoided them, where both labellers named the same part:
+
+| Part | M1 Max | M5 Max | Both |
+|---|---:|---:|---:|
+| A check before he sees it | 137 | 153 | 290 |
+| The watch | 44 | 353 (39 without the 314) | 397 (83) |
+| The agreement | 59 | 39 | 98 |
+| The glance | 45 | 23 | 68 |
+| The rule book | 29 | 25 | 54 |
+| A default | 25 | 15 | 40 |
+| The record | 16 | 0 | 16 |
+| One doorway | 9 | 3 | 12 |
+
+The M5 Max data repeats the M1 Max finding. The check is about three times the agreement on both computers, and on M5 Max it carries far more words (15,846 against 4,982). On M5 Max he sent work back for quality 185 times and stated a new goal 144 times. In the vehicle project, 395 of 510 messages were judged avoidable, most of them the prompts to carry on.
+
 ## Limits
 
 - Judgement, not fact: "avoidable" is two workers' reading of each message with the helper's text before and after it.
-- Chat on one Mac. The vehicle project's chat on M5 Max is missing, and most of that project's traffic went through pages.
+- The M5 Max extraction is less clean than M1 Max: more than a quarter of the rows marked as his were machine-written, and its origin rules had not finished being checked when the snapshot was taken.
 - Heat was marked too: about 5% of messages read as clearly frustrated (61 and 54 by the two labellers), and a further 5% to 9% as impatient.
