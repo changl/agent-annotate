@@ -85,7 +85,20 @@ The four premises are deliberately far apart: one conversation; a finite stack w
 | The machine designs, judged | Critics trace all four machine designs through the test week and the stall census | Which parts of which design survive |
 | The concepts, walked | Critics, mostly GPT 6.1 Sol and one Claude, blind to each other, walk every concept through the test week and count what it costs him | The counts at the end of `scenario.md` |
 
-**Wave 3.** One design: the screens combined from the best of the four, the machine chosen from the options, a second design round on real cases from the corpus, and a build plan in stages with the meter in the first stage.
+**Wave 3, running.** One design.
+
+| What | Who | Result |
+|---|---|---|
+| One baseline for cycles to done, with what each part of the method could remove | GPT 6.1 Sol | `research/b-baseline.md` |
+| Replay: agreements written blind for up to 36 past goals, three ways, then judged by two separate judges | GPT 6.1 Sol writer; one GPT 6.1 Sol and one Claude judge | `research/r-replay-*.md` |
+| The combined machine, every fork settled, and how to build it in stages | GPT 6.1 Sol | `machine/combined.md` |
+| The combined design on the letter's base, and on the sitting's base | Fable, Opus | `concepts/v2-letter`, `concepts/v2-sitting` |
+| Deep study: showing and correcting every kind of work, including things that move | Opus | `concepts/v2-showing` |
+| Deep study: coming back and staying in control | Fable | `concepts/v2-return` |
+
+The critics agreed that the letter and the sitting are the strongest wholes, and that no concept solved three problems: showing a thing that moves without leaving the one doorway; a bounded, honest return after days away or a wrong rule; and rhythm. Round 2 is aimed at those. The method itself was revised against the evidence first (`../from-zero-20261112.md`, revision 2).
+
+Then: critics walk round 2, the deep studies are merged into the stronger candidate, and the showing is prepared.
 
 ## 5. How options are judged
 
