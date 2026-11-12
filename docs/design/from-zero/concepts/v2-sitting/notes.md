@@ -2,7 +2,7 @@
 
 **What I built.** One doorway: a card on his lock screen, a widget he chooses to add. It says what has gathered and how long it will take, how fresh that is, or that it cannot see; it has a mic. Tapping it opens one sheet, written like a letter. Each thing opens in turn and folds to one line in his blue ink, with Undo. The sheet ends with "That is all." On the desk the sheet is the left page and the thing itself the facing page. Below, never pushed, are three pages: where all 40 goals stand, what he has let me do, and who is working where.
 
-`index.html` carries the 14 events and the stress cases in 15 moments; the striped bar is not part of the design and says, once, that everything is drawn. `#check` (add `&t=light` or `&t=dark`) walks every moment through the real buttons and runs 54 side paths. It fails on a word of the method on screen, a control under 44 × 44 px, two controls whose hit areas overlap, a sideways scroll, or "nothing needs you" shown while anything waits or is unseen. It passes at 390 and 1280, light and dark.
+`index.html` carries the 14 events and the stress cases in 15 moments; the striped bar is not part of the design and says, once, that everything is drawn. `#check` (add `&t=light` or `&t=dark`) walks every moment through the real buttons and runs 56 side paths. It fails on a word of the method on screen, a control under 44 × 44 px, two controls whose hit areas overlap, a sideways scroll, or "nothing needs you" shown while anything waits or is unseen. It passes at 390 and 1280, light and dark.
 
 ## Three merges in this round
 
@@ -29,7 +29,7 @@
 
 **After the craft critique:** no pop-up notices; proof as words; short buttons; a greeting instead of a count; dark lock cards; the desk opens on the sheet.
 
-**After the stress critique:** the desk cover shows Where everything stands, What you've let me do and Stop everything, and blind covers open their page. Dialogs keep Tab inside and give focus back.
+**After the stress critique:** the desk cover shows Where everything stands, What you've let me do and Stop everything, and blind covers open their page. Dialogs keep Tab inside and give focus back. The week lists, goal by goal, how often each came to him against how often I expected, in words; "Rules learned: 3" opens those three above every rule, grouped, each with where it came from, its uses and when it lapses.
 
 **After the defect critique:** no control only acknowledges. Pause, take back, stop, undo, ask the checker, price change, let-it-go, carry on and the week's answers all change state that their readers show. The journey plays at its real times and is accepted only once every screen is seen, or deferred to the phone; pins keep their screen or width. The price page is laid out at 390 and 1280 and scaled, its switch and Start are buttons, Start reaches checkout. The invented phone mark is gone. Dates and chronology agree (tax from 1 December; sign-in is readiness, the release is Thursday's go).
 
@@ -53,7 +53,7 @@
 | Places he must look | 1 (card → sheet), plus the app store to sign in | same |
 | Interruptions | 1, tried at most twice | 1 |
 | Held in his head | 0 things; 1 habit: glance at the card | same |
-| Words read to act | 3,503 (desk 3,409); was 3,124 | 2,820 (desk 2,747) |
+| Words read to act | 3,539 (desk 3,445); was 3,124 | 2,856 (desk 2,783) |
 | Words merely available | full say-backs, checker's sheets (~80 each), where everything stands, the allowed and stop pages | — |
 | Typed / spoken | 0 / 11 | 0 / 11 |
 | Taps | 42 (desk 34) | 35 (desk 29) |
@@ -63,7 +63,7 @@
 ## Three weakest points
 
 1. **Moving things are still recordings**, now labelled as drawn.
-2. **Safety cost words:** +379 on the phone, mostly the reminder-text go, the invoice trade-off, the third sign-up choice and held-answer reasons; telling the marks saved some.
+2. **Safety cost words:** +415 on the phone, mostly the reminder-text go, the invoice trade-off, the third sign-up choice and held-answer reasons; telling the marks saved some.
 3. **A say-back he never opens can drift** until the first showing.
 
 ## What revision 3 still cannot be drawn
@@ -71,4 +71,4 @@
 - **The checker's direct line** (principle 8): his question stays on the goal, but its answer waits for his next look.
 - **What was built on what** (principle 11): the record must hold the links between results.
 - **The random real look** needs a rate per kind of work.
-- **Per-goal returns against expected** on the week page; "Rules learned: 3" still opens the general allowed page.
+- **The week's figures are a fixture**; they do not recompute from his answers.

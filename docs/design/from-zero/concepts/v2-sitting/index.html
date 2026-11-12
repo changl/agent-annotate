@@ -345,6 +345,12 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 .life{list-style:none;margin:0;padding:0}
 .life li{display:grid;grid-template-columns:86px 1fr;gap:10px;padding:8px 0;border-top:1px solid var(--rule);font-size:15.5px}
 .life li span{color:var(--ink2);font-size:14px}
+.wkg{list-style:none;padding:0;margin:4px 0 12px}
+.wkg li{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:15px}
+.wkg li span:last-child{color:var(--ink2);text-align:right}
+.rl{margin:0;padding:9px 0;border-bottom:1px solid var(--rule);font-size:16px}
+.rl span{display:block;font-size:14px;color:var(--ink2);margin-top:2px}
+.rl.wk b::before{content:"";display:inline-block;width:8px;height:8px;border-radius:4px;background:var(--blue);margin-right:8px;vertical-align:2px}
 .allow li{padding:8px 0;border-top:1px solid var(--rule);font-size:15.5px;display:flex;justify-content:space-between;gap:10px;list-style:none}
 .allow{margin:0;padding:0}
 
@@ -634,7 +640,7 @@ function render(){
   const t = S.theme==='auto' ? (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light') : S.theme;
   document.documentElement.dataset.theme = t;
   proto();
-  const v = {lock:rLock, sheet:rSheet, stand:rStand, goal:rGoal, behind:rBehind, allow:rAllow, stopped:rStopped, blindall:rBlindAll}[S.view];
+  const v = {lock:rLock, sheet:rSheet, stand:rStand, goal:rGoal, behind:rBehind, allow:rAllow, rules:rRules, stopped:rStopped, blindall:rBlindAll}[S.view];
   $('#app').innerHTML = applyState(v() + rOverlay());
   if (S.toast){ const a = S.noteAt && $(S.noteAt), blk = a && a.closest('li, p, .proj, .verbs, .line, .opts, .fork, .card, .gl, .sheetov');
     const html = `<p class="inote" role="status">${S.toast.t}</p>`;
@@ -695,7 +701,7 @@ function rSheet(){
     ${m.told&&!S.toldSeen?`<ul class="told">${m.told.map(([c,t])=>`<li class="${c}">${typeof t==='function'?t():t}</li>`).join('')}</ul>`:''}</header>`;
   let list = '<ol class="order">', thingHtml = '', bar = '';
   S.items.forEach((it,i)=>{
-    if (lim && i===lim) list += `<li class="splitlab"><span class="lab">${m.splitAt||'At 5 pm'} · about ${minsOf(n.filter(j=>j>=lim))} minutes</span> <button class="link inl" data-act="pullall">Do them now</button></li>`;
+    if (lim && i===lim && n.some(j=>j>=lim)) list += `<li class="splitlab"><span class="lab">${m.splitAt||'At 5 pm'} · about ${minsOf(n.filter(j=>j>=lim))} minutes</span> <button class="link inl" data-act="pullall">Do them now</button></li>`;
     if (S.out[i]) list += `<li class="fold done"><span class="n">✓</span><span><span class="g">${goalName(it)}</span></span><span></span><span class="r">${S.out[i].r}${S.out[i].undo!==false?` <button class="link inl" data-act="undo" data-i="${i}">Undo</button>`:''}</span></li>`;
     else if (i===S.cur && n.length && !(lim && i>=lim)){ const b = rItem(it, st(i), i); list += `<li>${b.main}</li>`; thingHtml = b.thing; bar = b.bar; }
     else list += `<li><button class="fold ${lim&&i>=lim?'later':''}" data-act="goto" data-i="${i}" style="width:100%;background:none;border:0;border-bottom:1px solid var(--rule);text-align:left"><span class="n" aria-hidden="true">·</span><span>${it.vcls?`<span class="v ${it.vcls}">${it.verb}</span>`:''}<span class="g">${goalName(it)}</span></span><span class="m">${it.mins<1?'30 sec':Math.round(it.mins)+' min'}</span>${lim&&i>=lim&&it.wait?`<span class="wc">${it.wait}</span>`:''}</button></li>`;
@@ -952,11 +958,13 @@ T.refund = ()=>`<figure class="thing"><div class="tag"><span>The 12 refunds</spa
 
 /* --- the week, on one page --- */
 const feelB = (q,v)=>`<button class="chip" data-act="feel" data-k="${q}" data-v="${v}" aria-pressed="${S.feel[q]===v}">${v}</button>`;
+const BACK = [['Faster sign-up',2,2,''],['Welcome email',2,1,'you sent it back for tone'],['Invoice export',2,1,'my miss, a case not tried'],['Price page',1,1,''],['Photo move',1,1,''],['App update',1,1,''],['Reminder texts',1,1,''],['Driver ratings',2,2,'once parked by you']];
+const TIMES = ['never','once','twice','three times'];
 function weekHtml(){
   return `<h3>Your week</h3><p>9 things done, 24 minutes of yours, 8 questions (14 the week before).</p>
-   <p>Two came back twice: one taught us how to speak to customers; one was my miss, a case not tried.</p>
+   <p>How often each came to you, against how often I expected:</p><ul class="wkg">${BACK.map(([g,n,e,w])=>`<li><span>${g}</span><span>${n===e?`${TIMES[n]}, as expected`:`${TIMES[n]}; ${TIMES[e]} expected`}${w?`: ${w}`:''}</span></li>`).join('')}</ul>
    <p>26 choices made inside what you allowed. Worth a look: texts at 6 pm, not 7 ${und('wk6pm')}; old photos kept to 17 Dec ${und('wkphotos')}</p>
-   <p>One buzz, the store sign-in: my miss, now a rule. Was it right to interrupt you? <span class="chips" style="display:inline-flex;margin:2px 0">${feelB('buzz','Yes')}${feelB('buzz','No')}</span></p><p>21 of 22 dates kept. <button class="link inl" data-act="allow">Rules learned: 3</button></p>
+   <p>One buzz, the store sign-in: my miss, now a rule. Was it right to interrupt you? <span class="chips" style="display:inline-flex;margin:2px 0">${feelB('buzz','Yes')}${feelB('buzz','No')}</span></p><p>21 of 22 dates kept. <button class="link inl" data-act="rules">Rules learned: 3</button></p>
    <p>How did it feel? <span class="chips" style="display:inline-flex;margin:2px 0">${feelB('week','Light')}${feelB('week','Right')}${feelB('week','Too much')}</span></p>`;
 }
 
@@ -1024,8 +1032,30 @@ const ALLOW = [
  ['times','Choosing the hour for texts and emails, 8 am to 8 pm','the reminder texts, 17 Nov',6,'17 Feb',['Reminder texts at 6 pm'],'Only messages you have said yes to. This picks the hour, not whether.'],
  ['restart','Starting work again when it has stopped','you, 2 Nov',17,'when you say',['Test run, Tue 23:50','Sign-up, Wed 07:10'],'Only work you already agreed. Never a new start.']];
 const CAD = {both:['8:30 and 5 pm','about 5 minutes each'], am:['8:30 only','about 10 minutes'], pm:['5 pm only','about 10 minutes']};
+const RULES = [ // group, rule, came from, uses, lapses, day it began (17 = 17 Nov, 31 = 1 Dec), learned this week
+ ['Emails and wording','Emails to customers are short and plain','your “Always”, 17 Nov',3,'17 Feb, unless used',17,1],
+ ['Emails and wording','Small wording changes are told; 1 in 5 still shown','your answer, 19 Nov',4,'the first one changed back',19,1],
+ ['Emails and wording','No exclamation marks in customer emails','you, 3 Oct',11,'3 Jan, unless used',0],
+ ['Emails and wording','Sign emails “Fernway”, never “The Team”','you, 9 Oct',6,'9 Jan, unless used',0],
+ ['Prices and money','Round prices to whole dollars on price labels','your answer, 17 Nov',14,'17 Feb, unless used',17],
+ ['Prices and money','Refunds over $200 wait for you','you, 1 Oct',2,'when you say',0],
+ ['People and privacy','Notes about instructors reach the school only','you, 16 Nov',1,'when you say',16],
+ ['People and privacy','Ask “under 18?”, never a student’s age','you, 12 Oct',3,'when you say',0],
+ ['People and privacy','Parents are emailed only about under-18s','you, 17 Nov',1,'when you say',17],
+ ['Mine, from my own misses','Sign-ins due within 2 days come at 8:30 or 5 pm','my miss, 18 Nov',1,'never; it only asks earlier',18,1],
+ ['Mine, from my own misses','A case not tried holds the showing','my miss, 19 Nov',2,'never; it only holds',19]];
+function rRules(){
+  const now = dayN(M[S.m].day), live = RULES.filter(x=>x[5]<=now);
+  const row = (x, w) => `<p class="rl ${w?'wk':''}"><b>${now>=44&&x[1].startsWith('Small wording')?`<s>${x[1]}</s>`:x[1]}</b><span>From ${x[2]} · used ${x[3]} · lapses ${now>=44&&x[1].startsWith('Small wording')?'lapsed 14 Dec, after one miss':x[4]}${now>=46&&x[1].startsWith('Round prices')?' · I had widened it to every amount by guess; back to price labels only since 16 Dec':''}</span></p>`;
+  const groups = [...new Set(live.map(x=>x[0]))];
+  return `<div class="wrap"><section class="page"><button class="back" data-act="rulesback">‹ Back</button><h1>Rules</h1>
+   <p>Nothing here needs you. Each rule says where it came from, how often it was used, and when it lapses.</p>
+   <div class="proj"><h3><span>Learned this week</span><span>${live.filter(x=>x[6]).length}</span></h3>${live.filter(x=>x[6]).map(x=>row(x,1)).join('')}</div>
+   ${groups.map(g=>`<div class="proj"><h3><span>${g}</span><span>${live.filter(x=>x[0]===g).length}</span></h3>${live.filter(x=>x[0]===g).map(x=>row(x,0)).join('')}</div>`).join('')}
+   <div class="proj"><h3><span>My guesses, used only to suggest</span><span>21</span></h3><p class="small">Each lapses after a month unused.</p></div></section></div>`;
+}
 function rAllow(){
-  const sel = S.allowSel;
+  const sel = S.allowSel, now = dayN(M[S.m].day);
   const row = a => { const off = P.revoked[a[0]];
     return `<button class="gl" data-act="allowsel" data-v="${a[0]}" aria-expanded="${sel===a[0]}"><span class="nm">${off?`<s>${a[1]}</s><span class="nt">Taken back by you. I ask each time.</span>`:a[1]}</span><span class="dt">used ${a[3]}</span></button>${sel===a[0]?`<div class="allowd"><p><span class="lab">Only</span> ${a[6]}</p><p><span class="lab">Came from</span> ${a[2]}</p><p><span class="lab">Lapses</span> ${a[4]}</p>${a[5].map((x,j)=>`<p>${x} ${und(a[0]+j)}</p>`).join('')}${off?`<button class="btn" data-act="giveback" data-k="${a[0]}">Give it back</button>`:`<button class="btn" data-act="revoke" data-k="${a[0]}">Take this back</button>`}</div>`:''}`; };
   const msg = P.msgPaused ? `<p class="stopband"><b>Every text and email is paused</b>, by you on ${P.msgPaused}. Reminder texts wait; nothing reaches a customer or a student.</p><button class="btn" data-act="msgpause" data-v="0">Let them go again</button>`
@@ -1036,9 +1066,9 @@ function rAllow(){
    <div class="proj"><h3><span>When it goes ahead</span><span></span></h3><p>A choice I make inside these goes ahead only after a look where you could have seen it. Skip that look and it waits for the next one you open. Looking in more often never lets me do more.</p>
      <p>Your looks: <b>${CAD[P.cadence][0]}</b>, ${CAD[P.cadence][1]}. ${S.cadOpen?'':'<button class="link inl" data-act="cadopen">Change</button>'}</p>${S.cadOpen?`<div class="opts" role="group" style="grid-template-columns:1fr">${Object.entries(CAD).map(([k,c])=>`<button class="opt" data-act="cad" data-v="${k}" aria-pressed="${P.cadence===k}">${c[0]}<span class="rec">${c[1]}</span></button>`).join('')}</div>`:''}</div>
    <div class="proj"><h3><span>Messages to people</span><span></span></h3>${msg}</div>
-   <div class="proj"><h3><span>Kinds I no longer show you</span><span>1</span></h3><p>Report fixes: 22 done, 0 wrong. 1 in 5 still comes to you, picked by a draw.</p><p><s>Wording changes</s>: lost on 14 Dec after one miss. Shown to you again.</p></div>
-   <div class="proj"><h3><span>Rules you gave me</span><span>9</span></h3><p>Emails and wording 4 · prices and money 2 · people and privacy 3. Each lapses unless used.</p></div>
-   <div class="proj"><h3><span>My guesses, used only to suggest</span><span>21</span></h3><p><s>Round prices to whole dollars, everywhere</s>: price labels only, since 16 Dec.</p></div>
+   <div class="proj"><h3><span>Kinds I no longer show you</span><span>${now>=19&&now<44?2:1}</span></h3><p>Report fixes: 22 done, 0 wrong. 1 in 5 still comes to you, picked by a draw.</p>${now>=44?'<p><s>Wording changes</s>: lost on 14 Dec after one miss. Shown to you again.</p>':now>=19?'<p>Small wording changes: listed in your week since 19 Nov; 1 in 5 still comes to you.</p>':''}</div>
+   <div class="proj"><h3><span>Rules</span><span>${RULES.filter(x=>x[5]<=now).length}</span></h3><p>Emails and wording, prices and money, people and privacy, and two of my own from my misses. Each lapses unless used.</p><button class="btn" data-act="rules">See every rule</button></div>
+   <div class="proj"><h3><span>My guesses, used only to suggest</span><span>21</span></h3>${now>=46?'<p><s>Round prices to whole dollars, everywhere</s>: price labels only, since 16 Dec.</p>':''}</div>
    <div class="proj"><h3><span>Never without you</span><span></span></h3><p>Money, new messages to real people, releases, deletions.</p></div></section></div>`;
 }
 function rStopped(){
@@ -1153,6 +1183,8 @@ function act(a, d, ev){
     case 'notsaid': S.say = {stage:'idle'}; render(); break;
     case 'stand': S.overlay = null; S.from = S.view; go('stand', '.back'); break;
     case 'back': go(S.from==='sheet'?'sheet':'lock'); break;
+    case 'rules': S.rulesFrom = S.view; go('rules', '.back'); break;
+    case 'rulesback': go(S.rulesFrom || 'stand', S.rulesFrom==='allow' ? '.back' : null); break;
     case 'expand': S.expand = S.expand===+d.v ? null : +d.v; render(); break;
     case 'goal': S.goal = d.g; go('goal', '.back'); break;
     case 'behind': go('behind', '.back'); break;
@@ -1374,7 +1406,8 @@ async function runCheck(){
     load(4); act('open',{}); $('.open .seal').click(); { const f = $$('.sheetov button'); f[f.length-1].focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true})); side.push('Tab stays inside a dialog: '+!!document.activeElement.closest('.sheetov')); $('.sheetov [data-act="close"]').click(); side.push('and closing gives focus back: '+(document.activeElement.dataset.act==='proof')); }
     load(11); act('open',{}); act('pullall',{}); act('goto',{i:2}); side.push('a parked promise keeps its date: '+/Monday at the latest/.test($('#app').innerText)); side.push('a yes waits for his choice: '+!!$('.bar [data-act="accept"][disabled]')); act('pick',{c:'0',o:'0'}); act('accept',{}); side.push('and the receipt names it: '+/the school hears weekly/.test($('#app').innerText));
     load(14); act('goal',{g:'signup'}); side.push('dates from one state: '+/released 21 Nov/.test($('#app').innerText)+' '+!/\bThu\b/.test($('.page .small').innerText));
-    load(11); act('open',{}); act('act',{}); act('pick',{c:'0',o:'0'}); side.push('week read at the end of the first part: '+!!$('.weekblk'));
+    load(11); act('open',{}); act('act',{}); act('pick',{c:'0',o:'0'}); side.push('week read at the end of the first part: '+!!$('.weekblk')+', goal by goal: '+$$('.wkg li').length);
+    act('rules',{}); side.push('rules learned this week open as themselves: '+$$('.rl.wk').length+' of '+$$('.rl').length+' rows'); audit(M[11],'rules',fails); act('rulesback',{}); side.push('and back to the week: '+!!$('.weekblk'));
     load(0); act('open',{}); act('sbopen',{k:'ratingsSay'}); audit(M[0],'say-back lines',fails); act('close',{});
   } catch(err){ fails.push('side: '+err.message); }
   clean();
