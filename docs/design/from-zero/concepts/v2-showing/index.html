@@ -54,6 +54,21 @@ html[data-theme=dark] .proto{color:#EADFAE;background:repeating-linear-gradient(
 .rail{padding:14px 18px 8px;border-top:1px solid var(--rule)}
 @media (min-width:900px){.stage{padding:18px 20px 16px;min-height:520px}.rail{border-top:0;border-left:1px solid var(--rule);padding:16px 18px}}
 .hint{font-size:13.5px;color:var(--ink2)}
+.sim{display:table;margin:0 0 10px;padding:3px 8px;border:1px dashed #8A7733;border-radius:4px;font:11px/1.35 var(--mono);color:#3A3214;background:repeating-linear-gradient(-45deg,#F4E7B0 0 8px,#EDDB98 8px 16px)}
+html[data-theme=dark] .sim{color:#EADFAE;background:repeating-linear-gradient(-45deg,#2D2812 0 8px,#25210D 8px 16px)}
+.spd{margin-top:8px}
+/* the pointing view: while marking, every part he can point at is at least 44 px */
+.marking .scr{height:auto;min-height:440px}
+.marking .scr .kb{display:none}
+.marking .scr .tg{display:flex;align-items:center;min-height:44px;margin:4px 0}
+.marking .scr .tg.slot,.marking .scr .tg.field{flex-direction:column;align-items:flex-start;justify-content:center}
+.marking .scr .tg.cta{justify-content:center}
+.marking #thing span.tg:not(.scr span):not(.vp span){display:inline-flex;align-items:center;min-height:44px;min-width:44px}
+.marking .trace li.tg{min-height:44px;align-items:center}
+.marking .tbl td{padding:0}
+.marking .tbl td>.tg{display:flex!important;align-items:center;min-height:44px;padding:0 10px}
+.marking .tbl td.r>.tg{justify-content:flex-end}
+.marking .w{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 6px;margin:2px 1px;border:1px dashed rgba(160,48,28,.45);border-radius:8px;vertical-align:middle}
 .stage-hint{display:table;margin:0 0 10px;padding:3px 9px;border-radius:12px;background:var(--rubric);color:var(--paper);font:600 12.5px/1.4 var(--sans)}
 html[data-theme=dark] .stage-hint{color:#15171B}
 
@@ -288,9 +303,11 @@ html[data-theme=dark] .hold{color:#15171B}
   <select id="pS" aria-label="Kind of work"></select>
   <button id="pMark">Mark it for me</button>
   <button id="pBack">▸ It comes back</button>
-  <button id="pChange" class="wide">Change it after the check</button>
+  <button id="pChange">Change it after the check</button>
+  <button id="pPhone" hidden>Phone: answers</button>
+  <button id="pPhoneMark" hidden>▸ Mark from the phone</button>
   <button id="pTheme" aria-label="Switch light or dark">◐</button>
-  <span class="wide">Shown alone. In use it sits inside the letter or the sitting, which supplies the way back, the timing and the voice.</span>
+  <span class="nar">Shown alone; in use it sits inside the letter or the sitting. Everything here is a drawn stand-in: recordings, pages, read-backs, checks and the phone handoff are not live.</span>
   <span id="pNar" class="nar"></span>
 </header>
 <div id="checkOut"></div>
@@ -316,21 +333,22 @@ const SH=[
  seal:'<b>Checked by someone else</b> · this exact build, on an iPhone 13 · recorded 16:10',
  seal2:'<b>Checked again by someone else</b> · the new build, on an iPhone 13 · recorded 17:40',
  judge:'Does it feel quick enough to book on the spot?',
- dur:90,speed:3,
+ dur:90,speed:3,speeds:[1,3],
  done:[{t:'Three screens, not seven',at:0,tg:'steps',how:'Counted from the recording: steps 1 to 3, then booked.'},
-   {t:'Booked in under 2 minutes',at:84,tg:'booked',how:'Twenty people new to the app: median 1 min 30 s, slowest 2 min 10 s.'},
+   {t:'Median booking time under 2 minutes',at:84,tg:'booked',how:'Twenty people new to the app: median 1 min 30 s. One person took 2 min 10 s; that is shown, not hidden.'},
    {t:'Nothing you need is lost',at:84,tg:'saved',how:'Name, email and first lesson read back from the school’s records after booking.'},
    {t:'Next stays above the keyboard',at:14,tg:'next1',how:'Frame at 0:14: keyboard up, Next visible. Same on three phone sizes.'},
    {t:'Old phones',not:true,how:'Not checked: no iPhone 8 or older to test on. I’ll borrow one before release.'}],
  raw:`Checker’s report · Faster sign-up · build 214 · 16:10
 Started from your words and the 4 done lines, not from the maker’s notes.
 1 steps: 3 (was 7) ............................ pass
-2 time: 20 people, median 1:30, slowest 2:10 .. pass
+2 time: 20 people, median 1:30 ............. pass (median)
+  slowest single attempt 2:10
 3 saved: name, email, lesson read back ........ pass
 4 keyboard: Next visible on SE, 13, 15 Max .... pass
 Not tried: iPhone 8 or older (none available)`,
  reasons:['Wrong words…','Missing…','Shouldn’t be here','Say it…'],
- hand:'Opens this same build on your phone. Shake the phone to mark something; it comes back here, tied to this build.',
+ hand:true,sim:'a drawn stand-in for the checker’s recording; nothing here is real video',
  canned:[{at:26,tg:'slot0',label:'“Sat 21 Nov · 9:00”',why:'Missing',said:'Show who teaches each lesson'},{at:56,tg:'payNow',label:'“Pay now”',why:'Say it…',said:'Pay at the lesson should come first'}],
  answers:[{note:'Each lesson now says who teaches it.'},{note:'“Pay at the lesson” is now first.'}],
  nar:'A three-screen journey in the phone app, recorded by the checker on the exact build. Play or scrub it. Mark freezes the frame; tap any control in it.'},
@@ -338,13 +356,13 @@ Not tried: iPhone 8 or older (none available)`,
  seal:'<b>Checked by someone else</b> · this route, in the simulator with eight Saturdays of 9 am traffic · 17:05',
  seal2:'<b>Checked again by someone else</b> · the new route, in the simulator · 18:20',
  judge:'Is it a fair test for a nervous learner?',
- dur:1080,speed:36,
+ dur:1080,speed:36,sim:'a drawn stand-in for the checker’s simulator run',
  done:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Every road on the route checked against the road map: all single carriageway.'},
    {t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 (Mill Road) and 11:40 (Ridge Way).'},
    {t:'One hill start',at:470,tg:'hill',how:'Park Rise, 7:50. Gradient 1 in 9.'},
-   {t:'About 18 minutes at 9 am Saturday',at:1080,tg:'route',how:'Eight past Saturdays: 16 to 21 minutes, median 18.'},
+   {t:'Median 18 minutes on past Saturdays at 9 am',at:1080,tg:'route',how:'Eight past Saturdays: median 18 minutes, range 16 to 21. This Saturday is not known yet.'},
    {t:'Driven in a real car',not:true,how:'Not checked: simulator only. Saturday’s first lesson is the real test; the teacher will mark anything wrong.'}],
- done2:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Checked again for the new route: all single carriageway.'},{t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 and 12:10.'},{t:'One hill start',at:450,tg:'hill',how:'Park Rise, 7:30.'},{t:'About 19 minutes at 9 am Saturday',at:1140,tg:'route',how:'Eight past Saturdays: 17 to 22 minutes, median 19.'},{t:'Driven in a real car',not:true,how:'Not checked: simulator only.'}],
+ done2:[{t:'No motorway or dual carriageway',at:0,tg:'route',how:'Checked again for the new route: all single carriageway.'},{t:'Two roundabouts',at:200,tg:'rb1',how:'At 3:20 and 12:10.'},{t:'One hill start',at:450,tg:'hill',how:'Park Rise, 7:30.'},{t:'Median 19 minutes on past Saturdays at 9 am',at:1140,tg:'route',how:'Eight past Saturdays: median 19 minutes, range 17 to 22.'},{t:'Driven in a real car',not:true,how:'Not checked: simulator only.'}],
  raw:`Checker’s report · practice route v3 · 17:05
 Road types: 14 roads, 0 motorway, 0 dual carriageway .. pass
 Roundabouts: 2 (Mill Rd 3:20, Ridge Way 11:40) ........ pass
@@ -356,6 +374,7 @@ Not tried: a real car; roadworks after Friday unknown`,
  answers:[{note:'Now goes by Church Lane instead. Adds a minute: 19 in all.'}],
  nar:'A route that plays over time. The car moves along it; the turns follow. In Mark, tap any spot on the route: the mark keeps the place and the minute.'},
 {id:'B',kind:'B',word:'Web page · two widths',goal:'Price page',budget:'about 45 s',
+ sim:'a drawn stand-in for the served page; only the price switch and Start work',
  seal:'<b>Checked by someone else</b> · the page as served, at both widths · 15:30',
  seal2:'<b>Checked again by someone else</b> · the new page, at both widths · 16:55',
  judge:'Does yearly-first feel pushy?',
@@ -422,17 +441,17 @@ recompute 5% → nearest 0.50: 12/12 match ..... pass
 products changed: 12 of 298 (286 unchanged) .. pass
 live readback today: old prices; scheduled 1 Dec 00:00 .. pass
 undo on shop copy: 12/12 restored ............ pass`,
- fork:{q:'Gift vouchers already sold at old prices: honour them in full?',adv:'I’d say yes: 23 vouchers, $1,140.',opts:['Honour in full','Charge the difference'],wait:'This waits for you. Money is yours to decide; your silence is not a yes.'},
+ fork:{short:'gift vouchers already sold',q:'Gift vouchers already sold at old prices: honour them in full?',adv:'I’d say yes: 23 vouchers, $1,140.',opts:['Honour in full','Charge the difference'],wait:'This waits for you. Money is yours to decide; your silence is not a yes.'},
  reasons:['Wrong price…','Leave this one','Say it…'],
  under:'If you say nothing, nothing changes on 1 December.',okLabel:'Yes, these prices from 1 Dec',
  nar:'Only the changed rows, plus what a customer will see, read back from the live shop. In Mark, tap a row or a single price.'},
 {id:'F',kind:'F',word:'Behind the app',goal:'Move photos to cheaper storage',budget:'about 30 s',
  seal:'<b>Checked by someone else</b> · the live app, all 48,210 photos · 06:40',
- judge:'',judgeNone:'Nothing here to judge by eye. Only you: is 0.1 s slower worth $148 a month?',
+ told:{basis:'Moving storage, as long as photos stay private and the median open time stays under a second. Nothing was left for you to judge by eye.',undo:'Move every photo back to the old storage, which is kept read-only for 30 days. About two hours; nothing is deleted.',undone:'Moving the photos back started at 10:02. About two hours; nothing is deleted.'},
  done:[{t:'Every photo moved',tg:'count',how:'48,210 of 48,210, counted and fingerprinted.'},
    {t:'Same pictures, byte for byte',tg:'p0',how:'300 picked at random: identical before and after.'},
    {t:'Still private',tg:'deny',how:'A student opening another student’s photo is refused, as before.'},
-   {t:'Open in under a second',tg:'speed',how:'Median 0.4 s (was 0.3 s); slowest 1.3 s, for photos older than two years.'},
+   {t:'Median open time under a second',tg:'speed',how:'Median 0.4 s (was 0.3 s). Slowest 1.3 s, for photos older than two years; that tail is shown, not passed.'},
    {t:'The bill',not:true,how:'Not checked: $64 a month is from the price list. The first real bill comes 1 December.'}],
  raw:`Checker’s report · photo storage · 06:40
 count: 48,210 / 48,210; fingerprints match ... pass
@@ -445,7 +464,7 @@ Not checked: monthly cost (estimate only)`,
  nar:'Nothing to look at, so the showing is sameness: the same photos before and after, the same refusal, and the count. Tap any pair or number to mark it.'},
 {id:'G',kind:'G',word:'A tool · a number',goal:'Speed up the test run',budget:'about 30 s',
  seal:'<b>Checked by someone else</b> · ten runs each way, same computer · 09:10',
- judge:'',judgeNone:'Nothing to judge by eye. Only you: the desk computer works four times harder for those six minutes. Fine?',
+ told:{basis:'Faster test runs that run the same tests with the same results. The desk computer works harder for those six minutes, which is inside “use the computers as needed”.',undo:'Go back to running the tests one at a time: 19 minutes a run.',undone:'From the next run, tests run one at a time again.'},
  done:[{t:'The same tests ran',tg:'same',how:'1,904 before and after; the two lists are identical.'},
    {t:'Same results',tg:'same',how:'Both ways: 1,904 pass, 0 fail, 0 skipped.'},
    {t:'Faster every time, not once',tg:'runs',how:'Ten runs each way. Slowest new run 6:31; fastest old run 18:40.'},
@@ -455,7 +474,7 @@ test list: 1,904 = 1,904, identical ........ pass
 results: 1904 pass / 0 fail / 0 skip, both .. pass
 before: 18:40–19:30 (10 runs); after: 5:50–6:31 (10 runs) . pass
 Not tried: laptop (asleep)`,
- reasons:['Don’t believe it','Try it elsewhere','Say it…'],
+ reasons:['Don’t believe it','Try it elsewhere…','Say it…'],
  nar:'A number is shown as its runs: ten before, ten after, on one line, so the spread is visible. The number itself can be marked.'},
 {id:'H',kind:'H',word:'Runs by itself',goal:'Reminder texts go out too late',budget:'about 45 s',
  seal:'<b>Checked by someone else</b> · one real run last night, to two test phones · 18:00',
@@ -490,11 +509,11 @@ update 2.3 → 2.4 with 40 lessons: 40 kept .... pass
 Not tried: iPhone 8 or older (2% of users)`,
  act:{label:'Release',said:'Release Driving app 2.4 to 1 in 10 iPhone users today at 14:00, and to everyone by Monday.',
    cant:['Once a phone has updated, it keeps 2.4. We can only send a newer version.'],can:['Until Monday I can stop it reaching the other 9 in 10.','Your yes is for this exact build only. If anything in it changes, I ask again.'],
-   confirm:'Correct. Release it.',receipt:'Released at 14:02. 318 phones have it, no crashes so far. Everyone else gets it by Monday.',stop:'Stop it reaching anyone else',stopped:'Stopped at 14:20. The 318 phones that have 2.4 keep it; nobody else gets it until you say.'},
+   confirm:'Correct. Release it.',receipt:'Released at 14:02. 318 phones have it, no crashes so far. Everyone else gets it by Monday.',receiptAll:'Released at 14:02 to all 3,180 iPhone users at once. Nothing is left to stop; only a newer version can replace it.',stop:'Stop it reaching anyone else',stopped:'Stopped at 14:20. The 318 phones that have 2.4 keep it; nobody else gets it until you say.'},
  nar:'The pause before something that cannot be undone: the exact build, what is in it, to whom, said back in one sentence, confirmed by holding. Afterwards, the receipt and the way to stop the rest.'},
 {id:'J',kind:'J',word:'Proof',goal:'Refunds can’t be paid twice',budget:'about 30 s',
  seal:'<b>Checked by someone else</b> · the old billing, then the fixed one · 10:15',
- judge:'',judgeNone:'Nothing to judge by eye. Only you: refunds made at the bank’s own website are not covered. Accept that?',
+ told:{basis:'Billing fixes that are proved by a test that failed before the fix and passes after it.',undo:'Take the fix out again. The refund button would again pay twice on a double press.',undone:'Fix taken out at 10:20. A double press can again pay a refund twice.'},
  done:[{t:'Fails on the old build',tg:'before',how:'Before the fix: pressing Refund twice paid $89 twice.'},
    {t:'Passes on the new build',tg:'after',how:'After the fix: the second press says “Already refunded”.'},
    {t:'The check can fail',tg:'planted',how:'A copy built to pay twice was planted: the check caught it.'},
@@ -520,7 +539,7 @@ CO 2.9%, TX 6.25%: state sites, read 12 Nov ...... match
 thresholds $100k: accountant note 3 Nov p.2 ...... match
 Oct sales: CO $41,200; TX $112,600 (billing) ..... match
 Not covered: Colorado city taxes`,
- fork:{q:'Register in Colorado now, or when sales there pass $100,000?',adv:'I’d say wait: you are at $41,200 a year.',opts:['Wait','Register now'],wait:'This waits for you. Registering can’t easily be undone; your silence is not a yes.'},
+ fork:{short:'register in Colorado now or later',q:'Register in Colorado now, or when sales there pass $100,000?',adv:'I’d say wait: you are at $41,200 a year.',opts:['Wait','Register now'],wait:'This waits for you. Registering can’t easily be undone; your silence is not a yes.'},
  reasons:['Wrong…','Out of date','Ask the accountant','Say it…'],
  nar:'A decision is shown as the comparison itself, every figure tied to its source and date. Mark a single cell.'},
 {id:'L',kind:'L',word:'Cleanup',goal:'Clean up old test accounts',budget:'about 45 s',
@@ -545,16 +564,19 @@ Not seen: spreadsheets outside the app`,
 
 /* ======================= state ======================= */
 const S={i:0,mode:'look',t:0,playing:false,marks:[],pend:null,scope:false,proof:null,w:'phone',bWidth:'phone',monthly:false,checkout:false,
-  sel:null,changed:false,compare:null,hand:false,hold:0,fork:null,pre:null,theme:null};
+  sel:null,changed:false,compare:null,hand:null,handFail:false,hold:0,fork:null,pre:null,theme:null,rev:1,prevMode:null,accepted:null,spd:null,undo:null,choose:null,doneRec:null};
 const per={};
 function sh(){return SH[S.i];}
-function doneOf(){const s=sh();return S.mode==='back'&&s.done2?s.done2:s.done;}
-function reset(){Object.assign(S,{aud:'tenth',stopped:false,mode:'look',t:0,playing:false,marks:[],pend:null,scope:false,proof:null,bWidth:'phone',monthly:false,checkout:false,sel:null,changed:false,compare:null,hand:false,hold:0,fork:null});stopPlay();}
+function doneOf(){const s=sh();return S.rev===2&&s.done2?s.done2:s.done;}
+/* nothing may be accepted or done unless what he is looking at is exactly what was checked, and every choice that is his has an answer */
+function canAct(){return !S.changed;}
+function canAccept(){const s=sh();return canAct()&&!(s.fork&&!S.fork);}
+function reset(){Object.assign(S,{rev:1,prevMode:null,accepted:null,spd:null,undo:null,choose:null,doneRec:null,aud:'tenth',stopped:false,mode:'look',t:0,playing:false,marks:[],pend:null,scope:false,proof:null,bWidth:'phone',monthly:false,checkout:false,sel:null,changed:false,compare:null,hand:null,hold:0,fork:null});stopPlay();}
 
 /* mark target helper: any element can be pointed at */
 function tg(id,label,inner,cls='',tag='span',extra=''){
   const ms=S.marks.map((m,k)=>[m,k]).filter(([m])=>m.tg===id&&matchCtx(m));
-  const back=S.mode==='back';
+  const back=S.rev===2;
   const ev=S.proof!==null&&doneOf()[S.proof]&&doneOf()[S.proof].tg===id;
   const cl=`tg ${cls} ${ms.length?(back?'is-done':'is-marked'):''} ${ev?'ev-hl':''}`;
   const a=S.mode==='mark'?`role="button" tabindex="0" data-tg="${id}" data-label="${esc(label)}"`:'';
@@ -569,7 +591,7 @@ function matchCtx(m){const s=sh();
 const FR=[{t:0,scr:1},{t:6,scr:1,name:'Sam',f:0},{t:14,scr:1,name:'Sam Lee',email:'sam.lee@mail.com',f:1,kb:1},{t:24,scr:1,name:'Sam Lee',email:'sam.lee@mail.com',tap:'next1'},
   {t:26,scr:2},{t:51,scr:2,pick:0,tap:'slot0'},{t:53,scr:3},{t:80,scr:3,pick:'later',tap:'payLater'},{t:84,scr:4},{t:90,scr:4}];
 function frameAt(t){let f=FR[0];for(const x of FR)if(x.t<=t)f=x;return f;}
-function rev2(){return S.mode==='back'&&S.compare===null;}
+function rev2(){return S.rev===2&&S.compare===null;}
 function stageA1(){
   const f=frameAt(S.t),r2=rev2();let h='';
   if(f.scr===1)h=`<div class="pad">${tg('steps','“Step 1 of 3”','Step 1 of 3','step')}<h3>${tg('h1a','the heading','Your name and email')}</h3>
@@ -595,7 +617,7 @@ const TURNS2=[[0,'Start at Elm Street test centre'],[90,'Right onto Mill Road'],
 function posAt(rt,t){for(let k=1;k<rt.length;k++){if(t<=rt[k][2]){const a=rt[k-1],b=rt[k],u=(t-a[2])/(b[2]-a[2]||1);return [a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u];}}const z=rt[rt.length-1];return [z[0],z[1]];}
 function stageA2(){
   const r2=rev2(),rt=r2?RT2:RT,turns=r2?TURNS2:TURNS,[cx,cy]=posAt(rt,S.t),line=r=>r.map(p=>p[0]+','+p[1]).join(' ');
-  const pins=S.marks.map((m,k)=>`<g><circle cx="${m.x}" cy="${m.y}" r="11" fill="${S.mode==='back'?'#2F5D3A':'#A0301C'}" stroke="#fff" stroke-width="2"/><text x="${m.x}" y="${m.y+4}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${k+1}</text></g>`).join('');
+  const pins=S.marks.map((m,k)=>`<g><circle cx="${m.x}" cy="${m.y}" r="11" fill="${S.rev===2?'#2F5D3A':'#A0301C'}" stroke="#fff" stroke-width="2"/><text x="${m.x}" y="${m.y+4}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${k+1}</text></g>`).join('');
   const ev=S.proof!==null?doneOf()[S.proof].tg:null;
   const cur=turns.reduce((a,x,k)=>x[0]<=S.t?k:a,0);
   return `<div class="routewrap"><svg class="map ${S.mode==='mark'?'tgmap':''}" viewBox="0 0 400 300" role="img" aria-label="Map of the route, car at ${mmss(S.t)}" data-map="1" ${S.mode==='mark'?'tabindex="0"':''} style="${S.mode==='mark'?'cursor:crosshair;outline:1.5px dashed rgba(160,48,28,.55)':''}">
@@ -688,7 +710,7 @@ function stageF(){const ev=S.proof!==null?doneOf()[S.proof].tg:null;
     ${tg('allow','Sam opens his own photo','<div class="im" style="background:linear-gradient(135deg,#9DB0A3,#5E7A6E)"></div><b>Sam opens his own photo</b>Shown','pair','div')}
     ${tg('deny','Sam opens Jo’s photo','<div class="im">Refused</div><b>Sam opens Jo’s photo</b>Refused, as before','pair deny'+(ev==='deny'?' ev-hl':''),'div')}</div>
    <p class="big" style="font-size:30px">${tg('count','the count','48,210 <span style="font-weight:500;color:var(--ink2)">of</span> 48,210','',(ev==='count'?'span':'span'),ev==='count'?'style="outline:2.5px solid var(--ink);outline-offset:3px;border-radius:4px"':'')}</p>
-   <p class="foot" style="text-align:center">${tg('speed','open time','Median open time 0.4 s (was 0.3 s)','',ev==='speed'?'b':'span')} · ${tg('bill','the bill','$212 → $64 a month, from the price list')}</p>`;}
+   <p class="foot" style="text-align:center">${tg('speed','open time','Median open time 0.4 s (was 0.3 s); slowest 1.3 s','',ev==='speed'?'b':'span')} · ${tg('bill','the bill','$212 → $64 a month, from the price list')}</p>`;}
 
 /* G: a number, as its runs */
 const BEF=[1120,1135,1148,1150,1155,1160,1162,1168,1170,1170],AFT=[350,355,360,362,365,370,372,376,385,391];
@@ -759,14 +781,19 @@ function scrub(){const s=sh(),dur=curDur();
   const mt=S.marks.map((m,k)=>m.at===undefined?'':`<span class="tick m" style="left:${m.at/dur*100}%">${k+1}</span>`).join('');
   return `<div class="scrub"><button class="play" data-act="play" aria-label="${S.playing?'Pause':'Play'} the recording" ${S.mode==='mark'?'disabled':''}>${S.playing?PAUSE:PLAY}</button>
    <div class="track">${ticks}<input type="range" id="scrub" min="0" max="${dur}" step="1" value="${Math.round(S.t)}" aria-label="Position in the recording" ${S.mode==='mark'?'disabled':''}>${mt}</div>
-   <span class="time">${mmss(S.t)} / ${mmss(dur)}<br><span style="font-weight:500">plays ${s.speed}× fast</span></span></div>`;}
+   <span class="time">${mmss(S.t)} / ${mmss(dur)}</span></div>
+   ${s.speeds?`<div class="spd"><span class="seg" role="group" aria-label="Playing speed">${s.speeds.map(v=>`<button data-act="spd" data-v="${v}" aria-pressed="${spd()===v}">${v===1?'Real speed':v+'× faster'}</button>`).join('')}</span></div>`:`<p class="hint" style="margin:6px 0 0">Time-lapse: ${s.speed}× faster than real time.</p>`}`;}
+function spd(){const s=sh();return S.spd||(s.speeds?s.speeds[0]:s.speed);}
 
 /* ======================= the rail ======================= */
 function rail(){const s=sh();
   const DN=doneOf(),proved=DN.filter(d=>!d.not),not=DN.filter(d=>d.not);
   let h='';
-  if(S.mode==='back')h+=backBand();
+  if(S.mode==='accepted')return receiptHTML();
+  if(s.told&&S.undo)return toldUndoHTML();
+  if(S.rev===2)h+=backBand();
   if(s.act&&(S.mode==='act'||S.mode==='done'))return h+actRail();
+  if(s.told&&desk())h+=`<div class="r-sec"><p class="r-h">Done, inside what you allowed</p><p class="judge none">${s.told.basis}</p></div>`;
   if(desk()&&(s.judge||s.judgeNone))h+=`<div class="r-sec"><p class="r-h">Yours to judge</p><p class="judge ${s.judge?'':'none'}">${s.judge||s.judgeNone}</p></div>`;
   if(s.fork)h+=forkHTML();
   const all=not.length?`${NUM[proved.length]} pass`:`all ${NUM[proved.length]} pass`; /* the gap is said once, above the yes */
@@ -777,13 +804,30 @@ function rail(){const s=sh();
   if(S.proof!==null){const d=DN[S.proof];h+=`<div class="pdetail"><b>${d.not?'Not checked: ':(S.proof+1)+'. '}${d.t}</b><br>${d.how}
     ${S.proof===0?`<details class="raw"><summary>The checker’s own words</summary><pre>${esc(s.raw)}</pre></details>`:''}</div>`;}
   h+=`</div>`;
-  if(s.hand&&S.mode==='look')h+=`<div class="r-sec"><button class="lnk" data-act="hand" aria-expanded="${S.hand}">Try it in your hand</button>${S.hand?`<p class="hint" style="margin:0">${s.hand}</p>`:''}</div>`;
-  if(S.marks.length&&S.mode!=='back')h+=`<div class="r-sec"><p class="r-h">Your marks</p>${marksList()}</div>`;
+  if(s.hand&&(S.mode==='look'||S.mode==='mark'))h+=handHTML();
+  if(S.marks.length&&S.rev!==2)h+=`<div class="r-sec"><p class="r-h">Your marks</p>${marksList()}</div>`;
   if(s.under&&S.mode==='look')h+=`<p class="hint">${s.under}</p>`;
   return h;}
-function marksList(){return `<ul class="marks">${S.marks.map((m,k)=>`<li><span class="pin">${k+1}</span><span><b>${m.why==='Say it…'?esc(m.said):m.why+(m.said?': '+esc(m.said):'')}</b><span class="anc">on ${esc(m.label)}${m.at!==undefined?' at '+mmss(m.at):''}${m.w?' · '+m.w+' width':''}</span></span>${S.mode==='mark'?`<button class="lnk inl" data-act="unmark" data-n="${k}" aria-label="Take back mark ${k+1}">Take back</button>`:''}</li>`).join('')}</ul>`;}
+function marksList(){return `<ul class="marks">${S.marks.map((m,k)=>`<li><span class="pin">${k+1}</span><span><b>${m.why==='Say it…'?esc(m.said):m.why+(m.said?': '+esc(m.said):'')}</b><span class="anc">on ${esc(m.label)}${m.at!==undefined?' at '+mmss(m.at):''}${m.w?' · '+m.w+' width':''}${m.src==='phone'?' · from your phone':''}</span></span>${S.mode==='mark'?`<button class="lnk inl" data-act="unmark" data-n="${k}" aria-label="Take back mark ${k+1}">Take back</button>`:''}</li>`).join('')}</ul>`;}
 function verLabel(){return 'the first version';}
-function backBand(){const s=sh(),n=S.marks.length;
+/* the phone handoff, drawn: launch, build check, capture, cancel, the mark coming back, and a failed handoff */
+function handHTML(){const sec=x=>`<div class="r-sec hand"><p class="r-h">On your phone</p>${x}</div>`;
+  if(!S.hand)return `<div class="r-sec"><button class="lnk" data-act="hand" data-v="send">Try it in your hand</button><p class="hint" style="margin:0">Puts this exact build on your phone, for feel and speed in your hand.</p></div>`;
+  if(S.hand==='sending')return sec(`<p style="margin:0 0 8px"><b>Sending this build to your phone…</b></p><button class="b" data-act="hand" data-v="cancel">Cancel</button>`);
+  if(S.hand==='failed')return sec(`<p style="margin:0 0 8px"><b>Your phone didn’t answer.</b> It may be asleep or offline. Nothing was installed and nothing here changed.</p><div class="acts sm"><button class="b" data-act="hand" data-v="send">Try again</button><button class="b" data-act="hand" data-v="cancel">Cancel</button></div>`);
+  return sec(`<p style="margin:0 0 4px"><b>On your phone now.</b> It reports the same build that was checked at 16:10, so what you try is what was checked.</p><p class="hint" style="margin:0 0 8px">Shake the phone to mark something. The mark comes back here, on the same step.</p><button class="b" data-act="hand" data-v="cancel">Done with the phone</button>`);}
+/* receipts name exactly what was said yes to: the version, and every answer that was his */
+function receiptHTML(){const s=sh(),r=S.accepted||{};
+  const which=r.rev===2?'the second version, checked again':'the version that was checked';
+  let h=`<div class="r-sec"><p class="r-h">Your answer</p><div class="receipt"><b>${s.okLabel?esc(s.okLabel)+'.':'You said it looks right.'}</b> That is your judgement of ${which}; the checking stays the checker’s.`;
+  if(s.id==='E')h+=`<ul class="cant" style="margin-top:6px">${PR.map(x=>`<li>${x[0]}: ${money(x[1])} → <b>${money(x[2])}</b></li>`).join('')}</ul>From 1 Dec, 00:00. Gift vouchers already sold: <b>${r.fork==='Honour in full'?'honoured in full':'the difference is charged'}</b>. Undo puts all 12 back until a customer pays a new price.`;
+  if(s.id==='K')h+=` You chose: <b>${r.fork==='Wait'?'wait; Colorado comes back to you when sales there pass $100,000':'register in Colorado now'}</b>.`;
+  if(s.id==='L')h+=` The 214 test accounts are removed; the 6 in use stay. They can be brought back for 30 days.`;
+  return h+`</div><div class="acts"><button class="b" data-act="takeback" data-k="takeback">Take back</button></div></div>`;}
+function toldUndoHTML(){const t=sh().told;
+  if(S.undo==='done')return `<div class="r-sec"><p class="r-h">Undone</p><div class="receipt">${t.undone}</div></div>`;
+  return `<div class="r-sec"><p class="r-h">Undo</p><p class="q">${t.undo}</p><div class="acts sm"><button class="b red" data-act="undo" data-v="do" data-k="undodo">Undo it</button><button class="b" data-act="undo" data-v="keep">Keep it</button></div></div>`;}
+function backBand(){const s=sh(),n=S.marks.filter(m=>m.src!=='phone').length;
   return `<div class="backband"><span class="t">Your ${NUM[n]} mark${n>1?'s':''}: ${n>1?'all':''} dealt with</span>
    <ul class="marks" style="margin-top:6px">${S.marks.map((m,k)=>`<li><span class="pin done">${k+1} ✓</span><span>${s.answers[k].note}${m.said?`<span class="anc">You said: ${esc(m.said)}</span>`:''}
      <span class="seg" role="group" aria-label="Before or now for mark ${k+1}"><button data-act="cmp" data-n="${k}" aria-pressed="${S.compare===k}">Before</button><button data-act="cmp" data-n="-1" aria-pressed="${S.compare!==k}">Now</button></span></span></li>`).join('')}</ul></div>`;}
@@ -792,7 +836,8 @@ function forkHTML(){const f=sh().fork;
    ${S.fork?`<p class="chosen">✓ ${esc(S.fork)} <button class="lnk inl" data-act="fork" data-v="">Change</button></p>`:`<div class="chips" style="margin-top:8px">${f.opts.map(o=>`<button class="chip" data-act="fork" data-v="${esc(o)}">${o}</button>`).join('')}</div>`}
    <p class="wait">${f.wait}</p></div>`;}
 function actRail(){const a=sh().act;
-  if(S.mode==='done')return `<div class="r-sec"><p class="r-h">Done</p><div class="receipt">${S.stopped?a.stopped:a.receipt}</div>${S.stopped?'':`<div class="bar" style="padding-left:0;padding-right:0;border:0"><button class="b" data-act="stopact">${a.stop}</button></div>`}</div>`;
+  const all=sh().id==='I'&&(S.doneRec?S.doneRec.aud:S.aud)==='all';
+  if(S.mode==='done')return `<div class="r-sec"><p class="r-h">Done</p><div class="receipt">${S.stopped?a.stopped:all?a.receiptAll:a.receipt}</div>${S.stopped||all?'':`<div class="bar" style="padding-left:0;padding-right:0;border:0"><button class="b" data-act="stopact">${a.stop}</button></div>`}</div>`;
   const said=sh().id==='I'&&S.aud==='all'?'Release Driving app 2.4 to all 3,180 iPhone users today at 14:00.':a.said;
   return `<div class="r-sec"><p class="r-h">Before this goes out · said back</p><p class="saidback">${said}</p>
    ${sh().id==='I'?`<label class="opt"><input type="radio" name="aud" value="tenth" data-act="aud" ${S.aud!=='all'?'checked':''}> <span><b>1 in 10 today, everyone by Monday</b><br><span class="hint">I’d say this: it can be stopped until Monday.</span></span></label><label class="opt"><input type="radio" name="aud" value="all" data-act="aud" ${S.aud==='all'?'checked':''}> <span><b>Everyone today</b><br><span class="hint">3,180 people at once; nothing to stop.</span></span></label>`
@@ -804,34 +849,41 @@ function bar(){const s=sh();
   if(S.mode==='mark'){
     if(S.pend)return `<div class="tray" role="group" aria-label="What is wrong"><p class="q">What’s wrong with ${esc(S.pend.label)}?</p><div class="chips">${s.reasons.map((r,k)=>`<button class="chip" data-act="why" data-v="${esc(r)}" data-k="why${k}">${r}</button>`).join('')}</div>
       ${S.pend.say?`<div class="say"><input id="sayIn" placeholder="Say it, or type" aria-label="Say what is wrong" autocomplete="off"><button class="b pri" data-act="sayok">Add</button></div>`:''}</div>`;
+    if(S.choose)return `<div class="tray" role="group" aria-label="Which part"><p class="q">Which part did you mean?</p><div class="chips">${S.choose.list.map((c,k)=>`<button class="chip" data-act="pick" data-n="${k}" data-k="pick${k}">${esc(c.label)}</button>`).join('')}</div></div>`;
     if(S.scope)return `<div class="tray"><p class="q">Just this once, or always?</p><div class="chips"><button class="chip" data-act="send" data-v="once">Just this once</button><button class="chip" data-act="send" data-v="always">Always, for this kind</button></div></div>`;
     return `<div class="bar"><button class="b" data-act="whole">${desk()?'The whole thing':'Whole thing'}</button><span class="grow"></span><button class="b" data-act="look">${desk()?'Done marking':'Done'}</button>${S.marks.length?`<button class="b red" data-act="sendback" data-k="sendback">Send back · ${S.marks.length}</button>`:''}</div>`;}
   if(S.mode==='sent')return `<div class="sent" role="status"><b>Sent back with ${NUM[S.marks.length]} mark${S.marks.length>1?'s':''}.</b><span class="hint">It comes back checked again before you see it, by 17:00. Each mark will be answered in place.</span></div>`;
-  if(s.act&&S.mode==='act')return `<div class="bar"><button class="hold" data-act="hold" data-k="hold" aria-label="${esc(s.act.confirm)} Press and hold"><span class="fill" style="width:${S.hold*100}%"></span><span>${s.act.confirm}</span> <small style="position:relative;font-weight:500;opacity:.85">· press and hold</small></button><button class="b" data-act="look" style="flex:1">Not yet</button></div>`;
+  if(s.act&&S.mode==='act')return canAct()?`<div class="bar"><button class="hold" data-act="hold" data-k="hold" aria-label="${esc(s.act.confirm)} Press and hold"><span class="fill" style="width:${S.hold*100}%"></span><span>${s.act.confirm}</span> <small style="position:relative;font-weight:500;opacity:.85">· press and hold</small></button><button class="b" data-act="look" style="flex:1">Not yet</button></div>`
+    :`<div class="bar"><button class="hold" data-act="hold" disabled aria-disabled="true" style="opacity:.5;cursor:not-allowed"><span>Held: changed after the check</span></button><p class="under" style="margin:0">Nothing goes out until the new build has been checked and said back to you again.</p><button class="b" data-act="look" style="flex:1">Not yet</button></div>`;
   if(S.mode==='done')return '';
-  if(s.id==='I')return `<div class="bar"><button class="b red" data-act="toact" style="flex:1">Release…</button><button class="b" data-act="mark">Something’s wrong</button></div>`;
-  const ok=!S.changed,DN=doneOf();
+  if(s.id==='I')return `<div class="bar"><button class="b red" data-act="toact" style="flex:1 1 100%" ${canAct()?'':'disabled'}>${canAct()?'Release…':'Held: changed after the check'}</button><button class="b" data-act="mark">Something’s wrong</button></div>`;
+  if(S.mode==='accepted')return '';
+  if(s.told){if(S.undo)return '';const DNt=doneOf(),gap=DNt.filter(d=>d.not);
+    return `<div class="bar">${gap.map(d=>`<p class="caveat" style="cursor:default"><b>Not checked: ${lc(d.t)}.</b></p>`).join('')}<button class="b" data-act="undo" data-v="ask" data-k="undo">Undo…</button><button class="b" data-act="mark" data-k="mark">Something’s wrong</button></div>`;}
+  const ok=canAct(),DN=doneOf(),needFork=s.fork&&!S.fork;
   const unp=DN.map((d,k)=>[d,k]).filter(([d])=>d.not);
   const dk=desk();
   const cav=unp.length&&ok?unp.map(([d,k])=>`<button class="caveat" data-act="proof" data-n="${k}" aria-pressed="${S.proof===k}"><b>Not checked: ${lc(d.t)}.</b> Your yes does not cover it.</button>`).join(''):'';
-  return `<div class="bar ${dk?'stack':''}">${cav}${dk?'':`<button class="b" data-act="mark" data-k="mark">Mark</button>`}
-   <button class="b pri ${dk?'':'grow'}" data-act="accept" ${ok?'':'disabled'}>${ok?(s.okLabel||'Looks right'):'Can’t accept: changed after the check'}</button>
+  return `<div class="bar ${dk?'stack':''}">${cav}${needFork&&ok?`<p class="caveat" style="cursor:default;border-left-style:solid;border-left-color:var(--rubric)"><b>Answer “${esc(s.fork.short)}” first.</b> Your yes can’t go through without it.</p>`:''}${dk?'':`<button class="b" data-act="mark" data-k="mark">Mark</button>`}
+   <button class="b pri ${dk?'':'grow'}" data-act="accept" ${ok&&!needFork?'':'disabled'}>${ok?(s.okLabel||'Looks right'):'Can’t accept: changed after the check'}</button>
    ${dk?`<button class="b" data-act="mark" data-k="mark">Mark what’s wrong</button>`:''}
-   ${s.act?`<button class="b red ${dk?'':'full'}" data-act="toact">${s.act.label}…</button>`:''}</div>`;}
+   ${s.act?`<button class="b red ${dk?'':'full'}" data-act="toact" ${ok?'':'disabled'}>${ok?s.act.label+'…':'Held: changed after the check'}</button>`:''}</div>`;}
 
 /* ======================= render ======================= */
 function render(){
   const s=sh(),d=desk(),ae=document.activeElement,keep=S.focus||(ae&&ae.dataset&&ae.dataset.k);
-  const sealTxt=S.changed?`Changed after it was checked: a newer build arrived at 16:31. Checking it again, about 10 minutes. Until then there is nothing to accept.`:(S.mode==='back'&&s.seal2?s.seal2:s.seal);
-  const head=`<div class="sh-head"><div class="sh-top"><span>${S.mode==='back'?'<span class="ver">Second version</span>':s.word}</span><span>${s.budget}</span></div>
+  const sealTxt=S.changed?`Changed after it was checked: a newer build arrived at 16:31. Checking it again, about 10 minutes. Until then nothing can be accepted or sent.`:(S.rev===2&&s.seal2?s.seal2:s.seal);
+  const head=`<div class="sh-head"><div class="sh-top"><span>${S.rev===2?'<span class="ver">Second version</span>':s.word}</span><span>${s.budget}</span></div>
     <h2 class="sh-goal" tabindex="-1" data-k="goal">${s.goal}</h2><div class="seal ${S.changed?'broken':''}"><span class="stamp" title="What you see is what was checked" aria-hidden="true"></span><span>${sealTxt}</span></div>
-    ${!d&&(s.judge||s.judgeNone)&&!(s.act&&(S.mode==='act'||S.mode==='done'))?`<p class="judge ph ${s.judge?'':'none'}"><span class="r-h">Yours to judge</span>${s.judge||s.judgeNone}</p>`:''}</div>`;
-  const stage=`<div class="stage ${S.mode==='mark'?'marking':''}" id="stage">${S.mode==='mark'?`<span class="stage-hint">${s.dur?'Frozen at '+mmss(S.t)+'. ':''}Tap what’s wrong.</span>`:''}${S.compare!==null&&S.mode==='back'?`<span class="ribbon">Before · ${verLabel()}</span>`:''}<div id="thing">${STAGE[s.id]()}</div>${s.dur?scrub():''}</div>`;
+    ${!d&&(s.judge||s.judgeNone)&&!(s.act&&(S.mode==='act'||S.mode==='done'))?`<p class="judge ph ${s.judge?'':'none'}"><span class="r-h">Yours to judge</span>${s.judge||s.judgeNone}</p>`:''}
+    ${!d&&s.told&&!S.undo?`<p class="judge ph none"><span class="r-h">Done, inside what you allowed</span>${s.told.basis}</p>`:''}</div>`;
+  const stage=`<div class="stage ${S.mode==='mark'?'marking':''}" id="stage">${S.mode==='mark'?`<span class="stage-hint">${s.dur?'Frozen at '+mmss(S.t)+'. ':''}Tap what’s wrong.</span>`:''}${S.compare!==null&&S.rev===2?`<span class="ribbon">Before · ${verLabel()}</span>`:''}${s.sim?`<span class="sim">Prototype: ${s.sim}</span>`:''}<div id="thing" ${S.mode==='mark'&&s.id==='B'?'data-choose="1"':''}>${STAGE[s.id]()}</div>${s.dur?scrub():''}</div>`;
   const railH=`<div class="rail">${rail()}${d?bar():''}</div>`,lead=!d&&s.act&&(S.mode==='act'||S.mode==='done');
   app.innerHTML=`<article class="sheet" aria-label="Showing: ${esc(s.goal)}">${head}<div class="sh-body">${lead?railH+stage:stage+railH}</div>${d?'':bar()}</article>`;
   $('#pNar').textContent=s.nar;$('#pS').value=String(S.i);
   $('#pBack').disabled=!(S.mode==='sent'&&s.answers);
-  $('#pMark').disabled=!s.canned||S.mode==='back';
+  $('#pMark').disabled=!s.canned||S.rev===2;
+  $('#pPhone').hidden=$('#pPhoneMark').hidden=!s.hand;$('#pPhone').textContent=S.handFail?'Phone: won’t answer':'Phone: answers';$('#pPhoneMark').disabled=S.hand!=='ready';
   if(keep){const el=app.querySelector(`[data-k="${keep}"]`);if(el)el.focus({preventScroll:true});}S.focus=null;
   const sc=$('#scrub');if(sc)sc.addEventListener('input',e=>{S.t=+e.target.value;renderStage();});
   history.replaceState(null,'',`#s=${s.id}&mode=${S.mode}&theme=${S.theme}`);
@@ -839,13 +891,13 @@ function render(){
 function renderStage(){const th=$('#thing');if(!th)return;th.innerHTML=STAGE[sh().id]();
   const sc=$('#scrub');if(sc&&document.activeElement!==sc)sc.value=Math.round(S.t);
   const tl=app.querySelector('.time');if(tl)tl.firstChild.textContent=mmss(S.t)+' / '+mmss(curDur());}
-function curDur(){const s=sh();return S.mode==='back'&&s.id==='A2'?1140:s.dur;}
+function curDur(){const s=sh();return S.rev===2&&s.id==='A2'?1140:s.dur;}
 
 /* play */
 let timer=null;
 function stopPlay(){if(timer){clearInterval(timer);timer=null;}S.playing=false;}
 function play(){const s=sh(),dur=curDur();if(S.t>=dur)S.t=0;S.playing=true;
-  timer=setInterval(()=>{S.t=Math.min(dur,S.t+s.speed/10);if(S.t>=dur)stopPlay();renderStage();
+  timer=setInterval(()=>{S.t=Math.min(dur,S.t+spd()/10);if(S.t>=dur)stopPlay();renderStage();
     const pb=app.querySelector('[data-act=play]');if(pb){pb.innerHTML=S.playing?PAUSE:PLAY;}},100);}
 
 /* ======================= actions ======================= */
@@ -863,12 +915,16 @@ function act(a,d,el,ev){const s=sh();
   case 'unmark':S.marks.splice(+d.n,1);break;
   case 'sendback':S.scope=true;break;
   case 'send':S.mode='sent';S.scope=false;break;
-  case 'accept':S.mode='accepted';app.innerHTML=`<article class="sheet"><div class="sh-head"><div class="sh-top"><span>${s.word}</span></div><h2 class="sh-goal">${s.goal}</h2>
-    <div class="seal"><span class="stamp"></span><span><b>You said it looks right.</b> That is your judgement of this exact version; the checking stays the checker’s. <button class="lnk inl" data-act="look">Take back</button></span></div></div></article>`;return;
-  case 'toact':S.mode='act';S.hold=0;break;
+  case 'accept':if(!canAccept())return;S.prevMode=S.mode;S.mode='accepted';S.accepted={rev:S.rev,fork:S.fork,aud:S.aud};S.focus='takeback';break;
+  case 'takeback':S.mode=S.prevMode||'look';S.accepted=null;break;
+  case 'toact':if(!canAct())return;S.mode='act';S.hold=0;break;
+  case 'undo':if(d.v==='ask')S.undo='ask';else if(d.v==='do')S.undo='done';else S.undo=null;break;
+  case 'spd':S.spd=+d.v;break;
+  case 'pick':{const c=S.choose.list[+d.n];S.pend={tg:c.tg,label:c.label,w:S.choose.w};S.choose=null;S.focus='why0';break;}
+  case 'hand':if(d.v==='send'){S.hand='sending';render();setTimeout(()=>{if(S.hand==='sending'){S.hand=S.handFail?'failed':'ready';render();}},900);return;}
+    S.hand=null;break;
   case 'stopact':S.stopped=true;break;
   case 'fork':S.fork=d.v||null;break;
-  case 'hand':S.hand=!S.hand;break;
   case 'cmp':{const n=+d.n;S.compare=n<0?null:n;if(S.compare!==null){const m=S.marks[n];if(m.at!==undefined)S.t=m.at;}break;}
   case 'bw':S.bWidth=d.v;break;
   case 'bview':S.bView=d.v;break;
@@ -887,6 +943,12 @@ app.addEventListener('click',e=>{
       let best=null,bd=1e9;for(let t=0;t<=1080;t+=10){const [px,py]=posAt(RT,t),dd=(px-x)**2+(py-y)**2;if(dd<bd){bd=dd;best=[px,py,t];}}
       S.pend={tg:'pt',x:Math.round(best[0]),y:Math.round(best[1]),at:best[2],label:'the route at '+mmss(best[2])};render();return;}
     const pic=e.target.closest('[data-pic]');if(pic){const r=pic.getBoundingClientRect();S.pend={tg:'icon',x:Math.round((e.clientX-r.left)/r.width*100),y:Math.round((e.clientY-r.top)/r.height*100),label:'this spot on the icon'};render();return;}
+    const vpEl=e.target.closest('.vp');if(vpEl&&sh().id==='B'){const w=vpEl.closest('.webcol').querySelector('.webcap').textContent.startsWith('Phone')?'phone':'desk';
+      const near=[...vpEl.querySelectorAll('[data-tg]')].map(el=>{const r=el.getBoundingClientRect();const dx=Math.max(r.left-e.clientX,0,e.clientX-r.right),dy=Math.max(r.top-e.clientY,0,e.clientY-r.bottom);return {el,d:Math.hypot(dx,dy)};}).filter(x=>x.d<=22).sort((a,b)=>a.d-b.d);
+      const list=near.map(x=>({tg:x.el.dataset.tg,label:x.el.dataset.label}));
+      if(list.length===1){S.pend={tg:list[0].tg,label:list[0].label,w};S.focus='why0';}else if(list.length>1){S.choose={w,list};S.pend=null;S.focus='pick0';}
+      else{S.pend={tg:'whole',label:'the page at '+w+' width',w};}
+      render();return;}
     const t=e.target.closest('[data-tg]');if(t){const s=sh();S.pend={tg:t.dataset.tg,label:t.dataset.label,at:s.dur?Math.round(S.t):undefined,w:s.id==='B'?(t.closest('.webcol')&&t.closest('.webcol').querySelector('.webcap').textContent.startsWith('Phone')?'phone':'desk'):undefined};S.focus='why0';render();return;}
   }
   const b=e.target.closest('[data-act]');if(!b||b.disabled)return;act(b.dataset.act,b.dataset,b,e);});
@@ -899,8 +961,9 @@ app.addEventListener('keydown',e=>{
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.mode==='mark'){if(S.pend){S.pend=null;S.sel=null;}else S.mode='look';render();}});
 /* press and hold to confirm something that cannot be undone */
 let holdT=null;
-function holdStart(e){const b=e.target.closest('[data-act=hold]');if(!b)return;e.preventDefault();const t0=performance.now();clearInterval(holdT);
-  holdT=setInterval(()=>{S.hold=Math.min(1,(performance.now()-t0)/1200);const f=app.querySelector('.hold .fill');if(f)f.style.width=S.hold*100+'%';if(S.hold>=1){clearInterval(holdT);holdT=null;S.mode='done';render();}},30);}
+function holdStart(e){const b=e.target.closest('[data-act=hold]');if(!b)return;e.preventDefault();if(b.disabled||!canAct()||S.mode!=='act')return;const t0=performance.now();clearInterval(holdT);
+  holdT=setInterval(()=>{if(!canAct()){holdEnd();render();return;}S.hold=Math.min(1,(performance.now()-t0)/1200);const f=app.querySelector('.hold .fill');if(f)f.style.width=S.hold*100+'%';if(S.hold>=1){clearInterval(holdT);holdT=null;completeAct();}},30);}
+function completeAct(){if(!canAct()||S.mode!=='act'){S.hold=0;render();return false;}S.mode='done';S.doneRec={aud:S.aud};render();return true;}
 function holdEnd(){if(holdT){clearInterval(holdT);holdT=null;S.hold=0;const f=app.querySelector('.hold .fill');if(f)f.style.width='0';}}
 app.addEventListener('pointerdown',holdStart);app.addEventListener('pointerup',holdEnd);app.addEventListener('pointerleave',holdEnd,true);
 app.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&e.target.matches('[data-act=hold]')&&!e.repeat)holdStart(e);});
@@ -912,15 +975,17 @@ function applyMode(m){const s=sh();
   if(m==='mark'){S.mode='mark';}
   if(m==='marked'&&s.canned){S.mode='mark';S.marks=s.canned.map(x=>Object.assign({},x));if(s.canned[0].at!==undefined)S.t=s.canned[0].at;}
   if(m==='sent'&&s.canned){S.marks=s.canned.map(x=>Object.assign({},x));S.mode='sent';}
-  if(m==='back'&&s.canned){S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';if(s.canned[0].at!==undefined)S.t=s.canned[0].at;}
+  if(m==='back'&&s.canned){S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';S.rev=2;if(s.canned[0].at!==undefined)S.t=s.canned[0].at;}
   if(m==='act'&&s.act)S.mode='act';
-  if(m==='done'&&s.act)S.mode='done';
+  if(m==='done'&&s.act){S.mode='done';S.doneRec={aud:S.aud};}
   if(m==='changed')S.changed=true;
   if(m==='proof')S.proof=0;}
 $('#pS').innerHTML=SH.map((s,i)=>`<option value="${i}">${s.kind} · ${s.goal}</option>`).join('');
 $('#pS').addEventListener('change',e=>load(+e.target.value));
 $('#pMark').addEventListener('click',()=>{const s=sh();if(!s.canned)return;S.mode='mark';S.marks=s.canned.map(x=>Object.assign({},x));S.pend=null;if(s.canned[0].at!==undefined)S.t=s.canned[0].at;render();});
-$('#pBack').addEventListener('click',()=>{const s=sh();if(!s.canned)return;S.marks=s.canned.slice(0,Math.max(1,Math.min(S.marks.length,s.canned.length))).map(x=>Object.assign({},x));if(S.marks.length<s.canned.length)S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';S.compare=null;if(S.marks[0].at!==undefined)S.t=S.marks[0].at;render();});
+$('#pBack').addEventListener('click',()=>{const s=sh();if(!s.canned)return;S.marks=s.canned.slice(0,Math.max(1,Math.min(S.marks.length,s.canned.length))).map(x=>Object.assign({},x));if(S.marks.length<s.canned.length)S.marks=s.canned.map(x=>Object.assign({},x));S.mode='back';S.rev=2;S.compare=null;if(S.marks[0].at!==undefined)S.t=S.marks[0].at;render();});
+$('#pPhone').addEventListener('click',()=>{S.handFail=!S.handFail;render();});
+$('#pPhoneMark').addEventListener('click',()=>{if(S.hand!=='ready')return;stopPlay();S.t=56;S.mode='mark';S.marks.push({at:56,tg:'payNow',label:'“Pay now”',why:'Say it…',said:'Too far down on my phone; I had to scroll',src:'phone'});render();});
 $('#pChange').addEventListener('click',()=>{S.changed=!S.changed;render();});
 function setTheme(t){S.theme=t;document.documentElement.dataset.theme=t;}
 $('#pTheme').addEventListener('click',()=>{setTheme(S.theme==='dark'?'light':'dark');render();});
@@ -944,7 +1009,11 @@ function runCheck(){
         if(m==='act'&&!sheet.querySelector('.saidback'))errs.push('not said back');
         if(m==='done'&&!sheet.querySelector('.receipt'))errs.push('no receipt');
         if(m==='changed'&&!sheet.querySelector('.seal.broken'))errs.push('seal not broken');
-        if(m==='changed'&&!sheet.querySelector('[data-act=accept][disabled]')&&s.id!=='I')errs.push('accept still possible after change');
+        if(m==='changed'&&sheet.querySelector('[data-act=accept]:not([disabled])'))errs.push('accept still possible after change');
+        if(m==='changed'&&sheet.querySelector('[data-act=toact]:not([disabled])'))errs.push('the act is still reachable after change');
+        /* guard: in the pointing view every part he can point at is at least 44 by 44 px (small page parts go through a chooser) */
+        if(m==='mark'||m==='marked'){const tiny=[...sheet.querySelectorAll('[data-tg],[data-w]')].filter(el=>!el.closest('[data-choose]')).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&(r.width<43.5||r.height<43.5);});
+          if(tiny.length)errs.push('pointing target under 44 px: '+tiny.slice(0,3).map(el=>(el.dataset.label||el.textContent).trim().slice(0,24)+' '+Math.round(el.getBoundingClientRect().width)+'×'+Math.round(el.getBoundingClientRect().height)).join(' | '));}
         if(m==='proof'&&!sheet.querySelector('.pdetail'))errs.push('proof line does not open');
         /* guard: no word of the method on his screen */
         const bad=sheet.innerText.match(/\b(par|cycles?|gate|counterpart|ledger|sittings?|watcher|forks?|slice|backbrief)\b|\bthe watch\b/gi);
@@ -956,7 +1025,40 @@ function runCheck(){
         if(m==='back'||m==='act')extra.push(s.id+' '+m+' '+words(sheet));
         if(m==='look'){const all=words(sheet);const avail=all+s.done.reduce((a,d)=>a+d.how.split(/\s+/).length,0)+s.raw.split(/\s+/).length;tally.push([s.id,all,avail]);}
       }
-      if(errs.length){fail++;rows.push(`<div class="f">✗ ${s.id} ${m}: ${errs.join('; ')}</div>`);}else{pass++;rows.push(`<div>✓ ${s.id} ${m}</div>`);}});});
+      if(errs.length){fail++;rows.push(`<div class="f">✗ ${s.id} ${m}: ${errs.join('; ')}</div>`);}else{pass++;rows.push(`<div>✓ ${s.id} ${m}</div>`);}});
+    /* behaviour tests: each returns an error, or nothing when it holds */
+    const T=(name,fn)=>{let err=null;try{err=fn();}catch(x){err='threw: '+x.message;}
+      if(err){fail++;rows.push(`<div class="f">✗ ${s.id} ${name}: ${err}</div>`);}else{pass++;rows.push(`<div>✓ ${s.id} ${name}</div>`);}};
+    const txt=()=>app.innerText;
+    if(s.act)T('nothing goes out once changed after the check',()=>{
+      load(i,'changed');act('toact',{});if(S.mode==='act')return 'reached the act after a change';
+      load(i,'act');S.changed=true;render();const hb=app.querySelector('[data-act=hold]');if(!hb||!hb.disabled)return 'hold not held';
+      holdStart({target:hb,preventDefault(){}});if(holdT)return 'hold started';
+      if(completeAct()!==false||S.mode==='done')return 'completed anyway';
+      if(!/Held: changed after the check/.test(txt()))return 'held state not visible';});
+    if(s.fork)T('his choice must be answered, and the receipt names it',()=>{
+      load(i);if(!app.querySelector('[data-act=accept][disabled]'))return 'accept open before his choice';
+      act('accept',{});if(S.mode==='accepted')return 'accepted without his choice';
+      S.fork=s.fork.opts[0];render();act('accept',{});if(S.mode!=='accepted')return 'cannot accept after answering';
+      if(s.id==='E'&&!(/\$189\.00/.test(txt())&&/honoured in full/.test(txt())))return 'receipt lacks prices or voucher answer';
+      if(s.id==='K'&&!/wait/.test(txt()))return 'receipt lacks his choice';});
+    if(s.canned)T('the second version is kept through accept and take back',()=>{
+      load(i,'back');act('accept',{});if(!/second version/.test(txt()))return 'receipt does not name the second version';
+      act('takeback',{});if(S.rev!==2||!/Checked again/.test(app.querySelector('.seal').innerText))return 'reverted to the first version';});
+    if(s.id==='I')T('everyone today has its own receipt',()=>{
+      load(i,'act');S.aud='all';render();if(!/to all 3,180/.test(txt()))return 'said back wrong';completeAct();
+      if(!/all 3,180/.test(txt())||/Monday/.test(app.querySelector('.receipt').innerText))return 'receipt still describes the staged release';});
+    if(s.told)T('told, not asked: See and Undo, no yes',()=>{
+      load(i);if(app.querySelector('[data-act=accept]'))return 'still asks for a yes';
+      if(!app.querySelector('[data-act=undo]'))return 'no undo';
+      act('undo',{v:'ask'});act('undo',{v:'do'});if(!txt().includes(s.told.undone))return 'undo has no receipt';});
+    if(s.hand)T('the phone handoff is drawn, including failure',()=>{
+      load(i);S.hand='sending';render();if(!/Sending this build/.test(txt())||!app.querySelector('[data-act=hand][data-v=cancel]'))return 'no sending state with cancel';
+      S.hand='ready';render();if(!/same build that was checked/.test(txt()))return 'no build check';
+      S.hand='failed';render();if(!/didn’t answer/.test(txt()))return 'no failed handoff';
+      S.hand='ready';render();S.marks.push({at:56,tg:'payNow',label:'“Pay now”',why:'Say it…',said:'x',src:'phone'});S.mode='mark';S.t=56;render();
+      if(!/from your phone/.test(txt()))return 'phone mark not shown as such';});
+  });
   load(0);
   const tot=tally.reduce((a,x)=>a+x[1],0);
   $('#checkOut').innerHTML=`<div class="check" role="status"><b>Self-check at ${innerWidth} px, ${S.theme}: ${pass} states pass, ${fail} fail.</b><br>
