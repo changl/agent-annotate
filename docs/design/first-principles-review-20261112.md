@@ -10,6 +10,8 @@ Research and design only. Nothing live was changed. Numbers without a named sour
 
 **Revision 2, 12 Nov.** Chang answered round 1 in the session: shape and home are settled, the first stage is wider, and he added targets and the coordinator question. Sections 6, 7 and 9 are new; 1, 2, 10 and 11 are rewritten; the rest has small edits.
 
+**Revision 3, 12 Nov.** Chang answered round 2: the thin coordinator is tried first on agent-annotate; the yardsticks stand, and cycles to done is the number he cares about most; a plan outline comes next, with the look and feel settled before anything is built. New: "Cycles to done" in section 9, a stage 0 in section 10, a finding about old questions in section 6. Companion files in this folder: `stage1-plan-outline-20261112.md` and `home-page-mockup-20261112.html`.
+
 ## 1. Answer
 
 1. **Purpose.** agent-annotate is the one place where the reviewer's decisions enter the build, and the mechanism that carries each decision to the right agent once and shows that it was acted on. It also shows him the state of the work, read from the other tools. Nothing else.
@@ -17,9 +19,9 @@ Research and design only. Nothing live was changed. Numbers without a named sour
 3. **Home (settled).** One home for all pages on M1 Max, the central brain. Other Macs and every kind of agent use the same four commands over the tailnet (section 5).
 4. **Home page.** One page for every project: what needs him, the workers on each Mac and what they are doing, the board, the cost. An analytics tab tracks his targets. No agent writes any of it (section 6).
 5. **Thin coordinator.** A coordinator is a memory, a clerk and a judge. Memory moves to the stores, the clerk becomes a Windmill flow with no tokens, and the judge is a model called per event. No coordinator at all only where a script can pass or fail the work, and only after a shadow trial (section 7).
-6. **Targets.** His load at least 50% lower, tokens at most marginally higher per finished item, quality and progress no worse and aimed higher. Each has a number a script can read (section 9).
+6. **Targets.** The headline is cycles to done: how many times a goal comes back to him before he accepts it. Then his load at least 50% lower, tokens at most marginally higher per finished item, quality and progress no worse and aimed higher. Each has a number a script can read (section 9).
 7. **Today's product.** Keep the round, the card, the per-page database and the scripts. Change 17 page servers into one and 45 commands into four. Delete the compatibility paths (section 8).
-8. **First stage.** Two weeks, read-only, with the home page visible after week one (section 10).
+8. **First stage.** The look and feel is settled on a mock-up before any build. Then two weeks, read-only, with the home page visible after week one (section 10).
 
 ## 2. Already decided, measured or built
 
@@ -41,6 +43,7 @@ Not reopened here. The design builds on these.
 | No sideways scroll with the rail closed; colour meanings; tabs, not a dropdown; newest first. | #226; #136, #123, #148; #230 |
 | Shape: a standalone service with an Orca face. Home: M1 Max, "the central brain". First: the needs-you list, widened to one page for all projects, worker counts per Mac and an analytics tab. | In session, 12 Nov |
 | Targets: his load at least 50% lower than today; tokens only marginally higher, ideally lower for the progress made; quality at least today's, better as a high priority. A thin or absent coordinator must not put a project's progress at risk. | In session, 12 Nov |
+| The thin coordinator is tried first on agent-annotate. The proposed yardsticks stand. Progress per cycle may be the most important number, and total cycles to done is "the biggest brag". Next is a plan outline; the look and feel comes before building. | In session, 12 Nov, round 2 |
 
 **Measured:**
 
@@ -195,6 +198,19 @@ Rebex            1 · oldest 20 m  1 waiting           1 stuck     —          
 
 No agent writes anything on this page. A coordinator stops producing status, and Chang stops asking for it.
 
+### What the first real count showed
+
+Counted on M1 Max's 19 pages on 12 Nov, with the same rule the session-start line uses: 32 questions wait for him on four pages. 17 are new that day, on FLD. The other 15 have waited 41 to 48 days: 9 on Rebex, 3 on a Windmill review page and 3 on "Build workflow, pilot 2", the page of the September build flow. Nothing showed him those.
+
+Two consequences for the design:
+
+- **Old is shown apart from new.** A count of 32 hides that only 17 are live. Questions older than 30 days get their own mark, and one action sets a page's old questions aside.
+- **The September build flow probably did not fail; it stalled.** Its three questions have waited since it was built. That is the likely answer to section 11's first open point, to be confirmed by Chang.
+
+### Mock-up
+
+`home-page-mockup-20261112.html` in this folder: the Projects tab, the Analytics tab and the Orca panel, in dark and light, at desktop and phone width. It uses the live page's own colours, type and number chips (`src/agent_annotate/web/shell.css`), so red still means "needs you", yellow "an agent has it" and grey "nothing to do". Questions waiting, their age and agents per Mac are the real 12 Nov counts; goals, cycles and progress are examples and are tagged so.
+
 ### Analytics tab
 
 One group per target in section 9: his load, tokens, quality, progress. Weekly, by script, with no tokens, for each project and for all together. The first week measured is kept as the baseline and every later week is shown against it.
@@ -324,6 +340,37 @@ The first two rows remove about 820 lines with no change to normal work. The lar
 
 ## 9. Targets and measures
 
+### The headline: cycles to done
+
+Chang, 12 Nov: progress per cycle may be the most important number; total cycles to done is the biggest brag; how to measure it objectively is not obvious. Proposal:
+
+**Three stored events, so a script counts and nobody judges.**
+
+| Term | Meaning | Stored as |
+|---|---|---|
+| Goal | Something he asked for, with a stated "done". | One goal-sized item on the board, with its acceptance checks. |
+| Cycle | The work comes back to him and he sends it on. | One Send round holding a card tied to the goal, or one message he types to an agent about it. |
+| Done | He accepts the result. | "Accept" on the goal's result card. |
+
+**Cycles to done** is the number of cycles between a goal being stated and done. It is counted per goal, so it does not matter that late cycles move a project less than early ones.
+
+**Every cycle has one cause, taken from what he clicked, not from a reading of his words.**
+
+| Kind of cycle | Counted when | Avoidable |
+|---|---|---|
+| His decision | The round holds only decisions that are his: plan, look and feel, go-live. | No. Their number is the goal's par, fixed when he approves the plan. |
+| Sent back | He answers a result card with "Send back". | Yes |
+| Should not have been asked | A card that a standing rule or its own evidence already answered. He marks it with one click, or the rules check catches it. | Yes |
+| His change | He adds to the goal or changes it. | No. Shown apart, so it never counts against the agents. |
+
+The brag is "done in 4 cycles, par 3". The number to drive down is avoidable cycles per goal; its floor is zero. For this to work, every result must reach him as a card with Accept and Send back. That is a card rule for stage 2, and it is why the measure is honest: the cause is recorded at the moment he acts.
+
+**Progress per cycle** is the share of a goal's acceptance checks that pass after each cycle. The checks are written with the plan and fixed when he approves it; a check added later counts as his change. Drawn per goal, it gives the curve he described, steep and then flat, and makes a small goal and a large one comparable.
+
+**One caution.** Fewer cycles can be bought with larger rounds. His load numbers below sit beside it, so a round that takes an hour to answer is not counted as a win.
+
+**Today.** Cycles cannot be counted per goal: a card is not tied to a board item, and only 1 of this board's 5 goal-sized items has acceptance checks (88 of its 195 items do). For agent-annotate as a whole, 27 Sep–11 Nov: 108 answers given in 36 sittings, across 42 page versions, with 172 items finished. Stage 1 counts cycles per project per week from Send rounds and typed messages. Stage 2 ties each card to its goal, and the per-goal count starts there.
+
 ### Chang's targets, 12 Nov
 
 | Target | Number | Counted by script from |
@@ -383,9 +430,10 @@ The simplification plan's stages 0–5 are built. These are new stages. Its opti
 
 | Stage | What | Size | Proof |
 |---|---|---|---|
-| 1 | **Home page and baseline.** Every project on one page on M1 Max: needs you, workers per Mac, board counts. An Orca status-bar count and side panel. Then the analytics tab with a baseline week for the four targets. | Two weeks: the page and the Orca count in week one, analytics in week two. Read-only; no stored data changes. Undo: switch it off. Needs Chang's one-time approval of the plug-in in Orca. | The count equals the sum of the pages' own counts in 20 spot checks. Worker counts equal Orca's on all three Macs in 20 spot checks. A row opens the right card. The baseline exists for every page and project. |
-| 2 | **Card rules and standing rules.** Publish refuses setup asks and over-long cards. "Accept all recommended" is one action. An answer marked as a rule is applied next time instead of asked. | 1–2 weeks. | Typed answers 34% → 15%. Repeat questions zero. |
-| 3 | **Thin coordinator on one project and one kind of work.** One week in shadow, then live. Answers tied to the item; result packets as a file a worker writes. | Shadow one week; live 1–2 weeks. | Shadow matched on 95% of events. Live: turns per round and cost per finished item fall; items finished and reopened are no worse. |
+| 0 | **Look and feel.** The home page, analytics tab and Orca panel are settled on a mock-up with Chang before any build. The accepted mock-up becomes the build's acceptance reference. | Rounds with Chang; the first mock-up exists. | He accepts it. Checked in a real browser, dark and light, desktop and phone. |
+| 1 | **Home page and baseline.** Every project on one page on M1 Max: needs you, workers per Mac, board counts. An Orca status-bar count and side panel. Then the analytics tab with a baseline week for the targets, and cycles per project per week. Outline: `stage1-plan-outline-20261112.md`. | Two weeks: the page and the Orca count in week one, analytics in week two. Read-only; no stored data changes. Undo: switch it off. Needs Chang's one-time approval of the plug-in in Orca. | The count equals the sum of the pages' own counts in 20 spot checks. Worker counts equal Orca's on all three Macs in 20 spot checks. A row opens the right card. The baseline exists for every page and project. Screenshots match the accepted mock-up. |
+| 2 | **Card rules and standing rules.** A card names its goal. A result arrives as a card with Accept and Send back. Publish refuses setup asks and over-long cards. "Accept all recommended" is one action. An answer marked as a rule is applied next time instead of asked. | 1–2 weeks. | Cycles to done counted per goal. Typed answers 34% → 15%. Repeat questions zero. |
+| 3 | **Thin coordinator on agent-annotate, one kind of work.** One week in shadow, then live. Answers tied to the item; result packets as a file a worker writes. | Shadow one week; live 1–2 weeks. | Shadow matched on 95% of events. Live: turns per round and cost per finished item fall; items finished and reopened are no worse. |
 | 4 | **One service on M1 Max.** One process and one port for all pages. A script lists what nothing has called in 30 days, and those compatibility paths go. | 1–2 weeks. | 17 processes become 1. `scripts/store_rehearsal.py` shows every page unchanged. A release restarts one thing. |
 | 5 | **One home.** M5 Max and M1 Max 16 become thin clients; their pages move to M1 Max. | 2 weeks, with Chang's approval per Mac. | No page servers off M1 Max. A page release touches one Mac. |
 | 6 | **One place a decision can wait.** Owners follow Orca's live agents. An Orca gate, a Beads gate or a Windmill approval waiting on the person becomes a card. | 1–2 weeks. | Zero rounds waiting with no live owner. The home page's "waiting elsewhere" count is zero. |
@@ -397,7 +445,8 @@ Stage 1 is first because it is the smallest step the reviewer can feel, it canno
 
 ## 11. Open points and what was not checked
 
-- Why the September Windmill build flow (`f/build/item`) and its inbox are not in use. Section 7 is the same idea, so the reason matters. Asked of Chang in round 2.
+- Why the September Windmill build flow (`f/build/item`) and its inbox are not in use. Section 7 is the same idea, so the reason matters. Likely answer, found on 12 Nov: its page has three questions that have waited 48 days (section 6). To be confirmed by Chang.
+- The cycle definition in section 9 is a proposal. Whether a typed message to an agent should count as a cycle is his call.
 - Whether an Orca plug-in worker may open network connections and run commands freely. The docs call it a trusted Node worker. Prove it on day one; the fallback in section 4 covers a no.
 - Orca reports two status fields for an agent, and in the 12 Nov sample they did not always agree. Stage 1 must pick by test which one means "working".
 - What share of a project's tokens its coordinator uses. Cost for sessions on the other Macs needs the cost script to run there, with Chang's yes per Mac.

@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Home page mock-up: agent-annotate</title>
+<style>
+/* Mock-up only. Colours, type and chips are copied from the live page shell
+   (src/agent_annotate/web/shell.css, stock daisyUI dark and light). */
+@font-face{font-family:"Roboto";src:url("../../src/agent_annotate/web/RobotoVariable.woff2") format("woff2");font-weight:100 900}
+[data-theme=light]{color-scheme:light;--b1:oklch(100% 0 0);--b2:oklch(98% 0 0);--b3:oklch(95% 0 0);--bc:oklch(21% .006 285.885);--primary:oklch(45% .24 277.023);--success:oklch(76% .177 163.223);--warning:oklch(82% .189 84.429);--warning-content:oklch(41% .112 45.904);--error:oklch(71% .194 13.428);--error-content:oklch(27% .105 12.094);
+  --line:var(--b3);--yellow:color-mix(in oklab,var(--warning) 60%,var(--b1));--link:var(--primary);
+  --series:#2a78d6;--series-track:#cde2fb;--grey-series:#898781;--grid:#e1e0d9;--axis:#c3c2b7}
+[data-theme=dark]{color-scheme:dark;--b1:oklch(25.33% .016 252.42);--b2:oklch(23.26% .014 253.1);--b3:oklch(21.15% .012 254.09);--bc:oklch(97.807% .029 256.847);--primary:oklch(58% .233 277.117);--success:oklch(76% .177 163.223);--warning:oklch(82% .189 84.429);--warning-content:oklch(41% .112 45.904);--error:oklch(71% .194 13.428);--error-content:oklch(27% .105 12.094);
+  --line:color-mix(in oklab,var(--bc) 12%,var(--b1));--yellow:color-mix(in oklab,var(--warning) 60%,var(--bc));--link:color-mix(in oklab,var(--primary) 55%,var(--bc));
+  --series:#3987e5;--series-track:#0d366b;--grey-series:#898781;--grid:color-mix(in oklab,var(--bc) 9%,var(--b1));--axis:color-mix(in oklab,var(--bc) 22%,var(--b1))}
+:root{--muted:color-mix(in oklab,var(--bc) 74%,transparent);--faint:color-mix(in oklab,var(--bc) 66%,transparent);--orange:color-mix(in oklab,var(--warning) 50%,var(--error))}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{font-family:"Roboto",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--b2);color:var(--bc);font-size:13px;line-height:1.45}
+button,select{font:inherit;color:inherit}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+[hidden]{display:none!important}
+
+/* Mock-up controls: not part of the design */
+.mockbar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:6px 16px;background:var(--b3);border-bottom:1px solid var(--line);font-size:11px;color:var(--muted)}
+.mockbar b{color:var(--bc);font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--b1)}
+.seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:var(--muted)}
+.seg button[aria-pressed=true]{background:color-mix(in oklab,var(--bc) 14%,var(--b1));color:var(--bc);font-weight:600}
+
+/* Header: same 52px bar as the project page */
+.hdr{background:var(--b1);border-bottom:1px solid var(--line);padding:8px 16px 0 20px;display:flex;align-items:center;gap:8px 24px;flex-wrap:wrap;min-height:52px}
+.hdr-title{font-size:16px;font-weight:600;line-height:1.3}
+.hdr-sub{font-size:11px;color:var(--muted)}
+.hdr-left{padding-bottom:8px}
+.tabs{display:flex;gap:4px;align-self:flex-end}
+.tabs button{border:0;background:none;padding:8px 12px 10px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-weight:500}
+.tabs button[aria-selected=true]{color:var(--bc);border-bottom-color:var(--primary);font-weight:600}
+.sum{margin-left:auto;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;padding-bottom:8px;color:var(--muted)}
+.sum span.g{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+
+/* Number chip: same rules as the page's .citem-num */
+.num{display:inline-flex;align-items:center;justify-content:center;height:18px;min-width:18px;padding:0 6px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;background:color-mix(in oklab,var(--bc) 62%,var(--b1));color:var(--b1)}
+.num.is-needs{background:var(--error);color:var(--error-content)}
+.num.is-working{background:var(--yellow);color:var(--warning-content)}
+.num.is-waiting{background:transparent;color:var(--bc);box-shadow:inset 0 0 0 1.5px var(--yellow)}
+.num.is-stuck{background:var(--orange);color:var(--error-content)}
+.num.is-old{background:transparent;color:var(--bc);box-shadow:inset 0 0 0 1.5px var(--error)}
+
+main{padding:14px 16px 28px;max-width:1280px;margin:0 auto}
+.card{background:var(--b1);border:1px solid var(--line);border-radius:8px}
+
+/* Projects */
+table.proj{width:100%;border-collapse:collapse}
+.proj th{font-size:11px;font-weight:500;color:var(--muted);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:bottom}
+.proj th small{display:block;font-weight:400;color:var(--faint)}
+.proj td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.proj tr.row{cursor:pointer}
+.proj tr.row:hover td{background:color-mix(in oklab,var(--bc) 4%,var(--b1))}
+.proj tr:last-child td{border-bottom:0}
+.pname{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
+.pname button{border:0;background:none;cursor:pointer;color:var(--muted);width:18px;height:18px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.pname button:focus-visible,.tabs button:focus-visible,.bar:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.pname svg{width:12px;height:12px;transition:transform .12s}
+tr.row[aria-expanded=true] .pname svg{transform:rotate(90deg)}
+.goal{font-size:11.5px;color:var(--muted);margin:1px 0 0 24px}
+.st{display:flex;flex-wrap:wrap;gap:3px 10px;align-items:center}
+.st span.g{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.none{color:var(--faint)}
+.age{font-size:11.5px;color:var(--muted)}
+.meter{height:6px;border-radius:999px;background:var(--series-track);overflow:hidden;max-width:180px;margin:5px 0 4px}
+.meter i{display:block;height:100%;background:var(--series);border-radius:999px}
+.prog{font-size:11.5px;color:var(--muted)}
+.prog b{color:var(--bc);font-weight:600}
+tr.detail td{background:var(--b2);padding:12px 12px 14px 36px}
+.dgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:10px 28px}
+.dgrid h4{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px}
+.dgrid ul{list-style:none}
+.dgrid li{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.dgrid li .t{flex:1;min-width:0}
+.dgrid li .m{color:var(--muted);font-size:11.5px;white-space:nowrap}
+.quiet{padding:9px 12px;color:var(--muted)}
+.quiet summary{cursor:pointer}
+.legend{display:flex;flex-wrap:wrap;gap:4px 18px;margin:10px 4px 0;font-size:11.5px;color:var(--muted)}
+.legend span.g{display:inline-flex;align-items:center;gap:5px}
+
+/* Analytics */
+.filters{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:12px}
+.filters select{background:var(--b1);border:1px solid var(--line);border-radius:6px;padding:3px 8px}
+.agrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:12px}
+.pad{padding:14px 16px}
+.ctitle{font-size:13px;font-weight:600}
+.csub{font-size:11.5px;color:var(--muted);margin-top:1px}
+.hero{font-size:56px;font-weight:600;line-height:1.05;margin-top:10px}
+.hero small{font-size:14px;font-weight:500;color:var(--muted);margin-left:6px}
+.tag{display:inline-block;font-size:10px;font-weight:600;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--muted);vertical-align:middle;margin-left:6px}
+.bars{margin-top:10px}
+.bars .lab{font-size:12px}
+.bars .track{display:flex;align-items:center;gap:8px;min-width:0;margin:3px 0 9px}
+.bar{height:14px;border-radius:0 4px 4px 0;background:var(--grey-series);min-width:2px;cursor:default}
+.bar.avoid{background:var(--series)}
+.bar:hover,.bar:focus-visible{filter:brightness(1.15)}
+.bars .val{font-weight:600;font-variant-numeric:tabular-nums}
+.keys{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+.keys i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.keys i.line{width:14px;height:2px;border-radius:1px;vertical-align:3px}
+#burn{margin-top:8px;position:relative}
+#burn svg{display:block;width:100%;height:auto;overflow:visible}
+#burn text{font-size:11px;fill:var(--muted);font-family:inherit}
+#burn text.end{fill:var(--bc);font-weight:600}
+details.tbl{margin-top:8px;font-size:11.5px;color:var(--muted)}
+details.tbl summary{cursor:pointer}
+details.tbl table{border-collapse:collapse;margin-top:6px}
+details.tbl th,details.tbl td{padding:2px 12px 2px 0;text-align:right;font-variant-numeric:tabular-nums;font-weight:400}
+details.tbl th:first-child,details.tbl td:first-child{text-align:left}
+.kgroup{margin-top:14px}
+.kgroup h3{font-size:12px;font-weight:600;margin:0 4px 6px}
+.kgroup h3 span{font-weight:400;color:var(--muted);margin-left:6px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.tile{padding:10px 12px}
+.tile .l{font-size:11.5px;color:var(--muted);min-height:2.9em}
+.tile .v{font-size:24px;font-weight:600;line-height:1.2;margin-top:2px}
+.tile .d{font-size:11.5px;color:var(--muted);margin-top:2px}
+#tip{position:fixed;z-index:9;pointer-events:none;background:var(--bc);color:var(--b1);border-radius:6px;padding:6px 9px;font-size:11.5px;line-height:1.5;max-width:260px;box-shadow:0 4px 14px rgb(0 0 0/.25)}
+#tip b{font-weight:700}
+#tip .k{display:inline-block;width:12px;height:2px;margin-right:6px;vertical-align:3px}
+
+/* In Orca */
+.orca{max-width:980px;margin:18px auto;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--b3)}
+.orca-body{display:flex;min-height:430px}
+.orca-term{flex:1;min-width:0;padding:16px;color:var(--faint);font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+.orca-panel{width:320px;max-width:100%;background:var(--b1);border-left:1px solid var(--line);display:flex;flex-direction:column}
+.orca-panel header{padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;display:flex;align-items:center;gap:8px}
+.orca-panel .grp{padding:8px 12px 2px;font-size:11px;font-weight:600;color:var(--muted);display:flex;gap:6px;align-items:center}
+.orca-panel a.q{display:flex;gap:8px;align-items:baseline;padding:5px 12px;color:var(--bc)}
+.orca-panel a.q:hover{background:color-mix(in oklab,var(--bc) 6%,var(--b1));text-decoration:none}
+.orca-panel a.q .t{flex:1;min-width:0}
+.orca-panel a.q .m{color:var(--muted);font-size:11px;white-space:nowrap}
+.orca-panel .more{padding:2px 12px 6px;font-size:11.5px}
+.orca-panel footer{margin-top:auto;padding:9px 12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+.orca-status{display:flex;gap:16px;align-items:center;padding:4px 12px;background:var(--b1);border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+.orca-status .me{display:inline-flex;align-items:center;gap:6px;color:var(--bc);font-weight:600;padding:1px 8px;border-radius:4px;background:color-mix(in oklab,var(--error) 22%,var(--b1))}
+.orca-note{max-width:980px;margin:0 auto 24px;padding:0 4px;font-size:11.5px;color:var(--muted)}
+
+/* Narrow screens: rows become cards, nothing scrolls sideways */
+@media (max-width:860px){
+  .sum{margin-left:0;width:100%}
+  .tabs{order:3;width:100%}
+  table.proj,.proj tbody,.proj tr,.proj td{display:block;width:100%}
+  .proj thead{display:none}
+  .proj tr.row{padding:9px 12px;border-bottom:1px solid var(--line)}
+  .proj tr.row td{padding:2px 0;border:0;background:none!important}
+  .proj td[data-l]{display:flex;gap:8px;align-items:baseline;margin-left:24px;width:auto}
+  .proj td[data-l]::before{content:attr(data-l);flex:0 0 74px;font-size:11px;color:var(--muted)}
+  .proj td.empty{display:none}
+  .meter{flex:1}
+  tr.detail td{padding:10px 12px 12px 36px}
+  .dgrid,.agrid{grid-template-columns:minmax(0,1fr)}
+  .orca-body{flex-direction:column}
+  .orca-panel{width:100%;border-left:0;border-top:1px solid var(--line)}
+  .hero{font-size:48px}
+}
+</style>
+</head>
+<body>
+
+<div class="mockbar" aria-label="Mock-up controls">
+  <span><b>Mock-up</b>, nothing here is live</span>
+  <span class="seg" id="viewseg"><button aria-pressed="true" data-view="home">Home page</button><button aria-pressed="false" data-view="orca">In Orca</button></span>
+  <span class="seg" id="themeseg"><button aria-pressed="true" data-theme-set="dark">Dark</button><button aria-pressed="false" data-theme-set="light">Light</button></span>
+  <span>Real, 12 Nov: questions waiting and their age, agents per Mac. Examples: goals, cycles, progress, anything tagged "example".</span>
+</div>
+
+<div id="view-home">
+  <header class="hdr">
+    <div class="hdr-left"><div class="hdr-title">Home</div><div class="hdr-sub">Every project, every Mac</div></div>
+    <nav class="tabs" role="tablist" aria-label="Home views">
+      <button role="tab" aria-selected="true" data-tab="projects">Projects</button>
+      <button role="tab" aria-selected="false" data-tab="analytics">Analytics</button>
+    </nav>
+    <div class="sum" id="sum"></div>
+  </header>
+
+  <main>
+    <section id="tab-projects">
+      <div class="card">
+        <table class="proj" id="proj">
+          <thead><tr>
+            <th scope="col">Project</th>
+            <th scope="col">Needs you</th>
+            <th scope="col">M1 Max<small id="h0"></small></th>
+            <th scope="col">M5 Max<small id="h1"></small></th>
+            <th scope="col">M1 Max 16<small id="h2"></small></th>
+            <th scope="col">Current goal</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <details class="quiet"><summary>5 quiet projects: no questions, nobody working</summary>
+          <div style="margin-top:6px">Each opens its page as usual. A project moves up as soon as it has a question for you or an agent starts work.</div>
+        </details>
+      </div>
+      <div class="legend">
+        <span class="g"><span class="num is-working">2</span> working: doing something now</span>
+        <span class="g"><span class="num is-waiting">1</span> waiting: a coordinator waiting on its workers</span>
+        <span class="g"><span class="num">4</span> idle: finished its turn</span>
+        <span class="g"><span class="num is-stuck">&#9650; 1</span> stuck: working but silent for 15 minutes</span>
+        <span class="g"><span class="num is-old">9</span> questions older than 30 days</span>
+      </div>
+    </section>
+
+    <section id="tab-analytics" hidden>
+      <div class="filters">
+        <span class="seg"><button aria-pressed="true">Last 4 weeks</button><button aria-pressed="false">Since the baseline week</button></span>
+        <label>Project <select><option>All projects</option><option>FLD</option><option>Rebex</option><option>agent-annotate</option></select></label>
+      </div>
+      <div class="agrid">
+        <div class="card pad">
+          <div class="ctitle">Cycles to done <span class="tag">example</span></div>
+          <div class="csub">How many times a goal came back to you before you accepted it. Median of 6 goals finished.</div>
+          <div class="hero">4<small>cycles · best 2 · baseline week 7</small></div>
+          <div class="ctitle" style="margin-top:16px">Where the 25 cycles went</div>
+          <div class="bars" id="bars"></div>
+          <div class="keys"><span><i style="background:var(--grey-series)"></i>Needed</span><span><i style="background:var(--series)"></i>Avoidable: 9 of 25</span></div>
+        </div>
+        <div class="card pad">
+          <div class="ctitle">Progress per cycle <span class="tag">example</span></div>
+          <div class="csub">Share of a goal's acceptance checks that pass after each cycle. The checks are fixed when you approve the plan.</div>
+          <div id="burn"></div>
+          <div class="keys"><span><i class="line" style="background:var(--series)"></i>Home page (this goal)</span><span><i class="line" style="background:var(--grey-series)"></i>Other finished goals</span></div>
+          <details class="tbl"><summary>Show as a table</summary><div id="burntbl"></div></details>
+        </div>
+      </div>
+      <div id="kpis"></div>
+    </section>
+  </main>
+</div>
+
+<div id="view-orca" hidden>
+  <div class="orca">
+    <div class="orca-body">
+      <div class="orca-term">Orca: your terminals and agents, unchanged.<br><br>The plug-in adds one item to the status bar below and this side panel. It stores nothing.</div>
+      <aside class="orca-panel" aria-label="Needs you">
+        <header><span class="num is-needs">32</span> Need you</header>
+        <div id="opanel"></div>
+        <footer id="ofoot"></footer>
+      </aside>
+    </div>
+    <div class="orca-status"><span>main</span><span>3 Macs connected</span><span style="margin-left:auto" class="me"><span class="num is-needs">32</span> need you</span></div>
+  </div>
+  <p class="orca-note">Approximate. The real panel takes its colours and type from Orca, not from this page. A row opens the project page at that question; answering stays there, beside the evidence.</p>
+</div>
+
+<div id="tip" hidden></div>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+/* ---------- data ---------- */
+const MACS = ["M1 Max", "M5 Max", "M1 Max 16"];
+// needs, age, agents: real on 12 Nov. goal, cycle, done, total: examples.
+const PROJECTS = [
+  { name: "FLD", goal: "Real-build car test batch", cycle: 2, done: 18, total: 30, needs: 17, age: "new today", agents: [{ working: 1, waiting: 1, idle: 4 }, { working: 1, waiting: 2 }, null], open: true,
+    questions: [["Approve the test batch for the real build", "today"], ["Which drivers get the first invitations?", "today"], ["Keep the old sign-up screen for one more release?", "today"]],
+    workers: [["waiting", "Coordinator", "M1 Max", "52 min"], ["working", "Run the car test batch", "M1 Max", "8 min"], ["waiting", "Merge approved changes, deploy to staging", "M5 Max", "21 min"], ["waiting", "Merge the phone margin fix", "M5 Max", "21 min"], ["working", "Staging settings, then finish the proof", "M5 Max", "3 min"]] },
+  { name: "Rebex", goal: "Shopper test suite", cycle: 5, done: 22, total: 26, needs: 9, age: "41 days", old: true, agents: [{ working: 1, idle: 1 }, { idle: 1 }, null] },
+  { name: "Windmill", goal: "Build workflow, pilot 2", cycle: 1, done: 3, total: 9, needs: 6, age: "48 days", old: true, agents: [{ idle: 2 }, null, null] },
+  { name: "agent-annotate", goal: "First-principles redesign", cycle: 3, done: 2, total: 9, needs: 0, agents: [{ working: 2 }, null, null] },
+  { name: "multimac-orch", needs: 0, agents: [{ idle: 1 }, null, null] },
+  { name: "skills-org", needs: 0, agents: [{ idle: 1 }, null, null] },
+];
+const OTHER_AGENTS = [{ idle: 5 }, null, { idle: 2 }]; // agents in the quiet projects
+const STATES = [["working", "is-working"], ["waiting", "is-waiting"], ["idle", ""], ["stuck", "is-stuck"]];
+
+/* ---------- helpers ---------- */
+function stateChips(counts) {
+  const wrap = el("div", "st");
+  let any = false;
+  for (const [key, cls] of STATES) {
+    const n = counts && counts[key];
+    if (!n) continue;
+    any = true;
+    const g = el("span", "g");
+    g.append(el("span", "num " + cls, String(n)), document.createTextNode(key));
+    wrap.append(g);
+  }
+  if (!any) wrap.append(el("span", "none", "—"));
+  return wrap;
+}
+const total = (key, mac) => PROJECTS.concat({ agents: OTHER_AGENTS }).reduce((s, p) => s + ((p.agents[mac] || {})[key] || 0), 0);
+
+/* ---------- projects ---------- */
+function renderProjects() {
+  const body = $("#proj tbody");
+  PROJECTS.forEach((p, i) => {
+    const tr = el("tr", "row");
+    tr.setAttribute("aria-expanded", p.open ? "true" : "false");
+    const c0 = el("td");
+    const nm = el("div", "pname");
+    const btn = el("button");
+    btn.setAttribute("aria-label", "Show details for " + p.name);
+    btn.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    nm.append(btn, el("a", "", p.name));
+    nm.lastChild.href = "#";
+    c0.append(nm);
+    tr.append(c0);
+
+    const c1 = el("td"); c1.dataset.l = "Needs you";
+    const st = el("div", "st");
+    if (p.needs) {
+      const g = el("span", "g");
+      g.append(el("span", "num " + (p.old ? "is-old" : "is-needs"), String(p.needs)), el("span", "age", p.age));
+      st.append(g);
+    } else { st.append(el("span", "none", "nothing")); }
+    c1.append(st); tr.append(c1);
+
+    p.agents.forEach((a, m) => {
+      const td = el("td"); td.dataset.l = MACS[m];
+      if (!a) td.classList.add("empty");
+      td.append(stateChips(a)); tr.append(td);
+    });
+
+    const c5 = el("td"); c5.dataset.l = "Goal";
+    if (p.goal) {
+      const box = el("div"); box.style.flex = "1"; box.style.minWidth = "0";
+      box.append(el("div", "", p.goal));
+      const m = el("div", "meter"); const fill = el("i"); fill.style.width = Math.round(100 * p.done / p.total) + "%"; m.append(fill);
+      m.setAttribute("role", "img"); m.setAttribute("aria-label", p.done + " of " + p.total + " checks pass");
+      const t = el("div", "prog");
+      t.append(el("b", "", "Cycle " + p.cycle), document.createTextNode(" · " + p.done + " of " + p.total + " checks pass"));
+      box.append(m, t); c5.append(box);
+    } else { c5.classList.add("empty"); c5.append(el("span", "none", "—")); }
+    tr.append(c5);
+    body.append(tr);
+
+    const dr = el("tr", "detail"); dr.hidden = !p.open;
+    const dc = el("td"); dc.colSpan = 6;
+    const grid = el("div", "dgrid");
+    const q = el("div"); q.append(el("h4", "", p.needs ? "Needs you" : "Nothing needs you"));
+    const ql = el("ul");
+    (p.questions || []).forEach(([t, age]) => { const li = el("li"); const a = el("a", "t", t); a.href = "#"; li.append(a, el("span", "m", age)); ql.append(li); });
+    if (p.needs) {
+      const li = el("li"); const rest = p.needs - (p.questions || []).length;
+      const a = el("a", "t", (p.questions ? rest + " more: " : "") + "open the page at the first question"); a.href = "#"; li.append(a);
+      ql.append(li);
+      if (p.old) { const li2 = el("li"); const b = el("a", "t", "Set all " + p.needs + " aside: they are " + p.age + " old"); b.href = "#"; li2.append(b); ql.append(li2); }
+    }
+    q.append(ql);
+    const w = el("div"); w.append(el("h4", "", "Agents"));
+    const wl = el("ul");
+    const list = p.workers || [];
+    list.forEach(([state, what, mac, since]) => {
+      const li = el("li");
+      const cls = STATES.find(s => s[0] === state)[1];
+      li.append(el("span", "num " + cls, state), el("span", "t", what), el("span", "m", mac + " · " + since));
+      wl.append(li);
+    });
+    if (!list.length) { const li = el("li"); li.append(el("span", "m", "Example rows are shown for FLD only.")); wl.append(li); }
+    else if (p.agents[0] && p.agents[0].idle) { const li = el("li"); li.append(el("span", "num", "idle"), el("span", "t", p.agents[0].idle + " finished their turn"), el("span", "m", "M1 Max")); wl.append(li); }
+    w.append(wl);
+    grid.append(q, w); dc.append(grid); dr.append(dc); body.append(dr);
+
+    const toggle = () => { const openNow = tr.getAttribute("aria-expanded") === "true"; tr.setAttribute("aria-expanded", String(!openNow)); dr.hidden = openNow; };
+    tr.addEventListener("click", e => { if (e.target.closest("a")) return; toggle(); });
+  });
+
+  MACS.forEach((_, m) => {
+    const parts = STATES.map(([k]) => [k, total(k, m)]).filter(([, n]) => n);
+    $("#h" + m).textContent = parts.map(([k, n]) => n + " " + k).join(" · ");
+  });
+  const sum = $("#sum");
+  const needs = PROJECTS.reduce((s, p) => s + p.needs, 0);
+  const g0 = el("span", "g"); g0.append(el("span", "num is-needs", String(needs)), document.createTextNode("need you: 17 new, 15 older than 30 days")); sum.append(g0);
+  for (const [key, cls] of STATES) {
+    const n = MACS.reduce((s, _, m) => s + total(key, m), 0);
+    if (!n) continue;
+    const g = el("span", "g"); g.append(el("span", "num " + cls, String(n)), document.createTextNode(key)); sum.append(g);
+  }
+}
+
+/* ---------- tooltip ---------- */
+const tip = $("#tip");
+function showTip(x, y, build) {
+  tip.replaceChildren(); build(tip); tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.max(6, Math.min(x + 12, innerWidth - r.width - 6)) + "px";
+  tip.style.top = Math.max(6, y - r.height - 10) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+/* ---------- ranked bars ---------- */
+const CYCLES = [["Your decisions: plan, look and feel, go-live", 14, false], ["Sent back: the result was wrong or incomplete", 6, true], ["Asked something a rule or the evidence already answered", 3, true], ["You added or changed the goal", 2, false]];
+function renderBars() {
+  const box = $("#bars"); const max = Math.max(...CYCLES.map(c => c[1]));
+  CYCLES.forEach(([label, n, avoid]) => {
+    box.append(el("div", "lab", label));
+    const tr = el("div", "track");
+    const b = el("div", "bar" + (avoid ? " avoid" : "")); b.style.width = (100 * n / max * 0.8) + "%"; b.tabIndex = 0;
+    b.setAttribute("role", "img"); b.setAttribute("aria-label", label + ": " + n + " cycles");
+    const show = e => { const r = b.getBoundingClientRect(); showTip(e.clientX || r.right, e.clientY || r.top, t => { t.append(el("b", "", n + " cycles"), el("div", "", label), el("div", "", avoid ? "Avoidable" : "Needed")); }); };
+    b.addEventListener("pointermove", show); b.addEventListener("focus", show);
+    b.addEventListener("pointerleave", hideTip); b.addEventListener("blur", hideTip);
+    tr.append(b, el("span", "val", String(n)));
+    box.append(tr);
+  });
+}
+
+/* ---------- progress per cycle ---------- */
+const GOALS = [
+  { name: "Home page (this goal)", pts: [45, 78, 93, 100], main: true },
+  { name: "Phone answering", pts: [60, 100] },
+  { name: "Car test batch", pts: [30, 55, 70, 82, 90, 96, 100] },
+  { name: "Standing rules", pts: [50, 85, 100] },
+];
+function renderBurn() {
+  const box = $("#burn"); box.replaceChildren();
+  const NS = "http://www.w3.org/2000/svg";
+  const W = Math.max(280, box.clientWidth), H = 230, L = 38, R = 86, T = 12, B = 30;
+  const maxC = Math.max(...GOALS.map(g => g.pts.length));
+  const x = c => L + (W - L - R) * (c - 1) / (maxC - 1), y = v => T + (H - T - B) * (1 - v / 100);
+  const s = (tag, attrs, text) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; return n; };
+  const svg = s("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Share of acceptance checks passing after each cycle, for four goals" });
+  [0, 25, 50, 75, 100].forEach(v => {
+    svg.append(s("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: v ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
+    svg.append(s("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v + "%"));
+  });
+  for (let c = 1; c <= maxC; c++) svg.append(s("text", { x: x(c), y: H - 10, "text-anchor": "middle" }, c === 1 ? "Cycle 1" : String(c)));
+  const cross = s("line", { y1: T, y2: H - B, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+  svg.append(cross);
+  GOALS.slice().sort((a, b) => (a.main ? 1 : 0) - (b.main ? 1 : 0)).forEach(g => {
+    const col = g.main ? "var(--series)" : "var(--grey-series)";
+    svg.append(s("polyline", { points: g.pts.map((v, i) => x(i + 1) + "," + y(v)).join(" "), fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const ex = x(g.pts.length), ey = y(g.pts[g.pts.length - 1]);
+    svg.append(s("circle", { cx: ex, cy: ey, r: 5, fill: col, stroke: "var(--b1)", "stroke-width": 2 }));
+    if (g.main) svg.append(s("text", { x: ex + 9, y: ey + 14, class: "end" }, "Done in " + g.pts.length));
+  });
+  const hit = s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" });
+  svg.append(hit);
+  const move = e => {
+    const r = svg.getBoundingClientRect(); const px = (e.clientX - r.left) * W / r.width;
+    const c = Math.max(1, Math.min(maxC, Math.round(1 + (px - L) * (maxC - 1) / (W - L - R))));
+    cross.setAttribute("x1", x(c)); cross.setAttribute("x2", x(c)); cross.setAttribute("visibility", "visible");
+    showTip(e.clientX, e.clientY, t => {
+      t.append(el("div", "", "After cycle " + c));
+      GOALS.forEach(g => {
+        const row = el("div"); const k = el("span", "k"); k.style.background = g.main ? "var(--series)" : "var(--grey-series)";
+        const v = g.pts[c - 1];
+        row.append(k, el("b", "", v == null ? "done" : v + "%"), document.createTextNode("  " + g.name)); t.append(row);
+      });
+    });
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  box.append(svg);
+
+  const tb = el("table"); const hr = el("tr"); hr.append(el("th", "", "Goal"));
+  for (let c = 1; c <= maxC; c++) hr.append(el("th", "", "Cycle " + c));
+  tb.append(hr);
+  GOALS.forEach(g => { const r = el("tr"); r.append(el("td", "", g.name)); for (let c = 0; c < maxC; c++) r.append(el("td", "", g.pts[c] == null ? "" : g.pts[c] + "%")); tb.append(r); });
+  $("#burntbl").replaceChildren(tb);
+}
+
+/* ---------- tiles ---------- */
+const KPIS = [
+  ["Your load", "target: each count halves", [
+    ["Decisions put to you per finished item", "0.63", "target 0.31", "real, agent-annotate"],
+    ["Words you typed per week, in answers", "450", "target 225", "real, agent-annotate"],
+    ["Places you must look", "23", "target 1", "real"],
+    ["Time from question to answer, median", "34 min", "41 of 108 took over an hour", "real, agent-annotate"]]],
+  ["Tokens", "target: at most 5% more per finished item", [
+    ["Cost per finished item", "$1.90", "baseline week $2.00", "example"],
+    ["Coordinator turns per round delivered", "14", "target 7", "real, FLD"],
+    ["Share of coordinator cost spent re-reading", "68%", "falls with a thin coordinator", "real, FLD"]]],
+  ["Quality", "target: no worse than the baseline week", [
+    ["Results you sent back", "2 of 14", "baseline week 4 of 15", "example"],
+    ["Finished items reopened", "3", "baseline week 5", "example"],
+    ["Recommendations you overruled", "6 of 47", "", "real, agent-annotate"]]],
+  ["Progress", "target: no worse than the baseline week", [
+    ["Items finished per week", "32", "average since 5 Oct", "real, agent-annotate"],
+    ["Goals finished", "6", "last 4 weeks", "example"]]],
+];
+function renderKpis() {
+  const root = $("#kpis");
+  KPIS.forEach(([name, target, tiles]) => {
+    const g = el("div", "kgroup"); const h = el("h3", "", name); h.append(el("span", "", target)); g.append(h);
+    const grid = el("div", "tiles");
+    tiles.forEach(([l, v, d, tag]) => {
+      const t = el("div", "card tile");
+      const lab = el("div", "l", l); lab.append(el("span", "tag", tag));
+      t.append(lab, el("div", "v", v), el("div", "d", d || " ")); grid.append(t);
+    });
+    g.append(grid); root.append(g);
+  });
+}
+
+/* ---------- Orca panel ---------- */
+function renderOrca() {
+  const box = $("#opanel");
+  PROJECTS.filter(p => p.needs).forEach(p => {
+    const g = el("div", "grp"); g.append(el("span", "num " + (p.old ? "is-old" : "is-needs"), String(p.needs)), document.createTextNode(p.name + " · " + p.age)); box.append(g);
+    (p.questions || []).forEach(([t, age]) => { const a = el("a", "q"); a.href = "#"; a.append(el("span", "t", t), el("span", "m", age)); box.append(a); });
+    const m = el("div", "more"); const a = el("a", "", p.questions ? (p.needs - p.questions.length) + " more on the page" : "Open the page"); a.href = "#"; m.append(a); box.append(m);
+  });
+  const f = $("#ofoot");
+  const parts = STATES.map(([k]) => [k, MACS.reduce((s, _, m) => s + total(k, m), 0)]).filter(([, n]) => n);
+  f.append(document.createTextNode("Agents: " + parts.map(([k, n]) => n + " " + k).join(" · ") + ". "));
+  const a = el("a", "", "Open home"); a.href = "#"; f.append(a);
+}
+
+/* ---------- switches ---------- */
+function press(seg, btn) { seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b === btn))); }
+$("#themeseg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; document.documentElement.dataset.theme = b.dataset.themeSet; press($("#themeseg"), b); });
+$("#viewseg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; press($("#viewseg"), b); $("#view-home").hidden = b.dataset.view !== "home"; $("#view-orca").hidden = b.dataset.view !== "orca"; });
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach(o => o.setAttribute("aria-selected", String(o === b)));
+  $("#tab-projects").hidden = b.dataset.tab !== "projects"; $("#tab-analytics").hidden = b.dataset.tab !== "analytics";
+  if (b.dataset.tab === "analytics") renderBurn();
+}));
+document.querySelectorAll(".filters .seg").forEach(seg => seg.addEventListener("click", e => { const b = e.target.closest("button"); if (b) press(seg, b); }));
+addEventListener("resize", () => { if (!$("#tab-analytics").hidden) renderBurn(); });
+// ?view=orca&theme=light&tab=analytics lets a screenshot open any state directly
+const qs = new URLSearchParams(location.search);
+renderProjects(); renderBars(); renderKpis(); renderOrca();
+if (qs.get("theme") === "light") $('[data-theme-set="light"]').click();
+if (qs.get("view") === "orca") $('[data-view="orca"]').click();
+if (qs.get("tab") === "analytics") $('[data-tab="analytics"]').click();
+</script>
+</body>
+</html>
