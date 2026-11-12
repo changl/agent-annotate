@@ -14,7 +14,11 @@ Do not open `docs/design/first-attempt-20261112/` or `src/`.
 
 `docs/design/from-zero/concepts/thread/`, `sitting/`, `picture/`, `letter/`. Each has `index.html` (a clickable prototype) and `concept.md` (the designer's own account). Open each prototype yourself before reading its `concept.md`, so your first impression is the person's, not the designer's.
 
-Render with headless Chrome only, at 390 px and 1280 px, light and dark, and read the screenshots. Step through every state the prototype offers. For example: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=/tmp/critic-<you>-<concept>-390.png --window-size=390,844 file://<path>`. If a state can only be reached by clicking, read the file's script and drive it with a small headless script of your own in `/tmp`. Open no tabs in any visible browser. Start no servers.
+Render with headless Chrome only, at 390 px and 1280 px, light and dark, and read the screenshots. Step through every state the prototype offers. For example: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=/tmp/critic-<you>-<concept>-1280.png --window-size=1280,900 file://<path>`. Headless Chrome on this Mac will not lay a page out narrower than about 500 px, so for the phone width put the prototype in a 390 px wide iframe inside a small page of your own in `/tmp` and screenshot that. If a state can only be reached by clicking, read the file's script and drive it with a small headless script of your own in `/tmp`. Open no tabs in any visible browser. Start no servers.
+
+The prototypes carry their own walk-throughs, which you should use and also distrust: `letter/index.html#check`, `sitting/index.html#selftest=1` and `#count=1`, `thread/index.html#count`, and the "next moment" control in each.
+
+Your task message names one emphasis. Do the whole brief, and go deepest on your emphasis.
 
 ## For each concept
 
