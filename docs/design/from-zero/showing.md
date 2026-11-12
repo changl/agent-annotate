@@ -29,7 +29,7 @@ Forty-five workers read about 62 GB of your transcripts, every review page and e
 | Why | Your own decision 29%. Sent back for quality 20%. Intent misread 14%. You had to ask or push 10%. The working system needed you 9%. Asked something that did not need you 8%. You carried a message 5%. You changed your mind 5%. |
 | Your typed messages that were avoidable | 35% to 43% of 1,279, by two labellers working apart |
 | What would have avoided them | A check before you saw the work: 137. The agreement: 59. A glance you could trust: 45. A watch: 44. The rule book: 29. A default: 25. |
-| Who notices when work stops or goes wrong | You, in 78 of 87 cases on record |
+| Who notices when work stops or goes wrong | You, in 149 of 166 cases on record across both computers (90%) |
 | Questions put to you on review pages | 3,265. A quarter of your answers clearly did not need you. You typed 38,900 words into the answers. |
 | Rules you have had written down | 1,757. Only 69 are your own preferences. At least 8 were broken again after being written. |
 | Where helper effort goes | 10% doing the work. 27% helpers talking to helpers. Coordinators use a third of everything. |
