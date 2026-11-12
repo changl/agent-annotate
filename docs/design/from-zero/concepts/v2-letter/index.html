@@ -352,6 +352,8 @@ html[data-theme=dark] .obj{--rule:#cbc5b6;--paper2:#d9d3c5;--faint:#6f6a60}
 .pgrid figure{margin:0;text-align:center;font:12px var(--sans);color:#57534b}
 .pgrid span{display:block;background:#d9d3c5;border:1.5px solid #8b867b;border-radius:4px;margin:0 auto 4px}
 .t2{font:600 12px var(--sans);color:#57534b;text-align:center}
+.rowp{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:14px}
+.rowp.tot{font-weight:650;border-top:1.5px dashed #8b867b;margin-top:4px;padding-top:8px}
 .touched{border-left:2px solid var(--rule);padding-left:14px;margin:4px 0 12px}
 .touched p{font-size:16px;margin-bottom:6px}
 .touched b{font-weight:600}
@@ -404,7 +406,7 @@ html[data-theme=dark] .obj{--rule:#cbc5b6;--paper2:#d9d3c5;--faint:#6f6a60}
 
 /* ---------- the desk: an open book. Left page, the words. Right page, the thing at its own size. ---------- */
 .spread{display:none}
-@media (min-width:1040px){
+@media (min-width:860px){
   body{font-size:17.5px}
   #stage{background:var(--desk)}
   .spread{position:absolute;inset:0;display:grid;grid-template-columns:minmax(430px,520px) minmax(0,1fr);padding:16px 20px 18px;max-width:1400px;margin:0 auto}
@@ -430,20 +432,28 @@ html[data-theme=dark] .obj{--rule:#cbc5b6;--paper2:#d9d3c5;--faint:#6f6a60}
   .slip{margin:6px 0 14px;border-radius:14px;box-shadow:0 0 0 1px var(--rule)}
   .slip.alarm{box-shadow:0 0 0 2px var(--alarm)}
 }
-@media (min-width:1040px){.jr{grid-template-columns:auto minmax(0,1fr);align-items:start;gap:18px}}
-@media (max-width:1039.9px){.deskonly{display:none!important}}
-@media (min-width:1040px){.phoneonly{display:none!important}}
+@media (min-width:1100px){.jr{grid-template-columns:auto minmax(0,1fr);align-items:start;gap:18px}}
+/* a narrow desk, as beside a phone in one window: the same open book, with slimmer margins */
+@media (min-width:860px) and (max-width:1099.9px){
+  .spread{grid-template-columns:minmax(380px,44%) minmax(0,1fr);padding:12px}
+  .page.left{padding:14px 22px 32px 24px}
+  .page.right{padding:14px 22px 32px 24px}
+  .lead{font-size:22px}
+}
+@media (max-width:859.9px){.deskonly{display:none!important}}
+@media (min-width:860px){.phoneonly{display:none!important}}
 
 /* ---------- prototype control: not part of the design ---------- */
 #proto{position:fixed;left:0;right:0;bottom:0;height:var(--ph);display:flex;align-items:center;gap:6px;padding:0 8px;z-index:9;
   font:12px var(--mono);color:#e9e9e9;background:repeating-linear-gradient(135deg,#26262a 0 10px,#2e2e33 10px 20px);border-top:2px dashed #8d8d96}
-#proto .tag{display:none;white-space:nowrap;color:#c9c9d2}
+#proto .tag{display:none;white-space:nowrap;color:#c9c9d2;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
+#proto button{white-space:nowrap;flex:none}
 #proto button,#proto select{min-height:36px;min-width:40px;padding:0 8px;border:1px solid #6d6d76;border-radius:4px;background:#17171a;color:#f0f0f0;font:12px var(--mono);text-align:center}
 #proto select{flex:1;min-width:0;text-overflow:ellipsis}
 #proto :focus-visible{outline:2px solid #fff;outline-offset:1px}
 #pnote{position:fixed;left:8px;right:8px;bottom:calc(var(--ph) + 8px);z-index:9;padding:12px 14px;border:2px dashed #8d8d96;border-radius:6px;background:#1c1c20;color:#eee;font:12.5px/1.5 var(--mono);max-width:760px;max-height:60vh;overflow:auto}
 #pnote b{color:#fff}
-@media (min-width:1040px){#proto .tag{display:inline}#proto select{flex:0 1 460px}#pnote{left:auto;right:12px}}
+@media (min-width:860px){#proto .tag{display:inline}#proto select{flex:0 1 460px}#pnote{left:auto;right:12px}}
 
 .new.wrap,.new.slip,.new.thing{animation:rise .26s ease-out}
 .inkline.new,.note.new,.ask.new,.ps.new,.panel.new{animation:ink .35s ease-out}
@@ -460,7 +470,7 @@ html.still *{animation:none!important;transition:none!important}
 <div id="stage"></div>
 <div id="pnote" hidden></div>
 <nav id="proto" aria-label="Prototype control, not part of the design">
-  <span class="tag">PROTOTYPE · nothing in it is live</span>
+  <span class="tag">PROTOTYPE · nothing is live · figures are illustrative</span>
   <button id="pv" aria-label="Previous moment">◀</button>
   <select id="pm" aria-label="Moment in the stress week"></select>
   <button id="nx" aria-label="Next moment">next ▶</button>
@@ -472,7 +482,7 @@ html.still *{animation:none!important;transition:none!important}
 'use strict';
 const $=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const isDesk=()=>matchMedia('(min-width:1040px)').matches;
+const isDesk=()=>matchMedia('(min-width:860px)').matches;
 const svg=d=>`<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const I={
   tick:svg('<path d="M4 13.5c2.2 1.6 3.6 3.3 5 5.6C11.6 13 15 8.6 20 4.6"/>'),
@@ -527,7 +537,7 @@ const M=[
  {k:'away',day:'Tuesday',date:'24 November',time:'11:20',seen:'11:18',title:'Five days away',ev:'12',sheet:'back',
   note:'<b>He never said he was away.</b> After two set times unopened, the work slowed down by itself, and the card says so. No reminder. Still one sheet, rewritten in place. Only what he had allowed went ahead; everything else held; nothing new that needs him was started.'},
  {k:'back',day:'Thursday',date:'26 November',time:'8:30',sit:'8:30',seen:'8:28',title:'The return; things that move',ev:'12',sheet:'back',then:'5:00',
-  note:'<b>Five days away, one sheet.</b> One bar that adds up to his forty goals, five lines that bring him current, then the three things that cost most by waiting. The sign-up is the checker’s recording, scrubbed by named step; his two early choices are on it, and the third waits on its screen. Choose a way that was not built and the proof steps aside: it comes back built and checked. The other six things are the next two openings, or one touch away at the foot.'},
+  note:'<b>Five days away, one sheet.</b> One bar that adds up to his forty goals, five lines that bring him current, then the three things that cost most by waiting. Every one of the nine says how long it has waited; the six still to come are listed with their latest days, and the sheet ends “That is three of the nine”, not “That is all”. The sign-up is the checker’s recording, scrubbed by named step. Sales tax is a cheap sketch to look at; charging anyone is a separate go, later.'},
  {k:'back5',day:'Thursday',date:'26 November',time:'5:00',sit:'5:00',title:'The return, second part',ev:'12',sheet:'back5',then:'tomorrow 8:30',
   note:'<b>The next three of the nine.</b> Switching the reminder texts on is an act that cannot be undone: the exact texts, to whom, when, and the one choice that is his, said back and held. The ratings sketch is back from parking. Gift cards come as a first sketch with two choices drawn on it.'},
  {k:'fri27',day:'Friday',date:'27 November',time:'8:30',sit:'8:30',title:'The return, last part',ev:'12',sheet:'fri27',then:'5:00',
@@ -570,7 +580,7 @@ const G=[
  ['Year-end statement',1,{tue:'M:mid-December',thin:HELD,day30:'M:this week'}],
  ['Team seats on one bill',1,{tue:'P:after Price page',thin:'M:January'}],
  ['New welcome email',2,{tue:'M:first sketch at 5:00',wed:'D:done · new sign-ups get it'}],
- ['Sales tax for two new states',2,{tue:'P:until the accountant replies',away:'M:the accountant replied · waits for your go',thin:'M:mid-December',day30:'D:done 14 Dec'}],
+ ['Sales tax for two new states',2,{tue:'P:until the accountant replies',away:'M:the accountant replied · a sketch waits for your look',thin:'M:mid-December',day30:'M:built and checked · charging waits for your go'}],
  ['Gift cards',2,{tue:'M:a first sketch next week',away:'M:a first sketch waits for your look',thin:'M:January'}],
  ['Faster checkout on phones',2,{tue:'M:early December',away:HELD,day30:'M:January'}],
  ['Back-in-stock emails',2,{tue:'M:27 Nov',thin:'D:done 27 Nov'}],
@@ -589,7 +599,7 @@ const G=[
 ];
 const UNSEEN=['Faster sign-up','Reminder texts'];
 const STORY={
- 'Faster sign-up':{said:'Signing up takes too long. People give up.',steps:[['3 Nov','You said it.'],['4 Nov','I said back what done means: three screens, under a minute.'],['19 Nov','Three questions came up that are yours. Two came to you at once, drawn both ways.'],['20 Nov','Ready and checked; waiting for your look.'],['26 Nov','You settled the third on the recording and accepted it.']],cost:'41 hours of helper time, $58, 11 minutes of yours.'},
+ 'Faster sign-up':{said:'Signing up takes too long. People give up.',steps:[['16 Nov','You said it. I said back what done means, three screens and under a minute, and started.'],['18 Nov','The first screen was built and checked.'],['19 Nov','Three questions came up that are yours. Two came to you the same morning, each drawn both ways, before I built further.'],['20 Nov','Ready and checked; waiting for your look.'],['26 Nov','You settled the third on the recording and accepted it.']],cost:'41 hours of helper time, $58, 11 minutes of yours.'},
  'Price page':{said:'The price page hides the yearly price. Fix that.',steps:[['2 Nov','You said it.'],['3 Nov','I said it back, and you left its layout to me.'],['17 Nov','Yearly first went ahead at 5:00, as you allowed.'],['20 Nov','“2 months free” went ahead, the same way.'],['26 Nov','You accepted it at both widths.']],cost:'22 hours of helper time, $31, 4 minutes of yours.'},
  'Invoice export':{said:'I need one file a month for the accountant.',steps:[['9 Nov','You said it.'],['10 Nov','I said back six done lines.'],['17 Nov','Ready and checked, with one thing not tried. You started the monthly send.'],['19 Nov','The thing not tried was wrong: a late refund was missing. Corrected before anything was sent.']],cost:'29 hours of helper time, $40, 9 minutes of yours.'},
 };
@@ -632,6 +642,13 @@ const SB={
   told:'I have started building. No text goes to a learner until you say go. First look next Wednesday.',redo:'So far: the two texts are written. If a line is wrong, about half a day is made again. Nothing has gone out.',last:'I have started building. No text goes to a learner until you say go, because a sent text cannot be taken back.'},
 };
 
+// the six of the nine that come after the first three: [verb, what, minutes, how long it has waited, its latest day]
+const REST6=[['Go?','Reminder texts, switching them on',3,'Built and checked since Mon 23 Nov.','No latest day. Each day it waits, about two lessons are missed.'],
+ ['Look','Driver ratings, the sketch again',2,'Back from parking on Mon 23 Nov, the latest day you set.','Latest: Fri 27 Nov, or it misses the December release.'],
+ ['Look','Gift cards, a first sketch with two choices',3,'Waiting since Tue 24 Nov.','Latest: Mon 30 Nov, or not before Christmas.'],
+ ['Look','Late-payment reminders, the first reminder to read',3,'Waiting since Wed 25 Nov.','No latest day.'],
+ ['Look','Product photos, same size everywhere',4,'Ready since Tue 24 Nov.','No latest day.'],
+ ['Look','Instructors can swap a lesson',3,'Ready since Mon 23 Nov.','Latest: Fri 27 Nov, or it misses the December release.']];
 /* ---------- what reaches him. Each thing opens on the one sentence only he can judge. ---------- */
 const PARK=['tomorrow 8:30','Monday'];
 const eml=['Dear Valued Customer,','We are delighted to confirm that your account has been successfully created. Thank you for choosing to register with us.','Your account provides access to a comprehensive range of features, including order tracking, saved addresses, wish lists and personalised recommendations tailored to your preferences.','Please be advised that you may update your communication preferences at any time by visiting the Account Settings section of our website.','As a token of our appreciation, please find below a discount code entitling you to 10% off your first order: WELCOME10.','Should you require any assistance, our Customer Service team is available Monday to Friday, 9 am to 5 pm.','Yours sincerely,<br>The Customer Experience Team'];
@@ -662,42 +679,39 @@ const IT={
   leave:'This waits for you. Leave it and nothing goes out; I ask again next Thursday.',after:'You said: release Wednesday night’s checked version to everyone, today at 3:00 pm. It goes then, and only that version.',afterNo:'Not this week. Nothing goes out. I ask again next Thursday.'},
  // the two choices later work depends on come early, each drawn both ways, before anything more is built
  signupq:{id:'signupq',kind:'drawn',goal:'Faster sign-up',sub:'two choices, before I build further',proj:0,min:2,judge:'Which way should each of these go?',picks:['c1','c3'],
-  intro:'Last night the work raised 17 questions. Your earlier answers settled 11, and 3 were mine to decide. Three are yours. Two of them shape everything built after, so here they are now, drawn both ways. The third can wait for the finished sign-up.',
+  intro:'The first screen is built. Last night the work raised 17 questions: your earlier answers settled 11, and 3 were mine to decide. Three are yours. Two of them decide what the other two screens are, so here they are now, each drawn both ways, before I build further.',
   leave:'These wait for you. Until you choose, I build only what both ways share. Your silence is not a yes.'},
  sketch:{id:'sketch',kind:'look',goal:'Driver ratings',sub:'a first sketch',proj:0,min:2,judge:'Is this how it should look?',thing:'ratings',acceptLabel:'Build it like this',
   choices:[{id:'who',q:'Can an instructor see who gave a rating?',opts:['No names','With names'],pick:0}],
   parks:['Faster sign-up is done, Monday at the latest',...PARK],parkWhy:'Driver ratings and Faster sign-up change the same screens. Built together, one of them would be done twice.',
   rule:'screens for learners follow these marks',backAfter:'A new sketch tomorrow at 8:30.',leave:'Nothing more is built until you say so.',after:'Build it like this. Nothing until it is ready.'},
- signup:{id:'signup',kind:'look',goal:'Faster sign-up',proj:0,min:5,judge:'Does it feel quick and obvious to someone new?',thing:'signup',proof:'signup',choices:SIGNQ,
+ signup:{id:'signup',kind:'look',goal:'Faster sign-up',proj:0,min:5,age:'ready since Fri 20 Nov',judge:'Does it feel quick and obvious to someone new?',thing:'signup',proof:'signup',choices:SIGNQ,
   built:'phone number only; the price before they book; a lesson must be picked',
   from:['From the checker, not through me','It passes. But the code we text took over 30 seconds to arrive in 2 of 20 tries. I would not call that fast yet.','I think that is the phone network, not our work. You judge.'],
   rule:'screens for learners follow these marks',backAfter:'The fix at 5:00.',acceptLabel:'Accept: it goes in the next release',leave:'New learners keep the old sign-up. The release itself comes to you first.',after:'Accepted. It goes in the next release, which comes to you first.',rebuildAfter:'I build it your way and check it again. It comes back at 5:00 tomorrow with your choices in it. Nothing goes out.'},
- pricepage:{id:'pricepage',kind:'look',goal:'Price page',proj:1,min:3,judge:'Before it goes live: does it read right on a phone and on a desk?',thing:'pricepage',proof:'pricepage',
+ pricepage:{id:'pricepage',kind:'look',goal:'Price page',proj:1,min:3,age:'ready since Fri 20 Nov',judge:'Before it goes live: does it read right on a phone and on a desk?',thing:'pricepage',proof:'pricepage',
   rule:'billing pages follow these marks',backAfter:'The fix at 5:00.',acceptLabel:'Accept: it goes live for visitors',leave:'Visitors keep the old page until you accept.',after:'Accepted. It is live for visitors now, and switches back in a minute if you say.'},
- tax:{id:'tax',kind:'go',goal:'Sales tax for two new states',sub:'changed by what the accountant said',proj:2,min:2,judge:'Should I go ahead on the changed plan?',said:['3 November','Add sales tax for the two new states.'],
-  lines:[['new','What changed','The accountant answered on Monday: Oregon has no sales tax. So it is one new state, not two.'],
-   ['heard','I heard, now','Charge Washington’s sales tax on orders sent there, from 1 January. Nothing changes for Oregon.'],
-   ['done','Done means',['An order to Washington shows the tax before paying.','The tax is its own line on the invoice.','Orders to every other state are unchanged.']],
-   ['mine','I’ll decide','Where the tax line sits, and its wording.'],
-   ['first','First look','The checkout with the tax on it, in mid-December.']],
-  leave:'This waits for your go, because it changes what customers are charged.',after:'Go. First look in mid-December.'},
+ tax:{id:'tax',kind:'look',goal:'Sales tax for two new states',sub:'a first sketch of the checkout',proj:2,min:2,age:'since Mon 23 Nov',judge:'Is this how the tax should show at checkout?',thing:'taxsk',acceptLabel:'Build it like this',
+  text:['The accountant answered on Monday: Oregon has no sales tax. So it is one new state, not two. I changed what I heard to match, and drew this. A drawing is cheap, so it did not wait for you.'],
+  choices:[{id:'tx',q:'Where does the tax show?',opts:['On its own line','Inside the total'],pick:0}],
+  rule:'the shop’s checkout follows these marks',backAfter:'A new sketch tomorrow at 8:30.',leave:'Nothing is charged. Charging anyone is its own go, once this is built and checked.',after:'Build it like this. Nothing is charged until you say go, with the exact rate and day in front of you.'},
  // the six that waited behind the first three of the return
- remindgo:{id:'remindgo',kind:'pause',goal:'Reminder texts',sub:'switching them on',proj:0,min:3,judge:'Should these texts start going to your learners?',proof:'remindgo',
+ remindgo:{id:'remindgo',kind:'pause',goal:'Reminder texts',sub:'switching them on',proj:0,min:3,age:'built since Mon 23 Nov',judge:'Should these texts start going to your learners?',proof:'remindgo',
   choices:[{id:'optout',q:'Learners who turned texts off:',opts:['Leave them be','Text them too'],pick:0,note:'They asked for no texts. 38 learners.'}],built:'learners who turned texts off get none',
   mf:[['The evening before','“Your lesson with Dana is tomorrow at 10:00. Reply C to change it.”'],['Two hours before','“Your lesson with Dana is at 10:00, in two hours.”'],['To whom','Every learner with a lesson booked: 212 this fortnight.'],['When','From tomorrow. Never before 8 am or after 8 pm.'],['Cannot be undone','A sent text. Switching them off again is one touch, on this goal’s page.']],
   sayback:()=>`Start sending these two texts to learners with a lesson booked, from tomorrow${S.ans.optout&&S.ans.optout.v===1?', including the 38 who turned texts off':', leaving out the 38 who turned texts off'}.`,hold:'Hold to switch the texts on',no:'Not yet',
   leave:'This waits for you. Leave it and no text is sent.',after:'You said: start the two reminder texts from tomorrow, leaving out those who turned texts off. I tell you on 14 December whether fewer lessons are missed.',afterNo:'Not yet. No text is sent.',rebuildAfter:'I build it that way and check it again. Switching on then comes back to you. No text is sent.'},
- sketch2:{id:'sketch2',kind:'look',goal:'Driver ratings',sub:'the sketch, back from parking',proj:0,min:2,judge:'Is this how it should look?',thing:'ratings',acceptLabel:'Build it like this',
+ sketch2:{id:'sketch2',kind:'look',goal:'Driver ratings',sub:'the sketch, back from parking',proj:0,min:2,age:'back since Mon 23 Nov',judge:'Is this how it should look?',thing:'ratings',acceptLabel:'Build it like this',
   choices:[{id:'who',q:'Can an instructor see who gave a rating?',opts:['No names','With names'],pick:0}],
   rule:'screens for learners follow these marks',backAfter:'A new sketch tomorrow at 8:30.',leave:'Nothing more is built until you say so.',after:'Build it like this. Nothing until it is ready.'},
- gift:{id:'gift',kind:'look',goal:'Gift cards',sub:'a first sketch',proj:2,min:3,judge:'Is this the gift card you had in mind?',thing:'gift',acceptLabel:'Build it like this',
+ gift:{id:'gift',kind:'look',goal:'Gift cards',sub:'a first sketch',proj:2,min:3,age:'since Tue 24 Nov',judge:'Is this the gift card you had in mind?',thing:'gift',acceptLabel:'Build it like this',
   choices:[{id:'g1',q:'Does a gift card run out?',opts:['Never','After a year'],pick:0,note:'In some states the law says never.'},{id:'g2',q:'Can it be spent bit by bit?',opts:['Yes, bit by bit','All in one go'],pick:0}],
   rule:'the shop’s pages follow these marks',backAfter:'A new sketch tomorrow at 5:00.',leave:'Nothing more is built until you say so.',after:'Build it like this. First look at the built thing in mid-December.'},
- latepay:{id:'latepay',kind:'look',goal:'Late-payment reminders',sub:'the first reminder, to read',proj:1,min:3,judge:'Is this firm enough, and kind enough?',inline:'latepay',acceptLabel:'Yes: write the other two in this voice',
+ latepay:{id:'latepay',kind:'look',goal:'Late-payment reminders',sub:'the first reminder, to read',proj:1,min:3,age:'since Wed 25 Nov',judge:'Is this firm enough, and kind enough?',inline:'latepay',acceptLabel:'Yes: write the other two in this voice',
   rule:'reminders about money follow these marks',backAfter:'A new one at 5:00.',leave:'Nothing is sent. The other two reminders wait for this one.',after:'Yes. I write the second and third in this voice. Sending any of them comes to you first.'},
- photosq:{id:'photosq',kind:'look',goal:'Product photos, same size everywhere',proj:2,min:4,judge:'Do the pictures look right cut square?',thing:'photosq',proof:'photosq',acceptLabel:'Accept: the shop shows them this way',
+ photosq:{id:'photosq',kind:'look',goal:'Product photos, same size everywhere',proj:2,min:4,age:'ready since Tue 24 Nov',judge:'Do the pictures look right cut square?',thing:'photosq',proof:'photosq',acceptLabel:'Accept: the shop shows them this way',
   rule:'product pictures follow these marks',backAfter:'The fix at 5:00.',leave:'The shop keeps the old pictures until you accept.',after:'Accepted. The shop shows them this way now. The old pictures are kept for 30 days.'},
- swap:{id:'swap',kind:'look',goal:'Instructors can swap a lesson',proj:0,min:3,judge:'Is two taps the right amount of care for a swap?',thing:'swap',proof:'swap',
+ swap:{id:'swap',kind:'look',goal:'Instructors can swap a lesson',proj:0,min:3,age:'ready since Mon 23 Nov',judge:'Is two taps the right amount of care for a swap?',thing:'swap',proof:'swap',
   choices:[{id:'sw',q:'Must the learner agree to the swap?',opts:['They are told','They must say yes'],pick:0,note:'Asking first is kinder, and some swaps will then fall through.'}],built:'the learner is told, not asked',
   rule:'screens for instructors follow these marks',backAfter:'The fix at 5:00.',acceptLabel:'Accept: it goes in the next release',leave:'Instructors keep phoning the office until you accept.',after:'Accepted. It goes in the next release, which comes to you first.',rebuildAfter:'I build it that way and check it again. It comes back on Monday. Nothing goes out.'},
  pace:{id:'pace',kind:'choose',goal:'Your pace',proj:-1,min:1,judge:'Is twice a week your pace now?',
@@ -749,11 +763,11 @@ const SH={
     {a:'Decided for you',t:'the price page says “2 months free”, not “17% off”. Friday 5:00, inside what you allowed.',undo:'free'},
     {a:'Done',t:'4 goals, each checked. The test run takes 6 minutes, not 19. Also: the map in tunnels, the card details page, the tests that failed by chance.',thing:'tests',see:'The test run: what ran',undo:'tests'},
     {a:'Held',t:'6 goals not started, so nothing has gone stale. They start as you clear these nine.',more:['Which six','Lesson notes for parents, Instructor sign-up checks the licence, Refunds in one step, Faster checkout on phones, Search that forgives typos, Cheaper helpers for small jobs.']}]},
-  split:{when:'5:00 and tomorrow',rest:[['Go?','Reminder texts, switching them on',3],['Look','Driver ratings, the sketch again',2],['Look','Gift cards, a first sketch with two choices',3],['Look','Late-payment reminders, the first reminder to read',3],['Look','Product photos, same size everywhere',4],['Look','Instructors can swap a lesson',3]]},
-  next:'back5',nextLabel:'Take the next three now',after:'After these, three things at 5:00 and three tomorrow.',items:['signup','pricepage','tax']},
- back5:{lead:'Three things, about 8 minutes.',next:'fri27',nextLabel:'Take tomorrow’s three now',after:'After these, three things tomorrow at 8:30.',items:['remindgo','sketch2','gift']},
- fri27:{lead:'Good morning. Three things, about 10 minutes.',after:'After these, nothing before 5:00. That is everything from your five days away.',items:['latepay','photosq','swap']},
- thin:{lead:'One thing, about a minute.',after:'After this, nothing before Monday 8:30.',items:['pace']},
+  rest:REST6,restWhen:'three at 5:00, three tomorrow at 8:30',next:'back5',nextLabel:'Take the next three now',end:'That is three of the nine.',after:'Six remain, about 18 minutes. Each is listed above, with how long it has waited and its latest day.',items:['signup','pricepage','tax']},
+ back5:{lead:'Three things, about 8 minutes. Then three more tomorrow.',rest:REST6.slice(3),restWhen:'tomorrow at 8:30',next:'fri27',nextLabel:'Take tomorrow’s three now',end:'That is six of the nine.',after:'Three remain, about 10 minutes, tomorrow at 8:30.',items:['remindgo','sketch2','gift']},
+ fri27:{lead:'Good morning. Three things, about 10 minutes. They are the last of the nine.',end:'That is all nine.',after:'After these, nothing before 5:00. That is everything from your five days away.',items:['latepay','photosq','swap']},
+ thin:{lead:'One thing, about a minute.',after:'After this, nothing before Monday 8:30.',
+  know:[{goal:'Nine goals',text:'are held at the start, so that nothing gathers faster than you clear it. The oldest has been held since Tue 24 Nov. One has a latest day: Year-end statement must start by Fri 11 Dec to be ready for year end, so it starts then whichever you choose.',more:'held9'}],items:['pace']},
  day30:{lead:'Good morning. Three things, about 6 minutes.',after:'After these, nothing before 5:00.',
   know:[{goal:'Wording changes',text:'come to you every time again. On 9 December I changed “Pay now” to “Continue” without showing you, and three people did not finish paying. The old words went back within the hour. One miss ends it; it can be earned again.',more:'lost'}],items:['rule','storage','sample']},
 };
@@ -764,7 +778,7 @@ const PATH={tue:['hold:invsend'],
  wed:['accept:wording','opt:trust:0'],
  bad:['hold:release','opt:c1:0','opt:c3:0'],
  thu5:['thing:sketch','park:sketch','until:sketch:0'],
- back:['thing:signup','#journey','accept:signup','thing:pricepage','#widths','accept:pricepage','go:tax'],
+ back:['thing:signup','#journey','accept:signup','thing:pricepage','#widths','accept:pricepage','thing:tax','opt:tx:0','accept:tax'],
  back5:['opt:optout:0','hold:remindgo','thing:sketch2','opt:who:0','accept:sketch2','thing:gift','opt:g1:0','opt:g2:0','accept:gift'],
  fri27:['accept:latepay','thing:photosq','accept:photosq','thing:swap','opt:sw:0','accept:swap'],
  thin:['opt:pace:0'],
@@ -958,6 +972,8 @@ function runsHTML(sc){
   return `<div class="figs" style="margin-bottom:10px"><div class="fig"><b>6 min</b><span>the full run, now</span></div><div class="fig was"><b>19 min</b><span>before</span></div></div>
    ${mk(sc,'now','Now, ten runs: between 5 min 40 s and 6 min 10 s.',{chips:'row'})}${mk(sc,'bef','Before, ten runs: between 18 min 20 s and 19 min 30 s.',{chips:'row'})}${mk(sc,'same','The same 1,412 tests, by name, all passing in every run.',{chips:'row'})}`;
 }
+function taxHTML(sc){ const inl=S.ans.tx&&S.ans.tx.a==='opt'&&S.ans.tx.v===1, r=(a,b,c)=>`<div class="rowp${c||''}"><span>${a}</span><span>${b}</span></div>`;
+  return pinsHTML(sc,`<div class="sk" style="text-align:left"><div class="t">Checkout · an order sent to Washington</div>${r('Blue mug','$18.00')}${r('Shipping','$4.00')}${inl?'':r('Sales tax, Washington','$1.43')}${r('Total','$23.43',' tot')}${inl?'<div class="t">Includes $1.43 sales tax</div>':''}<div class="go" style="text-align:center;margin-top:12px">Pay $23.43</div></div>`,'Say what the tax is for, in plain words.'); }
 function giftHTML(sc){ const v=id=>S.ans[id]&&S.ans[id].a==='opt'?S.ans[id].v:0;
   return pinsHTML(sc,`<div class="sk"><div class="t">A gift card from the shop</div><div class="h">$50 for Sam</div><div class="box">“Happy birthday. Spend it on something silly.”</div><div class="t">${v('g1')===1?'Use it by 26 November 2027':'It never runs out'}</div><div class="t">${v('g2')===1?'Spend it all in one go':'Spend it bit by bit: $50.00 left'}</div><div class="go">Send to Sam</div></div>`,'The amount should be the biggest thing on it.'); }
 function photosqHTML(sc){ const names=['Mug','Tote bag','Vase','Scarf'], was=[[62,48],[48,70],[36,84],[84,40]];
@@ -976,17 +992,19 @@ const TH={
    +`<div class="sk2"><div class="t">What Dana, the instructor, then sees</div><div>${S.ans.who&&S.ans.who.v===1?'Maya · ':''}★★★★ “patient”</div></div>`},
  signup:{title:'Faster sign-up',what:'Friday’s checked version, made at 6:10. The checker recorded it on a real phone, and the checks ran on this same version.',html:journeyHTML,gate:sc=>{const s=S.seen[sc]||{};return s[0]&&s[2]&&s[3]&&s[4]?'':'To accept it, first watch it through or try it.';}},
  pricepage:{title:'Price page',what:'The page as built on Friday, yearly first. One page, at the two widths.',html:widthsHTML,gate:sc=>{const s=S.seen[sc]||{};return s.phone&&s.desk?'':'To accept it, first see it at both widths.';}},
- alts:{title:'Price page',what:'The two ways the page could open, as a visitor on a phone would see each.',html:()=>altsHTML(IT.price,isDesk())},
+ alts:{title:'Price page',what:'The two ways the page could open, as a visitor on a phone would see each.',html:()=>altsHTML(IT.price,isDesk()&&innerWidth>=1100)},
  photos:{title:'Move photos to cheaper storage',what:'What ran, taken from the job’s own record.',html:traceHTML,told:'photos'},
  tests:{title:'Speed up the test run',what:'Ten runs before and ten after: same tests, same computer.',html:runsHTML,told:'tests'},
  gift:{title:'Gift cards',what:'A drawing, not built.',html:giftHTML},
+ taxsk:{title:'Sales tax for two new states',what:'A drawing, not built. Nothing is charged.',html:taxHTML},
  photosq:{title:'Product photos, same size everywhere',what:'Four of the 212 pictures, before and after. The checks ran on all 212.',html:photosqHTML},
  swap:{title:'Instructors can swap a lesson',what:'Monday’s checked version, as three pictures. Nothing here can be pressed.',html:swapHTML},
  'sb-ratings':sbThing('ratings'),'sb-remind':sbThing('remind'),
 };
 const UNDO={yearly:['Undone. Monthly is first again; it switched back in a minute.','Price page'],photos:['Undone. The app reads from the old storage again. The new copy is kept for a week.','Move photos to cheaper storage'],tests:['Undone. The test run is the old one again: 19 minutes.','Speed up the test run'],
  free:['Undone. It says “17% off” again.','Price page'],holdinv:['Not sent. The monthly send is held until you say.','Invoice export']};
-const MORE={lost:()=>det('m-lost','Everything I changed unshown while I had this: 14 changes, each read again by someone else','<p><b>Fine · 11.</b> Button and label wording in the Driving app and the shop. Each still reads as you would write it.</p><p><b>Wrong, and seen by customers · 1.</b> “Pay now” became “Continue” for six hours on 9 December. Three people did not finish paying. Two have since paid; one has not come back.</p><p><b>Changed back to be safe · 1.</b> “Cancel lesson” had become “Change plans”. Nobody complained. It touches money, so the old words are back.</p><p><b>Not looked at yet · 1.</b> The footer of the receipt email. It is read by 5:00 today, and I tell you then.</p>'),
+const MORE={held9:()=>det('m-held9','Which nine, and since when','<p><b>Since Tue 24 Nov.</b> Lesson notes for parents; Instructor sign-up checks the licence; Refunds in one step; Faster checkout on phones; Search that forgives typos; Cheaper helpers for small jobs.</p><p><b>Since this week.</b> Practice test questions, 2027 rules; Year-end statement; One command to set up a new computer.</p>'),
+ lost:()=>det('m-lost','Everything I changed unshown while I had this: 14 changes, each read again by someone else','<p><b>Fine · 11.</b> Button and label wording in the Driving app and the shop. Each still reads as you would write it.</p><p><b>Wrong, and seen by customers · 1.</b> “Pay now” became “Continue” for six hours on 9 December. Three people did not finish paying. Two have since paid; one has not come back.</p><p><b>Changed back to be safe · 1.</b> “Cancel lesson” had become “Change plans”. Nobody complained. It touches money, so the old words are back.</p><p><b>Not looked at yet · 1.</b> The footer of the receipt email. It is read by 5:00 today, and I tell you then.</p>'),
  q14:()=>det('m-q14','The other 14','<p>Mine to decide, inside what you gave me. Touch one to overturn it:</p><ol>'+['The code we text is 4 digits, not 6.','The first-lesson picker shows 3 days, not a calendar.','The old photo storage is kept for 30 days.'].map((t,i)=>mk('i:q14','in'+i,t,{tag:'li',chips:'line'})).join('')+'</ol><p>Settled by your earlier answers, 11 in all. For example: “never ask for what we do not use” removed 4 fields; “plain words on every button” settled 3 labels.</p>')};
 
 /* ---------- drawing a sitting ---------- */
@@ -1089,7 +1107,7 @@ function askHTML(it){
 }
 function itemHTML(it,i){
   const a=S.ans[it.id], done=isDone(it), id=it.id;
-  const kick=`<span class="n">${i+1}</span>${VERB[it.kind]} <span class="min">· ${it.proj>=0?P4[it.proj]+' · ':''}${it.min} min</span>`, name=`${it.goal}${it.sub?` <small>${it.sub}</small>`:''}`;
+  const kick=`<span class="n">${i+1}</span>${VERB[it.kind]} <span class="min">· ${it.proj>=0?P4[it.proj]+' · ':''}${it.min} min${it.age?' · '+it.age:''}</span>`, name=`${it.goal}${it.sub?` <small>${it.sub}</small>`:''}`;
   if(!done&&S.cur!==id) return `<section class="item folded" id="it-${id}"><button class="fold" data-act="cur:${id}" data-fid="cur:${id}" aria-expanded="false"><span class="kick">${kick}</span><span class="h">${name}</span><span class="gist">${it.judge}</span>${I.fwd}</button></section>`;
   let body, side=`<button class="side" data-act="park:${id}" data-fid="park:${id}">Not now…</button>`;
   if(done){ body=doneHTML(it); side=`<button class="side" data-act="take:${id}" data-fid="take:${id}">Take back</button>`; }
@@ -1138,10 +1156,10 @@ function sheetHTML(){
   h+=knowHTML(sh);
   if(sh.early) h+=`<div class="know"><div class="lab">Ready early</div><p class="quiet">${sh.early}</p></div>`;
   its.forEach((it,i)=>h+=itemHTML(it,i));
-  const rest=sh.split?sh.split.rest.slice(S.pulled.back5?(S.pulled.fri27?6:3):0):[];
-  if(rest.length) h+=`<div class="know"><div class="lab">Then, at ${S.pulled.back5?'8:30 tomorrow':sh.split.when}</div>${rest.map(r=>`<p class="quiet" style="margin:0 0 4px">${r[0]} · ${r[1]} · ${r[2]} min</p>`).join('')}</div>`;
+  const rest=tail.rest||[];
+  if(rest.length) h+=`<div class="know"><div class="lab">Still to come · ${NUM[rest.length]}, about ${rest.reduce((a,r)=>a+r[2],0)} minutes · ${tail.restWhen}</div>${rest.map(r=>`<p style="margin:0 0 6px"><b>${r[1]}</b> <span class="quiet">${r[0]} · ${r[2]} min. ${r[3]} ${r[4]}</span></p>`).join('')}</div>`;
   h+='<footer class="foot">';
-  if(!left.length&&its.length) h+=`<p class="end" id="end" tabindex="-1">That is all.</p><p>${tail.after||''}</p>`;
+  if(!left.length&&its.length) h+=`<p class="end" id="end" tabindex="-1">${tail.end||'That is all.'}</p><p>${tail.after||''}</p>`;
   else if(!its.length) h+=`<p>${sh.after||''}</p>`;
   return h+foot+'</footer>';
 }
@@ -1173,7 +1191,7 @@ function glance(){
   if(stale()) return {kind:'unknown',act:'sheet',l1:`I have heard nothing for ${age()} minutes.`,l2:`Last heard ${heardT()}. It may be this phone, not the work`,l3:'Read what is below as old. What cannot be undone takes no go until I hear again'};
   if(S.stopped) return {kind:'quiet',act:'all',l1:'Stop sent. 2 of 3 computers answered.',l2:'Stopped by you. The third is asleep, with nothing running',l3:`${seen} · open this to go on`};
   if(mo.buzz&&!S.buzz) return {kind:'alarm',act:'sheet',l1:'One thing cannot wait.',l2:'Before 3:00 · nothing else needs you',l3:seen};
-  if(mo.part) return {kind:'unknown',act:'all',l1:`I cannot see 2 of your ${NG()} goals.`,l2:`Not since 9:14. The other ${NG()-2}: ${seen.toLowerCase()}`,l3:'Nothing else needs you before 5:00'};
+  if(mo.part) return {kind:'unknown',act:'all',l1:`I cannot see 2 of your ${NG()} goals.`,l2:`Not since 9:14. The other ${NG()-2}: ${seen.toLowerCase()}`,l3:'Nothing else that I can see needs you before 5:00'};
   if(mo.missed) return {kind:'quiet',act:'sheet',l1:'Thursday’s release did not go.',l2:'I tried you twice and did not reach you. It goes next Thursday',l3:seen};
   if(mo.k==='away') return {kind:'quiet',act:'sheet',l1:'Away, by the look of it.',l2:'9 things held for when you are back. Nothing new starts',l3:seen};
   if(sh){ const its=itemsOf(sh), left=its.filter(it=>!isDone(it)), min=left.reduce((a,it)=>a+it.min,0);
@@ -1286,12 +1304,13 @@ function rulesHTML(){
    <p class="quiet" style="margin-top:14px">${NRULES} rules, in your words. What I may do without asking is kept apart, with your times, under Everything.</p></div>`;
 }
 function weekHTML(){
+  const un=Object.keys(S.undone).filter(k=>S.undone[k]&&UNDO[k]).length;
   const d=(id,s,b)=>det('w-'+id,s,b), marks=(sc,ts)=>'<ol>'+ts.map((t,i)=>mk(sc,'r'+i,t,{tag:'li',chips:'line'})).join('')+'</ol>';
   return `<div class="top"><span>The week · 16 to 20 November</span><span><button class="tbtn" data-act="close" data-fid="close" aria-label="Close">${I.x}</button></span></div><div class="ledger">
    <p class="big" id="lead" tabindex="-1">6 things done.</p>
    <p class="led"><b>21 minutes</b> of your time, of your 100 minutes a week. 2 went on reading about my miss.</p>
    <p class="led" style="margin-bottom:18px">I put <b>9 things</b> to you, all of them yours alone. Last week: 14. Nothing waited on you longer than a day.</p>
-   ${d('tld','I told you 11 things without asking. You undid none','<p>Each had nothing in it for you to judge, could be undone, and was inside what you allowed: what I heard for two new goals, yearly first on the price page, the invoice file being ready, the photo move, the report fix, a withdrawn question, a day’s slip, the corrected invoice file, the two older files, the release going out. Each came with See, and Undo where there is one.</p><p>That you undid none shows they were easy to leave, not that they were right. One in five of the kinds you let me do unseen still comes to you as a real look.</p>')}
+   ${d('tld',`I told you 11 things without asking. You undid ${un?NUM[un]:'none'}`,'<p>Each had nothing in it for you to judge, could be undone, and was inside what you allowed: what I heard for two new goals, yearly first on the price page, the invoice file being ready, the photo move, the report fix, a withdrawn question, a day’s slip, the corrected invoice file, the two older files, the release going out. Each came with See, and Undo where there is one.</p>'+(un?'<p>What you undid is back as it was, and I ask next time.':'<p>That you undid none shows they were easy to leave, not that they were right.')+' One in five of the kinds you let me do unseen still comes to you as a real look.</p>')}
    ${d('gls','The 6, one by one: how often each came to you, and how often I expected','<ul><li><b>Fix wrong totals on the weekly report.</b> Never; I expected never. You allowed report fixes. 1 day.</li><li><b>Sign-up error messages.</b> Once; I expected once. 3 days.</li><li><b>Move photos to cheaper storage.</b> Never; I expected once. It had nothing for you to judge, so it was told. 6 days.</li><li><b>New welcome email.</b> Twice; I expected twice: a sketch, then the result. 8 days.</li><li><b>Thursday’s release.</b> Twice; I expected once. The second was the sign-in I had not tested.</li><li><b>Invoice export.</b> Once; I expected once. And once more, to read about my miss. 10 days.</li></ul><p>In all: 6 times, where I expected 6. One more for my sign-in miss; one fewer because the photo move was told.</p><p>Still open: Faster sign-up has come to you once of an expected two; Driver ratings once of two, and you parked it.</p>')}
    ${d('ext','2 things came back a second time: one taught us something, one was my miss','<p>Taught us something: the welcome email. The first sketch showed how you want customers spoken to. That is what a sketch is for.</p><p>My miss: the invoice export. A late refund was missing. It went to nobody; the accountant’s email built on it was rebuilt and checked again.</p><p>Asking again when something new turns up is not counted against anyone.</p>')}
    ${d('buz','I reached you outside your times once. That counts against me','<p>Thursday, 1:10 pm: the app store signed you out at noon, and the release was at 3:00. It reached you at the first try. What I changed: I test every sign-in the day before a release, so it is on a sheet, not a buzz.</p>')}
@@ -1301,7 +1320,7 @@ function weekHTML(){
    ${d('wdr','1 question withdrawn','<p>The colour of the old sign-up button. The new sign-up has no such button.</p>')}
    ${d('tru','What I may do without showing you, and what I may not','<p>Now: small wording changes, by your yes on Wednesday. One in five still comes to you.</p><p>Not yet: storage moves and test speed-ups have each gone well once. One earns nothing.</p><p>Taken away: billing files, after the miss.</p><p>Never: what cannot be undone, what goes to customers, spending.</p><p>You left yearly-first alone and it went ahead. That shows a suggestion is easy to leave, not that you agree.</p>')}
    <div class="ps"><p>One thing I cannot measure. Was this week light, about right, or too much?</p>${optsHTML({id:'load',q:'How the week felt',opts:['Light','About right','Too much']})}<p class="leave">If you leave it, I record nothing.</p></div>
-   ${proto('this week’s figures are written by hand to match the walked week. In use they are counted from the record.')}</div>`;
+   ${proto('these figures are illustrative: written by hand to match the walked week. Only “you undid” follows what you press here. In use every figure is counted from the record.')}</div>`;
 }
 function behindHTML(){
   const d=(id,s,b)=>det('b-'+id,s,b);
@@ -1345,7 +1364,7 @@ function render(){
   if(f){ f.focus({preventScroll:!S.fx||!!top}); if(S.fx&&!top) f.scrollIntoView({block:'nearest'}); }
   if(top) top.scrollIntoView({block:'start'});
   S.fx=S.top=null;
-  $('#pm').value=S.m; $('#pnote').innerHTML=CHECKNOTE||`<b>Nothing in this prototype is live.</b> Recordings are drawn frames, “Try it yourself” is scripted, voice and sign-in are simulated, and every figure is written by hand. “+20m” lets twenty minutes pass with nothing heard.<br><b>${M[S.m].day} ${M[S.m].time} · ${M[S.m].title}${M[S.m].ev==='–'?'':' · scenario event '+M[S.m].ev}</b><br>${M[S.m].note}`;
+  $('#pm').value=S.m; $('#pnote').innerHTML=CHECKNOTE||`<b>Nothing in this prototype is live.</b> Recordings are drawn frames, “Try it yourself” is scripted, voice and sign-in are simulated, and every figure is written by hand. The card ageing by itself, the one interruption and its second try, and signing in all need a real phone, and were not tried on one. “+20m” lets twenty minutes pass with nothing heard.<br><b>${M[S.m].day} ${M[S.m].time} · ${M[S.m].title}${M[S.m].ev==='–'?'':' · scenario event '+M[S.m].ev}</b><br>${M[S.m].note}`;
 }
 function go(v){ S.stack.push(S.view); S.view=v; S.fx='#lead'; }
 function firstOpen(){ const sh=sheetOf(); const it=itemsOf(sh).find(x=>!isDone(x)); S.cur=it&&!(sh&&sh.early)?it.id:null; autoThing(); }
@@ -1487,7 +1506,7 @@ $('#pn').onclick=()=>{ const n=$('#pnote'); n.hidden=!n.hidden; $('#pn').setAttr
 function applyTheme(){ document.documentElement.dataset.theme=S.theme==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):S.theme; $('#pt').textContent=S.theme; }
 $('#pt').onclick=()=>{ S.theme={auto:'light',light:'dark',dark:'auto'}[S.theme]; applyTheme(); };
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',applyTheme);
-matchMedia('(min-width:1040px)').addEventListener('change',()=>{ if(isDesk()&&S.view==='lock') S.view='sheet'; autoThing(); render(); });
+matchMedia('(min-width:860px)').addEventListener('change',()=>{ if(isDesk()&&S.view==='lock') S.view='sheet'; autoThing(); render(); });
 addEventListener('resize',()=>{ clearTimeout(window.__r); window.__r=setTimeout(render,150); });
 
 /* ---------- the week as he would walk it: used for screenshots (walk) and by the self-check (which presses the real buttons) ---------- */
@@ -1554,7 +1573,7 @@ async function selfCheck(){
       else if(a.startsWith('thing:')){ if(!S.thing) click(`[data-fid="peek-${a.slice(6)}"]`); }
       else click(`[data-act="${a}"]`);
     }
-    out.taps[k]=taps; ok(sheetDone(sheetOf())&&q('#end'),'it does not end with “That is all”: '+k); }
+    out.taps[k]=taps; ok(sheetDone(sheetOf())&&q('#end'),'the sheet does not come to an end: '+k); }
   // 4. the paths the week does not take
   const typeNote=t=>{ const f=q('.panel form'); ok(f,'no place to type a mark'); if(f){ f.t.value=t; f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})); audit(); } };
   const holdFully=async id=>{ const el=q(`[data-hold="${id}"]`); ok(el,'nothing to hold: '+id); if(el){ el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})); await wait(1300); audit(); } };
@@ -1584,7 +1603,7 @@ async function selfCheck(){
   ok(!/build 214/i.test(q('#it-release').textContent.replace(/Checked by[\s\S]*$/,'')),'a build number is on the face of the release');
   { const el=q('[data-hold="release"]'); el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})); await wait(200); el.dispatchEvent(new PointerEvent('pointerup',{bubbles:true})); await wait(1200); ok(!S.ans.release&&/Keep holding/.test(stage.textContent),'a slip of the thumb releases it'); }
   click('[data-act="cur:signupq"]'); ok(stage.querySelectorAll('#it-signupq .alt').length===4&&/Drawn, not built/.test(q('#it-signupq').textContent),'the two early choices are not each drawn both ways');
-  reset('unseen'); ok(glance().kind==='unknown'&&!/^Nothing needs you/.test(glance().l1),'two unseen goals still read as all is well'); if(!isDesk()) click('[data-fid="glance"]'); ok(stage.querySelectorAll('.gl .unseen').length===2,'the two unseen goals are not marked where they live');
+  reset('unseen'); ok(glance().kind==='unknown'&&!/^Nothing needs you/.test(glance().l1)&&/Nothing else that I can see needs you/.test(glance().l3)&&!/Nothing else needs you/.test(lockHTML()),'two unseen goals still read as all is well'); if(!isDesk()) click('[data-fid="glance"]'); ok(stage.querySelectorAll('.gl .unseen').length===2,'the two unseen goals are not marked where they live');
   reset('buzz'); click('[data-act="buzz:signed"]'); await wait(1100); ok(S.buzz==='signed'&&glance().kind==='quiet','the one thing that cannot wait is not answered in one press');
   reset('missed'); ok(/did not go/.test(glance().l1)&&/I do not try a third time/.test(sheetHTML()),'the missed second try is not told');
   reset('thu5'); ok(/August’s and September’s files, checked as I said/.test(sheetHTML()),'what was not looked at has no return'); if(!isDesk()) click('[data-fid="glance"]'); if(!S.thing) click('[data-fid="peek-sketch"]'); pin(); click('[data-act="speak"]'); ok(marksOf('t:ratings').some(m=>m.kind==='pin'&&m.text),'a picture cannot be marked at a spot');
@@ -1592,7 +1611,7 @@ async function selfCheck(){
   reset('away'); ok(/^Away, by the look of it/.test(glance().l1)&&/Nothing new starts/.test(glance().l2),'the away card is missing');
   reset('back'); ok(/^Welcome back/.test(glance().l1),'the return card is missing'); if(!isDesk()) click('[data-fid="glance"]');
   { const r=SH.back.ret, gs=goals(); ok(r.need+r.done+r.held+(NG()-r.need-r.done-r.held)===40&&q('.retbar')&&stage.querySelectorAll('.since>p').length===5,'the return does not open on one bar and five lines');
-    ok(gs.filter(g=>g.away&&g.grp==='D').length===r.done&&gs.filter(g=>g.grp==='H').length===r.held&&itemsOf(sheetOf()).length+SH.back.split.rest.length===r.need,'the bar’s numbers do not match the goals behind them'); }
+    ok(gs.filter(g=>g.away&&g.grp==='D').length===r.done&&gs.filter(g=>g.grp==='H').length===r.held&&itemsOf(sheetOf()).length+SH.back.rest.length===r.need,'the bar’s numbers do not match the goals behind them'); }
   if(!S.thing) click('[data-fid="peek-signup"]');
   ok(q('.chap')&&stage.querySelectorAll('.chap .ch').length===5&&stage.querySelectorAll('.chap .ch em:not(.doubt)').length===1&&/Prototype · these five frames are drawn/.test(stage.textContent),'the recording has no named steps, hides its open choice, or does not say it is drawn');
   click('[data-act="jplay"]'); await wait(700); ok(!S.playing&&S.step['t:signup']===4&&[0,1,2,3,4].every(f=>S.seen['t:signup'][f]),'the recording does not play through'); ok(!q('[data-act="accept:signup"]')&&/first settle the one/.test(stage.textContent),'the journey can be accepted before the choice that is his is settled');
@@ -1606,8 +1625,10 @@ async function selfCheck(){
   if(S.cur!=='pricepage') click('[data-act="cur:pricepage"]'); if(!S.thing) click('[data-fid="peek-pricepage"]'); click('[data-fid="bill-month"]'); ok(/\$19/.test(q('.ppw').textContent),'the page’s own buttons do not work in “Use it”');
   click('[data-fid="pay0"]'); ok(/Pay for Solo/.test(q('.ppw').textContent)&&/No real card was tried/.test(q('.ppw').textContent),'Start does nothing'); click('[data-fid="payback"]'); ok(/Simple pricing/.test(q('.ppw').textContent),'the pay screen has no way back');
   click('[data-fid="w-desk"]'); click('[data-fid="mode-mark"]'); pin(); click('[data-act="pin-keep"]'); ok(marksOf('t:pricepage').some(m=>m.where==='desk'),'a mark on the page does not keep its width');
-  // the other six of the nine are one touch away
-  reset('back'); walk('back'); render(); click('[data-act="pull:back5"]'); ok(itemsOf(sheetOf()).length===6&&q('#it-remindgo')&&!isDone(IT.remindgo),'the next three cannot be taken now');
+  // the first ten minutes do not end as if the other eighteen did not exist; the other six are one touch away
+  reset('back'); if(!isDesk()) click('[data-fid="glance"]'); ok(stage.querySelectorAll('.know p b').length>=6&&/Latest: Fri 27 Nov, or it misses the December release/.test(stage.textContent)&&/ready since Fri 20 Nov/.test(stage.textContent),'what remains is not named with its age and latest day');
+  ok(/Nothing is charged\. Charging anyone is its own go/.test(sheetHTML()+bodyHTML(IT.tax)+leaveHTML(IT.tax))&&IT.tax.kind==='look','a cheap sketch of the checkout waits for a go');
+  reset('back'); walk('back'); render(); ok(/That is three of the nine/.test(q('#end').textContent)&&!/That is all/.test(q('.foot').textContent)&&/Six remain, about 18 minutes/.test(q('.foot').textContent),'the first three end as if nothing remained'); click('[data-act="pull:back5"]'); ok(itemsOf(sheetOf()).length===6&&q('#it-remindgo')&&!isDone(IT.remindgo),'the next three cannot be taken now');
   reset('back5'); if(!isDesk()) click('[data-fid="glance"]'); ok(/first settle the one/.test(q('#it-remindgo').textContent)&&!q('[data-hold="remindgo"]'),'the texts can be switched on before the choice that is his'); click('[data-act="opt:optout:1"]'); ok(!q('[data-hold="remindgo"]')&&q('[data-act="rebuild:remindgo"]')&&/including the 38/.test(q('#it-remindgo').textContent),'texting those who turned texts off can be switched on unchecked');
   reset('day30'); if(!isDesk()) click('[data-fid="glance"]'); ok(/Everything I changed unshown while I had this: 14 changes/.test(stage.textContent)&&/Everything it touched: 9 uses, sorted/.test(stage.textContent),'a lost permission or a stretched rule does not list what it touched');
   reset('all'); ok(stage.querySelectorAll('.gl li').length<=10&&stage.querySelectorAll('.moreg').length===4,'the forty goals are all listed by default'); click('[data-act="expand:1"]'); click('[data-fid="g-Price page"]'); ok(q('#goal'),'a goal does not open');
@@ -1616,12 +1637,13 @@ async function selfCheck(){
   click('[data-act="times:1"]'); ok(S.times===1&&/From tomorrow: 8:30 on weekdays/.test(stage.textContent)&&/whether or not you look in/.test(stage.textContent),'his times cannot be changed, or what a time means is not said'); click('[data-act="times:0"]');
   click('[data-fid="glance-toggle"]'); ok(S.glanceOff&&!/class="glance/.test(lockHTML()),'the card cannot be taken off the lock screen'); click('[data-fid="glance-toggle"]'); ok(!S.glanceOff,'the card cannot be put back');
   click('[data-act="rules"]'); ok(NRULES===30&&stage.querySelectorAll('.ledger .rows li').length===35&&/Nothing here needs you/.test(stage.textContent),'the thirty rules cannot be seen whole'); click('[data-act="rtake"]'); ok(Object.keys(S.rtaken).length===1,'a rule cannot be taken back');
-  reset('week'); ok(/how often each came to you, and how often I expected/.test(weekHTML())&&/Prototype · this week’s figures are written by hand/.test(weekHTML()),'the week does not count goal by goal, or does not say its figures are hand-written');
+  reset('week'); ok(/how often each came to you, and how often I expected/.test(weekHTML())&&/Prototype · these figures are illustrative/.test(weekHTML())&&/You undid none/.test(weekHTML()),'the week does not count goal by goal, or does not say its figures are illustrative'); S.undone.yearly=true; ok(/You undid one/.test(weekHTML()),'the week does not follow what he undid'); delete S.undone.yearly;
+  reset('thin'); ok(/Year-end statement must start by Fri 11 Dec/.test(sheetHTML())&&/Which nine, and since when/.test(sheetHTML()),'a thin week does not name what it held, since when, and its latest day');
   reset('tue'); if(!isDesk()) click('[data-fid="glance"]'); ['j','k','t','/','Escape','Escape','Escape'].forEach(key); key(']'); ok(M[S.m].k==='say','the keys do not step');
   // report, where a person or a screenshot can read it
   const sum=o=>Object.values(o).reduce((a,b)=>a+b,0), kv=o=>Object.keys(o).map(k=>k+' '+o[k]).join(', ');
   document.documentElement.classList.remove('still'); reset('tue');
-  CHECKNOTE=`<b>Self-check at ${isDesk()?'desk':'phone'} width: ${errs.length?errs.length+' FAILED':'all pass'}.</b> ${errs.length?esc(errs.join(' · ')):'Every moment draws; all 14 scenario events are carried; nothing waits for him to agree; no word of the method is on any screen and no control is under 44 px (${audits} states looked at, every fold opened); every card says how fresh it is; each of the eleven sheets ends with “That is all” when walked on the real buttons; and the side paths hold: what I heard opens and a line of it can be changed, the send’s exact terms with what was not tried above the yes, the default in words, a permission taken back, the told choice changed and taken back, not now, take back, twenty minutes unheard turning the card old, an old sheet refusing a go, starting on what I heard taken back and held, say it and see what was heard, his typed words back on the next sketch, undo of what went ahead, the trace, an estimate kept out of the passed lines, the miss with everything it touched, a slipped hold, two early choices each drawn both ways, two unseen goals, the one interruption and its missed second try, the away card, the return’s bar and five lines, the recording played and scrubbed, an unbuilt choice refused the old proof, trying it himself, marks that keep their step and width, Start reaching the pay screen and back, the next three pulled in, a text choice nobody checked, a lost permission and a stretched rule listing what they touched, forty goals folded, undo saying what was built on it, stop saying what answered and what had gone, his times changed, the card taken off and put back, thirty rules seen whole, the keys.'}
+  CHECKNOTE=`<b>Self-check at ${isDesk()?'desk':'phone'} width: ${errs.length?errs.length+' FAILED':'all pass'}.</b> ${errs.length?esc(errs.join(' · ')):'Every moment draws; all 14 scenario events are carried; nothing waits for him to agree; no word of the method is on any screen and no control is under 44 px (${audits} states looked at, every fold opened); every card says how fresh it is; each of the eleven sheets comes to its end when walked on the real buttons, and says what still remains; and the side paths hold: what I heard opens and a line of it can be changed, the send’s exact terms with what was not tried above the yes, the default in words, a permission taken back, the told choice changed and taken back, not now, take back, twenty minutes unheard turning the card old, an old sheet refusing a go, starting on what I heard taken back and held, say it and see what was heard, his typed words back on the next sketch, undo of what went ahead, the trace, an estimate kept out of the passed lines, the miss with everything it touched, a slipped hold, two early choices each drawn both ways, two unseen goals, the one interruption and its missed second try, the away card, the return’s bar and five lines, every remaining thing named with its age and latest day, a sketch that needs no go, the recording played and scrubbed, an unbuilt choice refused the old proof, trying it himself, marks that keep their step and width, Start reaching the pay screen and back, the next three pulled in, a text choice nobody checked, a lost permission and a stretched rule listing what they touched, forty goals folded, undo saying what was built on it, stop saying what answered and what had gone, his times changed, the card taken off and put back, thirty rules seen whole, the keys.'}
    <br><b>Taps</b> (total ${sum(out.taps)+3}: ${kv(out.taps)}; plus 1 hold to speak, 1 sign-in, 1 to turn to the week).
    <br><b>Words he must read to act</b> (total ${sum(out.must)}): ${kv(out.must)}.
    <br><b>Words merely available</b> (total ${sum(out.avail)}): ${kv(out.avail)}.`;

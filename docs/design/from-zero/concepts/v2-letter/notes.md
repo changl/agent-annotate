@@ -2,7 +2,7 @@
 
 **What I built.** One sheet. On his phone it sits behind a card he put on the lock screen; on his desk it is the left page of an open book, with the thing itself on the facing page. He has two set times (8:30 and 5:00), but it opens at any time. It holds only what is his: look, decide, and "go?" before something that cannot be undone or that leaves the building. Everything else is told in one line with See and Undo, or is silent. It ends with "That is all."
 
-Open `index.html`. "next" steps through 18 moments of the stress week; "notes" says what he does not see; "+20m" lets twenty minutes pass with nothing heard. Under 1040 px it is the phone; above, the desk. `#check` runs every state and reports on screen. `#k=back&th=signup` and the like open one state.
+Open `index.html`. "next" steps through 18 moments of the stress week; "notes" says what he does not see; "+20m" lets twenty minutes pass with nothing heard. Under 860 px it is the phone; above, the desk (so the desk survives beside a phone in one window). `#check` runs every state and reports on screen. `#k=back&th=signup` and the like open one state.
 
 **Nothing in it is live.** Recordings are drawn frames, "Try it yourself" is scripted, voice and sign-in are simulated, every figure is written by hand. The file says so in its prototype bar, and in a striped note at each place the claim is made.
 
@@ -22,10 +22,15 @@ Open `index.html`. "next" steps through 18 moments of the stress week; "notes" s
 - **22 · One place says what a time means when he has not looked in**, beside the permissions, and there he can change his times.
 - **24 · His own words come back.** Type a correction and the next sketch quotes it, not a fixture.
 - **26 · Every control is at least 44 by 44**; `#check` now measures width and words spilling out, and found two more of my own.
-- **29 · An estimate is not a passed line.** The lower bill is "not tried" until January's real bill.
-- **30 · No build numbers on the face.** "Friday's checked version"; the number is in the checker's evidence.
+- **29, 30 · An estimate is not a passed line** (the lower bill is "not tried" until January's real bill), and **no build numbers on the face**: "Friday's checked version"; the number is in the checker's evidence.
 - **31 · Freshness comes from the clock.** After twenty unheard minutes the card says "I have heard nothing for 22 minutes", the sheet reads "as last heard", and a held go for what cannot be undone is refused. The missed second try of the one interruption is drawn.
 - **32 · Results with nothing to judge are told** with See and Undo. The random real look stays.
+
+For the stress critique:
+- **The early look (its item 6).** The morning after the questions arise, the two that decide later screens come each drawn both ways, with the first screen built and nothing more built until he chooses.
+- **Every remaining thing of the return is named** with how long it has waited and its latest day ("Back from parking on Mon 23 Nov, the latest day you set. Latest: Fri 27 Nov, or it misses the December release"). The first ten minutes end "That is three of the nine. Six remain, about 18 minutes", not "That is all". A thin week names the nine it held.
+- **Sales tax is a cheap sketch to look at.** Charging anyone is a separate go, later; no up-front wait on harmless work.
+- **Half-blind says only what it knows** ("Nothing else that I can see needs you"), and **the week says its figures are illustrative**, in the strip and on the page; only "you undid" follows what he presses.
 
 Earlier in the round, still true: nothing waits for him to agree; decisions sit on the showing; the card is his own silent widget and always says how fresh it is; the return opens on one bar that adds up to 40 and five lines; a journey is the checker's recording by named step; the facing page folds forty goals to what is with him; no word of the method on any screen.
 
@@ -52,18 +57,18 @@ Eleven sheets (the return in full, all nine things), the one interruption, one s
 | Places to look | 1 doorway: card, sheet, the thing, everything, the week | same |
 | Interruptions | 1 | 1 |
 | Held in his head | 0 pieces of work; 1 habit, his two times | same |
-| Words he must read to act | 4,176: sheets 3,582, cards 290, the week 182, the interruption 79, the heard-back 43 | 4,120 |
-| Words merely available | 4,009: evidence and what ran 2,096, the rules 623, the week's folds 577, everything 402, behind 311 | same |
+| Words he must read to act | 4,464: sheets 3,866, cards 294, the week 182, the interruption 79, the heard-back 43 | 4,407 |
+| Words merely available | 4,055: evidence and what ran 2,142, the rules 623, the week's folds 577, everything 402, behind 311 | same |
 | Words typed / spoken | 0 / 20 | 0 typed; a goal typed at the desk is 11 |
-| Taps | 63 | 44 |
-| Decisions | 30: 29 only his; 1 the random look at a checked result | same |
+| Taps | 65 | 45 |
+| Decisions | 31: 30 only his; 1 the random look at a checked result | same |
 | Minutes | about 55 by the sheets' own budgets | same |
 
-Up from 3,069 words and 37 minutes, because the return is now counted whole (its six further things are 724 words, 18 minutes) and the send, the early choices and the "touched" lists cost reading. Without the two stress-only sheets (a thin week, day 30) it is 3,653 words. This is my count by my rule, not the critics'.
+Up from 3,069 words and 37 minutes, because the return is now counted whole (nine things, 1,731 words, 28 minutes) and the send, the early choices, the ages and the "touched" lists cost reading. Without the two stress-only sheets (a thin week, day 30) it is 3,883 words. This is my count by my rule, not the critics'.
 
 ## Three weakest points
 
-1. **Honesty costs reading.** It is the longest of the candidates. The bad day is 507 words before he has pressed anything.
+1. **Honesty costs reading.** It is the longest of the candidates. The bad day is 512 words; the return's first opening is 894.
 2. **The moving thing is still a stand-in**, and now says so. What needs the real device is only listed as not tried.
 3. **Told lines can be skimmed**, and work starts on what I heard. Both are only safe while the checks can fail and the first look is cheap.
 

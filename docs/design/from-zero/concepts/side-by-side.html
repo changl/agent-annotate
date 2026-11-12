@@ -22,7 +22,9 @@
   iframe { display:block; border:1px solid var(--line); border-radius:12px; background:#fff; }
   #phone { width:390px; height:844px; flex:none; }
   .desk { flex:1; min-width:0; }
-  #desk { width:100%; height:844px; }
+  /* The desk view is always laid out 1280 wide, then scaled to fit, so it never falls back to a phone layout. */
+  #deskbox { width:100%; height:844px; overflow:hidden; border:1px solid var(--line); border-radius:12px; }
+  #desk { width:1280px; border:0; border-radius:0; transform-origin:0 0; }
   @media (max-width: 900px) { main { flex-direction:column; } #phone { width:100%; max-width:390px; } }
 </style>
 <header>
@@ -37,7 +39,7 @@
 </header>
 <main>
   <figure><figcaption>Phone, 390 wide</figcaption><iframe id="phone" title="Phone view"></iframe></figure>
-  <figure class="desk"><figcaption>Desk</figcaption><iframe id="desk" title="Desk view"></iframe></figure>
+  <figure class="desk"><figcaption>Desk, 1280 wide, scaled to fit</figcaption><div id="deskbox"><iframe id="desk" title="Desk view"></iframe></div></figure>
 </main>
 <script>
   // One static page: pick a design, show it at phone and desk width at once.
@@ -51,6 +53,14 @@
     history.replaceState(null, '', '#' + d);
   }
   buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.d)));
+  function fit() {
+    const box = document.getElementById('deskbox'), desk = document.getElementById('desk');
+    const s = Math.min(1, box.clientWidth / 1280);
+    desk.style.transform = 'scale(' + s + ')';
+    desk.style.height = (box.clientHeight / s) + 'px';
+  }
+  addEventListener('resize', fit);
+  fit();
   const wanted = location.hash.slice(1);
   show(buttons.some(b => b.dataset.d === wanted) ? wanted : 'v2-letter');
 </script>

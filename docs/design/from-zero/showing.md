@@ -57,7 +57,7 @@ In the viewer, pick a design along the top. Each prototype has a selector of nam
 
 | | Pick | Then choose | Look for |
 |---|---|---|---|
-| 1 | Letter-based | "Tue 8:30 · The morning" | The lock card on the phone. On the desk, the letter on the left page and the thing itself on the right. Two things told, one to look at. |
+| 1 | Letter-based | "Tue 8:30 · The morning" | The lock card on the phone. On the desk, the letter on the left page and the thing itself on the right. Three things told, and one that waits for your go because it sends something outside. |
 | 2 | Letter-based | "Tue 12:40 · Saying it on the move" | One spoken sentence, and what comes back. |
 | 3 | The showing sheet | "A · Faster sign-up" | A recording of the exact thing that was checked. What is yours to judge, in one line. What is not checked. Press "Mark it for me", then "It comes back". |
 | 4 | The showing sheet | "B · Price page", then "I · Thursday's Driving app release" | One page at two widths. Then the pause before something that cannot be undone; press "Change it after the check" and try to release it. |

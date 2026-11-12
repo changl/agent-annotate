@@ -2,31 +2,32 @@
 
 **What I built.** One doorway: a card on his lock screen, a widget he chooses to add. It says what has gathered and how long it will take, how fresh that is, or that it cannot see; it has a mic. Tapping it opens one sheet, written like a letter. Each thing opens in turn and folds to one line in his blue ink, with Undo. The sheet ends with "That is all." On the desk the sheet is the left page and the thing itself the facing page. Below, never pushed, are three pages: where all 40 goals stand, what he has let me do, and who is working where.
 
-`index.html` carries the 14 events and the stress cases in 15 moments; the striped bar is not part of the design. `#check` (add `&t=light` or `&t=dark`) walks every moment through the real buttons and runs the side paths. It fails on a word of the method on screen, a control under 44 px, a sideways scroll, or "nothing needs you" shown while anything waits or is unseen. It passes at 390 and 1280, light and dark.
+`index.html` carries the 14 events and the stress cases in 15 moments; the striped bar is not part of the design and says, once, that everything is drawn. `#check` (add `&t=light` or `&t=dark`) walks every moment through the real buttons and runs 46 side paths. It fails on a word of the method on screen, a control under 44 × 44 px, two controls whose hit areas overlap, a sideways scroll, or "nothing needs you" shown while anything waits or is unseen. It passes at 390 and 1280, light and dark.
 
 ## Three merges in this round
 
 **The say-back that does not wait** (revision 3):
 - It arrives as one told line when work starts; any line can be fixed at any time.
-- Only Sales tax waits for his go, and says why.
-- His decisions sit inside the first showing, as two concrete alternatives. No "agree" items remain.
+- Starting on what he says is a standing permission, bounded to throw-away work up to a first look, and on the allowed page with its uses. Taken back, new things wait for his go.
+- Sales tax waits for his go, and says why. So do the reminder texts: the exact two texts, who gets them, said back, held.
+- His decisions sit inside the first showing, as concrete alternatives that redraw the screen they change.
 - **Told, not asked** applies only when nothing is left to judge, the result can be undone, and it is inside what he allowed. One told result comes back at random as a real look.
 
 **The showing sheet** (v2-showing):
-- A seal naming exactly what was checked; "Looks right · build 4.12" names it again.
-- Done lines as dots that jump to their moment; "Your yes does not cover…".
-- Marks that come back green in place.
-- Before what cannot be undone: said back, a choice of who gets it, press and hold. That answer is never pinned; it sits after the sentence it answers.
+- A seal naming what was checked, in his words ("Friday's checked version"); the build number is one tap down. Changed after the check, the seal breaks and the answer is held, on every path to it.
+- "Not checked: …" just above the yes. Marks return beside what they became, in his own words.
+- Before what cannot be undone: said back, a choice of who gets it, press and hold. Held if the view is over 15 minutes old or messages are paused.
 
 **The return** (v2-return):
-- **After five days:** "36 of your 40 goals need nothing from you" over one bar that adds up to 40. What changed is sorted by consequence. What needs him is cut to his minutes; the rest is named, dated and costed ("Answer by Wednesday noon, or it misses Thursday's release").
-- **A wrong result** comes with what it touched, sorted (built on it; not used yet; checked again and fine; not looked at). The remedy is one prepared choice, with the exact note to his accountant said back.
-- **A wrong rule** comes with the checker's own words and its uses, sorted (inside its case, fine; already charged; held).
-- **What you've let me do** is a calm page: where each permission came from, its uses, when it lapses. Nothing on it asks for upkeep.
-- **Blind and buzz:** whole-blind (the phone works it out itself) and half-blind (only the unseen lines hatched). The buzz is tried at most twice, then it stops and says what was lost.
-- **Stop:** for one goal, one project, or everything. Each says what it did and what was already out of hand.
+- **After five days:** one bar that adds up to 40, then what the absence cost (gift cards missed a release; next date), then consequence order, his minutes, the rest costed.
+- **A wrong result or rule** comes with what it touched, sorted, and "not looked at yet" has an owner and a date.
+- **What you've let me do:** where each permission came from, what it covers, its uses, when it lapses, Take back that holds; the default rule ("only after a look where you could have seen it"); his look times, changeable; one switch that pauses every text and email.
+- **Blind and buzz:** whole-blind and half-blind. The buzz is tried twice; letting it go settles it.
+- **Stop:** for one goal, one project, or everything. It names each computer and whether it answered; until all with work have, it says "Stop asked", never "stopped". Undo of a released goal says what was built on it and offers a replacement.
 
-**After the craft critique:** no pop-up notices (a receipt sits in the flow under what it answers); proof as words ("Checked by someone else: all 6 pass", the exact thing beside it, "Not checked: …" just above the yes); short buttons; a greeting instead of a count; no verb tags or numbered queue; dark lock cards; the desk opens on the sheet with the thing at full height; the sign-up choices redraw the screen they change; marking shown as "✎ Touch what's wrong".
+**After the craft critique:** no pop-up notices; proof as words; short buttons; a greeting instead of a count; dark lock cards; the desk opens on the sheet.
+
+**After the defect critique:** no control only acknowledges. Pause, take back, stop, undo, ask the checker, price change, let-it-go, carry on and the week's answers all change state that their readers show. The journey plays at its real times and is accepted only once every screen is seen, or deferred to the phone; pins keep their screen or width. The price page is laid out at 390 and 1280 and scaled, its switch and Start are buttons, Start reaches checkout. The invented phone mark is gone. Dates and chronology agree (tax from 1 December; sign-in is readiness, the release is Thursday's go).
 
 ## From round 1's concepts
 
@@ -37,9 +38,9 @@
 
 ## The three unsolved problems
 
-1. **Things that move: in part.** Each showing is sealed to its exact build, page or file. A journey is a recording he scrubs (a dot jumps to its moment, a touch pins one). "Try it on your phone" opens the same build and brings marks back. Web pages show at two widths, with "Use it" kept apart from "Mark". Jobs show what they did; speed shows ten runs each. **Not solved:** feel and sound are judged on frames.
-2. **Coming back: answered, with one limit.** One bar that adds up, then consequence order, his minutes, and the rest costed. A miss and a wrong rule arrive with what they touched already sorted. **Limit:** each return is bounded, not the total. The debt is named and stops growing; it does not shrink.
-3. **Rhythm: answered.** Things gather for when he usually looks. A default goes only after a look in which he could have seen it. "Do them now" pulls things early. Absence needs no word from him.
+1. **Things that move: in part.** Each showing is sealed to its exact version, page or file. A journey is a recording he plays or steps through; a checked line jumps to its moment; a touch or Enter pins one. Web pages are judged at both real widths. **Not solved:** feel and sound are judged on frames; "Try it on your phone" is promised, not drawn; a desk-width page on a phone is a 26% picture.
+2. **Coming back: answered, with one limit.** One bar that adds up, the cost of absence first, then consequence order. **Limit:** each return is bounded, not the total.
+3. **Rhythm: answered.** Things gather for his look times, which he can change. A default goes only after a look in which he could have seen it; a skipped look holds it. "Do them now" pulls things early. Absence needs no word from him.
 
 ## Count (phone; `#check`; every visible line counted once per moment, stricter than the critics' rule)
 
@@ -48,23 +49,22 @@
 | Places he must look | 1 (card → sheet), plus the app store to sign in | same |
 | Interruptions | 1, tried at most twice | 1 |
 | Held in his head | 0 things; 1 habit: glance at the card | same |
-| Words read to act | 3,124 (desk 2,978) | 2,466 (desk 2,361) |
+| Words read to act | 3,534 (desk 3,380); was 3,124 | 2,851 (desk 2,738) |
 | Words merely available | full say-backs, checker's sheets (~80 each), where everything stands, the allowed and stop pages | — |
 | Typed / spoken | 0 / 11 | 0 / 11 |
-| Taps | 40 (desk 32: the desk opens straight to the sheet) | 33 (desk 27) |
-| Decisions | 22, all only his; 0 acceptances of what a check had passed | 18, all only his |
-| Minutes (critics' model) | about 22 | about 18 |
+| Taps | 43 (desk 35) | 36 (desk 30) |
+| Decisions | 23, all only his; 0 acceptances of what a check had passed | 19, all only his |
+| Minutes (scaled from words) | about 25 | about 21 |
 
 ## Three weakest points
 
-1. **Moving things are still recordings.**
-2. **The return cost words.** The sorted trace and the said-back note added about 155 words to the events.
+1. **Moving things are still recordings**, now labelled as drawn.
+2. **Safety cost words:** +410 on the phone, mostly the reminder-text go, the invoice trade-off, the third sign-up choice and held-answer reasons.
 3. **A say-back he never opens can drift** until the first showing.
 
 ## What revision 3 still cannot be drawn
 
-- **The checker's direct line** (principle 8): its answer still waits for his next look.
+- **The checker's direct line** (principle 8): his question stays on the goal, but its answer waits for his next look.
 - **What was built on what** (principle 11): the record must hold the links between results.
-- **A known gap he accepts** ("your yes does not cover") has no name in the method.
 - **The random real look** needs a rate per kind of work.
-- **Undo is not free:** undoing a default that others now rest on is the same trace problem as a wrong result.
+- **Per-goal returns against expected** on the week page; "Rules learned: 3" still opens the general allowed page.
