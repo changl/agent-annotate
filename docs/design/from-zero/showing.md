@@ -25,7 +25,7 @@ Forty-five workers read about 62 GB of your transcripts, every review page and e
 
 | | |
 |---|---|
-| How often a goal came back to you | 759 times for 80 goals. Median 5.5. Worst 55. |
+| How often a goal came back to you | 759 times for 80 goals. Median 5.5. Worst 55. Adding the vehicle project's chat from the second computer: 793 for 88. |
 | Why | Your own decision 29%. Sent back for quality 20%. Intent misread 14%. You had to ask or push 10%. The working system needed you 9%. Asked something that did not need you 8%. You carried a message 5%. You changed your mind 5%. |
 | Your typed messages that were avoidable | 35% to 43% of about 2,500 on two computers, each labelled by two workers apart |
 | What would have avoided them | A check before you saw the work: 290. A watch: 83, or 397 if the 314 one-word prompts to carry on after a rate limit were yours. The agreement: 98. A glance you could trust: 68. The rule book: 54. A default: 40. |
