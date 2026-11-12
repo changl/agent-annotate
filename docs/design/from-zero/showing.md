@@ -33,6 +33,8 @@ Forty-five workers read about 62 GB of your transcripts, every review page and e
 | Questions put to you on review pages | 3,265. A quarter of your answers clearly did not need you. You typed 38,900 words into the answers. |
 | Rules you have had written down | 1,757. Only 69 are your own preferences. At least 8 were broken again after being written. |
 | Where helper effort goes | 10% doing the work. 27% helpers talking to helpers. Coordinators use a third of everything. |
+| How you sit down | 419 sittings in the last 60 days, at every hour of the day. In 217 of them you typed one message and left. |
+| How much of what enters a helper's session is you | 2.5%. The rest is machinery: hooks, wake-ups, briefs from other helpers. |
 
 ## What the evidence overturned
 
