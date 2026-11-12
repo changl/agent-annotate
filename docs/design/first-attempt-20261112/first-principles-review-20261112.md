@@ -1,5 +1,7 @@
 # agent-annotate from first principles
 
+> **Set aside on 12 Nov 2026.** Chang: this improved the existing tool, and the job was a complete reimagining. The restart is `../from-zero-20261112.md`. This file, its summary, the plan outline and the mock-up are kept only for their measurements.
+
 Chang asked on 2026-11-12: if we started from scratch, as an Orca plug-in and/or a standalone tool, what would agent-annotate look like? Three goals:
 
 - agents on several Macs and several coding agents take part (at least Orca, Claude Code, Codex CLI, Beads, Windmill);
