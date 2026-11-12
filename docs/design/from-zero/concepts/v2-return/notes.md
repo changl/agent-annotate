@@ -1,13 +1,19 @@
 # v2-return: coming back and staying in control
 
-**What I built.** One component, nine moments, 26 states, in `index.html`. Every state is two facing pages: on the left what is so, on the right what he can do about it. On the phone they stack, and nothing is pinned over the content, so an answer cannot be reached before the thing it answers. `#check` walks every state and 15 side paths and reports on screen. It also fails on any word of the method, any control under 44 px, any sideways scroll, anything that waits only to be agreed, and "nothing needs you" shown while work is unseen or waiting. `#count` counts. `#m=3&s=2&t=dark` opens one state.
+**What I built.** One component, nine moments, 28 states, in `index.html`. Every state is two facing pages: on the left what is so, on the right what he can do about it. On the phone they stack, and nothing is pinned over the content, so an answer cannot be reached before the thing it answers. `#check` walks every state and 26 side paths and reports on screen. It also fails on any word of the method, any control under 44 px, any sideways scroll, anything that waits only to be agreed, "nothing needs you" shown while work is unseen or waiting, and any act that cannot be undone without a pause. `#count` counts. `#m=3&s=2&t=dark` opens one state.
+
+**After the defects critique.**
+- *Start performs nothing (item 3).* Choosing how long to give only picks which things are opened. Start, "All of it" and "Only the first" each open the first thing; a thing closes only on his own answer to it, and "Afterwards" is built from those answers alone. A look is a marked stand-in for v2-showing's sheet; its answer is still his to press. The filled-in session is a button in the prototype control, and the page it produces says the answers were not his.
+- *What is drawn, not real (item 6).* Said once at the top of the first screen and at the foot of every other.
+- *Old news (item 31).* The age of the news comes from each state's data plus minutes added with "+6 min", never from a fixed phrase. Past ten minutes the lock card replaces itself with "I cannot see the work" and a page gets a bar that withdraws the vouching. A yes to anything that cannot be undone is refused on old news until he looks again; `#check` proves it in all six places where such an act is confirmed (five acts: the note, the storage, the deletion, two sends). Stop still works, since it loses nothing. The phone offline is its own state: nothing pressed there is sent or kept, and a stop is refused, not pretended. The missed second delivery is drawn on the lock screen and in the account.
+- *Ready for the hosts to take (items 4, 14, 15).* Moment 5, state 2: the "start on what I heard" permission with how far it goes, a stop on each thing it started, and, once taken back, the things now held for his go. Moment 9: every stop lists who was asked, who answered and how fast, what had already left, and what is half-way; unanswered is hatched and never called stopped. Moments 3, 4 and 6: the sorted list (wrong, built on it, already out, held, checked fine, not looked at yet), where the last has an owner and a time he hears by. Putting files back after a note went out keeps the note as sent.
 
 **Revision 3 of the method is folded in.** Work starts on what I heard and does not wait for him. So after five days nothing waits to be agreed: what waits is a look, a choice inside a look, or a "go?" before something that cannot be undone or where I am in real doubt. What went ahead is told in three kinds, each with its own way back: choices (Undo), finished results that had nothing for him to judge (Undo, with who checked them and what was not checked), and work begun on what I heard that he has not read (every line still open to "this is wrong", with what a late correction costs).
 
 | Moment | What he gets | What it needs from its host |
 |---|---|---|
 | 1 Back after five days | One sentence on the lock screen, with the bad news in it. Then "what changed", by consequence (went wrong, lost, went ahead without you, moved), under one bar that adds up to 40. And "what needs you", cut to his ten minutes, the rest named, dated and costed. Afterwards the phone says what still waits, never "nothing needs you". | A first sentence it may replace. A list of things with minutes that it may order and cut. "Later" slots (5 pm, tomorrow). The host's own showing for each look and each go. |
-| 2 A week opened twice | What his pace did, without blame, including what started unread, and one choice: keep it, come daily, or keep it and allow two named things. | A place to keep "when I next expect you". "Goes ahead" and "cannot wait" must be read against it. |
+| 2 A week opened twice | What his pace did, without blame, including what started unread, and one choice: keep it, come daily, or keep it and allow two named things. Each answer cites what a past week at that pace finished, not a forecast. | A place to keep "when I next expect you". "Goes ahead" and "cannot wait" must be read against it. |
 | 3 The bad day | One page in the order it costs. The wrong result with what was built on it, what already left, what is fine and what was not looked at; the remedy as one choice, with a pause before the note goes. Seventeen questions: three his; the other fourteen with his own words, undo, a second reader's sample, and a draw he can make himself. | Told-once news stays on its goal until the new date is kept; answering something else must not clear it. Each goal must know what was built on it. In the full design each of the three choices sits inside its own showing. |
 | 4 A wrong rule, day 30 | The rule in his words and the case it came from; the checker's words; its 23 uses sorted into fine, already sent, not yet sent; one choice of scope; then a separate choice about messages already sent. | "Always?" must record the case a rule came from. Every use of a rule must be recorded. |
 | 5 What he has allowed | Permissions (the first is "start on what I heard"), kinds no longer shown, 30 rules in four groups, guesses, and the fixed "never without you" list. Each with its source, its uses, when it lapses, and take back. | One quiet link, never a prompt. Lapsing, and noticing use outside a rule's case, run without him. |
@@ -30,25 +36,26 @@
 | Places to look | 1: the host's doorway. Its first sentence is on the lock screen. | the same |
 | Interruptions | 1 (the sign-in), tried at most twice | |
 | Held in his head | 0 things. 0 fixed hours. One soft habit: opening it at all. | |
-| Words he must read to act | 1,520 (return 322, thin week 154, bad day 432, wrong rule 275, trust 317, interruption 20) | 734 |
-| Words merely available | 2,471, with every fold, answer, say-back and receipt | 1,844 (the allowed page alone is 889) |
+| Words he must read to act | 1,829 (return 608, thin week 173, bad day 436, wrong rule 275, trust 317, interruption 20) | 813 |
+| Words merely available | 3,002, with every fold, answer, say-back and receipt | 2,167 (the allowed page alone is 945) |
 | Typed / spoken | 0 / 0 ("stop everything" is 2 if he says it) | |
-| Taps | 16 | 2 |
-| Decisions | 11 only his; 1 acceptance of what a check had passed, the one in five | 1 only his |
-| Minutes | about 14 (200 words a minute, 3 s a tap, 30 s a decision) | about 4 |
+| Taps | 24 | 2 |
+| Decisions | 13 only his; 3 acceptances of what a check had passed (two looks, the one in five) | 1 only his |
+| Minutes | about 18 (200 words a minute, 3 s a tap, 30 s a decision), plus the host's time for each look | about 5 |
 
-Off the path: the allowed page, the missed interruption and its account, the five blind states, the five stop states. Revision 3 added about 40 must-read words to the return and removed one acceptance.
+Off the path: the allowed page, the missed interruption and its account, the six blind and offline states, the five stop states. The return rose from 322 to 608 must-read words and from 2 taps to 10 because he now answers its first three things himself; before, Start claimed them.
 
 **Three weakest points.**
 1. The return is bounded for each opening, not in total. Had all forty goals finished while he was away, the same page would offer eight openings. It names the debt and stops it growing. It cannot shrink it.
 2. Work that began on what I heard can run five days on a wrong line. The return puts those say-backs in front of him with the cost of correcting now, but only he can see that a line is wrong, and they sit in folds he may not open.
-3. Every page rests on things the screen cannot show to be true: that the 19 "as promised" were really seen, that the draw cannot be steered, that nothing can be released while nobody is looking. And a bad day is still 432 words and four decisions.
+3. Every page rests on things the screen cannot show to be true: that the 19 "as promised" were really seen, that the draw cannot be steered, that nothing can be released while nobody is looking. And a bad day is still 436 words and four decisions.
 
 **Of the nine, not fully honest and bounded.**
 - 1, the return: bounded per opening only (weakest point 1).
 - 4, the wrong rule: he finds out only when a check or a customer notices. A rule that is wrong quietly, inside its own case, never surfaces.
 - 5, what he has allowed: calm at 30 rules by grouping. His record holds about 1,600 procedures; at that size it is a place to search, not to read.
-- 8, whole-blind: it depends on his phone keeping time after the last word it got. If the phone itself is off, nothing says so.
+- 8, whole-blind, old news and offline: all rest on his phone keeping time after the last word it got, and on refusing what it cannot send. No phone has been tried. A phone that is switched off says nothing.
+- 7, the interruption: delivery, the second device and "it did not arrive" are drawn, not exercised.
 
 **What in revision 3 still cannot be drawn.**
 - Principle 12 defines defaults and "cannot wait" against the next sitting. A man who opens it twice a week has no next sitting. I drew "when I next expect you", learnt from him. The method should say this.

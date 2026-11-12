@@ -52,7 +52,13 @@ html[data-theme=dark] #proto button,html[data-theme=dark] #proto select,html[dat
 html[data-theme=light] .btn.warn{color:#fff}
 .btn[disabled]{opacity:.45}
 .link{background:none;border:0;padding:0;min-height:44px;color:var(--blue);font:600 15px/1.3 var(--sans);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
-.link.inl{display:inline-flex;align-items:center;min-height:44px;margin:-12px 0;vertical-align:middle;font-size:inherit;font-weight:600}
+.link.inl{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:0 4px;margin:0;vertical-align:middle;font-size:inherit;font-weight:600}
+.undone{font-weight:600;color:var(--ink2)}
+.stopband{border-left:3px solid var(--red);background:var(--paper2);padding:8px 12px;border-radius:0 10px 10px 0;margin:8px 0;font-size:15.5px}
+.stopband.blue{border-left-color:var(--blue)}
+.seal.broken b,.seal.broken .sealmark{color:var(--red);border-color:var(--red)}
+.pinarea:focus-visible{outline:3px solid #2340A8;outline-offset:-3px}
+.tag .sim{color:#8A5300;font-weight:600}
 .chip{min-height:44px;padding:0 14px;border-radius:22px;border:1px solid var(--rule);background:var(--paper);font:500 15px/1 var(--sans);color:var(--ink)}
 .chip[aria-pressed=true]{background:var(--blue);border-color:var(--blue);color:var(--on-blue)}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
@@ -107,14 +113,6 @@ html[data-theme=dark] .card .warnhead{color:#E7B566} html[data-theme=dark] .card
 .seal .what{font-size:14px;color:var(--ink2)}
 .seal .sealmark{margin-top:2px;flex:none}
 .seal b{color:var(--ink)} .sealmark{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:9px;border:1.5px solid var(--ink2);font-size:11px;vertical-align:1px}
-.dots{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 0 4px;border-top:1px solid var(--rule)}
-.dots .lab{margin-right:4px}
-.dot{width:44px;height:44px;border:0;background:none;padding:0;margin:0 -8px;position:relative}
-.dot::before{content:"";position:absolute;inset:10px;border-radius:12px;background:var(--ink)}
-.dot.dash::before{background:none;border:1.5px dashed var(--amber)}
-.dot.on::before{box-shadow:0 0 0 3px var(--blue)}
-.dots .more{margin-left:8px;font-size:14.5px;color:var(--ink2);text-decoration:none}
-.dotline{font-size:14.5px;color:var(--ink2);margin:0 0 6px}
 .notcov{font-size:14.5px;color:var(--amber);margin:2px 0 6px}
 .screens{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;background:#f3f2ee}
 .scr{min-width:0;overflow:hidden;background:#fff;border:4px solid #1d1d1f;border-radius:14px;padding:10px 8px;min-height:150px;display:flex;flex-direction:column;gap:6px}
@@ -172,7 +170,7 @@ html[data-theme=dark] .card .warnhead{color:#E7B566} html[data-theme=dark] .card
 .line{display:grid;grid-template-columns:84px 1fr;gap:2px 12px;padding:8px 0;border-top:1px solid var(--rule)}
 .line .lab{padding-top:4px}
 .line ol{margin:0;padding-left:20px}
-.fx{cursor:pointer;border-radius:6px}
+.fx{cursor:pointer;border-radius:6px;display:block;min-height:44px;padding:10px 6px;margin:0 -6px}
 .fx:hover{background:var(--paper2)}
 .fx.marked{text-decoration:line-through;text-decoration-color:var(--blue)}
 .ex{font:italic 16px/1.45 var(--serif);color:var(--ink2);padding:8px 12px;border-left:2px solid var(--rule);margin:6px 0 0}
@@ -250,7 +248,9 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 .phone{width:226px;margin:14px auto;background:#fff;border:7px solid #1d1d1f;border-radius:28px;padding:18px 14px 16px;min-height:330px;position:relative}
 .phone h4{font:650 16px/1.3 var(--sans);margin:4px 0 10px}
 .phone .stars{font-size:27px;letter-spacing:4px;color:#d39b00;margin-bottom:8px}
-.phone .fld{height:34px;border:1px solid #d6d6db;border-radius:9px;margin:0 0 8px;font:13px/32px var(--sans);color:#77777d;padding:0 9px;overflow:hidden;white-space:nowrap}
+.phone .fld{height:34px;border:1px solid #d6d6db;border-radius:9px;margin:0 0 8px;font:13px/32px var(--sans);color:#5c5c63;padding:0 9px;overflow:hidden;white-space:nowrap}
+.phone .fld.wrap{height:auto;white-space:normal;line-height:1.35;padding:7px 9px}
+.phone .sso{border:1.5px solid #1d1d1f;border-radius:9px;font:600 13px/31px var(--sans);text-align:center;margin:0 0 8px;color:#1d1d1f}
 .phone .cta{background:#1f6f5c;color:#fff;border-radius:10px;text-align:center;font:600 14.5px/40px var(--sans);margin-top:12px}
 .phone .muted{font:13px var(--sans);color:#6a6a70;text-align:center;margin-top:10px}
 .stage{background:#f3f2ee;padding:4px 0 2px}
@@ -269,13 +269,17 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 .web .hero{padding:16px 14px 6px} .web .hero h5{font:750 22px/1.15 var(--sans);margin:0 0 4px}
 .web .hero p{font:13.5px/1.4 var(--sans);color:#55555b;margin:0}
 .web .tog{display:inline-flex;margin:10px 14px;border:1px solid #ccc;border-radius:16px;overflow:hidden}
-.web .tog span{padding:5px 12px;font:600 12px var(--sans)} .web .tog .on{background:#1f6f5c;color:#fff}
+.web .tog button{padding:5px 12px;font:600 12px var(--sans);border:0;background:#fff;color:#1d1d1f} .web .tog .on{background:#1f6f5c;color:#fff}
 .web .plans{display:grid;gap:10px;padding:0 14px 16px}
 .web .plan{border:1px solid #e3e3e3;border-radius:12px;padding:12px}
 .web .plan b{display:block;font:750 20px var(--sans)} .web .plan span{font:12.5px var(--sans);color:#55555b}
-.web .plan i{display:block;font-style:normal;margin-top:8px;background:#1f6f5c;color:#fff;border-radius:8px;text-align:center;font:600 12.5px/30px var(--sans)}
+.web .start{display:block;width:100%;border:0;margin-top:8px;background:#1f6f5c;color:#fff;border-radius:8px;text-align:center;font:600 12.5px/30px var(--sans)}
+.web .start[disabled]{opacity:.55}
+.web .co{padding:14px} .web .co h6{font:700 18px var(--sans);margin:6px 0}
+.web .co .fl{border:1px solid #ccc;border-radius:8px;padding:8px;font:13px var(--sans);color:#5c5c63;margin:6px 0}
+.web .co .back2{border:0;background:none;color:#1f6f5c;font:600 13px var(--sans);padding:4px 0}
 .web.wd .plans{grid-template-columns:1fr 1fr 1fr} .web.wd .hero h5{font-size:28px}
-.frame{border:1px solid #ddd;border-radius:10px;overflow:hidden;margin:10px auto;background:#fff}
+.frame{border:1px solid #ddd;border-radius:10px;overflow:hidden;margin:10px auto;background:#fff;position:relative}
 .two{display:flex;gap:14px;justify-content:center;align-items:flex-start;padding:10px;background:#f3f2ee;flex-wrap:wrap}
 .two .cap{font:600 11.5px var(--sans);color:#55555b;text-align:center;margin-top:4px}
 .job{list-style:none;margin:0;padding:10px 12px}
@@ -381,7 +385,7 @@ html[data-theme=dark] .thing{box-shadow:0 0 0 1px #34363d}
 </head>
 <body>
 <div id="proto" role="region" aria-label="Prototype controls, not part of the design">
-  <b class="ptag">TEST WEEK<span> · not the design</span></b>
+  <b class="ptag">TEST WEEK · DRAWN<span>, nothing live</span></b>
   <button data-p="prev" aria-label="Previous moment">‹</button>
   <select id="psel" aria-label="Moment"></select>
   <button data-p="next">next ›</button>
@@ -424,18 +428,22 @@ I.remindersSay = {goal:'Reminder texts', said:['Today 12:40, walking','The remin
   decide:'The wording.', first:'A first look on Friday.', short:'A text at 6 pm the evening before, another 2 hours before. First look: Friday.'};
 
 /* what reaches his sittings: looks, his decisions inside the showing, and the rare go */
-I.invoiceLook = {kind:'look', verb:'Look', gid:'invoice', mins:3, judge:'Is this the file your accountant expects?', thing:'records',
-  proof:{seal:'the October file', at:'07:12', lines:[['One file a month, every invoice in it','r0'],['Totals match the billing screen to the cent','r2'],['Opens in Excel and Numbers'],['Refunds are negative lines','r3'],['Tax has its own column'],['A year exports in 6 seconds']], un:['invoices across two months'], words:'I had October only. No invoice spanned two months, so that case was not tried.'},
-  assumed:'your time zone; one file a month.', acceptLabel:'Yes, this file', rcpt:'Accepted.', dec:'his'};
+I.invoiceLook = {kind:'decide', verb:'Decide', gid:'invoice', mins:2, judge:'Take it now, with one case not tried?', thing:'records',
+  proof:{seal:'the October file', at:'07:12', lines:[['One file a month, every invoice in it','r0'],['Totals match the billing screen to the cent','r2'],['Opens in Excel and Numbers'],['Refunds are negative lines','r3'],['Tax has its own column'],['A year exports in 6 seconds']], un:['invoices that span two months'], words:'I had October only. No invoice spanned two months, so that case was not tried.'},
+  gap:'October had none, so that case wasn’t tried. Friday’s file has some.',
+  choices:[{opts:['Take it now','Wait for Friday'], rec:0, why:'Your accountant wants it this week; the gap closes on Friday’s file.', dflt:['wait','','it’s what your accountant files']}],
+  rc:p=>p[0]===0?'Taken now. The two-month case is tried on Friday’s file.':'Waits for Friday’s file.',
+  assumed:'your time zone; one file a month.', dec:'his'};
 I.priceDecide = {kind:'decide', verb:'Decide', gid:'price', mins:1, judge:'Which price do visitors see first?', priceCards:true,
   choices:[{opts:['Yearly first','Monthly first'], rec:0, why:'I’d say yearly: 7 in 10 customers pay yearly.', dflt:['go','after your 5 pm look','you left the page’s layout to me']}],
   rcpt:'Yearly first.', dec:'his'};
-I.signupSlice = {kind:'decide', verb:'Decide', gid:'signup', mins:2, sub:'The first two screens work. The third waits for you.', judge:'Two choices are yours.', thing:'slice',
-  proof:{seal:'build 4.10 on an iPhone 13', at:'16:50', lines:[['Name and phone on one screen'],['Nothing asked twice']]},
+I.signupSlice = {kind:'decide', verb:'Decide', gid:'signup', mins:2, sub:'The first two screens work. Your three choices draw the rest.', judge:'Three choices are yours.', thing:'slice',
+  proof:{seal:'the first two screens, on an iPhone 13', build:'build 4.10', at:'16:50', lines:[['Name and phone on one screen'],['Nothing asked twice']]},
   choices:[
-   {q:'The licence number', opts:['At sign-up','Before the first lesson'], rec:1, why:'Asking at sign-up is what makes it slow.', dflt:['wait','','it changes what instructors check']},
-   {q:'Under-18s', opts:['Parent’s email required','Not asked'], rec:0, why:'Your terms promise a parent’s consent.', dflt:['wait','','it’s a promise to families']}],
-  settled:true, rcpt:'Licence before the first lesson; parent’s email required.', dec:'his'};
+   {q:'The licence number', opts:['At sign-up','Before the first lesson'], rec:1, why:'Asking at sign-up is what makes it slow.', dflt:['wait','','it changes what instructors check'], jt:2},
+   {q:'Under-18s', opts:['Parent’s email required','Not asked'], rec:0, why:'Your terms promise a parent’s consent.', dflt:['wait','','it’s a promise to families'], jt:2},
+   {q:'One-tap sign-in with Apple or Google', opts:['Offer both','Email only'], rec:0, why:'One tap instead of typing, and most students sign up on a phone.', dflt:['wait','','it decides what you keep about people'], jt:0}],
+  settled:true, rc:p=>`${p[0]===0?'Licence at sign-up':'Licence before the first lesson'}; ${p[1]===0?'parent’s email required':'under-18s not asked'}; ${p[2]===0?'Apple and Google sign-in':'email only'}.`, dec:'his'};
 I.emailLook = {kind:'look', verb:'Look', gid:'welcome', mins:3, judge:'Is this how you greet a new customer?', sub:'Second sketch', thing:'email', ver:2,
   proof:{seal:'sketch 2', at:'16:40', lines:[['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]},
   chips:['Too long','Wrong tone','Cut this','Wrong fact'], demo:{p1:{c:['Wrong tone'],t:'Say hello like a person.'},p2:{c:['Cut this']}}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
@@ -450,34 +458,35 @@ I.photosItem = {kind:'decide', verb:'Decide', gid:'photos', mins:1, judge:'Delet
   rcpt:'Old copies go on 17 December.', dec:'his'};
 I.photosJob = {kind:'look', gid:'photos', thing:'job', proof:{lines:[['Nothing lost: 48,210 before and after'],['Every copy opened from the new place']]}};
 I.wordBook = {kind:'look', verb:'Look', gid:'release', mins:.5, judge:'Is the new wording right?', sub:'Picked at random from what I only told you, so the checks stay honest.', thing:'wording', w:['Book a lesson','Book your next lesson'], label:'Home screen button',
-  proof:{seal:'build 4.11', at:'07:20', lines:[['Fits on the smallest phone'],['Same words in the reminder texts']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
+  proof:{seal:'this week’s app', build:'build 4.11', at:'07:20', lines:[['Fits on the smallest phone'],['Same words in the reminder texts']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.emailV3 = {kind:'look', verb:'Look', gid:'welcome', mins:1, judge:'Did your marks land?', sub:'Second version', thing:'email', ver:3,
   proof:{seal:'sketch 3', at:'07:30', lines:[['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]}, chips:['Too long','Wrong tone','Cut this','Wrong fact'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
-I.invoiceMiss = {kind:'act', verb:'My miss', vcls:'red', gid:'invoice', mins:3, judge:'How should it be put right?', thing:'recordsFixed', miss:true,
+I.invoiceMiss = {kind:'act', verb:'My miss', vcls:'red', gid:'invoice', mins:3, judge:'How should it be put right?', thing:'recordsFixed', miss:true, msg:o=>o===0,
   proof:{seal:'the fixed October file', at:'16:05', lines:[['No invoice in two files (new)'],['Tried on 37 two-month invoices from last year'],['The six earlier checks, run again']]},
   aud:{opts:['Send the fixed pack with this note','Replace it; I’ll tell her myself'], rec:0, why:'A note to a real person can’t be unsent.'},
   said:o=>o===1?'Replace the October file and the pack. Nothing is sent in your name.':'Send your accountant the fixed pack: “October had four invoices counted twice. The corrected pack is attached: $37,232.60, not $38,412.60. Nothing else changed.”',
   holdLabel:'Correct. Do it.', rcpt:'Fixed pack sent with your note.', rcpt2:'Replaced. Nothing sent in your name.', dec:'his'};
 I.release = {kind:'act', verb:'Can’t be undone', vcls:'amber', gid:'release', mins:2, judge:'Who should get it, and when?', thing:'release',
-  proof:{seal:'build 4.11, used on 3 real phones', at:'16:20', lines:[['Installs over 4.10, data kept'],['Sign-in, booking and photos used on 3 real phones'],['Crash fixed on Android 11']], un:['tablets']},
+  proof:{seal:'this version, used on 3 real phones', build:'build 4.11', at:'16:20', lines:[['Installs over 4.10, data kept'],['Sign-in, booking and photos used on 3 real phones'],['Crash fixed on Android 11']], un:['tablets']},
   aud:{opts:['1 in 10 today, everyone by Monday','Everyone today'], rec:0, why:'I’d say 1 in 10 first: it can be stopped until Monday.'},
-  said:o=>o===1?'Release Driving app 4.11 to all 3,400 students today.':'Release Driving app 4.11 to 1 in 10 students today, and to everyone by Monday.',
-  holdLabel:'Correct. Release it.', rcpt:'Released 4.11 to 1 in 10 at 17:04. <button class="link inl" data-act="undo1">Stop the rest</button>', rcpt2:'Released 4.11 to everyone at 17:04. No undo.', dec:'his'};
+  said:o=>o===1?'Release this checked version of the driving app to all 3,400 students today.':'Release this checked version of the driving app to 1 in 10 students today, and to everyone by Monday.',
+  holdLabel:'Correct. Release it.', rcpt:'Released to 1 in 10 at 17:04. <button class="link inl" data-act="undo1" data-k="rel">Stop the rest</button>', rcpt2:'Released to everyone at 17:04. No undo.', dec:'his'};
 I.wordTrust = {kind:'decide', verb:'Decide', gid:'wordpay', goal:'Small wording changes', mins:.5, judge:'Stop bringing them to you?', trust:true,
   choices:[{opts:['Yes, like that','Keep showing me'], rec:0, why:'The last three stayed as they were. They’d be listed in your week instead.', dflt:['wait','','it widens what I may do']}],
   rcpt:'Small wording: listed in your week; 1 in 5 still here.', dec:'his'};
-I.signupJourney = {kind:'look', verb:'Look', gid:'signup', mins:3, judge:'Does sign-up feel quick?', sub:'3 screens, 46 seconds. It was 7 screens, about 3 minutes.', thing:'journey',
-  proof:{seal:'build 4.12 on an iPhone 13', at:'07:40', lines:[['Three screens, not seven',0],['Licence asked before the first lesson',3],['Under-18s give a parent’s email',2],['Nothing asked twice',1]], un:['phones older than 2021']},
+I.signupJourney = {kind:'look', verb:'Look', gid:'signup', mins:3, judge:'Does sign-up feel quick?', sub:'3 screens, 46 seconds. It was 7 screens, about 3 minutes.', thing:'journey', later:true,
+  proof:{seal:'Friday’s checked version, on an iPhone 13', build:'build 4.12', at:'07:40', lines:[['Three screens, not seven',0],['One-tap Apple or Google sign-in',0],['Licence asked before the first lesson',3],['Under-18s give a parent’s email',2],['Nothing asked twice',1]], un:['phones older than 2021'],
+   words:'Signed up 20 times on an iPhone 13 from a fresh install. Median 46 seconds, slowest 58. Apple and Google sign-in tried 5 times each. Not tried: phones older than 2021; I had none.'},
   picks:'Went ahead inside what you allowed: phone number optional; it remembers the last instructor.',
   chips:['Too slow here','Confusing','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.pricePage = {kind:'look', verb:'Look', gid:'price', mins:2, judge:'Does it read right on a phone and on a desk?', thing:'web',
   proof:{seal:'the page as served, both widths', at:'07:58', lines:[['Nothing cut off at either width'],['Yearly first, as decided'],['Prices match the billing tool'],['Start goes to checkout']]}, chips:['Too small','Wrong order','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
-I.ratingsBack = Object.assign({}, I.ratingsSketch, {sub:'Back from parking: sign-up is done', notnow:false});
+I.ratingsBack = Object.assign({}, I.ratingsSketch, {sub:'Back from parking: sign-up is done', notnow:false, wait:'Costs nothing to wait.'});
 I.taxGo = {kind:'agree', verb:'Waits for your go', vcls:'amber', gid:'tax', mins:2, judge:'Start on this?',
-  said:['Two weeks ago','We need to charge sales tax in Texas and Ohio now.'], fact:'Your accountant replied: start 1 January, with the rates in the attached table.',
-  heard:'From 1 January, orders to Texas or Ohio show the right tax before payment.',
+  said:['Two weeks ago','We need to charge sales tax in Texas and Ohio now.'], fact:'Your accountant replied: start 1 December, with the rates in the attached table.',
+  heard:'From 1 December, orders to Texas or Ohio show the right tax before payment.',
   done:['Tax shows before payment.','Rates come from the accountant’s table.','A monthly total per state, in the accountant’s pack.'],
-  wait:'This waits for your go, because it changes what customers pay.', next:'First look: 10 December.', rcpt:'Go. First look 10 December.', dec:'his'};
+  wait:'This waits for your go, because it changes what customers pay.', next:'First look: Saturday 28 November. Live 1 December.', rcpt:'Go. First look Saturday; live 1 December.', dec:'his'};
 I.remindersFx = {kind:'look', gid:'reminders', thing:'effect', proof:{lines:[['Sent at 6 pm in each student’s time zone'],['No text for cancelled lessons'],['No one got two of the same'],['A failed text is retried once, then the school is told']]}};
 I.testrun = {kind:'look', gid:'testrun', thing:'speed', proof:{lines:[['Same 1,284 checks, same computer, 10 runs each'],['Same results as the slow run on the last 20 changes'],['A planted failure is still caught']]}};
 I.shipLook = {kind:'look', verb:'Look', gid:'ship', mins:1, judge:'Is this the right promise to shoppers?', thing:'wording', w:['Ships in 3–5 days','Arrives by Thu 10 Dec'], label:'Product page',
@@ -487,11 +496,22 @@ I.refundDecide = {kind:'decide', verb:'Decide', gid:'refund', mins:1, judge:'Who
 I.calendarLook = {kind:'look', verb:'Look', gid:'calendar', mins:3, judge:'Can a student find a free slot at a glance?', sub:'A sketch, not built', thing:'calendar',
   proof:{seal:'sketch 1', at:'17:40', lines:[['Shows only the instructor’s free hours'],['Works with large text'],['Booked slots can’t be double-booked']]}, chips:['Too busy','Hard to read','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.zoomLook = {kind:'look', verb:'Look', gid:'zoom', mins:2, judge:'Does zooming feel natural?', thing:'wording', w:['Tap opens the photo','Pinch to zoom; double-tap resets'], label:'Product photo',
-  proof:{seal:'build 31 of the shop', at:'17:45', lines:[['Works on phone and desk'],['Sharp at 3× zoom'],['No layout jump']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
-I.giftQ = {kind:'decide', verb:'Decide', gid:'gift', mins:2, judge:'Can a gift card pay for lessons as well as goods?', wait:'Answer by Wednesday noon, or it misses Thursday’s release.',
+  proof:{seal:'the shop as it is today', build:'shop build 31', at:'17:45', lines:[['Works on phone and desk'],['Sharp at 3× zoom'],['No layout jump']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
+I.giftQ = {kind:'decide', verb:'Decide', gid:'gift', mins:2, judge:'Can a gift card pay for lessons as well as goods?', wait:'Answer by Wednesday 2 December noon for the 3 December release.',
+  lost:'Already missed: today’s release. The answer was needed by Wednesday noon, while you were away. Next release: 3 December, if you answer by Wednesday 2 December noon.',
   choices:[{opts:['Goods and lessons','Goods only'], rec:0, why:'Most gift cards are bought for learners.', dflt:['wait','','it decides what people can spend']}], rcpt:'Goods and lessons.', dec:'his'};
 I.returnsLook = {kind:'look', verb:'Look', gid:'returns', mins:2, judge:'Is the returns page clear?', thing:'wording', w:['Email us to return','One form; we print the label'], label:'Returns page', wait:'Ready since Saturday. Costs nothing to wait.',
   proof:{seal:'the page as served, both widths', at:'Sat 11:00', lines:[['A return takes under a minute'],['The label prints on A4 and on a phone']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
+I.remindersGo = {kind:'act', verb:'Texts real people', vcls:'amber', gid:'reminders', mins:2, judge:'Switch the reminder texts on?', thing:'smsdraft', msg:()=>true,
+  proof:{seal:'both texts, sent to 5 test phones', at:'07:20', lines:[['Arrive at 6 pm in each student’s time zone'],['No text for a cancelled lesson'],['No one gets the same text twice'],['A failed text is tried once more, then the school is told']]},
+  aud:{opts:['Every student, from Monday','Sam’s students first, for a week'], rec:0, why:'Each can be stopped at any time; a wrong text costs a confused minute, not money.'},
+  said:o=>o===1?'From Monday 23 November, text Sam’s 120 students before each lesson: at 6 pm the evening before, and 2 hours before. Everyone else from 30 November.':'From Monday 23 November, text every student before each lesson: at 6 pm the evening before, and 2 hours before. About 900 texts a week, from the school’s number.',
+  holdLabel:'Correct. Switch them on.', rcpt:'On from Monday for every student. <button class="link inl" data-act="undo1" data-k="remgo">Stop them</button>', rcpt2:'On from Monday for Sam’s students; everyone from 30 November. <button class="link inl" data-act="undo1" data-k="remgo">Stop them</button>', dec:'his'};
+I.signupSay = {goal:'Faster sign-up', said:['Mon 16 Nov, typed','Sign-up takes too long; people give up halfway.'],
+  heard:'A new student signs up on a phone in under a minute, and is never asked the same thing twice.',
+  done:['Three screens or fewer.','Under a minute for most people.','Nothing asked twice.'],
+  decide:'Screen details and the order of the steps.', yours:'The licence, under-18s, one-tap sign-in.', first:'Released Saturday 21 November.',
+  status:'Point at any line that is wrong; the next version follows the new wording.'};
 I.ruleWrong = {kind:'rule', verb:'A rule was wrong', vcls:'red', gid:'tax', goal:'“Round prices to whole dollars”', mins:2, judge:'Where should this rule apply?', thing:'affected', quote:'The tax on 12 Texas and Ohio orders came out in whole dollars. I don’t think the rule was meant for tax.',
   choices:[{opts:['Price labels only','Nowhere'], rec:0, why:'I’d say price labels only, as you first meant it.', dflt:['wait','','until you say, I don’t use it']}],
   rcpt:'Price labels only.', dec:'his'};
@@ -502,16 +522,22 @@ I.refundAct = {kind:'act', verb:'Can’t be undone', vcls:'amber', gid:'tax', mi
 
 /* lines he is told, not asked: nothing left to judge, undoable, inside what he allowed. Each has its undo. */
 const see = k => `<button class="link inl" data-act="see" data-k="${k}">See</button>`;
-const und = (t='Undo') => `<button class="link inl" data-act="undo1">${t}</button>`;
+const und = (k, t='Undo') => `<button class="link inl" data-act="undo1" data-k="${k}">${t}</button>`;
+/* state he changes that outlives one moment: taken-back permissions, the price he chose, the marks he sent, paused messages, his times */
+const P = {price:null, priceMine:false, revoked:{}, msgPaused:null, sent:null, cadence:'both'};
+const priceTold = when => P.priceMine ? `<b>Price page</b>: ${P.price==='monthly'?'monthly':'yearly'} first, as you chose. <button class="link inl" data-act="change">Change</button>`
+  : P.revoked.layout ? `<b>Price page</b>: yearly or monthly first waits for you; you took back layout choices. <button class="link inl" data-act="change">Choose</button>`
+  : `<b>Price page</b>: ${P.price==='monthly'?'monthly':'yearly'} first ${when}; you left layout to me. <button class="link inl" data-act="change">Change</button>`;
+const priceNt = ()=> P.revoked.layout && !P.priceMine ? 'Waits for you: which price first.' : `${P.price==='monthly'?'Monthly':'Yearly'} first, ${P.priceMine?'as you chose':'inside what you allowed'}.`;
 const sb = k => `<b>Started: ${I[k].goal}.</b> ${I[k].short} <button class="link inl" data-act="sbopen" data-k="${k}">What I heard</button>`;
 
 /* ============ the moments of the stress week ============ */
 const M = [
  {when:'Tue 17 Nov 08:30', title:'The morning sitting', ev:'1', view:'lock', day:'Tuesday 17 November', clock:'8:30',
-  card:{t1:'One thing, about 3 minutes', t2:'Gathered for your 8:30.', age:'Seen 2 min ago'},
-  told:[['dec', sb('ratingsSay')],['dec',`<b>Price page</b>: yearly first goes ahead at 5 pm; you left layout to me. <button class="link inl" data-act="change">Change</button>`]],
-  items:['invoiceLook'], next:'5 pm: 1 thing so far.', you:['invoice'], st:{totals:{dt:'done Mon',nt:'Done without you: a kind you trust.'},price:{dt:'5 pm',nt:'Yearly first, inside what you allowed.'},ratings:{dt:'sketch Wed',nt:'Started.'}},
-  path:['open','accept'], note:'Driver ratings was said last night; the say-back arrived as the work started and waits for nothing. The price fork is inside what he allowed and can be switched back, so it is told with Change. Only the invoice file needs his eye.'},
+  card:{t1:'One thing, about 2 minutes', t2:'Gathered for your 8:30.', age:'Seen 2 min ago'},
+  told:[['dec', sb('ratingsSay')],['dec',()=>priceTold('unless you change it by your 5 pm look')]],
+  items:['invoiceLook'], next:'5 pm: 1 thing so far.', you:['invoice'], st:{totals:{dt:'done Mon',nt:'Done without you: a kind you trust.'},price:()=>({dt:'5 pm',nt:priceNt()}),ratings:{dt:'sketch Wed',nt:'Started.'}},
+  path:['open','pick0'], note:'Driver ratings was said last night; the say-back arrived as the work started and waits for nothing. The price fork is inside what he allowed, but goes ahead only after a look where he could see it, so it is told with Change. The invoice file passed its checks except one case that could not be tried: taking it anyway is a trade-off, so it is asked, not told.'},
  {when:'Tue 12:40', title:'Saying it on the move', ev:'2', view:'lock', day:'Tuesday 17 November', clock:'12:40',
   card:{t1:'Quiet until 5 pm.', t2:'Then 1 thing, about 3 minutes.', age:'Seen 2 min ago', look:true},
   items:['emailLook'], say:{text:'The reminder texts go out too late, people miss their lesson.', k:'remindersSay'},
@@ -519,13 +545,13 @@ const M = [
  {when:'Tue 15:30', title:'A bad afternoon he never feels', ev:'3, 6, 7 · bad day', view:'lock', day:'Tuesday 17 November', clock:'15:30',
   card:{t1:'Quiet until 5 pm.', t2:'Then 2 things, about 5 minutes.', age:'Seen 1 min ago', look:true},
   items:['signupSlice','emailLook'], st:{signup:{old:'Thu',dt:'Fri',nt:'A computer was off overnight.'},reminders:{dt:'Fri'}},
-  path:[], note:'Behind: 17 questions arrive. 11 are settled by his earlier answers, 3 go ahead inside what he allowed, 3 are gathered into showings. Three helpers stall: two are restarted and keep their dates; one cannot, so Faster sign-up moves from Thursday to Friday. His phone stays dark.', alt:'stand'},
+  path:[], note:'Behind: 17 questions arrive. 11 are settled by his earlier answers, 3 go ahead inside what he allowed, 3 are gathered into the first sign-up showing. Three helpers stall: two are restarted and keep their dates; one cannot, so Faster sign-up moves from Thursday to Friday. His phone stays dark.', alt:'stand'},
  {when:'Tue 17:00', title:'The afternoon sitting', ev:'3, 4, 7', view:'lock', day:'Tuesday 17 November', clock:'17:00',
   card:{t1:'Two things, about 5 minutes', t2:'Gathered for your 5 pm.', age:'Seen 1 min ago'},
-  told:[['','<b>Faster sign-up</b>: <s>Thursday</s> Friday. A computer was off overnight.']],
+  told:[['','<b>Faster sign-up</b>: <s>Thursday</s> Friday. A computer was off overnight.'],['dec',()=>priceTold('goes ahead after this look')]],
   items:['signupSlice','emailLook'], next:'Tomorrow 8:30: 4 things so far.', you:['signup','welcome'], st:{signup:{old:'Thu',dt:'Fri'}},
-  path:['open','pick:0:1','pick:1:0','b:p1','c:Wrong tone','b:p2','c:Cut this','sendback','always'],
-  note:'The forks that are his come inside the first slice of sign-up, each shown as both versions. The other 14 are one tap away. On the email he touches what is wrong; each mark gets a note in his ink.'},
+  path:['open','pick:0:1','pick:1:0','pick:2:0','b:p1','c:Wrong tone','b:p2','c:Cut this','sendback','always'],
+  note:'All three forks that are his come inside the first slice of sign-up, each redrawing the screen it changes; the other 14 are one tap away. The price default goes ahead after this look, the first in which he could change it. On the email he touches what is wrong; his own words go back with each mark and return with the next version.'},
  {when:'Wed 18 Nov 08:30', title:'Not now; a random real look; his marks come back', ev:'5, 9, 10', view:'lock', day:'Wednesday 18 November', clock:'8:30',
   card:{t1:'Four things, about 5 minutes', t2:'Gathered for your 8:30.', age:'Seen 3 min ago'},
   told:[['grey','Last week’s question about the old CSV button no longer matters: the new export replaced that page.']],
@@ -539,34 +565,33 @@ const M = [
   path:[], note:'The helper that checks two goals stopped at 15:15; another is bringing it back. The card never says “Nothing needs you” while it can’t see. Only those two lines are hatched.', alt:'stand'},
  {when:'Thu 19 Nov 17:00', title:'A miss, a release, trust', ev:'11, 10 · built on a bad result · can’t be undone', view:'lock', day:'Thursday 19 November', clock:'17:00',
   card:{t1:'Three things, about 6 minutes', t2:'First: something I got wrong.', age:'Seen 1 min ago'},
-  told:[['done',`Changed: “Invoice” is now “Receipt” on the payment screen. ${und()}`],['grey','Yesterday 15:15 to 15:52 I couldn’t see 2 goals. Nothing was missed.']],
+  told:[['done',`Changed: “Invoice” is now “Receipt” on the payment screen. ${und('receipt')}`],['grey','Yesterday 15:15 to 15:52 I couldn’t see 2 goals. Nothing was missed.']], alt:'stale', altLabel:'If his phone is offline ›',
   items:['invoiceMiss','release','wordTrust'], next:'Tomorrow 8:30: 2 things so far.', you:['invoice','pack','release','wordpay'], st:{pack:{dt:'paused',nt:'Built on the wrong file. Rebuilt; not sent.'},signup:{old:'Thu',dt:'Fri'}},
   path:['open','hold','hold','pick0'], note:'The miss comes first, with what was built on it. The release is said back in one sentence that changes with who gets it, and is confirmed by holding. Trust is offered because three wording changes stayed as they were.'},
- {when:'Fri 20 Nov 08:30', title:'Things that move', ev:'7 · journey · two widths', view:'lock', day:'Friday 20 November', clock:'8:30',
-  card:{t1:'Two things, about 5 minutes', t2:'Faster sign-up kept Friday.', age:'Seen 2 min ago'},
-  told:[['done',`Running from Monday: the reminder texts. ${see('remindersFx')} ${und('Stop')}`]],
-  items:['signupJourney','pricePage'], next:'Monday 8:30.', you:['signup','price'], st:{},
-  path:['open','accept','accept'], note:'Sign-up is a recording of the exact build; each numbered dot jumps to the moment it proves. Touching the recording pins a moment. “Try it on your phone” opens the same build, and marks come back here. The price page is judged at both widths, with “Use it” and “Mark” kept apart.'},
+ {when:'Fri 20 Nov 08:30', title:'Texts to real people; things that move', ev:'7 · messages · journey · two widths', view:'lock', day:'Friday 20 November', clock:'8:30',
+  card:{t1:'Three things, about 7 minutes', t2:'First: the reminder texts wait for your go.', age:'Seen 2 min ago'},
+  items:['remindersGo','signupJourney','pricePage'], next:'Monday 8:30.', you:['reminders','signup','price'], st:{reminders:{dt:'Mon',nt:'Waits for your go.'}}, alt:'changed', altLabel:'If it changed after the check ›',
+  path:['open','hold','play','accept','ww:desk','accept'], note:'The reminder texts would reach real people, so they wait for his go: the exact two texts, who gets them, said back in one sentence, confirmed by holding. Sign-up is the recording of the exact version checked, played at its real speed; he can answer once he has seen every screen. A touch pins a moment of that version. The price page is laid out at its real phone and desk widths, and both are seen before it can be accepted.'},
  {when:'Sun 22 Nov 16:20', title:'I can’t see anything', ev:'outside evidence · whole-blind', view:'lock', day:'Sunday 22 November', clock:'16:20', blindAll:true,
   card:{t1:'I can’t see the work.', t2:'Nothing has reached this phone since 15:10. Nothing can be released, sent or deleted until I can.', age:'Last seen 15:10'}, items:[], st:{},
   path:['blindall'], note:'The phone works this out by itself: nothing has reached it for 70 minutes. No buzz: while nothing can be released, sent or deleted, nothing can go wrong that needs him today. The view comes back at 17:40; Thursday’s first page says what was found.'},
  {when:'Mon 23 Nov 14:00', title:'Away, without saying so', ev:'12, 6', view:'lock', day:'Monday 23 November', clock:'14:00',
   card:{t1:'Away, by the look of it.', t2:'2 things held for when you’re back. Nothing new starts.', age:'Seen 3 min ago'}, items:[], st:{ratings:{dt:'when you’re back',nt:'Back from parking: sign-up is done.'},tax:{dt:'when you’re back',nt:'Your accountant replied.'}},
-  path:[], note:'He never said he was away. After two sittings unopened, I slowed down: things he allowed and can undo go ahead; everything else holds; nothing new that needs him starts. No buzz.'},
+  path:[], note:'He never said he was away. After two looks unopened, I slowed down: agreed work goes on; choices that wait for a look keep waiting; nothing new that needs him starts. No buzz.'},
  {when:'Thu 26 Nov 08:30', title:'Back after five days', ev:'12, 13', view:'lock', day:'Thursday 26 November', clock:'8:30',
   card:{t1:'Welcome back. Two things now.', t2:'About 4 minutes; 2 more at 5 pm.', age:'Seen 2 min ago'},
-  ret:{need:4, changed:9, ok:27, lines:[['Went wrong','nothing.'],['Couldn’t see','Sunday 15:10 to 17:40, everything. When I could again, all 23 were where they were.'],['Done and out','Faster sign-up, the price page, the photo move.'],['Decided for you',`6 choices on 4 goals, inside what you allowed, each undoable until Monday. <button class="link inl" data-act="stand">See them</button>`],['Running',`the reminder texts; missed lessons 31 → 12. ${see('remindersFx')} ${und('Stop')}`],['Faster',`the test run, 11 → 4 minutes. ${see('testrun')} ${und()}`]]},
-  items:['ratingsBack','taxGo','giftQ','returnsLook'], split:2, week:true, next:'5 pm: 2 things, about 4 minutes.', you:['ratings','tax','gift','returns'], st:{},
-  path:['open','pick0','accept','go'], note:'Four lines bring him current. The ratings sketch comes back with its gathered choice. Sales tax waits for his go because it changes what customers pay. Then his week, to read.'},
+  ret:{need:4, changed:9, ok:27, lines:[['Lost while you were away','gift cards missed today’s release: the question needed you by Wednesday noon. Next chance: 3 December. It is second below.'],['Went wrong','nothing else.'],['Couldn’t see','Sunday 15:10 to 17:40, everything. When I could again, all 23 were where they were.'],['Done and out','Faster sign-up, the price page, the photo move.'],['Waiting for this look',`6 choices on 4 goals, inside what you allowed. They go ahead after this look unless you change one. <button class="link inl" data-act="stand">See them</button>`],['Running',()=>P.msgPaused?'the reminder texts: paused by you. <button class="link inl" data-act="msgpause" data-v="0">Let them go again</button>':`the reminder texts; missed lessons 31 → 12. ${see('remindersFx')} ${und('texts','Stop')}`],['Faster',`the test run, 11 → 4 minutes. ${see('testrun')} ${und('testrun')}`]]},
+  items:['taxGo','giftQ','ratingsBack','returnsLook'], split:2, week:true, next:'5 pm: 2 things, about 4 minutes.', you:['ratings','tax','gift','returns'], st:{},
+  path:['open','go','pick0'], note:'Four lines bring him current, starting with what his absence cost: gift cards missed a release. Sales tax comes first because it changes what customers pay from 1 December; then gift cards, with the next date they can still make. Then his week, to read.'},
  {when:'Thu 3 Dec 18:20', title:'A week he looked in twice', ev:'stress · skipped sittings', view:'lock', day:'Thursday 3 December', clock:'18:20',
   card:{t1:'Four things, about 7 minutes', t2:'2 now, the rest tomorrow. Oldest since Monday.', age:'Seen 1 min ago'},
-  told:[['','You’ve looked in twice this week, so I’ve slowed down: 6 new things are held, not started. <button class="link inl" data-act="carry">Carry on with them</button>']],
+  told:[['',()=>S.carried?'Started the 6 held things. They come to you a few at a time.':'You’ve looked in twice this week, so I’ve slowed down: 6 new things are held, not started. <button class="link inl" data-act="carry">Carry on with them</button>']],
   items:['shipLook','refundDecide','calendarLook','zoomLook'], split:2, splitAt:'Tomorrow 8:30', next:'Tomorrow 8:30: 2 things, about 5 minutes.', you:['ship','refund','calendar','zoom'], st:{}, held:6,
   path:['open','accept','pick0'], note:'He skipped most sittings. New work that would need him was not started, and he is told so once. What has gathered is more than this evening allows, so it splits: 2 now, the rest tomorrow, or “Do them now”.'},
  {when:'Wed 16 Dec 08:30', title:'Day 30: a rule was wrong', ev:'stress · day 30', view:'lock', day:'Wednesday 16 December', clock:'8:30',
   card:{t1:'Two things, about 3 minutes', t2:'First: one of my rules was wrong.', age:'Seen 2 min ago'},
   told:[['','Wording changes come to you again: on Monday “Receipt” left 14 customers unsure what they had paid. The 9 made without you since 19 Nov were read again; one more was put back.']],
-  items:['ruleWrong','refundAct'], next:'5 pm. Nothing gathers yet.', you:['tax'], st:{tax:{dt:'10 Dec · done'}},
+  items:['ruleWrong','refundAct'], next:'5 pm. Nothing gathers yet.', you:['tax'], st:{tax:{dt:'live since 1 Dec'}},
   path:['open','pick0','hold'], note:'Thirty rules, one wrong: a rule he gave for one page, widened by guess. It shows where it came from and what it decided, and has already stopped itself. Repaying customers is money: said back and held.'},
  {when:'Wed 16 Dec 08:45', title:'Curiosity', ev:'14', view:'lock', day:'Wednesday 16 December', clock:'8:45',
   card:{t1:'Nothing needs you.', t2:'5 pm. Nothing gathers yet.', age:'Seen 2 min ago'}, items:[], st:{}, path:['stand','behind','goal:signup'], note:'Who is working where, and what one goal has cost. One level down, never pushed.'}

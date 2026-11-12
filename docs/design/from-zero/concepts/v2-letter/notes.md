@@ -1,79 +1,75 @@
 # The sheet: one design from the best of four
 
-**What I built.** One sheet. On his phone it sits behind a card he put on the lock screen; on his desk it is the left page of an open book, with the thing itself on the facing page. He has two set times (8:30 and 5:00), but it opens at any time. It holds only what is his: look, decide, and the rare "go?" before something that cannot be undone. Everything else is told in one line with See and Undo, or is silent. It ends with "That is all."
+**What I built.** One sheet. On his phone it sits behind a card he put on the lock screen; on his desk it is the left page of an open book, with the thing itself on the facing page. He has two set times (8:30 and 5:00), but it opens at any time. It holds only what is his: look, decide, and "go?" before something that cannot be undone or that leaves the building. Everything else is told in one line with See and Undo, or is silent. It ends with "That is all."
 
-Open `index.html`. "next" in the striped bar steps through 15 moments of the stress week; "notes" says what he does not see. Under 1040 px it is the phone; above, the desk. `#check` runs every state and reports on screen. `#k=back&th=signup` and the like open one state.
+Open `index.html`. "next" steps through 18 moments of the stress week; "notes" says what he does not see; "+20m" lets twenty minutes pass with nothing heard. Under 1040 px it is the phone; above, the desk. `#check` runs every state and reports on screen. `#k=back&th=signup` and the like open one state.
 
-## Changed since round 2 began
+**Nothing in it is live.** Recordings are drawn frames, "Try it yourself" is scripted, voice and sign-in are simulated, every figure is written by hand. The file says so in its prototype bar, and in a striped note at each place the claim is made.
 
-For revision 3 of the method and the count critique:
-- **Nothing waits for him to agree.** What I heard arrives as the work starts, as one told line with "What I heard" one touch away; any line can be changed at any time. One still waits for his go (sales tax), and says why.
-- **His decisions sit on the showing**, on the screen each is about; choosing redraws that screen.
-- **Told, not asked:** the corrected invoice file and the yearly price. The nine sheets hold 13 things, not 19.
-- **The lock card is his own opt-in widget:** silent, one shape, "Take it off" in one touch.
+## Changed for the defects critique (its item numbers)
 
-For the craft critique (every item naming this folder):
-- **"Sitting" is gone from every screen**, with the other words of the method. The card says what has gathered, for when, and how fresh: "1 thing · about 3 minutes / Gathered for 8:30 · seen 2 min ago".
-- **Every card says how fresh it is.** New card: "Away, by the look of it. 9 things held for when you are back. Nothing new starts."
-- **The return opens on one bar that adds up to his 40 goals and five lines** (Went wrong, Lost by waiting, Decided for you, Done, Held). The bar's numbers match the goals behind them; `#check` asserts it. About 135 words before the first thing, was about 210.
-- **A thing that moves is the checker's recording**, played or scrubbed by named step ("0:08 The wait for the code"). He touches a frame to mark it; the mark keeps its step and time. The wait is a step of its own. "Try it yourself" runs the same build beside it. The step circles and "3 s" bubbles are gone.
-- **The facing page no longer lists forty goals.** Each project shows only what is with him, unseen or moved (or the next two), then "and 12 more, on their dates".
-- **A gate is a plain hint**, not a greyed button: "To accept it, first watch it through or try it."
-- Also: "Don't send it yet" for "Hold it"; "a first slice" reworded; the question only he can judge is a line of the letter, not a lavender box; the desk's left page no longer clips its last line.
-- **Two guards in `#check`:** no word of the method on any screen (every fold opened), and no control under 44 px. Both were shown to fail on a planted fault. Every markable line and pin is now 44 px.
+- **4 · Starting on what I heard is a permission he can see and take back.** It is first under "What I may do without asking", with its bound: only work that is cheap to make again, only as far as his first look. Taken back, every later goal waits for his go (the told line, the heard-back and "What I heard" all change), and Go starts it. What I heard now says what a wrong line would cost.
+- **6 · The edge of the simulation is drawn once, where it matters.** "Not tried" keeps real hardware, feel in the hand, real payments and outcomes that take two weeks.
+- **8 · The two sign-up choices later work depends on come on the bad day**, each drawn both ways, before more is built. They are remembered on the finished recording; the third waits on its screen.
+- **9 · All nine things of the return can be opened.** The other six are two further openings (5:00 and next morning), or one touch away: "Take the next three now".
+- **10 · The week counts goal by goal**: how often each came to him against how often I expected. All 30 rules are one calm page: his words, where each came from, times used, when it lapses, Take back. Guesses are kept apart.
+- **11 · A way nobody built cannot ride on the old proof.** Choose it and the proof steps aside ("Not checked the way you have now chosen"), Accept is gone, and the only act is "Build it this way, and check it again".
+- **14 · Stop and undo say what happened, not what was asked.** Stop: which computers answered, which did not, what had already gone out, what was left half-way. Undo first lists what goes back, what was built on it, and what cannot come back.
+- **15 · A miss lists everything it touched, sorted**: fine, already sent, held, not looked at yet, with a time for the remainder, which is then reported. The lost wording permission lists all 14 unshown changes the same way.
+- **17 · Start works** on the price page, and stops at the pay screen, where the checks stopped.
+- **21 · Tuesday's file is told, not asked.** Sending it each month is its own exact go: recipient, day, the condition, what cannot be undone, a held press.
+- **Reconciled: "6 of 6" never stands alone.** Tuesday's told line and the go both carry "Not tried: refunds made after the month closed", above his yes. Thursday's miss is that gap.
+- **22 · One place says what a time means when he has not looked in**, beside the permissions, and there he can change his times.
+- **24 · His own words come back.** Type a correction and the next sketch quotes it, not a fixture.
+- **26 · Every control is at least 44 by 44**; `#check` now measures width and words spilling out, and found two more of my own.
+- **29 · An estimate is not a passed line.** The lower bill is "not tried" until January's real bill.
+- **30 · No build numbers on the face.** "Friday's checked version"; the number is in the checker's evidence.
+- **31 · Freshness comes from the clock.** After twenty unheard minutes the card says "I have heard nothing for 22 minutes", the sheet reads "as last heard", and a held go for what cannot be undone is refused. The missed second try of the one interruption is drawn.
+- **32 · Results with nothing to judge are told** with See and Undo. The random real look stays.
 
-**Chosen not to do:** the price page keeps "Use it / Mark it", because pointing must never press a button. The return is still 762 words: the summary is a third shorter, but its three things are a five-step journey, a page at two widths and a go.
+Earlier in the round, still true: nothing waits for him to agree; decisions sit on the showing; the card is his own silent widget and always says how fresh it is; the return opens on one bar that adds up to 40 and five lines; a journey is the checker's recording by named step; the facing page folds forty goals to what is with him; no word of the method on any screen.
 
 ## What I took
 
-| From | Taken |
-|---|---|
-| Letter | The lock-screen card that counts its own age. Hold and say, with "That is not what I said". One sheet rewritten in place. His blue ink against my black type. Things at full size in their own colours. Strike, pin and whole-thing remark. "Take back" beside every mark. The P.S. for a trust offer. The checker's words, unedited. |
-| Sitting | The bounded session, "That is all." The opening "Only you can judge…". Proof apart from judgement, "Not tried" in its own box. A choice drawn as the two real pages. The goal page's verbs. Told lines with See and Undo. The return's bar and five lines. "Away, by the look of it". The recording with named steps. Projects folded to what is with him. |
-| Picture | A fixed place for each goal, showing only when he will next see it. The old day struck through on the goal's line. "I cannot see 2 of your 40 goals", hatched where they live. The desk as a spread. Rules he gave kept apart from my guesses. |
-| Thread | Margin notes in one touch. Undo on every default that went ahead. "That, not your accepting them, is why I ask." |
-| v2-showing | A done line that shows where it is true. His marks back in place on the next version. The button that names the act. |
+- **Letter:** the lock-screen card; hold and say; one sheet rewritten in place; his blue ink; things in their own colours; strike, pin, whole-thing remark; "Take back"; the P.S. for a trust offer; the checker's words unedited.
+- **Sitting:** the bounded session and "That is all"; "Only you can judge…"; proof apart from judgement; choices drawn as the real alternatives; told lines; the return bar; "Away, by the look of it"; the recording by named step; folded projects.
+- **Picture:** a fixed place for each goal; the struck-through day; "I cannot see 2 of your 40"; the desk spread; rules apart from guesses.
+- **Thread:** margin notes; Undo on what went ahead. **v2-showing:** "Show me" on a done line; marks back in place; the button that names the act.
+- **v2-return:** the start permission and its bound; sorted "touched" lists; a stop that says who answered; the rules page.
 
 ## The three unsolved problems
 
-**1. A thing that moves.** Answered in part.
-- *A journey*: the recording, by named step; marks on a frame or on the wait; "Try it yourself". It cannot be accepted until he has watched or tried it and settled what is his.
-- *A page at two widths*: one page at phone width and at 1280; its own buttons work where they are big enough to press; marks keep their width; both must be seen.
-- *A job with nothing to look at*: told, with what ran line by line, what was not tried, and Undo until the day that cannot be undone.
-- *A number*: the figure, what it was, the spread of ten runs in words, Undo.
-- *What cannot be undone*: the exact thing, to whom, said back, a held press.
-- **Not answered:** a route, a drive, sound, a real payment. A recording cannot be explored; what was not recorded cannot be marked.
-
-**2. Coming back.** Answered for the cases drawn: five days away (one bar, five lines, nine things over three looks); a thin week (one question about pace); a rule used too widely (his words, its nine uses, one choice); a bad accepted result with work built on it (told first). **Not answered:** the six things deferred on the return are named, not drawn; a return where something went wrong while he was away.
-
-**3. Rhythm.** Answered. "From 5:00" means the next set time, whether or not he looks in; then it is told once with Undo. He pulls early by opening the sheet ("Ready early"), "See what I heard", or "Start it now". The one interruption says why it could not wait, and the week counts it against me.
+1. **A thing that moves: in part.** Recording by step, marks on a frame or the wait, a page at two real widths with working buttons, a job's trace, a number's spread, the exact go. Not answered: a route, a drive, sound, feel. A recording cannot be explored.
+2. **Coming back: for the cases drawn.** Five days (bar, five lines, nine things over three openings, all reachable); a thin week; a stretched rule; a miss with what it touched; a lost permission. Not answered: a return where something went wrong meanwhile; chains deeper than one step.
+3. **Rhythm: answered,** and now stated in one place with a way to change it.
 
 ## The stress week, counted (`#check` presses the real buttons)
 
-Nine sheets, the one interruption, one spoken goal, the week. The return is counted for its first three things only.
+Eleven sheets (the return in full, all nine things), the one interruption, one spoken goal, the week.
 
 | | Phone | Desk |
 |---|---|---|
-| Places to look | 1 | 1 |
+| Places to look | 1 doorway: card, sheet, the thing, everything, the week | same |
 | Interruptions | 1 | 1 |
-| Held in his head | 0 pieces of work; 1 habit, the two set times | same |
-| Words he must read to act | 3,069: sheets 2,539, cards 239, the week 177, the interruption 71, the heard-back 43 | 3,039 |
-| Words merely available | 2,535: evidence, what I heard and what ran 1,482; the week's folded lines 470; behind 311; everything 272 | same |
+| Held in his head | 0 pieces of work; 1 habit, his two times | same |
+| Words he must read to act | 4,176: sheets 3,582, cards 290, the week 182, the interruption 79, the heard-back 43 | 4,120 |
+| Words merely available | 4,009: evidence and what ran 2,096, the rules 623, the week's folds 577, everything 402, behind 311 | same |
 | Words typed / spoken | 0 / 20 | 0 typed; a goal typed at the desk is 11 |
-| Taps | 47 | 33 |
-| Decisions | 20: 19 only his; 1 acceptance of what a check had passed, the random sample the method asks for | same |
-| Minutes | about 37 by the sheets' own budgets; about 21 on the critics' model | same |
+| Taps | 63 | 44 |
+| Decisions | 30: 29 only his; 1 the random look at a checked result | same |
+| Minutes | about 55 by the sheets' own budgets | same |
+
+Up from 3,069 words and 37 minutes, because the return is now counted whole (its six further things are 724 words, 18 minutes) and the send, the early choices and the "touched" lists cost reading. Without the two stress-only sheets (a thin week, day 30) it is 3,653 words. This is my count by my rule, not the critics'.
 
 ## Three weakest points
 
-1. **The moving thing is still a stand-in.** "The checker recorded it on a real phone" and "the same build" are claims he cannot see to be true. What needs the real device, road or card is only listed as not tried.
-2. **Told lines can be skimmed.** Ten things were told in the week and none undone. That is only safe while the checks can fail.
-3. **Work now starts on what I heard.** If I heard wrong and he never opens it, he finds out at the first look.
+1. **Honesty costs reading.** It is the longest of the candidates. The bad day is 507 words before he has pressed anything.
+2. **The moving thing is still a stand-in**, and now says so. What needs the real device is only listed as not tried.
+3. **Told lines can be skimmed**, and work starts on what I heard. Both are only safe while the checks can fail and the first look is cheap.
 
 ## What in revision 3 still cannot be drawn
 
-- **A set time: a clock or an act?** I chose the clock ("whether or not you look in").
-- **Which decisions wait for the showing.** Moving three questions onto the sign-up delayed them a week while the build went ahead on my picks.
+- **Which decisions deserve an early look.** I chose "what later work depends on". The method has no rule.
 - **Admitting work at his rate (10).** I can draw "held"; the method gives no order among forty goals.
 - **A kind of work (9).** Nobody names the kinds or their edges.
-- **The exact result (7).** I can print which build the checks ran on. He cannot see that it is true.
+- **The exact result (7).** I can refuse an unbuilt choice. I cannot show him that the thing he sees is the thing that was checked.

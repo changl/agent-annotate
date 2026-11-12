@@ -364,7 +364,7 @@ function backAfter(){
   const L=(X.simulated?`<p class="simnote">Prototype control: these answers were filled in for the demonstration. He did not give them, and choosing “Start” did not give them either.</p>`:'')+
    `${lab(`Tue 17 Nov, 8:31 · ${seenTxt()}`)}<h1 data-must>${!fin.length?'Nothing has been answered yet.':left.length?'That is all for now.':'That is all. Nothing else needs you.'}</h1>
    ${m(`${fin.length?`${cap(N[fin.length]||''+fin.length)} done.`:''}${left.length?` ${cap(N[left.length]||''+left.length)} ${fin.length?'still ':''}wait: ${lm} minutes.`:''}`)}
-   ${fin.length?blk('Done, by your answer',`<div class="rows">${fin.map(p=>row(nm(p)+(fixed(p)?'':` <button class="lnk" data-act="undothing" data-id="${p.id}">Undo</button>`),outcome(p))).join('')}</div>`):''}`;
+   ${fin.length?blk(X.simulated?'Done · filled in, not his answers':'Done, by your answer',`<div class="rows">${fin.map(p=>row(nm(p)+(fixed(p)?'':` <button class="lnk" data-act="undothing" data-id="${p.id}">Undo</button>`),outcome(p))).join('')}</div>`):''}`;
   if(!left.length) return {L};
   const grp=s=>{const ps=left.filter(p=>slotOf(p)===s);return ps.length?`<div class="slot later"><p class="lab"><span>${s?SLOT[s]:'Left from this time'}</span><span>${ps.reduce((n,p)=>n+p.min,0)} minutes</span></p><div class="rows">${ps.map(p=>row(`<span class="k${/go|Put/.test(p.k)?' hot':''}">${p.k}</span>${p.t}`,settled(p)?outcome(p):p.w,p.min+' min')).join('')}</div></div>`:'';};
   const R=`${lab('Still waiting')}<h2 data-must>Named, dated, and not hidden.</h2>${grp(0)}${grp(1)}${grp(2)}
