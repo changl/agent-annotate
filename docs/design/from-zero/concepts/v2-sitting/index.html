@@ -452,6 +452,7 @@ I.emailLook = {kind:'look', verb:'Look', gid:'welcome', mins:3, judge:'Is this h
 I.ratingsSketch = {kind:'look', verb:'Look', gid:'ratings', mins:2, judge:'Does it feel kind, not like a review site?', sub:'A sketch, not built', thing:'sketch',
   proof:{seal:'sketch 1', at:'07:40', lines:[['Two taps from the lesson screen'],['Says only the school sees the note'],['Works with large text']]}, notnow:true, chips:['Too small','Too pushy','Wrong words','Missing'],
   choices:[{q:'When an average drops below 3', alts:[['Tell the school, weekly','<b>To the school</b><small>Sam’s average fell to 2.8 this week.</small>'],['Say nothing','<b>No message</b><small>Instructors see only their own average.</small>']], rec:0, why:'You’d hear of a problem early.', dflt:['wait','','it’s about people’s work']}],
+  rc:p=>`Looks right; ${p[0]===0?'the school hears weekly when an average drops':'no message when an average drops'}.`,
   park:[{b:'When Faster sign-up is done',s:'They change the same screens. Monday at the latest.',rec:1,r:'Parked until sign-up is done, Monday at the latest.'},{b:'Monday',s:'',r:'Parked until Monday.'},{b:'Say when',s:'',r:'Parked.'}],
   acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.photosItem = {kind:'decide', verb:'Decide', gid:'photos', mins:1, judge:'Delete the old copies after the move?', thing:'jobmini',
@@ -462,7 +463,7 @@ I.photosJob = {kind:'look', gid:'photos', thing:'job', proof:{lines:[['Nothing l
 I.wordBook = {kind:'look', verb:'Look', gid:'release', mins:.5, judge:'Is the new wording right?', sub:'Picked at random from what I only told you, so the checks stay honest.', thing:'wording', w:['Book a lesson','Book your next lesson'], label:'Home screen button',
   proof:{seal:'this week’s app', build:'build 4.11', at:'07:20', lines:[['Fits on the smallest phone'],['Same words in the reminder texts']]}, acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.emailV3 = {kind:'look', verb:'Look', gid:'welcome', mins:1, judge:'Did your marks land?', sub:'Second version', thing:'email', ver:3,
-  proof:{seal:'sketch 3', at:'07:30', lines:[['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]}, chips:['Too long','Wrong tone','Cut this','Wrong fact'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
+  proof:{seal:'sketch 3', at:'07:30', lines:[['Each of your marks answered where you put it'],['Every link works'],['Reads well on a phone'],['The code HELLO works at checkout']]}, chips:['Too long','Wrong tone','Cut this','Wrong fact'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.invoiceMiss = {kind:'act', verb:'My miss', vcls:'red', gid:'invoice', mins:3, judge:'How should it be put right?', thing:'recordsFixed', miss:true, msg:o=>o===0,
   proof:{seal:'the fixed October file', at:'16:05', lines:[['No invoice in two files (new)'],['Tried on 37 two-month invoices from last year'],['The six earlier checks, run again']]},
   aud:{opts:['Send the fixed pack with this note','Replace it; I’ll tell her myself'], rec:0, why:'A note to a real person can’t be unsent.'},
@@ -476,19 +477,19 @@ I.release = {kind:'act', verb:'Can’t be undone', vcls:'amber', gid:'release', 
 I.wordTrust = {kind:'decide', verb:'Decide', gid:'wordpay', goal:'Small wording changes', mins:.5, judge:'Stop bringing them to you?', trust:true,
   choices:[{opts:['Yes, like that','Keep showing me'], rec:0, why:'The last three stayed as they were. They’d be listed in your week instead.', dflt:['wait','','it widens what I may do']}],
   rcpt:'Small wording: listed in your week; 1 in 5 still here.', dec:'his'};
-I.signupJourney = {kind:'look', verb:'Look', gid:'signup', mins:3, judge:'Does sign-up feel quick?', sub:'3 screens, 46 seconds. It was 7 screens, about 3 minutes.', thing:'journey', later:true,
+I.signupJourney = {kind:'look', verb:'Look', gid:'signup', mins:3, judge:'Does sign-up feel quick?', sub:'3 screens: median 46 seconds, slowest 58. It was 7 screens, about 3 minutes.', thing:'journey', later:true,
   proof:{seal:'Friday’s checked version, on an iPhone 13', build:'build 4.12', at:'07:40', lines:[['Three screens, not seven',0],['One-tap Apple or Google sign-in',0],['Licence asked before the first lesson',3],['Under-18s give a parent’s email',2],['Nothing asked twice',1]], un:['phones older than 2021'],
    words:'Signed up 20 times on an iPhone 13 from a fresh install. Median 46 seconds, slowest 58. Apple and Google sign-in tried 5 times each. Not tried: phones older than 2021; I had none.'},
   picks:'Went ahead inside what you allowed: phone number optional; it remembers the last instructor.',
   chips:['Too slow here','Confusing','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
 I.pricePage = {kind:'look', verb:'Look', gid:'price', mins:2, judge:'Does it read right on a phone and on a desk?', thing:'web',
   proof:{seal:'the page as served, both widths', at:'07:58', lines:[['Nothing cut off at either width'],['Yearly first, as decided'],['Prices match the billing tool'],['Start goes to checkout']]}, chips:['Too small','Wrong order','Wrong words','Missing'], acceptLabel:'Looks right', rcpt:'Looks right.', dec:'his'};
-I.ratingsBack = Object.assign({}, I.ratingsSketch, {sub:'Back from parking: sign-up is done', notnow:false, wait:'Costs nothing to wait.'});
-I.taxGo = {kind:'agree', verb:'Waits for your go', vcls:'amber', gid:'tax', mins:2, judge:'Start on this?',
-  said:['Two weeks ago','We need to charge sales tax in Texas and Ohio now.'], fact:'Your accountant replied: start 1 December, with the rates in the attached table.',
-  heard:'From 1 December, orders to Texas or Ohio show the right tax before payment.',
-  done:['Tax shows before payment.','Rates come from the accountant’s table.','A monthly total per state, in the accountant’s pack.'],
-  wait:'This waits for your go, because it changes what customers pay.', next:'First look: Saturday 28 November. Live 1 December.', rcpt:'Go. First look Saturday; live 1 December.', dec:'his'};
+I.ratingsBack = Object.assign({}, I.ratingsSketch, {sub:'Parked until Monday at the latest; back Monday, as promised. It has waited 3 days for you. No one is rating yet, so nothing was lost.', notnow:false, wait:'Waiting since Monday; nothing lost yet.'});
+I.taxGo = {kind:'act', verb:'Charges customers', vcls:'amber', gid:'tax', mins:2, judge:'Charge sales tax from 1 December?', thing:'taxsketch',
+  sub:'Started on what you said two weeks ago, without waiting: a sketch of the checkout. Nothing is charged.', fact:'Your accountant replied: start 1 December, with the rates in the attached table.',
+  proof:{seal:'the sketch, against the accountant’s table', at:'07:50', lines:[['Texas 6.25% and Ohio 5.75%, as in the table'],['Shown before payment'],['Other states unchanged']]},
+  said:()=>'From Tuesday 1 December, charge sales tax on shop orders to Texas (6.25%) and Ohio (5.75%), shown before payment.',
+  holdLabel:'Correct. Charge it from 1 December.', rcpt:'Go: tax from 1 December. The built checkout comes to you Saturday, before it is live.', dec:'his'};
 I.remindersFx = {kind:'look', gid:'reminders', thing:'effect', proof:{lines:[['Sent at 6 pm in each student’s time zone'],['No text for cancelled lessons'],['No one got two of the same'],['A failed text is retried once, then the school is told']]}};
 I.testrun = {kind:'look', gid:'testrun', thing:'speed', proof:{lines:[['Same 1,284 checks, same computer, 10 runs each'],['Same results as the slow run on the last 20 changes'],['A planted failure is still caught']]}};
 I.shipLook = {kind:'look', verb:'Look', gid:'ship', mins:1, judge:'Is this the right promise to shoppers?', thing:'wording', w:['Ships in 3–5 days','Arrives by Thu 10 Dec'], label:'Product page',
@@ -530,6 +531,8 @@ const P = {price:null, priceMine:false, revoked:{}, msgPaused:null, sent:null, c
 const priceTold = when => P.priceMine ? `<b>Price page</b>: ${P.price==='monthly'?'monthly':'yearly'} first, as you chose. <button class="link inl" data-act="change">Change</button>`
   : P.revoked.layout ? `<b>Price page</b>: yearly or monthly first waits for you; you took back layout choices. <button class="link inl" data-act="change">Choose</button>`
   : `<b>Price page</b>: ${P.price==='monthly'?'monthly':'yearly'} first ${when}; you left layout to me. <button class="link inl" data-act="change">Change</button>`;
+const emailTold = ()=>{ const n = Object.keys(P.sent || I.emailLook.demo).filter(k=>k in MAP3).length;
+  return S.v3back ? '<b>New welcome email</b>: sent back again. Sketch 4 comes to your next look.' : `<b>New welcome email</b>: sketch 3 answers your ${n} mark${n>1?'s':''}; someone else checked each one. <span class="pair">${see('emailV3')} <button class="link inl" data-act="v3back">Not right</button></span>`; };
 const priceNt = ()=> P.revoked.layout && !P.priceMine ? 'Waits for you: which price first.' : `${P.price==='monthly'?'Monthly':'Yearly'} first, ${P.priceMine?'as you chose':'inside what you allowed'}.`;
 const sb = k => `<b>Started: ${I[k].goal}.</b> ${I[k].short} <button class="link inl" data-act="sbopen" data-k="${k}">What I heard</button>`;
 
@@ -551,14 +554,14 @@ const M = [
  {when:'Tue 17:00', title:'The afternoon sitting', ev:'3, 4, 7', view:'lock', day:'Tuesday 17 November', clock:'17:00',
   card:{t1:'Two things, about 5 minutes', t2:'Gathered for your 5 pm.', age:'Seen 1 min ago'},
   told:[['','<b>Faster sign-up</b>: <s>Thursday</s> Friday. A computer was off overnight.'],['dec',()=>priceTold('goes ahead after this look')]],
-  items:['signupSlice','emailLook'], next:'Tomorrow 8:30: 4 things so far.', you:['signup','welcome'], st:{signup:{old:'Thu',dt:'Fri'}},
+  items:['signupSlice','emailLook'], next:'Tomorrow 8:30: 3 things so far.', you:['signup','welcome'], st:{signup:{old:'Thu',dt:'Fri'}},
   path:['open','pick:0:1','pick:1:0','pick:2:0','b:p1','c:Wrong tone','b:p2','c:Cut this','sendback','always'],
   note:'All three forks that are his come inside the first slice of sign-up, each redrawing the screen it changes; the other 14 are one tap away. The price default goes ahead after this look, the first in which he could change it. On the email he touches what is wrong; his own words go back with each mark and return with the next version.'},
  {when:'Wed 18 Nov 08:30', title:'Not now; a random real look; his marks come back', ev:'5, 9, 10', view:'lock', day:'Wednesday 18 November', clock:'8:30',
-  card:{t1:'Four things, about 5 minutes', t2:'Gathered for your 8:30.', age:'Seen 3 min ago'},
-  told:[['grey','Last week’s question about the old CSV button no longer matters: the new export replaced that page.']],
-  items:['ratingsSketch','photosItem','emailV3','wordBook'], next:'Tomorrow 5 pm.', you:['ratings','photos','welcome','release'], st:{signup:{old:'Thu',dt:'Fri'}},
-  path:['open','notnow','park0','pick0','accept','accept'], note:'“Not now” parks the ratings sketch, and the choice gathered into it, until sign-up is done. The photo move is done and checked; only the deletion is his. The second email version shows each of his marks where he put it. One told result is picked at random and shown as a real look.'},
+  card:{t1:'Three things, about 4 minutes', t2:'Gathered for your 8:30.', age:'Seen 3 min ago'},
+  told:[['grey','Last week’s question about the old CSV button no longer matters: the new export replaced that page.'],['done',()=>emailTold()]],
+  items:['ratingsSketch','photosItem','wordBook'], next:'Tomorrow 5 pm.', you:['ratings','photos','release'], st:{signup:{old:'Thu',dt:'Fri'}},
+  path:['open','notnow','park0','pick0','accept'], note:'“Not now” parks the ratings sketch, and the choice gathered into it, until sign-up is done, Monday at the latest. The photo move is done and checked; only the deletion is his. Whether his email marks landed is the checker’s question, not his: he is told, with See and Not right. One told result is picked at random and shown as a real look.'},
  {when:'Wed 13:10', title:'The one interruption', ev:'8', view:'lock', day:'Wednesday 18 November', clock:'13:10',
   card:{t1:'Quiet until tomorrow 5 pm.', t2:'Then 2 things so far.', age:'Seen 1 min ago'}, buzz:true, alt:'missed', altLabel:'If he misses it ›', items:[], st:{release:{dt:'Thu',you:1}},
   path:['signin'], note:'The only sound it ever makes. All three hold: only he can sign in, it can’t wait for tomorrow’s sitting, and missing it costs a week. It says why it wasn’t in a sitting, and counts itself as a miss.'},
@@ -578,13 +581,13 @@ const M = [
   card:{t1:'I can’t see the work.', t2:'Nothing has reached this phone since 15:10. Nothing can be released, sent or deleted until I can.', age:'Last seen 15:10'}, items:[], st:{},
   path:['blindall'], note:'The phone works this out by itself: nothing has reached it for 70 minutes. No buzz: while nothing can be released, sent or deleted, nothing can go wrong that needs him today. The view comes back at 17:40; Thursday’s first page says what was found.'},
  {when:'Mon 23 Nov 14:00', title:'Away, without saying so', ev:'12, 6', view:'lock', day:'Monday 23 November', clock:'14:00',
-  card:{t1:'Away, by the look of it.', t2:'2 things held for when you’re back. Nothing new starts.', age:'Seen 3 min ago'}, items:[], st:{ratings:{dt:'when you’re back',nt:'Back from parking: sign-up is done.'},tax:{dt:'when you’re back',nt:'Your accountant replied.'}},
+  card:{t1:'Away, by the look of it.', t2:'2 things held for when you’re back. Nothing new starts.', age:'Seen 3 min ago'}, items:[], st:{ratings:{dt:'waiting since Mon',nt:'Back Monday, as promised. Your look was skipped, so it waits.'},tax:{dt:'when you’re back',nt:'Your accountant replied.'}},
   path:[], note:'He never said he was away. After two looks unopened, I slowed down: agreed work goes on; choices that wait for a look keep waiting; nothing new that needs him starts. No buzz.'},
  {when:'Thu 26 Nov 08:30', title:'Back after five days', ev:'12, 13', view:'lock', day:'Thursday 26 November', clock:'8:30',
   card:{t1:'Welcome back. Two things now.', t2:'About 4 minutes; 2 more at 5 pm.', age:'Seen 2 min ago'},
   ret:{need:4, changed:9, ok:27, lines:[['Lost while you were away','gift cards missed today’s release. Next chance: 3 December.'],['Went wrong','nothing else.'],['Couldn’t see','Sunday 15:10 to 17:40, everything. When I could again, all 23 were where they were.'],['Done and out','Faster sign-up, the price page, the photo move.'],['Waiting for this look',`6 choices on 4 goals, inside what you allowed. They go ahead after this look unless you change one. <button class="link inl" data-act="stand">See them</button>`],['Running',()=>P.msgPaused?'the reminder texts: paused by you. <button class="link inl" data-act="msgpause" data-v="0">Let them go again</button>':`the reminder texts; missed lessons 31 → 12. <span class="pair">${see('remindersFx')} ${und('texts','Stop')}</span>`],['Faster',`the test run, 11 → 4 minutes. <span class="pair">${see('testrun')} ${und('testrun')}</span>`]]},
   items:['taxGo','giftQ','ratingsBack','returnsLook'], split:2, week:true, next:'5 pm: 2 things, about 4 minutes.', you:['ratings','tax','gift','returns'], st:{},
-  path:['open','go','pick0'], note:'Four lines bring him current, starting with what his absence cost: gift cards missed a release. Sales tax comes first because it changes what customers pay from 1 December; then gift cards, with the next date they can still make. Then his week, to read.'},
+  path:['open','hold','pick0'], note:'Four lines bring him current, starting with what his absence cost: gift cards missed a release. The sales-tax sketch was made without waiting; only charging customers waits for his go, said back and held. Then gift cards, with the next date they can still make. The ratings sketch came back Monday as promised and says how long it has waited. Then his week, to read; its figures are a fixture, not recomputed from his answers.'},
  {when:'Thu 3 Dec 18:20', title:'A week he looked in twice', ev:'stress · skipped sittings', view:'lock', day:'Thursday 3 December', clock:'18:20',
   card:{t1:'Four things, about 7 minutes', t2:'2 now, the rest tomorrow. Oldest since Monday.', age:'Seen 1 min ago'},
   told:[['',()=>S.carried?'Started the 6 held things. They come to you a few at a time.':'You’ve looked in twice this week, so I’ve slowed down: 6 new things are held, not started. <button class="link inl" data-act="carry">Carry on with them</button>']],
@@ -619,7 +622,7 @@ function load(mi, keep){
   S.items = (m.items||[]).map(k=>Object.assign({key:k}, I[k]));
   S.out = {}; S.st = {}; S.cur = 0; S.overlay = null; S.say = null; S.toast = null; S.marks = false; S.limit = m.split || null;
   S.view = m.view; S.h1 = null; S.buzzMissed = false; S.allowSel = null; S.hl = null; S.sbfix = {}; S.sbfixed = {}; S.signed = false; S.ps = null; S.jt = 0; S.ww = 'phone'; S.wmode = 'use'; S.wprice = P.price || 'yearly'; S.v3 = 'new'; S.wco = null;
-  S.seenF = new Set([0]); S.wseen = {phone:true, desk:false}; S.changedK = null; S.ageAdd = 0; S.t0 = Date.now(); S.undone = {}; S.stopped = null; S.gst = {}; S.carried = false; S.soon = false; S.feel = {}; S.cadOpen = false; S.askText = '';
+  S.seenF = new Set([0]); S.hand = null; S.handFail = false; S.v3back = false; S.opener = null; S.wseen = {phone:true, desk:false}; S.changedK = null; S.ageAdd = 0; S.t0 = Date.now(); S.undone = {}; S.stopped = null; S.gst = {}; S.carried = false; S.soon = false; S.feel = {}; S.cadOpen = false; S.askText = '';
   if (P.price==='monthly') S.items.forEach(x=>{ if (x.thing==='web') x.proof = Object.assign({}, x.proof, {lines:x.proof.lines.map(l=>l[0]==='Yearly first, as decided'?['Monthly first, as decided']:l)}); });
   if (S.items.some(x=>x.thing==='slice')) S.jt = 2; // open on the screen his choices change
   if (isDesk() && m.view==='lock' && m.items.length && !m.buzz && !m.card.look){ S.view = 'sheet'; S.cur = left()[0]; S.h1 = m.ret ? retH(m) : sizeOf(left().filter(i=>!S.limit || i<S.limit)); } // on the desk he has already chosen to look
@@ -644,7 +647,7 @@ function proto(){
   const m = M[S.m]; $('#psel').value = String(S.m);
   const open = S.note==null ? isDesk() : S.note;
   const pn = $('#pnote'); pn.hidden = !open; $('#pinfo').setAttribute('aria-expanded', String(open));
-  pn.innerHTML = `<b>${m.when} · ${m.title}</b> · ${m.ev}<p>${m.note}</p>${m.alt&&(S.view==='lock'||/^(changed|stale)$/.test(m.alt))?`<button data-act="${m.alt}">${m.altLabel||'Open “Where everything stands” ›'}</button>`:''}${S.view!=='lock'&&m.view==='lock'?` <button data-act="tolock">Back to his phone ›</button>`:''}<p>Drawn, not live: the recording is still screens shown at their real times; nothing is sent, released, signed in or paid; what the phone and the helpers do is acted out.</p>`;
+  pn.innerHTML = `<b>${m.when} · ${m.title}</b> · ${m.ev}<p>${m.note}</p>${m.alt&&(S.view==='lock'||/^(changed|stale)$/.test(m.alt))?`<button data-act="${m.alt}">${m.altLabel||'Open “Where everything stands” ›'}</button>`:''}${S.view!=='lock'&&m.view==='lock'?` <button data-act="tolock">Back to his phone ›</button>`:''}${S.items.some(x=>x.thing==='journey')?` <button data-act="handfail">His phone: ${S.handFail?'won’t answer':'answers'}</button> <button data-act="phonemark" ${S.hand==='ready'?'':'disabled'}>A mark from his phone ›</button>`:''}<p>Drawn, not live: the recording is still screens shown at their real times; nothing is sent, released, signed in or paid; what the phone and the helpers do is acted out.</p>`;
 }
 
 /* --- the lock screen: the glance, the mic, the one buzz --- */
@@ -674,9 +677,11 @@ function rLock(){
 function coverDesk(m){
   const c = m.card, n = left().length;
   return `<div class="lab" style="text-transform:none;letter-spacing:0;font:italic 15px/1.3 var(--serif)">${m.day}, ${m.clock}. <span data-age>${ageText(m)}</span>.</div>
-   ${m.buzz && S.signed!=='done'?`<div style="margin-top:14px">${buzzCard()}</div>`:`<h1 style="${m.blind?'color:var(--amber)':''}">${c.t1}</h1><p class="small" style="font-size:16px">${c.t2}</p>
-   ${m.items.length&&!m.blind?`<div class="bar" style="position:static;padding:10px 0"><button class="btn pri" data-act="open">${c.look?'Look now':'Open'}<kbd>⏎</kbd></button></div>`:''}`}
-   <div class="say"><button class="saybtn" data-act="say"><i>${mic()}</i>Say what you want<kbd>S</kbd></button></div>`;
+   ${m.buzz && S.signed!=='done'?`<div style="margin-top:14px">${buzzCard()}</div>`:`<h1 style="${m.blind||m.blindAll?'color:var(--amber)':''}">${c.t1}</h1><p class="small" style="font-size:16px">${c.t2}</p>
+   ${m.items.length&&!m.blind?`<div class="bar" style="position:static;padding:10px 0"><button class="btn pri" data-act="open">${c.look?'Look now':'Open'}<kbd>⏎</kbd></button></div>`:''}
+   ${m.blindAll?'<div class="bar" style="position:static;padding:10px 0"><button class="btn pri" data-act="blindall">What is safe, and look for yourself</button></div>':m.blind?'<div class="bar" style="position:static;padding:10px 0"><button class="btn pri" data-act="stand">Which two, and why</button></div>':''}`}
+   <div class="say"><button class="saybtn" data-act="say"><i>${mic()}</i>Say what you want<kbd>S</kbd></button></div>
+   <div class="proj">${[['stand','Where everything stands','<kbd>G</kbd>'],['allow','What you’ve let me do',''],['stop','Stop everything','']].map(([a,t,k])=>`<button class="gl" data-act="${a}" data-v="all"><span class="nm" style="font-family:var(--sans);font-size:16px">${t}</span><span class="dt">${k}›</span></button>`).join('')}</div>`;
 }
 
 /* --- the sheet: one sitting, folded lines and one open thing --- */
@@ -736,6 +741,7 @@ function rItem(it, s, i){
       <p class="small">From now on a case not tried holds the showing. Billing files come to you again until 3 stay right.</p>`;
   if (it.kind==='rule') pre += `<p>From your answer on 17 November about the price page. I widened it to every amount; that was my guess, not yours. <b>I stopped using it at 07:10.</b></p><div class="lab">How I found out · the checker’s own words</div><p class="quote">“${it.quote}”</p>`;
   if (it.lost) pre += `<p class="callout red">${it.lost}</p>`;
+  if (it.fact && it.kind!=='agree') pre += `<p class="callout amber">${it.fact}</p>`;
   if (it.thing && it.kind!=='agree') thing = T[it.thing](it, s, i);
   if (it.picks) body += `<p class="small">${it.picks} ${und('picks','Undo either')}</p>`;
   if (it.assumed) body += `<p class="assumed">Assumed: ${it.assumed}</p>`;
@@ -789,6 +795,7 @@ function barHtml(x){ return `<div class="bar">${x}</div>`; }
 /* what holds an answer back: a changed check, unseen screens or widths, a stale view, paused messages */
 function blocked(it, s){
   if (S.changedK===it.key) return 'Changed after the check, so it can’t be accepted until the check has run again, by 09:10.';
+  if (it.kind==='look' && it.choices && it.choices.some((c,ci)=>s.picks[ci]==null)) return 'Answer the choice below first.';
   if (it.thing==='journey' && S.seenF.size<FRAMES.length) return `Answer once you’ve seen all ${FRAMES.length} screens.`;
   if (it.thing==='web' && !(S.wseen.phone && S.wseen.desk)) return 'See it at desk width too, then answer.';
   if (it.kind==='act'){
@@ -881,7 +888,7 @@ T.email = (it,s)=>{
   return thingWrap(it,s,'<span>As a new customer gets it · sketch 2</span><span>156 words</span>',`<div class="mail">${blk(s,'subj','Welcome to the family! Here’s everything you need to know','div','subj')}<div class="from">From Fernway · to a new customer</div>${MAIL2.map((p,j)=>blk(s,'p'+(j+1),p,'p')).join('')}</div>`);
 };
 function pinsHtml(s, f){ return s.pins.map((p,j)=>f && !f(p) ? '' : `<span class="pin" style="left:${p.x}%;top:${p.y}%">${j+1}</span>`).join(''); }
-function pinWhere(p){ return p.f!=null ? `Friday’s version, screen ${p.f+1} at ${FRAMES[p.f][0]} · ` : p.w ? `${p.w==='phone'?'Phone':'Desk'} width · ` : ''; }
+function pinWhere(p){ return (p.src==='phone' ? 'From your phone · ' : '') + (p.f!=null ? `Friday’s version, screen ${p.f+1} at ${FRAMES[p.f][0]} · ` : p.w ? `${p.w==='phone'?'Phone':'Desk'} width · ` : ''); }
 function pinNotes(s){ return s.pins.map((p,j)=>(p.c.length||p.t)?`<div class="mnote"><span class="pn">${j+1}</span>${pinWhere(p)}${esc([...p.c,p.t].filter(Boolean).join(' · '))}</div>`:'').join('') + (S.marks && String(S.active).startsWith('pin') ? editor() : ''); }
 T.sketch = (it,s)=>thingWrap(it,s,'<span>Sketch · the student’s phone, after a lesson</span><span>not built</span>',
   `<div class="stage pinarea" data-pin="1" ${PINA}><div class="phone"><h4>How was your lesson with Sam?</h4><div class="stars">★★★★☆</div><div class="fld multi">Anything for the school? Only they see it.</div><div class="cta">Send</div><div class="muted">Not now</div></div>${pinsHtml(s)}</div>${pinNotes(s)}`);
@@ -903,7 +910,7 @@ T.journey = (it,s)=>{ const f = FRAMES[S.jt];
   return thingWrap(it,s,`<span>Friday’s checked version · <span class="sim">drawn here as ${FRAMES.length} still screens</span></span><span>46 s</span>`,
    `<div class="stage pinarea" data-pin="1" ${PINA}><div class="phone">${f[2]}</div>${pinsHtml(s, p=>p.f===S.jt)}</div>
     <div class="timeline"><button class="play" data-act="play" aria-label="${S.playing?'Pause':'Play at normal speed'}">${S.playing?'❚❚':'▶'}</button><div class="steps">${FRAMES.map((x,j)=>`<button data-act="jt" data-v="${j}" aria-current="${j===S.jt}">${x[1]}<small>${x[0]}${S.seenF.has(j)?' ✓':''}</small></button>`).join('')}</div></div>
-    ${pinNotes(s)}<div class="tag" style="border-top:1px solid #ececec;border-bottom:0"><span>Feel it in your own hand</span><button class="link inl" data-act="try" style="color:#2340A8">Try it on your phone</button></div>`);
+    ${pinNotes(s)}<div class="tag" style="border-top:1px solid #ececec;border-bottom:0"><span>${S.hand==='ready'?'On your phone now':'Feel it in your own hand'}</span><button class="link inl" data-act="try" style="color:#2340A8">Try it on your phone</button></div>`);
 };
 function webPage(desk){
   const y = S.wprice==='yearly', use = S.wmode==='use', a = (act, v)=> use ? `data-act="${act}" data-v="${v}"` : 'tabindex="-1"';
@@ -939,6 +946,8 @@ T.release = ()=>`<figure class="thing"><div class="tag"><span>This week’s driv
   <p><b>Can’t be undone:</b> once a phone has it, only a newer version replaces it. <b>Can be:</b> until Monday I can stop it reaching the rest.</p></div></figure>`;
 T.affected = ()=>`<figure class="thing"><div class="tag"><span>What it touched</span><span>20 uses since 18 Nov</span></div><ul class="job">
   <li><b>Fine</b>Inside the case it came from: price labels, 14 uses.</li><li><b style="color:#A3262A">Already charged</b>Outside it: tax on 12 orders rounded up, 2¢ to 49¢. The next thing puts it right.</li><li><b style="color:#8A5300">Held</b>Outside it, not yet shown: gift card amounts. Waiting on this choice.</li><li><b>Not looked at yet</b>Totals in the accountant’s December pack. The checker reads them by Friday 18 December; you hear only if one is wrong.</li></ul></figure>`;
+T.taxsketch = ()=>`<figure class="thing"><div class="tag"><span>Sketch · the shop’s checkout, an order to Ohio</span><span>not built</span></div><div class="act">
+  <p style="display:flex;justify-content:space-between;margin:0 0 6px">Rain jacket <b>$120.00</b></p><p style="display:flex;justify-content:space-between;margin:0 0 6px">Sales tax, Ohio 5.75% <b>$6.90</b></p><p style="display:flex;justify-content:space-between;margin:0;border-top:1px solid #eee;padding-top:6px">Total <b>$126.90</b></p></div></figure>`;
 T.refund = ()=>`<figure class="thing"><div class="tag"><span>The 12 refunds</span><span>2¢ to 49¢ each</span></div><div class="act"><p>Each customer gets the difference for their own order, with one line: “We charged you a few cents too much in tax. Here it is back.”</p></div></figure>`;
 
 /* --- the week, on one page --- */
@@ -952,10 +961,20 @@ function weekHtml(){
 }
 
 /* --- where everything stands: forty goals, four fixed places --- */
+const dayN = x => { const d = /(\d+) (Nov|Dec)/.exec(x||''); return d ? (d[2]==='Nov'?0:30) + +d[1] : ({today:17, Wed:18, Thu:19, Fri:20})[x] ?? null; };
+const DONE = {signup:['21 Nov','released'], release:['19 Nov','released'], price:['20 Nov','live'], photos:['18 Nov','done'], invoice:['19 Nov','fixed'], reminders:['23 Nov','running'], tax:['1 Dec','live'], gift:['3 Dec','released']};
+const stOf = (g, m)=>{ const o = (m.st||{})[g.id]; return (typeof o==='function' ? o() : o) || {}; };
+function dateOf(g, m, o){
+  if (o.dt != null) return o.dt;
+  const now = dayN(m.day), d = DONE[g.id];
+  if (d && now >= dayN(d[0])) return `${d[1]} ${d[0]}`;
+  const n = dayN(g.next);
+  return n != null && now > n ? `done ${n>30 ? (n-30)+' Dec' : n+' Nov'}` : g.next;
+}
 function lineFor(g, m){
-  const o0 = (m.st||{})[g.id], o = (typeof o0==='function' ? o0() : o0) || {}, you = (m.you||[]).includes(g.id) && (S.view==='lock' && !S.items.some((x,i)=>S.out[i]) || left().some(i=>S.items[i].gid===g.id));
+  const o = stOf(g, m), you = (m.you||[]).includes(g.id) && (S.view==='lock' && !S.items.some((x,i)=>S.out[i]) || left().some(i=>S.items[i].gid===g.id));
   const sp = S.stopped && (S.stopped.v==='all' || S.stopped.v==='project' && S.stopped.p===g.p || S.stopped.v==='goal' && S.stopped.goal===g.id), gp = (S.gst[g.id]||{}).paused;
-  const dt = sp ? 'stopped' : gp ? 'paused' : o.dt != null ? o.dt : g.next;
+  const dt = sp ? 'stopped' : gp ? 'paused' : dateOf(g, m, o);
   const parked = /after|parked/.test(dt);
   return `<button class="gl ${o.hatch?'hatch':''} ${you||o.you?'you':''} ${parked?'parked':''}" data-act="goal" data-g="${g.id}"><span class="nm">${g.name}${o.nt?`<span class="nt">${o.nt}</span>`:''}${o.hatch?`<span class="nt">Unseen since 15:15.</span>`:''}</span><span class="dt">${(you||o.you)&&!o.hatch&&!sp&&!gp?'with you':`${o.old?`<s>${o.old}</s>`:''}${dt}${o.hatch?' · unseen':''}`}</span></button>`;
 }
@@ -980,7 +999,7 @@ const REC = {
 const AGREE = {signup:'signupSay'};
 function rGoal(){
   const g = GN[S.goal], rec = !!REC[S.goal], r = REC[S.goal] || {h:'—', c:'—', y:'—', life:[['','Its record opens here.']], allow:['Details you left to me']}, gs = S.gst[S.goal] || {}, ag = AGREE[S.goal];
-  return `<div class="wrap"><section class="page"><button class="back" data-act="stand">‹ Where everything stands</button><h1>${g.name}</h1><p class="small">${PROJ[g.p]} · next: ${g.next||'—'} · seen 2 min ago</p>${stopBand()}
+  return `<div class="wrap"><section class="page"><button class="back" data-act="stand">‹ Where everything stands</button><h1>${g.name}</h1><p class="small">${PROJ[g.p]} · ${dateOf(g, M[S.m], stOf(g, M[S.m]))||'—'} · ${ageText(M[S.m])}</p>${stopBand()}
    <div class="verbs"><button class="btn" data-act="gpause">${gs.paused?'Carry on':'Pause'}</button>${ag?`<button class="btn" data-act="sbopen" data-k="${ag}">Change what we agreed</button>`:''}<button class="btn" data-act="gtake">${gs.taken?'Give back what I may decide':'Take back what I may decide'}</button>${rec?'<button class="btn" data-act="gundo">Undo the last change</button>':''}<button class="btn" data-act="stop" data-v="goal">Stop</button></div>
    ${gs.paused?`<p class="stopband">Paused by you at ${M[S.m].clock}. Nothing more is made on it; its helpers wait.</p>`:''}${gs.undo?undoHtml(gs):''}${(gs.asked||[]).map(q=>`<p class="stopband blue">You asked the checker at ${q.at}: “${esc(q.t)}” No answer yet. It comes to your next look, not through me.</p>`).join('')}
    <div class="costs"><span><b>${r.h.split(' of ')[0]}</b>helper time</span><span><b>${r.c}</b>spent</span><span><b>${r.y.split(' of ')[0]}</b>of yours</span></div>
@@ -1052,7 +1071,11 @@ function rOverlay(){
   if (o==='park'){ const it = S.items[S.cur];
     return wrap('Not now', `<h2>Not now. Back when…</h2>${(it.park||[{b:'Tomorrow morning',s:'',r:'Parked until tomorrow.'},{b:'Monday',s:'',r:'Parked until Monday.'}]).map((p,j)=>`<button class="orow ${p.rec?'rec':''}" data-act="park" data-o="${j}"><b>${p.b}</b>${p.s?`<span>${p.s}</span>`:''}</button>`).join('')}<p class="small">It comes back by itself. Nothing for you to remember.</p><button class="btn" data-act="close" style="width:100%">Cancel</button>`); }
   if (o==='settled') return wrap('Settled without you', `<h2>14 settled without you</h2><ul class="chk"><li>Password rules as in the billing tool: your answer in September</li><li>One confirmation email, not two: your answer, fewest messages</li><li>Error messages in plain words: your rule</li><li>…and 8 more by your earlier answers</li></ul><div class="lab">Inside what you allowed; undo any at the showing</div><ul class="chk"><li>Phone number optional</li><li>Remembers the last instructor</li><li>The sign-up button in your app’s green</li></ul><button class="btn" data-act="close" style="width:100%">Close</button>`);
-  if (o==='try') return wrap('Try it on your phone', `<h2>Try it on your phone</h2><p>This would open Friday’s checked version on your phone, with a pencil on top, so a mark comes back to the same screen.</p><p class="notcov">Not drawn yet: the phone opening it, checking it is the same version, and your marks coming back. Until then, mark it here, or answer “On my phone first” and it waits.</p><button class="btn" data-act="close" style="width:100%">Close</button>`);
+  if (o==='try') return wrap('Try it on your phone', `<h2>Try it on your phone</h2>${
+     S.hand==='sending' ? `<p><b>Sending Friday’s checked version to your phone…</b></p><button class="btn" data-act="hand" data-v="cancel" style="width:100%">Cancel</button>`
+     : S.hand==='failed' ? `<p><b>Your phone didn’t answer.</b> It may be asleep or offline. Nothing was installed and nothing here changed.</p><button class="btn pri" data-act="hand" data-v="send" style="width:100%">Try again</button><button class="btn" data-act="hand" data-v="cancel" style="width:100%;margin-top:8px">Cancel</button>`
+     : S.hand==='ready' ? `<p><b>On your phone now.</b> It reports the same version that was checked at 07:40, so what you try is what was checked.</p><p class="small">Shake the phone to mark something. The mark comes back here, on the same screen.</p><button class="btn" data-act="hand" data-v="cancel" style="width:100%">Done with the phone</button>`
+     : `<p>Puts Friday’s checked version on your phone, for feel and speed in your hand.</p><button class="btn pri" data-act="hand" data-v="send" style="width:100%">Send it to my phone</button><button class="btn" data-act="close" style="width:100%;margin-top:8px">Cancel</button>`}`);
   if (o==='words'){ const r = REC[S.goal] || {}; return wrap('The checker’s own words', `<h2>The checker’s own words</h2><p class="quote">“${r.words||''}”</p><p class="small">Written ${r.at||''}, unedited.</p><button class="btn" data-act="close" style="width:100%">Close</button>`); }
   if (o==='ask'){ const g = S.askG, q = (S.gst[g]||{}).asked || [];
     return wrap('Ask the checker yourself', `<h2>Ask the checker yourself</h2><p class="small">It goes to the checker of ${GN[g]?GN[g].name:'this goal'}, not through me.</p>${q.map(x=>`<p class="stopband blue">Asked at ${x.at}: “${esc(x.t)}” No answer yet.</p>`).join('')}<input class="sbin" data-in="ask" value="${esc(S.askText||'')}" placeholder="Your question" aria-label="Your question to the checker"><button class="btn pri" data-act="asksend" style="width:100%">Send</button><button class="btn" data-act="close" style="width:100%;margin-top:8px">Close</button>`); }
@@ -1089,7 +1112,7 @@ function act(a, d, ev){
     case 'tolock': go('lock'); break;
     case 'goto': S.cur = +d.i; S.marks = false; go('sheet', '#goal'); break;
     case 'go': finish(it.rcpt + (Object.keys(s.marks).length?' With your change.':'')); break;
-    case 'accept': if (blocked(it, s)) return; if (it.ps && !S.ps){ S.ps = 'show'; S.out[S.cur] = null; render(); break; } finish(it.rcpt); break;
+    case 'accept': if (blocked(it, s)) return; if (it.ps && !S.ps){ S.ps = 'show'; S.out[S.cur] = null; render(); break; } finish(it.rc ? it.rc(s.picks) : it.rcpt); break;
     case 'pick': s.picks[+d.c] = +d.o; if (it.thing==='slice') S.jt = it.choices[+d.c].jt ?? 2;
       if ((it.kind==='decide'||it.kind==='rule') && it.choices.every((c,ci)=>s.picks[ci]!=null)){ const c = it.choices[0]; const r = it.rc ? it.rc(s.picks) : it.choices.length>1 ? it.rcpt : (c.opts ? c.opts[+d.o] : c.alts[+d.o][0]) + (it.gid==='photos' && +d.o===0 ? ': old copies go on 17 December.' : '.'); render(); later(()=>finish(r)); }
       else render(); break;
@@ -1105,7 +1128,7 @@ function act(a, d, ev){
     case 'park': { const p = (it.park||[{r:'Parked until tomorrow.'},{r:'Parked until Monday.'}])[+d.o]; S.overlay = null; finish(p.r); } break;
     case 'proof': S.proofI = +d.i; S.overlay = 'proof'; S.focus = '.sheetov .btn'; render(); break;
     case 'settled': S.overlay = 'settled'; render(); break;
-    case 'close': S.overlay = null; S.say = null; render(); break;
+    case 'close': S.overlay = null; S.say = null; S.focus = S.opener; S.opener = null; render(); break;
     case 'mark': S.marks = true; S.active = null; if (it.thing==='web') S.wmode = 'mark'; render(); break;
     case 'unmark': S.marks = false; s.marks = {}; s.pins = []; S.active = null; S.wmode = 'use'; render(); break;
     case 'b': S.marks = true; if (!s.marks[d.b]) s.marks[d.b] = {c:[], t:''}; S.active = d.b; render(); break;
@@ -1143,9 +1166,13 @@ function act(a, d, ev){
     case 'pullall': S.limit = null; render(); break;
     case 'feel': S.feel[d.k] = d.v; render(); break;
     case 'v3': S.v3 = d.v; render(); break;
+    case 'v3back': S.v3back = true; render(); break;
     case 'play': S.playing = !S.playing; if (S.playing) play(); render(); break;
     case 'jt': S.jt = +d.v; S.seenF.add(S.jt); S.playing = false; render(); break;
     case 'try': S.overlay = 'try'; render(); break;
+    case 'hand': if (d.v==='send'){ S.hand = 'sending'; render(); later(()=>{ if (S.hand==='sending'){ S.hand = S.handFail ? 'failed' : 'ready'; render(); } }); } else { S.hand = null; S.overlay = null; render(); } break;
+    case 'handfail': S.handFail = !S.handFail; render(); break;
+    case 'phonemark': { const j = S.items.findIndex(x=>x.thing==='journey'); if (S.hand!=='ready' || j<0) return; S.overlay = null; S.cur = j; S.jt = 1; S.seenF.add(1); S.marks = true; st(j).pins.push({x:50, y:44, c:[], t:'The password rule shows too late.', f:1, w:null, src:'phone'}); go('sheet', '#goal'); } break;
     case 'ww': S.ww = d.v; S.wseen[d.v] = true; S.wco = null; render(); break;
     case 'wmode': S.wmode = d.v; S.marks = d.v==='mark'; render(); break;
     case 'wprice': S.wprice = d.v; render(); break;
@@ -1195,7 +1222,9 @@ document.addEventListener('click', e=>{
   }
   const t = e.target.closest('[data-act]'); if (!t || t.disabled || !t.dataset.act) return;
   S.noteAt = `[data-act="${t.dataset.act}"]` + ['k','v','g','i','o','c','p','n'].filter(k=>t.dataset[k]!=null).map(k=>`[data-${k}="${CSS.escape(t.dataset[k])}"]`).join('');
+  const op = S.noteAt, had = !!S.overlay;
   act(t.dataset.act, t.dataset, e);
+  if (!had && S.overlay) S.opener = op;
 });
 document.addEventListener('input', e=>{
   const t = e.target; if (!t.dataset || !t.dataset.in) return; const s = st(S.cur);
@@ -1205,6 +1234,8 @@ document.addEventListener('input', e=>{
 });
 document.addEventListener('keydown', e=>{
   const t = e.target;
+  if (e.key==='Tab' && S.overlay){ const f = $$('.sheetov button, .sheetov input').filter(x=>!x.disabled && x.getClientRects().length); if (!f.length) return; const i = f.indexOf(document.activeElement);
+    if (e.shiftKey ? i<=0 : (i<0 || i===f.length-1)){ e.preventDefault(); (e.shiftKey ? f[f.length-1] : f[0]).focus(); } return; }
   if (t.matches && t.matches('input,textarea,select')){ if (e.key==='Escape') t.blur(); if (e.key==='Enter' && t.dataset.in==='say' && t.value.trim()){ S.say = {stage:'heard', text:t.value.trim(), reply:P.revoked.start ? 'I have it. It waits for your go: you took back starting on what I hear.' : 'I have it. I have started; what I heard is in your next look.'}; render(); } return; }
   if (e.metaKey||e.ctrlKey||e.altKey) return;
   if (e.key===']') return protoAct('next'); if (e.key==='[') return protoAct('prev');
@@ -1242,7 +1273,7 @@ setInterval(()=>{ const m = M[S.m]; $$('[data-age]').forEach(el=>{ el.textConten
 /* ============ #check: walk every moment through the real buttons, count, report ============ */
 const PATHSEL = {open:'[data-act="open"]', go:'.bar [data-act="go"]', accept:'.bar [data-act="accept"]', pick0:'.open [data-act="pick"][data-o="0"]', decided:'.bar [data-act="decided"]',
   mark:'.bar [data-act="mark"]', sendback:'.bar [data-act="sendback"]', notnow:'.bar [data-act="notnow"]', park0:'[data-act="park"][data-o="0"]', act:'.bar [data-act="act"]', ps0:'[data-act="ps"][data-o="0"]',
-  blindall:'[data-act="blindall"]', hold:'.bar [data-hold]', always:'[data-act="always"]', expand0:'[data-act="expand"][data-v="0"]', stand:'[data-act="stand"]', pullall:'[data-act="pullall"]', say:'.lockmic', listen:'[data-act="listen"]', sayok:'[data-act="sayok"]', signin:'[data-act="signin"]', buzzok:'[data-act="buzzok"]', behind:'[data-act="behind"]', play:'[data-act="play"]'};
+  blindall:'[data-act="blindall"]', hold:'.bar [data-hold]', always:'[data-act="always"]', expand0:'[data-act="expand"][data-v="0"]', stand:'[data-act="stand"]', pullall:'[data-act="pullall"]', say:'.lockmic, .saybtn', listen:'[data-act="listen"]', sayok:'[data-act="sayok"]', signin:'[data-act="signin"]', buzzok:'[data-act="buzzok"]', behind:'[data-act="behind"]', play:'[data-act="play"]'};
 function words(el){
   if (!el) return [];
   const c = el.cloneNode(true), box = document.createElement('div');
@@ -1288,7 +1319,7 @@ async function runCheck(){
         if (step.startsWith('ww:')) sel = `[data-act="ww"][data-v="${step.slice(3)}"]`;
         if (step.startsWith('goal:')) sel = `[data-act="goal"][data-g="${step.slice(5)}"]`;
         if (step==='open' && S.view==='sheet') continue;
-        const el = $(sel); if (!el) throw new Error(`${step}: nothing matches ${sel} (view ${S.view})`);
+        const el = $$(sel).find(x=>x.getClientRects().length); if (!el) throw new Error(`${step}: nothing matches ${sel} (view ${S.view})`);
         const cur = S.items[S.cur];
         if (['go','accept','decided','act','park0'].includes(step) && !(step==='accept' && cur && cur.kind==='read') || (step.startsWith('pick') && cur && cur.choices) || step==='ps0' || step==='sendback' || step==='signin' || step==='always' || step==='hold'){ dec++; if (cur && cur.dec==='acc') acc++; else his++; }
         if (step==='pick0' && cur && cur.kind==='decide' && cur.choices.length===1){}
@@ -1308,7 +1339,8 @@ async function runCheck(){
   // side paths
   const side = [];
   try { load(8); act('open',{}); act('goto',{i:1}); act('mark',{}); $('[data-pin="1"]').dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:200,clientY:300})); side.push('a journey mark keeps its screen: '+((st(1).pins[0]||{}).f!=null)); act('unmark',{});
-    act('try',{}); side.push('trying on the phone invents no mark: '+(st(1).pins.length===0)); act('close',{});
+    act('try',{}); act('hand',{v:'send'}); side.push('handoff reaches the phone and invents no mark: '+(S.hand==='ready' && st(1).pins.length===0)); S.handFail = true; act('hand',{v:'send'}); side.push('a failed handoff is said: '+/didn’t answer/.test($('#app').innerText)); act('hand',{v:'cancel'}); S.handFail = false;
+    act('try',{}); act('hand',{v:'send'}); act('phonemark',{}); side.push('a mark from the phone comes back labelled: '+/From your phone/.test($('#app').innerText)); act('unmark',{}); S.hand = null;
     act('accept',{}); side.push('an unseen recording can’t be accepted: '+!S.out[1]); [1,2,3].forEach(v=>act('jt',{v})); act('accept',{}); side.push('accepted once every screen was seen: '+!!S.out[1]);
     side.push('price page held until both widths are seen: '+!!$('.bar [data-act="accept"][disabled]')); act('wmode',{v:'mark'}); side.push('web mark mode: '+S.marks); act('wmode',{v:'use'}); act('wprice',{v:'monthly'}); side.push('web use mode switches price: '+S.wprice);
     act('wstart',{v:'Plus'}); side.push('Start reaches checkout: '+/Checkout · Plus/.test($('#app').innerText)); act('wstart',{}); side.push('the switch and Start are real buttons: '+($$('.web .tog button').length===2 && $$('.web .start').length===3));
@@ -1338,8 +1370,12 @@ async function runCheck(){
     load(0); act('open',{}); act('sbopen',{k:'ratingsSay'}); act('sbfix',{k:'d0'}); side.push('say-back line can be fixed: '+!!$('.sbin')); act('sbclose',{});
     load(8); if (S.view!=='sheet') act('open',{}); act('proof',{i:'1'}); act('jump',{v:'2'}); side.push('a checked line jumps to its moment: frame '+S.jt);
     load(3); if (S.view!=='sheet') act('open',{}); act('goto',{i:0}); act('pick',{c:'0',o:'0'}); side.push('a choice redraws the screen it changes: '+/Licence number/.test($('#app').innerText)); act('pick',{c:'2',o:'0'}); side.push('the third choice too: '+/Continue with Apple/.test($('#app').innerText));
-    load(4); act('open',{}); act('goto',{i:2}); side.push('marks come back in place: '+$$('.okpin').length+', in his words: '+/wrong tone/i.test($('#app').innerText));
-    load(11); act('open',{}); act('go',{}); act('pick',{c:'0',o:'0'}); side.push('week read at the end of the first part: '+!!$('.weekblk'));
+    load(4); act('open',{}); act('see',{k:'emailV3'}); side.push('marks come back in place: '+$$('.okpin').length+', in his words: '+/wrong tone/i.test($('#app').innerText)+', told, not asked: '+!S.items.some(x=>x.key==='emailV3')); act('close',{});
+    load(4); act('open',{}); $('.open .seal').click(); { const f = $$('.sheetov button'); f[f.length-1].focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true})); side.push('Tab stays inside a dialog: '+!!document.activeElement.closest('.sheetov')); $('.sheetov [data-act="close"]').click(); side.push('and closing gives focus back: '+(document.activeElement.dataset.act==='proof')); }
+    load(11); act('open',{}); act('pullall',{}); act('goto',{i:2}); side.push('a parked promise keeps its date: '+/Monday at the latest/.test($('#app').innerText)); side.push('a yes waits for his choice: '+!!$('.bar [data-act="accept"][disabled]')); act('pick',{c:'0',o:'0'}); act('accept',{}); side.push('and the receipt names it: '+/the school hears weekly/.test($('#app').innerText));
+    load(14); act('goal',{g:'signup'}); side.push('dates from one state: '+/released 21 Nov/.test($('#app').innerText)+' '+!/\bThu\b/.test($('.page .small').innerText));
+    load(11); act('open',{}); act('act',{}); act('pick',{c:'0',o:'0'}); side.push('week read at the end of the first part: '+!!$('.weekblk'));
+    load(0); act('open',{}); act('sbopen',{k:'ratingsSay'}); audit(M[0],'say-back lines',fails); act('close',{});
   } catch(err){ fails.push('side: '+err.message); }
   clean();
   const rep = `CHECK · ${desk?'desk':'phone'} · ${document.documentElement.dataset.theme} · ${new Date().toTimeString().slice(0,5)}\n\n${out.join('\n')}\n\nWords to read to act: ${RW}\nTaps: ${TAPS}\nDecisions: ${DEC} (only his: ${HIS}; acceptances of what a check had passed: ${ACC})\nAvailable, not required: where everything stands ${sw} words; one proof sheet ${pw} words\n\nSide paths: ${side.join(' · ')}\n\n${fails.length?'FAILURES:\n'+fails.join('\n'):'All moments walked without a failure.'}`;
