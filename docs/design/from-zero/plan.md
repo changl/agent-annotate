@@ -64,6 +64,11 @@ Whether these three are one place, three places or no new place at all is the op
 | D3, GPT 6.1 Sol | Every standing instruction he has given, and whether each one stopped the repeat | The seed rule book |
 | D4, GPT 6.1 Sol | How goals travelled through boards, worker runs and hand-overs | Baselines, and the share of work spent on the working system itself |
 | D5, GPT 6.1 Sol | Outside evidence for and against each principle; patterns and traps from other fields and products | Verdict per principle |
+| D6, GPT 6.1 Sol | At least 15 products where one person directs software helpers: what the person sees, and what users complain about | Patterns, complaints, what nobody does well |
+| D7, GPT 6.1 Sol | The working procedures of at least ten other fields (private offices, military orders, surgery, aviation, kitchens, newsrooms and more), in enough detail to copy | Procedures, wordings and numbers worth copying |
+| S, GPT 6.1 Sol | The kinds of work he actually asks for, from 300 finished pieces: how each can be shown as the thing itself, and how each can be checked | The list of kinds that trust is counted against |
+| X, GPT 6.1 Sol | What Orca, the Claude and Codex command-line helpers, Beads and Windmill can really do today. Facts only, for when tools are chosen last | A grid of the four needs against the pieces |
+| M1 to M4, GPT 6.1 Sol | Four whole designs of the machine behind the screen, from four centres: the record; the checks; a well-run private office; goals that carry themselves | `machine/record-first`, `check-first`, `office-first`, `capsule-first` |
 | Four designers, two Fable and two Opus | Four separate concepts, each a clickable prototype of the same test week (`scenario.md`), phone and desk, light and dark | `concepts/thread`, `sitting`, `picture`, `letter` |
 
 The four premises are deliberately far apart: one conversation; a finite stack worked through at a sitting; one true picture; no app at all (a briefing paper and a reply). Each designer is told how their premise usually fails.
@@ -76,8 +81,9 @@ The four premises are deliberately far apart: one conversation; a finite stack w
 | Cycles per goal today | Rebuild about 60 goals across four projects from first sentence to acceptance. Count the cycles and give each one cause. | This is the baseline for the headline number |
 | How work stalls | Count stalls, false "done", lost messages, memory lost at a restart; how long each lasted; who noticed, him or the system | Sets what the watch and the checks must catch |
 | Replay | For about 30 past goals, three ways of writing the agreement (his sentence alone; with the rule book; with the rule book and a look at the project first), written blind. Then compare with what happened. | A different model scores which later cycles each agreement would have prevented |
-| The machine, in options | For the record, the gate, the checks and the watch: two or three designs each, written separately by GPT 6.1 Sol and Opus | The test week and the stall census |
-| The concepts, walked | Two critics, one GPT 6.1 Sol and one Claude, blind to each other, walk every concept through the test week and count what it costs him | The counts at the end of `scenario.md` |
+| Where the effort goes | Cost per session and per kind of activity (doing, re-reading, coordinating, waiting), by project | The baseline for cost per goal |
+| The machine designs, judged | Critics trace all four machine designs through the test week and the stall census | Which parts of which design survive |
+| The concepts, walked | Critics, mostly GPT 6.1 Sol and one Claude, blind to each other, walk every concept through the test week and count what it costs him | The counts at the end of `scenario.md` |
 
 **Wave 3.** One design: the screens combined from the best of the four, the machine chosen from the options, a second design round on real cases from the corpus, and a build plan in stages with the meter in the first stage.
 
@@ -104,7 +110,8 @@ Par for this programme from here: 2 cycles. The showing, then the build plan.
 
 ## 7. Limits kept
 
-- At most ten workers at once on M1 Max. One heavy process each, at low priority.
+- Workers are GPT 6.1 Sol for the most part, with Fable and Opus for the screens. No fixed cap on their number (Chang, 12 Nov: cost is not the concern, conflicts are).
+- To avoid conflicts: every worker writes only its own named files; sources are read-only; only the lead commits; only one worker scans raw transcripts and only one reads the other Macs, and everyone else reads the corpus it produces; heavy scripts run at low priority.
 - Other Macs are read over SSH only. Nothing is written or installed on them.
 - Raw text from transcripts stays out of git, in a local folder. Only numbers and paraphrase are committed.
 - Workers change nothing: no pages, boards, schedules, skills or instruction files.
