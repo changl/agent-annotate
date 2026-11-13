@@ -1,5 +1,7 @@
 # Review surface: a rough framework
 
+> **Rejected, 13 Nov 2026.** Chang: this frame looked more and more like agent-annotate and was at least as taxing. A lighter screen that followed it was rejected too, as worse and less flexible than agent-annotate. A new lead restarts from zero. Kept only as a record of what was tried; the findings about live readings near the end still stand as evidence.
+
 ## What it is
 
 This is a review surface: a tool, never an assistant.
