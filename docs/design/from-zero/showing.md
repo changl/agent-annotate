@@ -1,5 +1,7 @@
 # The showing
 
+> **Superseded, 12 Nov 2026.** This showing and `look.html` present an earlier design that read like a personal assistant. Chang rejected that framing: the product is a review surface on Orca, Beads, Windmill, Claude Code and Codex. The current direction starts at `machine/on-foundations.md` and `research/v1-census.md` to `v6-levers.md`. Kept for the record only.
+
 **Start with `look.html`: one day in seven pictures, about two minutes, one question.** This page is the detail behind it, and is not needed to answer.
 
 For Chang, 12 Nov 2026. About twenty minutes: six to read this page, twelve to click through the design, two to decide.
