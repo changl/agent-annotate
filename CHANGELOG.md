@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.31.3
+
+- Question cards show their own context again. An inline ask without a `see:` line quotes only the content just above it (back to the previous ask or heading), not its whole section or another card's text, and its strip stays beside its own screenshots. Broken since 2.29.0 (full section quotes visible since 2.31.0). Renderer only; agents write nothing new.
+
 ## 2.31.2
 
 - Library builds its pending-item membership once per list render, keeping large copy libraries responsive while edits and pending comments remain under Ready to send.
