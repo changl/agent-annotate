@@ -2204,6 +2204,9 @@ function excerptsFor(c) {
   if (S.doc) return S.x; // read by adapter.js from the document it draws the card in
   return (EXCERPTS_VERSION === CURRENT_VERSION && gotoVersionFor(c) === CURRENT_VERSION) ? EXCERPTS : null;
 }
+function evidenceExcerpt(c, anchor, excerpts) {
+  return excerpts?.[c.anchor_id]?.evidence?.[anchor] || excerpts?.[anchor];
+}
 // The section path comes from the anchor registry, which keeps the source's
 // markdown; show words only: link text, no emphasis or code marks.
 function mdPlain(s) {
@@ -2239,7 +2242,7 @@ function renderDecisionExcerpt(c, dr) {
   if (!x) return '';
   const link = S.doc || isGeneralAnchor(c.anchor_id) || gotoUnavailable[c.id] ? '' : openDocBtn(c, ' data-excerpt-goto="1"');
   const ev = evidenceList(dr);
-  const first = ev.length ? x[ev[0].anchor] : null;
+  const first = ev.length ? evidenceExcerpt(c, ev[0].anchor, x) : null;
   if (first && first.text) return renderExcerptBox(c.id + '|first', first.text, first.name, link);
   const own = !S.doc && x[c.anchor_id];
   if (own && own.text && !own.card) return renderExcerptBox(c.id + '|own', own.text, own.name, link);
@@ -2277,7 +2280,7 @@ function evidenceItemsHtml(c, ev) {
     const key = c.id + '|' + e.anchor + '|' + i;
     const itemOpen = !!S.evItemOpen[key];
     const pid = idFor('evp|' + key);
-    const hit = x ? x[e.anchor] : null;
+    const hit = evidenceExcerpt(c, e.anchor, x);
     const preview = hit && hit.text
       ? renderExcerptBox('ev|' + key, hit.text, hit.name)
       : `<div class="${k('decision-evidence-missing', 'annotate-decision-evidence-missing')}">${hit && hit.missing ? 'Not on this version of the page.' : S.doc ? 'Nothing to quote here.' : 'No preview for this version.'}</div>`;

@@ -1171,7 +1171,7 @@ function excerptText(el) {
   const walk = (node) => {
     if (node.nodeType === 3) { out += node.nodeValue; return; }
     if (node.nodeType !== 1) return;
-    if (node.matches && node.matches(EXCERPT_SKIP_SEL)) return;
+    if ((node.matches && node.matches(EXCERPT_SKIP_SEL)) || isStaticCard(node)) return;
     const block = EXCERPT_BLOCK_TAG.test(node.tagName);
     if (block) out += '\n';
     if (/^li$/i.test(node.tagName)) out += '• ';
@@ -1200,6 +1200,22 @@ function excerptSource(anchorId) {
 // mistaken for one and hidden.
 function isStaticCard(el) {
   return !!(el && el.matches && el.matches('.aa .cards > .card'));
+}
+
+// An inline ask cites its section by default. Its authored position narrows
+// that citation to the preceding content, up to the previous ask or heading.
+function inlineEvidence(card, evidence) {
+  if (!isStaticCard(card) || !evidence || !evidence.matches('section[data-anchor-id]') ||
+      card.parentElement.parentElement !== evidence || card.parentElement.children.length !== 1) return null;
+  const nodes = [];
+  for (let n = card.parentElement.previousElementSibling; n; n = n.previousElementSibling) {
+    if (n.matches('.cards, h1, h2, h3, h4, h5, h6')) {
+      if (n.matches('.cards') && !nodes.length) continue; // consecutive asks share the preceding evidence
+      break;
+    }
+    if (!n.matches(EXCERPT_SKIP_SEL)) nodes.unshift(n);
+  }
+  return { end: card.parentElement, text: nodes.map(excerptText).filter(Boolean).join('\n') };
 }
 
 function buildStripEl(anchorId, items, x) {
@@ -1373,7 +1389,9 @@ function stripTarget(anchorId, items) {
   const targets = [];
   items.forEach(e => evidenceOf(e.decisionRequest).forEach(x => {
     const el = findAnchorEl(x.anchor);
-    if (el && el !== own && !isStaticCard(el) && !el.closest('.cards') && inActivePanel(el)) targets.push(headingBlockEnd(el));
+    if (el && el !== own && !isStaticCard(el) && !el.closest('.cards') && inActivePanel(el)) {
+      targets.push(inlineEvidence(own, el)?.end || headingBlockEnd(el));
+    }
   }));
   if (!targets.length) return own;
   // The target that ends last: compare deepest last descendants; a container
@@ -2238,7 +2256,14 @@ function excerptMap() {
     for (const e of entries || []) {
       if (!e.decisionRequest) continue;
       add(aid);
-      evidenceOf(e.decisionRequest).forEach(x => add(x.anchor));
+      evidenceOf(e.decisionRequest).forEach(x => {
+        add(x.anchor);
+        const local = inlineEvidence(findAnchorEl(aid) || foldedAnchorEl(aid), findAnchorEl(x.anchor) || foldedAnchorEl(x.anchor));
+        if (local) {
+          out[aid].evidence ||= {};
+          out[aid].evidence[x.anchor] = { text: local.text, name: excerptSource(x.anchor) };
+        }
+      });
     }
   }
   return out;

@@ -1,0 +1,32 @@
+[
+  {
+    "release": "2.28.2",
+    "cards": 0
+  },
+  {
+    "release": "2.28.3",
+    "cards": 0
+  },
+  {
+    "release": "2.29.0",
+    "cards": 4,
+    "quote_chars": 1200,
+    "includes_other_cards": false,
+    "section_contains_card": false,
+    "context": "Drawings only. Whatever you pick is built on both phones, then shown to you again before it merges.",
+    "last_quote_chars": 1200,
+    "quotes_identical": true,
+    "last_quotes_first_topic": true
+  },
+  {
+    "release": "2.30.0",
+    "cards": 4,
+    "quote_chars": 1200,
+    "includes_other_cards": false,
+    "section_contains_card": false,
+    "context": "Drawings only. Whatever you pick is built on both phones, then shown to you again before it merges.",
+    "last_quote_chars": 1200,
+    "quotes_identical": true,
+    "last_quotes_first_topic": true
+  }
+]
