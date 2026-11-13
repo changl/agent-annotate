@@ -37,7 +37,7 @@ def test_inline_asks_keep_their_context_and_screenshots(tmp_path):
     with browser_page(tmp_path, directory) as (page, _):
         frame = page.frame_locator("#content-frame")
         feedback(page)
-        topics = ["1. Messaging with the least in the way.", "2. The new phone, when it isn't confirmed.",
+        topics = ["Proposed keeps the security you approved", "2. The new phone, when it isn't confirmed.",
                   "3. Past events on the phones.", "4. iPhone: the lock in the chat list."]
         captions = ["Android: today vs proposed, with both options", "New phone, not confirmed: A and B on both phones",
                     "Android event page, before and after", "iPhone chat list lock, before and after"]
@@ -47,6 +47,8 @@ def test_inline_asks_keep_their_context_and_screenshots(tmp_path):
             quote = card.locator(".annotate-excerpt-text").first
             playwright.expect(card.locator(".annotate-decision-context")).to_have_text(c["decision_request"]["context"])
             playwright.expect(quote).to_contain_text(topics[index])
+            playwright.expect(quote).not_to_contain_text("Your #38873 and #38874 notes")
+            playwright.expect(quote).not_to_contain_text("First private message, on your usual phone")
             for other in topics[:index] + topics[index + 1:]:
                 playwright.expect(quote).not_to_contain_text(other)
             for other in cards:
@@ -65,7 +67,7 @@ def test_inline_asks_keep_their_context_and_screenshots(tmp_path):
         playwright.expect(frame.locator('[data-strip-item="38887"] .annotate-excerpt-text')).not_to_contain_text(topics[0])
 
 
-def test_adjacent_asks_share_local_evidence_and_explicit_citations_still_move(tmp_path):
+def test_asks_stop_at_previous_ask_and_explicit_citations_still_move(tmp_path):
     source = tmp_path / "page.md"
     source.write_text("""---
 title: Local evidence
@@ -111,9 +113,76 @@ see: s:work:p2
                               created_at="2026-11-12T19:03:00Z")] for c in cards}}))
     with browser_page(tmp_path, directory) as (page, _):
         frame = page.frame_locator("#content-frame")
-        for number, expected in [(1, "Evidence for the first pair."), (2, "Evidence for the first pair."),
+        for number, expected in [(1, "Evidence for the first pair."),
                                  (3, "Evidence for the last choice."), (4, "Evidence for the first pair.")]:
             quote = frame.locator(f'[data-strip-item="{number}"] .annotate-excerpt-text')
             playwright.expect(quote).to_have_text(expected)
+        assert frame.locator('[data-strip-item="2"] .annotate-excerpt-text').count() == 0
         explicit = frame.locator('[data-strip-item="4"]')
         assert explicit.evaluate("el => el.closest('[data-annotate-strip]').previousElementSibling.dataset.anchorId") == "s:work:p2"
+
+
+def test_rebex_238_quotes_the_last_list_instead_of_the_status_opening(tmp_path):
+    source = tmp_path / "page.md"
+    source.write_text((FIXTURE.parent / "rebex-v195-card-context.md").read_text())
+    directory = tmp_path / "items-model"
+    generate(source, directory)
+    complete(directory)
+    [card] = json.loads((directory / "versions" / "v1.cards.json").read_text())
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {
+        card["anchor_id"]: [dict(card, id="238", author="agent:test", version="v1", status="open",
+                                created_at="2026-11-12T18:07:04Z")]}}))
+    with browser_page(tmp_path, directory) as (page, _):
+        frame = page.frame_locator("#content-frame")
+        live = frame.locator('[data-strip-item="238"]')
+        quote = live.locator(".annotate-excerpt-text").first
+        playwright.expect(quote).to_contain_text("Cause, found offline (likely, not certain)")
+        playwright.expect(quote).to_contain_text("Measured: Safari took about 4 minutes")
+        for unrelated in ["Rebex is live", "#160 starting screenshots", "Phase C: you chose staged", "New 4-piece cutout"]:
+            playwright.expect(quote).not_to_contain_text(unrelated)
+        assert live.evaluate("el => el.closest('[data-annotate-strip]').previousElementSibling.previousElementSibling.tagName") == "UL"
+        feedback(page)
+        playwright.expect(page.locator('.citem[data-comment-id="238"] .decision-excerpt-text')).to_have_text(quote.text_content())
+
+
+def test_nearest_prose_includes_indented_blocks_and_keeps_explicit_section_quotes(tmp_path):
+    source = tmp_path / "page.md"
+    blocks = ["<p>Last paragraph.</p>", "<ul><li>Last list.</li></ul>",
+              "<blockquote><p>Last blockquote.</p></blockquote>",
+              "<table><tr><th>Last table.</th></tr><tr><td>Table row.</td></tr></table>",
+              '<div style="margin-left:40px"><p>Earlier nested paragraph.</p><p>Last indented paragraph.</p></div>']
+    text = "---\ntitle: Prose blocks\nother_files_required: none\n---\n"
+    for number in range(1, 7):
+        text += f"\n## Case {number}\n\nEarlier unrelated paragraph.\n\nLast placeholder {number}.\n\n```ask\n#{number} Choice {number}?\n+ Yes: Go.\n- No: Wait.\n"
+        text += (f"see: s:case-{number}\n" if number == 6 else "") + "```\n"
+    text += "\n## Boundary\n\nEarlier boundary paragraph.\n\n### No evidence\n\n```ask\n#7 No prose?\n+ Yes: Go.\n- No: Wait.\n```\n"
+    source.write_text(text)
+    directory = tmp_path / "items-model"
+    generate(source, directory)
+    complete(directory)
+    html_path = directory / "versions/v1.html"
+    html = html_path.read_text()
+    for number, block in enumerate(blocks, 1):
+        marker = f'<p data-anchor-id="s:case-{number}:p2">Last placeholder {number}.</p>'
+        assert marker in html
+        html = html.replace(marker, block + '<figure><img src="assets/proof.png" alt="Proof"><figcaption>Trailing picture.</figcaption></figure>')
+    html_path.write_text(html)
+    (directory / "assets").mkdir(exist_ok=True)
+    (directory / "assets/proof.png").write_bytes(png(160, 80))
+    cards = json.loads((directory / "versions/v1.cards.json").read_text())
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "archived": {}, "anchors": {
+        c["anchor_id"]: [dict(c, id=str(c["number"]), author="agent:test", version="v1", status="open",
+                              created_at="2026-11-12T19:03:00Z")] for c in cards}}))
+    with browser_page(tmp_path, directory) as (page, _):
+        frame = page.frame_locator("#content-frame")
+        for number, expected in enumerate(["Last paragraph.", "Last list.", "Last blockquote.", "Last table.", "Last indented paragraph."], 1):
+            quote = frame.locator(f'[data-strip-item="{number}"] .annotate-excerpt-text')
+            playwright.expect(quote).to_contain_text(expected)
+            playwright.expect(quote).to_contain_text("Trailing picture.")
+            playwright.expect(quote).not_to_contain_text("Earlier")
+            playwright.expect(quote).not_to_contain_text("Scroll sideways")
+        # Explicit same-section citations retain the 2.31.3 preceding-group behavior.
+        explicit = frame.locator('[data-strip-item="6"] .annotate-excerpt-text')
+        playwright.expect(explicit).to_contain_text("Earlier unrelated paragraph.")
+        playwright.expect(explicit).to_contain_text("Last placeholder 6.")
+        assert frame.locator('[data-strip-item="7"] .annotate-excerpt-text').count() == 0

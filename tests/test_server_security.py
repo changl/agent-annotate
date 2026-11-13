@@ -1,5 +1,7 @@
 import http.client
 import http.server
+import json
+import re
 import stat
 import threading
 import urllib.parse
@@ -64,6 +66,30 @@ def test_valid_content_and_current_version_symlink_still_work(tmp_path):
     handler._v2_serve_content(urllib.parse.urlparse("/content?v=v1"))
     assert handler.responses[-1][0] == 200
     assert b"PUBLIC_INERT_CONTENT" in handler.responses[-1][1]
+
+
+@pytest.mark.parametrize("source_kind", ["valid", "missing", "malformed", "outside"])
+def test_content_recovers_implicit_asks_only_from_a_valid_contained_source(tmp_path, source_kind):
+    directory = tmp_path / "page"
+    (directory / "content").mkdir(parents=True)
+    (directory / "content/v1.html").write_text("<html><body>Public content</body></html>")
+    source = directory / "source/v1.md"
+    source.parent.mkdir()
+    text = "## Status\n\n```ask\n#1 Implicit?\n+ Yes: Go.\n- No: Wait.\n```\n"
+    if source_kind == "valid":
+        source.write_text(text + "\n```ask\n#2 Explicit?\n+ Yes: Go.\n- No: Wait.\nsee: s:status\n```\n")
+    elif source_kind == "malformed":
+        source.write_text(text[:-4])
+    elif source_kind == "outside":
+        outside = tmp_path / "private.md"
+        outside.write_text(text)
+        source.symlink_to(outside)
+    handler = _handler(directory)
+    handler._v2_serve_content(urllib.parse.urlparse("/content?v=v1"))
+    status, body = handler.responses[-1]
+    assert status == 200
+    metadata = json.loads(re.search(rb"__ANNOTATE_CONTENT_META__=(.*?);</script>", body)[1])
+    assert metadata["implicitAsks"] == (["d:q1"] if source_kind == "valid" else [])
 
 
 def test_mounted_root_redirect_preserves_query_and_keeps_mount_boundary(tmp_path):

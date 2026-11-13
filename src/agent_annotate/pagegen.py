@@ -334,6 +334,14 @@ def parse_ask(raw: str) -> dict:
     return card
 
 
+def implicit_ask_anchors(text: str) -> list[str]:
+    """Recover section defaults from stored source, where explicit `see:` is still distinguishable."""
+    _, body = parse_front_matter(text)
+    cards = [parse_ask(block["raw"]) for block in parse_blocks(body) if block["kind"] == "ask"]
+    return [f'd:q{card["number"]}' for card in cards
+            if card.get("number") and "evidence" not in card["decision_request"]]
+
+
 class _Regenerate(Exception):
     """Another publish took a reserved number, or the picked version, before the locked write."""
 
