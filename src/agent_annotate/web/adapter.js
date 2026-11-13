@@ -1202,18 +1202,35 @@ function isStaticCard(el) {
   return !!(el && el.matches && el.matches('.aa .cards > .card'));
 }
 
-// An inline ask cites its section by default. Its authored position narrows
-// that citation to the preceding content, up to the previous ask or heading.
+// An implicit section citation quotes the nearest prose block and trailing
+// images. Stored source distinguishes it from an explicit `see:` citation.
 function inlineEvidence(card, evidence) {
   if (!isStaticCard(card) || !evidence || !evidence.matches('section[data-anchor-id]') ||
       card.parentElement.parentElement !== evidence || card.parentElement.children.length !== 1) return null;
   const nodes = [];
+  const nearest = (META.implicitAsks || []).includes(card.dataset.anchorId);
+  const prose = 'p, ul, ol, blockquote, table';
   for (let n = card.parentElement.previousElementSibling; n; n = n.previousElementSibling) {
+    if (n.matches(EXCERPT_SKIP_SEL) || (nearest && n.matches('.unified-table-hint'))) continue;
     if (n.matches('.cards, h1, h2, h3, h4, h5, h6')) {
-      if (n.matches('.cards') && !nodes.length) continue; // consecutive asks share the preceding evidence
+      if (!nearest && n.matches('.cards') && !nodes.length) continue;
       break;
     }
-    if (!n.matches(EXCERPT_SKIP_SEL)) nodes.unshift(n);
+    if (nearest) {
+      const block = n.matches(prose) ? n : [...n.querySelectorAll(prose)]
+        .filter(el => !el.parentElement.closest(prose)).at(-1);
+      if (block) {
+        const range = document.createRange();
+        range.setStartBefore(block);
+        range.setEndAfter(n);
+        const copy = document.createElement('div');
+        copy.appendChild(range.cloneContents());
+        nodes.unshift(copy);
+        break;
+      }
+      if (!n.matches('figure, img') && !n.querySelector('img')) break;
+    }
+    nodes.unshift(n);
   }
   return { end: card.parentElement, text: nodes.map(excerptText).filter(Boolean).join('\n') };
 }

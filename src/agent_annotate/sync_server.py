@@ -1992,8 +1992,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         css += f'<link rel="stylesheet" href="{base}/assets/{_mtime_stamp((self.skill_dir or WEB_DIR) / "content.css")}/content.css">'
         html = html.replace('</head>', css + '</head>', 1) if '</head>' in html else _insert_in_head(html, css)
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
+        implicit_asks = []
+        if plan_id is None:
+            from .pagegen import PageGenError, implicit_ask_anchors
+            try:
+                source = _contained_path(self.artifact_dir, f"source/{v}.md")
+                implicit_asks = implicit_ask_anchors(source.read_text(encoding="utf-8"))
+            except (OSError, ValueError, PageGenError):
+                pass  # Missing or invalid source cannot safely distinguish an explicit section citation.
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
                                    "evidence": evidence_tokens,
+                                   "implicitAsks": implicit_asks,
                                    **({"doc": "plan:" + plan_id, "category": "plans"} if plan_id else {})}).replace("<", "\\u003c")
         bootstrap = (
             f'<script>window.__ANNOTATE_CONTENT_META__='

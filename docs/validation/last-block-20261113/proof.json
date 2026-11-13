@@ -1,0 +1,117 @@
+{
+  "method": "Copied historical HTML, stored source and original image files; only copied target cards reopened; worktree PYTHONPATH, explicit sandbox ports",
+  "results": [
+    {
+      "page": "fld-stack-round8",
+      "version": "v811",
+      "number": 38884,
+      "context": "Drawings only. Whatever you pick is built on both phones, then shown to you again before it merges.",
+      "excerpt": "\u2022 Proposed keeps the security you approved (card 21344): the recovery key, \"Is this you signing in?\" on the other phone, and emoji compared on both. The key is made in the background after sign-in; on the first Message tap the member saves it in two taps and the chat opens. A new phone asks the other phone by itself; Chat shows one quiet line, \"Confirm on your other phone\".\n\u2022 Option 1, key later: the chat opens at once and the key is saved later, from one line in Chat. If the phone is lost before then, older private messages are gone.\n\u2022 Option 2, one sheet: the other phone shows the emoji on the \"Is this you signing in?\" sheet, so one tap says both \"it's me\" and \"they match\" (2 screens, 2 taps). A hurried tap approves both.\niPhone: today vs proposed, with both options\nAndroid: today vs proposed, with both options",
+      "excerpt_first80": "\u2022 Proposed keeps the security you approved (card 21344): the recovery key, \"Is t",
+      "placement": {
+        "section": "s:private-messages-less-in-the-way-drawn-past-even",
+        "preceding": "IMG E84C25%50%75%100%\u2922 Full sizeAndroid: today vs proposed, with both options",
+        "precedingTag": "FIGURE",
+        "precedingCaption": "Android: today vs proposed, with both options",
+        "next": "2. The new phone, when it isn't confirmed. One page, the same whether the other phone tapped No, never answered or was closed. Neither version says what the other phone did, and both say what the memb",
+        "atAuthoredPosition": true
+      },
+      "server_command": [
+        "/tmp/annotate-card-context-venv/bin/python",
+        "-m",
+        "agent_annotate.sync_server",
+        "--slug-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/fld-stack-round8",
+        "--slug",
+        "fld-stack-round8",
+        "--bus-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/bus",
+        "--port",
+        "18761",
+        "--strict-port",
+        "--local-author",
+        "reviewer@example.com"
+      ],
+      "screenshot": "fld-stack-round8-v811-38884.png",
+      "runtime_assets": {
+        "adapter.js": "1fdf65bf3afb6d26db9132f27909b272494e6d892aff2d3e8f721e5a595c4045",
+        "shell.js": "3a644cda6316b346e68b29e12c50f8a2b8fa6d8acce25510c720d2179fa3625f"
+      }
+    },
+    {
+      "page": "fld-stack-round8",
+      "version": "v811",
+      "number": 38887,
+      "context": "iPhone only. It's on the same branch as the narrow stop box (#38879) and merges in the next iPhone merge.",
+      "excerpt": "4. iPhone: the lock in the chat list. A phone that isn't confirmed yet shows \"Locked until you confirm this phone\" in the chat list. Android draws the thin outline lock before it (approved on #38872); the iPhone now does too. At 130 % text the two rows broke at different words in the first picture, because some digits in the time are wider than others; the times now use same-width digits, so both rows break at the same word. Top is today's main, bottom is the fix, at normal and 130 % text. The test fails on today's main and passes with the fix; the iPhone check passes.\niPhone chat list lock, before and after",
+      "excerpt_first80": "4. iPhone: the lock in the chat list. A phone that isn't confirmed yet shows \"Lo",
+      "placement": {
+        "section": "s:private-messages-less-in-the-way-drawn-past-even",
+        "preceding": "IMG 51DC25%50%75%100%\u2922 Full sizeiPhone chat list lock, before and after",
+        "precedingTag": "FIGURE",
+        "precedingCaption": "iPhone chat list lock, before and after",
+        "next": null,
+        "atAuthoredPosition": true
+      },
+      "server_command": [
+        "/tmp/annotate-card-context-venv/bin/python",
+        "-m",
+        "agent_annotate.sync_server",
+        "--slug-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/fld-stack-round8",
+        "--slug",
+        "fld-stack-round8",
+        "--bus-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/bus",
+        "--port",
+        "18761",
+        "--strict-port",
+        "--local-author",
+        "reviewer@example.com"
+      ],
+      "screenshot": "fld-stack-round8-v811-38887.png",
+      "runtime_assets": {
+        "adapter.js": "1fdf65bf3afb6d26db9132f27909b272494e6d892aff2d3e8f721e5a595c4045",
+        "shell.js": "3a644cda6316b346e68b29e12c50f8a2b8fa6d8acce25510c720d2179fa3625f"
+      }
+    },
+    {
+      "page": "rebex",
+      "version": "v195",
+      "number": 238,
+      "context": "The second hour also ended early, on a test rule, after 12 page requests; Safari now passes. Same limits, same two halves, read-only, rebex-new only.",
+      "excerpt": "\u2022 Cause, found offline (likely, not certain): a test bug, not a site bug. After the password page, the test briefly ran the home page's scripts as if they were still on the password page's address. A theme script then fetched the wrong address and failed in Safari. The browser installs are unchanged since the offline checks passed.\n\u2022 Fix: the test now answers the password step with an empty page and runs the home page only at its real address. Offline, the old code reproduces the error and the fix clears it, while a real home-page failure still stops the run. Limits are unchanged. It is being committed and goes through the same review and full offline CI before any store use.\n\u2022 Measured: Safari took about 4.5 minutes for two widths, so both halves fit in an hour with room to spare.\n\u2022 You allowed one more hour (#236, 16:38Z). The fix passed independent review, the full offline CI and my own offline check. The pilot ran at 17:14Z. Safari got through both widths this time. Then Firefox, on its first page, logged script-loading errors for Shopify's and the theme's own modules, and the run was stopped there (12 page requests). The second half didn't start, so there are no tablet screenshots yet. I released the store at 17:21Z.\n\u2022 Cause, checked offline: all 42 Firefox errors are the same 9 messages seen in the earlier runs and in a plain Firefox on the live site. They come from Firefox and Shopify's script loading, not the theme or the test. The earlier runs only noted them; they were never marked as known for strict runs, so the pilot treated them as new.\n\u2022 Fix: mark exactly those 9 messages as known, and only in Firefox, on the home page, at the four widths. Any other or new error still stops the run; offline, an added new error still stopped it. Limits are unchanged. The full offline CI passed, but the independent review found that the \"home page only\" condition could also have matched the password page, so the fix is being tightened and re-checked.\n\u2022 Measured: Safari took about 4 minutes for both widths and used 8 of its 32 page requests.",
+      "excerpt_first80": "\u2022 Cause, found offline (likely, not certain): a test bug, not a site bug. After ",
+      "placement": {
+        "section": "s:status",
+        "preceding": "Cause, found offline (likely, not certain): a test bug, not a site bug. After the password page, the test briefly ran the home page's scripts as if they were still on the password page's address. A theme script then fetched the wrong address and failed in Safari. The browser installs are unchanged since the offline checks passed.Fix: the test now answers the password step with an empty page and runs the home page only at its real address. Offline, the old code reproduces the error and the fix clears it, while a real home-page failure still stops the run. Limits are unchanged. It is being committed and goes through the same review and full offline CI before any store use.Measured: Safari took about 4.5 minutes for two widths, so both halves fit in an hour with room to spare.You allowed one more hour (#236, 16:38Z). The fix passed independent review, the full offline CI and my own offline check. The pilot ran at 17:14Z. Safari got through both widths this time. Then Firefox, on its first page, logged script-loading errors for Shopify's and the theme's own modules, and the run was stopped there (12 page requests). The second half didn't start, so there are no tablet screenshots yet. I released the store at 17:21Z.Cause, checked offline: all 42 Firefox errors are the same 9 messages seen in the earlier runs and in a plain Firefox on the live site. They come from Firefox and Shopify's script loading, not the theme or the test. The earlier runs only noted them; they were never marked as known for strict runs, so the pilot treated them as new.Fix: mark exactly those 9 messages as known, and only in Firefox, on the home page, at the four widths. Any other or new error still stops the run; offline, an added new error still stopped it. Limits are unchanged. The full offline CI passed, but the independent review found that the \"home page only\" condition could also have matched the password page, so the fix is being tightened and re-checked.Measured: Safari took about 4 minutes for both widths and used 8 of its 32 page requests.",
+        "precedingTag": "UL",
+        "precedingCaption": null,
+        "next": "New 4-piece cutout and your image choices since Nov 11: live on both stores, verified (06:58Z). Spice, 15-pc German, 15-pc Damascus with block, 5-pc, 4-pc and 4-pc set meat cleaver now match your cata",
+        "atAuthoredPosition": true
+      },
+      "server_command": [
+        "/tmp/annotate-card-context-venv/bin/python",
+        "-m",
+        "agent_annotate.sync_server",
+        "--slug-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/rebex",
+        "--slug",
+        "rebex",
+        "--bus-dir",
+        "/var/folders/80/z4mj96kn0dn16r_dc45rv_8w0000gn/T/annotate-last-block-proof-l511dpxi/bus",
+        "--port",
+        "18762",
+        "--strict-port",
+        "--local-author",
+        "reviewer@example.com"
+      ],
+      "screenshot": "rebex-v195-238.png",
+      "runtime_assets": {
+        "adapter.js": "1fdf65bf3afb6d26db9132f27909b272494e6d892aff2d3e8f721e5a595c4045",
+        "shell.js": "3a644cda6316b346e68b29e12c50f8a2b8fa6d8acce25510c720d2179fa3625f"
+      }
+    }
+  ],
+  "cleanup": "Both servers and Chrome closed"
+}

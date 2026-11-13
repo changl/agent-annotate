@@ -77,6 +77,14 @@ def test_a_card_cites_its_section_by_default_and_renders_like_a_json_card(tmp_pa
             == expected["html"].read_text().split("<!-- CANVAS")[1])
 
 
+def test_stored_source_distinguishes_implicit_asks_from_explicit_section_citations():
+    text = ("## Plan\n\n```ask\n#1 First?\n+ Yes: Go.\n- No: Wait.\n```\n\n"
+            "```ask\n#2 Explicit section?\n+ Yes: Go.\n- No: Wait.\nsee: s:plan\n```\n\n"
+            "```ask\nUnnumbered?\n+ Yes: Go.\n- No: Wait.\n```\n\n"
+            "```ask\n#3 Another?\nsee: this is context, before options\n+ Yes: Go.\n- No: Wait.\n```\n")
+    assert pagegen.implicit_ask_anchors(text) == ["d:q1", "d:q3"]
+
+
 def test_see_labels_come_from_the_whole_page_and_unknown_anchors_are_refused(tmp_path):
     later = _source(tmp_path, "## Plan\n\n```ask\nShip?\n- Yes: y\n- No: n\nsee: s:results\n```\n\n## Results\n\nDone.\n")
     [card] = json.loads(pagegen.generate(later, tmp_path / "ok")["cards_json"].read_text())
