@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-annotate"
-version = "2.31.3"
+version = "2.31.4"
 source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },

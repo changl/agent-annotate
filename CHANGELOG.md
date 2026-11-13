@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.31.4
+
+- An ask without a `see:` line quotes only the last block of text directly above it (a paragraph, list, quote or table) plus any pictures between that block and the card, so a card at the end of a long section no longer quotes the whole section. The page server reads the stored source to tell these cards from ones with an explicit `see:`, which keep their cited quote. Agents write nothing new.
+
 ## 2.31.3
 
 - Question cards show their own context again. An inline ask without a `see:` line quotes only the content just above it (back to the previous ask or heading), not its whole section or another card's text, and its strip stays beside its own screenshots. Broken since 2.29.0 (full section quotes visible since 2.31.0). Renderer only; agents write nothing new.
