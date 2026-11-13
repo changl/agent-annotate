@@ -1,0 +1,48 @@
+{
+  "images": [
+    {
+      "src": "assets/preview/8cf7f4b0bb96e1d6.jpg",
+      "width": 647,
+      "height": 1200
+    },
+    {
+      "src": "assets/preview/e84c0a2c30de62a1.jpg",
+      "width": 609,
+      "height": 1200
+    },
+    {
+      "src": "assets/preview/a6ab35d8be15766f.jpg",
+      "width": 1200,
+      "height": 726
+    },
+    {
+      "src": "assets/preview/6203a40a1ad047d7.jpg",
+      "width": 831,
+      "height": 1200
+    },
+    {
+      "src": "assets/preview/fe3d0d851d956cbf.jpg",
+      "width": 886,
+      "height": 1200
+    },
+    {
+      "src": "assets/preview/51dc2a85f92196dc.jpg",
+      "width": 1200,
+      "height": 909
+    }
+  ],
+  "cards": [
+    {
+      "id": "e2fca49f240d",
+      "context": "Drawings only. Whatever you pick is built on both phones, then shown to you again before it merges.",
+      "quote": "Your #38873 and #38874 notes, drawn on both phones; and the phones now follow the web on past events. Sections 1 and 2 are drawings only: nothing is built until you pick. Section 3 and the iPhone lock are built and their checks pass. Nothing has merged; testers are unchanged. Test names and data throughout. Card text \u00b7 Report\n1. Messaging with the least in the way. Each strip shows today on top and the proposal under it. Counts are the screens and waits a member meets, the taps, and the words on them.\n| Today (iPhone / Android) | Proposed\nFirst private message, on your usual phone | 3 screens, 1 wait, 3 taps, 155 / 145 words | 2 screens, no wait, 2 taps, 53 / 59 words\nSigning in on a new phone, until it reads and sends | 5 screens, 2 waits, 6 taps, 351 / 314 words | 3 screens, 1 wait, 3 taps, 157 / 156 words\nA message whose keys are still arriving | \"Waiting for this message.\" / \"Confirm this phone to read this message.\" | A quiet grey bubble with no words that fills in by itself\nScroll sideways to see all columns\n\u2022 Proposed keeps the security you approved (card 21344): the recovery key, \"Is this you signing in?\" on the other phone, and emoji compared on both. The key is made in the background after sign-in; on the first Message tap the member saves it in two taps and the chat opens. A new phone asks the other phone by itself; Chat shows one quiet line, \"Confirm on your other phone\".\n\u2022 Option 1, key later: the chat opens at once and the key is saved later, from one line in Chat. If the phone is lost before then, older private messages are gone.\n\u2022 Option 2, one sheet: the other phone shows the emoji on the \"Is this you signing in?\" sheet, so one tap says both \"it's me\" and \"they match\" (2 screens, 2 taps). A hurried tap approves both.\niPhone: today vs proposed, with both options\nAndroid: today vs proposed, with both options",
+      "within_section": true
+    },
+    {
+      "id": "c378948fbee8",
+      "context": "iPhone only. It's on the same branch as the narrow stop box (#38879) and merges in the next iPhone merge.",
+      "quote": "4. iPhone: the lock in the chat list. A phone that isn't confirmed yet shows \"Locked until you confirm this phone\" in the chat list. Android draws the thin outline lock before it (approved on #38872); the iPhone now does too. At 130 % text the two rows broke at different words in the first picture, because some digits in the time are wider than others; the times now use same-width digits, so both rows break at the same word. Top is today's main, bottom is the fix, at normal and 130 % text. The test fails on today's main and passes with the fix; the iPhone check passes.\niPhone chat list lock, before and after",
+      "within_section": true
+    }
+  ]
+}
