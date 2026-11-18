@@ -5449,6 +5449,12 @@ def build_parser(*, all_commands=False):
     names_mode.add_argument("--apply", action="store_true", help="apply the explicit map with exact-byte backups")
     sp_names.add_argument("--json", action="store_true")
     sp_names.set_defaults(func=cmd_names)
+    from .signin import cmd_member
+    sp_member = sub.add_parser("member", help="who may sign in with Google to which projects' pages (operator only)")
+    sp_member.add_argument("action", choices=("add", "remove", "list"))
+    sp_member.add_argument("email", nargs="?", help="the owner (ANNOTATE_OWNER_EMAIL) needs no entry")
+    sp_member.add_argument("project", nargs="?", help="required for add; remove without one drops the email")
+    sp_member.set_defaults(func=cmd_member)
     sp_doc.set_defaults(func=cmd_doctor)
     sp_update = sub.add_parser("update", help="check/apply tested stable releases; opt into daily checks")
     update_mode = sp_update.add_mutually_exclusive_group()

@@ -1074,7 +1074,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         email, name = self._tailscale_identity()
         if not email and self._is_funnel_origin():
             from .review_access import identity
-            email, name = identity(self.artifact_dir, self.headers.get("Cookie") or "")
+            from .signin import member
+            cookie = self.headers.get("Cookie") or ""
+            email, name = member(cookie, _monitor_project(self.bus_dir))
+            if not email:
+                email, name = identity(self.artifact_dir, cookie)
         origin = self._origin("https://" + (self.headers.get("Host") or ""))
         if (origin in self._published_proxy_origins() and origin in self._access_origins()
                 and not origin[1].endswith(".ts.net") and self.headers.get("Cf-Access-Jwt-Assertion")):
@@ -1137,7 +1141,38 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if (self.command not in ("GET", "HEAD") or not self._is_public_inert_asset(path)
                 or self.headers.get("Sec-Fetch-Mode") not in (None, "no-cors") or not self._is_funnel_origin()):
             return False
-        return bool(identity(self.artifact_dir, self.headers.get("Cookie") or "", asset=True)[0])
+        from .signin import member
+        cookie = self.headers.get("Cookie") or ""
+        return bool(identity(self.artifact_dir, cookie, asset=True)[0]
+                    or member(cookie, _monitor_project(self.bus_dir), asset=True)[0])
+
+    def _signin_route(self) -> bool:
+        """Google sign-in lives outside every page mount, at signin.ROUTE on the Funnel host."""
+        from . import signin
+        parsed = urllib.parse.urlsplit(self.path)
+        if (parsed.path not in (signin.ROUTE + "/login", signin.ROUTE + "/callback", signin.ROUTE + "/denied")
+                or not signin.configured() or self._strip_base(parsed.path) != parsed.path):
+            return False
+        try:
+            loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback or not self._is_funnel_origin():
+            self._respond(404, b'{"error":"sign-in is served only on the Funnel host"}')
+            return True
+        origin = self._origin("https://" + (self.headers.get("Host") or ""))
+        code, headers, body = signin.handle(parsed.path, parsed.query, self.headers.get("Cookie") or "",
+                                            "https://" + origin[1] + ("" if origin[2] == 443 else f":{origin[2]}"))
+        self._respond(code, body, "text/html; charset=utf-8", cache_control="no-store", extra_headers=headers)
+        return True
+
+    def _signin_gate(self) -> str:
+        """Where a Funnel visitor with no access goes once the shell has checked for a #review= key."""
+        from . import signin
+        if not signin.configured() or not self._is_funnel_origin() or self._identity()["authenticated"]:
+            return ""
+        signed_in = signin.session(self.headers.get("Cookie") or "")[0]
+        return signin.ROUTE + ("/denied" if signed_in else "/login") + "?next="
 
     # ── Consolidated pages ───────────────────────────────────────────
     # `annotate consolidate` leaves consolidated.json in a page it merged
@@ -1200,7 +1235,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
-        if not self._allow_request():
+        if self._signin_route() or not self._allow_request():
             return
         parsed = urllib.parse.urlparse(self.path)
         if self.public_base_path and parsed.path == self.public_base_path:
@@ -1815,6 +1850,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     for attribute in ("href", "src"):
                         html = html.replace(f'{attribute}="{name}"',
                             f'{attribute}="{base}/assets/{_mtime_stamp(self.skill_dir / name)}/{name}"')
+                if gate := self._signin_gate():
+                    html = html.replace("</head>", f'<meta name="annotate-signin" content="{gate}">\n</head>', 1)
                 self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8",
                               cache_control=_NO_STORE)
                 return

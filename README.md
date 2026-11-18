@@ -70,6 +70,26 @@ Use the installed executable if another tool owns `annotate` on PATH. System Pyt
 
 Funnel publishes one exact path, preserving other routes. A private share link grants page review access; its fragment key becomes a secure page-scoped cookie. Tailnet users retain Tailscale identity. Keep the full printed URL when sharing. Public route failures stop publication; localhost is never substituted. Cloudflare adapters are retained only for existing deployments.
 
+### Google sign-in (off until configured)
+
+Funnel pages can ask for a Google account instead of a share link. It stays off, and pages behave exactly as above, until a page server starts with all four of these in its environment, kept in Infisical under `/projects/agent-annotate`:
+
+- `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`: a Google "Web application" OAuth client, scopes `openid email profile`, redirect URL `https://m1max.tail2b8ab9.ts.net/annotate/auth/callback`.
+- `ANNOTATE_SESSION_KEY`: a random key that signs the 30-day sign-in cookie. Changing it signs everyone out.
+- `ANNOTATE_OWNER_EMAIL`: the owner's Google email (not a secret). The owner sees every project and needs no members entry, so a broken members list never locks them out.
+
+To turn it on, first map the Funnel path `/annotate/auth` to any running page server's `http://127.0.0.1:<port>/annotate/auth`, then restart the page servers under `infisical run --path /projects/agent-annotate -- annotate ...`. If the mapped server stops, new sign-ins wait and existing cookies keep working.
+
+Everyone else who may sign in is set in `members.json` beside `projects.toml`. The file holds no secrets.
+
+```sh
+annotate member add guest@gmail.com PROJECT    # one project (required); repeat for more
+annotate member remove guest@gmail.com PROJECT # or no project: remove them entirely
+annotate member list
+```
+
+A signed-in person with no access to a project sees "not shared with you". Removing a member takes effect on their next request. `#review=` links keep working for one release as the way back in. Local agent calls and tailnet ports never ask anyone to sign in.
+
 State defaults remain `~/.claude/annotate-state` and `~/.claude/annotate-bus`; environment overrides support isolated development. Runtime updates preserve owners, routes, ports, and feedback. No scheduled reports, automatic skill updates, or agent-owned monitors are needed for normal project work.
 
 ## Reference and validation
