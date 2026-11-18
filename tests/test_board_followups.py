@@ -18,6 +18,7 @@ NOW = datetime.datetime(2026, 11, 10, 6, 5, tzinfo=datetime.timezone.utc)
 @pytest.fixture
 def checks(tmp_path, monkeypatch):
     monkeypatch.setenv("ANNOTATE_BOARD_DRY_RUN", "1")
+    monkeypatch.delenv("ANNOTATE_BOARD_APPLY", raising=False)
     monkeypatch.setattr(checks_module, "OUT", tmp_path / "board-checks")
     return checks_module
 
