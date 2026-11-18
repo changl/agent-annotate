@@ -18,7 +18,8 @@ from agent_annotate.pagegen import generate
 HOST = "host.ts.net"
 OWNER, GUEST = "owner@example.com", "guest@example.com"
 SECRETS = {"GOOGLE_OAUTH_CLIENT_ID": "client-1.apps.googleusercontent.com",
-           "GOOGLE_OAUTH_CLIENT_SECRET": "test-client-secret", "ANNOTATE_SESSION_KEY": "test-session-key"}
+           "GOOGLE_OAUTH_CLIENT_SECRET": "test-client-secret", "ANNOTATE_SESSION_KEY": "test-session-key",
+           "ANNOTATE_OWNER_EMAIL": "Owner@Example.com"}
 
 
 def _bind(handler):
@@ -121,7 +122,8 @@ def _sign_in(world, email, *, claims=None, next_path="/annotate/proj/page/#feedb
     assert code == 302
     location = urllib.parse.urlsplit(headers["Location"])
     query = {k: v[0] for k, v in urllib.parse.parse_qs(location.query).items()}
-    flow = signin.FLOW_COOKIE + "=" + _cookies(headers)[signin.FLOW_COOKIE]
+    name = signin.FLOW_COOKIE + query["state"]
+    flow = name + "=" + _cookies(headers)[name]
     google["claims"] = {"iss": "https://accounts.google.com", "aud": SECRETS["GOOGLE_OAUTH_CLIENT_ID"],
                         "exp": int(time.time()) + 3600, "email": email, "email_verified": True,
                         "name": "Guest Person", **(claims or {})}
@@ -163,7 +165,7 @@ def test_full_google_flow_signs_in_a_member_and_returns_to_the_page(world, monke
     session = issued[signin.SESSION_COOKIE]
     assert session["path"] == "/" and session["samesite"] == "Lax" and session["httponly"] and session["secure"]
     assert int(session["max-age"]) == 30 * 86400 and not session["domain"]
-    assert issued[signin.ASSET_COOKIE]["samesite"] == "None" and issued[signin.FLOW_COOKIE].value == ""
+    assert issued[signin.ASSET_COOKIE]["samesite"] == "None" and issued[signin.FLOW_COOKIE + query["state"]].value == ""
     cookie = _session(headers)
     code, _, body = request("proj", "api/identity", cookie)
     assert code == 200 and json.loads(body)["email"] == GUEST
@@ -182,8 +184,7 @@ def test_full_google_flow_signs_in_a_member_and_returns_to_the_page(world, monke
 
 def test_owner_sees_every_project_and_a_member_is_blocked_from_another(world, monkeypatch):
     _configure(monkeypatch)
-    signin.change_member("add", OWNER)
-    signin.change_member("add", GUEST, "proj")
+    signin.change_member("add", GUEST, "proj")  # the owner has no entry: ANNOTATE_OWNER_EMAIL
     request = world["request"]
     owner = _session(_sign_in(world, OWNER)[1][1])
     guest = _session(_sign_in(world, GUEST)[1][1])
@@ -198,6 +199,29 @@ def test_owner_sees_every_project_and_a_member_is_blocked_from_another(world, mo
     code, _, body = request("other", signin.ROUTE + "/denied?next=/annotate/other/page/", guest)
     assert code == 403 and "not shared with you" in body and GUEST in body
     assert "/annotate/auth/login?next=%2Fannotate%2Fother%2Fpage%2F" in body
+    assert request("proj", "api/comments", guest)[0] == 200
+    signin.MEMBERS.write_text('{"guest@example.com": "proj"')  # corrupt: shares nothing...
+    assert request("proj", "api/comments", guest)[0] == 403
+    for project in ("proj", "other"):  # ...but never locks the owner out
+        assert request(project, "api/comments", owner)[0] == 200
+        assert 'name="annotate-signin"' not in request(project, "", owner)[2]
+
+
+def test_two_tabs_signing_in_at_once_both_finish(world, monkeypatch):
+    _configure(monkeypatch)
+    request = world["request"]
+    flows = []
+    for _ in range(2):
+        _, headers, _ = request("proj", signin.ROUTE + "/login?next=/annotate/proj/page/")
+        state = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(headers["Location"]).query))["state"]
+        flows.append((state, signin.FLOW_COOKIE + state + "=" + _cookies(headers)[signin.FLOW_COOKIE + state]))
+    jar = "; ".join(cookie for _, cookie in flows)
+    world["google"]["claims"] = {"iss": "accounts.google.com", "aud": SECRETS["GOOGLE_OAUTH_CLIENT_ID"],
+                                 "exp": int(time.time()) + 3600, "email": OWNER, "email_verified": True}
+    for state, _ in flows:
+        code, headers, _ = request("proj", signin.ROUTE + "/callback?" + urllib.parse.urlencode(
+            {"code": "c", "state": state}), cookie=jar)
+        assert code == 302 and signin.SESSION_COOKIE in _cookies(headers)
 
 
 def test_removed_member_loses_access_at_once(world, monkeypatch):
@@ -215,7 +239,6 @@ def test_removed_member_loses_access_at_once(world, monkeypatch):
 
 def test_forged_and_expired_cookies_are_refused(world, monkeypatch):
     _configure(monkeypatch)
-    signin.change_member("add", OWNER)
     request = world["request"]
     now = int(time.time())
     forged = _seal_with("someone-elses-key", {"use": "session", "email": OWNER, "name": "", "exp": now + 3600}, monkeypatch)
@@ -233,7 +256,6 @@ def test_forged_and_expired_cookies_are_refused(world, monkeypatch):
                                     {"exp": 1000}, {"email_verified": False}, {"email_verified": "true"}])
 def test_callback_refuses_an_id_token_google_did_not_vouch_for(world, monkeypatch, claims):
     _configure(monkeypatch)
-    signin.change_member("add", OWNER)
     code, headers, body = _sign_in(world, OWNER, claims=claims)[1]
     assert code == 403 and "did not confirm" in body and signin.SESSION_COOKIE not in _cookies(headers)
 
@@ -242,7 +264,7 @@ def test_callback_refuses_a_wrong_state_and_an_offsite_return(world, monkeypatch
     _configure(monkeypatch)
     request = world["request"]
     _, headers, _ = request("proj", signin.ROUTE + "/login?next=//evil.example/")
-    flow = signin.FLOW_COOKIE + "=" + _cookies(headers)[signin.FLOW_COOKIE]
+    flow = "; ".join(f"{name}={value}" for name, value in _cookies(headers).items())
     code, headers, _ = request("proj", signin.ROUTE + "/callback?code=x&state=wrong", cookie=flow)
     assert code == 400 and signin.SESSION_COOKIE not in _cookies(headers)
     assert request("proj", signin.ROUTE + "/callback?code=x&state=%C3%A9", cookie=flow)[0] == 400
@@ -273,10 +295,13 @@ def test_local_agent_and_tailnet_calls_never_sign_in(world, monkeypatch):
     assert request("proj", signin.ROUTE + "/login", host=f"127.0.0.1:{port}")[0] == 404
 
 
-def test_without_the_three_secrets_nothing_changes(world, monkeypatch):
+def test_without_all_four_values_nothing_changes(world, monkeypatch):
     request, page = world["request"], world["pages"]["proj"]
-    signin.change_member("add", OWNER)
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "only-one-of-three")
+    _configure(monkeypatch)
+    monkeypatch.delenv("ANNOTATE_OWNER_EMAIL")
+    assert not signin.configured()  # three secrets, no owner: still off
+    monkeypatch.setenv("ANNOTATE_OWNER_EMAIL", OWNER)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET")
     cookie = _seal_with(SECRETS["ANNOTATE_SESSION_KEY"], {"use": "session", "email": OWNER, "name": "",
                                                           "exp": int(time.time()) + 3600}, monkeypatch)
     monkeypatch.delenv("ANNOTATE_SESSION_KEY")
@@ -297,16 +322,20 @@ def test_member_command_adds_lists_and_removes(capsys, tmp_path, monkeypatch):
     def run(*argv):
         args = cli.build_parser().parse_args(["member", *argv])
         return args.func(args)
-    assert run("add", "Owner@Example.com") == 0
-    assert run("add", GUEST, "proj") == 0
+    assert run("add", GUEST) == 1 and not signin.MEMBERS.exists()  # a forgotten project grants nothing
+    assert "needs a project" in capsys.readouterr().out
+    assert run("add", "Guest@Example.com", "proj") == 0
     assert run("add", GUEST, "other") == 0
+    assert run("add", "x@example.com", "proj") == 0
     capsys.readouterr()
-    assert run("list") == 0
-    assert capsys.readouterr().out.splitlines() == [f"{GUEST}  other, proj", f"{OWNER}  every project (owner)"]
+    assert run("list", GUEST) == 0
+    assert capsys.readouterr().out.splitlines() == [f"{GUEST}  other, proj"]
     assert run("remove", GUEST, "other") == 0
-    assert signin.load_members() == {OWNER: ["*"], GUEST: ["proj"]}
+    assert signin.load_members() == {GUEST: ["proj"], "x@example.com": ["proj"]}
     assert signin.MEMBERS.stat().st_mode & 0o777 == 0o600
     assert run("remove", GUEST) == 0 and GUEST not in signin.load_members()
-    assert run("add", "not-an-email") == 1 and run("remove") == 1
+    assert run("add", "not-an-email", "proj") == 1 and run("remove") == 1
+    signin.MEMBERS.write_text('{"Mixed@Example.com": ["proj"]}')  # hand-edited case still matches
+    assert signin.allowed("mixed@example.com", "proj") and not signin.allowed("mixed@example.com", "other")
     signin.MEMBERS.write_text('{"x@example.com": "proj"}')
     assert not signin.allowed("x@example.com", "p")  # a malformed list shares nothing

@@ -25,14 +25,14 @@ from .review_access import _valid_name
 ROUTE = "/annotate/auth"
 SESSION_COOKIE = "__Host-annotate_session"
 ASSET_COOKIE = SESSION_COOKIE + "_assets"  # SameSite=None twin, honoured only for sandboxed image loads
-FLOW_COOKIE = "annotate_signin"
+FLOW_COOKIE = "annotate_signin_"  # + state, so two tabs signing in at once keep their own
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 ISSUERS = ("https://accounts.google.com", "accounts.google.com")
 SESSION_SECONDS = 30 * 86400
-EVERY = "*"  # the owner's entry: every project
 MEMBERS = CONFIG_DIR / "members.json"
-_ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY")
+# The owner sees every project and is pinned here, so a broken members.json never locks them out.
+_ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY", "ANNOTATE_OWNER_EMAIL")
 
 
 def configured() -> bool:
@@ -92,15 +92,21 @@ def load_members() -> dict[str, list[str]]:
             isinstance(email, str) and isinstance(projects, list) and all(isinstance(p, str) for p in projects)
             for email, projects in data.items()):
         raise ValueError(f"{MEMBERS} must map emails to lists of projects")
-    return data
+    members: dict[str, list[str]] = {}
+    for email, projects in data.items():  # hand-edited keys may differ only in case
+        members.setdefault(email.strip().lower(), []).extend(projects)
+    return members
 
 
 def allowed(email: str, project: str) -> bool:
+    email = email.lower()
+    owner = os.environ.get("ANNOTATE_OWNER_EMAIL", "").strip().lower()
+    if owner and email == owner:
+        return True
     try:
-        projects = load_members().get(email.lower(), [])
+        return project in load_members().get(email, [])
     except (OSError, ValueError):
-        return False  # an unreadable list shares nothing
-    return EVERY in projects or project in projects
+        return False  # an unreadable list shares nothing (the owner is checked above)
 
 
 def member(header: str, project: str, *, asset: bool = False) -> tuple[str, str]:
@@ -110,14 +116,16 @@ def member(header: str, project: str, *, asset: bool = False) -> tuple[str, str]
 
 
 def change_member(action: str, email: str, project: str | None = None) -> dict[str, list[str]]:
-    """add/remove one email; add without a project makes it an owner (every project)."""
+    """add one email to one project, or remove it from one project (no project: from all)."""
     email = email.strip().lower()
     if "@" not in email or any(c.isspace() for c in email):
         raise ValueError("member must be an email address")
+    if action == "add" and not project:
+        raise ValueError("member add needs a project; the owner is ANNOTATE_OWNER_EMAIL and sees every project")
     members = load_members()
     projects = members.get(email, [])
     if action == "add":
-        members[email] = sorted(set(projects) | {project or EVERY})
+        members[email] = sorted(set(projects) | {project})
     elif project:
         members[email] = [p for p in projects if p != project]
     if action == "remove" and (not project or not members.get(email)):
@@ -141,7 +149,7 @@ def cmd_member(args) -> int:
         print(f"ERROR: {exc}")
         return 1
     for email, projects in sorted(members.items()):
-        print(email + "  " + ("every project (owner)" if EVERY in projects else ", ".join(projects)))
+        print(email + "  " + ", ".join(projects))
     return 0
 
 
@@ -192,9 +200,9 @@ def handle(route: str, query: str, cookie: str, origin: str) -> tuple[int, dict,
             "response_type": "code", "scope": "openid email profile", "state": state,
             "code_challenge": _b64(hashlib.sha256(verifier.encode()).digest()),
             "code_challenge_method": "S256", "prompt": "select_account"})
-        return 302, {"Location": url, "Set-Cookie": f"{FLOW_COOKIE}={flow}; Max-Age=600; {flow_attributes}"}, b""
+        return 302, {"Location": url, "Set-Cookie": f"{FLOW_COOKIE}{state}={flow}; Max-Age=600; {flow_attributes}"}, b""
     if route == ROUTE + "/callback":
-        flow = _open(cookie, FLOW_COOKIE, "flow")
+        flow = _open(cookie, FLOW_COOKIE + first("state"), "flow")
         if not flow or not first("code") or not hmac.compare_digest(first("state").encode(), flow["state"].encode()):
             return _page(400, "Sign-in did not finish. Open the page again to retry.")
         try:
@@ -206,7 +214,7 @@ def handle(route: str, query: str, cookie: str, origin: str) -> tuple[int, dict,
         return 302, {"Location": flow["next"], "Set-Cookie": [
             f"{SESSION_COOKIE}={value}; {attributes}; SameSite=Lax",
             f"{ASSET_COOKIE}={value}; {attributes}; SameSite=None",
-            f"{FLOW_COOKIE}=; Max-Age=0; {flow_attributes}"]}, b""
+            f"{FLOW_COOKIE}{flow['state']}=; Max-Age=0; {flow_attributes}"]}, b""
     if route == ROUTE + "/denied":
         email = session(cookie)[0]
         text = "This page is not shared with you." + (f" You are signed in as {email}." if email else "")

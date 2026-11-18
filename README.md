@@ -72,18 +72,18 @@ Funnel publishes one exact path, preserving other routes. A private share link g
 
 ### Google sign-in (off until configured)
 
-Funnel pages can ask for a Google account instead of a share link. It stays off, and pages behave exactly as above, until a page server starts with all three of these in its environment, kept in Infisical under `/projects/agent-annotate`:
+Funnel pages can ask for a Google account instead of a share link. It stays off, and pages behave exactly as above, until a page server starts with all four of these in its environment, kept in Infisical under `/projects/agent-annotate`:
 
 - `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`: a Google "Web application" OAuth client, scopes `openid email profile`, redirect URL `https://m1max.tail2b8ab9.ts.net/annotate/auth/callback`.
 - `ANNOTATE_SESSION_KEY`: a random key that signs the 30-day sign-in cookie. Changing it signs everyone out.
+- `ANNOTATE_OWNER_EMAIL`: the owner's Google email (not a secret). The owner sees every project and needs no members entry, so a broken members list never locks them out.
 
 To turn it on, first map the Funnel path `/annotate/auth` to any running page server's `http://127.0.0.1:<port>/annotate/auth`, then restart the page servers under `infisical run --path /projects/agent-annotate -- annotate ...`. If the mapped server stops, new sign-ins wait and existing cookies keep working.
 
-Who may sign in is set in `members.json` beside `projects.toml`. The file holds no secrets.
+Everyone else who may sign in is set in `members.json` beside `projects.toml`. The file holds no secrets.
 
 ```sh
-annotate member add owner@gmail.com            # no project: sees every project (the owner)
-annotate member add guest@gmail.com PROJECT    # one project; repeat for more
+annotate member add guest@gmail.com PROJECT    # one project (required); repeat for more
 annotate member remove guest@gmail.com PROJECT # or no project: remove them entirely
 annotate member list
 ```
