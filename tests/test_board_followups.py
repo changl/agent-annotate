@@ -97,7 +97,7 @@ def test_settle_survives_sessions_checkss_and_changed_fingerprint_reopens(checks
         "board-followups.json", "board-followups.lock", "board-verdicts.ndjson"]
 
 
-def test_turn_check_dry_run_and_default_writes_readback_one_note_per_write(checks, tmp_path, monkeypatch):
+def test_turn_check_reports_by_default_and_writes_only_when_opted_in(checks, tmp_path, monkeypatch):
     b = board(tmp_path)
     records = [{"id": "agent-annotate-go", "status": "blocked", "notes": "BLOCKED BY: agent-annotate-end"},
                {"id": "agent-annotate-end", "status": "closed"}]
@@ -127,6 +127,9 @@ def test_turn_check_dry_run_and_default_writes_readback_one_note_per_write(check
     result = checks.check_one(b, NOW.timestamp())
     assert result["actions"][0]["mode"] == "dry-run" and writes == []
     monkeypatch.delenv("ANNOTATE_BOARD_DRY_RUN")
+    result = checks.check_one(b, (NOW + datetime.timedelta(seconds=30)).timestamp())
+    assert result["actions"][0]["mode"] == "dry-run" and writes == []
+    monkeypatch.setenv("ANNOTATE_BOARD_APPLY", "1")
     result = checks.check_one(b, (NOW + datetime.timedelta(minutes=1)).timestamp())
     assert result["actions"][0]["mode"] == "apply" and len(writes) == 2
     assert records[0]["notes"].count("SWEEP-AUTO") == 1
