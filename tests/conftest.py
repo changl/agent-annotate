@@ -47,6 +47,9 @@ for _name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID",
               "ANNOTATE_SESSION_ID", "ANNOTATE_HOOK_ALL", "ANNOTATE_HOOK_DRY_RUN"):
     os.environ.pop(_name, None)
 os.environ.pop("ORCA_TERMINAL_HANDLE", None)
+# Google sign-in stays off unless a test turns it on (test_signin.py).
+for _name in ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY"):
+    os.environ.pop(_name, None)
 
 import pytest  # noqa: E402
 

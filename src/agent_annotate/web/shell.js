@@ -5033,6 +5033,12 @@ const REVIEW_KEY = (() => {
 // without it every API call is refused on the public origin.
 async function startReviewerSession() {
   const reviewKey = REVIEW_KEY;
+  // Google sign-in (when the server has it on): no access and no review key.
+  const signin = document.querySelector('meta[name="annotate-signin"]');
+  if (!reviewKey && signin) {
+    location.replace(signin.content + encodeURIComponent(location.pathname + location.search + location.hash));
+    return false;
+  }
   if (!reviewKey) return true;
   let name = 'Reviewer';
   try { name = localStorage.getItem('annotate:reviewer-name') || name; } catch {}
