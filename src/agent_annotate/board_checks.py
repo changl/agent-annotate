@@ -550,7 +550,8 @@ def check_one(board, now=None):
                 planned["actions"] = [a for a in planned["actions"] if a["rule"] != "reset-no-live-worker"]
                 state["flags"] = {k: v for k, v in state["flags"].items() if not k.startswith("reset:")}
                 state["since"] = {k: v for k, v in state["since"].items() if not k.startswith("reset:")}
-            apply = os.environ.get("ANNOTATE_BOARD_DRY_RUN") != "1"
+            # Bead writes belong to the hourly cleaner; a page turn only reports unless explicitly opted in.
+            apply = os.environ.get("ANNOTATE_BOARD_APPLY") == "1" and os.environ.get("ANNOTATE_BOARD_DRY_RUN") != "1"
             findings.update(at=iso(stamp), board=board["path"], page=board["project"] + "/" + board["slug"],
                             mode="apply" if apply else "dry-run", unchecked=not_checked, beads=records,
                             needs_model=planned["needs_model"], live_workers=live_count, cards=card_rows,

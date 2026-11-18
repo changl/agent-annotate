@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.1
+
+- `annotate board` only reports by default. Its two guarded bead fixes (reopen a blocked bead whose blockers are closed, reset an in-progress bead with no live worker) apply only with `ANNOTATE_BOARD_APPLY=1`, because bead writes belong to the hourly cleaner. `ANNOTATE_BOARD_DRY_RUN=1` still forces a report. On 2026-11-18 a page turn reset 7 in-progress FLD beads whose workers were live on another Mac.
+
 ## 2.32.0
 
 - Optional Google sign-in for pages, off until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ANNOTATE_SESSION_KEY` and `ANNOTATE_OWNER_EMAIL` are all set. The owner sees every project; others are listed per project in `members.json` (`annotate member add|remove|list`). `#review=` links, loopback agents and tailnet identity work as before. No new dependencies.
