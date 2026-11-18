@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.0
+
+- Optional Google sign-in for pages, off until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ANNOTATE_SESSION_KEY` and `ANNOTATE_OWNER_EMAIL` are all set. The owner sees every project; others are listed per project in `members.json` (`annotate member add|remove|list`). `#review=` links, loopback agents and tailnet identity work as before. No new dependencies.
+
 ## 2.31.4
 
 - An ask without a `see:` line quotes only the last block of text directly above it (a paragraph, list, quote or table) plus any pictures between that block and the card, so a card at the end of a long section no longer quotes the whole section. The page server reads the stored source to tell these cards from ones with an explicit `see:`, which keep their cited quote. Agents write nothing new.
