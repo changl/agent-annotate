@@ -20,6 +20,8 @@ OWNER, GUEST = "owner@example.com", "guest@example.com"
 SECRETS = {"GOOGLE_OAUTH_CLIENT_ID": "client-1.apps.googleusercontent.com",
            "GOOGLE_OAUTH_CLIENT_SECRET": "test-client-secret", "ANNOTATE_SESSION_KEY": "test-session-key",
            "ANNOTATE_OWNER_EMAIL": "Owner@Example.com"}
+PREFIX = "signin-test-"  # project names no other test uses
+PROJ, OTHER = PREFIX + "proj", PREFIX + "other"
 
 
 def _bind(handler):
@@ -58,25 +60,29 @@ def world(tmp_path, monkeypatch):
 
     servers = [_bind(Token)]
     monkeypatch.setattr(signin, "TOKEN_URL", f"http://127.0.0.1:{servers[0].server_port}/token")
+    # Nothing shared is left behind: bus and review keys live in tmp_path, and the
+    # only shared files (the two state records) use names no other test uses and go at teardown.
+    monkeypatch.setattr(review_access, "STATE_DIR", tmp_path / "state")
     pages = {}
-    for project in ("proj", "other"):
-        directory = tmp_path / project / "page"
-        source = tmp_path / f"{project}.md"
-        source.write_text(f"## Progress\n\nPrivate {project} content.\n")
+    for key in ("proj", "other"):
+        project = PREFIX + key
+        directory = tmp_path / key / "page"
+        source = tmp_path / f"{key}.md"
+        source.write_text(f"## Progress\n\nPrivate {key} content.\n")
         generate(source, directory)
         complete(directory)
         (directory / "assets").mkdir(exist_ok=True)
         (directory / "assets" / "x.png").write_bytes(b"private proof")
-        bus = cli.BUS_ROOT / project
-        bus.mkdir(parents=True, exist_ok=True)
-        base = f"/annotate/{project}/page"
+        bus = tmp_path / "bus" / project
+        bus.mkdir(parents=True)
+        base = f"/annotate/{key}/page"
         server = _bind(sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path=base,
                                                 skill_dir=sync_server.WEB_DIR))
         cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
             "slug_dir": str(directory), "port": server.server_port, "transport": "funnel",
             "url": f"https://{HOST}{base}/"}}})
         servers.append(server)
-        pages[project] = {"port": server.server_port, "base": base, "key": review_access.ensure_key(directory)}
+        pages[key] = {"port": server.server_port, "base": base, "key": review_access.ensure_key(directory)}
     threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
     for thread in threads:
         thread.start()
@@ -102,6 +108,8 @@ def world(tmp_path, monkeypatch):
         server.server_close()
     for thread in threads:
         thread.join(timeout=5)
+    for key in pages:
+        (cli.STATE_DIR / f"{PREFIX}{key}.json").unlink(missing_ok=True)
 
 
 def _configure(monkeypatch):
@@ -145,7 +153,7 @@ def _seal_with(key, payload, monkeypatch):
 
 def test_full_google_flow_signs_in_a_member_and_returns_to_the_page(world, monkeypatch):
     _configure(monkeypatch)
-    signin.change_member("add", GUEST, "proj")
+    signin.change_member("add", GUEST, PROJ)
     request, google = world["request"], world["google"]
     code, headers, body = request("proj", "")
     assert code == 200 and f'content="{signin.ROUTE}/login?next="' in body  # the shell goes to Google
@@ -184,7 +192,7 @@ def test_full_google_flow_signs_in_a_member_and_returns_to_the_page(world, monke
 
 def test_owner_sees_every_project_and_a_member_is_blocked_from_another(world, monkeypatch):
     _configure(monkeypatch)
-    signin.change_member("add", GUEST, "proj")  # the owner has no entry: ANNOTATE_OWNER_EMAIL
+    signin.change_member("add", GUEST, PROJ)  # the owner has no entry: ANNOTATE_OWNER_EMAIL
     request = world["request"]
     owner = _session(_sign_in(world, OWNER)[1][1])
     guest = _session(_sign_in(world, GUEST)[1][1])
@@ -200,7 +208,7 @@ def test_owner_sees_every_project_and_a_member_is_blocked_from_another(world, mo
     assert code == 403 and "not shared with you" in body and GUEST in body
     assert "/annotate/auth/login?next=%2Fannotate%2Fother%2Fpage%2F" in body
     assert request("proj", "api/comments", guest)[0] == 200
-    signin.MEMBERS.write_text('{"guest@example.com": "proj"')  # corrupt: shares nothing...
+    signin.MEMBERS.write_text('{"guest@example.com": "' + PROJ + '"')  # corrupt: shares nothing...
     assert request("proj", "api/comments", guest)[0] == 403
     for project in ("proj", "other"):  # ...but never locks the owner out
         assert request(project, "api/comments", owner)[0] == 200
@@ -226,11 +234,11 @@ def test_two_tabs_signing_in_at_once_both_finish(world, monkeypatch):
 
 def test_removed_member_loses_access_at_once(world, monkeypatch):
     _configure(monkeypatch)
-    signin.change_member("add", GUEST, "proj")
-    signin.change_member("add", GUEST, "other")
+    signin.change_member("add", GUEST, PROJ)
+    signin.change_member("add", GUEST, OTHER)
     cookie = _session(_sign_in(world, GUEST)[1][1])
     assert world["request"]("proj", "api/comments", cookie)[0] == 200
-    assert signin.change_member("remove", GUEST, "proj") == {GUEST: ["other"]}
+    assert signin.change_member("remove", GUEST, PROJ) == {GUEST: [OTHER]}
     assert world["request"]("proj", "api/comments", cookie)[0] == 403
     assert world["request"]("other", "api/comments", cookie)[0] == 200
     assert signin.change_member("remove", GUEST, None) == {}
