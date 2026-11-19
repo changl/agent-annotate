@@ -189,11 +189,13 @@ def test_live_workers_asks_every_mac_and_counts_every_active_terminal(checks, mo
                         else [worker("ctx_m5_unverifiable", "run-m5", "unverifiable")],
                         "page": {"hasMore": not second, "nextCursor": None if second else "next"},
                         "scope": {"source": "all"}}
-            return {"workers": [], "page": {"hasMore": False}, "scope": {"source": "all"}}
+            # run on the M5Max, `local` lists the same worker again; it must count once
+            dup = [worker("ctx_m5_live", "run-m5", "live")] if "local" in args else []
+            return {"workers": dup, "page": {"hasMore": False}, "scope": {"source": "all"}}
         if args[0] == "terminal":
             return {"terminals": [{"handle": "term-remote", "connected": True}]}
         assert args[-2:] == ("--environment", "M5Max")  # a run's task names come from the Mac that owns the run
-        return {"tasks": [{"title": "GATE-RUNNER-one task"}]}
+        return {"tasks": [{"title": "GATE-RUNNER-one: task"}]}
 
     monkeypatch.setattr(checks, "orca_json", orca)
     workers, unchecked = checks.live_workers()
@@ -202,17 +204,26 @@ def test_live_workers_asks_every_mac_and_counts_every_active_terminal(checks, mo
     assert live["names"] == {"GATE-RUNNER-one", "GR-one"}
     assert live["ctxs"] == {"ctx_m5_live", "ctx_m5_unverifiable"} and "term-remote" in live["terms"]
     lists = [args for args in calls if args[1] == "worker-list"]
-    assert [a[-2:] for a in lists if "--cursor" not in a][1:] == [("--environment", "M5Max"), ("--environment", "M1Max16")]
-    terminals = [args for args in calls if args[0] == "terminal"]
-    assert len(terminals) == 3
-    assert terminals[1][-2:] == ("--environment", "M5Max")
-    assert terminals[2][-2:] == ("--environment", "M1Max16")
+    macs = [("--environment", "local"), ("--environment", "M5Max"), ("--environment", "M1Max16")]
+    assert [a[-2:] for a in lists if "--cursor" not in a] == macs
+    assert [args[-2:] for args in calls if args[0] == "terminal"] == macs
+
+
+def test_truncated_terminal_list_is_not_proof_of_absence(checks, monkeypatch):
+    def orca(*args):
+        if args[1] == "worker-list":
+            return {"workers": [], "page": {"hasMore": False}, "scope": {"source": "all"}}
+        return {"terminals": [], "truncated": "M1Max16" in args}
+
+    monkeypatch.setattr(checks, "orca_json", orca)
+    _, unchecked = checks.live_workers()
+    assert unchecked == [{"source": "terminal list --environment M1Max16", "reason": "truncated at 1000"}]
 
 
 def test_run_bound_local_list_is_not_proof_of_absence(checks, monkeypatch):
     def orca(*args):
         if args[1] == "worker-list":
-            bound = "--environment" not in args
+            bound = "local" in args
             return {"workers": [], "page": {"hasMore": False},
                     "scope": {"source": "bound", "run": "run-caller"} if bound else {"source": "all"}}
         return {"terminals": []}
