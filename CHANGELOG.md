@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.2
+
+- `annotate board` now counts workers on every Mac. It asks this Mac, the M5 Max and the M1 Max 16 separately (`--include-remote` returned no M5 Max workers) and counts every active worker as live, `unverifiable` included, as FLD's `beads_turn.py` does. A list limited to the caller's own Orca run counts as an unchecked source, which blocks resets. On 2026-11-19 a check reported 0 of 8 FLD workers live while 16 were running on the M5 Max.
+
 ## 2.32.1
 
 - `annotate board` only reports by default. Its two guarded bead fixes (reopen a blocked bead whose blockers are closed, reset an in-progress bead with no live worker) apply only with `ANNOTATE_BOARD_APPLY=1`, because bead writes belong to the hourly cleaner. `ANNOTATE_BOARD_DRY_RUN=1` still forces a report. On 2026-11-18 a page turn reset 7 in-progress FLD beads whose workers were live on another Mac.

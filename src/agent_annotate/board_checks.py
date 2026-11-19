@@ -289,36 +289,47 @@ def orca_json(*argv):
     return json.loads(sh("orca", *argv))["result"]
 
 
+MACS = ([], ["--environment", "M5Max"], ["--environment", "M1Max16"])
+
+
 def live_workers():
-    """FLD's cross-Mac liveness collection, with task names grouped by run for every board."""
-    rows, cur, unchecked = [], None, []
-    try:
-        while True:
-            page = orca_json("orchestration", "worker-list", "--include-remote", "--json", "--full", "--limit", "100",
-                             *(["--cursor", cur] if cur else []))
-            rows += page["workers"]
-            cur = page["page"].get("nextCursor")
-            if not page["page"].get("hasMore"):
-                break
-    except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
-        unchecked.append({"source": "worker-list", "reason": str(exc)[:200]})
-    live = [r for r in rows if ((r.get("projection") or {}).get("liveness") or {}).get("verdict") == "live"]
-    ctxs = {r["dispatchId"] for r in live}
-    terms = {r["agentTerminalHandle"] for r in live if r.get("agentTerminalHandle")}
-    for env in ([], ["--environment", "M5Max"], ["--environment", "M1Max16"]):
+    """Active workers on every Mac, with task names grouped by run for every board.
+
+    Each Mac is asked directly (`--include-remote` returned no M5Max workers), and every active terminal counts
+    as live, `unverifiable` included, as FLD's beads_turn.py counts them."""
+    rows, unchecked, run_env = [], [], {}
+    for env in MACS:
+        cur = None
+        try:
+            while True:
+                page = orca_json("orchestration", "worker-list", "--terminal-state", "active", "--json", "--full",
+                                 "--limit", "100", *env, *(["--cursor", cur] if cur else []))
+                rows += page["workers"]
+                run_env.update((r["runId"], env) for r in page["workers"] if r.get("runId"))
+                cur = page["page"].get("nextCursor")
+                if not page["page"].get("hasMore"):
+                    break
+            if page.get("scope", {}).get("source") == "bound":
+                # A caller inside an Orca run sees only that run's local workers; the rest is not proof of absence.
+                unchecked.append({"source": "worker-list", "reason": "scoped to run " + str(page["scope"].get("run"))})
+        except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+            unchecked.append({"source": "worker-list " + " ".join(env), "reason": str(exc)[:200]})
+    ctxs = {r["dispatchId"] for r in rows}
+    terms = {r["agentTerminalHandle"] for r in rows if r.get("agentTerminalHandle")}
+    for env in MACS:
         try:
             res = orca_json("terminal", "list", "--json", "--limit", "1000", *env)
             terms |= {t["handle"] for t in res["terminals"] if t.get("connected")}
         except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
             unchecked.append({"source": "terminal list " + " ".join(env), "reason": str(exc)[:200]})
     names_by_run = {}
-    for run in sorted({r["runId"] for r in live if r.get("runId")}):
+    for run in sorted(run_env):
         try:
-            out = orca_json("orchestration", "task-list", "--run", run, "--status", "dispatched", "--json")
+            out = orca_json("orchestration", "task-list", "--run", run, "--status", "dispatched", "--json", *run_env[run])
             names_by_run[run] = {t["title"].split()[0] for t in out["tasks"] if t.get("title")}
         except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
             unchecked.append({"source": "task-list " + run, "reason": str(exc)[:200]})
-    return {"ctxs": ctxs, "terms": terms, "rows": rows, "live": live, "names_by_run": names_by_run}, unchecked
+    return {"ctxs": ctxs, "terms": terms, "rows": rows, "live": rows, "names_by_run": names_by_run}, unchecked
 
 
 def board_workers(board, workers):
