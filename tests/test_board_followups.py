@@ -171,33 +171,66 @@ def test_redirect_keeps_all_followup_writes_out_of_live_page(checks, tmp_path, m
     assert not os.path.exists(live / "board-followups.json")
 
 
-def test_live_workers_uses_remote_pagination_and_three_terminal_lists(checks, monkeypatch, tmp_path):
+def test_live_workers_asks_every_mac_and_counts_every_active_terminal(checks, monkeypatch, tmp_path):
     b = board(tmp_path)
     calls = []
+
+    def worker(ctx, run, verdict):
+        return {"dispatchId": ctx, "agentTerminalHandle": "term-" + ctx, "runId": run,
+                "projection": {"liveness": {"verdict": verdict}, "workspace": {"id": "id::" + b["repo"]}}}
 
     def orca(*args):
         calls.append(args)
         if args[1] == "worker-list":
-            assert "--include-remote" in args
-            second = "--cursor" in args
-            return {"workers": [{"dispatchId": "ctx_aaaaaaaaaaaa", "agentTerminalHandle": "term-live",
-                                 "runId": "run-project", "projection": {"liveness": {"verdict": "live"},
-                                 "workspace": {"id": "id::" + b["repo"]}}}] if not second else [],
-                    "page": {"hasMore": not second, "nextCursor": "next" if not second else None}}
+            assert "--include-remote" not in args and args[2:4] == ("--terminal-state", "active")
+            if "M5Max" in args:  # FLD's workers run here; only asking the M5Max directly returns them
+                second = "--cursor" in args
+                return {"workers": [worker("ctx_m5_live", "run-m5", "live")] if not second
+                        else [worker("ctx_m5_unverifiable", "run-m5", "unverifiable")],
+                        "page": {"hasMore": not second, "nextCursor": None if second else "next"},
+                        "scope": {"source": "all"}}
+            # run on the M5Max, `local` lists the same worker again; it must count once
+            dup = [worker("ctx_m5_live", "run-m5", "live")] if "local" in args else []
+            return {"workers": dup, "page": {"hasMore": False}, "scope": {"source": "all"}}
         if args[0] == "terminal":
             return {"terminals": [{"handle": "term-remote", "connected": True}]}
-        return {"tasks": [{"title": "GATE-RUNNER-one task"}]}
+        assert args[-2:] == ("--environment", "M5Max")  # a run's task names come from the Mac that owns the run
+        return {"tasks": [{"title": "GATE-RUNNER-one: task"}]}
 
     monkeypatch.setattr(checks, "orca_json", orca)
     workers, unchecked = checks.live_workers()
     live, count = checks.board_workers(b, workers)
-    assert not unchecked and count == 1
+    assert not unchecked and count == 2
     assert live["names"] == {"GATE-RUNNER-one", "GR-one"}
-    assert live["ctxs"] == {"ctx_aaaaaaaaaaaa"} and "term-remote" in live["terms"]
-    terminals = [args for args in calls if args[0] == "terminal"]
-    assert len(terminals) == 3
-    assert terminals[1][-2:] == ("--environment", "M5Max")
-    assert terminals[2][-2:] == ("--environment", "M1Max16")
+    assert live["ctxs"] == {"ctx_m5_live", "ctx_m5_unverifiable"} and "term-remote" in live["terms"]
+    lists = [args for args in calls if args[1] == "worker-list"]
+    macs = [("--environment", "local"), ("--environment", "M5Max"), ("--environment", "M1Max16")]
+    assert [a[-2:] for a in lists if "--cursor" not in a] == macs
+    assert [args[-2:] for args in calls if args[0] == "terminal"] == macs
+
+
+def test_truncated_terminal_list_is_not_proof_of_absence(checks, monkeypatch):
+    def orca(*args):
+        if args[1] == "worker-list":
+            return {"workers": [], "page": {"hasMore": False}, "scope": {"source": "all"}}
+        return {"terminals": [], "truncated": "M1Max16" in args}
+
+    monkeypatch.setattr(checks, "orca_json", orca)
+    _, unchecked = checks.live_workers()
+    assert unchecked == [{"source": "terminal list --environment M1Max16", "reason": "truncated at 1000"}]
+
+
+def test_run_bound_local_list_is_not_proof_of_absence(checks, monkeypatch):
+    def orca(*args):
+        if args[1] == "worker-list":
+            bound = "local" in args
+            return {"workers": [], "page": {"hasMore": False},
+                    "scope": {"source": "bound", "run": "run-caller"} if bound else {"source": "all"}}
+        return {"terminals": []}
+
+    monkeypatch.setattr(checks, "orca_json", orca)
+    _, unchecked = checks.live_workers()
+    assert unchecked == [{"source": "worker-list", "reason": "scoped to run run-caller"}]
 
 
 def test_unchecked_liveness_never_resets_or_starts_reset_clock(checks, tmp_path, monkeypatch):
