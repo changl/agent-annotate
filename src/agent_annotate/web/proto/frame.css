@@ -181,6 +181,7 @@ a.btn{color:inherit;font-weight:400}
 .p-toastwrap{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:40;max-width:calc(100vw - 24px)}
 .p-toast{display:flex;align-items:center;gap:12px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-box);padding:8px 14px;box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 25%,transparent)}
 .p-toast .lk{color:var(--color-base-100);text-decoration:underline}
+.p-toast .p-inert{color:inherit;border-color:currentColor}  /* the toast is inverted: the marker takes its text colour */
 
 /* desk only: the phone's menu button, title, menu and floating Send */
 .mbtn,.ptitle,.pmenu,.fab,.ph-only{display:none}

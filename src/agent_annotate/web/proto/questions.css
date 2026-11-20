@@ -58,6 +58,7 @@
 .blkp{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;color:var(--err-text);border:1px solid var(--color-error);border-radius:10px;padding:0 7px 0 5px;white-space:nowrap}
 
 .qbody{display:flex;flex-direction:column;gap:10px}
+body.opts-first .qbody > .qan{order:-1}  /* settings: Options first puts the choices above the context */
 .qctx{margin:0 0 8px;padding:8px 12px;background:var(--excerpt-bg);border-radius:var(--radius-field);font-size:var(--text-primary);line-height:1.45}
 .qctx p{margin:0 0 6px}.qctx p:last-child{margin:0}
 .qopts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;align-items:stretch;margin:0 0 6px}

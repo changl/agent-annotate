@@ -64,7 +64,9 @@
 
   /* ---------- each picture remembers its own size (#118): 25 / 50 / 75 / 100 %, kept per picture ---------- */
   const SIZES = [25, 50, 75, 100];
-  P.picSizes = function (doc, ctx) {
+  // root: a document (a version's frame) or an element of this page (Questions, Reference)
+  P.picSizes = function (root, ctx) {
+    const doc = root.ownerDocument || root;
     if (!doc.getElementById('pp-size-css')) {
       const st = doc.createElement('style'); st.id = 'pp-size-css';
       st.textContent = '.pp-size{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:4px 0 10px;font:12px system-ui,sans-serif;color:#666}'
@@ -95,10 +97,10 @@
         ctx.prefs.set('picsize', all);
         apply(img, bar);
       };
-      (img.closest('a') || img).after(bar);
+      (img.closest('a, .qpinwrap') || img).after(bar);  // outside a note's pin box, so pins keep their spot
       apply(img, bar);
     };
-    doc.querySelectorAll('img').forEach(img => {
+    root.querySelectorAll('img').forEach(img => {
       img.loading = 'eager';  // the frame is as tall as its content, so a lazy picture would wait for nothing
       if (img.complete && img.naturalWidth) add(img); else img.addEventListener('load', () => add(img), {once: true});
     });

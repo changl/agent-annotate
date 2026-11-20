@@ -39,6 +39,8 @@
   const cardOpen = q => isDone(q) ? S.open.has(q.id) : !S.shut.has(q.id);
   const waitingCount = () => (D ? D.questions.filter(isWaiting).length : 0);
   const toSend = () => D ? D.questions.filter(q => !q.closed && (isDraft(q) || (draft(q.id).reply || '').trim())).length : 0;
+  // the one Send count: the bar here, the top bar and the phone's floating Send
+  const sendCount = () => D ? toSend() + D.notes.filter(x => !x.sent).length + (ctx.prefs.get('q:general', '').trim() ? 1 : 0) : 0;
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -137,7 +139,7 @@
   }
   function inflate(d) {  // "Earlier updates" carry their sections in a <template> until opened, as on today's page
     const tpl = d.querySelector(':scope > template');
-    if (tpl) { tpl.replaceWith(tpl.content.cloneNode(true)); placeCards(d); placeNotes(d); wrapTasks(d); }
+    if (tpl) { tpl.replaceWith(tpl.content.cloneNode(true)); placeCards(d); placeNotes(d); wrapTasks(d); if (P.picSizes) P.picSizes(d, ctx); }
   }
   function placeNotes(docEl) {
     D.notes.forEach((n, i) => {
@@ -186,7 +188,7 @@
     const decided = D.questions.filter(q => !isWaiting(q) && !q.later).length, all = D.questions.length;
     const chips = [['need', `Waiting ${cnt('need')}`], ['later', `<span class="hide-ph">Answer later</span><span class="ph-only">Later</span> ${cnt('later')}`], ['ready', `To send ${cnt('ready')}`], ['wait', `Sent ${cnt('wait')}`], ['arch', `Closed ${cnt('arch')}`]];
     const vsw = `<span class="qseg" role="group" aria-label="View">${[['doc', 'doc', 'Document', 'The review document, each card at its evidence'], ['list', 'list', 'Cards only', 'Only the cards, open; each folds once answered']].map(([v, k, t, tip]) => `<button data-view="${v}" aria-pressed="${S.view === v}" title="${tip}">${ic(k)}<span class="hide-ph">${t}</span></button>`).join('')}</span>`;
-    const n = toSend() + D.notes.filter(x => !x.sent).length + (ctx.prefs.get('q:general', '').trim() ? 1 : 0);
+    const n = sendCount();
     return `<div class="qbar">${vsw}<span class="qchips">${chips.map(([k, t]) => `<button class="chipb" data-filter="${k}" aria-pressed="${lv && S.filter === k}"${lv ? '' : ' title="Show these in Cards only"'}>${t}</button>`).join('')}</span>
       <span class="prog" title="${decided} of ${all} questions decided">${decided} of ${all}<span class="hide-ph"> decided</span><i><b style="width:${all ? Math.round(decided / all * 100) : 0}%"></b></i></span>
       <span class="spacer"></span>${lv ? `<span class="qseg" role="group" aria-label="Open or fold the cards">${ib('expand', 'Expand all: open every card', 'data-all="expand"')}${ib('collapse', 'Collapse all: fold every card to its line', 'data-all="collapse"')}${ib('colans', 'Collapse answered: fold the cards you answered, closed or set aside', 'data-all="answered"')}</span>` : ''}
@@ -219,6 +221,7 @@
         if (after) after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', newNoteBox());
       }
     }
+    if (P.picSizes) P.picSizes(root, ctx);  // each picture keeps the size he picks, as in Pages & links
     if (keepScroll) scrollTo(0, y);
     ctx.refreshChips();
   }
@@ -354,7 +357,7 @@
     if (ds.ncopy) return copy((D.notes.find(x => x.id === ds.ncopy) || {}).text || '', 'Note');
     if (ds.nlink) return copy(location.href.split('#')[0] + '#questions/n-' + ds.nlink, 'Link');
     // a note: tap a picture spot, select words, or click a line, row or item of the document
-    if (S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,figcaption,summary')) return;
+    if (S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.pp-size,figcaption,summary')) return;
     const img = e.target.closest('img');
     const anchorEl = e.target.closest('[data-anchor-id]');
     if (!anchorEl || anchorEl.tagName === 'SECTION' && !img) return;
@@ -399,7 +402,12 @@
 
   P.tab({
     key: 'questions',
-    chip: async c => { ctx = ctx || c; D = D || await c.data('questions'); const n = waitingCount(); return n ? {text: `${n} waiting`, tone: 'red', title: pl(n, 'question waits', 'questions wait') + ' for your answer'} : null; },
+    chip: async c => {
+      ctx = ctx || c; D = D || await c.data('questions');
+      const n = waitingCount(), later = D.questions.filter(FILTERS.later).length;
+      if (n) return {text: `${n} waiting`, tone: 'red', title: pl(n, 'question waits', 'questions wait') + ' for your answer'};
+      return later ? {text: `${later} later`, title: pl(later, 'question', 'questions') + ' set aside to answer later'} : null;
+    },
     render: async (el, c, anchor) => {
       ctx = c; root = el;
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
@@ -409,6 +417,12 @@
       el.onclick = onClick; el.oninput = onInput; el.onchange = onChange;
       await draw();
     },
+  });
+  const load = async c => { ctx = ctx || c; D = D || await c.data('questions'); };
+  P.send({
+    count: async c => { await load(c); return sendCount(); },
+    waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
+    open: c => { S.armed = true; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); else c.go('questions'); },
   });
   // shortcut: exposed for tests in a browser console only
   P.questionsState = () => ({S, D});

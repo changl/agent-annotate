@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 
-from agent_annotate.hooks.session_start import waiting_count
+from .questions import waiting as waiting_count  # one count everywhere: the Questions tab's waiting
 
 DAYS = 14
 TTL = 60  # seconds; Home reads ~40 pages, so one read a minute at most

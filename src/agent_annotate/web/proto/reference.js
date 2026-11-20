@@ -305,6 +305,7 @@
     if (!here()) return;
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
     el.innerHTML = `<div class="rf">${list()}${viewer()}</div>`;
+    if (P.picSizes) P.picSizes(el, ctx);  // each picture keeps the size he picks, as in Pages & links
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
     if (S.scroll) { S.scroll = false; const v = document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: 'start'}); }

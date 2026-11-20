@@ -50,12 +50,34 @@ def _decision(d):
     return {k: d.get(k) for k in ("verdict", "text", "option_id", "ts", "round_pending")}
 
 
+def _all(page_dir: Path) -> list:
+    comments = store.read_comments(page_dir)
+    # Close (today's archive) moves a card into "archived": it stays in place on the page, closed
+    return [c for part in ("anchors", "archived") for cs in (comments.get(part) or {}).values() for c in cs]
+
+
+def _asked(c, v) -> bool:
+    """A question on the Questions tab: this version's, top level, not withdrawn by the agent."""
+    return bool(c.get("version") == v and not c.get("parent_id") and c.get("decision_request")
+                and not (c.get("status") == "archived" and not _mine(c.get("archived_by"))))
+
+
+def _flags(c) -> dict:
+    d = _decision(c.get("decision"))
+    return {"closed": c.get("status") == "archived" and _mine(c.get("archived_by")),
+            "later": bool(c.get("answer_later")), "sent": bool(d and not d.get("round_pending"))}
+
+
+def waiting(page_dir: Path) -> int:
+    """Questions waiting on him: the one count the top bar, the tab, Home and every project row use."""
+    v = store.read_meta(page_dir).get("current")
+    return sum(1 for c in _all(page_dir) if _asked(c, v) and not any(_flags(c).values()))
+
+
 def build(page_dir: Path) -> dict:
     meta = store.read_meta(page_dir)
     v = meta.get("current")
-    comments = store.read_comments(page_dir)
-    # Close (today's archive) moves a card into "archived": it stays in place on the page, closed
-    allc = [c for part in ("anchors", "archived") for cs in (comments.get(part) or {}).values() for c in cs]
+    allc = _all(page_dir)
     # earlier answers, by the question's words (today's b15 match) and by the agent's item id
     past: dict[str, list] = {}
     for c in allc:
@@ -75,15 +97,15 @@ def build(page_dir: Path) -> dict:
                 notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
                               "target": c.get("target"), "sent": bool(c.get("flagged_for_session") or c.get("delivery_id"))})
             continue
-        if c.get("status") == "archived" and not _mine(c.get("archived_by")):
+        if not _asked(c, v):
             continue  # withdrawn by the agent
-        d = _decision(c.get("decision"))
+        d, f = _decision(c.get("decision")), _flags(c)
         text = json.dumps(dr, ensure_ascii=False)
         named = BEAD.findall(text)
         ids.update(named)
         replies = [{"you": _mine(r.get("author")), "text": _mask(r.get("text", "")), "ts": r.get("ts"),
                     "sent": bool(r.get("sent_at")) or not _mine(r.get("author"))} for r in c.get("replies") or []]
-        sent = bool(d and not d.get("round_pending"))
+        sent = f["sent"]
         seen, earlier = set(), []
         for key in ("p:" + dr.get("prompt", ""), "o:" + str(c.get("origin_item_id") or "")):
             for row in past.get(key, []):
@@ -92,11 +114,11 @@ def build(page_dir: Path) -> dict:
                     earlier.append(row)
         qs.append({
             "id": c["id"], "n": c.get("number"), "anchor": c.get("anchor_id"), "status": c.get("status"),
-            "closed": c.get("status") == "archived" and _mine(c.get("archived_by")),
+            "closed": f["closed"],
             "prompt": _mask(dr.get("prompt") or c.get("text")), "context": _mask(dr.get("context") or ""),
             "options": [{"id": o.get("id"), "label": _mask(o.get("label")), "c": _mask(o.get("consequence") or "")} for o in dr.get("options") or []],
             "rec": dr.get("recommendation"), "impact": dr.get("impact"), "blocking": bool(dr.get("blocking")),
-            "evidence": dr.get("evidence") or [], "later": bool(c.get("answer_later")), "decision": d, "replies": replies,
+            "evidence": dr.get("evidence") or [], "later": f["later"], "decision": d, "replies": replies,
             "sent": sent, "read": sent and c.get("status") in ("addressed_by_agent", "resolved_in_version"),
             "bead": named[0] if named else None,
             "earlier": sorted(earlier, key=lambda r: r["t"], reverse=True)[:8],

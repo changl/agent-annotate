@@ -133,15 +133,18 @@
   /* ---------- top bar ---------- */
   const projName = () => (S.meta && S.meta.name) || 'This project';
   const myName = () => (S.who && S.who.name) || 'You';
-  const waitingHere = () => (S.fd && S.fd.waiting) || 0;
+  // One waiting count: the Questions tab's, with his unsent answers; the server's same rule until it loads.
+  const waitingHere = () => S.qWait != null ? S.qWait : (S.fd && S.fd.waiting) || 0;
+  const projs = () => ((S.fd && S.fd.projects) || []).map(x => x.this ? {...x, waiting: waitingHere()} : x);
+  // One ready count: Running's, read from the board with `bd ready`.
+  const readyHere = () => S.ready != null ? S.ready : null;
   function reloadBtn() {
     const nw = S.newer;
     if (nw) return `<button class="rl2 new" data-recheck title="A newer version is ready. Red: ${pl(nw.n, 'new question', 'new questions')}. Amber: ${pl(nw.fix, 'fix', 'fixes')} to your notes. Press to load it; your place and what you typed are kept." aria-label="Load the newer version: ${pl(nw.n, 'new question', 'new questions')}, ${pl(nw.fix, 'fix', 'fixes')}">${I('reload')}${nw.n ? `<span class="n q">${nw.n}</span>` : ''}${nw.fix ? `<span class="n f">${nw.fix}</span>` : ''}</button>`;
     return `<button class="rl2" data-recheck title="Up to date${S.checked ? ', checked at ' + S.checked : ''}. The icon turns blue when the agent publishes a newer version; the page changes only when you press it." aria-label="Up to date. Check for a newer version">${I('reload')}</button>`;
   }
   function projRows() {
-    const ps = (S.fd && S.fd.projects) || [];
-    return ps.map(x => `<button class="mi" role="menuitem" ${x.this ? `data-gothis${S.home ? '' : ' aria-current="page"'}` : `data-home title="${esc(x.name)} is read-only in the prototype: its counts show on Home"`}><span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${x.this ? '' : '<span class="small mut">read-only</span>'}</button>`).join('');
+    return projs().map(x => `<button class="mi" role="menuitem" ${x.this ? `data-gothis${S.home ? '' : ' aria-current="page"'}` : `data-home title="${esc(x.name)} is read-only in the prototype: its counts show on Home"`}><span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${x.this ? '' : '<span class="small mut">read-only</span>'}</button>`).join('');
   }
   function settingsBody() {
     const fs = prefs.get('fs', 100), theme = themeMode(), rem = {...REM, ...prefs.get('rem', {})}, z = prefs.get('zoomDef', 75);
@@ -170,7 +173,7 @@
     const top = document.getElementById('p-top'), w = waitingHere();
     const cur = byKey[S.tab] || TABS[0];
     const mb = `<button class="mbtn" data-menu="nav" aria-haspopup="dialog" aria-expanded="${S.menu === 'nav'}" title="Menu: tabs, projects and settings" aria-label="Menu: tabs, projects and settings">${I(S.menu === 'nav' ? 'x' : 'menu')}</button>`;
-    const allW = ((S.fd && S.fd.projects) || []).reduce((s, x) => s + (x.waiting || 0), 0);
+    const allW = projs().reduce((s, x) => s + (x.waiting || 0), 0);
     const pt = `<button class="ptitle" data-menu="nav" aria-label="Menu: tabs, projects and settings">${S.home ? `<b>All projects</b><span class="tn">${pl(allW, 'question waiting', 'questions waiting')}</span>` : `<b>${esc(projName())}</b><span class="tn">${esc(cur.label)}<span data-chip="${cur.key}">${chipHtml(S.chips[cur.key])}</span></span>`}</button>`;
     const brand = `<a class="brand" href="#home" title="Home: every project" aria-label="Home: every project"${S.home ? ' aria-current="page"' : ''}>${I('home')}<span class="full">Agent Annotate</span></a>`;
     const projMenu = S.menu === 'proj' ? `<div class="menu" role="menu" aria-label="Projects"><h3>Your projects</h3>${projRows()}<div class="sep"></div><button class="mi" data-home><span class="nm">All projects (home)</span></button></div>` : '';
@@ -179,7 +182,7 @@
     const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(projName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${w} waiting</span>` : ''} ▾</button>${projMenu}</div>`;
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
     const ver = S.meta ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}</span>` : '';
-    const ready = S.board && typeof S.board.ready === 'number' ? S.board.ready : null;
+    const ready = readyHere();
     const beads = S.boardUrl ? `<a class="btn ghost hide-ph bdchip" href="${esc(S.boardUrl)}" target="_blank" rel="noopener" title="Open the bead board (read-only from here)">${I('bead')}Beads${ready != null ? `<span class="badge ok">${ready} ready</span>` : ''}</a>` : '';
     top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${reloadBtn()}${beads}${sendBtn('hide-ph')}${who}`;
     drawBar();
@@ -210,16 +213,19 @@
     topTimer = setTimeout(async () => {
       await Promise.all([
         sendP ? Promise.resolve().then(() => sendP.count(ctx)).then(n => { S.sendN = +n || 0; }).catch(e => console.warn('send count', e)) : null,
+        sendP && sendP.waiting ? Promise.resolve().then(() => sendP.waiting(ctx)).then(n => { S.qWait = +n || 0; }).catch(e => console.warn('waiting', e)) : null,
+        data('running').then(r => { S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null; }).catch(() => {}),
         data('frame', true).then(d => { S.fd = d; }).catch(() => {}),
       ]);
       drawTop(); drawFab(); if (S.menu === 'nav') drawLayer();
+      if (S.home) drawHome();  // its row for this page shows the same waiting count
     }, 300);
   }
 
   /* ---------- the phone's menu, People and keyboard shortcuts ---------- */
   function navMenu() {
     const tabs = S.home ? '' : `<nav aria-label="Tabs">${TABS.map(t => { const c = S.chips[t.key]; return `<button class="pm-tab ${t.tone}${c && c.empty ? ' empty' : ''}" role="tab" data-tab="${t.key}" aria-selected="${S.tab === t.key}">${I(t.icon)}<span>${esc(t.label)}</span><span data-chip="${t.key}">${chipHtml(c)}</span></button>`; }).join('')}</nav>
-      <div class="pm-acts">${sendBtn('')}${S.boardUrl ? `<a class="btn" href="${esc(S.boardUrl)}" target="_blank" rel="noopener">${I('bead')} Bead board${S.board && typeof S.board.ready === 'number' ? ` <span class="badge ok">${S.board.ready} ready</span>` : ''}</a>` : ''}</div>`;
+      <div class="pm-acts">${sendBtn('')}${S.boardUrl ? `<a class="btn" href="${esc(S.boardUrl)}" target="_blank" rel="noopener">${I('bead')} Bead board${readyHere() != null ? ` <span class="badge ok">${readyHere()} ready</span>` : ''}</a>` : ''}</div>`;
     return `<div class="pmenu" role="dialog" aria-label="Menu">${tabs}<h3>Projects</h3>${projRows()}<button class="mi" data-home${S.home ? ' aria-current="page"' : ''}><span class="nm ri8">${I('home')} All projects</span></button><div class="smb">${settingsBody()}</div></div>`;
   }
   const KEYS = [['F', 'next question'], ['A', 'previous question'], ['1–9', 'pick that choice on the highlighted question'], ['C', 'write words on the highlighted question'],
@@ -248,12 +254,17 @@
     el.className = 'p-main home';
     const fd = S.fd || await data('frame').catch(() => null);
     if (!fd) { el.innerHTML = `<div class="p-empty">${I('warn')}<p>Home could not load its counts.</p></div>`; return; }
+    S.fd = fd;
     const run = await data('running').catch(() => ({}));
     const days = fd.days || 14;
     const ago = h => h == null ? 'no page yet' : h < 1 ? 'under an hour ago' : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
     const SL = {working: 'working', stuck: 'no sign of life', failed: 'failed', done: 'done', later: 'later', stopped: 'stopped'};
-    const rows = fd.projects.map(x => {
-      const ws = x.this && Array.isArray(run.workers) ? run.workers.map(w => ({name: w.name || '', s: w.s || w.state || 'working'})) : null;
+    const rows = projs().map(x => {
+      // running.json keeps workers by Mac, every project's; this row shows this project's, as Running does
+      // shortcut: the project is fixed to FastLane Drive, as in running.js; take it from the page when other pages use this UI
+      const rw = Array.isArray(run.workers) ? run.workers : run.workers && typeof run.workers === 'object'
+        ? Object.values(run.workers).flatMap(v => (v && v.workers) || []).filter(w => w.proj === 'fld') : null;
+      const ws = x.this && rw ? rw.map(w => ({name: w.name || '', s: w.s || w.state || 'working'})) : null;
       const jobs = x.this && Array.isArray(run.jobs) ? run.jobs : null;
       const bad = (jobs || []).filter(j => j.failing).length + (ws || []).filter(w => w.s === 'stuck' || w.s === 'failed').length;
       const h = x.lastAgoH;

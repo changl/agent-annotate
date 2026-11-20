@@ -129,6 +129,34 @@ def _record(db, task_id):
     return clean(re.sub(r"\s*\(.*", "", (r[0] if r else "") or ""), 60), ("" if rep in ("Question", "Status") else rep[:140])
 
 
+_BEAD = re.compile(r"\bFLD-[a-z0-9]+(?:\.\d+)*\b")
+
+
+def _bead(db, task_id):
+    """The first task on the board a worker's brief names, or None."""
+    r = db.execute("select coalesce(task_title, '') || ' ' || coalesce(spec, '') from tasks where id = ?", (task_id,)).fetchone()
+    m = _BEAD.search(r[0]) if r else None
+    return m.group(0) if m else None
+
+
+def group_work(out):
+    """Workers grouped by the real work: the board epic (else the task) their brief names. Every FLD worker shares one run,
+    so the run's objective said the same thing on every Mac."""
+    ws = [w for m in (out.get("workers") or {}).values() if isinstance(m, dict) for w in m.get("workers") or []]
+    beads = (out.get("board") or {}).get("beads") or {}
+    roots = {w["bead"].split(".")[0] for w in ws if w.get("bead")}
+    titles = {k: beads[k]["t"] for k in roots if k in beads}
+    missing = sorted(roots - titles.keys())
+    if missing:  # closed epics are not on Running's open list
+        rows = safe(lambda: run_json(["bd", "-C", str(FLD_BOARD), "--readonly", "show", *missing, "--json"], timeout=60), [])
+        titles.update({r["id"]: r.get("title") or "" for r in rows if isinstance(r, dict) and r.get("id")})
+    for w in ws:
+        b = w.pop("bead", None)
+        t = titles.get(b.split(".")[0]) if b else None
+        w["work"] = _cut(t, 70) if t else "Other work"
+    return out
+
+
 def workers():
     """{machine: {ok, why?, workers: [...]}}. The M1 Max record coordinates every Mac's work, so run and report come from it."""
     db = _orca_db()
@@ -157,7 +185,7 @@ def workers():
                 state = "working"
             out.append({"name": clean(t[0] if t else "") or "a worker", "s": state, "agent": prov.get("id") or "", "model": prov.get("model") or "",
                         "work": work, "proj": proj_of(ws + " " + (t[0] if t else "") + " " + work), "heard": heard,
-                        "mins": mins_since(t[1]) if t else None, "report": rep})
+                        "mins": mins_since(t[1]) if t else None, "report": rep, "bead": _bead(db, w.get("taskId"))})
         res[name] = {"ok": True, "workers": out}
     # this Mac: dispatched workers whose terminal is still open (Orca's terminal list), plus those that failed in the last two hours;
     # the terminal's last output is the last sign of life
@@ -180,7 +208,8 @@ def workers():
         work, rep = _record(db, tid)
         m1.append({"name": clean(dn), "s": state, "agent": la.get("agent") or so.get("agent") or "", "model": la.get("model") or "",
                    "effort": la.get("effort") or "", "work": work, "proj": proj_of(work + " " + (dn or "")), "heard": heard,
-                   "mins": mins_since(at) if st == "dispatched" else (mins_since(at) or 0) - (mins_since(done) or 0), "report": rep})
+                   "mins": mins_since(at) if st == "dispatched" else (mins_since(at) or 0) - (mins_since(done) or 0), "report": rep,
+                   "bead": _bead(db, tid)})
     res["M1 Max"] = {"ok": True, "workers": m1}
     db.close()
     return res
@@ -453,6 +482,7 @@ def _compute(page_dir: Path) -> dict:
         f = {k: ex.submit(safe, fn, None) for k, fn in
              (("workers", workers), ("board", board), ("jobs", jobs), ("prs", prs), ("load", machine_load), ("an", lambda: analytics(page_dir)))}
         out = {k: v.result() for k, v in f.items()}
+    safe(lambda: group_work(out), {})
     out["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return mask(out)
 
