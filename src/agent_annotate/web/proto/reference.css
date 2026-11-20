@@ -1,0 +1,164 @@
+/* Reference tab, from round9/final/mock.html (r8-reference, r9-reference). Every rule is scoped to the tab: #p-main is shared. */
+.tab-reference .rf{min-width:0}
+.tab-reference .r8bar{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:4px 0 8px}
+.tab-reference .r8bar input[type=search]{flex:1 1 280px;max-width:420px;min-width:0;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:5px 10px}
+.tab-reference .rf-chips{display:flex;flex-wrap:wrap;gap:4px}
+.tab-reference .r8bar .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.tab-reference .chipb{display:inline-flex;align-items:center;gap:4px}
+.tab-reference .chipb .n{font-weight:400;color:var(--muted)}.tab-reference .chipb[aria-pressed=true] .n{color:inherit}
+.tab-reference .chipb svg.pi{width:14px;height:14px}
+.tab-reference .chipb:disabled{opacity:.45;cursor:default}
+.tab-reference .rf-new{display:inline-block;font-size:var(--fs-xs);font-weight:700;border-radius:9px;padding:0 7px;background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text);vertical-align:1px;white-space:nowrap}
+/* the list: groups in as many columns as fit */
+.tab-reference .r8list{columns:3 440px;column-gap:24px;padding:2px 0 8px}
+.tab-reference .r8g{break-inside:avoid;margin:0 0 14px;border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100)}
+.tab-reference .r8gh{position:relative;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--excerpt-bg);font-weight:700;font-size:var(--fs-md);border-radius:var(--radius-box) var(--radius-box) 0 0}
+.tab-reference .r8gh .gt{min-width:0}
+.tab-reference .r8gh .n{font-weight:400;color:var(--muted);font-size:var(--fs-sm)}
+.tab-reference .r8gh input{flex:1;min-width:0;font-weight:600;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:3px 8px}
+.tab-reference .r8row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:2px 10px;align-items:start;width:100%;border:0;border-top:1px solid color-mix(in oklab,var(--line) 70%,transparent);background:none;padding:7px 10px;text-align:left;cursor:pointer;color:inherit;font:inherit}
+.tab-reference .r8gh+.r8row{border-top:0}
+.tab-reference .r8row:hover{background:color-mix(in oklab,var(--color-primary) 6%,transparent)}
+.tab-reference .r8row[aria-pressed=true]{background:color-mix(in oklab,var(--color-primary) 12%,transparent);box-shadow:inset 3px 0 0 var(--color-primary)}
+.tab-reference .r8row svg.pi{margin-top:2px;color:var(--muted)}
+.tab-reference .r8row .t{font-weight:600;overflow-wrap:anywhere}
+.tab-reference .r8row .m{grid-column:2/4;font-size:var(--fs-sm);color:var(--muted);overflow-wrap:anywhere}
+.tab-reference .r8row .s{grid-row:1;grid-column:3;display:flex;gap:6px;align-items:center}
+.tab-reference .rf-st{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;border-radius:10px;padding:0 8px;white-space:nowrap}
+.tab-reference .rf-st i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.tab-reference .rf-st.prop{background:color-mix(in oklab,var(--st-waiting) 22%,var(--color-base-100));color:var(--color-base-content)}
+.tab-reference .rf-st.prop i{background:var(--st-waiting)}
+.tab-reference .rf-st.ok{background:var(--done-bg);color:var(--ok-text)}
+.tab-reference .rf-st.ref{background:var(--excerpt-bg);color:var(--muted)}
+.tab-reference .tact{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:none;border-radius:6px;padding:3px 8px;font-size:var(--fs-sm);font-weight:600;color:var(--muted);cursor:pointer;flex:none;white-space:nowrap}
+.tab-reference .tact:hover,.tab-reference .tact:focus-visible,.tab-reference .tact[aria-expanded=true]{border-color:var(--line);background:var(--color-base-100);color:var(--color-base-content)}
+.tab-reference .pop{position:absolute;right:6px;top:36px;z-index:12;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-field);box-shadow:0 6px 20px color-mix(in oklab,#000 18%,transparent);padding:4px;min-width:220px;max-width:calc(100vw - 40px);font-weight:400}
+.tab-reference .pop>div{padding:4px 10px}
+.tab-reference .pop button{display:block;width:100%;text-align:left;border:0;background:none;padding:6px 10px;border-radius:4px;cursor:pointer;color:inherit}
+.tab-reference .pop button:hover{background:var(--excerpt-bg)}
+/* workflows: a chevron opens the steps in place */
+.tab-reference .r9fl{display:flex;align-items:stretch;border-top:1px solid color-mix(in oklab,var(--line) 70%,transparent)}
+.tab-reference .r9fl .r8row{border-top:0;flex:1;min-width:0;padding-left:4px}
+.tab-reference .r9fl .chev{border:0;background:none;color:var(--muted);cursor:pointer;padding:9px 0 0 8px;display:flex;align-items:flex-start}
+.tab-reference .r9fl .chev svg{transition:transform .15s}.tab-reference .r9fl .chev[aria-expanded=true] svg{transform:rotate(90deg)}
+.tab-reference .r9fx{padding:0 10px 8px 30px}.tab-reference .r9fx p{margin:4px 0}
+.tab-reference .ftree{list-style:none;margin:6px 0;padding:0}
+.tab-reference .ftree .ftree{margin:4px 0 4px 11px;padding-left:14px;border-left:2px solid var(--line)}
+.tab-reference .fs9{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:4px 6px;border-radius:6px}
+.tab-reference .fs9 .nm{min-width:0}
+.tab-reference .fs9 .kd{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.tab-reference .kpill{display:inline-flex;align-items:center;gap:3px;font-size:var(--fs-xs);font-weight:600;border-radius:4px;padding:0 6px;background:var(--excerpt-bg);color:var(--muted);white-space:nowrap}
+.tab-reference .kpill svg.pi{width:12px;height:12px;vertical-align:0}
+.tab-reference .kpill.ai{background:color-mix(in oklab,var(--color-primary) 16%,var(--color-base-100));color:var(--color-base-content)}
+.tab-reference .kpill.wait{background:color-mix(in oklab,var(--st-waiting) 24%,var(--color-base-100));color:var(--color-base-content)}
+.tab-reference .fgrp{font-size:var(--fs-sm);font-weight:700;color:var(--muted);padding:4px 6px 0;display:flex;gap:6px;align-items:center}
+.tab-reference .fgrp.taken{color:var(--ok-text)}.tab-reference .rf-failg{color:var(--err-text)}
+.tab-reference .rf-none{margin:0 0 4px 26px}
+/* state marks: one colour per state */
+.tab-reference .sm9{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;flex:none;vertical-align:-3px;margin-right:4px}
+.tab-reference .sm9 svg.pi{width:12px;height:12px;stroke-width:2.4}
+.tab-reference .sm9.ok{background:var(--st-done);color:var(--color-base-100)}
+.tab-reference .sm9.fail{background:var(--st-failed);color:#fff}
+.tab-reference .sm9.blocked{background:var(--st-blocked)}
+.tab-reference .sm9.in{background:conic-gradient(var(--st-progress) 0 50%,transparent 50% 100%);box-shadow:inset 0 0 0 2px var(--st-progress)}
+.tab-reference .sm9.todo,.tab-reference .sm9.skp,.tab-reference .sm9.none{box-shadow:inset 0 0 0 2px var(--st-none)}
+/* documents */
+.tab-reference .rf-docs{border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100);margin:0 0 14px}
+.tab-reference .rf-dh{flex-wrap:wrap}
+.tab-reference .docbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px 2px}
+.tab-reference .rf-grp{padding:0 10px}
+.tab-reference .fold{display:flex;align-items:center;gap:10px;width:100%;border:0;border-top:1px solid var(--line);background:none;text-align:left;cursor:pointer;padding:8px 0;min-height:38px;font-weight:700}
+.tab-reference .rf-grp:first-of-type .fold{border-top:0}
+.tab-reference .fold::before{content:"";flex:none;width:7px;height:7px;border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);transform:rotate(-45deg);margin:0 3px;transition:transform .12s}
+.tab-reference .fold[aria-expanded=true]::before{transform:rotate(45deg)}
+.tab-reference .fold .small{font-weight:400}
+.tab-reference .doc9{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto auto;gap:2px 12px;align-items:center;padding:5px 4px;border-top:1px solid color-mix(in oklab,var(--line) 70%,transparent)}
+.tab-reference .doc9[aria-current=true]{background:color-mix(in oklab,var(--color-primary) 10%,transparent)}
+.tab-reference .doc9 .nm{min-width:0;text-align:left;border:0;background:none;padding:0;font-weight:600;color:var(--color-primary);cursor:pointer;overflow-wrap:anywhere}
+[data-theme=dark] .tab-reference .doc9 .nm{color:color-mix(in oklab,var(--color-primary) 55%,var(--color-base-content))}
+.tab-reference .doc9 .nm:hover{text-decoration:underline}
+.tab-reference .doc9 .sub{display:block;font-weight:400;font-size:var(--fs-xs);color:var(--muted)}
+.tab-reference .doc9 .sz,.tab-reference .doc9 .d9t{font-size:var(--fs-sm);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.tab-reference .rf-more{margin:4px 0 8px 28px}
+/* file kinds: Markdown is the landscape M-down mark in blue, Word a page with a W in navy */
+.tab-reference .rf-dk{display:inline-grid;place-items:center;width:22px;height:20px;flex:none}
+.tab-reference .rf-dk svg.pi{width:20px;height:20px;stroke-width:1.5}
+.tab-reference .rf-dk.k-md{color:#3f6fb5}.tab-reference .rf-dk.k-pdf{color:#c2372f}.tab-reference .rf-dk.k-word{color:#2b5797}.tab-reference .rf-dk.k-sheet{color:#1e7a45}.tab-reference .rf-dk.k-video{color:#6b4fa3}
+[data-theme=dark] .tab-reference .rf-dk.k-md{color:#7fa8e8}[data-theme=dark] .tab-reference .rf-dk.k-pdf{color:#f07b72}[data-theme=dark] .tab-reference .rf-dk.k-word{color:#8fb0ea}[data-theme=dark] .tab-reference .rf-dk.k-sheet{color:#5fc58a}[data-theme=dark] .tab-reference .rf-dk.k-video{color:#b39be0}
+.tab-reference .chipb .rf-dk{width:16px;height:16px}.tab-reference .chipb .rf-dk svg.pi{width:16px;height:16px}
+/* the opened entry */
+.tab-reference .viewer{border-top:2px solid var(--line);padding:12px 0;scroll-margin-top:100px}
+.tab-reference .rf-docv{border-top:1px solid var(--line);margin:4px 0 10px;padding:10px 0 4px}
+.tab-reference .rf-acts{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:6px 0}
+.tab-reference .rf-vh{margin:0 0 8px}.tab-reference .rf-vt{font-size:var(--fs-lg)}
+.tab-reference .rf-topic select{border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:2px 6px;max-width:220px}
+.tab-reference .revbar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:var(--fs-sm);padding:6px 10px;background:var(--excerpt-bg);border-radius:var(--radius-field);margin:0 0 8px}
+.tab-reference .r8v{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
+.tab-reference .vlist{border:1px solid var(--line);border-radius:var(--radius-box);padding:4px 0;position:sticky;top:100px;max-height:calc(100vh - 120px);overflow:auto;background:var(--color-base-100)}
+.tab-reference .vlist h5{margin:4px 12px 6px;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.tab-reference .vrow{display:block;width:100%;border:0;border-left:3px solid transparent;background:none;text-align:left;padding:6px 12px;font-size:var(--fs-sm);color:inherit;cursor:pointer}
+.tab-reference .vrow[aria-current=true]{border-left-color:var(--color-primary);background:color-mix(in oklab,var(--color-primary) 10%,transparent)}
+.tab-reference .vrow b{display:block}.tab-reference .vrow span{color:var(--muted)}
+.tab-reference .doc{padding:8px 12px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-field);min-width:0}
+.tab-reference .doc p,.tab-reference .doc h4{margin:0 0 8px;max-width:110ch}
+.tab-reference .doc h4{font-size:var(--fs-base);margin-top:12px}
+.tab-reference .doc .li{padding-left:16px;position:relative}.tab-reference .doc .li::before{content:"•";position:absolute;left:4px}
+.tab-reference [data-line]{cursor:pointer;border-radius:3px;scroll-margin-top:100px}
+.tab-reference [data-line]:hover{background:var(--excerpt-bg);outline:1px dashed var(--faint)}
+.tab-reference figure{margin:6px 0 10px;max-width:1000px}
+.tab-reference figure img{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--line)}
+.tab-reference figcaption{font-size:var(--fs-sm);color:var(--muted);margin-top:4px}
+.tab-reference .rf-code{position:relative;margin:6px 0 10px}
+.tab-reference .rf-code pre{margin:0;padding:8px 10px;background:var(--excerpt-bg);border-radius:var(--radius-field);white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
+.tab-reference .rf-code .btn{position:absolute;top:4px;right:4px}
+/* plan tables wrap at every width, task ids included: no sideways scroll */
+.tab-reference .tblw{margin:6px 0 10px}
+.tab-reference .tblw table{width:100%;border-collapse:collapse;font-size:var(--fs-md);table-layout:auto}
+.tab-reference .tblw td,.tab-reference .tblw th{border:1px solid var(--line);padding:4px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere;word-break:break-word}
+.tab-reference .tblw th{font-weight:600;background:var(--excerpt-bg)}
+@media (min-width:701px){.tab-reference .tblw{container-type:inline-size}.tab-reference .tblw td,.tab-reference .tblw th{min-width:min(6.5em,calc(100cqi / var(--c,1) - 2px))}}
+.tab-reference del{background:color-mix(in oklab,var(--color-error) 18%,transparent);color:var(--err-text)}
+.tab-reference ins{background:var(--done-bg);color:var(--ok-text);text-decoration:none}
+.tab-reference .rf-tag{font-size:var(--fs-xs);border-radius:4px;padding:0 6px;white-space:nowrap;border:1px solid var(--orange);color:var(--warn-text);margin-left:6px}
+.tab-reference .rf-bd{display:inline;font-weight:600;border-radius:4px;padding:0 4px;background:color-mix(in oklab,var(--st) 16%,var(--color-base-100))}
+.tab-reference .rf-bd .dot{width:8px;height:8px;margin-right:4px;vertical-align:0}
+.tab-reference .rf-bd code{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace}
+.tab-reference .rf-det{margin:12px 0}.tab-reference .rf-det summary{cursor:pointer;font-weight:600;padding:6px 0}
+.tab-reference .rf-what{max-width:90ch}
+/* notes */
+.tab-reference .rf-pin{display:inline-flex;align-items:center;gap:2px;height:18px;padding:0 6px 0 4px;border-radius:9px;background:var(--color-primary);color:var(--color-primary-content);font-size:11px;font-weight:700;margin-right:6px;vertical-align:1px}
+.tab-reference .rf-pin svg.pi{width:11px;height:11px}
+.tab-reference .rf-notes{margin:2px 0 10px;max-width:80ch}
+.tab-reference .rf-nt{border-left:3px solid var(--color-primary);padding:4px 10px;margin:4px 0;background:color-mix(in oklab,var(--color-primary) 7%,var(--color-base-100));border-radius:0 var(--radius-field) var(--radius-field) 0}
+.tab-reference .rf-nw{font-size:var(--fs-sm);color:var(--muted)}.tab-reference .rf-nw svg.pi{width:13px;height:13px;margin-right:3px}
+.tab-reference .rf-box{border:1px solid var(--color-primary);border-radius:var(--radius-field);padding:8px;background:var(--color-base-100)}
+.tab-reference .rf-box textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:6px 8px;display:block}
+/* the checklist */
+.tab-reference .rf-chart{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:4px 0 8px;padding:6px}
+.tab-reference .prog2{display:flex;height:12px;border-radius:6px;overflow:hidden;min-width:160px;flex:1;max-width:520px}.tab-reference .prog2 i{display:block}
+.tab-reference .rf-legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-sm)}
+.tab-reference .r9chips{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:6px 0 10px}
+.tab-reference .r9chips .cg{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.tab-reference .r9chips .cgl{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:2px}
+.tab-reference .cl9{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:7px 4px;border-top:1px solid color-mix(in oklab,var(--line) 70%,transparent)}
+.tab-reference .cl9 .tx{min-width:0}
+.tab-reference .rf-task{display:block;margin-top:2px}
+.tab-reference .cl9 .pl{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;align-items:center}
+.tab-reference .pl9{display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font-size:var(--fs-xs);font-weight:600;white-space:nowrap;border:1px solid transparent;background:var(--excerpt-bg)}
+.tab-reference .pl9.who9{background:color-mix(in oklab,var(--color-primary) 12%,var(--color-base-100))}
+.tab-reference .pl9.who9.you{background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text)}
+@media (max-width:900px){.tab-reference .r8v{grid-template-columns:minmax(0,1fr)}.tab-reference .vlist{position:static;max-height:none;order:-1}}
+/* phone: 390 px in its own right */
+@media (max-width:600px){
+  .tab-reference .r8bar input[type=search]{flex-basis:100%;max-width:none}
+  .tab-reference .r8bar .sep,.tab-reference .r8bar .spacer{display:none}
+  .tab-reference .r8list{columns:1}
+  .tab-reference .tact{padding:3px 4px}
+  .tab-reference .doc9{grid-template-columns:24px minmax(0,1fr) auto auto}.tab-reference .doc9 .sz{display:none}
+  .tab-reference .cl9{grid-template-columns:22px minmax(0,1fr)}.tab-reference .cl9 .pl{grid-column:2;justify-content:flex-start}
+  .tab-reference .fs9{grid-template-columns:22px minmax(0,1fr)}.tab-reference .fs9 .kd{grid-column:2;justify-content:flex-start}
+  .tab-reference .r9fx{padding-left:12px}
+  .tab-reference .doc{padding:8px}
+  .tab-reference .vlist{max-height:220px;overflow:auto}
+}
+@media (max-width:700px){.tab-reference .tblw td,.tab-reference .tblw th{padding:3px 5px;font-size:var(--fs-sm)}}
