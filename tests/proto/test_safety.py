@@ -9,13 +9,13 @@ import threading
 import pytest
 
 from agent_annotate.paths import WEB_DIR
-from agent_annotate.proto_data import questions, scrub
+from agent_annotate.proto_data import questions, scrub, scrub_json
 from agent_annotate.sync_server import ReviewHTTPServer, make_handler
 
 REAL = "pat.doe@realmail.test"
 COMPANY = "support@fastlanedrive.com"
 KEY = "FAKEreviewKEY0123456789abcdef"
-TEXT = f"Ask {COMPANY} or {REAL}; see https://h.ts.net/annotate/reviews/x/#review={KEY} and icon@2x.png"
+TEXT = f"Ask {COMPANY} or\n{REAL}; see https://h.ts.net/annotate/reviews/x/#review={KEY} and icon@2x.png"
 
 
 def test_scrub_masks_every_address_and_key():
@@ -24,6 +24,15 @@ def test_scrub_masks_every_address_and_key():
     assert out.count("member@example.com") == 2 and "#review=redacted" in out and "icon@2x.png" in out
     assert scrub("member@example.com") == "member@example.com"
     assert questions._mask(COMPANY) == "member@example.com"  # no company exemption
+
+
+@pytest.mark.parametrize("fn", [lambda t: scrub(t, escaped=True), scrub_json])
+def test_escaped_json_stays_valid(fn):
+    """An address right after an escape (\\n, \\u00e9) must not eat the escape."""
+    raw = json.dumps({REAL: f"line\n{REAL}\té{COMPANY} \\{REAL}"})  # ensure_ascii writes é
+    out = json.loads(fn(raw))
+    assert REAL not in json.dumps(out) and COMPANY not in json.dumps(out)
+    assert out == {"member@example.com": "line\nmember@example.com\témember@example.com \\member@example.com"}
 
 
 @pytest.fixture
@@ -68,6 +77,7 @@ def test_proto_replies_are_masked(serve, path, gz):
     status, body = serve({"current": "v1", "history": [], "ui": "proto"})(path, gz)
     assert status == 200
     assert REAL not in body and COMPANY not in body and KEY not in body
+    json.loads(body)
 
 
 def test_ordinary_page_is_unchanged(serve):

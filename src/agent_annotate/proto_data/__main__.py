@@ -6,7 +6,7 @@ Prints counts only, never a match.
 import sys
 from pathlib import Path
 
-from . import scrub
+from . import scrub, scrub_json
 
 changed = 0
 for p in sorted(x for x in Path(sys.argv[1]).rglob("*") if x.is_file() and not x.is_symlink()):
@@ -14,8 +14,7 @@ for p in sorted(x for x in Path(sys.argv[1]).rglob("*") if x.is_file() and not x
         text = p.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):
         continue  # images and other binary files
-    clean = scrub(text)
-    if clean != text:
-        p.write_text(clean, encoding="utf-8")
+    if scrub(text, escaped=True) != text:  # something to hide; JSON is scrubbed by value so it stays valid
+        p.write_text(scrub_json(text) if p.suffix in (".json", ".ndjson") else scrub(text, escaped=True), encoding="utf-8")
         changed += 1
 print(f"scrubbed {changed} file(s)")
