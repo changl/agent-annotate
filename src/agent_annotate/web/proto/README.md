@@ -1,6 +1,6 @@
 # Prototype UI: module contract
 
-Served only for a page whose `current.meta.json` has `"ui": "proto"`. Files: `web/proto/<area>.js|.css`, `proto_data/<area>.py`, `tests/proto/`. Areas: `questions`, `reference`, `running` (Running and Analytics tabs), `history`, `links`. Touch only your own files.
+Served only for a page whose `current.meta.json` has `"ui": "proto"`. Files: `web/proto/<area>.js|.css`, `proto_data/<area>.py`, `tests/proto/`. Areas: `questions`, `reference`, `running` (Running and Analytics tabs), `history`, `links`; the frame owns `frame`. Touch only your own files.
 
 **Register a tab.** `frame.js` loads `proto/<area>.css` and `proto/<area>.js` when present, then routes. In your JS:
 
@@ -11,7 +11,15 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
   render: async (el, ctx, anchor) => { el.innerHTML = '...'; }});
 ```
 
-`render` owns `el` (`<main>`, class `area-<area> tab-<key>`), is called each time the tab opens, and gets the `anchor` from `#<tab>/<anchor>`. Call `ctx.refreshChips()` after a change.
+`render` owns `el` (`<main>`, class `area-<area> tab-<key>`), is called each time the tab opens, and gets the `anchor` from `#<tab>/<anchor>`. Call `ctx.refreshChips()` after a change. A chip of `{empty: true}` dims the tab and reads "nothing yet"; tones also take `blue` and `orange`.
+
+**Added in round 10 (frame):**
+- `Proto.send({count: ctx => n, open: ctx => {...}})`: the questions area registers Send. The frame draws the top-bar Send ("Send N", primary once N > 0) and the phone's floating Send, and calls `open` on a click. Call `ctx.refreshTop()` after an answer changes N. ⌘↵ stays with the questions area.
+- `Proto.bar({render: (el, ctx) => {...}})`: one top-bar slot beside the version (Running's worker squares).
+- `ctx.remember('folds'|'tab'|'drafts')`: the settings switches; keep folds or drafts across reloads only when true.
+- Settings also set `prefs.get('optsFirst')` (and `body.opts-first`) and `prefs.get('zoomDef', 75)`, the width full-size pictures open at.
+- Home (`#home`) reads `proto/data/frame.json`. On this project's row it shows `running.json`'s `workers: [{name, state}]` and `jobs: [{name, failing}]` when present.
+- Use `.p-primary` for question context; textareas and text inputs are already 16 px at 100% (`--fs-primary`).
 
 **ctx**
 - `base`: the page's URL, ending in `/`. Use relative paths.

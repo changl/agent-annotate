@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Agent Annotate · prototype</title>
 <link rel="icon" href="data:,">
-<script>try{var t=localStorage.getItem('annotate:theme');var d=t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light'}catch(e){}</script>
+<script>try{var t=localStorage.getItem('annotate:theme');var d=t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';var f=+JSON.parse(localStorage.getItem('annotate-proto:fs')||'100');if(f)document.documentElement.style.setProperty('--fs',f/100)}catch(e){}</script>
 <link rel="stylesheet" href="proto/tokens.css">
 <link rel="stylesheet" href="proto/frame.css">
 <script src="proto/icons.js"></script>
@@ -13,15 +13,11 @@
 </head>
 <body>
 <a class="skip" href="#p-main">Skip to content</a>
-<header class="top">
-  <span class="brand" id="p-name">&nbsp;</span>
-  <span class="p-inert">prototype</span>
-  <span class="spacer"></span>
-  <button class="ib" id="p-reload" title="Reload" aria-label="Reload"></button>
-  <button class="ib" id="p-theme"></button>
-</header>
+<header class="top" id="p-top"></header>
 <nav class="tabs" id="p-tabs" role="tablist" aria-label="Tabs"></nav>
 <main class="p-main" id="p-main"></main>
+<div id="p-layer"></div>
+<button class="fab" id="p-fab" hidden></button>
 <div id="p-toast" class="p-toastwrap" aria-live="polite"></div>
 </body>
 </html>
