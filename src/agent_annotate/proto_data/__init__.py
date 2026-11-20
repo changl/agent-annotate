@@ -14,6 +14,17 @@ import re
 _AREA = re.compile(r"/proto/data/([a-z][a-z0-9_]{0,40})\.json")
 _FILE = re.compile(r"/proto/([A-Za-z0-9][A-Za-z0-9_.-]{0,80})")
 
+MASK = "member@example.com"
+# every address, company mailboxes included; not image names such as icon@2x.png
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?!(?:png|jpe?g|gif|svg|webp)\b)[A-Za-z]{2,}\b")
+# a review link credential, or any similar key carried in a link
+KEY = re.compile(r"([#?&;](?:review|token|key|access_token|auth|signin|invite)=)[^\s&#;\"'<>)\]\\]+", re.I)
+
+
+def scrub(s: str) -> str:
+    """No real address and no review key leaves the prototype page."""
+    return KEY.sub(r"\1redacted", EMAIL.sub(MASK, s))
+
 
 def build(area: str, page_dir) -> dict:
     try:

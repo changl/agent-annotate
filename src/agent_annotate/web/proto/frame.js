@@ -324,7 +324,8 @@
 
   /* ---------- theme and text size ---------- */
   const THEMES = ['light', 'dark', 'system'];
-  function themeMode() { try { const t = localStorage.getItem('annotate:theme'); return THEMES.includes(t) ? t : 'system'; } catch { return 'system'; } }
+  // own key: ordinary pages share this origin and read annotate:theme
+  function themeMode() { const t = prefs.get('theme', 'system'); return THEMES.includes(t) ? t : 'system'; }
   function applyTheme(mode) {
     const dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -365,7 +366,7 @@
       return;
     }
     if (d.signout !== undefined) { S.menu = ''; drawAll(); inert('Signed out'); return; }
-    if (d.setTheme) { try { localStorage.setItem('annotate:theme', d.setTheme); } catch {} applyTheme(d.setTheme); drawAll(); return; }
+    if (d.setTheme) { prefs.set('theme', d.setTheme); applyTheme(d.setTheme); drawAll(); return; }
     if (d.fs) { setFs(prefs.get('fs', 100) + +d.fs); drawAll(); return; }
     if (d.fsset) { setFs(d.fsset); drawAll(); return; }
     if (d.zdef) { prefs.set('zoomDef', +d.zdef); drawAll(); return; }

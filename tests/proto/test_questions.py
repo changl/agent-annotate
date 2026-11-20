@@ -43,5 +43,5 @@ def test_build(tmp_path, monkeypatch):
     assert d["beads"] == {}
 
 
-def test_mask_keeps_company_and_images():
-    assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com support@fastlanedrive.com x@2x.png"
+def test_mask_covers_company_and_keeps_images():
+    assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"

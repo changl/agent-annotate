@@ -9,16 +9,19 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from .. import store
+from . import scrub
 
 BEAD = re.compile(r"\bFLD-[a-z0-9]+(?:\.\d+)*\b")
 # shortcut: the board path is fixed to FastLane Drive's checkout; take it from the project record when other pages use this UI
 BOARD = os.environ.get("ANNOTATE_PROTO_BOARD", "/Users/changlee/projects/FastLane Drive/fld-main")
 STATE = {"closed": "done", "in_progress": "progress", "blocked": "blocked", "deferred": "none", "open": "waiting"}
-# personal addresses only: the company's own (support@fastlanedrive.com) are what a question is about
-EMAIL = re.compile(r"[\w.+-]+@(?!fastlanedrive\.com\b)[a-z][\w-]*(?:\.[\w-]+)*\.[a-z]{2,}\b", re.I)
+_board: dict = {"at": 0.0, "ids": None, "beads": {}}
+_board_lock = threading.Lock()
 
 
 def _mine(author) -> bool:
@@ -26,22 +29,29 @@ def _mine(author) -> bool:
 
 
 def _mask(s):
-    return EMAIL.sub("member@example.com", s) if isinstance(s, str) else s
+    """Every address, company mailboxes included, and every review key."""
+    return scrub(s) if isinstance(s, str) else s
 
 
 def _beads(ids: set[str]) -> dict:
+    """The named tasks, read only; cached a minute, one board read at a time (as Reference does)."""
     if not ids or not Path(BOARD).is_dir():
         return {}
-    try:
-        out = subprocess.run(["bd", "-C", BOARD, "--readonly", "show", *sorted(ids), "--json"],
-                             capture_output=True, text=True, timeout=20)
-        rows = json.loads(out.stdout or "[]")
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return {}
-    if not isinstance(rows, list):
-        return {}
-    return {r["id"]: {"title": _mask(r.get("title", "")), "status": r.get("status", ""),
-                      "state": STATE.get(r.get("status"), "none")} for r in rows if isinstance(r, dict) and r.get("id")}
+    key = tuple(sorted(ids))
+    with _board_lock:
+        if _board["ids"] == key and time.time() - _board["at"] <= 60:
+            return _board["beads"]
+        try:
+            out = subprocess.run(["bd", "-C", BOARD, "--readonly", "show", *key, "--json"],
+                                 capture_output=True, text=True, timeout=20)
+            rows = json.loads(out.stdout or "[]")
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            rows = []
+        beads = {r["id"]: {"title": _mask(r.get("title", "")), "status": r.get("status", ""),
+                           "state": STATE.get(r.get("status"), "none")}
+                 for r in rows if isinstance(rows, list) and isinstance(r, dict) and r.get("id")}
+        _board.update(at=time.time(), ids=key, beads=beads)
+        return beads
 
 
 def _decision(d):

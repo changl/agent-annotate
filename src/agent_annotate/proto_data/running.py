@@ -40,6 +40,7 @@ NAMES = {"fld": "FastLane Drive", "rebex": "Rebex", "annotate": "Agent Annotate"
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]*\w")
 _lock = threading.Lock()
+_cold = threading.Lock()
 _mem: dict = {}  # page dir -> (built epoch, result)
 _busy: set = set()
 
@@ -515,10 +516,14 @@ def build(page_dir: Path) -> dict:
         except (OSError, ValueError):
             got = None
     if got is None:
-        with _lock:
-            _busy.add(key)
-        _refresh(page_dir)
-        return {**_mem[key][1], "age": 0}
+        with _cold:  # cold start: one request builds, overlapping ones wait for it
+            got = _mem.get(key)
+            if got is None:
+                with _lock:
+                    _busy.add(key)
+                _refresh(page_dir)
+                got = _mem[key]
+        return {**got[1], "age": round(time.time() - got[0])}
     if time.time() - got[0] > TTL:
         with _lock:
             start = key not in _busy

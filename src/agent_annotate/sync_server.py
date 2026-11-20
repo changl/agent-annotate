@@ -1180,6 +1180,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not email and self.local_author and self._is_direct_loopback_request():
             email = self.local_author
             name = self.local_author_name or name
+        if self._is_proto():
+            # Prototype page: no real address is stored, logged or returned.
+            from .proto_data import scrub
+            email, name = (scrub(email) if email else email), (scrub(name) if name else name)
         return {
             "email": email or None,
             "name": name or None,
@@ -3823,6 +3827,22 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _version_order(self) -> dict:
         return {h.get("version"): i for i, h in enumerate(self._read_meta().get("history") or []) if isinstance(h, dict)}
 
+    def _is_proto(self) -> bool:
+        """The prototype page (meta "ui": "proto"); re-read only when the meta file changes."""
+        try:
+            stamp = self._meta_path().stat().st_mtime_ns
+        except OSError:
+            return False
+        cached = type(self).__dict__.get("_proto_stamp")
+        if not cached or cached[0] != stamp:
+            try:
+                flag = json.loads(self._meta_path().read_text(encoding="utf-8")).get("ui") == "proto"
+            except (OSError, ValueError, AttributeError):
+                flag = False
+            cached = (stamp, flag)
+            type(self)._proto_stamp = cached
+        return cached[1]
+
     def _read_meta(self) -> dict:
         p = self._meta_path()
         if p.exists():
@@ -4343,6 +4363,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "text/javascript", "application/javascript", "text/css", "text/html",
             "application/json", "image/svg+xml",
         }
+        if content_type.startswith("application/json") and self._is_proto():
+            # Prototype page: mask addresses and review keys in every JSON reply.
+            from .proto_data import scrub
+            if representation is not None:
+                body = gzip.decompress(representation[0]) if representation[1] else representation[0]
+                representation = None
+            body = scrub(body.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
         compressed = False
         if representation is not None:
             body, compressed = representation

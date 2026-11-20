@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Agent Annotate · prototype</title>
 <link rel="icon" href="data:,">
-<script>try{var t=localStorage.getItem('annotate:theme');var d=t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';var f=+JSON.parse(localStorage.getItem('annotate-proto:fs')||'100');if(f)document.documentElement.style.setProperty('--fs',f/100)}catch(e){}</script>
+<script>try{var t=JSON.parse(localStorage.getItem('annotate-proto:theme')||'null');var d=t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';var f=+JSON.parse(localStorage.getItem('annotate-proto:fs')||'100');if(f)document.documentElement.style.setProperty('--fs',f/100)}catch(e){}</script>
 <link rel="stylesheet" href="proto/tokens.css">
 <link rel="stylesheet" href="proto/frame.css">
 <script src="proto/icons.js"></script>

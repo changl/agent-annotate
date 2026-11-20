@@ -10,12 +10,14 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 from ..categories import is_archive_plan, list_plans
 from ..plan_topics import file_plans
+from . import scrub
 
 FLD_MAIN = Path("/Users/changlee/projects/FastLane Drive/fld-main")
 FLD_DIR = Path("/Users/changlee/projects/FastLane Drive")
@@ -23,13 +25,12 @@ FLD_DIR = Path("/Users/changlee/projects/FastLane Drive")
 WM_FLOWS = Path("/Users/changlee/projects/agent-annotate/shared/agents/uiux-lead-20261116/round9/final/build/wm-flows.json")
 
 BEAD = re.compile(r"\bFLD-[a-z0-9]{3,6}(?:\.\d+)*\b")
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\d)")
 
 
 def hide(s: str) -> str:
-    """No email address or phone number leaves this module."""
-    return PHONE.sub("a phone number", EMAIL.sub("member@example.com", s))
+    """No email address, review key or phone number leaves this module."""
+    return PHONE.sub("a phone number", scrub(s))
 
 
 def plain(s: str, n: int = 200) -> str:
@@ -38,10 +39,16 @@ def plain(s: str, n: int = 200) -> str:
 
 
 _board: dict = {"at": 0.0, "beads": {}}
+_board_lock = threading.Lock()
 
 
 def board() -> dict:
     """{id: [title, state]} from the FastLane Drive board, read only, cached a minute."""
+    with _board_lock:  # one read at a time: overlapping requests wait and share it
+        return _board_read()
+
+
+def _board_read() -> dict:
     if time.time() - _board["at"] > 60:
         try:
             out = subprocess.run(["bd", "-C", str(FLD_MAIN), "--readonly", "list", "--all", "--limit", "0", "--brief", "--flat", "--json"],
