@@ -1,0 +1,115 @@
+/* Prototype Questions tab, from round9/final/mock.html (ecard, qline, notebox, bar2), renamed to q* so the document's own .card rules never reach it. */
+.tab-questions{--text-primary:calc(16px * var(--fs,1))}  /* question context and what you type: 16 px at 100% (#100) */
+
+/* the bar: view switch, one row of group chips, progress, fold-all icons, Send */
+.qbar{position:sticky;top:90px;z-index:6;display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;padding:6px 0;background:var(--color-base-200);border-bottom:1px solid var(--line)}
+.qchips{display:inline-flex;gap:6px;flex-wrap:wrap}
+.qseg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;background:var(--color-base-100)}
+.qseg button{border:0;background:none;padding:3px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:var(--color-base-content)}
+.qseg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
+.qseg .ib{width:30px;height:28px;border-radius:0}
+.prog{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
+.prog i{display:inline-block;width:80px;height:6px;border-radius:3px;background:var(--excerpt-bg);overflow:hidden}.prog i b{display:block;height:100%;background:var(--st-done)}
+.btn[disabled]{opacity:.5;cursor:default}
+.ph-only{display:none}
+
+/* Send: a small panel under the bar; ⌘↵ opens it, ⌘↵ again sends */
+.qsend{position:fixed;top:136px;right:20px;z-index:12;width:min(560px,calc(100vw - 40px));padding:10px 14px;border:1px solid var(--color-primary);border-radius:var(--radius-box);background:var(--color-base-100);box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 15%,transparent)}
+.qsend ul{margin:4px 0 8px;padding-left:18px}
+.qsend .acts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px}
+.qsend.sending{display:flex;align-items:center;gap:10px;width:auto}
+
+/* the document, whole */
+.qdoc.aa{padding:8px 0 60px}
+.qdoc [data-anchor-id]:not(section):not(.qcard){cursor:text}
+.qdoc img{cursor:crosshair}
+.qlit{outline:2px solid var(--orange);outline-offset:2px;background:color-mix(in oklab,var(--color-warning) 22%,transparent)}
+.qunplaced{border-left:4px solid var(--color-error)}
+
+/* the card: one column; context, then the choices side by side, then the words box (#136) */
+.qcard{border:1px solid var(--line);border-left:4px solid var(--color-error);border-radius:var(--radius-box);padding:8px 14px 6px;margin:10px 0 14px;background:var(--color-base-100);scroll-margin-top:140px;font-size:var(--fs-base);max-width:1080px;color:var(--color-base-content)}
+.qcard.answered,.qcard.sent{border-left-color:var(--st-done)}.qcard.closed{border-left-color:var(--faint)}.qcard.later{border-left-color:var(--st-waiting)}
+.qcard.folded{padding:0 14px;margin:6px 0}
+.qhead{display:flex;align-items:flex-start;gap:6px 10px;flex-wrap:wrap;margin-bottom:8px}
+.qcard.folded .qhead{margin:0;align-items:center}
+.qfold{display:flex;align-items:flex-start;gap:10px;flex:1 1 320px;min-width:0;border:0;background:none;text-align:left;cursor:pointer;padding:3px 0 0;font-weight:700;font-size:var(--fs-lg);color:inherit}
+.qfold.static{cursor:default}
+.qfold:not(.static)::before{content:"";flex:none;width:7px;height:7px;margin:8px 3px 0;border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);transform:rotate(-45deg);transition:transform .12s}
+.qfold[aria-expanded=true]::before{transform:rotate(45deg)}
+.qcard.folded .qfold{font-size:var(--fs-base);font-weight:600;padding:8px 0}
+.qcard.folded .qfold::before{margin-top:6px}
+.qt{min-width:0}
+.qnum{flex:none;font-weight:700;font-size:var(--fs-xs);border-radius:10px;padding:1px 7px;margin-top:2px;background:color-mix(in oklab,var(--color-error) 20%,var(--color-base-100));color:var(--err-text);white-space:nowrap}
+.qstate{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qstate:empty{display:none}
+.saved{font-size:var(--fs-sm);color:var(--ok-text);font-weight:600;display:inline-flex;align-items:center;gap:4px}
+.qread{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:600;color:var(--st-waiting)}
+.eacts{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
+.ib.ibw{width:auto;padding:0 8px;gap:5px;font-size:var(--fs-sm)}
+.ib.sm{width:28px;height:28px}
+.ib[aria-pressed=true]{background:var(--excerpt-bg);color:var(--color-base-content)}
+/* the fixed impact mark: always the far right of the top row, the same width with or without a level (#104) */
+.qmarks{display:inline-flex;align-items:center;gap:6px;flex:none;min-width:56px;justify-content:flex-end;padding-top:5px}
+.impw{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;white-space:nowrap;min-width:48px}
+.impw.high{color:var(--err-text)}.impw.medium{color:var(--warn-text)}.impw.low{color:var(--muted)}
+.imp{display:inline-flex;align-items:flex-end;gap:2px;height:16px;padding:0 2px;flex:none}
+.imp i{display:block;width:4px;border-radius:1px;background:var(--line)}.imp i:nth-child(1){height:6px}.imp i:nth-child(2){height:11px}.imp i:nth-child(3){height:16px}
+.imp.high i{background:var(--err-text)}.imp.medium i:nth-child(-n+2){background:var(--orange)}.imp.low i:nth-child(1){background:var(--muted)}
+.blkp{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;color:var(--err-text);border:1px solid var(--color-error);border-radius:10px;padding:0 7px 0 5px;white-space:nowrap}
+
+.qbody{display:flex;flex-direction:column;gap:10px}
+.qctx{margin:0 0 8px;padding:8px 12px;background:var(--excerpt-bg);border-radius:var(--radius-field);font-size:var(--text-primary);line-height:1.45}
+.qctx p{margin:0 0 6px}.qctx p:last-child{margin:0}
+.qopts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;align-items:stretch;margin:0 0 6px}
+.qopt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:1px solid var(--line);background:var(--color-base-100);border-radius:var(--radius-field);padding:8px 12px;cursor:pointer;height:100%;color:inherit}
+.qopt.rec{background:var(--rec-bg);border-color:var(--rec-line)}
+.qopt[aria-pressed=true]{outline:2px solid var(--color-primary);outline-offset:0}
+.qopt b{font-weight:600}.qopt span{font-size:var(--fs-sm);color:var(--muted)}
+.qopt .rl{font-size:var(--fs-xs);font-weight:700;color:var(--ok-text)}
+textarea.qwords,.qnote textarea{display:block;width:100%;font-size:var(--text-primary);min-height:3.2em;field-sizing:content;max-height:40vh;resize:vertical;border:1px solid var(--line);border-radius:var(--radius-field);padding:6px 10px;background:var(--color-base-100)}
+.hint{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:var(--fs-xs);color:var(--muted);margin:2px 0 6px}
+kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:3px;padding:0 4px;background:var(--excerpt-bg)}
+.qmeta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:var(--fs-sm);color:var(--muted);padding:6px 0 2px;border-top:1px dashed var(--line)}
+.qmeta>span{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.qthread{list-style:none;margin:6px 0;padding:0;font-size:var(--fs-md)}.qthread li{padding:4px 8px;border-left:3px solid var(--line);margin:4px 0}.qthread li.agent{border-left-color:var(--color-primary)}
+.qthread .who{font-size:var(--fs-xs);color:var(--muted)}
+.qhist{list-style:none;margin:0;padding:0;font-size:var(--fs-sm)}.qhist li{padding:3px 0;border-top:1px solid color-mix(in oklab,var(--line) 60%,transparent)}
+.dfold{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:2px 0;cursor:pointer;color:var(--muted);font-size:var(--fs-sm)}
+.dfold::after{content:"";width:6px;height:6px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(-45deg);margin-left:2px}
+.dfold[aria-expanded=true]::after{transform:rotate(45deg)}
+
+/* a task: title · bead id · state, with a state dot (#44, #46) */
+.qtask{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:12px;padding:0 9px 0 6px;background:var(--color-base-100);cursor:pointer;font-size:var(--fs-sm);color:var(--color-base-content);text-align:left;max-width:100%;vertical-align:baseline;line-height:1.5}
+.qtask:hover{border-color:var(--color-primary)}
+.qtask .bid{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap}
+.qtask .mut{white-space:nowrap}
+
+/* notes: on a line, words, a row, or a spot on a picture (#103: icons for their actions) */
+.qnote{border:1px solid var(--color-primary);border-radius:var(--radius-field);padding:6px 8px;margin:6px 0;background:var(--color-base-100);max-width:80ch;font-size:var(--fs-md);display:block}
+.qnote.sent{border-color:var(--line);background:var(--excerpt-bg)}
+.qnote textarea{margin:4px 0}
+.qnote .acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.nacts{display:inline-flex;gap:0;vertical-align:middle;margin-left:4px}
+.qmk{display:inline-flex;align-items:center;gap:2px;min-width:18px;height:18px;padding:0 5px 0 4px;border-radius:9px;background:var(--color-primary);color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:1px}
+.qmk svg.pi{width:11px;height:11px}.qmk.sent{background:var(--faint)}
+.qpinwrap{position:relative;display:inline-block;max-width:100%}
+.qpin{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
+.qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}
+
+/* Cards only: each card open, with its evidence copied above its context */
+.qlist{padding-top:8px}
+.qev{border-left:3px solid var(--orange);padding:2px 0 2px 10px}
+.qevb.aa{padding:4px 0;font-size:var(--fs-sm)}
+.qevb table{width:100%}
+
+/* phone: icons only on the card, choices one per row */
+@media (max-width:600px){
+  .ibt,.hide-ph{display:none}.ph-only{display:inline}
+  .ib.ibw{width:30px;padding:0}
+  .qbar{top:90px}
+  .qcard{padding:8px 10px 6px}
+  .qopts{grid-template-columns:minmax(0,1fr)}
+  .qmarks{min-width:0}
+  .eacts{margin-left:0}
+  .qsend{top:auto;bottom:70px;left:8px;right:8px;width:auto}
+}
