@@ -9,7 +9,7 @@ import {spawn} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 
 const plan = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-const CALL_MS = 15000, CLOSE_MS = 5000;
+const START_MS = 60000, CALL_MS = 15000, CLOSE_MS = 5000;
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
 const DEVICES = {
   desk: {width: 1440, height: 900, deviceScaleFactor: 1, mobile: false},
@@ -159,6 +159,9 @@ async function visit(v) {
 }
 
 try {
+  // Chrome answers its first call only once it has started; a cold start on a fresh CI runner
+  // took up to 14.8 s, past CALL_MS once the first call is counted, so start-up gets its own budget.
+  await send('Browser.getVersion', {}, undefined, START_MS);
   const results = [];
   for (const v of plan.visits) results.push(await visit(v));
   console.log(JSON.stringify({visits: results, unresolved}));
