@@ -32,7 +32,9 @@
         <key>HOME</key>
         <string>/Users/changlee</string>
     </dict>
+    <!-- Standard, not Background: under Background's I/O throttle a busy Mac stalled the
+         ownership check (imports 106 s, 25 s-capped calls 88 s) past its 300 s timeout. -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Standard</string>
 </dict>
 </plist>
