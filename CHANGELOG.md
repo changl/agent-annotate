@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## 2.32.5
+
+- A link or code span inside bold or italic text renders as a link or code instead of literal `[text](url)`, in headings, lists, tables and card titles and options. Emphasis skips whole code spans and links, and link URLs may hold one level of balanced parentheses; escaping and the `javascript:`/`data:` guard are unchanged. On FLD, "**[Live chat (#39122)](…)**" showed as raw markdown.
+- Tests only: sign-in access is checked end to end in real Chrome on desk and phone, over plain HTTP and TLS.
+
 ## 2.32.4
 
 - A question asked again in the same words under a new number shows the reviewer's earlier sent answer on its card, in the rail and the document ("You answered this on Nov 19: Changes needed — …"). Matching uses the displayed prompt, ignoring case and spacing; unsent and discarded picks fall back to the last sent answer. Reviewer-side only; agents write nothing new. On 2026-11-19 Rebex re-asked #352 as #367 and #355 as #364 after "Changes needed", and the repeats looked like duplicates.
