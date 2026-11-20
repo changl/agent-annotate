@@ -2424,6 +2424,7 @@ function renderDecisionBlock(c) {
     ${S.doc ? '' : changingNote}
     ${promptHtml(c)}
     ${textHtml}
+    ${changing ? '' : priorAnswerHtml(c)}
     ${renderDecisionMeta(dr)}
     ${S.doc ? changingNote : ''}
     ${renderDecisionContext(dr)}
@@ -2451,6 +2452,33 @@ function foldedHtml(c) {
   return `<div class="annotate-decision-item annotate-folded${d ? ' annotate-answered' : ''}" data-strip-item="${id}">
     <button type="button" class="annotate-folded-row" data-decision-action="unfold" data-id="${id}" aria-expanded="false" title="Open this question">${numChipHtml(c, 'annotate-decision-num')}<span class="annotate-folded-prompt">${esc(displayPrompt(c))}</span><span class="annotate-folded-what">${esc(what)}</span>${d && numState(c) !== 'pending' ? stateTag(false, d) : ''}</button>
   </div>`;
+}
+// An agent that re-asks an answered question under a new number would make it
+// read as a duplicate (Chang, 2026-11-19): the new card shows the latest sent
+// answer to the same prompt, asked earlier in the same document. Copies of the
+// same card already carry their answer (inherited), so they are skipped.
+function priorAnswer(c) {
+  const key = normText(c.decision_request.prompt).toLowerCase();
+  const asked = Date.parse(c.decision_request.requested_at || c.created_at || '');
+  const root = c.origin_id || c.id;
+  let best = null;
+  if (!key) return null;
+  for (const x of flattenStore(true)) {
+    const d = decisionAnswer(x);
+    if (!d || d.inherited || d.round_pending || !(d.delivery_id || x.delivery_id || x.flagged_for_session)
+        || !x.decision_request || x.doc !== c.doc || x.number === c.number || (x.origin_id || x.id) === root
+        || !(Date.parse(d.ts) < asked) || normText(x.decision_request.prompt).toLowerCase() !== key) continue;
+    if (!best || Date.parse(d.ts) > Date.parse(best.d.ts)) best = { x, d };
+  }
+  return best;
+}
+function priorAnswerHtml(c) {
+  const p = priorAnswer(c);
+  if (!p) return '';
+  const when = new Date(p.d.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const what = answerLabel(p.x).text.trim().replace(/\s*\n+\s*/g, ' — ');
+  const who = isMine(p.d.by) ? 'You' : authorLabel({ author: p.d.by });
+  return `<div class="${k('decision-prior', 'annotate-decision-prior')}">${esc(who)} answered this on ${esc(when)}: <b>${esc(what)}</b></div>`;
 }
 function promptHtml(c) {
   if (!S.doc) return `<div class="decision-prompt">${ticketsHTML(displayPrompt(c))}</div>`;

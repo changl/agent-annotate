@@ -211,6 +211,7 @@ svg.i{width:16px;height:16px;display:block;flex-shrink:0}
 .decision-context{font-size:calc(11px * var(--aa-text, 1));color:var(--muted);line-height:1.5;margin:-2px 0 8px;white-space:pre-wrap;word-break:break-word}
 .decision-reco-line{font-size:calc(11px * var(--aa-text, 1));font-weight:600;color:var(--ok-text);line-height:1.4;margin:0 0 8px}
 .decision-reco-line b{font-weight:800}
+.decision-prior{font-size:calc(11px * var(--aa-text, 1));line-height:1.4;background:var(--soft);border:1px solid var(--line);border-radius:var(--radius-field);padding:5px 8px;margin:0 0 8px;word-break:break-word}
 .decision-meta{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px}
 .decision-excerpt{margin:0 0 8px;padding:6px 10px;background:var(--excerpt-bg);border-radius:var(--radius-field);min-width:0}
 .decision-excerpt-src{font-size:calc(9.5px * var(--aa-text, 1));font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px;overflow-wrap:anywhere}

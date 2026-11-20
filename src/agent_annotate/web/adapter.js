@@ -911,6 +911,12 @@ function ensureStripStyle() {
       line-height: 1.4 !important; margin: 0 0 6px !important;
     }
     .annotate-decision-reco-line b { font-weight: 800 !important; }
+    .annotate-decision-prior {
+      font-size: calc(11px * var(--aa-text, 1)) !important; line-height: 1.4 !important; font-weight: 400 !important;
+      background: var(--color-base-200) !important; color: var(--color-base-content) !important; border: 1px solid var(--line) !important;
+      border-radius: 6px !important; padding: 5px 8px !important; margin: 0 0 6px !important; word-break: break-word !important;
+    }
+    .annotate-decision-prior b { font-weight: 700 !important; }
     /* Quoted excerpt of the element the card is about, read from this page. */
     .annotate-excerpt {
       margin: 0 0 8px !important; padding: 5px 9px !important; background: var(--color-base-100) !important;
