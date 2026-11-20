@@ -1,0 +1,24 @@
+/* Prototype tokens, copied from round9/final/mock.html (the product's stock theme plus derived colours). */
+@font-face{font-family:Roboto;src:url("../RobotoVariable.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+
+[data-theme=light]{--color-base-100:oklch(100% 0 0);--color-base-200:oklch(96.5% 0 0);--color-base-300:oklch(95% 0 0);--color-base-content:oklch(21% .006 285.885);--color-primary:oklch(45% .24 277.023);--color-primary-content:oklch(93% .034 272.788);color-scheme:light}
+[data-theme=dark]{--color-base-100:oklch(25.33% .016 252.42);--color-base-200:oklch(23.26% .014 253.1);--color-base-300:oklch(21.15% .012 254.09);--color-base-content:oklch(97.807% .029 256.847);--color-primary:oklch(58% .233 277.117);--color-primary-content:oklch(96% .018 272.314);color-scheme:dark}
+:root{--color-info:oklch(74% .16 232.661);--color-success:oklch(76% .177 163.223);--color-success-content:oklch(37% .077 168.94);--color-warning:oklch(82% .189 84.429);--color-warning-content:oklch(41% .112 45.904);--color-error:oklch(71% .194 13.428);--color-error-content:oklch(27% .105 12.094);--radius-box:.5rem;--radius-field:.25rem}
+:root{--muted:color-mix(in oklab,var(--color-base-content) 74%,transparent);--faint:color-mix(in oklab,var(--color-base-content) 60%,transparent);
+  --orange:color-mix(in oklab,var(--color-warning) 50%,var(--color-error));--violet:oklch(62% .2 300);
+  --rec-bg:color-mix(in oklab,var(--color-success) 26%,var(--color-base-100));--rec-line:color-mix(in oklab,var(--color-success) 55%,var(--color-base-100));
+  --done-bg:color-mix(in oklab,var(--color-success) 20%,var(--color-base-100));--excerpt-bg:color-mix(in oklab,var(--color-base-content) 6%,var(--color-base-100));
+  --ok-text:var(--color-success);--err-text:var(--color-error);--warn-text:var(--color-warning);
+  /* mock's worker swatches */
+  --s-working:var(--color-success);--s-stuck:var(--orange);--s-failed:var(--color-error);--s-done:color-mix(in oklab,var(--color-base-content) 30%,var(--color-base-100));--s-later:var(--faint);
+  /* one colour per state (spec-common): use these, through .st-<state> */
+  --st-done:var(--color-success);--st-progress:var(--violet);--st-waiting:var(--color-info);--st-blocked:var(--orange);--st-failed:var(--color-error);--st-none:color-mix(in oklab,var(--color-base-content) 35%,var(--color-base-100));
+  /* type scale (html is 14px x --fs) */
+  --fs-xs:.79rem;--fs-sm:.86rem;--fs-md:.93rem;--fs-base:1rem;--fs-lg:1.07rem;--fs-xl:1.25rem;--fs-2xl:1.5rem}
+[data-theme=dark]{--line:color-mix(in oklab,var(--color-base-content) 12%,var(--color-base-100))}
+[data-theme=light]{--line:color-mix(in oklab,var(--color-base-content) 13%,var(--color-base-100));--rec-bg:color-mix(in oklab,var(--color-success) 38%,var(--color-base-100));--ok-text:var(--color-success-content);--err-text:var(--color-error-content);--warn-text:var(--color-warning-content)}
+
+/* state signs: a dot or a chip coloured by its state */
+.st-done{--st:var(--st-done)}.st-progress{--st:var(--st-progress)}.st-waiting{--st:var(--st-waiting)}
+.st-blocked{--st:var(--st-blocked)}.st-failed{--st:var(--st-failed)}.st-none{--st:var(--st-none)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--st,var(--st-none));flex:none}

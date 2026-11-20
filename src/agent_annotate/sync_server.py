@@ -1416,6 +1416,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if route_path == "/content":
             with _locked_store(self.artifact_dir, write=False):
                 return self._v2_serve_content(parsed)
+        # Prototype UI (branch changl/uiux-proto): only a page whose meta says "ui": "proto".
+        if (route_path in ("", "/") or route_path.startswith("/proto/")) and self._read_meta().get("ui") == "proto":
+            from .proto_data import serve
+            return serve(self, route_path)
         if route_path == "/" or route_path == "":
             with _locked_store(self.artifact_dir, write=False):
                 return self._v2_serve_root(parsed)
