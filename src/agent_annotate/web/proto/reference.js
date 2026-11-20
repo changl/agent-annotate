@@ -10,7 +10,8 @@
   const ico = (n, l) => P.icon(n, l), pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
   const esc = s => ctx.esc(s);
   const dm = s => { const d = new Date(String(s).slice(0, 10) + 'T12:00'); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
-  const KN = {plan: 'Plans', check: 'Checklists', flow: 'Workflows', doc: 'Documents'};
+  const KN = {plan: 'Plans', check: 'Checklists', design: 'Diagrams and designs', text: 'App text', data: 'Sheets and findings', flow: 'Workflows', mem: 'Memory', doc: 'Documents'};
+  const KG = {...KN, decision: 'Decisions'};  // group names: decisions are plans, listed apart from the topics
   const SN = {prop: ['Proposed', 'Waits on your decision: something the agent proposed'], ok: ['Approved', 'You approved it, or it was decided'], ref: ['For reference', 'Kept for looking things up']};
   const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const BST = {closed: 'done', 'in progress': 'progress', blocked: 'blocked', deferred: 'waiting', open: 'none'};
@@ -23,14 +24,19 @@
   const markSeen = ids => { const s = seen(), now = new Date().toISOString().slice(0, 16); ids.forEach(i => s[i] = now); ctx.prefs.set('ref-seen', s); ctx.refreshChips(); };
 
   /* ---------- rows ---------- */
-  const lastTs = p => p.revs[p.revs.length - 1][1];
+  // shortcut: filing (Proposed, Approved, For reference) is kept in this browser; no reviewer endpoint moves a plan between sections yet
+  const filed = () => ctx.prefs.get('ref-file', {}), stOf = p => filed()[p.id] || p.st;
+  const lastTs = p => p.revs[p.revs.length - 1][1], xOf = id => (D.extras || []).find(x => x.id === id);
   const nSteps = ss => ss.reduce((n, s) => n + 1 + nSteps(s.sub || []) + (s.br || []).reduce((m, b) => m + nSteps(b[1]), 0), 0);
   function rows() {
-    const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: p.st,
-      g: p.kind === 'plan' ? 't:' + p.topic : 'k:check', p, stamp: lastTs(p), s: p.topic}));
+    const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: stOf(p),
+      g: p.kind !== 'plan' ? 'k:' + p.kind : p.id.startsWith('decision-') ? 'k:decision' : 't:' + p.topic, p, stamp: lastTs(p), s: p.topic}));
+    for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`, kind: x.kind, st: stOf(x),
+      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: x.md ? x.md.slice(0, 20000) : JSON.stringify(x.parts).slice(0, 20000)});  // finds words inside them too
     for (const f of D.flows) out.push({id: f.id, t: f.t, m: `Windmill · runs ${f.when} · ${pl(nSteps(f.steps), 'step', 'steps')} · ${f.last ? `last run ${dm(f.last.at)}, ${f.last.ok ? 'passed' : 'failed'}` : 'not run yet'}`,
       kind: 'flow', st: 'ref', g: 'k:flow', f, stamp: f.edited, s: f.what + ' ' + JSON.stringify(f.steps.map(x => x.n))});
     out.forEach(r => r.ch = changed(r.id, r.stamp));
+    out.push({id: 'mem:later', t: 'Memory tree', m: 'later: what the agents remember about this project, as a tree you can open', kind: 'mem', st: 'ref', g: 'k:mem', later: true});
     return out;
   }
   const docId = f => 'doc:' + [f.g, f.sub, f.n].filter(Boolean).join('/');
@@ -49,11 +55,17 @@
     return {category: 'plans', doc: 'plan:' + p.id, version: p.revs.some(r => r[0] === v) ? v : p.current};
   }
   const pin = k => { const n = notesAt(k).length; return n ? `<span class="rf-pin" title="${pl(n, 'note', 'notes')} here">${ico('note')}${n}</span>` : ''; };
-  function noteList(k) {
-    const ns = notesAt(k), box = S.note === k;
+  const cutq = s => s.length > 60 ? s.slice(0, 58).trimEnd() + '…' : s;
+  // what a note is on: selected words, a spot on a picture (numbered as its pin), or the whole line
+  const onWhat = (t, no) => !t ? '' : t.quote ? ` on “${esc(cutq(t.quote))}”` : t.offset ? ` at spot ${no || '+'} on the picture` : '';
+  const spotNo = (k, n) => notesAt(k).filter(x => x.target && x.target.offset).indexOf(n) + 1;
+  const spots = k => notesAt(k).filter(n => n.target && n.target.offset).map((n, i) => `<span class="pinm" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%">${i + 1}</span>`).join('')
+    + (S.note === k && S.tgt && S.tgt.offset ? `<span class="pinm new" style="left:${S.tgt.offset.dx * 100}%;top:${S.tgt.offset.dy * 100}%">+</span>` : '');
+  function noteList(k, dlg) {
+    const ns = notesAt(k), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
     if (!ns.length && !box) return '';
-    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
-      ${box ? `<div class="rf-box"><textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
+    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+      ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
   const at = (k, label) => `data-line="${esc(k)}" data-label="${esc(String(label || '').slice(0, 80))}"`;
@@ -61,10 +73,17 @@
   /* ---------- a plan revision, read from today's plans/<id>/<v>.html as blocks ---------- */
   const CHROME = 'header.hdr,aside,nav,#popover,#legend,script,style,button,select,textarea,input,noscript,template,svg';
   const BLOCK = /^(P|DIV|SECTION|ARTICLE|MAIN|H[1-6]|UL|OL|LI|TABLE|PRE|FIGURE|IMG|BLOCKQUOTE|DETAILS|SUMMARY|DL|DT|DD|HR|HEADER|FOOTER)$/;
+  const pics = {};  // embedded picture -> object URL, shared by every revision so the same picture pairs as unchanged
+  const pic = (sha, b64) => pics[sha] || (pics[sha] = URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], {type: b64.startsWith('iVBOR') ? 'image/png' : 'image/jpeg'})));
   function parse(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html'), out = [], T = e => e.textContent.replace(/\s+/g, ' ').trim();
+    const doc = new DOMParser().parseFromString(html, 'text/html'), out = [], clean = s => s.replace(/[\s\u0001]+/g, ' ').trim(), T = e => clean(e.textContent);
+    let emb = {};  // pictures some plans carry inline, by hash: <img src="" data-embedded="<sha>">
+    try { const j = doc.getElementById('embedded-captures'); if (j) emb = JSON.parse(j.textContent); } catch {}
     doc.querySelectorAll(CHROME).forEach(e => e.remove());
-    const img = e => { const s = (e.getAttribute('src') || '').replace(/^\/annotate\/reviews\/[^/]+\//, ''); if (s && !s.startsWith('data:')) out.push(['img', new URL(s, location.origin + ctx.base).href, e.getAttribute('alt') || '']); };
+    doc.querySelectorAll('br').forEach(b => b.replaceWith('\u0001'));  // a line break starts a new line, as in the mock
+    const img = e => { const h = e.getAttribute('data-embedded'), s = (e.getAttribute('src') || '').replace(/^\/annotate\/reviews\/[^/]+\//, '');
+      const u = h && emb[h] ? pic(h, emb[h]) : s && !s.startsWith('data:') ? new URL(s, location.origin + ctx.base).href : s.startsWith('data:image/') ? s : '';
+      if (u) out.push(['img', u, e.getAttribute('alt') || '']); };
     (function walk(n) {
       for (const e of n.children) {
         const t = e.tagName;
@@ -74,20 +93,23 @@
         else if (t === 'IMG') img(e);
         else if (t === 'LI') { const c = e.cloneNode(true); c.querySelectorAll('ul,ol,table,pre').forEach(x => x.remove()); const x = T(c); if (x) out.push(['li', x]); e.querySelectorAll(':scope > ul, :scope > ol').forEach(walk); }
         else if ([...e.children].some(c => BLOCK.test(c.tagName))) walk(e);
-        else { e.querySelectorAll('img').forEach(img); const x = T(e); if (x) out.push([t === 'DT' || t === 'SUMMARY' ? 'h' : 'p', x]); }
+        else { e.querySelectorAll('img').forEach(img); e.textContent.split('\u0001').map(clean).filter(Boolean).forEach(x => out.push([t === 'DT' || t === 'SUMMARY' ? 'h' : 'p', x])); }
       }
     })(doc.body);
     return out;
   }
+  // a revision is read up to three times: the tunnel answers 502 now and then; a failed read is not kept, so Try again reads it afresh
+  const get = (u, n = 3) => fetch(u, {cache: 'no-store'}).then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+    .catch(e => n > 1 ? new Promise(ok => setTimeout(ok, 1500)).then(() => get(u, n - 1)) : Promise.reject(e));
   function need(id, v) {
     const k = id + '~' + v;
     if (blocks[k] || loading[k]) return blocks[k];
-    loading[k] = fetch(`${ctx.base}plans/${encodeURIComponent(id)}/${encodeURIComponent(v)}.html`, {cache: 'no-store'})
-      .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(h => { blocks[k] = parse(h); }, e => { blocks[k] = [['p', 'This revision could not be read: ' + e.message]]; })
+    loading[k] = get(`${ctx.base}plans/${encodeURIComponent(id)}/${encodeURIComponent(v)}.html`)
+      .then(h => { blocks[k] = parse(h); }, e => { blocks[k] = Object.assign([], {err: e.message}); })
       .then(() => draw());
     return null;
   }
+  const retry = (id, v) => { const k = id + '~' + v; delete blocks[k]; delete loading[k]; draw(); };
 
   /* word diff and block pairing, as in the mock (cycle 6, c W2) */
   function wdiff(a, b) {
@@ -104,9 +126,15 @@
   const alike = (p, q) => { const a = wset(p), b = wset(q); let c = 0; a.forEach(w => b.has(w) && c++); return c / Math.max(1, a.size, b.size); };
   function alignBlocks(A, B) {
     const key = b => b[0] + '\u0001' + b[1], x = A.map(key), y = B.map(key), n = x.length, m = y.length, out = [];
-    if (n * m > 4e6) return B.map((_, b) => ({k: 'same', b}));  // too long to pair: show it plain
-    const L = Array.from({length: n + 1}, () => new Uint16Array(m + 1));
-    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    // pair only the middle that differs: long plans (the car catalog) change a few paragraphs between equal starts and ends
+    let s0 = 0, e0 = 0;
+    while (s0 < n && s0 < m && x[s0] === y[s0]) s0++;
+    while (e0 < n - s0 && e0 < m - s0 && x[n - 1 - e0] === y[m - 1 - e0]) e0++;
+    const mn = n - s0 - e0, mm = m - s0 - e0, ys = new Set(y.slice(s0, m - e0)), xs = new Set(x.slice(s0, n - e0));
+    const L = mn * mm > 4e6 ? null : Array.from({length: mn + 1}, () => new Uint16Array(mm + 1));
+    if (L) for (let i = mn - 1; i >= 0; i--) for (let j = mm - 1; j >= 0; j--) L[i][j] = x[s0 + i] === y[s0 + j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    // shortcut: a middle too long for the table pairs greedily by exact match; fine while revisions edit a few spots
+    const dropA = (i, j) => L ? L[i + 1 - s0][j - s0] >= L[i - s0][j + 1 - s0] : !ys.has(x[i]) || xs.has(y[j]);
     let ga = [], gb = [];
     const txt = b => b[0] === 'img' ? b[2] : b[1];
     const flush = () => { let bi = 0;
@@ -118,37 +146,53 @@
       for (let t = bi; t < gb.length; t++) out.push({k: 'add', b: gb[t]});
       ga = []; gb = []; };
     let i = 0, j = 0;
-    while (i < n && j < m) { if (x[i] === y[j]) { flush(); out.push({k: 'same', a: i++, b: j++}); } else if (L[i + 1][j] >= L[i][j + 1]) ga.push(i++); else gb.push(j++); }
-    while (i < n) ga.push(i++); while (j < m) gb.push(j++); flush();
+    for (; i < s0; i++, j++) out.push({k: 'same', a: i, b: j});
+    while (i < n - e0 && j < m - e0) { if (x[i] === y[j]) { flush(); out.push({k: 'same', a: i++, b: j++}); } else if (dropA(i, j)) ga.push(i++); else gb.push(j++); }
+    while (i < n - e0) ga.push(i++); while (j < m - e0) gb.push(j++); flush();
+    for (; i < n; i++, j++) out.push({k: 'same', a: i, b: j});
     return out;
   }
 
   const untag = t => t.replace(/^[A-Za-z0-9][\w.-]{3,}:\s*/, '');  // a workstream name before the title is a worker's, not his
   /* a task a plan names reads "title · bead id · state", coloured by its state */
   const beadIn = h => h.replace(/\bFLD-[a-z0-9]{3,6}(?:\.\d+)*\b/g, id => { const b = D.beads[id]; if (!b) return id;
-    const t = untag(b[0]);
-    return `<span class="rf-bd st-${BST[b[1]] || 'none'}" title="Its task on the board"><i class="dot"></i>${esc(t)} · <code>${id}</code> · ${esc(b[1])}</span>`; });
+    const t = untag(b[0]), cut = t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t;
+    return `<button class="rf-bd lk st-${BST[b[1]] || 'none'}" data-task="${id}" title="Open its task: ${esc(t)}"><i class="dot"></i>${esc(cut)} · <code>${id}</code> · ${esc(b[1])}</button>`; });
+
+  /* pictures open full size at 25-100% of the screen width, each remembering its own; the default comes from the settings menu */
+  const ZS = [25, 50, 75, 100], zOf = k => ctx.prefs.get('ref-zoom', {})[k] || ctx.prefs.get('zoomDef', 75);
+  const zoomBar = (k, src, cap) => `<figcaption>${cap ? esc(cap) + ' · ' : ''}<span class="seg zm" role="group" aria-label="Open full size at">${ZS.map(z => `<button data-zoom="${z}" data-zk="${esc(k)}" aria-label="Open at ${z}%" aria-pressed="${z === zOf(k)}">${z}%</button>`).join('')}</span> <button class="lk small" data-zoom="${zOf(k)}" data-zk="${esc(k)}">⤢ Full size</button> · tap a spot to write a note</figcaption>`;
+  function zoomView() {
+    const f = S.full;
+    if (!f) return '';
+    return `<div class="zoomv" role="dialog" aria-modal="true" aria-label="Full-size picture"><div class="zbar"><b class="small">${esc(cutq(f.cap || 'Picture'))}</b><span class="seg">${ZS.map(z => `<button data-zoom="${z}" data-zk="${esc(f.k)}" aria-pressed="${z === f.z}">${z}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width · tap a spot to write a note · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>Close</button></div>
+      <div class="qpinwrap pic" ${at(f.k, 'Picture: ' + f.cap)} style="width:${f.z}vw"><img src="${esc(f.src)}" alt="${esc(f.cap || 'Picture')}">${spots(f.k)}</div>
+      <div class="zn">${noteList(f.k, true)}</div></div>`;
+  }
 
   // one block: heading, paragraph, list line, code, table or picture; `inner` replaces the text (diff marks)
   function block(b, k, inner, tag) {
     const [kind, t, x, hd] = b, tg = tag || '', a = at(k, kind === 'img' ? 'Picture: ' + x : kind === 'tbl' ? 'Table: ' + x[0].join(' · ') : t);
-    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${pin(k)}<table>${x.map((r, ri) => `<tr>${r.map(c => ri === 0 && hd ? `<th>${esc(c)}</th>` : `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>`
-      : kind === 'img' ? `<figure ${a}>${pin(k)}<img src="${esc(t)}" alt="${esc(x || 'Picture')}" loading="lazy">${x ? `<figcaption>${esc(x)}</figcaption>` : ''}${tg}</figure>`
+    // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
+    const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
+    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${esc(c)}</th>` : `<td>${ci ? '' : pin(rk(ri))}${beadIn(esc(c))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
+      : kind === 'img' ? `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x)}${tg}</figure>`
       : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}<pre><code>${esc(t)}</code></pre><button class="btn sm" data-copy="${esc(t)}">${ico('copy')}Copy</button>${tg}</div>`
-      : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${inner || esc(t)}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
+      : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
     return body + noteList(k);
   }
 
   /* ---------- the list ---------- */
   function topicHead(t, n) {
-    const real = D.topics.includes(t) && t !== 'Unsorted', others = D.topics.filter(x => x !== t && x !== 'Unsorted');
+    const real = D.topics.includes(t), others = D.topics.filter(x => x !== t && x !== 'Unsorted');
     if (S.trn === t) return `<div class="r8gh">${ico('plan')}<input type="text" id="rf-trn" value="${esc(t)}" aria-label="New name for the topic ${esc(t)}"><button class="btn sm pri" data-trnsave="${esc(t)}">Save</button><button class="ib" data-trn="" title="Cancel" aria-label="Cancel renaming">${ico('x')}</button></div>`;
     return `<div class="r8gh">${ico('plan')}<span class="gt">${esc(t)}</span><span class="n">${n}</span><span class="spacer"></span>${real ? `<button class="tact" data-trn="${esc(t)}" title="Rename this topic">${ico('edit')}<span>Rename</span></button><button class="tact" data-tmerge="${esc(t)}" aria-expanded="${S.tmerge === t}" title="Combine this topic with another: its plans move into that topic, and this one goes away">${ico('combine')}<span>Combine</span></button>` : ''}
       ${S.tmerge === t ? `<div class="pop" role="menu"><div class="small mut">Combine with… its ${pl(n, 'plan moves', 'plans move')} into</div>${others.map(x => `<button role="menuitem" data-tmergeto="${esc(x)}">${esc(x)}</button>`).join('') || '<div class="small mut">No other topic yet</div>'}</div>` : ''}</div>`;
   }
   const stPill = s => `<span class="rf-st ${s}" title="${esc(SN[s][1])}"><i></i>${SN[s][0]}</span>`;
   const chg = '<span class="rf-new" title="Changed since you last looked">changed</span>';
-  const row = r => `<button class="r8row" data-ref="${esc(r.id)}" aria-pressed="${S.sel === r.id}">${ico(r.kind)}<span class="t">${esc(r.t)} ${r.ch ? chg : ''}</span><span class="s">${stPill(r.st)}</span><span class="m">${esc(r.m)}</span></button>`;
+  const row = r => r.later ? `<button class="r8row later" aria-disabled="true" title="Comes later: ${esc(r.m)}">${ico(r.kind)}<span class="t">${esc(r.t)}</span><span class="s"><span class="rf-st ref"><i></i>Later</span></span><span class="m">${esc(r.m)}</span></button>`
+    : `<button class="r8row" data-ref="${esc(r.id)}" aria-pressed="${S.sel === r.id}">${ico(r.kind)}<span class="t">${esc(r.t)} ${r.ch ? chg : ''}</span><span class="s">${stPill(r.st)}</span><span class="m">${esc(r.m)}</span></button>`;
 
   function stepKinds(s) {
     return [s.ai ? ['ai', 'AI agent', 'An AI agent does this step'] : s.t === 'script' ? ['code', 'Script', 'A saved script the workflow calls'] : s.t === 'rawscript' ? ['code', 'Inline code', 'A few lines of code kept inside the workflow'] : /loop/.test(s.t) ? ['loop', 'Loop', 'Repeats the steps under it'] : /branch/.test(s.t) ? ['branch', 'Branch', 'Takes one of the paths under it'] : ['code', s.t || 'Step', ''],
@@ -179,17 +223,18 @@
     const nd = F.filter(dhit).length;
     const stN = s => R.filter(r => hit(r) && inK(r) && (s === 'all' || r.st === s)).length + ((!S.kind || S.kind === 'doc') && (s === 'all' || s === 'ref') ? nd : 0);
     const kN = k => k === 'doc' ? (S.sec === 'all' || S.sec === 'ref' ? nd : 0) : R.filter(r => hit(r) && inSt(r) && r.kind === k).length;
-    const gs = [...new Set(shown.map(r => r.g))].sort((a, b) => {
-      const o = g => g[0] === 't' ? D.topics.indexOf(g.slice(2)) : 100 + ['check', 'flow'].indexOf(g.slice(2));
-      return o(a) - o(b); });
+    // topics first (the mock's left column), then the kinds in their chip order
+    const KO = [...Object.keys(KN), 'decision'], o = g => g[0] === 't' ? (g === 't:Plans' ? 99 : D.topics.indexOf(g.slice(2))) : 100 + KO.indexOf(g.slice(2));
+    const gs = [...new Set(shown.map(r => r.g))].sort((a, b) => o(a) - o(b));
     const nch = R.filter(r => r.ch).length + F.filter(f => f.ch).length;
-    const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find in Reference" aria-label="Find in Reference" value="${esc(S.q)}">
+    const kinds = Object.keys(KN).filter(k => k === 'doc' || R.some(r => r.kind === k));  // FastLane Drive has no app text
+    const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find a plan, checklist, design or workflow" aria-label="Find in Reference" value="${esc(S.q)}">
       <span class="rf-chips" role="group" aria-label="State">${['all', 'prop', 'ok', 'ref'].map(s => `<button class="chipb" data-sec="${s}" aria-pressed="${S.sec === s}" title="${s === 'all' ? 'Every item' : esc(SN[s][1])}">${s === 'all' ? 'All' : SN[s][0]} <span class="n">${stN(s)}</span></button>`).join('')}</span>
-      <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${Object.keys(KN).map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k === 'doc' ? 'doc' : k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
+      <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${kinds.map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k === 'doc' ? 'doc' : k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
       <span class="spacer"></span><span class="small mut rf-chl">${nch ? `${chg} ${pl(nch, 'item changed', 'items changed')} since you last looked · <button class="lk small" data-allseen>Mark all as seen</button>` : 'Nothing changed since you last looked'}</span></div>`;
     const lst = gs.length ? `<div class="r8list">${gs.map(g => { const rs = shown.filter(r => r.g === g);
-      return `<div class="r8g">${g[0] === 't' ? topicHead(g.slice(2), rs.length) : `<div class="r8gh">${ico(g.slice(2))}<span class="gt">${KN[g.slice(2)]}</span><span class="n">${rs.length}</span></div>`}${rs.map(r => r.kind === 'flow' ? flowRow(r) : row(r)).join('')}</div>`; }).join('')}</div>` : (docsOn && nd ? '' : '<p class="mut">Nothing matches.</p>');
-    return bar + lst + (docsOn ? docList(F.filter(dhit), F.length) : '');
+      return `<div class="r8g">${g[0] === 't' ? topicHead(g.slice(2), rs.length) : `<div class="r8gh">${ico(g === 'k:decision' ? 'plan' : g.slice(2))}<span class="gt">${KG[g.slice(2)]}</span><span class="n">${rs.length}</span></div>`}${(g === 'k:decision' && !q && !S.open.has(g) ? rs.slice(0, 6) : rs).map(r => r.kind === 'flow' ? flowRow(r) : row(r)).join('')}${g === 'k:decision' && !q && rs.length > 6 ? `<button class="lk small rf-more" data-fold="${g}">${S.open.has(g) ? 'Show the first 6' : `Show all ${rs.length}`}</button>` : ''}</div>`; }).join('')}</div>` : (docsOn && nd ? '' : '<p class="mut">Nothing matches.</p>');
+    return [bar + lst, docsOn ? docList(F.filter(dhit), F.length) : ''];  // documents go under the opened item, never between the list and it
   }
 
   /* ---------- documents: this project's files, like Finder's list view ---------- */
@@ -222,8 +267,8 @@
     const kinds = Object.keys(DK).filter(k => F.some(f => f.k === k)), sh = F.filter(f => !S.dk || f.k === S.dk);
     const gs = Object.keys(D.docs.groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
     const dic = k => `<span class="rf-dk k-${k}" title="${DK[k][1]}">${ico(DK[k][0], DK[k][1])}</span>`;
-    const drow = f => `<div class="doc9"${S.dsel === f.id ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="nm" data-dopen="${esc(f.id)}" ${f.md ? `aria-expanded="${S.dsel === f.id}" title="Open it here"` : 'title="Copies its path, to open it from Finder"'}>${esc(f.n)} ${f.ch ? chg : ''}${f.sub ? `<span class="sub">${esc(f.sub)}</span>` : ''}</button><span class="sz">${kb(f.kb)}</span><span class="d9t">${esc(dm(f.d))}</span><button class="ib" data-copy="${esc(path(f))}" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${ico('copy')}</button></div>${S.dsel === f.id && f.md ? docView(f) : ''}`;
-    return `<section class="rf-docs" aria-label="Documents"><div class="r8gh rf-dh">${ico('doc')}<span class="gt">Documents</span><span class="n">${pl(total, 'file', 'files')} in this project's folder · Markdown opens here, other kinds copy their path for Finder</span></div>
+    const drow = f => `<div class="doc9"${S.dsel === f.id ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="nm" data-dopen="${esc(f.id)}" ${f.md ? `aria-expanded="${S.dsel === f.id}" title="Open it here"` : 'title="Opens in a new tab"'}>${esc(f.n)}${f.md ? '' : ' ↗'} ${f.ch ? chg : ''}${f.sub ? `<span class="sub">${esc(f.sub)}</span>` : ''}</button><span class="sz">${kb(f.kb)}</span><span class="d9t">${esc(dm(f.d))}</span><button class="ib" data-copy="${esc(path(f))}" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${ico('copy')}</button></div>${S.dsel === f.id && f.md ? docView(f) : ''}`;
+    return `<section class="rf-docs" aria-label="Documents"><div class="r8gh rf-dh">${ico('doc')}<span class="gt">Documents</span><span class="n">${pl(total, 'file', 'files')} in this project's folder · Markdown opens here, other kinds in a new tab</span></div>
       <div class="docbar"><button class="chipb" data-dk="" aria-pressed="${!S.dk}">All <span class="n">${F.length}</span></button>${kinds.map(k => `<button class="chipb" data-dk="${k}" aria-pressed="${S.dk === k}" title="Only ${DK[k][1]} files">${dic(k)}${DK[k][1]} <span class="n">${F.filter(f => f.k === k).length}</span></button>`).join('')}</div>
       ${gs.map(g => { const l = sh.filter(f => f.g === g), key = 'dg:' + g, op = !!S.q || S.open.has(key) || sh.some(f => f.id === S.dsel && f.g === g), all = S.open.has('dga:' + g), nchg = l.filter(f => f.ch).length;
         return `<div class="rf-grp"><button class="fold" data-fold="${esc(key)}" aria-expanded="${op}"><span>${esc(D.docs.groups[g])}</span> <span class="small mut">${pl(l.length, 'file', 'files')}${nchg ? ` · ${nchg} changed` : ''}</span></button>
@@ -247,7 +292,7 @@
         return `<button class="chipb" data-clf="${g}~${esc(v)}" aria-pressed="${p}"${!n && !p ? ' disabled' : ''} title="${p ? 'Stop filtering by' : 'Show only'} ${esc(gl.toLowerCase())}: ${esc(v)}">${lab(g, v)}<span class="n">${n}</span></button>`; }).join('')}</span>`).join('')}
       ${S.clf.size ? `<span class="small"><b>${pl(shown.length, 'item', 'items')} shown</b> of ${cl.items.length} · <button class="lk small" data-clf="">Clear filters</button></span>` : ''}</div>`;
     const crow = ([[pf, it, st, who, bead], i]) => { const b0 = bi(bead), t = b0 && untag(b0[0]), k = 'chk:' + i;
-      return `<div class="cl9" ${at(k, it)}>${cm(st)}<span class="tx">${pin(k)}${esc(it)}<span class="small mut rf-task">${bead ? `${cm(b0 ? b0[1] : 'none', 'Task ')}<span class="rf-bd st-${BST[b0 && b0[1]] || 'none'}">${esc(t || 'not on the board')} · <code>${esc(bead)}</code> · ${esc(b0 ? b0[1] : 'unknown')}</span>` : 'no task'}</span></span>
+      return `<div class="cl9" ${at(k, it)}>${cm(st)}<span class="tx">${pin(k)}${esc(it)}<span class="small mut rf-task">${bead ? `<button class="pl9 bid9" ${b0 ? `data-task="${esc(bead)}" title="Its task: ${esc(t)} · ${esc(b0[1])}. Opens it in Running"` : 'disabled title="Not on the board"'}>${cm(b0 ? b0[1] : 'none', 'Task ')}${esc(bead)}</button> ${esc(t ? (t.length > 70 ? t.slice(0, 68).trimEnd() + '…' : t) : 'not on the board')} · ${esc(b0 ? b0[1] : 'unknown')}` : 'no task'}</span></span>
         <span class="pl"><span class="pl9 pf" title="Platform">${esc(pfOf(pf))}</span><span class="pl9 who9${whoOf(who) === 'You' ? ' you' : ''}" title="Who does it">${whoOf(who)}</span></span></div>${noteList(k)}`; };
     const COL = {done: 'var(--st-done)', 'in progress': 'var(--st-progress)', 'not started': 'var(--st-none)', blocked: 'var(--st-blocked)'};
     return `<div class="rf-chart" ${at('chk:chart', 'The checklist chart')}>${pin('chk:chart')}<b>${pl(cl.items.length, 'item', 'items')}</b><span class="prog2" role="img" aria-label="${Object.entries(by).map(([s, n]) => `${n} ${s}`).join(', ')}">${Object.entries(by).map(([s, n]) => `<i style="flex:${n};background:${COL[s]}" title="${n} ${s}"></i>`).join('')}</span>
@@ -262,41 +307,53 @@
     const isCheck = D.checklist && p.id === D.checklist.plan;
     let doc, csum = '';
     if (!B || !A) doc = '<p class="mut">Reading this revision…</p>';
+    else if (B.err) doc = `<p class="rf-err">Revision ${cur + 1} could not be read just now (${esc(B.err)}). <button class="btn sm" data-retry="${esc(p.revs[cur][0])}">Try again</button></p>`;
     else {
-      const v = p.revs[cur][0], key = i => `${k}~${v}~${i}`, mk = S.marks && cur === last && n > 1;
+      const v = p.revs[cur][0], key = i => `${k}~${v}~${i}`, mk = S.marks && cur === last && n > 1 && !A.err;  // no marks against a revision that failed to read
       if (mk) {
         const al = alignBlocks(A, B), nk = x => al.filter(y => y.k === x).length, when = `in revision ${n}`, tag = w => ` <span class="rf-tag">${w} ${when}</span>`;
-        csum = `${pl(nk('chg'), 'part', 'parts')} changed · ${nk('add')} added · ${nk('del')} removed`;
+        csum = `${pl(nk('chg'), 'paragraph', 'paragraphs')} changed · ${nk('add')} added · ${nk('del')} removed`;
         doc = al.map(x => x.k === 'same' ? block(B[x.b], key(x.b))
           : x.k === 'chg' ? block(B[x.b], key(x.b), ['img', 'tbl', 'pre'].includes(B[x.b][0]) ? '' : wdiff(A[x.a][1], B[x.b][1]), tag('changed'))
           : x.k === 'add' ? block(B[x.b], key(x.b), ['img', 'tbl', 'pre'].includes(B[x.b][0]) ? '' : `<ins>${esc(B[x.b][1])}</ins>`, tag('added'))
           : `<p class="small"><del>${esc(A[x.a][0] === 'img' ? 'Picture: ' + (A[x.a][2] || '') : A[x.a][0] === 'tbl' ? 'Table: ' + A[x.a][2][0].join(' · ') : A[x.a][1])}</del>${tag('removed')}</p>`).join('');
       } else doc = B.map((b, i) => block(b, key(i))).join('') || '<p class="mut">This revision has no text.</p>';
-      doc = beadIn(doc);
     }
     const vlist = n > 1 ? `<nav class="vlist" aria-label="Revisions"><h5>${pl(n, 'revision', 'revisions')}</h5>${p.revs.map((r, i) => [r, i]).reverse().map(([[v, ts, label], i]) =>
       `<button class="vrow" data-rv="${i}" aria-current="${i === cur}"><b>Revision ${i + 1} · ${esc(dm(ts))}${i === last ? ' · newest' : ''}</b><span>${esc(i === last && csum ? csum : label || '')}</span></button>`).join('')}</nav>` : '';
-    const revbar = n > 1 ? `<div class="revbar"><b>Revision ${cur + 1} of ${n}</b>${cur === last ? `<span>${S.marks ? `${csum ? csum + ', ' : ''}marked word by word against revision ${n - 1}: <del>struck</del> words left, <ins>marked</ins> words came in` : 'marks hidden'}</span><button class="lk small" data-marks>${S.marks ? 'Hide marks' : 'Show marks'}</button>` : `<span>an earlier revision, as it read</span><button class="lk small" data-rv="${last}">Back to the newest</button>`}</div>` : '';
+    const revbar = n > 1 ? `<div class="revbar"><b>Revision ${cur + 1} of ${n}</b>${cur === last ? A && A.err ? `<span>revision ${n - 1} could not be read just now, so nothing is marked</span><button class="lk small" data-retry="${esc(p.revs[last - 1][0])}">Try again</button>` : `<span>${S.marks ? `${csum ? csum + ', ' : ''}marked word by word against revision ${n - 1}: <del>struck</del> words left, <ins>marked</ins> words came in` : 'marks hidden'}</span><button class="lk small" data-marks>${S.marks ? 'Hide marks' : 'Show marks'}</button>` : `<span>an earlier revision, as it read</span><button class="lk small" data-rv="${last}">Back to the newest</button>`}</div>` : '';
     const text = `<div class="${vlist ? 'r8v' : ''}"><div><div class="doc">${doc}</div></div>${vlist}</div>`;
     const topics = D.topics.filter(t => t !== 'Unsorted');
-    return `<div class="rf-acts rf-vh">${ico(p.kind)}<b class="rf-vt">${esc(p.t)}</b>${stPill(p.st)}<span class="spacer"></span>
-        ${p.kind === 'plan' ? `<label class="small mut rf-topic">Topic <select data-move="${esc(p.id)}" aria-label="Topic">${p.topic === 'Unsorted' ? '<option selected>Unsorted</option>' : ''}${topics.map(t => `<option${t === p.topic ? ' selected' : ''}>${esc(t)}</option>`).join('')}<option value="__new">New topic…</option></select></label>` : ''}
+    const st = stOf(p);
+    return `<div class="rf-acts rf-vh">${ico(p.kind)}<b class="rf-vt">${esc(p.t)}</b>${stPill(st)}<span class="spacer"></span>
         <button class="ib" data-link="${esc(p.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       ${isCheck ? checklistHtml() + `<details class="rf-det"${S.det ? ' open' : ''}><summary>The checklist plan as written, with its ${pl(n, 'revision', 'revisions')}</summary>${revbar}${text}</details>` : revbar + text}
-      ${noteList(k + '~all')}<div class="rf-acts"><button class="btn sm" data-note="${esc(k)}~all">${ico('note')}Write a note</button><span class="small mut">Click any line, table, picture${isCheck ? ', row or the chart' : ''} to write a note on it. To ask for another version, say so in a note.</span></div>`;
+      ${foot(k, st, p.kind === 'plan' ? `<label class="small mut rf-topic">Topic <select data-move="${esc(p.id)}" aria-label="Topic">${p.topic === 'Unsorted' ? '<option selected>Unsorted</option>' : ''}${topics.map(t => `<option${t === p.topic ? ' selected' : ''}>${esc(t)}</option>`).join('')}<option value="__new">New topic…</option></select></label>` : '',
+        `Click any line, table, picture${isCheck ? ', row or the chart' : ''} or select words to write a note on them. To ask for another version, say so in a note.`)}`;
+  }
+  // the plan footer, as in the mock: a note, where it is filed, its topic
+  const foot = (k, st, topic, hint) => `${noteList(k + '~all')}<div class="rf-acts"><button class="btn sm" data-note="${esc(k)}~all">${ico('note')}Write a note</button>
+      <span class="small mut">Filed as</span><span class="seg" role="group" aria-label="Filed as">${['prop', 'ok', 'ref'].map(s => `<button data-plansec="${s}" aria-pressed="${st === s}" title="${esc(SN[s][1])}">${SN[s][0]}</button>`).join('')}</span>
+      ${topic}<span class="spacer"></span><span class="small mut">${hint}</span></div>`;
+  // a project file the mock files under Reference: Markdown as text, sheets as tables, each line and row open to a note
+  function extraView(x) {
+    const k = 'ref:' + x.id, B = x.md ? mdBlocks(x.md) : x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]);
+    return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · changed ${esc(dm(x.d))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
+      <div class="doc">${B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || '<p class="mut">This file has no text.</p>'}</div>
+      ${foot(k, stOf(x), '', 'Click any line or row, or select words, to write a note on them')}`;
   }
   function flowView(f) {
     const k = 'ref:' + f.id;
-    return `<div class="rf-acts rf-vh">${ico('flow')}<b class="rf-vt">${esc(f.t)}</b><span class="small mut">Windmill workflow · runs ${esc(f.when)} · last edited ${esc(dm(f.edited))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(f.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
+    return `<div class="rf-acts rf-vh">${ico('flow')}<b class="rf-vt">${esc(f.t)}</b><span class="small mut">Windmill workflow · runs ${esc(f.when)} · last edited ${esc(dm(f.edited))} · read-only here</span><span class="spacer"></span><button class="btn sm" data-wmopen="${esc(f.t)}" title="Open this workflow in Windmill, in a new tab">Open in Windmill ${ico('ext')}</button><button class="ib" data-link="${esc(f.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       <p class="rf-what" ${at(k + '~what', f.what)}>${pin(k + '~what')}${esc(f.what)}</p>${noteList(k + '~what')}
       <p class="small"><b>${lastRun(f)}</b></p>${ftree(f.steps, k, !!f.last)}${failTree(f, k)}
       <p class="small mut">As deployed in Windmill today. Change it there or ask the agent in a note; this view only shows it.</p>
       ${noteList(k + '~all')}<div class="rf-acts"><button class="btn sm" data-note="${esc(k)}~all">${ico('note')}Write a note</button><span class="small mut">Click a step to write a note on it</span></div>`;
   }
   function viewer() {
-    const p = D.plans.find(x => x.id === S.sel), f = !p && D.flows.find(x => x.id === S.sel);
-    if (!p && !f) return '';
-    return `<div class="viewer" id="rf-viewer">${p ? planView(p) : flowView(f)}</div>`;
+    const p = D.plans.find(x => x.id === S.sel), f = !p && D.flows.find(x => x.id === S.sel), x = !p && !f && xOf(S.sel);
+    if (!p && !f && !x) return '';
+    return `<div class="viewer" id="rf-viewer">${p ? planView(p) : f ? flowView(f) : extraView(x)}</div>`;
   }
 
   /* ---------- draw and events ---------- */
@@ -304,8 +361,10 @@
   function draw() {
     if (!here()) return;
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
-    el.innerHTML = `<div class="rf">${list()}${viewer()}</div>`;
-    if (P.picSizes) P.picSizes(el, ctx);  // each picture keeps the size he picks, as in Pages & links
+    const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
+    const [lst, dl] = list();
+    el.innerHTML = `<div class="rf">${lst}${viewer()}${dl}${zoomView()}</div>`;
+    const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
     if (S.scroll) { S.scroll = false; const v = document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: 'start'}); }
@@ -324,14 +383,24 @@
     const b =e.target.closest('button,[data-line],summary,a,select,input,textarea');
     if (!b || !el.contains(b)) { if (S.tmerge) { S.tmerge = ''; draw(); } return; }
     const d = b.dataset;
-    if (b.matches('[data-line]')) {
-      if (window.getSelection().toString()) return;
+    if (b.matches('[data-line]')) {  // a spot on a picture, the selected words, or else the whole line
+      const im = e.target.closest('img'), sel = getSelection(), q = String(sel || '').replace(/\s+/g, ' ').trim();
+      if (im) { const r = im.getBoundingClientRect(); S.tgt = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; }
+      else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300)} : null;
       S.note = d.line; draw(); return;
     }
     if (b.tagName === 'SUMMARY') { S.det = !b.parentElement.open; return; }  // kept across redraws
     if (b.tagName !== 'BUTTON') return;
     if (S.tmerge && d.tmerge === undefined && d.tmergeto === undefined) S.tmerge = '';
     if (d.ref !== undefined) return open(d.ref);
+    if (d.task) { ctx.prefs.set('task', d.task); return ctx.go('running', d.task); }  // Running opens the task kept in prefs
+    if (d.retry) return retry(S.sel, d.retry);
+    if (d.plansec) {
+      const p = D.plans.find(x => x.id === S.sel) || xOf(S.sel), f = filed(), was = f[p.id];
+      ctx.prefs.set('ref-file', {...f, [p.id]: d.plansec}); draw();
+      return ctx.inert(`Filed “${cutq(p.t)}” as ${SN[d.plansec][0]}`, () => { const g = filed(); if (was) g[p.id] = was; else delete g[p.id]; ctx.prefs.set('ref-file', g); draw(); });
+    }
+    if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
     if (d.allseen !== undefined) { markSeen([...rows().map(r => r.id), ...docs().map(f => f.id)]); return draw(); }
@@ -347,19 +416,29 @@
       const f = docs().find(x => x.id === d.dopen);
       if (!f) return;
       markSeen([f.id]);
-      if (!f.md) return copy(path(f), 'Path');
+      // shortcut: no route serves the project's files yet, so the prototype says what opens; its path still copies beside it
+      if (!f.md) return ctx.toast(`Opens “${f.n}” in a new tab${f.k === 'pdf' ? '; PDFs open in place later' : ''}`, {inert: true});
       S.dsel = S.dsel === f.id ? '' : f.id; S.note = ''; return draw();
     }
-    if (d.note) { S.note = d.note; return draw(); }
+    if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
+    if (d.zoom) {
+      const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-line="${CSS.escape(k)}"] img`);
+      ctx.prefs.set('ref-zoom', {...ctx.prefs.get('ref-zoom', {}), [k]: +d.zoom});
+      S.full = im ? {k, src: im.getAttribute('src'), cap: im.getAttribute('alt'), z: +d.zoom} : {...S.full, z: +d.zoom};
+      if (S.note !== k) S.note = '';
+      return draw();
+    }
+    if (d.zclose !== undefined) return closeZoom();
     if (d.nsave) {
       const k = d.nsave, text = (document.getElementById('rf-nt').value || '').trim();
       if (!text) return ctx.toast('Write something first');
       const src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
       try {
-        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, ...noteMeta(k)});
-        mine.push({id: c.id, a: k, text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version});
-        S.note = ''; draw(); ctx.refreshChips();
+        const target = S.tgt || undefined;
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)});
+        mine.push({id: c.id, a: k, text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
+        S.note = ''; S.tgt = null; draw(); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id)});
       } catch (er) { fail(er); }
       return;
@@ -374,13 +453,24 @@
     try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); draw(); ctx.toast('Note taken back'); }
     catch (e) { fail(e); }
   }
+  // Unsorted is not a stored topic: renaming or combining it files each of its plans under the named topic, one move each
+  async function unsortedTo(topic, isNew) {
+    const ps = D.plans.filter(p => p.topic === 'Unsorted');
+    S.trn = S.tmerge = '';
+    try {
+      for (const [i, p] of ps.entries()) { topics(await ctx.api('api/plan-topics', {move: p.id, topic, ...(isNew && !i ? {new: true} : {})})); p.topic = topic; }
+      draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”. A plan cannot go back to Unsorted, so this has no Undo; each plan's Topic menu still moves it.`);
+    } catch (e) { draw(); fail(e); }
+  }
   function renameTopic(old, to) {
     if (!to || to === old) { S.trn = ''; return draw(); }
+    if (old === 'Unsorted') return unsortedTo(to, !D.topics.includes(to));
     const set = (a, b) => D.plans.forEach(p => { if (p.topic === a) p.topic = b; });
     topicChange({rename: old, to}, () => { S.trn = ''; set(old, to); },
       async () => { topics(await ctx.api('api/plan-topics', {rename: to, to: old})); set(to, old); }, `Topic renamed to “${to}”`);
   }
   function combine(from, into) {
+    if (from === 'Unsorted') return unsortedTo(into, false);
     const moved = D.plans.filter(p => p.topic === from);
     S.tmerge = '';
     topicChange({merge: from, into}, () => moved.forEach(p => p.topic = into),
@@ -400,8 +490,10 @@
       `Moved to “${topic}”`);
   }
   function onInput(e) { if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); } }
+  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
+  function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
-    if (!here()) return;
+    if (!here() || S.full) return;
     if (e.target.id === 'rf-trn' && e.key === 'Enter') renameTopic(S.trn, e.target.value.trim());
     if (e.key === 'Escape' && (S.trn || S.tmerge || S.note)) { S.trn = S.tmerge = S.note = ''; draw(); }
     if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
@@ -413,11 +505,12 @@
       ctx = c; el = main;
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       const id = anchor ? decodeURIComponent(anchor) : '';
-      if (id && (D.plans.some(p => p.id === id) || D.flows.some(f => f.id === id))) { S.sel = id; S.scroll = true; markSeen([id]); }
+      if (id && (D.plans.some(p => p.id === id) || D.flows.some(f => f.id === id) || xOf(id))) { S.sel = id; S.scroll = true; markSeen([id]); }
       if (!main._rf) {
         main._rf = true;
         main.addEventListener('click', onClick); main.addEventListener('change', onChange);
         main.addEventListener('input', onInput); main.addEventListener('keydown', onKey);
+        document.addEventListener('keydown', onDocKey, true);  // Esc closes the picture viewer wherever the focus is
       }
       draw();
     }});

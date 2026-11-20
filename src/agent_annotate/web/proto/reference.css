@@ -10,7 +10,8 @@
 .tab-reference .chipb:disabled{opacity:.45;cursor:default}
 .tab-reference .rf-new{display:inline-block;font-size:var(--fs-xs);font-weight:700;border-radius:9px;padding:0 7px;background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text);vertical-align:1px;white-space:nowrap}
 /* the list: groups in as many columns as fit */
-.tab-reference .r8list{columns:3 440px;column-gap:24px;padding:2px 0 8px}
+.tab-reference .r8list{columns:3 470px;column-gap:28px;padding:2px 0 8px}
+.tab-reference .r8row.later{opacity:.6;cursor:default}
 .tab-reference .r8g{break-inside:avoid;margin:0 0 14px;border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100)}
 .tab-reference .r8gh{position:relative;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--excerpt-bg);font-weight:700;font-size:var(--fs-md);border-radius:var(--radius-box) var(--radius-box) 0 0}
 .tab-reference .r8gh .gt{min-width:0}
@@ -123,6 +124,25 @@
 .tab-reference .rf-bd{display:inline;font-weight:600;border-radius:4px;padding:0 4px;background:color-mix(in oklab,var(--st) 16%,var(--color-base-100))}
 .tab-reference .rf-bd .dot{width:8px;height:8px;margin-right:4px;vertical-align:0}
 .tab-reference .rf-bd code{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace}
+.tab-reference button.rf-bd{border:0;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-align:left}
+.tab-reference button.rf-bd:hover{text-decoration:underline}
+.tab-reference .pl9.bid9{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;color:inherit;border-color:var(--line);background:var(--color-base-100)}
+.tab-reference .pl9.bid9:hover{border-color:var(--color-primary)}.tab-reference .pl9.bid9 .sm9{width:12px;height:12px}
+.tab-reference .rf-err{color:var(--err-text);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tab-reference .rf-on{font-weight:600;margin:0 0 4px}
+/* pictures: pins at the spot a note is on; the full-size viewer, as in the mock */
+.tab-reference .qpinwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top}
+.tab-reference .pinm{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
+.tab-reference .pinm.new{background:var(--color-warning);color:#000}
+.tab-reference figure img{cursor:crosshair}
+.tab-reference .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;vertical-align:middle}
+.tab-reference .seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:inherit}.tab-reference .seg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
+.tab-reference .seg.zm button{font-size:var(--fs-xs);padding:1px 7px}
+.tab-reference .zoomv{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:52px 16px 16px}
+.tab-reference .zoomv .zbar{position:fixed;top:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);z-index:41}
+.tab-reference .zoomv .pic{display:block;max-width:fit-content;margin:0 auto;cursor:crosshair}
+.tab-reference .zoomv .pic img{display:block;width:100%;max-width:100%;height:auto}
+.tab-reference .zoomv .zn{max-width:760px;margin:8px auto}.tab-reference .zoomv .zn:empty{display:none}
 .tab-reference .rf-det{margin:12px 0}.tab-reference .rf-det summary{cursor:pointer;font-weight:600;padding:6px 0}
 .tab-reference .rf-what{max-width:90ch}
 /* notes */
@@ -153,6 +173,7 @@
   .tab-reference .r8bar input[type=search]{flex-basis:100%;max-width:none}
   .tab-reference .r8bar .sep,.tab-reference .r8bar .spacer{display:none}
   .tab-reference .r8list{columns:1}
+  .tab-reference .hide-ph{display:none}
   .tab-reference .tact{padding:3px 4px}
   .tab-reference .doc9{grid-template-columns:24px minmax(0,1fr) auto auto}.tab-reference .doc9 .sz{display:none}
   .tab-reference .cl9{grid-template-columns:22px minmax(0,1fr)}.tab-reference .cl9 .pl{grid-column:2;justify-content:flex-start}

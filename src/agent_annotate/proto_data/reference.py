@@ -186,6 +186,63 @@ def documents(root: Path = FLD_DIR) -> dict:
     return {"files": files, "groups": groups}
 
 
+# project files the approved mock files under Reference (round9/final/build/build.py, setref): id, title, kind, state, path.
+# Left out as in the mock: the trader guide (a home address), the chapter owner and tester sheets (member data).
+EXTRAS = [
+    ("delivery-scope", "Delivery scope", "plan", "ref", "planning/04-delivery-scope.md"),
+    ("stack-choice", "Stack choice: Railway, Matrix or Payload", "plan", "ok", "planning/02-stack-decision.md"),
+    ("legal-review-list", "Legal review list", "check", "ref", "planning/10-legal-review-list.csv"),
+    ("store-review-notes", "App store review notes", "check", "ref",
+     "planning/operations/orchestration/run_c9d587c967ba/reports/store-review-cards/src/droid-review-store-review-droid.md"),
+    ("design-tokens", "Design tokens and platform mapping", "design", "ref", "design/tokens.json"),
+    ("ask-nicole-word", "Ask Nicole, edited Word file", "data", "ref", "Ask-Nicole (edited).docx"),
+]
+
+
+def _flat(o, p=""):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from _flat(v, f"{p}.{k}" if p else k)
+    else:
+        yield [p, o if isinstance(o, str) else json.dumps(o)]
+
+
+def extras(root: Path = FLD_DIR) -> list:
+    """The project files above as Reference items: Markdown as text, the CSV as one table per section, tokens as one table."""
+    import csv
+    out = []
+    for iid, title, kind, st, rel in EXTRAS:
+        p = root / rel
+        if not p.is_file():
+            continue
+        item = {"id": iid, "t": title, "kind": kind, "st": st, "from": rel, "d": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}
+        if p.suffix == ".md":
+            item["md"] = hide(p.read_text(errors="ignore"))
+        elif p.suffix == ".csv":  # one table per section: a change in the first column starts one, and its first row is the header
+            parts = []
+            for r in csv.reader(p.open(errors="ignore")):
+                if not r:
+                    continue
+                if not parts or parts[-1][0] != hide(r[0]):
+                    parts.append([hide(r[0]), [hide(c) for c in r[1:]], []])
+                else:
+                    parts[-1][2].append([plain(c, 400) for c in r[1:]])
+            item["parts"] = parts
+        elif p.suffix == ".docx":  # its paragraphs, headings marked, as the mock reads it
+            import zipfile
+            xml = zipfile.ZipFile(p).read("word/document.xml").decode(errors="ignore")
+            lines = []
+            for para in re.findall(r"<w:p[ >].*?</w:p>", xml, re.S):
+                t = hide(html.unescape("".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", para)))).strip()
+                if t:
+                    lines.append(("# " if re.search(r'w:val="(Heading|Title)', para) else "") + t)
+            item["md"] = "\n\n".join(lines)
+        else:
+            item["parts"] = [["Tokens", ["Token", "Value"], [[a, plain(b, 300)] for a, b in _flat(json.loads(p.read_text()))]]]
+        out.append(item)
+    return out
+
+
 def build(page_dir: Path) -> dict:
     page_dir = Path(page_dir)
     plans = list_plans(page_dir)
@@ -209,7 +266,7 @@ def build(page_dir: Path) -> dict:
     if cl:
         ids.update(r[4] for r in cl["items"] if r[4])
     beads = board()
-    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows(), "docs": documents(),
+    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows(), "docs": documents(), "extras": extras(),
             "beads": {i: beads[i] for i in sorted(ids) if i in beads}, "notes": notes(page_dir)}
 
 
@@ -227,5 +284,6 @@ def notes(page_dir: Path) -> list:
             if c.get("status") in ("deleted",):
                 continue
             out.append({"id": c.get("id"), "a": anchor, "text": hide(c.get("text") or ""), "who": c.get("author_name") or "You",
-                        "at": (c.get("created_at") or "")[:16], "v": c.get("version"), "st": c.get("status")})
+                        "at": (c.get("created_at") or "")[:16], "v": c.get("version"), "st": c.get("status"),
+                        "target": c.get("target")})  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
     return sorted(out, key=lambda n: n["at"])
