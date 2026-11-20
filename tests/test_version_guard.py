@@ -220,8 +220,12 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
                            "(/api/capabilities HTTP 404; legacy server)")
     assert (f"fix: kill 4242 && nohup {shlex.quote(sys.executable)} -I -m agent_annotate.sync_server "
             f"{shlex.join(tail)} >> ") in line
-    # Only where a pid is reported (its pid field or the kill command): a port or temp path can contain "4343".
-    assert not re.search(rf"\b(pid|kill) (4343|4545|4646|{os.getpid()})\b", out)
+    # Only where a pid is reported (its pid field and the kill command's own arguments): any path
+    # in the text, even a temp root named "pid 4343", may hold the other pids.
+    reported = re.findall(r"\(unregistered, pid (\d+)\)", out)
+    killed = [pid for line in out.splitlines() if "fix: kill " in line
+              for pid in line.split("fix: kill ", 1)[1].split(" && ", 1)[0].split()]
+    assert reported == killed == ["4242"], (reported, killed)
 
 
 def test_json_output_lists_components_and_fixes(estate, page_server, capsys):

@@ -8,7 +8,8 @@ Chrome's phone emulation: 390x844, touch, an iPhone user agent.
 Chrome runs in its own process group with a temporary HOME and profile, and may only reach
 the test servers: every connection goes through a local gate that lets through only the
 page and the stand-in Google and refuses anything else, and the run fails on any refusal,
-on a socket that skips the gate, or on a file left in that HOME. The whole group is killed
+on a page's request to one of the Google names that skip the gate (they fail to resolve
+instead), on a socket that skips the gate, or on a file left in that HOME. The whole group is killed
 at the deadline. These checks need Google Chrome (macOS app, or google-chrome on Linux, as
 on GitHub's Ubuntu runner) and node; without them they skip.
 """
@@ -125,8 +126,13 @@ def _drive(world, visits):  # noqa: F811
             # Its own process group: the deadline kills node, Chrome and every helper together.
             # On Linux, fontconfig and NSS keep their caches in the XDG dirs: beside the profile, not in HOME.
             xdg = {f"XDG_{kind}_HOME": str(Path(root) / f"xdg-{kind.lower()}") for kind in ("CACHE", "CONFIG", "DATA")}
-            node = subprocess.Popen(["node", str(SCRIPT), str(plan)], stdout=out, stderr=err, start_new_session=True,
-                                    env={**os.environ, **xdg, "HOME": str(home)})
+            try:
+                node = subprocess.Popen(["node", str(SCRIPT), str(plan)], stdout=out, stderr=err,
+                                        start_new_session=True, env={**os.environ, **xdg, "HOME": str(home)})
+            except BaseException:  # no node to wait for: close the gate here
+                gate.shutdown()
+                gate.server_close()
+                raise
             reached, ends = set(), time.monotonic() + DEADLINE
             try:
                 while node.poll() is None and (remaining := ends - time.monotonic()) > 0:
@@ -160,7 +166,9 @@ def _drive(world, visits):  # noqa: F811
     assert reached, "saw no socket at all, so the next check would prove nothing"
     assert reached <= {f"127.0.0.1:{gate.server_address[1]}"}, f"Chrome connected around the gate: {reached}"
     assert written == [], f"Chrome wrote outside its profile: {written}"
-    return {v["name"]: v for v in json.loads(stdout)}
+    result = json.loads(stdout)
+    assert result["unresolved"] == [], f"Chrome tried to reach a name the gate lets bypass it: {result['unresolved']}"
+    return {v["name"]: v for v in result["visits"]}
 
 
 def _second_version(world):  # noqa: F811
@@ -177,7 +185,7 @@ def _landed(seen, link, card):
     (older) version, the document readable and its picture drawn."""
     assert seen["who"] == EDITOR
     assert seen["href"] == link + "&view=review&v=v1", seen["href"]  # shell.js adds the card's view and version
-    assert seen["card"] == {"highlighted": True, "onScreen": True, "text": seen["card"]["text"]}, seen
+    assert seen["card"] == {"highlighted": True, "onScreen": True, "open": True, "text": seen["card"]["text"]}, seen
     assert "Look at the corner of this picture." in seen["card"]["text"]
     assert seen["frame"] == "./content?v=v1"
     assert PRIVATE in seen["document"]["text"] and SECOND not in seen["document"]["text"]
@@ -196,6 +204,24 @@ def test_a_person_on_the_list_lands_on_the_picture_note_on_desk_and_phone(world,
     for device in ("desk", "phone"):
         _landed(seen[device]["first"], link, card)
     assert world["google"]["accounts"] == []  # each fresh jar signed in once
+
+
+@pytest.mark.parametrize("world", ["tls"], indirect=True)
+def test_a_question_link_opens_the_question_after_sign_in_on_desk_and_phone(world, monkeypatch):  # noqa: F811
+    """An open question follows the current version, so it is linked on v1, the only version."""
+    _configure(monkeypatch)
+    card = _setup(world)["ids"]["question"]
+    link = f"https://{world['pages']['proj']['host']}/annotate/proj/page/#feedback={card}"
+    world["google"]["accounts"] = [EDITOR, EDITOR]
+    seen = _drive(world, [{"name": device, "device": device, "url": link, "card": card} for device in ("desk", "phone")])
+    landed = {device: seen[device]["first"] for device in ("desk", "phone")}
+    for device, first in landed.items():
+        assert first["who"] == EDITOR
+        assert first["href"] == link + "&view=review", first["href"]  # no v: it follows the viewer
+    # Both widths in one check, so a miss on either shows.
+    cards = {device: {**first["card"], "text": "Ship it?" in first["card"]["text"]} for device, first in landed.items()}
+    assert cards == {device: {"highlighted": True, "onScreen": True, "open": True, "text": True} for device in landed}
+    assert world["google"]["accounts"] == []
 
 
 @pytest.mark.parametrize("world", ["tls"], indirect=True)

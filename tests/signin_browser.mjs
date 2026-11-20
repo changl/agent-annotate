@@ -1,5 +1,5 @@
 // Drives headless Chrome over its DevTools pipe for tests/test_signin_browser.py; asserts nothing.
-// Run: node signin_browser.mjs <plan.json>. Prints one JSON line of what each visit saw.
+// Run: node signin_browser.mjs <plan.json>. Prints one JSON line: what each visit saw, and every URL whose name failed to resolve.
 // The plan: {chrome, profile, host, port, proxy, visits: [{name, device, url, card, click, copy}]}.
 // Each visit gets its own browser context, so its own empty cookie jar. url "@copied" opens
 // what the previous visit's Copy link put on the clipboard.
@@ -35,6 +35,9 @@ const exited = new Promise(resolve => chrome.once('exit', resolve));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let id = 0, buffer = '';
 const pending = new Map();
+// The Google names skip the gate, so the gate cannot refuse them; a page's request or
+// navigation to one ends at the resolver instead, and is reported like a refusal.
+const urls = new Map(), unresolved = [];
 chrome.stdio[4].on('data', chunk => {
   buffer += chunk.toString();
   let end;
@@ -42,6 +45,10 @@ chrome.stdio[4].on('data', chunk => {
     const message = JSON.parse(buffer.slice(0, end));
     buffer = buffer.slice(end + 1);
     if (message.id && pending.has(message.id)) pending.get(message.id)(message);
+    else if (message.method === 'Network.requestWillBeSent') urls.set(message.params.requestId, message.params.request.url);
+    else if (message.method === 'Network.loadingFailed' && message.params.errorText.includes('NAME_NOT_RESOLVED')) {
+      unresolved.push(urls.get(message.params.requestId) || message.params.requestId);
+    }
   }
 });
 chrome.stdio[3].on('error', () => {});
@@ -67,6 +74,7 @@ async function visit(v) {
   const {sessionId} = await send('Target.attachToTarget', {targetId, flatten: true});
   const s = (method, params) => send(method, params, sessionId);
   await s('Page.enable');
+  await s('Network.enable');
   await s('Emulation.setFocusEmulationEnabled', {enabled: true});
   await s('Emulation.setDeviceMetricsOverride', DEVICES[v.device]);
   if (v.device === 'phone') {
@@ -98,7 +106,7 @@ async function visit(v) {
       const frame = document.getElementById('content-frame');
       return {href: location.href, who, text: document.body.innerText.slice(0, 400),
               card: card ? {highlighted: card.classList.contains('hl'), onScreen: !!hit && card.contains(hit),
-                            text: card.innerText.slice(0, 120)} : null,
+                            open: !card.classList.contains('is-line'), text: card.innerText.slice(0, 120)} : null,
               frame: frame ? frame.getAttribute('src') : null};
     })()`);
     // The document is a sandboxed frame; read it from inside.
@@ -153,7 +161,7 @@ async function visit(v) {
 try {
   const results = [];
   for (const v of plan.visits) results.push(await visit(v));
-  console.log(JSON.stringify(results));
+  console.log(JSON.stringify({visits: results, unresolved}));
 } finally {
   await send('Browser.close', {}, undefined, CLOSE_MS).catch(() => {});
   if (await Promise.race([exited.then(() => true), sleep(CLOSE_MS).then(() => false)]) === false) {
