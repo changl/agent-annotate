@@ -1,7 +1,8 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.32.3
 
+- Inline pictures show at most at their natural size. Stacked compare cells and Findings proof images no longer force `width: 100%`, so a 719 px crop stops being stretched to 1400 px on a wide screen; large shots still shrink to fit the column. `image_size` reads JPEG EXIF orientation, so a turned photo no longer renders at twice its size.
 - A sent answer stays with its question across versions. A new version that keeps an answered `#N` with the same prompt and choices shows it answered, and an answer sent (or changed and sent) on the older copy after a newer version went up also answers the newer copy. A changed prompt, or a choice whose label or consequence changed, is a new question and is asked again. Unsent and discarded picks never carry. On 2026-11-19 FLD #39066-39073, #39109-39113 and #39118-39119 came back undecided after a republish and were answered twice.
 
 ## 2.32.2
