@@ -1,6 +1,6 @@
 // Drives headless Chrome over its DevTools pipe for tests/test_signin_browser.py; asserts nothing.
 // Run: node signin_browser.mjs <plan.json>. Prints one JSON line of what each visit saw.
-// The plan: {chrome, profile, host, port, visits: [{name, device, url, card, click, copy}]}.
+// The plan: {chrome, profile, host, port, proxy, visits: [{name, device, url, card, click, copy}]}.
 // Each visit gets its own browser context, so its own empty cookie jar. url "@copied" opens
 // what the previous visit's Copy link put on the clipboard.
 // The Python side starts this in its own process group and kills the group on its deadline;
@@ -15,11 +15,17 @@ const DEVICES = {
   desk: {width: 1440, height: 900, deviceScaleFactor: 1, mobile: false},
   phone: {width: 390, height: 844, deviceScaleFactor: 3, mobile: true},
 };
-// The pipe needs no debugging port. Name lookups go only to the test host (127.0.0.1, whose
-// certificate is self-signed); every other name fails, and Chrome's own background traffic is off.
+// The pipe needs no debugging port. Every connection, loopback included, goes through the test's
+// gate (plan.proxy), which refuses all but the test servers; WebRTC may not send around it.
+// Direct name lookups fail, the test host's certificate is self-signed, and Chrome's own
+// background traffic is off.
 const chrome = spawn(plan.chrome, ['--headless=new', '--remote-debugging-pipe', `--user-data-dir=${plan.profile}`,
   '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--ignore-certificate-errors',
-  `--host-resolver-rules=MAP ${plan.host} 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1`,
+  `--proxy-server=http://127.0.0.1:${plan.proxy}`, '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+  // Chrome's own Google services (it preconnects to accounts.google.com and www.google.com for every
+  // context, flags or not) go direct instead, where the resolver rule below fails every name.
+  '--proxy-bypass-list=<-loopback>;*.google.com;*.gstatic.com;*.googleapis.com',
+  '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
   '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-breakpad',
   '--disable-crash-reporter', '--disable-domain-reliability', '--disable-client-side-phishing-detection',
   '--disable-default-apps', '--disable-extensions', '--no-pings', '--metrics-recording-only',

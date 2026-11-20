@@ -6,27 +6,36 @@ account chooser stood in for. Playwright's WebKit is not installed here, so the 
 Chrome's phone emulation: 390x844, touch, an iPhone user agent.
 
 Chrome runs in its own process group with a temporary HOME and profile, and may only reach
-the test servers: the run fails if it connects anywhere else or leaves a file in that HOME,
-and the whole group is killed at the deadline. These checks need macOS Google Chrome and
-node, so on the Linux PR runner they skip.
+the test servers: every connection goes through a local gate that lets through only the
+page and the stand-in Google and refuses anything else, and the run fails on any refusal,
+on a socket that skips the gate, or on a file left in that HOME. The whole group is killed
+at the deadline. These checks need Google Chrome (macOS app, or google-chrome on Linux, as
+on GitHub's Ubuntu runner) and node; without them they skip.
 """
 import json
 import os
+import select
 import shutil
 import signal
+import socket
+import socketserver
 import subprocess
 import tempfile
+import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
 from review_fixtures import complete
-from test_signin import OWNER, _configure, world  # noqa: F401
+from test_signin import OWNER, _bind, _configure, world  # noqa: F401
 from test_signin_matrix import EDITOR, PRIVATE, STRANGER, _setup
 
+from agent_annotate import signin
 from agent_annotate.pagegen import generate
 
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME = MAC_CHROME if Path(MAC_CHROME).exists() else shutil.which("google-chrome")
 SCRIPT = Path(__file__).with_name("signin_browser.mjs")
 DEADLINE = 120
 SECOND = "Second version, published after the card."
@@ -36,29 +45,90 @@ def _pids(*args):
     return subprocess.run(["pgrep", *args], capture_output=True, text=True).stdout.split()
 
 
-def _sockets(group):
-    """Remote ends of every connection the browser's process group holds right now."""
-    out = subprocess.run(["lsof", "-nP", "-a", "-g", str(group), "-i"], capture_output=True, text=True).stdout
+def _sockets(group, seconds):
+    """Remote ends of every connection the browser's process group holds right now; nothing
+    if lsof does not answer within `seconds`, so a stuck call cannot hold up the cleanup."""
+    try:
+        out = subprocess.run(["lsof", "-nP", "-a", "-g", str(group), "-i"], capture_output=True, text=True,
+                             timeout=seconds).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
     return {line.split("->")[1].split()[0] for line in out.splitlines() if "->" in line}
 
 
+class _Gate(socketserver.ThreadingTCPServer):
+    """Chrome's proxy: tunnels to an allowed (host, port), refuses and records anything else."""
+    daemon_threads = True
+
+    def __init__(self, address, handler):
+        self.allowed, self.passed, self.refused = set(), [], []
+        super().__init__(address, handler)
+
+
+class _GateHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        client, server = self.request, self.server
+        client.settimeout(10)
+        head = b""
+        try:
+            while b"\r\n\r\n" not in head and len(head) < 65536:
+                chunk = client.recv(65536)
+                if not chunk:
+                    return
+                head += chunk
+            line = head.split(b"\r\n", 1)[0].decode("latin-1")
+            method, target = (line.split(" ") + [""])[:2]
+            if method == "CONNECT":
+                host, _, port = target.rpartition(":")
+            else:  # plain http: an absolute URL
+                url = urllib.parse.urlsplit(target)
+                host, port = url.hostname or "", url.port or 80
+            if (host, int(port or 0)) not in server.allowed:
+                server.refused.append(line)
+                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                return
+            server.passed.append(line)
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=10) as upstream:
+                if method == "CONNECT":
+                    client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    head = head.split(b"\r\n\r\n", 1)[1]
+                # The stand-in Google answers one plain request and closes, so this tunnel ends with it.
+                upstream.sendall(head)
+                while True:
+                    ready, _, _ = select.select([client, upstream], [], [], 10)
+                    if not ready:
+                        return
+                    for side in ready:
+                        data = side.recv(65536)
+                        if not data:
+                            return
+                        (upstream if side is client else client).sendall(data)
+        except (OSError, ValueError):
+            return
+
+
 def _drive(world, visits):  # noqa: F811
-    if not Path(CHROME).exists() or not shutil.which("node"):
-        pytest.skip("the browser checks need macOS Google Chrome and node; this runner has neither")
+    if not CHROME or not shutil.which("node"):
+        pytest.skip("the browser checks need Google Chrome and node; this runner lacks one")
     page = world["pages"]["proj"]
+    gate = _bind(_GateHandler, _Gate)
+    host = page["host"].split(":")[0]
+    gate.allowed |= {(host, page["port"]), ("127.0.0.1", urllib.parse.urlsplit(signin.AUTH_URL).port)}
+    gate_thread = threading.Thread(target=gate.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    gate_thread.start()
     with tempfile.TemporaryDirectory(prefix="annotate-signin-chrome-") as root:
         plan, home, profile = Path(root) / "plan.json", Path(root) / "home", Path(root) / "profile"
         home.mkdir()
-        plan.write_text(json.dumps({"chrome": CHROME, "profile": str(profile), "host": page["host"].split(":")[0],
-                                    "port": page["port"], "visits": visits}))
+        plan.write_text(json.dumps({"chrome": CHROME, "profile": str(profile), "host": host, "port": page["port"],
+                                    "proxy": gate.server_address[1], "visits": visits}))
         with open(Path(root) / "out", "w+") as out, open(Path(root) / "err", "w+") as err:
             # Its own process group: the deadline kills node, Chrome and every helper together.
             node = subprocess.Popen(["node", str(SCRIPT), str(plan)], stdout=out, stderr=err, start_new_session=True,
                                     env={**os.environ, "HOME": str(home)})
             reached, ends = set(), time.monotonic() + DEADLINE
             try:
-                while node.poll() is None and time.monotonic() < ends:
-                    reached |= _sockets(node.pid)
+                while node.poll() is None and (remaining := ends - time.monotonic()) > 0:
+                    reached |= _sockets(node.pid, remaining)
                     time.sleep(0.3)
             finally:
                 timed_out = node.poll() is None
@@ -74,6 +144,8 @@ def _drive(world, visits):  # noqa: F811
                     time.sleep(0.1)
                 for pid in left:
                     os.kill(int(pid), signal.SIGKILL)
+                gate.shutdown()
+                gate.server_close()
             out.seek(0)
             err.seek(0)
             stdout, stderr = out.read(), err.read()
@@ -81,9 +153,10 @@ def _drive(world, visits):  # noqa: F811
     assert not left, f"Chrome processes outlived the run: {left}"
     assert not timed_out, f"no result in {DEADLINE} s: {stderr}"
     assert node.returncode == 0, stderr
-    assert reached, "saw no connection at all, so the next check would prove nothing"
-    assert {r.rsplit(":", 1)[0] for r in reached} <= {"127.0.0.1"}, f"Chrome reached outside the test: {reached}"
-    assert all(18700 <= int(r.rsplit(":", 1)[1]) < 18800 for r in reached), reached
+    assert gate.refused == [], f"Chrome tried to reach outside the test: {gate.refused}"
+    assert gate.passed, "nothing went through the gate, so the checks above prove nothing"
+    assert reached, "saw no socket at all, so the next check would prove nothing"
+    assert reached <= {f"127.0.0.1:{gate.server_address[1]}"}, f"Chrome connected around the gate: {reached}"
     assert written == [], f"Chrome wrote outside its profile: {written}"
     return {v["name"]: v for v in json.loads(stdout)}
 

@@ -166,17 +166,21 @@ def _writes(env, cookie, case, link, email, may_write, missing):
     before = _owner_view(env, case)
     card = ids["picture note"] if link == "picture note" else ids["question"]
     if link == "picture note":
-        code, _, answered = request("proj", f"api/comments/{card}/reply", cookie, "POST", {"text": "Seen, from " + email})
+        expected = ("comment", "Seen, from " + email)
+        code, _, answered = request("proj", f"api/comments/{card}/reply", cookie, "POST", {"text": expected[1]})
     else:
+        expected = ("accept", "")
         code, _, answered = request("proj", f"api/comments/{card}/decision", cookie, "POST",
                                     {"verdict": "accept", "defer_push": True})
     send, _, sent = request("proj", "api/rounds/submit", cookie, "POST", {"note": "Round from " + email})
     after = _owner_view(env, case)
     new_rounds = after[1][len(before[1]):]
-    # Answered and sent: the card went out in one new round, by this person, with their note.
+    # Answered and sent: the card went out in one new round, by this person, with their note,
+    # and the round holds exactly what they answered (Accept stays Accept), under their name.
     went_through = (code == 200 and send == 200 and card in json.loads(sent).get("comment_ids", [])
                     and [(r["by"], r["note"]) for r in new_rounds] == [(email, "Round from " + email)]
-                    and card in [a["comment_id"] for a in new_rounds[0]["answers"]])
+                    and [(a["verdict"], a["text"], a["by"]) for a in new_rounds[0]["answers"]
+                         if a["comment_id"] == card] == [(*expected, email)])
     refused = (code, send) == (403, 403) and after == before
     if may_write:
         assert went_through, (code, send, sent, new_rounds)
@@ -287,18 +291,34 @@ def test_role_raised_while_signed_in_can_answer_at_once(world, monkeypatch):  # 
 
 
 class _Forms(HTMLParser):
+    """Links and forms, each with the words a person sees on it."""
+
     def __init__(self):
         super().__init__()
-        self.links, self.forms = [], []
+        self.links, self.forms, self.texts, self.open = [], [], [], []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "a":
             self.links.append(attrs.get("href", ""))
+            self.texts.append({"tag": "a", "action": attrs.get("href", ""), "method": "get", "fields": {}, "text": ""})
+            self.open.append(self.texts[-1])
         elif tag == "form":
-            self.forms.append({"action": attrs.get("action", ""), "method": attrs.get("method", "get"), "fields": {}})
-        elif tag in ("input", "button") and self.forms and attrs.get("name"):
-            self.forms[-1]["fields"][attrs["name"]] = attrs.get("value", "")
+            self.forms.append({"tag": "form", "action": attrs.get("action", ""), "method": attrs.get("method", "get"),
+                               "fields": {}, "text": ""})
+            self.open.append(self.forms[-1])
+        elif tag in ("input", "button") and self.forms:
+            if attrs.get("name"):
+                self.forms[-1]["fields"][attrs["name"]] = attrs.get("value", "")
+            self.forms[-1]["text"] += " " + (attrs.get("value") or "")
+
+    def handle_endtag(self, tag):
+        if tag in ("a", "form") and self.open and self.open[-1]["tag"] == tag:
+            self.open.pop()
+
+    def handle_data(self, data):
+        for element in self.open:
+            element["text"] += data
 
 
 def test_not_shared_page_offers_another_account_and_lands_on_the_card(world, monkeypatch):  # noqa: F811
@@ -332,13 +352,19 @@ def test_not_shared_page_offers_to_ask_for_access(world, monkeypatch):  # noqa: 
     parsed = _Forms()
     parsed.feed(page)
     missing = NotBuiltYet(NO_ASK)
-    asks = [f for f in parsed.forms if f["method"].lower() == "post" and f["fields"].get("next") == target]
-    missing.expect(asks != [], "no form that asks for access to this card")
-    if asks:  # only the missing form is expected; once there, sending it must work and be recorded
+    # Found by its words first, so a control that is there but wrong fails instead of counting as missing.
+    asks = [c for c in parsed.forms + parsed.texts
+            if any(words in " ".join(c["text"].lower().split()) for words in ("ask for access", "request access"))]
+    missing.expect(asks != [], "no control that asks for access")
+    if asks:  # only the missing control is expected; once there, it must be right, work and be recorded
         assert len(asks) == 1, asks
+        ask = asks[0]
+        assert (ask["tag"], ask["method"].lower()) == ("form", "post"), ask  # asking changes state
+        assert ask["action"].startswith(signin.ROUTE + "/"), ask
+        assert ask["fields"].get("next") == target, ask  # the request names this card
         roots = (world["pages"]["proj"]["dir"].parents[1], Path(os.environ["ANNOTATE_STATE_DIR"]).parent)
         before = _files(roots)
-        code, _, body = request("proj", asks[0]["action"], cookie, "POST", asks[0]["fields"])
+        code, _, body = request("proj", ask["action"], cookie, "POST", ask["fields"])
         assert code in (200, 201, 202, 303), (code, body)
         assert any(STRANGER in text and (PROJ in text or BASE in text) for text in _written(roots, before)), \
             "asking recorded no request naming this person and page"
