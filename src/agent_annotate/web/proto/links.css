@@ -1,0 +1,35 @@
+/* Pages & links tab and its People page. Look from round9/final/mock.html. */
+.l-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 40px;align-items:start}
+.l-ph{display:flex;align-items:center;gap:8px;font-size:var(--fs-lg);margin:6px 0 4px}
+.l-line{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)}
+.l-line>svg.pi{color:var(--muted)}
+.l-grow{flex:1;min-width:0}
+.l-sub{display:block}
+.l-left{text-align:left}
+.l-subrow{padding-left:22px}
+.l-grp{border-top:1px solid var(--line)}
+.l-fold{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;width:100%;text-align:left;background:none;border:0;padding:8px 0;cursor:pointer;font-size:var(--fs-md)}
+.l-fold svg.pi{align-self:center;transition:transform .15s}
+.l-fold[aria-expanded=true] svg.pi{transform:rotate(90deg)}
+.l-view{margin:0 0 6px}
+.l-line a{display:inline-flex;align-items:center;gap:4px}
+
+/* People */
+.l-people{max-width:880px}
+.l-back{display:inline-flex;align-items:center;gap:4px}.l-back svg.pi{transform:rotate(180deg)}
+.l-prow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.l-av{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;background:var(--color-primary);color:var(--color-primary-content)}
+.l-seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden}
+.l-seg button{display:inline-flex;align-items:center;gap:5px;border:0;background:var(--color-base-100);padding:4px 10px;cursor:pointer;font-size:var(--fs-sm);white-space:nowrap}
+.l-seg button+button{border-left:1px solid var(--line)}
+.l-seg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100);font-weight:600}
+.l-add{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 0 4px;border-top:1px solid var(--line)}
+.l-add input{flex:1 1 180px;min-width:0;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:6px 10px}
+.l-err{color:var(--err-text)}
+.l-hint svg.pi{vertical-align:-3px}
+
+@media (max-width:900px){.l-cols{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:600px){
+  .l-seg button{padding:4px 8px}
+  .l-prow .l-seg{order:3;margin-left:40px}
+}
