@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import os
 import socket
 import ssl
 import subprocess
@@ -391,6 +392,51 @@ def test_without_all_four_values_nothing_changes(world, monkeypatch):
 def test_an_idle_connection_does_not_stall_the_https_pages(world):
     with socket.create_connection(("127.0.0.1", world["pages"]["proj"]["port"])):  # connects, never says hello
         assert world["request"]("proj", "")[0] == 200
+
+
+def test_page_servers_fill_missing_values_from_infisical(monkeypatch, tmp_path):
+    toml = tmp_path / "projects.toml"
+    monkeypatch.setattr(signin, "PROJECTS_TOML", toml)
+    signin.load_from_infisical()  # no projects.toml: nothing asked, still off
+    toml.write_text('[signin]\nkeychain_service = "svc"\nkeychain_account = "acct"\n'
+                    'project_id = "p1"\nenvironment = "dev"\npath = "/projects/x"\n')
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '{"clientId": "id", "clientSecret": "cs"}', "")
+
+    class Response:
+        def __init__(self, data):
+            self.data = json.dumps(data).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, limit):
+            return self.data
+
+    def urlopen(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url.endswith("universal-auth/login"):
+            assert json.loads(request.data) == {"clientId": "id", "clientSecret": "cs"}
+            return Response({"accessToken": "tok"})
+        assert request.get_header("Authorization") == "Bearer tok"
+        return Response({"secrets": [{"secretKey": k, "secretValue": v} for k, v in SECRETS.items()]
+                         + [{"secretKey": "githubaa", "secretValue": "not-ours"}]})
+    monkeypatch.setattr(signin.subprocess, "run", run)
+    monkeypatch.setattr(signin.urllib.request, "urlopen", urlopen)
+    for name in (*SECRETS, "githubaa"):  # undo then removes what the call sets
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANNOTATE_OWNER_EMAIL", "kept@example.com")  # the environment wins
+    signin.load_from_infisical()
+    assert signin.configured() and os.environ["ANNOTATE_OWNER_EMAIL"] == "kept@example.com"
+    assert os.environ["ANNOTATE_SESSION_KEY"] == SECRETS["ANNOTATE_SESSION_KEY"] and "githubaa" not in os.environ
+    assert calls[0][-5:] == ["-s", "svc", "-a", "acct", "-w"]
+    assert "workspaceId=p1&environment=dev&secretPath=%2Fprojects%2Fx" in calls[2]
 
 
 def test_member_command_adds_lists_and_removes(capsys, monkeypatch):

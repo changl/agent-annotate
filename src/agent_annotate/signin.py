@@ -14,12 +14,14 @@ import html
 import json
 import os
 import secrets
+import subprocess
 import time
+import tomllib
 import urllib.parse
 import urllib.request
 from http.cookies import CookieError, SimpleCookie
 
-from .paths import CONFIG_DIR
+from .paths import CONFIG_DIR, PROJECTS_TOML
 from .review_access import _valid_name
 
 ROUTE = "/annotate/auth"
@@ -37,6 +39,41 @@ _ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSIO
 
 def configured() -> bool:
     return all(os.environ.get(name) for name in _ENV)
+
+
+def load_from_infisical() -> None:
+    """Fill missing sign-in values from Infisical when projects.toml has a [signin] table.
+
+    Every page server calls this at start, so publish, revive, rollout restarts
+    and launchd all get the values with nothing written anywhere. The read-only
+    machine identity's {"clientId", "clientSecret"} JSON is a login-keychain
+    item. Raises OSError while Infisical is unreachable, so the caller can retry.
+    """
+    if configured():
+        return
+    try:
+        settings = tomllib.loads(PROJECTS_TOML.read_text(encoding="utf-8")).get("signin")
+    except (OSError, ValueError):
+        return
+    if not isinstance(settings, dict):
+        return
+    client = json.loads(subprocess.run(
+        ["/usr/bin/security", "find-generic-password", "-s", settings["keychain_service"],
+         "-a", settings["keychain_account"], "-w"], capture_output=True, text=True, check=True, timeout=20).stdout)
+
+    def call(path: str, body: dict | None = None, token: str = "") -> dict:
+        request = urllib.request.Request(
+            "https://app.infisical.com/api/" + path, data=None if body is None else json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read(1024 * 1024))
+
+    token = call("v1/auth/universal-auth/login", {"clientId": client["clientId"], "clientSecret": client["clientSecret"]})
+    query = urllib.parse.urlencode({"workspaceId": settings["project_id"], "environment": settings["environment"],
+                                    "secretPath": settings["path"]})
+    for item in call("v3/secrets/raw?" + query, token=token["accessToken"])["secrets"]:
+        if item.get("secretKey") in _ENV and item.get("secretValue") and not os.environ.get(item["secretKey"]):
+            os.environ[item["secretKey"]] = item["secretValue"]
 
 
 def _b64(raw: bytes) -> str:
