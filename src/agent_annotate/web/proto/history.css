@@ -33,5 +33,6 @@
 @media (max-width:600px){
   .h-bar input[type=search]{flex:1 1 100%}
   .h-fold{font-size:var(--fs-base)}
+  .h-dot{display:none}
   .hv-view{padding:6px 8px 10px;margin:4px -4px 12px}
 }

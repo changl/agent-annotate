@@ -137,7 +137,7 @@
       html += vers.slice(0, S.nv).map(([v, hs], i) => {
         const m = D.versions[v] || {}, op = !!q || (i === 0) !== S.open.has(v);
         return `<div class="h-grp" id="h-${esc(v)}"><div class="h-gh"><button class="h-fold" data-fold="${esc(v)}" aria-expanded="${op}">${icon('chev')}<b>Version ${esc(vn(v))}</b>
-          <span class="small mut">· sent ${esc(hs[0].t)} · ${pl(hs.length, 'answer', 'answers')}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${i === 0 && !q ? ' · newest' : ''}</span></button>
+          <span class="small mut"><span class="h-dot">· </span>sent ${esc(hs[0].t)} · ${pl(hs.length, 'answer', 'answers')}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${i === 0 && !q ? ' · newest' : ''}</span></button>
           <button class="ib" data-hv="${esc(v)}" title="Open version ${esc(vn(v))} read-only" aria-label="Open version ${esc(vn(v))} read-only">${icon('eye')}</button></div>
           ${m.note ? `<div class="small h-note"><span class="mut">Agent's note:</span> ${esc(m.note)}</div>` : ''}
           ${op ? `<ul class="h-list">${hs.map(h => li(h, ctx)).join('')}</ul>` : ''}</div>`;
