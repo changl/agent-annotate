@@ -35,7 +35,7 @@ def image_size(data: bytes) -> tuple[int, int] | None:
                     int.from_bytes(data[27:30], "little") + 1)
         return None
     if data[:2] == b"\xff\xd8":
-        i = 2
+        i, turned = 2, False
         while i + 9 < len(data):
             if data[i] != 0xFF:
                 return None
@@ -47,11 +47,32 @@ def image_size(data: bytes) -> tuple[int, int] | None:
                 i += 2
                 continue
             length = int.from_bytes(data[i + 2:i + 4], "big")
+            if marker == 0xE1 and data[i + 4:i + 10] == b"Exif\0\0":
+                turned = _exif_orientation(data[i + 10:i + 2 + length]) in (5, 6, 7, 8)
             # SOF0-SOF15 carry the frame size; C4 (DHT), C8 and CC (DAC) do not.
             if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
                 h, w = struct.unpack(">HH", data[i + 5:i + 9])
-                return w, h
+                # Browsers apply EXIF rotation, so a quarter turn swaps the shown size.
+                return (h, w) if turned else (w, h)
             i += 2 + length
+    return None
+
+
+def _exif_orientation(tiff: bytes) -> int | None:
+    """The Orientation tag (0x0112) from IFD0 of an Exif TIFF block, else None."""
+    order = {b"II": "<", b"MM": ">"}.get(tiff[:2])
+    if not order or len(tiff) < 8:
+        return None
+    ifd = struct.unpack(order + "I", tiff[4:8])[0]
+    if ifd + 2 > len(tiff):
+        return None
+    count = struct.unpack(order + "H", tiff[ifd:ifd + 2])[0]
+    for k in range(count):
+        entry = tiff[ifd + 2 + 12 * k:ifd + 14 + 12 * k]
+        if len(entry) < 12:
+            return None
+        if struct.unpack(order + "H", entry[:2])[0] == 0x0112:
+            return struct.unpack(order + "H", entry[8:10])[0]
     return None
 
 

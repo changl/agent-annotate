@@ -161,7 +161,7 @@ mark.sp-cmark.is-hl,mark.sp-cmark[data-c="pending"]{background:var(--primary-sof
 .fix-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:calc(10.5px * var(--aa-text, 1));color:var(--faint);margin-bottom:6px}
 .fix-proof{display:flex;flex-direction:column;gap:8px;margin:6px 0}
 .fix-proof-img{margin:0}
-.fix-proof-img img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
+.fix-proof-img img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--color-base-200)}
 .fix-proof-img figcaption{display:flex;align-items:center;gap:6px;font-size:calc(10.5px * var(--aa-text, 1));color:var(--muted);margin-top:4px}
 .fix-proof-img figcaption svg.i{width:13px;height:13px}
 .fix-proof-links{margin:0;padding:0}

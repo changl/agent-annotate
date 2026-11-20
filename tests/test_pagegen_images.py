@@ -59,6 +59,22 @@ def test_image_size_reads_png_gif_jpeg_and_webp_headers():
     assert image_size(b"<html>not an image</html>") is None
 
 
+def test_image_size_applies_exif_quarter_turns():
+    """The browser rotates by EXIF, so a turned phone photo must report its shown size."""
+    def jpeg(orientation, order):
+        f = "<" if order == b"II" else ">"
+        tiff = order + struct.pack(f + "HI", 42, 8) + struct.pack(f + "H", 1) \
+            + struct.pack(f + "HHIHH", 0x0112, 3, 1, orientation, 0) + b"\x00" * 4
+        app1 = b"Exif\x00\x00" + tiff
+        return (b"\xff\xd8" + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1
+                + b"\xff\xc0" + struct.pack(">HBHH", 17, 8, 400, 800) + b"\x00" * 12)
+    for order in (b"II", b"MM"):
+        assert image_size(jpeg(6, order)) == (400, 800)
+        assert image_size(jpeg(8, order)) == (400, 800)
+        assert image_size(jpeg(1, order)) == (800, 400)
+        assert image_size(jpeg(3, order)) == (800, 400)
+
+
 def test_layout_is_side_only_when_every_image_is_portrait():
     assert layout_for([(390, 844), (390, 844)]) == "side"
     assert layout_for([(390, 844), (1440, 900)]) == "stack"
