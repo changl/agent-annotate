@@ -367,6 +367,17 @@ def test_local_agent_and_tailnet_calls_never_sign_in(world, monkeypatch):
     assert request("proj", signin.ROUTE + "/login", host=f"127.0.0.1:{port}")[0] == 404
 
 
+@pytest.mark.parametrize("route, heading", [("/about", "Agent Annotate"),
+                                            ("/privacy", "Agent Annotate privacy policy"),
+                                            ("/terms", "Agent Annotate terms of service")])
+def test_google_branding_pages_are_public_on_the_funnel_host_only(world, monkeypatch, route, heading):
+    _configure(monkeypatch)
+    request, port = world["request"], world["pages"]["proj"]["port"]
+    code, headers, body = request("proj", signin.ROUTE + route)
+    assert code == 200 and f"<p>{heading}</p>" in body and not headers.get_all("Set-Cookie")
+    assert request("proj", signin.ROUTE + route, host=f"127.0.0.1:{port}")[0] == 404
+
+
 def test_without_all_four_values_nothing_changes(world, monkeypatch):
     request, page = world["request"], world["pages"]["proj"]
     _configure(monkeypatch)

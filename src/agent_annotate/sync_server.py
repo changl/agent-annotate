@@ -1241,7 +1241,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """Google sign-in lives outside every page mount, at signin.ROUTE on the Funnel host."""
         from . import signin
         parsed = urllib.parse.urlsplit(self.path)
-        if (parsed.path not in (signin.ROUTE + "/login", signin.ROUTE + "/callback", signin.ROUTE + "/denied")
+        if (parsed.path not in (signin.ROUTE + "/login", signin.ROUTE + "/callback", signin.ROUTE + "/denied",
+                                signin.ROUTE + "/about", signin.ROUTE + "/privacy", signin.ROUTE + "/terms")
                 or not signin.configured() or self._strip_base(parsed.path) != parsed.path):
             return False
         try:

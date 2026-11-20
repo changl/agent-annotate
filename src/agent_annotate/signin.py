@@ -35,6 +35,25 @@ SESSION_SECONDS = 30 * 86400
 MEMBERS = CONFIG_DIR / "members.json"
 # The owner sees every project and is pinned here, so a broken members.json never locks them out.
 _ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY", "ANNOTATE_OWNER_EMAIL")
+# Public pages Google's OAuth branding links to: home page, privacy policy, terms of service.
+PAGES = {
+    "about": (
+        "Agent Annotate",
+        "Agent Annotate hosts private review pages. Agents show their work there, and the people the owner "
+        "invites answer its questions. A page opens only for the people it is shared with."),
+    "privacy": (
+        "Agent Annotate privacy policy",
+        "When you sign in with Google, Agent Annotate receives your name and email address, and nothing else.",
+        "They are used only to check which pages are shared with you and to label your answers. They are kept "
+        "in a signed cookie in your browser for up to 30 days, and in this server's list of members. Nothing is "
+        "sold or shared with anyone.",
+        "To be removed, ask the person who shared a page with you."),
+    "terms": (
+        "Agent Annotate terms of service",
+        "Agent Annotate is a private tool, provided as is, without warranty. Use it only for the pages shared "
+        "with you, and don't share their contents without the owner's permission. Access can be removed at "
+        "any time."),
+}
 
 
 _LOADED: dict[str, str] = {}  # from Infisical; kept out of os.environ so child processes never inherit them
@@ -203,9 +222,10 @@ def _next(value: str) -> str:
     return value if ok else "/"
 
 
-def _page(code: int, text: str, link: tuple[str, str] | None = None) -> tuple[int, dict, bytes]:
+def _page(code: int, text: str | tuple[str, ...], link: tuple[str, str] | None = None) -> tuple[int, dict, bytes]:
     body = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-            f'<title>Agent Annotate</title><p>{html.escape(text)}</p>')
+            '<title>Agent Annotate</title>'
+            + "".join(f"<p>{html.escape(t)}</p>" for t in ((text,) if isinstance(text, str) else text)))
     if link:
         body += f'<p><a href="{html.escape(link[0])}">{html.escape(link[1])}</a></p>'
     return code, {}, body.encode()
@@ -227,7 +247,9 @@ def _exchange(code: str, verifier: str, redirect_uri: str) -> tuple[str, str]:
 
 
 def handle(route: str, query: str, cookie: str, origin: str) -> tuple[int, dict, bytes]:
-    """Serve ROUTE/login, ROUTE/callback and ROUTE/denied for `origin` (https://host)."""
+    """Serve ROUTE/login, /callback, /denied and the public PAGES for `origin` (https://host)."""
+    if route.removeprefix(ROUTE + "/") in PAGES:
+        return _page(200, PAGES[route.removeprefix(ROUTE + "/")])
     params = urllib.parse.parse_qs(query)
 
     def first(name: str) -> str:
