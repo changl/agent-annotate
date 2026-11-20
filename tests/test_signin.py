@@ -4,13 +4,18 @@ import hashlib
 import http.client
 import http.server
 import json
+import ssl
+import subprocess
+import tempfile
 import threading
 import time
 import urllib.parse
 from http.cookies import SimpleCookie
+from pathlib import Path
 
 import pytest
 from review_fixtures import complete
+from test_pagegen_images import png
 
 from agent_annotate import cli, review_access, signin, sync_server
 from agent_annotate.pagegen import generate
@@ -38,13 +43,42 @@ def _b64(data: dict) -> str:
 
 
 @pytest.fixture
-def world(tmp_path, monkeypatch):
+def world(request, monkeypatch):
+    # The fixture owns its files: nothing stays behind in pytest's kept tmp dirs.
+    with tempfile.TemporaryDirectory(prefix="annotate-signin-") as root:
+        yield from _world(Path(root), monkeypatch, tls=getattr(request, "param", None) == "tls")
+
+
+def _world(tmp_path, monkeypatch, tls):
+    """Two Funnel pages and a stand-in Google. tls=True serves them over https, as a real browser needs."""
     for name in SECRETS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(signin, "MEMBERS", tmp_path / "config" / "members.json")
-    google = {"claims": {}, "forms": []}
+    google = {"claims": {}, "forms": [], "accounts": []}
+    context = None
+    if tls:
+        cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+        try:
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                            "-subj", "/CN=" + HOST, "-keyout", str(key), "-out", str(cert)],
+                           check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip("openssl is needed for the https test pages")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
 
     class Token(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            """Google's account chooser: the next account in google["accounts"] picks itself."""
+            query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+            email = google["accounts"].pop(0)
+            google["claims"] = {"iss": "https://accounts.google.com", "aud": SECRETS["GOOGLE_OAUTH_CLIENT_ID"],
+                                "exp": int(time.time()) + 3600, "email": email, "email_verified": True, "name": "Person"}
+            self.send_response(302)
+            self.send_header("Location", query["redirect_uri"] + "?" + urllib.parse.urlencode(
+                {"code": "auth-code", "state": query["state"]}))
+            self.end_headers()
+
         def do_POST(self):
             form = urllib.parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
             google["forms"].append({k: v[0] for k, v in form.items()})
@@ -60,6 +94,7 @@ def world(tmp_path, monkeypatch):
 
     servers = [_bind(Token)]
     monkeypatch.setattr(signin, "TOKEN_URL", f"http://127.0.0.1:{servers[0].server_port}/token")
+    monkeypatch.setattr(signin, "AUTH_URL", f"http://127.0.0.1:{servers[0].server_port}/auth")
     # Nothing shared is left behind: bus and review keys live in tmp_path, and the
     # only shared files (the two state records) use names no other test uses and go at teardown.
     monkeypatch.setattr(review_access, "STATE_DIR", tmp_path / "state")
@@ -68,48 +103,60 @@ def world(tmp_path, monkeypatch):
         project = PREFIX + key
         directory = tmp_path / key / "page"
         source = tmp_path / f"{key}.md"
-        source.write_text(f"## Progress\n\nPrivate {key} content.\n")
+        (tmp_path / f"{key}-proof.png").write_bytes(png(240, 160, (30, 120, 200)))
+        source.write_text(f"## Progress\n\nPrivate {key} content.\n\n![Proof]({key}-proof.png)\n")
         generate(source, directory)
         complete(directory)
         (directory / "assets").mkdir(exist_ok=True)
-        (directory / "assets" / "x.png").write_bytes(b"private proof")
+        (directory / "assets" / "x.png").write_bytes(png(8, 8))
         bus = tmp_path / "bus" / project
         bus.mkdir(parents=True)
         base = f"/annotate/{key}/page"
         server = _bind(sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path=base,
                                                 skill_dir=sync_server.WEB_DIR))
+        if context:
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        # Over https the browser sends the port in Host, so the published URL carries it.
+        public = f"{HOST}:{server.server_port}" if tls else HOST
         cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
             "slug_dir": str(directory), "port": server.server_port, "transport": "funnel",
-            "url": f"https://{HOST}{base}/"}}})
+            "url": f"https://{public}{base}/"}}})
         servers.append(server)
-        pages[key] = {"port": server.server_port, "base": base, "key": review_access.ensure_key(directory)}
+        pages[key] = {"port": server.server_port, "base": base, "key": review_access.ensure_key(directory),
+                      "host": public, "dir": directory}
     threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
     for thread in threads:
         thread.start()
 
-    def request(project, path, cookie="", method="GET", body=None, host=HOST, **headers):
+    def request(project, path, cookie="", method="GET", body=None, host=None, **headers):
         page = pages[project]
-        connection = http.client.HTTPConnection("127.0.0.1", page["port"], timeout=5)
+        host = host or page["host"]
+        connection = (http.client.HTTPSConnection("127.0.0.1", page["port"], timeout=5,
+                                                  context=ssl._create_unverified_context()) if tls
+                      else http.client.HTTPConnection("127.0.0.1", page["port"], timeout=5))
         sent = {"Host": host, **({"Cookie": cookie} if cookie else {}), **headers}
-        if host == HOST:
+        if host == page["host"]:
             sent.setdefault("Sec-Fetch-Site", "same-origin")
         if body is not None:
             sent["Content-Type"] = "application/json"
         route = path if path.startswith(signin.ROUTE) else page["base"] + "/" + path
         connection.request(method, route, body=json.dumps(body) if body is not None else None, headers=sent)
         response = connection.getresponse()
-        result = response.status, response.headers, response.read().decode()
+        raw = response.read()
+        result = response.status, response.headers, (raw if raw.startswith(b"\x89PNG") else raw.decode())
         connection.close()
         return result
 
-    yield {"request": request, "pages": pages, "google": google}
-    for server in servers:
-        server.shutdown()
-        server.server_close()
-    for thread in threads:
-        thread.join(timeout=5)
-    for key in pages:
-        (cli.STATE_DIR / f"{PREFIX}{key}.json").unlink(missing_ok=True)
+    try:
+        yield {"request": request, "pages": pages, "google": google}
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=5)
+        for key in pages:
+            (cli.STATE_DIR / f"{PREFIX}{key}.json").unlink(missing_ok=True)
 
 
 def _configure(monkeypatch):
