@@ -9,6 +9,7 @@ import fcntl
 import http.server
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -219,7 +220,8 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
                            "(/api/capabilities HTTP 404; legacy server)")
     assert (f"fix: kill 4242 && nohup {shlex.quote(sys.executable)} -I -m agent_annotate.sync_server "
             f"{shlex.join(tail)} >> ") in line
-    assert "4343" not in out and f"pid {os.getpid()}" not in out and "4545" not in out and "4646" not in out
+    # Whole numbers only: a random port or temp-dir name can contain "4343".
+    assert not re.search(r"\b(4343|4545|4646)\b", out) and f"pid {os.getpid()}" not in out
 
 
 def test_json_output_lists_components_and_fixes(estate, page_server, capsys):
