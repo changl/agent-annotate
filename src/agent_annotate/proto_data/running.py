@@ -461,6 +461,19 @@ def orca_history():
                 "days": sorted(o["days"].items())[-30:]} for p, o in orc.items()}, since
 
 
+def hours(now=None):
+    """This project's workers at once, hour by hour over the last 24 hours, oldest first, from the same Orca record."""
+    db = _orca_db()
+    fld = {i for i, o in db.execute("select id, objective from runs") if proj_of(o) == "fld"}
+    rows = [(r, a, c) for r, a, c in db.execute("select run_id, dispatched_at, completed_at from dispatch_contexts "
+                                                "where dispatched_at > datetime('now', '-7 day')") if r in fld]
+    db.close()
+    end = int((now or time.time()) // 3600 + 1) * 3600
+    ts = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=timezone.utc).timestamp() if s else None
+    spans = [(ts(a), ts(c)) for _, a, c in rows]
+    return [sum(1 for a, c in spans if a and a < end - (23 - h) * 3600 and (c is None or c >= end - (24 - h) * 3600)) for h in range(24)]
+
+
 def sessions():
     ses = Counter()
     for d in (HOME / ".claude/projects").glob("*"):
@@ -498,7 +511,7 @@ def analytics(page_dir: Path):
 def _compute(page_dir: Path) -> dict:
     with ThreadPoolExecutor(6) as ex:
         f = {k: ex.submit(safe, fn, None) for k, fn in
-             (("workers", workers), ("board", board), ("jobs", jobs), ("prs", prs), ("load", machine_load), ("an", lambda: analytics(page_dir)))}
+             (("workers", workers), ("board", board), ("jobs", jobs), ("prs", prs), ("load", machine_load), ("hours", hours), ("an", lambda: analytics(page_dir)))}
         out = {k: v.result() for k, v in f.items()}
     safe(lambda: group_work(out), {})
     out["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

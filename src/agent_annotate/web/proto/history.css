@@ -16,6 +16,18 @@
 .h-grow{flex:1;min-width:0}
 .h-ph{font-size:var(--fs-md);margin:10px 0 2px}
 .h-ok{color:var(--ok-text);display:inline-flex;align-items:center;gap:4px}
+.h-nofold{cursor:default;padding-left:22px}
+.h-none .h-fold b{font-weight:600}
+.h-fix,.h-cnt{display:inline-block;font-size:var(--fs-xs);font-weight:600;border-radius:6px;padding:0 6px;vertical-align:1px}
+.h-fix{color:var(--warn-text);border:1px solid color-mix(in oklab,var(--orange) 60%,transparent)}
+.h-cnt{color:var(--muted);background:color-mix(in oklab,var(--color-base-content) 10%,transparent)}
+
+/* full-size picture viewer */
+.pp-zoom{position:fixed;inset:0;z-index:60;overflow:auto;background:rgb(0 0 0 / .82);padding:0 0 24px}
+.pp-zbar{position:sticky;top:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
+.pp-zseg{display:inline-flex;gap:4px}
+.pp-zpic{margin:12px auto;max-width:fit-content}
+.pp-zpic img{display:block;width:100%;height:auto;background:#fff}
 
 /* one tag for overruled, superseded, overridden and replaced; the agent's words on hover or focus */
 .h-ovr{position:relative;display:inline-block;font-size:var(--fs-xs);font-weight:600;color:var(--warn-text);border:1px solid color-mix(in oklab,var(--orange) 60%,transparent);border-radius:6px;padding:0 5px;white-space:nowrap;cursor:help}
@@ -34,5 +46,6 @@
   .h-bar input[type=search]{flex:1 1 100%}
   .h-fold{font-size:var(--fs-base)}
   .h-dot{display:none}
+  .pp-zhint{display:none}
   .hv-view{padding:6px 8px 10px;margin:4px -4px 12px}
 }

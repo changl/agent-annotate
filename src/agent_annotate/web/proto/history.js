@@ -39,13 +39,15 @@
     }
     function fail(why, retried) {
       const at = new Date().toTimeString().slice(0, 5);
-      box.innerHTML = `<div class="hv-err" role="alert">${icon('warn')}<div><b>This version could not load.</b> ${esc(why)} Nothing you wrote is lost.
+      box.innerHTML = `<div class="hv-err" role="alert">${icon('warn')}<div><b>${esc(o.failTitle || 'This version could not load.')}</b> ${esc(why)} Nothing you wrote is lost.
         ${retried ? `<span class="small mut">Retried at ${at}: still failing.</span>` : ''}
         <div class="hv-acts"><button class="btn sm" data-retry>${icon('reload')} Retry</button>
-        ${told ? `<span class="small h-ok">${icon('tick')} The agent is told with your next Send</span>` : `<button class="btn sm" data-tell>${icon('msg')} Tell the agent</button>`}${P.inertMark()}</div></div></div>`;
+        ${told ? `<span class="small h-ok">${icon('tick')} The agent is told with your next Send</span> <button class="lk small" data-untell>Undo</button>` : `<button class="btn sm" data-tell>${icon('msg')} Tell the agent</button>`}${P.inertMark()}</div></div></div>`;
       box.querySelector('[data-retry]').onclick = () => load(true);
-      const tell = box.querySelector('[data-tell]');
-      if (tell) tell.onclick = () => { told = true; fail(why, retried); ctx.inert('The agent will be told with your next Send', () => { told = false; fail(why, retried); }); };
+      // Undo sits beside the done line, as in the mock (#107); nothing is sent in the prototype
+      const tell = box.querySelector('[data-tell]'), untell = box.querySelector('[data-untell]');
+      if (tell) tell.onclick = () => { told = true; fail(why, retried); };
+      if (untell) untell.onclick = () => { told = false; fail(why, retried); };
     }
     load(false);
   };
@@ -79,7 +81,7 @@
     const keyOf = img => (img.getAttribute('src') || '').split('?')[0];
     const apply = (img, bar) => {
       const pct = all[keyOf(img)];
-      img.style.width = pct ? `${Math.round((img.naturalWidth || img.width) * pct / 100)}px` : '';
+      img.style.width = pct ? `${pct}%` : '';  // a share of the column, as in the mock: 25% on a 390 px phone is about 98 px (#38)
       img.style.maxWidth = '100%'; img.style.height = 'auto';
       bar.querySelectorAll('[data-pct]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.pct === pct)));
       bar.querySelector('[data-def]').hidden = !pct;
@@ -90,9 +92,10 @@
       img.dataset.ppSized = '1';
       const bar = doc.createElement('div');
       bar.className = 'pp-size';
-      bar.innerHTML = `<span>This picture:</span>${SIZES.map(s => `<button type="button" data-pct="${s}">${s}%</button>`).join('')}<button type="button" data-def>As published</button>`;
+      bar.innerHTML = `<span>This picture:</span>${SIZES.map(s => `<button type="button" data-pct="${s}">${s}%</button>`).join('')}<button type="button" data-def>As published</button><button type="button" data-full title="Open it full size">⤢ Full size</button>`;
       bar.onclick = e => {
         const b = e.target.closest('button'); if (!b) return;
+        if (b.hasAttribute('data-full')) return P.zoom(img.currentSrc || img.src, img.alt, all[keyOf(img)] || 100, ctx);
         if (b.dataset.pct) all[keyOf(img)] = +b.dataset.pct; else delete all[keyOf(img)];
         ctx.prefs.set('picsize', all);
         apply(img, bar);
@@ -104,6 +107,28 @@
       img.loading = 'eager';  // the frame is as tall as its content, so a lazy picture would wait for nothing
       if (img.complete && img.naturalWidth) add(img); else img.addEventListener('load', () => add(img), {once: true});
     });
+  };
+
+  /* ---------- full-size viewer (#39): the picture at 25-100% of the screen width, Close or Esc ---------- */
+  P.zoom = function (src, cap, z, ctx) {
+    const {esc} = ctx;
+    let dlg = document.getElementById('pp-zoom');
+    if (dlg) dlg.remove();
+    dlg = document.createElement('div');
+    dlg.id = 'pp-zoom'; dlg.className = 'pp-zoom'; dlg.setAttribute('role', 'dialog'); dlg.setAttribute('aria-modal', 'true'); dlg.setAttribute('aria-label', 'Full-size picture');
+    const back = document.activeElement;
+    const close = () => { dlg.remove(); document.removeEventListener('keydown', key, true); if (back && back.focus) back.focus(); };
+    const key = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    const draw = () => {
+      dlg.innerHTML = `<div class="pp-zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="pp-zseg" role="group" aria-label="Size">${SIZES.map(x => `<button class="chipb" data-z="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span>
+        <span class="small mut pp-zhint">of the screen width · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>${ctx.icon('x')} Close</button></div>
+        <div class="pp-zpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || '')}"></div>`;
+      dlg.querySelector('[data-zclose]').focus();
+    };
+    dlg.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.z) { z = +b.dataset.z; draw(); } else if (b.hasAttribute('data-zclose')) close(); };
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(dlg);
+    draw();
   };
 
   /* ---------- the tab ---------- */
@@ -134,14 +159,22 @@
       const list = q ? D.answers.filter(h => h.n === num || hay(h).includes(q)) : D.answers;
       const byV = new Map();
       for (const h of list) { if (!byV.has(h.v)) byV.set(h.v, []); byV.get(h.v).push(h); }
-      const vers = [...byV];
+      // every published version is listed, newest first, so one with questions but no Send still opens (#73); searching lists only matches
+      const num_ = v => +vn(v) || 0;
+      const vers = q ? [...byV] : [...new Set([...Object.keys(D.versions), ...byV.keys()])].sort((a, b) => num_(b) - num_(a)).map(v => [v, byV.get(v) || []]);
+      const fix = n => /\bfix/i.test(n) ? '<span class="h-fix">fix</span> ' : '';
       if (q) html += `<p class="small mut">${pl(list.length, 'match', 'matches')}</p>`;
-      html += vers.slice(0, S.nv).map(([v, hs], i) => {
-        const m = D.versions[v] || {}, op = !!q || (i === 0) !== S.open.has(v);
+      let first = true;
+      html += vers.slice(0, S.nv).map(([v, hs]) => {
+        const m = D.versions[v] || {}, eye = `<button class="ib" data-hv="${esc(v)}" title="Open version ${esc(vn(v))} read-only" aria-label="Open version ${esc(vn(v))} read-only">${icon('eye')}</button>`;
+        const note = m.note ? `<div class="small h-note">${fix(m.note)}<span class="mut">Agent's note:</span> ${esc(m.note)}</div>` : '';
+        if (!hs.length) return `<div class="h-grp h-none" id="h-${esc(v)}"><div class="h-gh"><span class="h-fold h-nofold"><b>Version ${esc(vn(v))}</b>
+          <span class="small mut"><span class="h-dot">· </span>published ${esc(m.t || '')} · no answers sent${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}</span></span>${eye}</div>${note}</div>`;
+        const top = first && !q; first = false;
+        const op = !!q || top !== S.open.has(v);
         return `<div class="h-grp" id="h-${esc(v)}"><div class="h-gh"><button class="h-fold" data-fold="${esc(v)}" aria-expanded="${op}">${icon('chev')}<b>Version ${esc(vn(v))}</b>
-          <span class="small mut"><span class="h-dot">· </span>sent ${esc(hs[0].t)} · ${pl(hs.length, 'answer', 'answers')}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${i === 0 && !q ? ' · newest' : ''}</span></button>
-          <button class="ib" data-hv="${esc(v)}" title="Open version ${esc(vn(v))} read-only" aria-label="Open version ${esc(vn(v))} read-only">${icon('eye')}</button></div>
-          ${m.note ? `<div class="small h-note"><span class="mut">Agent's note:</span> ${esc(m.note)}</div>` : ''}
+          <span class="small mut"><span class="h-dot">· </span>sent ${esc(hs[0].t)} · ${pl(hs.length, 'answer', 'answers')}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${top ? ' · newest Send' : ''}</span></button>
+          ${eye}</div>${note}
           ${op ? `<ul class="h-list">${hs.map(h => li(h, ctx)).join('')}</ul>` : ''}</div>`;
       }).join('') || (q ? '<p class="mut">No past answer matches.</p>' : '<p class="mut">No answers sent on this page yet.</p>');
       if (vers.length > S.nv) html += `<button class="btn sm" data-hmore>Show ${Math.min(20, vers.length - S.nv)} earlier versions</button>`;
@@ -153,14 +186,21 @@
       }
     }
     if (S.f !== 'q') {
-      const revs = D.plans.flatMap(p => p.revs.map((r, i) => ({p, r, i}))).sort((a, b) => b.r[1].localeCompare(a.r[1]) || b.i - a.i)
+      const all = D.plans.flatMap(p => p.revs.map((r, i) => ({p, r, i}))).sort((a, b) => b.r[1].localeCompare(a.r[1]) || a.p.t.localeCompare(b.p.t) || b.i - a.i)
         .filter(x => !q || `${x.p.t} ${x.r[2]}`.toLowerCase().includes(q));
+      // a run of same-day revisions of one plan is one row with its count, as in the mock (#114); the eye opens the newest
+      const lab = r => /^[A-Z0-9][A-Z0-9-]{5,}\b/.test(r[2] || '') ? '' : r[2] || '', revs = [];
+      for (const x of all) {
+        const g = revs.at(-1), l = lab(x.r);
+        if (g && g.p === x.p && g.r[1] === x.r[1] && g.lo === x.i + 1) { g.lo = x.i; g.n++; if (l) g.labs.add(l); }
+        else revs.push({...x, lo: x.i, n: 1, labs: new Set(l ? [l] : [])});
+      }
       const op = S.f === 'ref' || S.ref || !!q;
-      const rows = revs.slice(0, S.nref).map(x => `<div class="h-line">${icon(/checklist/i.test(x.p.t) ? 'check' : 'plan')}<span class="h-grow"><b>${esc(x.p.t)}</b> · revision ${x.i + 1} of ${x.p.revs.length}${x.r[2] ? ` · <span class="mut">${esc(x.r[2])}</span>` : ''}</span>
+      const rows = revs.slice(0, S.nref).map(x => `<div class="h-line">${icon(/checklist/i.test(x.p.t) ? 'check' : 'plan')}<span class="h-grow"><b>${esc(x.p.t)}</b> · ${x.n > 1 ? `revisions ${x.lo + 1} to ${x.i + 1} of ${x.p.revs.length} <span class="h-cnt">${x.n}</span>` : `revision ${x.i + 1} of ${x.p.revs.length}`}${x.labs.size ? ` · <span class="mut">${esc([...x.labs].join(', '))}</span>` : ''}</span>
         <span class="small mut">${esc(x.r[1])}</span><button class="ib" data-hp="${esc(x.p.id)}~${esc(x.r[0])}" title="Open this revision read-only" aria-label="Open ${esc(x.p.t)}, revision ${x.i + 1}, read-only">${icon('eye')}</button></div>`).join('');
       const more = revs.length > S.nref ? `<button class="btn sm" data-refmore>Show ${Math.min(60, revs.length - S.nref)} more</button>` : '';
       html += S.f === 'ref' ? (rows + more || '<p class="mut">No Reference changes match.</p>')
-        : revs.length ? `<div class="h-grp"><button class="h-fold" data-refall aria-expanded="${op}">${icon('chev')}<b>Reference changes</b> <span class="small mut">${pl(revs.length, 'revision', 'revisions')} of ${pl(D.plans.length, 'plan', 'plans')}</span></button>${op ? rows + more : ''}</div>` : '';
+        : revs.length ? `<div class="h-grp"><button class="h-fold" data-refall aria-expanded="${op}">${icon('chev')}<b>Reference changes</b> <span class="small mut">${pl(all.length, 'revision', 'revisions')} of ${pl(D.plans.length, 'plan', 'plans')}</span></button>${op ? rows + more : ''}</div>` : '';
     }
     box.innerHTML = html;
   }

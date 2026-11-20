@@ -33,11 +33,12 @@
 
   /* ------------------------------------------------------------ the chip: only the most urgent state */
   function urgent(d) {
-    const ws = mine(d), crashed = ws.filter(w => w.s === 'failed' || w.s === 'stuck').length;
+    // crashed: failed workers and failing jobs; a worker with no sign of life is blocked, as on its tile
+    const ws = mine(d), failed = ws.filter(w => w.s === 'failed').length, stuck = ws.filter(w => w.s === 'stuck').length;
     const failing = (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.failing).length, wait = ((d.board || {}).waiting || []).length;
-    if (crashed) return {text: `${crashed} crashed`, tone: 'red', title: `${pl(crashed, 'worker has', 'workers have')} failed or shown no sign of life for half an hour`};
-    if (failing) return {text: `${failing} blocked`, tone: 'amber', title: `${pl(failing, 'scheduled job is', 'scheduled jobs are')} failing`};
-    if (wait) return {text: `${wait} waiting`, tone: 'amber', title: `${pl(wait, 'task waits', 'tasks wait')} on you`};
+    if (failed + failing) return {text: `${failed + failing} crashed`, tone: 'red', title: [failed && pl(failed, 'worker failed', 'workers failed'), failing && pl(failing, 'scheduled job is failing', 'scheduled jobs are failing')].filter(Boolean).join('; ')};
+    if (stuck) return {text: `${stuck} blocked`, tone: 'orange', title: `${pl(stuck, 'worker has', 'workers have')} shown no sign of life for half an hour`};
+    if (wait) return {text: `${wait} waiting`, tone: 'blue', title: `${pl(wait, 'task waits', 'tasks wait')} on you`};
     return ws.length ? {text: `${ws.length} running`, tone: 'green'} : null;
   }
   const mine = d => Object.entries(d.workers || {}).filter(([k]) => k !== 'error').flatMap(([m, v]) => (v.workers || []).filter(w => w.proj === PROJ).map(w => ({...w, mac: m})));
@@ -45,7 +46,7 @@
   /* ------------------------------------------------------------ Running */
   function running() {
     const d = D, b = d.board && !d.board.error ? d.board : {tasks: [], beads: {}, waiting: [], groups: []}, B = b.beads || {};
-    S.list = [...new Set([...b.waiting.map(x => x[0]), ...b.tasks.map(t => t.id)])];
+    if (!S.list.includes(S.task)) S.list = [...new Set([...b.waiting.map(x => x[0]), ...b.tasks.map(t => t.id)])];
     const wy = new Set(b.waiting.map(x => x[0]));
     // Waiting: only the tasks whose own notes on the board say they wait on him; merges marked
     const wyo = S.open.has('wy'), wyl = [...b.waiting].sort((x, y) => y[2] - x[2]), merges = b.waiting.filter(x => x[2]).length;
@@ -59,7 +60,8 @@
     const lmark = m => { const v = L[m] || {};
       if (!v.load) return `<span class="lm none" title="This Mac's load could not be read just now">${ic('dash')} load not recorded yet</span>`;
       const pc = v.load[0] / v.cpus, cls = pc >= 0.9 ? 'bad' : pc >= 0.7 ? 'warn' : 'ok', lab = cls === 'bad' ? 'busy' : cls === 'warn' ? 'getting busy' : 'calm';
-      return `<span class="lm ${cls}" title="Load ${pc.toFixed(1)} per core on the ${esc(m)}: new workers wait over 0.9"><span class="mt"><i style="width:${Math.min(100, pc / 1.2 * 100)}%"></i></span><b>${lab}</b><span class="mut">${pc.toFixed(1)} per core</span></span>`; };
+      const at = new Date(v.hist && v.hist.length ? v.hist[v.hist.length - 1][0] * 1000 : d.built).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
+      return `<span class="lm ${cls}" title="Load ${pc.toFixed(1)} per core on the ${esc(m)} (${v.load[0].toFixed(0)} over ${v.cpus} cores), read ${esc(at)}. New workers wait over 0.9 per core."><span class="mt"><i style="width:${Math.min(100, pc / 1.2 * 100)}%"></i></span><b>${lab}</b><span class="mut">${pc.toFixed(1)} per core</span></span>`; };
     const stack = c => `<span class="stack" role="img" aria-label="${WORDER.filter(s => c[s]).map(s => `${c[s]} ${WS[s][1]}`).join(', ')}">${WORDER.filter(s => c[s]).map(s => `<i class="st-${WS[s][0]}${s === 'stuck' ? ' hatch' : ''}" style="flex:${c[s]}"></i>`).join('')}</span>
       <span class="small">${WORDER.filter(s => c[s]).map(s => `<span class="nw"><i class="dot st-${WS[s][0]}"></i> ${c[s]} ${WS[s][1]}</span>`).join(' · ')}</span>`;
     const count = list => list.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
@@ -95,7 +97,8 @@
       ${panel()}`;
   }
   // a worker as a tile: state, model, time running, last sign of life, last report; no Stop
-  const tile = w => `<div class="wt st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}" tabindex="0" data-wk="${esc(JSON.stringify(w))}"><div class="wt1"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><b class="wn" title="${esc(w.name)}">${esc(wnm(w.name))}</b><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span></div>
+  const tile = w => `<div class="wt st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}" tabindex="0" data-wk="${esc(JSON.stringify(w))}"><div class="wt1"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><b class="wn" title="${esc(w.name)}">${esc(wnm(w.name))}</b><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span>
+        <button class="ib" data-term="${esc(wnm(w.name))}" title="Open its terminal in Orca" aria-label="Open the terminal of ${esc(wnm(w.name))} in Orca">${ic('term')}</button></div>
       <div class="wt2"><span class="tbar" title="Running ${ago(w.mins)}"><i style="width:${Math.max(4, Math.min(100, (w.mins || 0) / 120 * 100))}%"></i></span><span class="small nw">${ago(w.mins)}</span>
         ${w.s !== 'failed' && w.heard != null ? `<span class="small nw ${w.s === 'stuck' ? 'stuck-t' : 'mut'}" title="Its last sign of life">${ic('pulse')} ${ago(w.heard)} ago</span>` : ''}</div>
       <div class="wt3 small" title="${esc(w.report || 'No report yet')}">${ic('msg')}<span class="${w.report ? '' : 'mut'}">${esc(scrub(w.report) || 'no report yet')}</span></div></div>`;
@@ -203,6 +206,8 @@
     const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
     const qaRows = Object.entries(A.qa || {}).filter(([, x]) => x.sel >= 10).sort((a, b) => pct(b[1].rec, b[1].sel) - pct(a[1].rec, a[1].sel));
     const wk = (A.qaWeeks || []).map(([w, n, r]) => [w.replace(/^\d+-W/, 'week '), pct(r, n)]);
+    const ttvRows = Object.entries(A.qa || {}).filter(([, x]) => x.ttvMed != null && x.sends >= 5).sort((a, b) => a[1].ttvMed - b[1].ttvMed);
+    const sesRows = Object.entries(A.sessions || {}).filter(([p]) => p !== 'other').sort((a, b) => b[1] - a[1]);
     const QA = `<div class="agrp cv h1" id="an-qa"><h2 class="ph">Questions and answers</h2><div class="atiles">
         ${q && q.sel ? atile(pct(q.rec, q.sel) + '%', `of ${q.sel.toLocaleString()} picks were the recommended choice, by week`, '', wk.length > 1 ? spark(wk.map(x => x[1])) : '') : atile('—', 'no picks recorded yet', 'dim')}
         ${q && q.ttvMed != null ? atile(ago(q.ttvMed), 'median time from a question to your answer') : ''}
@@ -212,7 +217,7 @@
         ${acard('Recommended choice picked, by project', hbars(qaRows.map(([p, x]) => [N[p] || p, pct(x.rec, x.sel), p === PROJ, `${N[p] || p}: ${x.rec.toLocaleString()} of ${x.sel.toLocaleString()} picks`]), {max: 100, fmt: v => v + '%'}) + tbl(['Project', 'Picks', 'Recommended'], qaRows.map(([p, x]) => [N[p] || p, x.sel, x.rec])),
           `${PNAME} from this page's own record; the others from their review pages on this Mac. A pick counts as recommended when it matches the option the card recommended. Projects with fewer than 10 picks left out.`)}
         ${wk.length ? acard(`Recommended choice picked, by week · ${PNAME}`, lchart(wk, {fmt: v => Math.round(v) + '%', t: 'Recommended share by week', max: 100}) + tbl(['Week', 'Picks', 'Recommended'], A.qaWeeks), "This page's Sends, by the week of the answer.") : ''}
-        ${acard('Time from a question to your answer, by project', hbars(Object.entries(A.qa || {}).filter(([, x]) => x.ttvMed != null && x.sends >= 5).sort((a, b) => a[1].ttvMed - b[1].ttvMed).map(([p, x]) => [N[p] || p, x.ttvMed, p === PROJ]), {fmt: v => ago(v)}),
+        ${acard('Time from a question to your answer, by project', hbars(ttvRows.map(([p, x]) => [N[p] || p, x.ttvMed, p === PROJ]), {fmt: v => ago(v)}) + tbl(['Project', 'Median minutes', 'Sends'], ttvRows.map(([p, x]) => [N[p] || p, x.ttvMed, x.sends])),
           `Median minutes from when a card asked to when you answered it.${q && q.ttvP90 != null ? ` On this page the slowest tenth took over ${ago(q.ttvP90)}.` : ''}`)}
         ${(A.qpv || []).length ? acard('Questions asked per version · the newest 40', cols(A.qpv.map(([v, n]) => [`version ${v}`, n]), {t: 'Questions asked per version', hl: A.qpv.length - 1}) + tbl(['Version', 'Questions'], A.qpv), "Questions asked in each published version of this page.") : ''}
         ${cb.sendsHist ? acard('The same issue coming back', `${segbar(cb.sendsHist.map(([s, n]) => [s === 1 ? 'settled in 1 Send' : `answered in ${s} Sends`, n]), 'questions')}${tbl(['Sends', 'Questions'], cb.sendsHist)}
@@ -229,8 +234,8 @@
         ${acard('Workers by project and outcome', stacks(orcRows.map(([p, o]) => [N[p] || p, {done: o.ok, failed: Math.max(0, o.failed - o.stopped), stopped: o.stopped}, p === PROJ]), [['done', 'finished', 'done'], ['failed', 'failed', 'failed'], ['stopped', 'stopped by a coordinator', 'none']]) + tbl(['Project', 'Workers', 'Finished', 'Failed', 'Stopped'], orcRows.map(([p, o]) => [N[p] || p, o.workers, o.ok, o.failed, o.stopped])),
           `Orca's record on this Mac since ${esc(A.orcaSince)}. Work run from the M5 Max's own coordinators is in its record, not here.`)}
         ${oc && oc.days.length ? acard(`Workers started per day · ${PNAME}`, lchart(oc.days.map(([d, n]) => [dm(d), n]), {t: 'Workers per day'}) + tbl(['Day', 'Workers'], oc.days), "Orca workers started each day, from this Mac's record.") : ''}
-        ${oc && oc.codex + oc.claude ? acard('Which agent ran the workers', donut(oc.codex, oc.claude, 'Codex', 'Claude', 'workers'), `Orca's record on this Mac since ${esc(A.orcaSince)}.`) : ''}
-        ${acard('Claude Code sessions by project', hbars(Object.entries(ses).filter(([p]) => p !== 'other').sort((a, b) => b[1] - a[1]).map(([p, n]) => [N[p] || p, n, p === PROJ])),
+        ${oc && oc.codex + oc.claude ? acard('Which agent ran the workers', donut(oc.codex, oc.claude, 'Codex', 'Claude', 'workers') + tbl(['Agent', 'Workers'], [['Codex', oc.codex], ['Claude', oc.claude]]),`Orca's record on this Mac since ${esc(A.orcaSince)}.`) : ''}
+        ${acard('Claude Code sessions by project', hbars(sesRows.map(([p, n]) => [N[p] || p, n, p === PROJ])) + tbl(['Project', 'Sessions'], sesRows.map(([p, n]) => [N[p] || p, n])),
           `Session transcripts under the Claude Code folder on this Mac, by the folder each ran in; ${(ses.other || 0).toLocaleString()} sessions in other folders left out. Codex sessions are not counted yet.`)}
       </div></div>`;
     const last = U[U.length - 1] || {}, w7 = U.slice(-7), wUsd = w7.reduce((s, d) => s + d.usd, 0), wC = w7.reduce((s, d) => s + d.commits, 0);
@@ -245,7 +250,18 @@
         ${acard('Most workers at once, per day', cols(U.map(d => [dm(d.d), d.peak]), {t: 'Most workers at once', gate: [8, 'cap 8'], hl: U.length - 1}) + tbl(['Day', 'Workers at once'], U.map(d => [d.d, d.peak])), `${PNAME}'s daily usage reports.`)}
         ${roles.length ? acard(`Where ${dm(last.d)}'s spend went, by role`, segbar([...roles.slice(0, 5), ...(roles.length > 5 ? [['Other roles', roles.slice(5).reduce((s, x) => s + x[1], 0)]] : [])], 'dollars') + tbl(['Role', 'Dollars'], roles), "The newest daily usage report's split by worker role: the five largest, the rest as other roles.") : ''}
       </div>` : `<p class="mut">No usage reports could be read.</p>`}</div>`;
-    return `<nav class="ajump small" aria-label="Analytics groups">${[['an-qa', 'Questions and answers'], ['an-work', 'Sessions and workers'], ['an-use', 'Usage and cost'], ['an-mac', 'Machine load']].map(([i, t]) => `<a href="#analytics/${i}">${t}</a>`).join('')}</nav>${QA}${SW}${UC}${loadGroup()}`;
+    const SV = `<div class="agrp" id="an-saves"><h2 class="ph">What this page saves</h2>${savesHtml(q, cb)}</div>`;
+    return `<nav class="ajump small" aria-label="Analytics groups">${[['an-qa', 'Questions and answers'], ['an-work', 'Sessions and workers'], ['an-use', 'Usage and cost'], ['an-mac', 'Machine load'], ['an-saves', 'What this page saves']].map(([i, t]) => `<a href="#analytics/${i}">${t}</a>`).join('')}</nav>${QA}${SW}${UC}${loadGroup()}${SV}`;
+  }
+  // What this page saves, from the mock: clicks measured by its click script against today's page, and one round projected from them
+  const SAVES = [['Answer with the recommended choice', 1, 1], ['Answer with another choice', 1, 1], ['Send what you answered', 2, 2], ['Pin a note on a picture', 3, 2], ['Compare two versions', 3, 2], ['Find a past decision', 2, 1, 'one click and a scroll'], ['Open the bead board', 1, 1], ['Switch light and dark', 1, 1]];
+  function savesHtml(q, cb) {
+    const o = S.open.has('saves'), r = {q: 17, pin: 3, cmp: 1, past: 1}, t = SAVES, tot = i => r.q * t[0][i] + t[2][i] + r.pin * t[3][i] + r.cmp * t[4][i] + r.past * t[5][i];
+    return `<div class="grp"><button class="fold" data-fold="saves" aria-expanded="${o}">${ic('chev')} What this page saves <span class="small mut nb">· ${tot(1) - tot(2)} clicks in a round like today's, projected</span></button>${o ? `<div class="tw"><table class="svt"><thead><tr><th>Task</th><th>Clicks today</th><th>Clicks now</th></tr></thead><tbody>${t.map(([w, a, b, note]) => `<tr><td>${esc(w)}</td><td>${note ? esc(note) : pl(a, 'click', 'clicks')}</td><td>${pl(b, 'click', 'clicks')}${b < a ? ` <span class="rn-pill st-done">saves ${pl(a - b, 'click', 'clicks')}</span>` : ''}</td></tr>`).join('')}
+      <tr><td><b>A round like today's</b>: ${r.q} questions answered, ${r.pin} notes on pictures, ${r.cmp} comparison, ${r.past} past decision found, then Send</td><td><b>${pl(tot(1), 'click', 'clicks')}</b> plus a scroll</td><td><b>${pl(tot(2), 'click', 'clicks')}</b></td></tr>
+      ${q && q.ttvMed != null ? `<tr><td>Time from a question appearing to your answer</td><td>median ${ago(q.ttvMed)}</td><td class="small mut">counted from the same record once this page ships</td></tr>` : ''}
+      ${cb && cb.questions ? `<tr><td>Sends per decision</td><td>${cb.oneSend.toLocaleString()} of ${pl(cb.questions, 'question', 'questions')} settled in one Send</td><td>the same one Send; Undo and Answer later keep it at one</td></tr>` : ''}</tbody></table></div>
+      <p class="small mut">Clicks measured on the approved mock by its click script, today's counts on the live page. The page does not change how many Sends a round takes, so no saving in turns is claimed.</p>` : ''}</div>`;
   }
   // machine load: each Mac's recorder (one line a minute, launchd)
   function loadGroup() {
@@ -254,8 +270,8 @@
     const pts = thin(h);
     const t = e => new Date(e * 1000).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
     const charts = ['M1 Max', 'M5 Max', 'M1 Max 16'].filter(m => ((L[m] || {}).hist || []).length).map(m => { const v = L[m], p = thin(v.hist);
-      return acard(`Load per core, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[1] / v.cpus]), {fmt: x => x.toFixed(1), t: 'Load per core', gate: [0.9, 'new workers wait']}), `The ${m}'s own recorder: the 1-minute load average over its ${v.cpus} cores, one reading a minute. New workers wait over 0.9 per core.`)
-        + acard(`Memory free, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[2]]), {fmt: x => Math.round(x) + '%', t: 'Memory free', max: 100}), 'Free, inactive and speculative memory as a share of the whole, from the same readings.'); }).join('');
+      return acard(`Load per core, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[1] / v.cpus]), {fmt: x => x.toFixed(1), t: 'Load per core', gate: [0.9, 'new workers wait']}) + tbl(['Time', 'Load', 'Per core'], p.map(r => [t(r[0]), r[1], (r[1] / v.cpus).toFixed(2)])), `The ${m}'s own recorder: the 1-minute load average over its ${v.cpus} cores, one reading a minute. New workers wait over 0.9 per core.`)
+        + acard(`Memory free, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[2]]), {fmt: x => Math.round(x) + '%', t: 'Memory free', max: 100}) + tbl(['Time', 'Memory free %', 'Disk used %'], p.map(r => [t(r[0]), r[2], r[3]])), 'Free, inactive and speculative memory as a share of the whole, from the same readings.'); }).join('');
     const pc = m1.load ? m1.load[0] / m1.cpus : null, lastMem = h.length ? h[h.length - 1][2] : null, disk = h.length ? h[h.length - 1][3] : null;
     const rows = ['M1 Max', 'M5 Max', 'M1 Max 16'].map(m => { const v = L[m] || {};
       return `<div class="line sub">${ic('mac')}<b class="grow">${esc(m)}</b>${v.recorded ? `<span class="rn-pill st-done"><i class="dot"></i>recording once a minute</span><span class="small mut">since ${esc(new Date(v.since * 1000).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}</span>` : '<span class="rn-pill st-progress"><i class="dot"></i>recorder installed: first readings soon</span>'}</div>`; }).join('');
@@ -277,7 +293,8 @@
       if (!t || !el.contains(t)) return;
       const ds = t.dataset;
       if (ds.fold != null) { S.open.has(ds.fold) ? S.open.delete(ds.fold) : S.open.add(ds.fold); return draw(); }
-      if (ds.task != null) { openTask(ds.task); return; }
+      if (ds.task != null) { openTask(ds.task); return; }  // draw() sets the arrows' list to the task lines on screen
+      if (ds.term) return CTX.inert(`${ds.term}: its terminal opens in Orca`);
       if (ds.ask != null) { S.ask = ds.ask; return draw(); }
       if (ds.rerun) { const p = ds.rerun; S.rerun.set(p, Date.now()); S.ask = ''; draw();
         return CTX.inert('Rerun started', () => { S.rerun.delete(p); draw(); }); }
@@ -312,7 +329,9 @@
     const body = t => { if (t.dataset.tip) { const [h, d] = t.dataset.tip.split('|'); return `<b>${esc(h)}</b><span>${esc(d)}</span>`; }
       try { return `<div class="wcard">${card(JSON.parse(t.dataset.wk))}</div>`; } catch { return ''; } };
     const find = e => e.target.closest && e.target.closest('.area-running [data-tip], .area-running .wsqi[data-wk]');
-    document.addEventListener('pointermove', e => { const t = find(e); t ? show(body(t), e.clientX, e.clientY) : hide(); });
+    // pointermove alone missed hovers that arrive as mouse events only (some automation, #145); a tap on touch shows it too
+    const at = e => { const t = find(e); t ? show(body(t), e.clientX, e.clientY) : hide(); };
+    ['pointermove', 'mouseover', 'pointerdown'].forEach(n => document.addEventListener(n, at));
     document.addEventListener('focusin', e => { const t = find(e); if (!t) return hide(); const r = t.getBoundingClientRect(); show(body(t), r.left + r.width / 2, r.top); });
     document.addEventListener('scroll', hide, true); })();
 
@@ -321,6 +340,11 @@
     if (!EL || !D) return;
     const y = scrollY, ps = EL.querySelector('.tpanel .tpscroll'), py = ps ? ps.scrollTop : 0;
     EL.innerHTML = tabNow === 'running' ? running() : analytics();
+    // the task arrows step through the tasks shown on screen, not the folded groups (#144); one redraw when they differ
+    if (tabNow === 'running' && S.task) {
+      const l = [...new Set([...EL.querySelectorAll('[data-task]')].filter(x => !x.closest('.tpanel')).map(x => x.dataset.task).filter(x => x && ((D.board || {}).beads || {})[x]))];
+      if (l.includes(S.task) && l.join() !== S.list.join()) { S.list = l; EL.innerHTML = running(); }
+    }
     scrollTo(0, y);
     const ps2 = EL.querySelector('.tpanel .tpscroll'); if (ps2) ps2.scrollTop = py;
   }
@@ -328,12 +352,49 @@
     CTX = ctx; EL = el; tabNow = tab;
     if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p></div>`;
     D = await ctx.data('running');
+    if (!el.classList.contains('tab-' + tab)) return;  // another tab opened while this one read its data: never draw over it
+    tabNow = tab;
     if (tab === 'running') S.task = ctx.prefs.get('task', '');
     bind(el, tab);
     draw();
     if (anchor && tab === 'analytics') { const t = document.getElementById(anchor); if (t) t.scrollIntoView({block: 'start'}); }
   }
   matchMedia('(max-width: 699px)').addEventListener('change', () => { if (EL && EL.isConnected && tabNow === 'analytics') draw(); });
+
+  /* ------------------------------------------------------------ the top-bar worker squares and their overview card (#131) */
+  let BOPEN = false;
+  async function bar(el, ctx) {
+    const d = await ctx.data('running'), ws = mine(d).sort((x, y) => WORDER.indexOf(x.s) - WORDER.indexOf(y.s));
+    const jobs = (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.failing), c = ws.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
+    if (!ws.length && !jobs.length) { el.innerHTML = ''; return; }
+    const sq = ws.slice(0, 24).map(w => `<i class="st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}"></i>`).join('');
+    const counts = WORDER.filter(s => c[s] && s !== 'done').map(s => `<span class="nw"><i class="dot st-${WS[s][0]}"></i>${c[s]}</span>`).join('');
+    el.innerHTML = `<span class="rn-bar"><button class="rn-bbtn" aria-haspopup="dialog" aria-expanded="${BOPEN}" title="This project's workers and scheduled jobs">
+        <span class="rn-sqs" aria-hidden="true">${sq}</span>${counts}<b class="nw">${pl(ws.length, 'worker', 'workers')}</b>${jobs.length ? `<span class="rn-jf nw">${jobs.slice(0, 3).map(() => ic('x')).join('')} ${pl(jobs.length, 'job', 'jobs')} failing</span>` : ''}</button>
+      ${BOPEN ? `<div class="rn-bcard" role="dialog" aria-label="Workers overview">${overview(d, ws, jobs, c)}</div>` : ''}</span>`;
+    el.querySelector('.rn-bbtn').onclick = e => { e.stopPropagation(); BOPEN = !BOPEN; bar(el, ctx); };
+    const card = el.querySelector('.rn-bcard');
+    if (card) card.onclick = e => { const g = e.target.closest('[data-bgo]'); if (g) { BOPEN = false; bar(el, ctx); ctx.go('running', 'workers'); } e.stopPropagation(); };
+    BAR = () => bar(el, ctx);
+  }
+  let BAR = null;
+  document.addEventListener('click', () => { if (BOPEN && BAR) { BOPEN = false; BAR(); } });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && BOPEN && BAR) { BOPEN = false; BAR(); } });
+  function overview(d, ws, jobs, c) {
+    const macs = ['M1 Max', 'M5 Max', 'M1 Max 16'].map(m => [m, ws.filter(w => w.mac === m)]).filter(([, l]) => l.length), mx = Math.max(1, ...macs.map(([, l]) => l.length));
+    const H = Array.isArray(d.hours) ? d.hours : [], hm = Math.max(1, ...H);
+    const look = ws.filter(w => w.s === 'stuck' || w.s === 'failed');
+    return `<div class="rn-bh"><b>${pl(ws.length, 'worker', 'workers')}</b> <span class="small mut">on ${pl(macs.length, 'Mac', 'Macs')}</span></div>
+      <div class="small rn-bst">${WORDER.filter(s => c[s]).map(s => `<span class="nw"><i class="dot st-${WS[s][0]}"></i> ${c[s]} ${WS[s][1]}</span>`).join('')}</div>
+      ${H.length ? `<div class="rn-bk">Workers at once, last 24 hours</div><div class="rn-hrs" role="img" aria-label="Most at once in the last 24 hours: ${Math.max(0, ...H)}">${H.map((n, i) => `<i style="height:${Math.max(2, n / hm * 100)}%" title="${24 - i} h ago: ${pl(n, 'worker', 'workers')}"></i>`).join('')}</div>
+        <div class="small mut rn-hax"><span>24 h ago</span><span>now · most at once: ${pl(Math.max(0, ...H), 'worker', 'workers')}</span></div>` : ''}
+      ${macs.length ? `<div class="rn-bk">By Mac</div>${macs.map(([m, l]) => { const k = l.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
+        return `<div class="rn-bm"><span>${esc(m)}</span><span class="rn-bmt" style="width:${l.length / mx * 100}%">${WORDER.filter(s => k[s]).map(s => `<i class="st-${WS[s][0]}" style="flex:${k[s]}" title="${k[s]} ${WS[s][1]}"></i>`).join('')}</span><b>${l.length}</b></div>`; }).join('')}` : ''}
+      ${look.length ? `<div class="rn-bk">Needs a look first</div>${look.slice(0, 6).map(w => `<button class="rn-bw" data-bgo><i class="dot st-${WS[w.s][0]}"></i><span class="rn-bwn"><b>${esc(wnm(w.name))}</b><span class="small"><span class="${w.s === 'stuck' ? 'stuck-t' : 'err-t'}">${w.s === 'stuck' ? `no sign of life for ${ago(w.heard)}` : 'failed'}</span> · ${esc(scrub(w.report) || 'no report yet')}</span></span><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span><span class="small nw">${ago(w.mins)}</span></button>`).join('')}` : ''}
+      ${jobs.length ? `<div class="rn-bk">Scheduled jobs failing</div>${jobs.map(j => `<div class="rn-bj">${ic('x')}<b>${esc(j.name)}</b></div>`).join('')}` : ''}
+      <button class="lk small rn-bmore" data-bgo>${ws.length - Math.min(6, look.length) > 0 ? `${pl(ws.length - Math.min(6, look.length), 'more worker', 'more workers')} under Running · ` : ''}open Running</button>`;
+  }
+  P.bar({render: bar});
 
   P.tab({key: 'running', chip: async ctx => urgent(await ctx.data('running')), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});

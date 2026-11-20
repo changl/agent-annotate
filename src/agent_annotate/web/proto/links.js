@@ -5,7 +5,32 @@
 (function () {
   'use strict';
   const P = window.Proto = window.Proto || {};
-  const S = {arch: false, view: '', copied: ''};
+  const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', bad: false};
+  let mine = [];  // notes written here this visit, so Undo can take them back
+  const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
+  const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
+  const fpath = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
+  const dm = d => { const t = new Date(String(d).slice(0, 10) + 'T12:00'); return isNaN(t) ? String(d || '') : t.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
+  // shortcut: the same small Markdown reader as Reference's; share one copy when the prototype graduates
+  function mdBlocks(t) {
+    const out = [], L = t.replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
+    let i = 0, para = [];
+    const flush = () => { if (para.length) out.push(['p', inl(para.join(' '))]); para = []; };
+    if (L[0] === '---') { i = 1; while (i < L.length && L[i] !== '---') i++; i++; }
+    while (i < L.length) {
+      const l = L[i];
+      if (/^\s*```/.test(l)) { flush(); const b = []; i++; while (i < L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++; out.push(['pre', b.join('\n')]); continue; }
+      if (/^#{1,6}\s/.test(l)) { flush(); out.push(['h', inl(l.replace(/^#+\s*/, ''))]); i++; continue; }
+      if (/^\s*\|/.test(l)) { flush(); const r = []; while (i < L.length && /^\s*\|/.test(L[i])) { const c = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => inl(x.trim())); if (!c.every(x => /^:?-{2,}:?$/.test(x))) r.push(c); i++; } out.push(['tbl', r]); continue; }
+      if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { flush(); out.push(['li', inl(l.replace(/^\s*([-*+]|\d+\.)\s+/, ''))]); i++; continue; }
+      if (!l.trim() || /^(-{3,}|\*{3,})$/.test(l.trim())) { flush(); i++; continue; }
+      para.push(l.trim()); i++;
+    }
+    flush();
+    return out;
+  }
+  const blocksHtml = (bs, esc) => bs.map(([k, t]) => k === 'h' ? `<h4>${esc(t)}</h4>` : k === 'li' ? `<p class="l-li">• ${esc(t)}</p>` : k === 'pre' ? `<pre><code>${esc(t)}</code></pre>`
+    : k === 'tbl' ? `<div class="l-tw"><table>${t.map((r, i) => `<tr>${r.map(c => i ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>` : `<p>${esc(t)}</p>`).join('');
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const ROLE = {view: 'Can view', send: 'Can answer and send'}, ROLEIC = {view: 'eye', send: 'edit'};
   const ROLEHINT = {view: 'Reads the page, its questions, Reference and History', send: 'Also answers, writes notes and presses Send'};
@@ -34,9 +59,10 @@
     const {esc, icon} = ctx;
     const copyBtn = (key, name) => `<button class="ib" data-copylink="${esc(key)}" data-name="${esc(name)}" title="Copy link to ${esc(name)}" aria-label="Copy link to ${esc(name)}">${icon(S.copied === key ? 'copied' : 'link')}</button>`;
     const pageRow = (name, sub, key, open) => `<div class="l-line">${icon('doc')}<span class="l-grow">${open}<span class="small mut l-sub">${sub}</span></span>${copyBtn(key, name)}</div>`;
-    const me = pageRow(D.name, `this prototype copy · version ${esc(D.current.replace(/^v/, ''))} · ${pl(D.versions, 'version', 'versions')}`, ctx.base,
+    // each page says why it is its own page, so he can choose between them (#81); counts follow
+    const me = pageRow(D.name, `the review page you answer on today; its rounds are the versions in History · this prototype copy, ${pl(D.versions, 'version', 'versions')}`, ctx.base,
       `<button class="lk" data-goq>${esc(D.name)}</button>`);
-    const others = D.pages.map(p => pageRow(p.name, `live page · ${pl(p.versions, 'version', 'versions')}${p.last ? ` · last ${esc(p.last)}` : ''}`, p.url,
+    const others = D.pages.map(p => pageRow(p.name, `${esc(p.why || 'its own page')} · ${pl(p.versions, 'version', 'versions')}${p.last ? ` · last ${esc(dm(p.last))}` : ''}`, p.url,
       `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)} ${icon('ext')}</a>`)).join('');
     const ppl = 1 + ctx.prefs.get('people', []).length;
     const arch = S.arch ? D.archived.map(a => `<div class="l-line l-subrow">${icon('archive')}<span class="l-grow"><button class="lk l-left" data-arch="${esc(a.id)}" aria-expanded="${S.view === a.id}">${esc(a.t)}</button>
@@ -44,19 +70,69 @@
     w.innerHTML = `<div class="l-cols"><section><h2 class="l-ph">${icon('pages')} Pages of this project <span class="badge grey">${1 + D.pages.length}</span></h2>${me}${others}
         <div class="l-line">${icon('people')}<span class="l-grow"><button class="lk" data-people>People</button><span class="small mut l-sub">who can open this page · ${pl(ppl, 'person', 'people')}</span></span>${icon('chev')}</div>
         <div class="l-grp"><button class="l-fold" data-archall aria-expanded="${S.arch}">${icon('chev')}<b>Archived pages</b> <span class="small mut">${pl(D.archived.length, 'snapshot', 'snapshots')}</span></button>${arch}</div>
-        <div class="l-line">${icon('warn')}<span class="l-grow"><button class="lk l-left" data-bad aria-expanded="${S.view === 'bad'}">A version that fails to load</button><span class="small mut l-sub">an example, to try Retry and Tell the agent</span></span></div>
+        <div class="l-line">${icon('warn')}<span class="l-grow"><button class="lk l-left" data-bad aria-expanded="${S.view === 'bad'}">${esc(badTitle(D))}</button><span class="small mut l-sub"><span class="l-errt">could not load</span> · an example, to try Retry and Tell the agent</span></span></div>
         ${S.view === 'bad' ? '<div class="l-view" data-view></div>' : ''}</section>
       <section><h2 class="l-ph">${icon('code')} Repos, folders and links</h2>
         ${D.folders.map(f => `<div class="l-line">${icon('code')}<span class="l-grow">${esc(f.name)}<span class="small mut l-sub">${esc(f.what)}</span></span><button class="btn sm" data-copypath="${esc(f.path)}" title="Copy ${esc(f.path)}">${icon(S.copied === f.path ? 'copied' : 'copy')} Copy path</button></div>`).join('')}
-        ${D.links.map(l => `<div class="l-line">${icon('bead')}<span class="l-grow"><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)} ${icon('ext')}</a><span class="small mut l-sub">${esc(l.what)}</span></span>${copyBtn(l.url, l.name)}</div>`).join('')}
-        <p class="small mut">This project's documents are in <button class="lk" data-goref>Reference</button>.</p></section></div>`;
+        ${D.links.map(l => l.url ? `<div class="l-line">${icon('bead')}<span class="l-grow"><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)} ${icon('ext')}</a><span class="small mut l-sub">${esc(l.what)}</span></span>${copyBtn(l.url, l.name)}</div>`
+          : `<div class="l-line">${icon('ext')}<span class="l-grow">${esc(l.name)}<span class="small mut l-sub">${esc(l.what)}</span></span></div>`).join('')}</section>
+      ${docsHtml(ctx, D)}</div>`;
     const host = w.querySelector('[data-view]');
     if (host) {
       const a = D.archived.find(x => x.id === S.view);
       const close = () => { S.view = ''; draw(w, ctx, D); };
       P.viewVersion(host, ctx, a ? {title: a.t, src: `plans/${encodeURIComponent(a.id)}/${encodeURIComponent(a.v)}.html`, onClose: close}
-        : {title: 'A version that fails to load', src: 'content?v=v0', onClose: close});
+        : {title: badTitle(D), src: 'content?v=v0', onClose: close, failTitle: `The publish of ${badWhen(D)} could not load.`});
     }
+    const q = w.querySelector('#l-dq');
+    if (q) {
+      let t;
+      q.oninput = () => { clearTimeout(t); t = setTimeout(() => { S.dq = q.value.trim(); S.dsel = -1; draw(w, ctx, D); const n = w.querySelector('#l-dq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 150); };
+    }
+  }
+  // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed
+  const badWhen = D => { const [d, t] = String(D.current_t || '').split(' '); return d ? `${dm(d)}${t ? ', ' + t : ''}` : 'today'; };
+  const badTitle = D => `${D.name}, the publish of ${badWhen(D).split(',')[0]}`;
+
+  /* ---------- Documents (#16): kept on this page, then every file in the project's folder ---------- */
+  const notesAt = (D, k) => [...D.notes, ...mine].filter(n => n.a === k);
+  function noteBox(ctx, D, k) {
+    const {esc, icon} = ctx, ns = notesAt(D, k);
+    if (!ns.length && S.note !== k) return '';
+    return `<div class="l-notes">${ns.map(n => `<div class="l-nt">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}</span> ${esc(n.text)}${mine.includes(n) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+      ${S.note === k ? `<div class="l-nbox"><textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note"></textarea>
+        <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
+  }
+  function chartHtml(ctx, D, d) {
+    const {esc} = ctx, c = d.chart, max = Math.max(c.gate || 0, ...c.pts.map(p => p[1])) || 1;
+    return `<figure class="l-chart"><figcaption class="small"><b>${esc(c.t)}</b> · click a bar to write a note on it</figcaption>
+      <div class="l-bars" role="list">${c.pts.map(([lab, v], i) => { const k = `doc:kept-${d.id}~${i}`, n = notesAt(D, k).length;
+        return `<button class="l-bar${v > c.gate ? ' over' : ''}" role="listitem" data-bnote="${esc(k)}" aria-pressed="${S.note === k}" title="${esc(lab)}: ${v.toLocaleString()} ms${v > c.gate ? `, over the ${c.gate.toLocaleString()} ms gate` : ''}. Click to write a note on it"><span class="l-bl">${esc(lab)}</span><span class="l-bt"><i style="width:${(v / max * 100).toFixed(1)}%"></i>${c.gate ? `<s style="left:${(c.gate / max * 100).toFixed(1)}%" aria-hidden="true"></s>` : ''}</span><span class="l-bv">${v.toLocaleString()} ms${n ? ` · ${ctx.icon('note')}${n}` : ''}</span></button>`; }).join('')}</div>
+      <p class="small mut">The line marks the ${c.gate.toLocaleString()} ms gate · ${esc(c.axis)}</p></figure>
+      ${c.pts.map((_, i) => noteBox(ctx, D, `doc:kept-${d.id}~${i}`)).join('')}`;
+  }
+  function docsHtml(ctx, D) {
+    const {esc, icon} = ctx, kept = D.kept || [], F = ((D.docs || {}).files || []).map((f, i) => ({...f, i})), groups = (D.docs || {}).groups || {};
+    const k0 = kept.find(x => x.id === S.kept);
+    const keptRows = kept.map(d => `<div class="l-line"><span class="l-grow"><button class="lk l-left" data-kept="${esc(d.id)}" aria-expanded="${S.kept === d.id}">${icon('doc')} ${esc(d.t)}</button><span class="small mut l-sub">${esc(d.sub)}</span></span></div>
+      ${S.kept === d.id ? `<div class="l-doc"><div class="l-dbar"><b>${esc(d.t)}</b><span class="small mut">read-only</span><span class="spacer"></span><button class="btn sm" data-kept="${esc(d.id)}">${icon('x')} Close</button></div>
+        ${d.chart ? chartHtml(ctx, D, d) : ''}${blocksHtml(d.blocks || [], esc)}${noteBox(ctx, D, `doc:kept-${d.id}`)}
+        <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button></div></div>` : ''}`).join('');
+    const q = S.dq.toLowerCase(), hit = f => !q || `${f.n} ${f.sub} ${groups[f.g] || ''}`.toLowerCase().includes(q);
+    const sh = F.filter(f => hit(f) && (!S.dk || f.k === S.dk)), kinds = Object.keys(DK).filter(k => F.some(f => f.k === k));
+    const gs = Object.keys(groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
+    const dic = k => `<span class="l-dk k-${k}" title="${DK[k][1]}">${icon(DK[k][0])}</span>`;
+    const row = f => `<div class="l-d9"${S.dsel === f.i ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="lk l-nm" data-dopen="${f.i}" ${f.md ? `aria-expanded="${S.dsel === f.i}" title="Open it here"` : 'title="Copies its path, to open it from Finder"'}>${esc(f.n)}${f.sub ? `<span class="small mut l-dsub">${esc(f.sub)}</span>` : ''}</button><span class="small mut l-sz">${kb(f.kb)}</span><span class="small mut l-dt">${esc(dm(f.d))}</span><button class="ib" data-copypath="${esc(fpath(f))}" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${icon(S.copied === fpath(f) ? 'copied' : 'copy')}</button></div>
+      ${S.dsel === f.i && f.md ? `<div class="l-doc"><div class="l-dbar">${dic('md')}<b>${esc(f.n)}</b><span class="small mut">${esc(groups[f.g] || '')}${f.sub ? ' / ' + esc(f.sub) : ''} · ${kb(f.kb)} · changed ${esc(dm(f.d))}</span><span class="spacer"></span><button class="btn sm" data-dopen="${f.i}">${icon('x')} Close</button></div>${blocksHtml(mdBlocks(f.md), esc)}</div>` : ''}`;
+    const list = gs.map(g => { const l = sh.filter(f => f.g === g), key = 'dg:' + g, op = !!q || S.open.has(key) || (S.dsel >= 0 && F[S.dsel] && F[S.dsel].g === g && sh.includes(F[S.dsel])), all = S.open.has('dga:' + g);
+      return `<div class="l-grp"><button class="l-fold" data-fold="${esc(key)}" aria-expanded="${op}">${icon('chev')}<b>${esc(groups[g])}</b> <span class="small mut">${pl(l.length, 'file', 'files')}</span></button>
+        ${op ? l.slice(0, all ? l.length : 8).map(row).join('') + (l.length > 8 ? `<button class="lk small l-more" data-fold="dga:${esc(g)}">${all ? 'Show the first 8' : `Show all ${l.length}`}</button>` : '') : ''}</div>`; }).join('') || '<p class="mut">No document matches.</p>';
+    return `<section class="l-docs" id="docs"><h2 class="l-ph">${icon('doc')} Documents</h2>
+      <div class="l-kept"><div class="l-kh"><b>Kept on this page</b> <span class="badge grey">${kept.length}</span></div>${keptRows || '<p class="small mut">None yet</p>'}</div>
+      <h3 class="l-ph3">Files in this project's folder</h3>
+      <div class="l-dbar2"><input type="search" id="l-dq" placeholder="Find a document by name or folder" aria-label="Find a document" value="${esc(S.dq)}">
+        <span class="l-chips" role="group" aria-label="Kind"><button class="chipb" data-dk="" aria-pressed="${!S.dk}">All <span class="n">${F.filter(hit).length}</span></button>${kinds.map(k => `<button class="chipb" data-dk="${k}" aria-pressed="${S.dk === k}" title="Only ${DK[k][1]} files">${dic(k)}${DK[k][1]} <span class="n">${F.filter(f => hit(f) && f.k === k).length}</span></button>`).join('')}</span></div>
+      <p class="small mut">${pl(F.length, 'file', 'files')} in this project's folder · Markdown opens here, other kinds copy their path for Finder</p>${list}</section>`;
   }
 
   async function click(e, w, ctx, D) {
@@ -74,7 +150,30 @@
     else if (b.hasAttribute('data-bad')) { S.view = S.view === 'bad' ? '' : 'bad'; draw(w, ctx, D); }
     else if (b.hasAttribute('data-people')) ctx.go('links', 'people');
     else if (b.hasAttribute('data-goq')) ctx.go('questions');
-    else if (b.hasAttribute('data-goref')) ctx.go('reference');
+    else if (b.dataset.kept) { S.kept = S.kept === b.dataset.kept ? '' : b.dataset.kept; S.note = ''; draw(w, ctx, D); }
+    else if (b.dataset.dk !== undefined) { S.dk = b.dataset.dk; draw(w, ctx, D); }
+    else if (b.dataset.fold) { S.open.has(b.dataset.fold) ? S.open.delete(b.dataset.fold) : S.open.add(b.dataset.fold); draw(w, ctx, D); }
+    else if (b.dataset.dopen) {
+      const i = +b.dataset.dopen, f = D.docs.files[i];
+      if (!f.md) { if (await copyText(fpath(f))) ctx.toast(`Path copied: ${fpath(f)}`); else ctx.toast('Copy failed: your browser blocked the clipboard'); return; }
+      S.dsel = S.dsel === i ? -1 : i; draw(w, ctx, D);
+    } else if (b.dataset.bnote) { S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
+    else if (b.hasAttribute('data-ncancel')) { S.note = ''; draw(w, ctx, D); }
+    else if (b.dataset.nsave) {
+      const k = b.dataset.nsave, text = (w.querySelector('#l-nt').value || '').trim();
+      if (!text) return ctx.toast('Write something first');
+      const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1];
+      try {
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: d ? `${d.t}${i !== undefined && d.chart ? ', ' + d.chart.pts[+i][0] : ''}` : 'Pages & links', text});
+        mine.push({id: c.id, a: k, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString()});
+        S.note = ''; draw(w, ctx, D); ctx.refreshChips();
+        ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
+      } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
+    } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
+  }
+  async function undoNote(id, w, ctx, D) {
+    try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); draw(w, ctx, D); ctx.refreshChips(); ctx.toast('Note taken back'); }
+    catch (e) { ctx.toast(`Could not take it back: ${e.message}`); }
   }
 
   /* ---------- People: two roles; edits change only this copy, kept in this browser ---------- */

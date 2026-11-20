@@ -9,11 +9,73 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import re
+from html.parser import HTMLParser
+
 from .history import _comments, _plain
+from .reference import FLD_DIR, documents, hide, notes
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
 REGISTRY = Path.home() / ".claude" / "annotate-state" / "state"  # live page records, read only
 MASK = "member@example.com"
+# documents kept on this page (mock round 9): the usage audit page and the go-live load test's k6 summary
+USAGE_AUDIT = FLD_DIR / "planning/operations/usage-audit-2026-11-06/page/current.html"
+LOAD_TEST = FLD_DIR / "planning/operations/orchestration/run_d169910aea33/reports/go-live-backend-2"
+
+
+class _Blocks(HTMLParser):
+    """Headings, paragraphs, list items and table cells of an HTML page, as [kind, text]; scripts and styles skipped."""
+    KEEP = {"h1": "h", "h2": "h", "h3": "h", "h4": "h", "p": "p", "li": "li", "td": "p", "pre": "pre"}
+
+    def __init__(self):
+        super().__init__()
+        self.out, self.kind, self.buf, self.skip = [], None, [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.skip += 1
+        elif tag in self.KEEP:
+            self._flush()
+            self.kind = self.KEEP[tag]
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self.skip = max(0, self.skip - 1)
+        elif tag in self.KEEP:
+            self._flush()
+
+    def handle_data(self, data):
+        if self.kind and not self.skip:
+            self.buf.append(data)
+
+    def _flush(self):
+        t = re.sub(r"\s+", " ", "".join(self.buf)).strip()
+        if self.kind and t:
+            self.out.append([self.kind, hide(t)[:900]])
+        self.kind, self.buf = None, []
+
+
+def kept() -> list[dict]:
+    """The usage audit's text and the load test's request times; each is left out when its file is missing."""
+    out = []
+    try:
+        b = _Blocks()
+        b.feed(USAGE_AUDIT.read_text(errors="ignore"))
+        if b.out:
+            out.append({"id": "usage-audit", "t": "Usage audit", "sub": "the usage audit page of 6 Nov · from FastLane Drive planning", "blocks": b.out[:60]})
+    except OSError:
+        pass
+    try:
+        km = json.loads((LOAD_TEST / "tiny-summary.json").read_bytes())["metrics"]
+        pts = [[f"{w} {s}", round(km[f"http_req_duration{{kind:{k}}}"][p])] for k, w in (("api", "API"), ("web", "Web"))
+               for s, p in (("median", "med"), ("p90", "p(90)"), ("p95", "p(95)"))]
+        said = [hide(re.sub(r"\*\*", "", ln.strip().lstrip("- ")))[:900] for ln in (LOAD_TEST / "report.md").read_text(errors="ignore").splitlines() if "p95" in ln][:1]
+        out.append({"id": "load-test", "t": "Load-test graph", "sub": "k6, eight members · from FastLane Drive planning",
+                    "chart": {"t": "Request time in the eight-member sample, in milliseconds", "pts": pts, "gate": 1000,
+                              "axis": "k6 summary; it keeps the median, p90 and p95"}, "blocks": [["p", s] for s in said]})
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return out
 
 
 def _json(path: Path) -> dict:
@@ -22,6 +84,17 @@ def _json(path: Path) -> dict:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _why(name: str, folder: Path) -> str:
+    """Why a page is its own page, so he can choose between them (mock: 'its own page because it is long')."""
+    if folder.name == "fld-stack-round8":
+        return "the live review page this copy was taken from; answers there reach the agents"
+    if re.search(r"meeting", name, re.I):
+        return "its own page: one meeting's notes, kept apart from the review rounds"
+    if re.search(r"roadmap", name, re.I):
+        return "its own page because it is long"
+    return "its own page, so its rounds stay apart from this one's"
 
 
 def _pages() -> list[dict]:
@@ -34,7 +107,8 @@ def _pages() -> list[dict]:
                 continue
             meta = _json(folder / "current.meta.json")
             hist = meta.get("history") or []
-            pages[slug] = {"name": _plain(meta.get("name") or slug, 80), "url": url,
+            name = _plain(meta.get("name") or slug, 80)
+            pages[slug] = {"name": name, "url": url, "why": _why(name, folder),
                            "versions": len(hist), "last": str((hist[-1] if hist else {}).get("ts") or "")[:10]}
     return list(pages.values())
 
@@ -65,6 +139,19 @@ def build(page_dir: Path) -> dict:
                {"name": "reviews/fld-stack-round8", "what": "the live page's record", "path": "~/projects/fastlane-drive/reviews/fld-stack-round8"},
                {"name": "annotate-proto/reviews/fld-proto", "what": "this prototype copy", "path": "~/" + str(page_dir.relative_to(Path.home())) if page_dir.is_relative_to(Path.home()) else str(page_dir)}]
     links = [{"name": board.get("label") or "Beads", "what": "the project's task board", "url": board["url"]}] if board.get("url") else []
+    # the tester server's address is in no record the prototype reads, so its row says so instead of linking (mock #82)
+    links.append({"name": "Tester server", "what": "its address is not in this project's record yet", "url": ""})
+    hist = meta.get("history") or []
     return {"name": _plain(meta.get("name") or "This page", 80), "current": meta.get("current") or "",
-            "versions": len(meta.get("history") or []), "pages": _pages(), "archived": archived,
-            "folders": folders, "links": links, "people": list(people.values())}
+            "current_t": str((hist[-1] if hist else {}).get("ts") or "")[:16].replace("T", " "),
+            "versions": len(hist), "pages": _pages(), "archived": archived,
+            "folders": folders, "links": links, "people": list(people.values()),
+            "kept": kept(), "docs": documents(), "notes": _kept_notes(page_dir)}
+
+
+def _kept_notes(page_dir: Path) -> list:
+    """Notes on the kept documents and their chart bars; an unreadable comment store shows none rather than breaking the tab."""
+    try:
+        return [n for n in notes(page_dir) if str(n["a"]).startswith("doc:kept-")]
+    except (OSError, ValueError):
+        return []
