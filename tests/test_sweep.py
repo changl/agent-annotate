@@ -159,6 +159,8 @@ def test_plist_is_hourly_report_only():
     assert plist["Label"] == "com.changlee.annotate-sweep" and plist["StartInterval"] == 3600
     assert plist["ProgramArguments"][2:4] == ["/Users/changlee/.local/share/annotate-sweeps/sweep.py", "all"]
     assert "--apply" not in plist["ProgramArguments"] and plist["RunAtLoad"] is False
+    # Background throttling pushed the ownership check past its 300 s timeout on a busy Mac.
+    assert plist["ProcessType"] == "Standard"
 
 
 def test_brief_names_the_full_suite_receipt():
