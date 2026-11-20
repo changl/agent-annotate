@@ -97,9 +97,11 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 import tomllib
+import urllib.error
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
@@ -4421,6 +4423,26 @@ def make_handler(
     return BoundHandler
 
 
+def _load_signin() -> None:
+    """A thread, so a slow or offline Infisical never delays the listener; share links work meanwhile."""
+    from . import signin
+    while True:
+        try:
+            signin.load_from_infisical()
+            return
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500 and exc.code != 429:
+                print(f"  sign-in stays off: Infisical refused ({exc.code})", file=sys.stderr)
+                return
+            print(f"  sign-in waiting for Infisical ({exc.code})", file=sys.stderr)
+        except (OSError, subprocess.SubprocessError) as exc:  # offline at boot, or keychain locked or slow
+            print(f"  sign-in waiting for Infisical or the keychain: {type(exc).__name__}", file=sys.stderr)
+        except (ValueError, KeyError, TypeError) as exc:
+            print(f"  sign-in stays off: [signin] setup failed ({type(exc).__name__})", file=sys.stderr)
+            return
+        threading.Event().wait(60)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="annotate sync server — serve HTML artifact and persist comments to disk"
@@ -4535,6 +4557,7 @@ def main():
     global VERSION_GUARD_PAGE
     VERSION_GUARD_PAGE = (_monitor_project(bus_dir), slug)
     threading.Thread(target=warn_at_start, args=VERSION_GUARD_PAGE, daemon=True).start()
+    threading.Thread(target=_load_signin, daemon=True).start()
 
     try:
         def delivery_loop():

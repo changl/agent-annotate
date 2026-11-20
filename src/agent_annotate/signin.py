@@ -14,12 +14,14 @@ import html
 import json
 import os
 import secrets
+import subprocess
 import time
+import tomllib
 import urllib.parse
 import urllib.request
 from http.cookies import CookieError, SimpleCookie
 
-from .paths import CONFIG_DIR
+from .paths import CONFIG_DIR, PROJECTS_TOML
 from .review_access import _valid_name
 
 ROUTE = "/annotate/auth"
@@ -35,8 +37,50 @@ MEMBERS = CONFIG_DIR / "members.json"
 _ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY", "ANNOTATE_OWNER_EMAIL")
 
 
+_LOADED: dict[str, str] = {}  # from Infisical; kept out of os.environ so child processes never inherit them
+
+
+def _value(name: str) -> str:
+    return os.environ.get(name) or _LOADED.get(name, "")
+
+
 def configured() -> bool:
-    return all(os.environ.get(name) for name in _ENV)
+    return all(_value(name) for name in _ENV)
+
+
+def load_from_infisical() -> None:
+    """Fill missing sign-in values from Infisical when projects.toml has a [signin] table.
+
+    Every page server calls this at start, so publish, revive, rollout restarts
+    and launchd all get the values with nothing written anywhere. The read-only
+    machine identity's {"clientId", "clientSecret"} JSON is a login-keychain
+    item. Raises OSError while Infisical is unreachable, so the caller can retry.
+    """
+    if configured():
+        return
+    try:
+        settings = tomllib.loads(PROJECTS_TOML.read_text(encoding="utf-8")).get("signin")
+    except (OSError, ValueError):
+        return
+    if not isinstance(settings, dict):
+        return
+    client = json.loads(subprocess.run(
+        ["/usr/bin/security", "find-generic-password", "-s", settings["keychain_service"],
+         "-a", settings["keychain_account"], "-w"], capture_output=True, text=True, check=True, timeout=20).stdout)
+
+    def call(path: str, body: dict | None = None, token: str = "") -> dict:
+        request = urllib.request.Request(
+            "https://app.infisical.com/api/" + path, data=None if body is None else json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read(1024 * 1024))
+
+    token = call("v1/auth/universal-auth/login", {"clientId": client["clientId"], "clientSecret": client["clientSecret"]})
+    query = urllib.parse.urlencode({"workspaceId": settings["project_id"], "environment": settings["environment"],
+                                    "secretPath": settings["path"]})
+    for item in call("v3/secrets/raw?" + query, token=token["accessToken"])["secrets"]:
+        if item.get("secretKey") in _ENV and item.get("secretValue"):
+            _LOADED[item["secretKey"]] = item["secretValue"]
 
 
 def _b64(raw: bytes) -> str:
@@ -48,7 +92,7 @@ def _unb64(text: str) -> bytes:
 
 
 def _signature(body: str) -> str:
-    return hmac.new(os.environ["ANNOTATE_SESSION_KEY"].encode(), body.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_value("ANNOTATE_SESSION_KEY").encode(), body.encode(), hashlib.sha256).hexdigest()
 
 
 def _seal(payload: dict) -> str:
@@ -100,7 +144,7 @@ def load_members() -> dict[str, list[str]]:
 
 def allowed(email: str, project: str) -> bool:
     email = email.lower()
-    owner = os.environ.get("ANNOTATE_OWNER_EMAIL", "").strip().lower()
+    owner = _value("ANNOTATE_OWNER_EMAIL").strip().lower()
     if owner and email == owner:
         return True
     try:
@@ -168,9 +212,9 @@ def _page(code: int, text: str, link: tuple[str, str] | None = None) -> tuple[in
 
 
 def _exchange(code: str, verifier: str, redirect_uri: str) -> tuple[str, str]:
-    client_id = os.environ["GOOGLE_OAUTH_CLIENT_ID"]
+    client_id = _value("GOOGLE_OAUTH_CLIENT_ID")
     form = urllib.parse.urlencode({
-        "code": code, "client_id": client_id, "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        "code": code, "client_id": client_id, "client_secret": _value("GOOGLE_OAUTH_CLIENT_SECRET"),
         "redirect_uri": redirect_uri, "grant_type": "authorization_code", "code_verifier": verifier}).encode()
     with urllib.request.urlopen(urllib.request.Request(TOKEN_URL, data=form), timeout=10) as response:
         claims = json.loads(_unb64(json.loads(response.read(65536))["id_token"].split(".")[1]))
@@ -196,7 +240,7 @@ def handle(route: str, query: str, cookie: str, origin: str) -> tuple[int, dict,
         flow = _seal({"use": "flow", "state": state, "verifier": verifier,
                       "next": _next(first("next")), "exp": int(time.time()) + 600})
         url = AUTH_URL + "?" + urllib.parse.urlencode({
-            "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"], "redirect_uri": redirect_uri,
+            "client_id": _value("GOOGLE_OAUTH_CLIENT_ID"), "redirect_uri": redirect_uri,
             "response_type": "code", "scope": "openid email profile", "state": state,
             "code_challenge": _b64(hashlib.sha256(verifier.encode()).digest()),
             "code_challenge_method": "S256", "prompt": "select_account"})

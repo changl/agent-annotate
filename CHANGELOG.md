@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Google sign-in stays on across every way a page server starts. With a `[signin]` table in `projects.toml`, each server reads its four sign-in values from Infisical at start, through a read-only machine identity whose client JSON is in the login keychain; nothing is written to disk or passed to child processes, and values already in the environment win. An `infisical run -- annotate ...` start was lost at the next `annotate revive`, launchd start or rollout restart. While Infisical or the keychain is unavailable (offline, 5xx, 429), share links keep working and the server retries every minute. README names the right Infisical folder, `/projects/agentannotate`.
+
 ## 2.32.5
 
 - A link or code span inside bold or italic text renders as a link or code instead of literal `[text](url)`, in headings, lists, tables and card titles and options. Emphasis skips whole code spans and links, and link URLs may hold one level of balanced parentheses; escaping and the `javascript:`/`data:` guard are unchanged. On FLD, "**[Live chat (#39122)](…)**" showed as raw markdown.

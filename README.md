@@ -72,13 +72,24 @@ Funnel publishes one exact path, preserving other routes. A private share link g
 
 ### Google sign-in (off until configured)
 
-Funnel pages can ask for a Google account instead of a share link. It stays off, and pages behave exactly as above, until a page server starts with all four of these in its environment, kept in Infisical under `/projects/agent-annotate`:
+Funnel pages can ask for a Google account instead of a share link. It stays off, and pages behave exactly as above, until a page server starts with all four of these, kept in Infisical under `/projects/agentannotate`:
 
 - `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`: a Google "Web application" OAuth client, scopes `openid email profile`, redirect URL `https://m1max.tail2b8ab9.ts.net/annotate/auth/callback`.
 - `ANNOTATE_SESSION_KEY`: a random key that signs the 30-day sign-in cookie. Changing it signs everyone out.
 - `ANNOTATE_OWNER_EMAIL`: the owner's Google email (not a secret). The owner sees every project and needs no members entry, so a broken members list never locks them out.
 
-To turn it on, first map the Funnel path `/annotate/auth` to any running page server's `http://127.0.0.1:<port>/annotate/auth`, then restart the page servers under `infisical run --path /projects/agent-annotate -- annotate ...`. If the mapped server stops, new sign-ins wait and existing cookies keep working.
+To turn it on, first map the Funnel path `/annotate/auth` to any running page server's `http://127.0.0.1:<port>/annotate/auth`, then add a `[signin]` table to `projects.toml` and restart the page servers. Each server then reads the four values from Infisical itself at start, so publish, `annotate revive`, launchd and rollout restarts all keep sign-in on, and nothing is written to disk. Values already in the environment (say, under `infisical run --path /projects/agentannotate -- annotate ...`) win. If the mapped server stops, new sign-ins wait and existing cookies keep working.
+
+```toml
+[signin]
+keychain_service = "wm-test-infisical"   # login-keychain item holding {"clientId", "clientSecret"}
+keychain_account = "wm-test-pipeline"    # of a read-only Infisical machine identity
+project_id       = "<Infisical project id>"
+environment      = "dev"
+path             = "/projects/agentannotate"
+```
+
+While Infisical is unreachable (say, just after boot) a server keeps share links working and retries every minute.
 
 Everyone else who may sign in is set in `members.json` beside `projects.toml`. The file holds no secrets.
 
