@@ -190,13 +190,28 @@ def _reviewer_post(httpd, path, body=None):
 def test_a_new_version_keeping_an_answered_number_keeps_the_answer(round_server, tmp_path, label):
     # agent-annotate-11r: FLD #39109 answered in v999 came back undecided in v1000.
     prior = _answered_prior(evidence=[{"anchor": "s:evidence", "label": label}])
+    prior["decision"]["ts"] = prior["flagged_at"] = "2099-01-01T00:00:00Z"  # inside v2's history interval
     old, fresh = _publish_over(round_server, tmp_path, prior)
-    assert fresh["version"] == "v2" and fresh["decision"] == prior["decision"]
+    assert fresh["version"] == "v2" and fresh["decision"] == {**prior["decision"], "inherited": True}
     assert old["decision"] == prior["decision"]
     assert not sync_server._comment_needs_push(fresh)
+    from agent_annotate.review_history import review_history
+    answers = [a for v in review_history(round_server[0])["versions"] for a in v["answers"]]
+    assert [a["comment_id"] for a in answers] == ["prior"]
+
+
+def test_the_newer_copy_follows_the_resolution_of_the_answer_it_shows(round_server, tmp_path):
+    _, fresh = _publish_over(round_server, tmp_path, _answered_prior())
+    code, _ = _http(round_server[1], "PUT", "/api/comments/prior", {
+        "status": "resolved_in_version", "resolved_in_version": "v2", "resolution_anchor_id": "s:evidence"})
+    assert code == 200
+    _, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
+    assert fresh["status"] == "resolved_in_version" and fresh["resolved_in_version"] == "v2"
 
 
 @pytest.mark.parametrize("change", [
+    {"options": [{"id": "yes", "label": "Yes", "consequence": "Ship"}, {"id": "yes", "label": "Yes", "consequence": "Ship"},
+                 {"id": "no", "label": "No", "consequence": "Wait"}]},
     {"prompt": "Ship last week's build?"},
     {"options": [{"id": "yes", "label": "Yes", "consequence": "Ship next month"},
                  {"id": "no", "label": "No", "consequence": "Wait"}]},
@@ -207,10 +222,13 @@ def test_a_new_version_asking_a_changed_question_under_the_number_asks_again(rou
     assert not fresh.get("decision")
 
 
-def test_a_discarded_answer_is_not_carried_to_the_new_version(round_server, tmp_path):
+@pytest.mark.parametrize("snapshot", [True, False])
+def test_a_discarded_answer_is_not_carried_to_the_new_version(round_server, tmp_path, snapshot):
     prior = _answered_prior()
-    prior.pop("flagged_for_session")
-    prior["agent_snapshot"] = {k: v for k, v in prior.items() if k != "decision"}
+    for key in ("flagged_for_session", "flagged_at", "flagged_by"):
+        prior.pop(key)
+    if snapshot:  # pre-snapshot stores left a discarded first pick unmarked
+        prior["agent_snapshot"] = {k: v for k, v in prior.items() if k != "decision"}
     _, fresh = _publish_over(round_server, tmp_path, prior)
     assert not fresh.get("decision")
 
@@ -223,7 +241,7 @@ def test_an_inherited_answer_is_visible_to_the_agent_past_unsent_notes():
                          {"author": "reviewer@example.com", "ts": "2026-11-10T00:30:00Z", "text": "legacy note"}])
     assert sync_server._share_answer(answered, card)
     view = sync_server.comment_view(card)
-    assert view["decision"] == answered["decision"] and "PRIVATE" not in json.dumps(view)
+    assert view["decision"] == {**answered["decision"], "inherited": True} and "PRIVATE" not in json.dumps(view)
     assert sync_server._unsent_notes(card) == ["PRIVATE", "legacy note"]
 
 
@@ -234,7 +252,7 @@ def test_an_inherited_answer_goes_beneath_an_unsent_draft():
     card = dict(_card(), id="new", version="v2", status="open", decision=dict(draft))
     assert sync_server._share_answer(answered, card)
     assert card["decision"] == draft
-    assert sync_server.comment_view(card)["decision"] == answered["decision"]
+    assert sync_server.comment_view(card)["decision"] == {**answered["decision"], "inherited": True}
 
 
 def test_a_discarded_pick_on_the_newer_copy_still_takes_the_sent_answer():
@@ -243,7 +261,8 @@ def test_a_discarded_pick_on_the_newer_copy_still_takes_the_sent_answer():
                  decision={"verdict": "select", "option_id": "no", "by": "anonymous", "ts": "2026-11-10T00:00:00Z"},
                  agent_snapshot={"id": "new", "status": "open", "decision": None})
     store = {"anchors": {"d:q1": [prior, newer]}}
-    assert sync_server._unanswered_copies(store, prior) == [newer]
+    assert sync_server._unanswered_copies(store, prior, {"v1": 0, "v2": 1}) == [newer]
+    assert sync_server._unanswered_copies(store, prior, {"v2": 0, "v1": 1}) == []  # v2 went up first
 
 
 @pytest.mark.parametrize("send", ["/api/rounds/submit", "/api/comments/prior/push"])
@@ -254,7 +273,7 @@ def test_an_answer_sent_on_the_older_copy_answers_the_newer_one(round_server, tm
     status, sent = _reviewer_post(round_server[1], send)
     assert status == 200 and sent.get("undecided_ids", []) == []
     old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
-    assert fresh["decision"] == old["decision"] and not fresh["decision"].get("round_pending")
+    assert fresh["decision"] == {**old["decision"], "inherited": True} and not fresh["decision"].get("round_pending")
     assert fresh["flagged_at"] == old["flagged_at"] and fresh["delivery_id"] == old["delivery_id"]
 
 
@@ -271,7 +290,7 @@ def test_a_changed_answer_sent_on_the_older_copy_replaces_the_inherited_one(roun
                           {"verdict": "select", "option_id": "no", "text": "No", "defer_push": True})[0] == 200
     assert _reviewer_post(httpd, "/api/rounds/submit")[0] == 200
     old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
-    assert old["decision"]["option_id"] == "no" and fresh["decision"] == old["decision"]
+    assert old["decision"]["option_id"] == "no" and fresh["decision"] == {**old["decision"], "inherited": True}
 
 
 def test_an_answer_sent_on_the_newer_copy_leaves_the_older_one_alone(round_server, tmp_path):

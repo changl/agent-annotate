@@ -121,7 +121,7 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
         history = comment.get("decision_history") if isinstance(comment.get("decision_history"), list) else []
         for decision in history + [comment.get("decision")]:
             if (not isinstance(decision, dict) or not decision.get("verdict")
-                    or decision.get("round_pending") or decision.get("discarded")):
+                    or decision.get("round_pending") or decision.get("discarded") or decision.get("inherited")):
                 continue
             timestamp = _time(decision.get("ts"))
             for source in wildcards + ([target["source_page"]] if target.get("source_page") else []):
