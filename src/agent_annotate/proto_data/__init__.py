@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import importlib
 import json
 import re
 import threading
+import urllib.parse
 
 _AREA = re.compile(r"/proto/data/([a-z][a-z0-9_]{0,40})\.json")
 _FILE = re.compile(r"/proto/([A-Za-z0-9][A-Za-z0-9_.-]{0,80})")
@@ -24,12 +26,35 @@ EMAIL = re.compile(_ADDR)
 EMAIL_ESCAPED = re.compile(r"(\\u[0-9A-Fa-f]{4}|\\.)?" + _ADDR)
 # a review link credential, or any similar key carried in a link
 KEY = re.compile(r"([#?&;](?:review|token|key|access_token|auth|signin|invite)=)[^\s&#;\"'<>)\]\\]+", re.I)
+# a run of link text holding %XX or &entity; (member%40x.com, #%72eview=k): checked again once decoded.
+# The lookbehind pins each run to its start, so long runs (data URIs) stay linear.
+_ENCODED = re.compile(r"(?<![^\s\"'<>()\[\]\\])[^\s\"'<>()\[\]\\%&]*[%&][^\s\"'<>()\[\]\\]*")
+_UNSAFE = re.compile(r"[\s\x00-\x1f\x7f\"'<>()\[\]\\%]")
+
+
+def _plain(s: str, escaped: bool) -> str:
+    s = EMAIL_ESCAPED.sub(lambda m: (m[1] or "") + MASK, s) if escaped else EMAIL.sub(MASK, s)
+    return KEY.sub(r"\1redacted", s)
+
+
+def _decoded(m: re.Match) -> str:
+    run = m[0]
+    text = run
+    for _ in range(4):  # URLSearchParams decodes once; nested encodings are decoded too, to be safe
+        nxt = html.unescape(urllib.parse.unquote(text))
+        if nxt == text:
+            break
+        text = nxt
+    if text == run or _plain(text, False) == text:
+        return run  # nothing hidden in it: left byte for byte
+    # re-encode what would end the run, so a Markdown link stays one link
+    return _UNSAFE.sub(lambda c: "%%%02X" % ord(c[0]), _plain(text, False))
 
 
 def scrub(s: str, escaped: bool = False) -> str:
-    """No real address and no review key leaves the prototype page. escaped: s is raw JSON/HTML source text."""
-    s = EMAIL_ESCAPED.sub(lambda m: (m[1] or "") + MASK, s) if escaped else EMAIL.sub(MASK, s)
-    return KEY.sub(r"\1redacted", s)
+    """No real address and no review key leaves the prototype page, in plain or encoded form.
+    escaped: s is raw JSON/HTML source text."""
+    return _plain(_ENCODED.sub(_decoded, s), escaped)
 
 
 def _walk(x):

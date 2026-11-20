@@ -74,6 +74,12 @@ def test_area_module_is_dispatched(serve, monkeypatch):
     assert get("/p/proto/data/fakearea.json") == (200, b'{"page": "page"}')
 
 
+@pytest.mark.parametrize("meta", [[1, 2], "proto", None])
+def test_non_object_meta_is_not_a_prototype(serve, meta):
+    get, _ = serve(meta)
+    assert get("/p/proto/frame.js")[0] == 404  # as on main: no dropped connection
+
+
 def test_other_pages_render_as_today(serve):
     get, web = serve({"current": "v1", "history": []})
     status, body = get("/p/")

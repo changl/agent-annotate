@@ -1421,7 +1421,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 return self._v2_serve_content(parsed)
         # Prototype UI (branch changl/uiux-proto): only a page whose meta says "ui": "proto".
-        if (route_path in ("", "/") or route_path.startswith("/proto/")) and self._read_meta().get("ui") == "proto":
+        if (route_path in ("", "/") or route_path.startswith("/proto/")) and self._is_proto():
             from .proto_data import serve
             return serve(self, route_path)
         if route_path == "/" or route_path == "":
@@ -3836,8 +3836,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         cached = type(self).__dict__.get("_proto_stamp")
         if not cached or cached[0] != stamp:
             try:
-                flag = json.loads(self._meta_path().read_text(encoding="utf-8")).get("ui") == "proto"
-            except (OSError, ValueError, AttributeError):
+                meta = json.loads(self._meta_path().read_text(encoding="utf-8"))
+                flag = isinstance(meta, dict) and meta.get("ui") == "proto"  # any non-object: not a prototype
+            except (OSError, ValueError):
                 flag = False
             cached = (stamp, flag)
             type(self)._proto_stamp = cached

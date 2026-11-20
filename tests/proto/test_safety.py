@@ -26,6 +26,20 @@ def test_scrub_masks_every_address_and_key():
     assert questions._mask(COMPANY) == "member@example.com"  # no company exemption
 
 
+ENC = "pat.doe%40realmail.test"
+ENC_TEXT = (f"[mail](mailto:{ENC}) and [open](https://h.ts.net/annotate/reviews/x/#%72eview={KEY}) "
+            f"and h.ts.net/x/#a=1&r%65view={KEY}&b=2 and pat.doe&#64;realmail.test")
+
+
+def test_scrub_masks_encoded_addresses_and_keys():
+    out = scrub(ENC_TEXT)
+    assert "realmail" not in out and KEY not in out
+    assert "[mail](mailto:member@example.com)" in out and "(https://h.ts.net/annotate/reviews/x/#review=redacted)" in out
+    assert scrub("https://h/x?q=a%20b&c=1") == "https://h/x?q=a%20b&c=1"  # nothing hidden: left byte for byte
+    raw = json.dumps({"text": ENC_TEXT})
+    assert "realmail" not in scrub_json(raw) and KEY not in scrub_json(raw)
+
+
 @pytest.mark.parametrize("fn", [lambda t: scrub(t, escaped=True), scrub_json])
 def test_escaped_json_stays_valid(fn):
     """An address right after an escape (\\n, \\u00e9) must not eat the escape."""
@@ -45,7 +59,7 @@ def serve(tmp_path):
             shutil.copytree(WEB_DIR, web)
         page = tmp_path / str(len(servers)) / "page"
         page.mkdir(parents=True)
-        card = {"id": "c1", "anchor_id": "a1", "author": REAL, "author_email": REAL, "text": TEXT, "version": "v1"}
+        card = {"id": "c1", "anchor_id": "a1", "author": REAL, "author_email": REAL, "text": TEXT + ENC_TEXT, "version": "v1"}
         (page / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"a1": [card]}, "archived": {}}))
         (page / "current.meta.json").write_text(json.dumps(meta))
         (page / "current.html").write_text("<html><body>Review</body></html>")
@@ -76,7 +90,7 @@ def serve(tmp_path):
 def test_proto_replies_are_masked(serve, path, gz):
     status, body = serve({"current": "v1", "history": [], "ui": "proto"})(path, gz)
     assert status == 200
-    assert REAL not in body and COMPANY not in body and KEY not in body
+    assert REAL not in body and COMPANY not in body and KEY not in body and "realmail" not in body
     json.loads(body)
 
 
