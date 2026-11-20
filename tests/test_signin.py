@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -29,10 +30,24 @@ PREFIX = "signin-test-"  # project names no other test uses
 PROJ, OTHER = PREFIX + "proj", PREFIX + "other"
 
 
-def _bind(handler):
+class _DeferredTLS(http.server.ThreadingHTTPServer):
+    """The TLS handshake runs on the request's own thread, so a client that connects and
+    sends nothing cannot hold up the accept loop, other requests or shutdown()."""
+
+    def finish_request(self, request, client_address):
+        request.settimeout(10)
+        try:
+            request.do_handshake()
+        except (OSError, ssl.SSLError):
+            return
+        request.settimeout(None)
+        super().finish_request(request, client_address)
+
+
+def _bind(handler, server=http.server.ThreadingHTTPServer):
     for port in range(18700, 18800):  # sandbox test ports only
         try:
-            return http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+            return server(("127.0.0.1", port), handler)
         except OSError:
             continue
     raise RuntimeError("no free test port in 18700-18799")
@@ -113,9 +128,10 @@ def _world(tmp_path, monkeypatch, tls):
         bus.mkdir(parents=True)
         base = f"/annotate/{key}/page"
         server = _bind(sync_server.make_handler(directory, bus_dir=bus, slug="page", public_base_path=base,
-                                                skill_dir=sync_server.WEB_DIR))
+                                                skill_dir=sync_server.WEB_DIR),
+                       _DeferredTLS if context else http.server.ThreadingHTTPServer)
         if context:
-            server.socket = context.wrap_socket(server.socket, server_side=True)
+            server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
         # Over https the browser sends the port in Host, so the published URL carries it.
         public = f"{HOST}:{server.server_port}" if tls else HOST
         cli._save_state_for_project(project, {"project": project, "slugs": {"page": {
@@ -124,7 +140,7 @@ def _world(tmp_path, monkeypatch, tls):
         servers.append(server)
         pages[key] = {"port": server.server_port, "base": base, "key": review_access.ensure_key(directory),
                       "host": public, "dir": directory}
-    threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
+    threads = [threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True) for s in servers]
     for thread in threads:
         thread.start()
 
@@ -371,8 +387,19 @@ def test_without_all_four_values_nothing_changes(world, monkeypatch):
     assert request("proj", "api/comments", headers.get_all("Set-Cookie")[0].split(";", 1)[0])[0] == 200
 
 
-def test_member_command_adds_lists_and_removes(capsys, tmp_path, monkeypatch):
-    monkeypatch.setattr(signin, "MEMBERS", tmp_path / "members.json")
+@pytest.mark.parametrize("world", ["tls"], indirect=True)
+def test_an_idle_connection_does_not_stall_the_https_pages(world):
+    with socket.create_connection(("127.0.0.1", world["pages"]["proj"]["port"])):  # connects, never says hello
+        assert world["request"]("proj", "")[0] == 200
+
+
+def test_member_command_adds_lists_and_removes(capsys, monkeypatch):
+    with tempfile.TemporaryDirectory(prefix="annotate-members-") as root:  # not pytest's kept tmp dirs
+        monkeypatch.setattr(signin, "MEMBERS", Path(root) / "members.json")
+        _member_command(capsys)
+
+
+def _member_command(capsys):
 
     def run(*argv):
         args = cli.build_parser().parse_args(["member", *argv])

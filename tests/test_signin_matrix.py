@@ -13,8 +13,10 @@ until the mark comes off (the same as xfail strict).
 """
 import inspect
 import json
+import os
 import urllib.parse
 from html.parser import HTMLParser
+from pathlib import Path
 
 import pytest
 from test_signin import (  # noqa: F401
@@ -171,20 +173,22 @@ def _writes(env, cookie, case, link, email, may_write, missing):
     send, _, sent = request("proj", "api/rounds/submit", cookie, "POST", {"note": "Round from " + email})
     after = _owner_view(env, case)
     new_rounds = after[1][len(before[1]):]
+    # Answered and sent: the card went out in one new round, by this person, with their note.
+    went_through = (code == 200 and send == 200 and card in json.loads(sent).get("comment_ids", [])
+                    and [(r["by"], r["note"]) for r in new_rounds] == [(email, "Round from " + email)]
+                    and card in [a["comment_id"] for a in new_rounds[0]["answers"]])
+    refused = (code, send) == (403, 403) and after == before
     if may_write:
-        assert code in (200, 201) and send == 200
-        assert card in json.loads(sent)["comment_ids"]
-        assert [(r["by"], r["note"]) for r in new_rounds] == [(email, "Round from " + email)]
-        assert card in [a["comment_id"] for a in new_rounds[0]["answers"]]
+        assert went_through, (code, send, sent, new_rounds)
         return
     if missing is None:  # no access at all: refused for that reason, and nothing changed for the owner
-        assert (code, send) == (403, 403) and after == before
+        assert refused
         assert json.loads(answered) == json.loads(sent) == {"error": "authenticated proxy boundary required"}
         return
-    assert code in (200, 201, 403) and send in (200, 403)  # anything else is a real error, not the missing role
-    missing.expect(code == 403, f"answer got {code}")
-    missing.expect(send == 403, f"Send got {send}")
-    missing.expect(after == before, "the owner sees the answer and a round")
+    # Expected to fail only as today: answer and Send go through in full. Built: both refused and
+    # nothing changes. Anything in between (403 that still saves, 200 that sends nothing) fails.
+    assert went_through or refused, f"neither today's behaviour nor the role: answer {code}, Send {send}, {sent}"
+    missing.expect(refused, f"answer got {code}; Send got {send}; the owner sees the answer and a round")
 
 
 def _case(person, link, ua):
@@ -216,35 +220,15 @@ def test_access_matrix(world, monkeypatch, person, link, ua):  # noqa: F811
         missing.settle()
 
 
-def test_copy_link_gives_the_page_with_its_review_key(world, monkeypatch):  # noqa: F811
-    """The URL Copy link puts on the clipboard, followed the way shell.js follows it."""
-    _configure(monkeypatch)
-    case = _setup(world)
-    request, page = world["request"], world["pages"]["proj"]
-    code, _, body = request("proj", "api/share-link", case["owner"])
-    copied = json.loads(body)["url"]
-    assert code == 200 and copied == f"https://{HOST}{BASE}#review={page['key']}"
-    assert request("proj", "api/share-link")[0] == 403  # signed out: nothing to copy
-    # shell.js: a #review= key is exchanged before the sign-in check, so Google is never asked.
-    key = urllib.parse.urlsplit(copied).fragment.removeprefix("review=")
-    signin.change_member("add", EDITOR, PROJ)
-    code, headers, _ = request("proj", "api/reviewer/session", method="POST", body={"key": key, "name": "Guest"})
-    assert code == 200
-    cookie = headers.get_all("Set-Cookie")[0].split(";", 1)[0]
-    code, _, body = request("proj", "api/identity", cookie)
-    # The person on the list arrives as an unnamed review-link reviewer, not as their Google account.
-    assert code == 200 and json.loads(body)["email"].startswith("reviewer:") and json.loads(body)["name"] == "Guest"
-    code, _, document = request("proj", "content?v=v1", cookie)
-    assert code == 200 and PRIVATE in document
-
-
 def test_review_key_link_lets_anyone_in_until_google_signin_is_live(world, monkeypatch):  # noqa: F811
     """Temporary path (README: "#review= links keep working for one release"). Whoever holds a
-    copied link gets in, People list or not, and removal does not shut it. When Copy link stops
-    adding the key, delete this test and add the copied URL to test_access_matrix."""
+    copied link gets in, People list or not, and removal does not shut it. Copy link itself is
+    pressed in a real browser in test_signin_browser.py. When Copy link stops adding the key,
+    delete this test and add the copied URL to test_access_matrix."""
     _configure(monkeypatch)
     case = _setup(world)
     request, key = world["request"], world["pages"]["proj"]["key"]
+    assert request("proj", "api/share-link")[0] == 403  # signed out: nothing to copy
     for email in (STRANGER, REMOVED):
         _, (_, headers, _) = _sign_in(world, email)
         google = _session(headers)
@@ -349,8 +333,22 @@ def test_not_shared_page_offers_to_ask_for_access(world, monkeypatch):  # noqa: 
     parsed.feed(page)
     missing = NotBuiltYet(NO_ASK)
     asks = [f for f in parsed.forms if f["method"].lower() == "post" and f["fields"].get("next") == target]
-    missing.expect(len(asks) == 1, "no form that asks for access to this card")
-    if asks:  # the control sends a request naming the page the person was sent
-        code = request("proj", asks[0]["action"], cookie, "POST", asks[0]["fields"])[0]
-        missing.expect(code in (200, 201, 202, 303), f"asking got {code}")
+    missing.expect(asks != [], "no form that asks for access to this card")
+    if asks:  # only the missing form is expected; once there, sending it must work and be recorded
+        assert len(asks) == 1, asks
+        roots = (world["pages"]["proj"]["dir"].parents[1], Path(os.environ["ANNOTATE_STATE_DIR"]).parent)
+        before = _files(roots)
+        code, _, body = request("proj", asks[0]["action"], cookie, "POST", asks[0]["fields"])
+        assert code in (200, 201, 202, 303), (code, body)
+        assert any(STRANGER in text and (PROJ in text or BASE in text) for text in _written(roots, before)), \
+            "asking recorded no request naming this person and page"
     missing.settle()
+
+
+def _files(roots):
+    return {path: path.stat().st_mtime_ns for root in roots for path in root.rglob("*") if path.is_file()}
+
+
+def _written(roots, before):
+    """The text of every file created or changed since `before`."""
+    return [path.read_bytes().decode(errors="ignore") for path, mtime in _files(roots).items() if before.get(path) != mtime]
