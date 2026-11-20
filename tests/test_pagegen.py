@@ -142,7 +142,9 @@ def test_inline_renders_a_link_inside_bold_or_italic():
     assert inline("__[x](https://e.com)__") == '<strong><a href="https://e.com">x</a></strong>'
     assert inline("*see [x](https://e.com)*") == '<em>see <a href="https://e.com">x</a></em>'
     assert inline("**`a_b` <s>**") == "<strong><code>a_b</code> &lt;s&gt;</strong>"
-    assert inline("**[x](javascript:alert`1`)**") == '<strong><a href="#">x</a></strong>'
+    assert inline("**[x](javascript:alert(1))**") == '<strong><a href="#">x</a></strong>'
+    assert inline("**[API](https://e.com/API_(x))**") == '<strong><a href="https://e.com/API_(x)">API</a></strong>'
+    assert inline("__Copy *.csv and *.json__") == "<strong>Copy *.csv and *.json</strong>"
 
 
 def test_slugify_is_ascii_hyphenated_and_never_empty():
