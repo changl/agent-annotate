@@ -169,48 +169,84 @@ def _answered_prior(round_pending=False, **request):
     return prior
 
 
-@pytest.mark.parametrize("label", ["Proof", "Proof, 12 cards"])
-def test_a_new_version_keeping_an_answered_number_keeps_the_answer(round_server, tmp_path, label):
-    # agent-annotate-11r: FLD #39109 answered in v999 came back undecided in v1000.
+def _publish_over(round_server, tmp_path, prior):
     directory, httpd = round_server
-    prior = _answered_prior(evidence=[{"anchor": "s:evidence", "label": label}])
     (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"d:q1": [prior]}, "archived": {}}))
     _, draft = _stage_round(directory, tmp_path)
     assert _ready(httpd, draft, [_card()])[0] == 200
-    old, fresh = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+    return json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+
+
+def _reviewer_post(httpd, path, body=None):
+    conn = http.client.HTTPConnection('127.0.0.1', httpd.server_port, timeout=5)
+    conn.request('POST', path, body=json.dumps(body or {}), headers={'Content-Type': 'application/json'})
+    response = conn.getresponse()
+    status, payload = response.status, json.loads(response.read())
+    conn.close()
+    return status, payload
+
+
+@pytest.mark.parametrize("label", ["Proof", "Proof, 12 cards"])
+def test_a_new_version_keeping_an_answered_number_keeps_the_answer(round_server, tmp_path, label):
+    # agent-annotate-11r: FLD #39109 answered in v999 came back undecided in v1000.
+    prior = _answered_prior(evidence=[{"anchor": "s:evidence", "label": label}])
+    old, fresh = _publish_over(round_server, tmp_path, prior)
     assert fresh["version"] == "v2" and fresh["decision"] == prior["decision"]
     assert old["decision"] == prior["decision"]
     assert not sync_server._comment_needs_push(fresh)
 
 
-def test_a_new_version_asking_a_changed_question_under_the_number_asks_again(round_server, tmp_path):
-    directory, httpd = round_server
-    prior = _answered_prior(prompt="Ship last week's build?")
-    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"d:q1": [prior]}, "archived": {}}))
-    _, draft = _stage_round(directory, tmp_path)
-    assert _ready(httpd, draft, [_card()])[0] == 200
-    _, fresh = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+@pytest.mark.parametrize("change", [
+    {"prompt": "Ship last week's build?"},
+    {"options": [{"id": "yes", "label": "Yes", "consequence": "Ship next month"},
+                 {"id": "no", "label": "No", "consequence": "Wait"}]},
+])
+def test_a_new_version_asking_a_changed_question_under_the_number_asks_again(round_server, tmp_path, change):
+    _, fresh = _publish_over(round_server, tmp_path, _answered_prior(**change))
     assert not fresh.get("decision")
 
 
-def test_an_answer_sent_on_the_older_copy_answers_the_newer_one(round_server, tmp_path):
+def test_a_discarded_answer_is_not_carried_to_the_new_version(round_server, tmp_path):
+    prior = _answered_prior()
+    prior.pop("flagged_for_session")
+    prior["agent_snapshot"] = {k: v for k, v in prior.items() if k != "decision"}
+    _, fresh = _publish_over(round_server, tmp_path, prior)
+    assert not fresh.get("decision")
+
+
+def test_an_inherited_answer_is_visible_to_the_agent_past_unsent_notes():
+    answered = _answered_prior()
+    card = dict(_card(), id="new", version="v2", status="open",
+                agent_snapshot={"id": "new", "status": "open", "decision": None, "replies": []},
+                replies=[{"author": "reviewer@example.com", "ts": "2026-11-10T02:00:00Z", "text": "PRIVATE", "sent_at": None}])
+    assert sync_server._share_answer(answered, card)
+    view = sync_server.comment_view(card)
+    assert view["decision"] == answered["decision"] and "PRIVATE" not in json.dumps(view)
+
+
+@pytest.mark.parametrize("send", ["/api/rounds/submit", "/api/comments/prior/push"])
+def test_an_answer_sent_on_the_older_copy_answers_the_newer_one(round_server, tmp_path, send):
     # FLD #39118: picked in v1004, v1005 published before Send, then answered again.
-    directory, httpd = round_server
-    prior = _answered_prior(round_pending=True)
-    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"d:q1": [prior]}, "archived": {}}))
-    _, draft = _stage_round(directory, tmp_path)
-    assert _ready(httpd, draft, [_card()])[0] == 200
-    _, fresh = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+    _, fresh = _publish_over(round_server, tmp_path, _answered_prior(round_pending=True))
     assert not fresh.get("decision")
-    conn = http.client.HTTPConnection('127.0.0.1', httpd.server_port, timeout=5)
-    conn.request('POST', '/api/rounds/submit', body='{}', headers={'Content-Type': 'application/json'})
-    response = conn.getresponse()
-    sent = json.loads(response.read())
-    conn.close()
-    assert response.status == 200 and sent["undecided_ids"] == []
-    old, fresh = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
+    status, sent = _reviewer_post(round_server[1], send)
+    assert status == 200 and sent.get("undecided_ids", []) == []
+    old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
     assert fresh["decision"] == old["decision"] and not fresh["decision"].get("round_pending")
-    assert fresh["flagged_at"] == old["flagged_at"]
+    assert fresh["flagged_at"] == old["flagged_at"] and fresh["delivery_id"] == old["delivery_id"]
+
+
+def test_a_changed_answer_sent_on_the_older_copy_replaces_the_inherited_one(round_server, tmp_path):
+    prior = _answered_prior()
+    prior["decision"]["by"] = "anonymous"
+    _, fresh = _publish_over(round_server, tmp_path, prior)
+    assert fresh["decision"]["option_id"] == "yes"
+    httpd = round_server[1]
+    assert _reviewer_post(httpd, "/api/comments/prior/decision",
+                          {"verdict": "select", "option_id": "no", "text": "No", "defer_push": True})[0] == 200
+    assert _reviewer_post(httpd, "/api/rounds/submit")[0] == 200
+    old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
+    assert old["decision"]["option_id"] == "no" and fresh["decision"] == old["decision"]
 
 
 @pytest.mark.parametrize("confirmed", [False, True])
