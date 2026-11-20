@@ -104,10 +104,11 @@ def inline(text: str) -> str:
         elif label is not None:
             href = "#" if _UNSAFE_URL.match(url) else url
             out.append(f'<a href="{E(href, quote=True)}">{E(html.unescape(label))}</a>')
+        # Recurse so a link or code span inside emphasis renders; the inner text is always shorter.
         elif bold is not None or bold2 is not None:
-            out.append(f"<strong>{E(bold if bold is not None else bold2)}</strong>")
+            out.append(f"<strong>{inline(bold if bold is not None else bold2)}</strong>")
         else:
-            out.append(f"<em>{E(italic)}</em>")
+            out.append(f"<em>{inline(italic)}</em>")
         pos = m.end()
     out.append(E(text[pos:]))
     return "".join(out)
