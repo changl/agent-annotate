@@ -57,7 +57,7 @@
     // Workers: by machine, then by the work they belong to
     const ws = mine(d), W = d.workers || {}, L = d.load || {};
     const lmark = m => { const v = L[m] || {};
-      if (!v.load) return `<span class="lm none" title="This Mac's load is not recorded yet: recording it there needs your yes">${ic('dash')} load not recorded yet</span>`;
+      if (!v.load) return `<span class="lm none" title="This Mac's load could not be read just now">${ic('dash')} load not recorded yet</span>`;
       const pc = v.load[0] / v.cpus, cls = pc >= 0.9 ? 'bad' : pc >= 0.7 ? 'warn' : 'ok', lab = cls === 'bad' ? 'busy' : cls === 'warn' ? 'getting busy' : 'calm';
       return `<span class="lm ${cls}" title="Load ${pc.toFixed(1)} per core on the ${esc(m)}: new workers wait over 0.9"><span class="mt"><i style="width:${Math.min(100, pc / 1.2 * 100)}%"></i></span><b>${lab}</b><span class="mut">${pc.toFixed(1)} per core</span></span>`; };
     const stack = c => `<span class="stack" role="img" aria-label="${WORDER.filter(s => c[s]).map(s => `${c[s]} ${WS[s][1]}`).join(', ')}">${WORDER.filter(s => c[s]).map(s => `<i class="st-${WS[s][0]}${s === 'stuck' ? ' hatch' : ''}" style="flex:${c[s]}"></i>`).join('')}</span>
@@ -247,23 +247,26 @@
       </div>` : `<p class="mut">No usage reports could be read.</p>`}</div>`;
     return `<nav class="ajump small" aria-label="Analytics groups">${[['an-qa', 'Questions and answers'], ['an-work', 'Sessions and workers'], ['an-use', 'Usage and cost'], ['an-mac', 'Machine load']].map(([i, t]) => `<a href="#analytics/${i}">${t}</a>`).join('')}</nav>${QA}${SW}${UC}${loadGroup()}`;
   }
-  // machine load: the M1 Max's recorder (one line a minute, launchd); the other Macs wait for his yes
+  // machine load: each Mac's recorder (one line a minute, launchd)
   function loadGroup() {
     const L = D.load || {}, m1 = L['M1 Max'] || {}, h = m1.hist || [];
-    const step = Math.max(1, Math.round(h.length / 144)), pts = h.filter((_, i) => i % step === 0 || i === h.length - 1);  // one point per ten minutes over a day
+    const thin = h => { const step = Math.max(1, Math.round(h.length / 144)); return h.filter((_, i) => i % step === 0 || i === h.length - 1); };  // one point per ten minutes over a day
+    const pts = thin(h);
     const t = e => new Date(e * 1000).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+    const charts = ['M1 Max', 'M5 Max', 'M1 Max 16'].filter(m => ((L[m] || {}).hist || []).length).map(m => { const v = L[m], p = thin(v.hist);
+      return acard(`Load per core, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[1] / v.cpus]), {fmt: x => x.toFixed(1), t: 'Load per core', gate: [0.9, 'new workers wait']}), `The ${m}'s own recorder: the 1-minute load average over its ${v.cpus} cores, one reading a minute. New workers wait over 0.9 per core.`)
+        + acard(`Memory free, last 24 hours · ${m}`, lchart(p.map(r => [t(r[0]), r[2]]), {fmt: x => Math.round(x) + '%', t: 'Memory free', max: 100}), 'Free, inactive and speculative memory as a share of the whole, from the same readings.'); }).join('');
     const pc = m1.load ? m1.load[0] / m1.cpus : null, lastMem = h.length ? h[h.length - 1][2] : null, disk = h.length ? h[h.length - 1][3] : null;
     const rows = ['M1 Max', 'M5 Max', 'M1 Max 16'].map(m => { const v = L[m] || {};
-      return `<div class="line sub">${ic('mac')}<b class="grow">${esc(m)}</b>${v.recorded ? `<span class="rn-pill st-done"><i class="dot"></i>recording once a minute</span><span class="small mut">since ${esc(new Date(v.since * 1000).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}</span>` : m === 'M1 Max' ? '<span class="rn-pill st-progress"><i class="dot"></i>recorder installed: first readings soon</span>' : '<span class="rn-pill st-none"><i class="dot"></i>not recorded yet</span><span class="small mut">needs your yes to install there</span>'}</div>`; }).join('');
+      return `<div class="line sub">${ic('mac')}<b class="grow">${esc(m)}</b>${v.recorded ? `<span class="rn-pill st-done"><i class="dot"></i>recording once a minute</span><span class="small mut">since ${esc(new Date(v.since * 1000).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}</span>` : '<span class="rn-pill st-progress"><i class="dot"></i>recorder installed: first readings soon</span>'}</div>`; }).join('');
     return `<div class="agrp cv h3" id="an-mac"><h2 class="ph">Machine load</h2><div class="atiles">
         ${pc != null ? atile(pc.toFixed(1), `load per core on the M1 Max now (${Math.round(m1.load[0])} over ${m1.cpus} cores)`, pc > 0.9 ? 'bad' : pc > 0.7 ? 'warn' : '', h.length > 1 ? spark(pts.map(r => r[1] / m1.cpus)) : '') : ''}
         ${lastMem != null ? atile(lastMem + '%', 'memory free or reclaimable at the last reading', lastMem < 10 ? 'warn' : '') : ''}
         ${disk != null ? atile(disk + '%', 'disk used at the last reading', disk > 90 ? 'warn' : '') : ''}
         ${atile(pl(h.length, 'reading', 'readings'), 'on the M1 Max in the last 24 hours')}</div>
       <div class="agrid">
-        ${acard('Load per core, last 24 hours · M1 Max', lchart(pts.map(r => [t(r[0]), r[1] / m1.cpus]), {fmt: v => v.toFixed(1), t: 'Load per core', gate: [0.9, 'new workers wait']}), "The M1 Max's own recorder: the 1-minute load average over its cores, one reading a minute. New workers wait over 0.9 per core.")}
-        ${acard('Memory free, last 24 hours · M1 Max', lchart(pts.map(r => [t(r[0]), r[2]]), {fmt: v => Math.round(v) + '%', t: 'Memory free', max: 100}), 'Free, inactive and speculative memory as a share of the whole, from the same readings.')}
-        ${acard('Which Macs record their load', rows, 'Recording costs about 15 CPU-seconds a day and 2.5 MB of disk a month on each Mac, with no tokens. The M5 Max and the M1 Max 16 need your separate yes.')}
+        ${charts}
+        ${acard('Which Macs record their load', rows, 'Recording costs about 15 CPU-seconds a day and 2.5 MB of disk a month on each Mac, with no tokens.')}
       </div></div>`;
   }
 

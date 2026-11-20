@@ -6,7 +6,7 @@ Sources, each read at most once a minute (the whole result is cached; a stale co
 - tasks: the FastLane Drive board through `bd --readonly`;
 - pull requests: `gh search prs`, read only;
 - daily usage: FastLane Drive's usage reports; Analytics: the page's own record and the other review pages' records;
-- machine load: the launchd recorder's file on this Mac (~/.local/share/machine-load/load.tsv).
+- machine load: the launchd recorder's file (~/.local/share/machine-load/load.tsv) on this Mac, and on the others through `ssh`, read only.
 Nothing here writes outside the page dir; the only write is the snapshot file proto-running.json in it.
 """
 
@@ -216,26 +216,43 @@ def workers():
     return res
 
 
-def machine_load():
-    """Per Mac: load now (M1 Max) and the recorder's last 24 hours. Only the M1 Max records; the others need his yes first."""
-    out = {}
-    la = subprocess.run(["sysctl", "-n", "vm.loadavg", "hw.ncpu", "hw.memsize", "hw.pagesize"], capture_output=True, text=True, timeout=5).stdout.split()
+_SYSCTL = "sysctl -n vm.loadavg hw.ncpu hw.memsize hw.pagesize"
+_TAIL = 1500 * 70  # the last day only: about 1,440 lines of ~60 bytes
+
+
+def load_entry(sysctl_out: str, tsv: str) -> dict:
+    """One Mac's load now and its recorder's last 24 hours, from sysctl's output and the tail of its load.tsv."""
+    la = sysctl_out.split()
     cpus, mem, page = int(la[5]), int(la[6]), int(la[7])
-    hist = []
+    cut, hist = time.time() - 86400, []
+    for ln in tsv.splitlines()[1:]:  # the first line may be cut in half by the tail
+        c = ln.split("\t")
+        if len(c) >= 8 and c[0].isdigit() and int(c[0]) >= cut:
+            hist.append([int(c[0]), float(c[1]), round(int(c[4] or 0) * page / mem * 100, 1), int(c[6].rstrip("%") or 0)])
+    return {"recorded": bool(hist), "load": [float(x) for x in la[1:4]], "cpus": cpus, "hist": hist, "since": hist[0][0] if hist else None}
+
+
+def _remote_load(env: str) -> dict:
+    # the ssh shortcuts are the Orca environment names in lower case: m5max, m1max16
+    out = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", env.lower(),
+                          f"{_SYSCTL}; echo ---; tail -c {_TAIL} ~/.local/share/machine-load/load.tsv"],
+                         capture_output=True, text=True, timeout=20).stdout
+    sc, _, tsv = out.partition("\n---\n")
+    return load_entry(sc, tsv)
+
+
+def machine_load():
+    """Per Mac: load now and the recorder's last 24 hours; the other Macs are read over ssh, one call each."""
+    tsv = ""
     if LOAD_TSV.exists():
-        with LOAD_TSV.open("rb") as f:  # the last day only: about 1,440 lines of ~60 bytes
+        with LOAD_TSV.open("rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 1500 * 70))
-            lines = f.read().decode(errors="ignore").splitlines()[1:]
-        cut = time.time() - 86400
-        for ln in lines:
-            c = ln.split("\t")
-            if len(c) >= 8 and c[0].isdigit() and int(c[0]) >= cut:
-                hist.append([int(c[0]), float(c[1]), round(int(c[4] or 0) * page / mem * 100, 1), int(c[6].rstrip("%") or 0)])
-    out["M1 Max"] = {"recorded": bool(hist), "load": [float(x) for x in la[1:4]], "cpus": cpus, "hist": hist,
-                     "since": hist[0][0] if hist else None}
-    for name, _ in MACS[1:]:
-        out[name] = {"recorded": False}
+            f.seek(max(0, f.tell() - _TAIL))
+            tsv = f.read().decode(errors="ignore")
+    here = subprocess.run(_SYSCTL.split(), capture_output=True, text=True, timeout=5).stdout
+    out = {"M1 Max": load_entry(here, tsv)}
+    for name, env in MACS[1:]:
+        out[name] = safe(lambda: _remote_load(env), {"recorded": False})
     return out
 
 
