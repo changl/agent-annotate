@@ -145,6 +145,14 @@ def test_inline_renders_a_link_inside_bold_or_italic():
     assert inline("**[x](javascript:alert(1))**") == '<strong><a href="#">x</a></strong>'
     assert inline("**[API](https://e.com/API_(x))**") == '<strong><a href="https://e.com/API_(x)">API</a></strong>'
     assert inline("__Copy *.csv and *.json__") == "<strong>Copy *.csv and *.json</strong>"
+    assert inline("**Run `ls *.csv` first**") == "<strong>Run <code>ls *.csv</code> first</strong>"
+    assert inline("__[Setup](./get_started.md)__") == '<strong><a href="./get_started.md">Setup</a></strong>'
+    assert inline("__*.csv, see [f](./a.csv), *.json__") == '<strong>*.csv, see <a href="./a.csv">f</a>, *.json</strong>'
+
+
+def test_inline_unclosed_emphasis_with_many_tokens_is_fast():
+    text = "**" + "`a` [b](c) " * 2000
+    assert inline(text).startswith("**<code>a</code>")
 
 
 def test_slugify_is_ascii_hyphenated_and_never_empty():

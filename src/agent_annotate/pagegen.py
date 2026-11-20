@@ -79,12 +79,18 @@ def first_sentence(text: str) -> str:
     return (m.group(1) if m else text).strip()
 
 
-_INLINE = re.compile(
-    r"`([^`]+)`"                                   # `code`
+_CODE_LINK = (
+    r"`([^`]+)`"                                     # `code`
     r"|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)"  # [text](url), url may hold one level of (…)
-    r"|\*\*([^*]+)\*\*"                            # **bold**
-    r"|__([^_]+)__"                                # __bold__
-    r"|\*([^*]+)\*"                                # *italic*
+)
+# Emphasis skips over whole code spans and links, so a `*` or `_` inside them never closes it.
+_TOKEN = r"(?>`[^`]+`|\[[^\]]+\]\((?:[^()\s]|\([^()\s]*\))+\)|[^{0}])"
+_CODE_LINK_ONLY = re.compile(_CODE_LINK)
+_INLINE = re.compile(
+    _CODE_LINK
+    + r"|\*\*((?:" + _TOKEN.format("*") + r")+?)\*\*"  # **bold**
+    + r"|__((?:" + _TOKEN.format("_") + r")+?)__"      # __bold__
+    + r"|\*((?:" + _TOKEN.format("*") + r")+?)\*"      # *italic*
 )
 
 
@@ -97,16 +103,15 @@ def inline(text: str, _nested: bool = False) -> str:
     """
     out: list[str] = []
     pos = 0
-    for m in _INLINE.finditer(text):
+    for m in (_CODE_LINK_ONLY if _nested else _INLINE).finditer(text):
         out.append(E(text[pos:m.start()]))
-        code, label, url, bold, bold2, italic = m.groups()
+        code, label, url = m.group(1, 2, 3)
+        bold, bold2, italic = m.groups()[3:] or (None, None, None)
         if code is not None:
             out.append(f"<code>{E(code)}</code>")
         elif label is not None:
             href = "#" if _UNSAFE_URL.match(url) else url
             out.append(f'<a href="{E(href, quote=True)}">{E(html.unescape(label))}</a>')
-        elif _nested:
-            out.append(E(m.group(0)))
         elif bold is not None or bold2 is not None:
             out.append(f"<strong>{inline(bold if bold is not None else bold2, True)}</strong>")
         else:
