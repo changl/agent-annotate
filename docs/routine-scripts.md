@@ -49,7 +49,7 @@ Each run writes its summary lines, a blank line and the judgment items (stale be
 
 Main worktrees and the deny list in the code (`rebex-library-performance`) are never inspected. A merged, clean worktree that names no bead is listed for a coordinator to decide.
 
-**Timer.** `scripts/launchd/com.changlee.annotate-sweep.plist` runs `sweep.py all` hourly, report only, at the Standard process type: under Background, I/O throttling on a busy Mac pushed the ownership check past its 300 s timeout. Install steps are in its header comment. It is not loaded until Chang says yes. To stop it, run `launchctl bootout` and remove the file.
+**Timer.** `scripts/launchd/com.changlee.annotate-sweep.plist` runs `sweep.py all` hourly, report only, at the Standard process type: under Background, I/O throttling on a busy Mac pushed the ownership check past its 300 s timeout. Install steps are in its header comment. To change an installed job, edit only the changed key in `~/Library/LaunchAgents/com.changlee.annotate-sweep.plist` (the installed copy also sets `ANNOTATE_OWNERSHIP_MANIFEST`), then `launchctl bootout gui/$(id -u)/com.changlee.annotate-sweep` and `bootstrap` it again; a loaded job keeps its old settings until then. It is not loaded until Chang says yes. To stop it, run `launchctl bootout` and remove the file.
 
 
 ## Board judgement on turns: `annotate board`
