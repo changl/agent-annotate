@@ -79,12 +79,13 @@ def first_sentence(text: str) -> str:
     return (m.group(1) if m else text).strip()
 
 
+_URL = r"(?:(?:[^()\s]|\([^()\s]*\))+|[^)\s]+)"   # one level of balanced (…) first, else up to the first )
 _CODE_LINK = (
-    r"`([^`]+)`"                                     # `code`
-    r"|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)"  # [text](url), url may hold one level of (…)
+    r"`([^`]+)`"                                    # `code`
+    r"|\[([^\]]+)\]\((" + _URL + r")\)"             # [text](url); reports put a literal [ in text
 )
 # Emphasis skips over whole code spans and links, so a `*` or `_` inside them never closes it.
-_TOKEN = r"(?>`[^`]+`|\[[^\]]+\]\((?:[^()\s]|\([^()\s]*\))+\)|[^{0}])"
+_TOKEN = r"(?>`[^`]+`|\[[^\]]+\]\(" + _URL + r"\)|[^{0}])"
 _CODE_LINK_ONLY = re.compile(_CODE_LINK)
 _INLINE = re.compile(
     _CODE_LINK

@@ -148,6 +148,7 @@ def test_inline_renders_a_link_inside_bold_or_italic():
     assert inline("**Run `ls *.csv` first**") == "<strong>Run <code>ls *.csv</code> first</strong>"
     assert inline("__[Setup](./get_started.md)__") == '<strong><a href="./get_started.md">Setup</a></strong>'
     assert inline("__*.csv, see [f](./a.csv), *.json__") == '<strong>*.csv, see <a href="./a.csv">f</a>, *.json</strong>'
+    assert inline("[S](https://e.com/s?q=f(b)") == '<a href="https://e.com/s?q=f(b">S</a>'
 
 
 def test_inline_unclosed_emphasis_with_many_tokens_is_fast():
