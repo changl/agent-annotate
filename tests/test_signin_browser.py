@@ -123,8 +123,10 @@ def _drive(world, visits):  # noqa: F811
                                     "proxy": gate.server_address[1], "visits": visits}))
         with open(Path(root) / "out", "w+") as out, open(Path(root) / "err", "w+") as err:
             # Its own process group: the deadline kills node, Chrome and every helper together.
+            # On Linux, fontconfig and NSS keep their caches in the XDG dirs: beside the profile, not in HOME.
+            xdg = {f"XDG_{kind}_HOME": str(Path(root) / f"xdg-{kind.lower()}") for kind in ("CACHE", "CONFIG", "DATA")}
             node = subprocess.Popen(["node", str(SCRIPT), str(plan)], stdout=out, stderr=err, start_new_session=True,
-                                    env={**os.environ, "HOME": str(home)})
+                                    env={**os.environ, **xdg, "HOME": str(home)})
             reached, ends = set(), time.monotonic() + DEADLINE
             try:
                 while node.poll() is None and (remaining := ends - time.monotonic()) > 0:
