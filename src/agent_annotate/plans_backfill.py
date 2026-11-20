@@ -49,7 +49,7 @@ def _cards(store):
 
 def _excluded(comment, decision):
     return (str(decision.get("by", "")).startswith("agent:")
-            or decision.get("catalog_eligible") is False or decision.get("legacy")
+            or decision.get("catalog_eligible") is False or decision.get("legacy") or decision.get("inherited")
             or not isinstance(comment.get("decision_request"), dict)
             or comment["decision_request"].get("catalog") is not True
             or comment.get("category", "review") != "review")

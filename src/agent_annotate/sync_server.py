@@ -107,6 +107,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
+from .hooks.decision_state import is_live_card as _is_live_card
 from .hooks.decision_state import is_set_aside as _is_set_aside
 from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
@@ -342,6 +343,94 @@ def _carry_unsent_feedback(prior: dict, fresh: dict) -> None:
         fresh["decision"] = decision
         prior.update(status="user_confirmed" if submitted.get("status") == "user_confirmed" else "addressed_by_agent",
                      response_text=f"Asked again in {fresh['version']}.")
+
+
+def _same_question(a: dict, b: dict) -> bool:
+    """Same prompt and choices (label and consequence by id, any order); a reworded context or evidence is not a new question."""
+    def key(card):
+        dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
+        options = sorted(json.dumps([o.get("id"), o.get("label"), o.get("consequence")] if isinstance(o, dict) else o)
+                         for o in dr.get("options") or [])
+        return str(dr.get("prompt") or "").strip(), options, dr.get("consequences"), dr.get("item_id"), dr.get("catalog")
+    return bool(key(a)[0]) and key(a) == key(b)
+
+
+def _sent_decision(card: dict) -> dict:
+    """The answer the agent has; an unsent or discarded pick is still the reviewer's draft."""
+    decision = (comment_view(card) or {}).get("decision")
+    if not (isinstance(decision, dict) and decision.get("verdict")):
+        return {}
+    # Before agent_snapshot, a discarded first pick stayed on the card unmarked: require a send.
+    if ("agent_snapshot" not in card and not decision.get("delivery_id")
+            and not (card.get("flagged_for_session") and str(card.get("flagged_at") or "") >= str(decision.get("ts") or ""))):
+        return {}
+    return decision
+
+
+def _decision_key(decision: dict):
+    # Reply-made answers carry no id.
+    return (decision.get("id"), decision.get("by"), decision.get("ts"), decision.get("verdict")) if decision else None
+
+
+def _share_answer(answered: dict, card: dict) -> bool:
+    """A sent answer also answers another copy of the same numbered question, so it is never asked twice."""
+    decision = _sent_decision(answered)
+    if (not decision or type(card.get("number")) is not int or card["number"] != answered.get("number")
+            or not _same_question(answered, card)):
+        return False
+    decision = {**decision, "inherited": True}  # review history lists the original submission once
+    # Legacy notes date-compare against flagged_at, which is about to move: track them explicitly.
+    for reply in _reviewer_notes(card):
+        if "sent_at" not in reply and _note_unsent(card, reply):
+            reply["sent_at"] = None
+    own = card.get("decision") if isinstance(card.get("decision"), dict) else {}
+    if own.get("round_pending"):  # the draft stays on top until Send or Discard
+        card.setdefault("decision_history", []).append(json.loads(json.dumps(decision)))
+    else:
+        if own.get("verdict") and _decision_key(own) != _decision_key(_sent_decision(card)):
+            card.setdefault("decision_history", []).append(dict(own, discarded=True))
+        card["decision"] = json.loads(json.dumps(decision))
+        if card.get("status") in ("open", "user_confirmed"):
+            card["status"] = "user_confirmed" if decision["verdict"] == "accept" else "open"
+    card.update({k: answered[k] for k in ("flagged_for_session", "flagged_at", "flagged_by", "delivery_id") if k in answered})
+    snapshot = card.get("agent_snapshot")
+    if isinstance(snapshot, dict):  # unsent notes stay hidden; the sent answer does not
+        snapshot["decision"] = json.loads(json.dumps(decision))
+        if snapshot.get("status") in ("open", "user_confirmed"):
+            snapshot["status"] = "user_confirmed" if decision["verdict"] == "accept" else "open"
+    return True
+
+
+def _published_after(a: dict, b: dict, order: dict) -> bool:
+    """order: version -> its place in the page's publication history."""
+    if a.get("version") in order and b.get("version") in order and a["version"] != b["version"]:
+        return order[a["version"]] > order[b["version"]]
+    return str(a.get("created_at") or "") > str(b.get("created_at") or "")
+
+
+def _later_copies(store: dict, card: dict, order: dict) -> list[dict]:
+    root = card.get("origin_id") or card["id"]
+    return [c for c in store["anchors"].get(card.get("anchor_id"), [])
+            if c is not card and (c.get("origin_id") or c["id"]) == root and c.get("doc") == card.get("doc")
+            and c.get("number") == card.get("number") and _published_after(c, card, order) and _is_live_card(c)]
+
+
+def _unanswered_copies(store: dict, card: dict, order: dict) -> list[dict]:
+    """Newer live copies of this card's question that its next sent answer also answers.
+
+    Call before the answer is committed: a copy holding the answer it replaces is refreshed too."""
+    replaced = _decision_key(_sent_decision(card))
+    def takes(c):
+        sent = _decision_key(_sent_decision(c))
+        return sent is None or sent == replaced
+    return [c for c in _later_copies(store, card, order) if takes(c) and _same_question(c, card)]
+
+
+def _inheriting_copies(store: dict, card: dict, order: dict) -> list[dict]:
+    """Newer copies that show this card's sent answer; they follow its resolution."""
+    sent = _decision_key(_sent_decision(card))
+    return [c for c in _later_copies(store, card, order) if sent and _sent_decision(c).get("inherited")
+            and _decision_key(_sent_decision(c)) == sent]
 
 
 def _push_answers(comments: list[dict], authors: set[str] | None = None) -> list[dict]:
@@ -2453,6 +2542,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 if publication:
                                     for prior in lineage:
                                         _carry_unsent_feedback(prior, fresh)
+                                answered = next((c for c in reversed(lineage) if _sent_decision(c)), None)
+                                if answered:
+                                    _share_answer(answered, fresh)
                         _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
@@ -2683,6 +2775,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 c["resolution_anchor_id"] = resolution_anchor
                 c["resolved_at"] = _now_iso()
                 c["resolved_by"] = author
+                for later in _inheriting_copies(store, c, self._version_order()):
+                    later.update({k: c[k] for k in ("status", "resolved_in_version", "resolution_anchor_id",
+                                                    "resolved_at", "resolved_by")})
+                    if isinstance(later.get("agent_snapshot"), dict):
+                        later["agent_snapshot"]["status"] = c["status"]
                 # An unsent pick keeps round_pending: it still goes with Send.
             if "response_text" in payload:
                 c["response_text"] = payload["response_text"]
@@ -3151,6 +3248,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         # v2.19 "Send now": a deferred verdict pushed on its
                         # own leaves the pending round.
                         committing_decision = bool(decision.get("round_pending"))
+                        copies = _unanswered_copies(store, c, self._version_order())
                         if isinstance(c.get("decision"), dict):
                             c["decision"].pop("round_pending", None)
                         found = (anchor_id, c)
@@ -3167,6 +3265,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._queue_feedback_delivery(delivery, [found[1]], author, anchor_id=found[0])
             commit(found[1], delivery["delivery_id"])
             _mark_notes_sent(found[1], found[1]["flagged_at"], self._reviewer_authors(author))
+            for later in copies:
+                _share_answer(found[1], later)
             self._v2_save(store)
         print(f"  POST /api/comments/{comment_id}/push → {delivery['delivery']}, monitors={delivery['monitor_count']}, by {author}", flush=True)
         self._respond(200, json.dumps({
@@ -3494,11 +3594,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if (d.get("round_pending") and d.get("by") in reviewer_authors
                             and (c["id"], d.get("by"), d.get("ts"), d.get("verdict"), d.get("id")) in submitted_answers):
                         sent_at, delivery_id = submitted_answers[(c["id"], d.get("by"), d.get("ts"), d.get("verdict"), d.get("id"))]
+                        copies = _unanswered_copies(store, c, self._version_order())
                         commit(c, delivery_id)
                         d.pop("round_pending", None)
                         promote(self.artifact_dir, store, c)
                         _mark_notes_sent(c, sent_at, reviewer_authors)
                         c.update(flagged_for_session=True, flagged_at=sent_at, flagged_by=author)
+                        for later in copies:
+                            _share_answer(c, later)
                         recovered = True
                     reopen = (c.get("reopened") or [{}])[-1]
                     if (c.get("round_pending") and reopen.get("by") in reviewer_authors
@@ -3546,6 +3649,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if c.get("round_pending") and c.get("reopened") and c["reopened"][-1].get("by") in reviewer_authors:
                         reopens.append(c)
             comment_ids = list(dict.fromkeys(c["id"] for c in pending + reopens))
+            # An answer sent on an older copy also answers its newer copy (below).
+            order = self._version_order()
+            sharing = {c["id"]: _unanswered_copies(store, c, order) for c in pending}
+            shared_ids = {other["id"] for copies in sharing.values() for other in copies}
+            undecided_ids = [i for i in undecided_ids if i not in shared_ids]
             # Open comments with new activity (general feedback, replies) go
             # out with the round: one Send is one prompt to the owner, not a
             # round prompt followed by a push prompt (Chang, 2026-10-10). The
@@ -3621,6 +3729,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 promote(self.artifact_dir, store, c)
                 _mark_notes_sent(c, now, self._reviewer_authors(author))
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
+                for later in sharing[c["id"]]:
+                    _share_answer(c, later)
             for c in reopens:
                 c.pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
@@ -3683,6 +3793,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                     and ("(revised verdict; was " in str(r.get("text"))
                                                          or str(r.get("text")).startswith("↺ Changed to ")))]
                             c["status"] = self._DECISION_STATUS_MAP.get(sent.get("verdict"), c.get("status"))
+                        else:  # stays recorded for the reviewer; a later note's Send must not deliver or carry it
+                            d["discarded"] = True
                     # A pending reopen stays recorded on the finding, unsent.
                     if c.get("round_pending") and (c.get("reopened") or [{}])[-1].get("by") in reviewer_authors:
                         c.pop("round_pending", None)
@@ -3703,6 +3815,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "ok": True, "comment_count": len(comment_ids), "comment_ids": comment_ids,
             "edit_count": len(revision_ids), "revision_ids": revision_ids,
         }).encode(), "application/json")
+
+    def _version_order(self) -> dict:
+        return {h.get("version"): i for i, h in enumerate(self._read_meta().get("history") or []) if isinstance(h, dict)}
 
     def _read_meta(self) -> dict:
         p = self._meta_path()
