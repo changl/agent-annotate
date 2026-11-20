@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.4
+
+- A question asked again in the same words under a new number shows the reviewer's earlier sent answer on its card, in the rail and the document ("You answered this on Nov 19: Changes needed — …"). Matching uses the displayed prompt, ignoring case and spacing; unsent and discarded picks fall back to the last sent answer. Reviewer-side only; agents write nothing new. On 2026-11-19 Rebex re-asked #352 as #367 and #355 as #364 after "Changes needed", and the repeats looked like duplicates.
+
 ## 2.32.3
 
 - Inline pictures show at most at their natural size. Stacked compare cells and Findings proof images no longer force `width: 100%`, so a 719 px crop stops being stretched to 1400 px on a wide screen; large shots still shrink to fit the column. `image_size` reads JPEG EXIF orientation, so a turned photo no longer renders at twice its size.
