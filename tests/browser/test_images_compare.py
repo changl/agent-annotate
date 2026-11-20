@@ -36,7 +36,8 @@ def shots_page(tmp_path):
     shots = tmp_path / "shots"
     shots.mkdir()
     for name, size, rgb in (("phone-a", (390, 844), (230, 200, 200)), ("phone-b", (390, 844), (200, 230, 200)),
-                            ("desk-a", (1440, 900), (230, 200, 200)), ("desk-b", (1440, 900), (200, 230, 200))):
+                            ("desk-a", (1440, 900), (230, 200, 200)), ("desk-b", (1440, 900), (200, 230, 200)),
+                            ("crop-a", (400, 150), (230, 200, 200)), ("crop-b", (400, 150), (200, 230, 200))):
         (shots / f"{name}.png").write_bytes(png(*size, rgb))
     for n in (1, 2, 3):
         (shots / f"flow-a{n}.png").write_bytes(png(390, 844, (230, 200, 60 * n)))
@@ -48,6 +49,8 @@ def shots_page(tmp_path):
         "---\ntitle: Shots\n---\n\n"
         "## Checkout\n\n```compare\ncurrent: shots/phone-a.png | Today\nproposed: shots/phone-b.png | One-step pay\n```\n\n"
         "## Board\n\n```compare\ncurrent: shots/desk-a.png | Today\nproposed: shots/desk-b.png | Grouped\n```\n\n"
+        "## Crop\n\n```compare\ncurrent: shots/crop-a.png | Today\nproposed: shots/crop-b.png | Tighter\n```\n\n"
+        "![Small crop](shots/crop-a.png)\n\n"
         f"## Sign-in\n\n```compare\n{flow}\n```\n\n"
         "## Single\n\n![Home on a phone](shots/phone-a.png)\n\n"
         f"## Questions for Chang\n\n```cards\n{json.dumps([CARD])}\n```\n",
@@ -62,6 +65,8 @@ def _content(page):
     ready(page)
     frame = page.locator("#content-frame").element_handle().content_frame()
     frame.wait_for_selector('[data-anchor-id="cmp:checkout"]')
+    # Images below the fold are lazy and never load in a headless viewport.
+    frame.evaluate("() => document.querySelectorAll('img').forEach(i => { i.loading = 'eager'; })")
     frame.wait_for_function("() => [...document.images].every(i => i.complete && i.naturalWidth > 0)")
     return frame
 
@@ -79,6 +84,9 @@ GEOMETRY = """() => {
     deskWidth: box(fig('cmp:board')).width,
     flow: cells('[data-anchor-id="cmp:sign-in"]').map(r => ({top: r.top, h: r.height})),
     single: box(document.querySelector('[data-anchor-id="fig:home-on-a-phone"] img')).height,
+    // Shrink to fit, never grow past the real pixels (Chang #248).
+    grown: [...document.querySelectorAll('.aa img')].filter(i => i.clientWidth > i.naturalWidth).map(i => i.alt),
+    crop: cells('[data-anchor-id="cmp:crop"]').map(r => r.width),
     labels: [...fig('cmp:board').querySelectorAll('.aa-cmp-label')].map(l => l.textContent),
     stripAfterCompare: !!fig('cmp:checkout').nextElementSibling?.matches('.annotate-decision-strip, .annotate-strip-block'),
   };
@@ -120,6 +128,10 @@ def test_pairs_flows_and_figures_are_judged_inline(tmp_path, shots_page, width, 
             cur, pro = g["desk"]
             assert cur["bottom"] <= pro["top"] and min(cur["w"], pro["w"]) >= 0.9 * g["deskWidth"]
             assert g["labels"] == ["Current", "Proposed"]
+            # A small landscape crop stacks at its own size on a wide column, and still fits a phone.
+            assert g["grown"] == [] and all(w <= 400 for w in g["crop"]) and len(g["crop"]) == 2
+            if width > 1000:
+                assert all(w > 390 for w in g["crop"])
             # Three-screen flow: a current row of three and a proposed row of three, each row within the viewport.
             rows = g["flow"]
             assert len({round(r["top"]) for r in rows[:3]}) == 1 and len({round(r["top"]) for r in rows[3:]}) == 1
