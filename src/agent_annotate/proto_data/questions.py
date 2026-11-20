@@ -84,19 +84,74 @@ def waiting(page_dir: Path) -> int:
     return sum(1 for c in _all(page_dir) if _asked(c, v) and not any(_flags(c).values()))
 
 
+STOP = set("the a an to of and or for on in is be it this that with as at by from what who how should do does run".split())
+
+
+def _words(s) -> set:
+    return {w for w in re.findall(r"[a-z]{3,}", str(s or "").lower()) if w not in STOP}
+
+
+TAG = re.compile(r"<[^>]+>")
+SEC = re.compile(r'<section data-anchor-id="([^"]+)">(.*?)</section>', re.S)
+_secs_cache: dict = {}
+
+
+def _sections(page_dir: Path, v) -> dict:
+    """{top section anchor: its words}, for one version; cached by file."""
+    f = page_dir / "versions" / f"{v}.html"
+    try:
+        key = (str(f), f.stat().st_mtime)
+    except OSError:
+        return {}
+    if key not in _secs_cache:
+        h = f.read_text(encoding="utf-8", errors="replace")
+        _secs_cache[key] = {a: " ".join(TAG.sub(" ", b).split()) for a, b in SEC.findall(h)}
+    return _secs_cache[key]
+
+
+def _since(page_dir: Path, meta: dict, v) -> dict:
+    """Each top section: "" when new or changed in this version, else the oldest version it is unchanged since (40 back at most)."""
+    vs = [h.get("version") for h in meta.get("history") or [] if h.get("version")]
+    if v not in vs:
+        return {}
+    i, now, out = vs.index(v), _sections(page_dir, v), {}
+    for a, t in now.items():
+        since = ""
+        for pv in reversed(vs[max(0, i - 40):i]):
+            if _sections(page_dir, pv).get(a) != t:
+                break
+            since = pv
+        out[a] = since
+    return out
+
+
+def _table_beads(html: str) -> dict:
+    """The page's tracking tables: a row linking question N and naming FLD ids gives N its task."""
+    out: dict = {}
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        ns, ids = re.findall(r'href="#d:q(\d+)"', row), BEAD.findall(row)
+        for n in ns if ids else []:
+            out.setdefault(int(n), ids[0])
+    return out
+
+
 def build(page_dir: Path) -> dict:
     meta = store.read_meta(page_dir)
     v = meta.get("current")
     allc = _all(page_dir)
     # earlier answers, by the question's words (today's b15 match) and by the agent's item id
     past: dict[str, list] = {}
+    rows: list = []
     for c in allc:
         dr, d = c.get("decision_request"), _decision(c.get("decision"))
         if not dr or not d or c.get("version") == v or d.get("round_pending"):
             continue
         row = {"v": c.get("version"), "t": (d.get("ts") or "")[:10], "q": _mask(dr.get("prompt", "")), "a": _mask((d.get("text") or "").split("\n\n")[0])}
+        rows.append((row, _words(dr.get("prompt"))))
         for key in {"p:" + dr.get("prompt", ""), "o:" + str(c.get("origin_item_id") or "")} - {"o:"}:
             past.setdefault(key, []).append(row)
+    page = _page_text(page_dir, v)
+    tbeads = _table_beads(page)
     qs, notes, ids = [], [], set()
     for c in allc:
         if c.get("version") != v or c.get("parent_id"):
@@ -117,26 +172,72 @@ def build(page_dir: Path) -> dict:
                     "sent": bool(r.get("sent_at")) or not _mine(r.get("author"))} for r in c.get("replies") or []]
         sent = f["sent"]
         seen, earlier = set(), []
-        for key in ("p:" + dr.get("prompt", ""), "o:" + str(c.get("origin_item_id") or "")):
-            for row in past.get(key, []):
-                if (row["v"], row["q"]) not in seen:
-                    seen.add((row["v"], row["q"]))
-                    earlier.append(row)
+        w = _words(dr.get("prompt"))
+        # the same topic: three words in common (two for a short question), closest first, four at most
+        hits = [(len(rw & w), r["t"], i) for i, (r, rw) in enumerate(rows) if len(rw & w) >= min(3, max(2, len(w) // 2))]
+        topic = [rows[i][0] for _, _, i in sorted(hits, reverse=True)[:4]]
+        for row in [r for key in ("p:" + dr.get("prompt", ""), "o:" + str(c.get("origin_item_id") or "")) for r in past.get(key, [])] + topic:
+            if (row["v"], row["q"]) not in seen:
+                seen.add((row["v"], row["q"]))
+                earlier.append(row)
+        ev = dr.get("evidence") or []
+        bead = (named[0] if named else None) or tbeads.get(c.get("number"))
+        if bead:
+            ids.add(bead)
+        # a question in "Blocked items" or holding a task on the board blocks work (the mock's mark, by section)
+        blocking = bool(dr.get("blocking")) or any(str(e.get("anchor", "")).startswith("s:blocked") for e in ev if isinstance(e, dict))
         qs.append({
             "id": c["id"], "n": c.get("number"), "anchor": c.get("anchor_id"), "status": c.get("status"),
             "closed": f["closed"],
             "prompt": _mask(dr.get("prompt") or c.get("text")), "context": _mask(dr.get("context") or ""),
             "options": [{"id": o.get("id"), "label": _mask(o.get("label")), "c": _mask(o.get("consequence") or "")} for o in dr.get("options") or []],
-            "rec": dr.get("recommendation"), "impact": dr.get("impact"), "blocking": bool(dr.get("blocking")),
-            "evidence": dr.get("evidence") or [], "later": f["later"], "decision": d, "replies": replies,
+            "rec": dr.get("recommendation"), "impact": dr.get("impact"), "blocking": blocking,
+            "evidence": ev, "later": f["later"], "decision": d, "replies": replies,
             "sent": sent, "read": sent and c.get("status") in ("addressed_by_agent", "resolved_in_version"),
-            "bead": named[0] if named else None,
+            "bead": bead,
             "earlier": sorted(earlier, key=lambda r: r["t"], reverse=True)[:8],
         })
     qs.sort(key=lambda q: q["n"] or 0)
     closed = sum(1 for c in allc if c.get("decision_request") and c.get("status") == "archived")
-    return {"version": v, "questions": qs, "notes": notes, "closed": closed,
-            "beads": _beads(ids | set(BEAD.findall(_page_text(page_dir, v))))}
+    beads = _beads(ids | set(BEAD.findall(page)))
+    for q in qs:  # a task the board says is blocked waits on this answer too
+        q["blocking"] = q["blocking"] or (beads.get(q["bead"]) or {}).get("state") == "blocked"
+    notes_all = [c for c in allc if not c.get("decision_request") and not c.get("parent_id") and _mine(c.get("author"))]
+    tiles = {"versions": len(meta.get("history") or []),
+             "open": sum(1 for c in notes_all if c.get("status") == "open"),
+             "addressed": sum(1 for c in notes_all if c.get("status") in ("addressed_by_agent", "resolved_in_version", "user_confirmed")),
+             "sends": _count_lines(page_dir / "rounds.ndjson")}
+    return {"version": v, "questions": qs, "notes": notes, "closed": closed, "beads": beads,
+            "done": len(rows), "tiles": tiles, "since": _since(page_dir, meta, v), "carried": _carried(page_dir, notes_all, v, page)}
+
+
+def _count_lines(f: Path) -> int:
+    try:
+        with f.open(encoding="utf-8", errors="replace") as fh:
+            return sum(1 for line in fh if line.strip())
+    except OSError:
+        return 0
+
+
+def _anchor_text(html: str, anchor) -> str | None:
+    m = re.search(r'<(\w+)[^>]*data-anchor-id="%s"[^>]*>(.*?)</\1>' % re.escape(str(anchor)), html, re.S)
+    return " ".join(TAG.sub(" ", m.group(2)).split()) if m else None
+
+
+def _carried(page_dir: Path, notes_all: list, v, page: str) -> list:
+    """His open notes from earlier versions whose line is still in this one; changed when the line's text differs."""
+    out = []
+    for c in notes_all:
+        if c.get("status") != "open" or c.get("version") == v:
+            continue
+        anchor = c.get("carried_to_anchor_id") or c.get("anchor_id")
+        now = _anchor_text(page, anchor)
+        if now is None:
+            continue
+        was = _anchor_text(_page_text(page_dir, c.get("version")), c.get("anchor_id"))
+        out.append({"id": c["id"], "anchor": anchor, "v": c.get("version"), "text": _mask(c.get("text") or ""),
+                    "changed": was is not None and was != now})
+    return out[-20:]
 
 
 def _page_text(page_dir: Path, v) -> str:

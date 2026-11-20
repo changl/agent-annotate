@@ -43,5 +43,36 @@ def test_build(tmp_path, monkeypatch):
     assert d["beads"] == {}
 
 
+def test_task_blocking_topic_and_page_counts(tmp_path, monkeypatch):
+    """Round 12 #03 #07 #12 #14 #15 #16: the tracking table names a task, Blocked items marks it,
+    same-topic answers show, and the tiles, section ages and carried notes come with the data."""
+    monkeypatch.setattr(questions, "BOARD", str(tmp_path / "no-board"))
+    page = tmp_path / "page"
+    (page / "versions").mkdir(parents=True)
+    same = '<section data-anchor-id="s:old"><h2>Old</h2><p data-anchor-id="s:old:p">Same text</p></section>'
+    (page / "versions" / "v1.html").write_text(same)
+    (page / "versions" / "v2.html").write_text(
+        same + '<section data-anchor-id="s:blocked-items"><h2>Blocked</h2><table><tr><td><a href="#d:q7">#7</a></td>'
+        '<td>FLD-abc1 blocked</td></tr></table></section>')
+    ev = [{"anchor": "s:blocked-items:firebase", "label": "Firebase"}]
+    q7 = _q("c7", 7, "v2", "Switch off the Firebase CLI login that leaked?")
+    q7["decision_request"]["evidence"] = ev
+    anchors = {
+        "d:q6": [_q("c6", 6, "v1", "Should the Firebase CLI login stay?", decision={"verdict": "select", "text": "Off", "ts": "2026-11-01"})],
+        "d:q7": [q7],
+        "s:old:p": [{"id": "n9", "version": "v1", "anchor_id": "s:old:p", "author": "member", "text": "old note", "status": "open"}],
+    }
+    (page / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": anchors, "archived": {}}))
+    (page / "current.meta.json").write_text(json.dumps({"current": "v2", "history": [{"version": "v1"}, {"version": "v2"}]}))
+    (page / "rounds.ndjson").write_text('{"a":1}\n{"a":2}\n')
+    d = questions.build(page)
+    q = d["questions"][0]
+    assert q["bead"] == "FLD-abc1" and q["blocking"]
+    assert [e["a"] for e in q["earlier"]] == ["Off"]  # firebase, cli, login in common
+    assert d["done"] == 1 and d["tiles"] == {"versions": 2, "open": 1, "addressed": 0, "sends": 2}
+    assert d["since"] == {"s:old": "v1", "s:blocked-items": ""}
+    assert [(c["id"], c["changed"]) for c in d["carried"]] == [("n9", False)]
+
+
 def test_mask_covers_company_and_keeps_images():
     assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"

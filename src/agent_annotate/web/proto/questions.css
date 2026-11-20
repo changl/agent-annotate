@@ -1,5 +1,8 @@
 /* Prototype Questions tab, from round9/final/mock.html (ecard, qline, notebox, bar2), renamed to q* so the document's own .card rules never reach it. */
 .tab-questions{--text-primary:calc(16px * var(--fs,1))}  /* question context and what you type: 16 px at 100% (#100) */
+.qdoc.aa,.qevb.aa{font-size:calc(16px * var(--fs,1))}  /* the document itself reads at 16 px too (#25) */
+.tab-questions :is(.qdoc,.qevb) .lede{font-size:inherit}  /* content.css loads after this file, so one class more */
+.tab-questions :is(.qdoc,.qevb) th{word-break:normal;overflow-wrap:normal;hyphens:none}
 
 /* the bar: view switch, one row of group chips, progress, fold-all icons, Send */
 .qbar{position:sticky;top:90px;z-index:6;display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;padding:6px 0;background:var(--color-base-200);border-bottom:1px solid var(--line)}
@@ -11,24 +14,75 @@
 .prog{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
 .prog i{display:inline-block;width:80px;height:6px;border-radius:3px;background:var(--excerpt-bg);overflow:hidden}.prog i b{display:block;height:100%;background:var(--st-done)}
 .btn[disabled]{opacity:.5;cursor:default}
+.btn.rec{border-color:var(--rec-line);background:var(--rec-bg)}
 .ph-only{display:none}
 
-/* Send: a small panel under the bar; ⌘↵ opens it, ⌘↵ again sends */
-.qsend{position:fixed;top:136px;right:20px;z-index:12;width:min(560px,calc(100vw - 40px));padding:10px 14px;border:1px solid var(--color-primary);border-radius:var(--radius-box);background:var(--color-base-100);box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 15%,transparent)}
-.qsend ul{margin:4px 0 8px;padding-left:18px}
-.qsend .acts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px}
-.qsend.sending{display:flex;align-items:center;gap:10px;width:auto}
+/* General feedback: a small sheet under the bar (#11) */
+.qgen{position:sticky;top:136px;z-index:6;margin:6px 0 0 auto;width:min(520px,100%);padding:10px 14px;border:1px solid var(--color-primary);border-radius:var(--radius-box);background:var(--color-base-100);box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 15%,transparent)}
+.qgen .acts{display:flex;align-items:center;gap:12px}
 
-/* the document, whole */
-.qdoc.aa{padding:8px 0 60px}
+/* Send: the whole summary, each item with Go to it and Remove (the mock's sheet, #09 #10) */
+.qsheet{position:fixed;inset:0;z-index:40;background:color-mix(in oklab,var(--color-base-content) 30%,transparent);display:flex;justify-content:center;align-items:flex-start;padding:70px 16px 16px;overflow:auto}
+.qsend{position:relative;width:min(720px,100%);padding:14px 18px;border:1px solid var(--color-primary);border-radius:var(--radius-box);background:var(--color-base-100);box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 15%,transparent)}
+.qsend h2{margin:0 0 4px;font-size:var(--fs-lg)}
+.qsend h4{margin:12px 0 4px;font-size:var(--fs-sm)}
+.qsend .qhist li{padding:4px 0}
+.qsend .acts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.qsend .btn.pri kbd{background:transparent;color:inherit;border-color:currentColor}
+.qsendkey{margin:8px 0;padding:6px 10px;border-radius:var(--radius-field);background:color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));font-size:var(--fs-sm);display:flex;align-items:center;gap:6px}
+.qsend.sending{position:fixed;top:136px;right:20px;z-index:12;display:flex;align-items:center;gap:10px;width:auto}
+.warn-t{color:var(--warn-text)}
+body.qsheet-open #p-fab{display:none}  /* the floating Send hides while its sheet or a picture is open (#28) */
+
+/* the document, whole: header, jump menu, section folds, tiles (#12) */
+.qdoc.aa{padding:8px 0 40px}
+.qdoch{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;padding:10px 0 6px;border-bottom:1px solid var(--line)}
+.qdoc .qdoch h2{margin:0;padding:0;border:0;background:none;font-size:var(--fs-lg);max-width:none}
+.qdoch select{width:290px;max-width:100%;font-size:var(--fs-sm);padding:4px 8px}
+.qdoc .qsec{padding-left:26px;border-bottom:1px solid var(--line)}
+.qdoc .qsec > h2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px -26px;padding:0;border:0;background:none;font-size:var(--fs-lg);max-width:none}
+.qsecf{flex:none;width:22px;height:22px;border:0;background:none;cursor:pointer;display:inline-grid;place-items:center;padding:0}
+.qsecf::before{content:"";width:8px;height:8px;border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);transform:rotate(45deg);transition:transform .12s}
+.qsecf[aria-expanded=false]::before{transform:rotate(-45deg)}
+.qsecm{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-sm);font-weight:400}
+.qsecm .badge{font-size:var(--fs-xs);font-weight:700;border-radius:10px;padding:1px 8px}
+.qsecm .badge.qw{background:color-mix(in oklab,var(--color-error) 18%,var(--color-base-100));color:var(--err-text)}
+.qsecm .badge.ok{background:color-mix(in oklab,var(--st-done) 18%,var(--color-base-100));color:var(--ok-text)}
+.qnew{font-size:var(--fs-xs);font-weight:700;color:var(--color-primary)}
+.qsec.qshut > :not(h2){display:none}
+.qtiles{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
+.qtiles > div{border:1px solid var(--line);border-radius:var(--radius-field);padding:8px 12px;background:var(--color-base-100);display:flex;flex-direction:column}
+.qtiles b{font-size:20px}.qtiles span{font-size:var(--fs-sm);color:var(--muted)}
+.qtiles .warn{border-left:3px solid var(--orange)}.qtiles .ok{border-left:3px solid var(--st-done)}
+.qtiles .warn b{color:var(--warn-text)}.qtiles .ok b{color:var(--ok-text)}
+/* "Open for you: …" lists become rows of question chips (#19) */
+.qrows{margin:6px 0 10px;display:flex;flex-direction:column;gap:6px}
+.qrow{display:grid;grid-template-columns:150px 1fr;gap:6px 10px;align-items:baseline}
+.qrow > b{color:var(--muted)}
+.qcs{display:inline-flex;gap:6px;flex-wrap:wrap}
+.qchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:1px 9px 1px 3px;background:var(--color-base-100);cursor:pointer;font-size:var(--fs-sm);color:var(--color-base-content);text-align:left}
+.qchip:hover{border-color:var(--color-primary)}
+.qchip .qnum{margin:0}
+.qmissing{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-sm);color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius-field);padding:2px 8px}
 .qdoc [data-anchor-id]:not(section):not(.qcard){cursor:text}
 .qdoc img{cursor:crosshair}
 .qlit{outline:2px solid var(--orange);outline-offset:2px;background:color-mix(in oklab,var(--color-warning) 22%,transparent)}
 .qunplaced{border-left:4px solid var(--color-error)}
 
+/* pictures: size buttons beside Full size, and the in-page viewer (#24) */
+.qzm{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;margin-right:8px;vertical-align:middle}
+.qzm button{border:0;background:var(--color-base-100);padding:1px 7px;font-size:var(--fs-xs);cursor:pointer;color:var(--color-base-content)}
+.qzm button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
+.qzoom{position:fixed;inset:0;z-index:45;background:var(--color-base-200);overflow:auto;padding:0 0 30px}
+.qzbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:8px 16px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
+.qzpic{position:relative;margin:12px auto;max-width:calc(100vw - 24px)}
+.qzpic img{display:block;width:100%;height:auto;cursor:crosshair}
+.qznotes{max-width:80ch;margin:0 auto;padding:0 16px}
+
 /* the card: one column; context, then the choices side by side, then the words box (#136) */
-.qcard{border:1px solid var(--line);border-left:4px solid var(--color-error);border-radius:var(--radius-box);padding:8px 14px 6px;margin:10px 0 14px;background:var(--color-base-100);scroll-margin-top:140px;font-size:var(--fs-base);max-width:1080px;color:var(--color-base-content)}
+.qcard{border:1px solid var(--line);border-left:4px solid var(--color-error);border-radius:var(--radius-box);padding:8px 14px 6px;margin:10px 0 14px;background:var(--color-base-100);scroll-margin-top:140px;font-size:var(--fs-base);color:var(--color-base-content)}
 .qcard.answered,.qcard.sent{border-left-color:var(--st-done)}.qcard.closed{border-left-color:var(--faint)}.qcard.later{border-left-color:var(--st-waiting)}
+.qcard.hl{box-shadow:0 0 0 2px var(--color-primary)}  /* the card F, A and 1-9 act on (#05) */
 .qcard.folded{padding:0 14px;margin:6px 0}
 .qhead{display:flex;align-items:flex-start;gap:6px 10px;flex-wrap:wrap;margin-bottom:8px}
 .qcard.folded .qhead{margin:0;align-items:center}
@@ -38,6 +92,9 @@
 .qfold[aria-expanded=true]::before{transform:rotate(45deg)}
 .qcard.folded .qfold{font-size:var(--fs-base);font-weight:600;padding:8px 0}
 .qcard.folded .qfold::before{margin-top:6px}
+.qsect{flex:none;font-weight:400;padding-top:2px}
+.qright{display:inline-flex;align-items:center;gap:8px;flex:none}
+.btn.quick{white-space:nowrap}
 .qt{min-width:0}
 .qnum{flex:none;font-weight:700;font-size:var(--fs-xs);border-radius:10px;padding:1px 7px;margin-top:2px;background:color-mix(in oklab,var(--color-error) 20%,var(--color-base-100));color:var(--err-text);white-space:nowrap}
 .qstate{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -84,10 +141,12 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 .qtask:hover{border-color:var(--color-primary)}
 .qtask .bid{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap}
 .qtask .mut{white-space:nowrap}
+.qpeek{display:inline-block;margin:2px 0 2px 6px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--excerpt-bg);color:var(--color-base-content)}  /* #27 */
 
 /* notes: on a line, words, a row, or a spot on a picture (#103: icons for their actions) */
 .qnote{border:1px solid var(--color-primary);border-radius:var(--radius-field);padding:6px 8px;margin:6px 0;background:var(--color-base-100);max-width:80ch;font-size:var(--fs-md);display:block}
 .qnote.sent{border-color:var(--line);background:var(--excerpt-bg)}
+.qnote.car{border-style:dashed}
 .qnote textarea{margin:4px 0}
 .qnote .acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .nacts{display:inline-flex;gap:0;vertical-align:middle;margin-left:4px}
@@ -100,8 +159,9 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 /* Cards only: each card open, with its evidence copied above its context */
 .qlist{padding-top:8px}
 .qev{border-left:3px solid var(--orange);padding:2px 0 2px 10px}
-.qevb.aa{padding:4px 0;font-size:var(--fs-sm)}
+.qevb.aa{padding:4px 0}
 .qevb table{width:100%}
+.qevb img{max-width:100%;height:auto}
 
 /* phone: icons only on the card, choices one per row */
 @media (max-width:600px){
@@ -112,5 +172,11 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
   .qopts{grid-template-columns:minmax(0,1fr)}
   .qmarks{min-width:0}
   .eacts{margin-left:0}
-  .qsend{top:auto;bottom:70px;left:8px;right:8px;width:auto}
+  .qsheet{padding:8px 0 0}
+  .qsend{border-radius:var(--radius-box) var(--radius-box) 0 0;min-height:calc(100vh - 8px)}
+  .qbsend{display:none}  /* one Send on the phone: the floating one (#28) */
+  .qsend.sending{top:auto;bottom:70px;left:8px;right:8px;width:auto;min-height:0}
+  .qdoch select{max-width:100%}
+  .qrow{grid-template-columns:1fr}
+  .qdoc .qsec{padding-left:0}.qdoc .qsec > h2{margin-left:0}
 }
