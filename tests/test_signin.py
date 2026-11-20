@@ -429,12 +429,13 @@ def test_page_servers_fill_missing_values_from_infisical(monkeypatch, tmp_path):
                          + [{"secretKey": "githubaa", "secretValue": "not-ours"}]})
     monkeypatch.setattr(signin.subprocess, "run", run)
     monkeypatch.setattr(signin.urllib.request, "urlopen", urlopen)
-    for name in (*SECRETS, "githubaa"):  # undo then removes what the call sets
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(signin, "_LOADED", {})
     monkeypatch.setenv("ANNOTATE_OWNER_EMAIL", "kept@example.com")  # the environment wins
     signin.load_from_infisical()
-    assert signin.configured() and os.environ["ANNOTATE_OWNER_EMAIL"] == "kept@example.com"
-    assert os.environ["ANNOTATE_SESSION_KEY"] == SECRETS["ANNOTATE_SESSION_KEY"] and "githubaa" not in os.environ
+    assert signin.configured() and signin._value("ANNOTATE_OWNER_EMAIL") == "kept@example.com"
+    assert signin._value("ANNOTATE_SESSION_KEY") == SECRETS["ANNOTATE_SESSION_KEY"]
+    assert set(signin._LOADED) == set(SECRETS)  # nothing else in the folder is taken
+    assert "ANNOTATE_SESSION_KEY" not in os.environ  # so child processes never inherit it
     assert calls[0][-5:] == ["-s", "svc", "-a", "acct", "-w"]
     assert "workspaceId=p1&environment=dev&secretPath=%2Fprojects%2Fx" in calls[2]
 

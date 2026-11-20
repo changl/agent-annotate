@@ -37,8 +37,15 @@ MEMBERS = CONFIG_DIR / "members.json"
 _ENV = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "ANNOTATE_SESSION_KEY", "ANNOTATE_OWNER_EMAIL")
 
 
+_LOADED: dict[str, str] = {}  # from Infisical; kept out of os.environ so child processes never inherit them
+
+
+def _value(name: str) -> str:
+    return os.environ.get(name) or _LOADED.get(name, "")
+
+
 def configured() -> bool:
-    return all(os.environ.get(name) for name in _ENV)
+    return all(_value(name) for name in _ENV)
 
 
 def load_from_infisical() -> None:
@@ -72,8 +79,8 @@ def load_from_infisical() -> None:
     query = urllib.parse.urlencode({"workspaceId": settings["project_id"], "environment": settings["environment"],
                                     "secretPath": settings["path"]})
     for item in call("v3/secrets/raw?" + query, token=token["accessToken"])["secrets"]:
-        if item.get("secretKey") in _ENV and item.get("secretValue") and not os.environ.get(item["secretKey"]):
-            os.environ[item["secretKey"]] = item["secretValue"]
+        if item.get("secretKey") in _ENV and item.get("secretValue"):
+            _LOADED[item["secretKey"]] = item["secretValue"]
 
 
 def _b64(raw: bytes) -> str:
@@ -85,7 +92,7 @@ def _unb64(text: str) -> bytes:
 
 
 def _signature(body: str) -> str:
-    return hmac.new(os.environ["ANNOTATE_SESSION_KEY"].encode(), body.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_value("ANNOTATE_SESSION_KEY").encode(), body.encode(), hashlib.sha256).hexdigest()
 
 
 def _seal(payload: dict) -> str:
@@ -137,7 +144,7 @@ def load_members() -> dict[str, list[str]]:
 
 def allowed(email: str, project: str) -> bool:
     email = email.lower()
-    owner = os.environ.get("ANNOTATE_OWNER_EMAIL", "").strip().lower()
+    owner = _value("ANNOTATE_OWNER_EMAIL").strip().lower()
     if owner and email == owner:
         return True
     try:
@@ -205,9 +212,9 @@ def _page(code: int, text: str, link: tuple[str, str] | None = None) -> tuple[in
 
 
 def _exchange(code: str, verifier: str, redirect_uri: str) -> tuple[str, str]:
-    client_id = os.environ["GOOGLE_OAUTH_CLIENT_ID"]
+    client_id = _value("GOOGLE_OAUTH_CLIENT_ID")
     form = urllib.parse.urlencode({
-        "code": code, "client_id": client_id, "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        "code": code, "client_id": client_id, "client_secret": _value("GOOGLE_OAUTH_CLIENT_SECRET"),
         "redirect_uri": redirect_uri, "grant_type": "authorization_code", "code_verifier": verifier}).encode()
     with urllib.request.urlopen(urllib.request.Request(TOKEN_URL, data=form), timeout=10) as response:
         claims = json.loads(_unb64(json.loads(response.read(65536))["id_token"].split(".")[1]))
@@ -233,7 +240,7 @@ def handle(route: str, query: str, cookie: str, origin: str) -> tuple[int, dict,
         flow = _seal({"use": "flow", "state": state, "verifier": verifier,
                       "next": _next(first("next")), "exp": int(time.time()) + 600})
         url = AUTH_URL + "?" + urllib.parse.urlencode({
-            "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"], "redirect_uri": redirect_uri,
+            "client_id": _value("GOOGLE_OAUTH_CLIENT_ID"), "redirect_uri": redirect_uri,
             "response_type": "code", "scope": "openid email profile", "state": state,
             "code_challenge": _b64(hashlib.sha256(verifier.encode()).digest()),
             "code_challenge_method": "S256", "prompt": "select_account"})

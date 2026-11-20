@@ -4431,14 +4431,16 @@ def _load_signin() -> None:
             signin.load_from_infisical()
             return
         except urllib.error.HTTPError as exc:
-            print(f"  sign-in stays off: Infisical refused ({exc.code})", file=sys.stderr)
-            return
-        except OSError as exc:  # offline at boot: keep trying
-            print(f"  sign-in waiting for Infisical: {type(exc).__name__}", file=sys.stderr)
-            threading.Event().wait(60)
-        except (subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+            if 400 <= exc.code < 500 and exc.code != 429:
+                print(f"  sign-in stays off: Infisical refused ({exc.code})", file=sys.stderr)
+                return
+            print(f"  sign-in waiting for Infisical ({exc.code})", file=sys.stderr)
+        except (OSError, subprocess.SubprocessError) as exc:  # offline at boot, or keychain locked or slow
+            print(f"  sign-in waiting for Infisical or the keychain: {type(exc).__name__}", file=sys.stderr)
+        except (ValueError, KeyError, TypeError) as exc:
             print(f"  sign-in stays off: [signin] setup failed ({type(exc).__name__})", file=sys.stderr)
             return
+        threading.Event().wait(60)
 
 
 def main():
