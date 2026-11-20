@@ -200,6 +200,7 @@ def test_a_new_version_keeping_an_answered_number_keeps_the_answer(round_server,
     {"prompt": "Ship last week's build?"},
     {"options": [{"id": "yes", "label": "Yes", "consequence": "Ship next month"},
                  {"id": "no", "label": "No", "consequence": "Wait"}]},
+    {"consequences": {"accept": "Ship to production"}},
 ])
 def test_a_new_version_asking_a_changed_question_under_the_number_asks_again(round_server, tmp_path, change):
     _, fresh = _publish_over(round_server, tmp_path, _answered_prior(**change))
@@ -218,10 +219,31 @@ def test_an_inherited_answer_is_visible_to_the_agent_past_unsent_notes():
     answered = _answered_prior()
     card = dict(_card(), id="new", version="v2", status="open",
                 agent_snapshot={"id": "new", "status": "open", "decision": None, "replies": []},
-                replies=[{"author": "reviewer@example.com", "ts": "2026-11-10T02:00:00Z", "text": "PRIVATE", "sent_at": None}])
+                replies=[{"author": "reviewer@example.com", "ts": "2026-11-10T02:00:00Z", "text": "PRIVATE", "sent_at": None},
+                         {"author": "reviewer@example.com", "ts": "2026-11-10T00:30:00Z", "text": "legacy note"}])
     assert sync_server._share_answer(answered, card)
     view = sync_server.comment_view(card)
     assert view["decision"] == answered["decision"] and "PRIVATE" not in json.dumps(view)
+    assert sync_server._unsent_notes(card) == ["PRIVATE", "legacy note"]
+
+
+def test_an_inherited_answer_goes_beneath_an_unsent_draft():
+    answered = _answered_prior()
+    draft = {"verdict": "comment", "text": "Maybe", "by": "reviewer@example.com", "ts": "2026-11-10T02:00:00Z",
+             "round_pending": True}
+    card = dict(_card(), id="new", version="v2", status="open", decision=dict(draft))
+    assert sync_server._share_answer(answered, card)
+    assert card["decision"] == draft
+    assert sync_server.comment_view(card)["decision"] == answered["decision"]
+
+
+def test_a_discarded_pick_on_the_newer_copy_still_takes_the_sent_answer():
+    prior = _answered_prior(round_pending=True)
+    newer = dict(_card(), id="new", version="v2", status="open", author="agent:test", origin_id="prior",
+                 decision={"verdict": "select", "option_id": "no", "by": "anonymous", "ts": "2026-11-10T00:00:00Z"},
+                 agent_snapshot={"id": "new", "status": "open", "decision": None})
+    store = {"anchors": {"d:q1": [prior, newer]}}
+    assert sync_server._unanswered_copies(store, prior) == [newer]
 
 
 @pytest.mark.parametrize("send", ["/api/rounds/submit", "/api/comments/prior/push"])
@@ -236,9 +258,12 @@ def test_an_answer_sent_on_the_older_copy_answers_the_newer_one(round_server, tm
     assert fresh["flagged_at"] == old["flagged_at"] and fresh["delivery_id"] == old["delivery_id"]
 
 
-def test_a_changed_answer_sent_on_the_older_copy_replaces_the_inherited_one(round_server, tmp_path):
+@pytest.mark.parametrize("with_id", [True, False])
+def test_a_changed_answer_sent_on_the_older_copy_replaces_the_inherited_one(round_server, tmp_path, with_id):
     prior = _answered_prior()
     prior["decision"]["by"] = "anonymous"
+    if not with_id:  # a reply-made answer has no id
+        prior["decision"].pop("id")
     _, fresh = _publish_over(round_server, tmp_path, prior)
     assert fresh["decision"]["option_id"] == "yes"
     httpd = round_server[1]
@@ -247,6 +272,18 @@ def test_a_changed_answer_sent_on_the_older_copy_replaces_the_inherited_one(roun
     assert _reviewer_post(httpd, "/api/rounds/submit")[0] == 200
     old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
     assert old["decision"]["option_id"] == "no" and fresh["decision"] == old["decision"]
+
+
+def test_an_answer_sent_on_the_newer_copy_leaves_the_older_one_alone(round_server, tmp_path):
+    prior = _answered_prior()
+    prior["decision"]["by"] = "anonymous"
+    _, fresh = _publish_over(round_server, tmp_path, prior)
+    httpd = round_server[1]
+    assert _reviewer_post(httpd, f"/api/comments/{fresh['id']}/decision",
+                          {"verdict": "select", "option_id": "no", "text": "No", "defer_push": True})[0] == 200
+    assert _reviewer_post(httpd, "/api/rounds/submit")[0] == 200
+    old, fresh = json.loads((round_server[0] / "comments.json").read_text())["anchors"]["d:q1"]
+    assert old["decision"] == prior["decision"] and fresh["decision"]["option_id"] == "no"
 
 
 @pytest.mark.parametrize("confirmed", [False, True])

@@ -351,7 +351,7 @@ def _same_question(a: dict, b: dict) -> bool:
         dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
         options = {(o.get("id") if isinstance(o, dict) else o): (o.get("label"), o.get("consequence"))
                    if isinstance(o, dict) else None for o in dr.get("options") or []}
-        return str(dr.get("prompt") or "").strip(), options
+        return str(dr.get("prompt") or "").strip(), options, dr.get("consequences")
     return bool(key(a)[0]) and key(a) == key(b)
 
 
@@ -361,33 +361,59 @@ def _sent_decision(card: dict) -> dict:
     return decision if isinstance(decision, dict) and decision.get("verdict") else {}
 
 
+def _decision_key(decision: dict):
+    # Reply-made answers carry no id.
+    return (decision.get("id"), decision.get("by"), decision.get("ts"), decision.get("verdict")) if decision else None
+
+
 def _share_answer(answered: dict, card: dict) -> bool:
     """A sent answer also answers another copy of the same numbered question, so it is never asked twice."""
     decision = _sent_decision(answered)
     if (not decision or type(card.get("number")) is not int or card["number"] != answered.get("number")
             or not _same_question(answered, card)):
         return False
-    card["decision"] = json.loads(json.dumps(decision))
+    # Legacy notes date-compare against flagged_at, which is about to move: track them explicitly.
+    for reply in _reviewer_notes(card):
+        if "sent_at" not in reply and _note_unsent(card, reply):
+            reply["sent_at"] = None
+    own = card.get("decision") if isinstance(card.get("decision"), dict) else {}
+    if own.get("round_pending"):  # the draft stays on top until Send or Discard
+        card.setdefault("decision_history", []).append(json.loads(json.dumps(decision)))
+    else:
+        if own.get("verdict") and _decision_key(own) != _decision_key(_sent_decision(card)):
+            card.setdefault("decision_history", []).append(dict(own, discarded=True))
+        card["decision"] = json.loads(json.dumps(decision))
+        if card.get("status") in ("open", "user_confirmed"):
+            card["status"] = "user_confirmed" if decision["verdict"] == "accept" else "open"
     card.update({k: answered[k] for k in ("flagged_for_session", "flagged_at", "flagged_by", "delivery_id") if k in answered})
-    if card.get("status") in ("open", "user_confirmed"):
-        card["status"] = "user_confirmed" if decision["verdict"] == "accept" else "open"
-    if isinstance(card.get("agent_snapshot"), dict):  # unsent notes stay hidden; the sent answer does not
-        card["agent_snapshot"].update(decision=json.loads(json.dumps(decision)), status=card.get("status"))
+    snapshot = card.get("agent_snapshot")
+    if isinstance(snapshot, dict):  # unsent notes stay hidden; the sent answer does not
+        snapshot["decision"] = json.loads(json.dumps(decision))
+        if snapshot.get("status") in ("open", "user_confirmed"):
+            snapshot["status"] = "user_confirmed" if decision["verdict"] == "accept" else "open"
     return True
 
 
+def _published_after(a: dict, b: dict) -> bool:
+    va, vb = (re.fullmatch(r"v(\d+)", str(c.get("version") or "")) for c in (a, b))
+    if va and vb and va[1] != vb[1]:
+        return int(va[1]) > int(vb[1])
+    return str(a.get("created_at") or "") > str(b.get("created_at") or "")
+
+
 def _unanswered_copies(store: dict, card: dict) -> list[dict]:
-    """Live copies of this card's question that its next sent answer also answers.
+    """Newer live copies of this card's question that its next sent answer also answers.
 
     Call before the answer is committed: a copy holding the answer it replaces is refreshed too."""
     root = card.get("origin_id") or card["id"]
-    replaced = _sent_decision(card).get("id")
+    replaced = _decision_key(_sent_decision(card))
     def takes(c):
-        own = c.get("decision") if isinstance(c.get("decision"), dict) else {}
-        return not own.get("verdict") or (replaced and own.get("id") == replaced and not own.get("round_pending"))
+        sent = _decision_key(_sent_decision(c))
+        return sent is None or sent == replaced
     return [c for c in store["anchors"].get(card.get("anchor_id"), [])
             if c is not card and (c.get("origin_id") or c["id"]) == root and c.get("doc") == card.get("doc")
-            and c.get("number") == card.get("number") and _is_live_card(c) and takes(c) and _same_question(c, card)]
+            and c.get("number") == card.get("number") and _published_after(c, card) and _is_live_card(c)
+            and takes(c) and _same_question(c, card)]
 
 
 def _push_answers(comments: list[dict], authors: set[str] | None = None) -> list[dict]:
@@ -2500,7 +2526,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                     for prior in lineage:
                                         _carry_unsent_feedback(prior, fresh)
                                 answered = next((c for c in reversed(lineage) if _sent_decision(c)), None)
-                                if answered and not fresh.get("decision"):
+                                if answered:
                                     _share_answer(answered, fresh)
                         _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
