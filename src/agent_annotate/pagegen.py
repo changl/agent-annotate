@@ -79,35 +79,44 @@ def first_sentence(text: str) -> str:
     return (m.group(1) if m else text).strip()
 
 
+_URL = r"(?:(?:[^()\s]|\([^()\s]*\))+|[^)\s]+)"   # one level of balanced (…) first, else up to the first )
+_CODE_LINK = (
+    r"`([^`]+)`"                                    # `code`
+    r"|\[([^\]]+)\]\((" + _URL + r")\)"             # [text](url); reports put a literal [ in text
+)
+# Emphasis skips over whole code spans and links, so a `*` or `_` inside them never closes it.
+_TOKEN = r"(?>`[^`]+`|\[[^\]]+\]\(" + _URL + r"\)|[^{0}])"
+_CODE_LINK_ONLY = re.compile(_CODE_LINK)
 _INLINE = re.compile(
-    r"`([^`]+)`"                                   # `code`
-    r"|\[([^\]]+)\]\(([^)\s]+)\)"                  # [text](url)
-    r"|\*\*([^*]+)\*\*"                            # **bold**
-    r"|__([^_]+)__"                                # __bold__
-    r"|\*([^*]+)\*"                                # *italic*
+    _CODE_LINK
+    + r"|\*\*((?:" + _TOKEN.format("*") + r")+?)\*\*"  # **bold**
+    + r"|__((?:" + _TOKEN.format("_") + r")+?)__"      # __bold__
+    + r"|\*((?:" + _TOKEN.format("*") + r")+?)\*"      # *italic*
 )
 
 
-def inline(text: str) -> str:
+def inline(text: str, _nested: bool = False) -> str:
     """Escape, then re-introduce exactly the five inline forms we support.
 
     One pass, so a `**literal**` inside a code span stays literal and a stray
-    asterisk in prose stays an asterisk.
+    asterisk in prose stays an asterisk. Inside emphasis only code and links
+    render, so `__*.csv__` keeps its asterisk.
     """
     out: list[str] = []
     pos = 0
-    for m in _INLINE.finditer(text):
+    for m in (_CODE_LINK_ONLY if _nested else _INLINE).finditer(text):
         out.append(E(text[pos:m.start()]))
-        code, label, url, bold, bold2, italic = m.groups()
+        code, label, url = m.group(1, 2, 3)
+        bold, bold2, italic = m.groups()[3:] or (None, None, None)
         if code is not None:
             out.append(f"<code>{E(code)}</code>")
         elif label is not None:
             href = "#" if _UNSAFE_URL.match(url) else url
             out.append(f'<a href="{E(href, quote=True)}">{E(html.unescape(label))}</a>')
         elif bold is not None or bold2 is not None:
-            out.append(f"<strong>{E(bold if bold is not None else bold2)}</strong>")
+            out.append(f"<strong>{inline(bold if bold is not None else bold2, True)}</strong>")
         else:
-            out.append(f"<em>{E(italic)}</em>")
+            out.append(f"<em>{inline(italic, True)}</em>")
         pos = m.end()
     out.append(E(text[pos:]))
     return "".join(out)

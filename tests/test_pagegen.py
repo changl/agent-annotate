@@ -137,6 +137,25 @@ def test_inline_refuses_a_javascript_url():
     assert '<a href="#">click</a>' in inline("[click](javascript:alert(1))")
 
 
+def test_inline_renders_a_link_inside_bold_or_italic():
+    assert inline("**[#39122](https://e.com/p/39122)**") == '<strong><a href="https://e.com/p/39122">#39122</a></strong>'
+    assert inline("__[x](https://e.com)__") == '<strong><a href="https://e.com">x</a></strong>'
+    assert inline("*see [x](https://e.com)*") == '<em>see <a href="https://e.com">x</a></em>'
+    assert inline("**`a_b` <s>**") == "<strong><code>a_b</code> &lt;s&gt;</strong>"
+    assert inline("**[x](javascript:alert(1))**") == '<strong><a href="#">x</a></strong>'
+    assert inline("**[API](https://e.com/API_(x))**") == '<strong><a href="https://e.com/API_(x)">API</a></strong>'
+    assert inline("__Copy *.csv and *.json__") == "<strong>Copy *.csv and *.json</strong>"
+    assert inline("**Run `ls *.csv` first**") == "<strong>Run <code>ls *.csv</code> first</strong>"
+    assert inline("__[Setup](./get_started.md)__") == '<strong><a href="./get_started.md">Setup</a></strong>'
+    assert inline("__*.csv, see [f](./a.csv), *.json__") == '<strong>*.csv, see <a href="./a.csv">f</a>, *.json</strong>'
+    assert inline("[S](https://e.com/s?q=f(b)") == '<a href="https://e.com/s?q=f(b">S</a>'
+
+
+def test_inline_unclosed_emphasis_with_many_tokens_is_fast():
+    text = "**" + "`a` [b](c) " * 2000
+    assert inline(text).startswith("**<code>a</code>")
+
+
 def test_slugify_is_ascii_hyphenated_and_never_empty():
     assert slugify("Out of Scope!") == "out-of-scope"
     assert slugify("   ") == "x"
