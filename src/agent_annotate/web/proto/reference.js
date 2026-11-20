@@ -183,7 +183,7 @@
       const o = g => g[0] === 't' ? D.topics.indexOf(g.slice(2)) : 100 + ['check', 'flow'].indexOf(g.slice(2));
       return o(a) - o(b); });
     const nch = R.filter(r => r.ch).length + F.filter(f => f.ch).length;
-    const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find a plan, checklist, workflow or document" aria-label="Find in Reference" value="${esc(S.q)}">
+    const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find in Reference" aria-label="Find in Reference" value="${esc(S.q)}">
       <span class="rf-chips" role="group" aria-label="State">${['all', 'prop', 'ok', 'ref'].map(s => `<button class="chipb" data-sec="${s}" aria-pressed="${S.sec === s}" title="${s === 'all' ? 'Every item' : esc(SN[s][1])}">${s === 'all' ? 'All' : SN[s][0]} <span class="n">${stN(s)}</span></button>`).join('')}</span>
       <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${Object.keys(KN).map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k === 'doc' ? 'doc' : k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
       <span class="spacer"></span><span class="small mut rf-chl">${nch ? `${chg} ${pl(nch, 'item changed', 'items changed')} since you last looked · <button class="lk small" data-allseen>Mark all as seen</button>` : 'Nothing changed since you last looked'}</span></div>`;
