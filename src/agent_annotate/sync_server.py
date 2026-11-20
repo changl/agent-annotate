@@ -351,7 +351,7 @@ def _same_question(a: dict, b: dict) -> bool:
         dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
         options = sorted(json.dumps([o.get("id"), o.get("label"), o.get("consequence")] if isinstance(o, dict) else o)
                          for o in dr.get("options") or [])
-        return str(dr.get("prompt") or "").strip(), options, dr.get("consequences")
+        return str(dr.get("prompt") or "").strip(), options, dr.get("consequences"), dr.get("item_id"), dr.get("catalog")
     return bool(key(a)[0]) and key(a) == key(b)
 
 
@@ -429,7 +429,7 @@ def _unanswered_copies(store: dict, card: dict, order: dict) -> list[dict]:
 def _inheriting_copies(store: dict, card: dict, order: dict) -> list[dict]:
     """Newer copies that show this card's sent answer; they follow its resolution."""
     sent = _decision_key(_sent_decision(card))
-    return [c for c in _later_copies(store, card, order) if sent and (c.get("decision") or {}).get("inherited")
+    return [c for c in _later_copies(store, card, order) if sent and _sent_decision(c).get("inherited")
             and _decision_key(_sent_decision(c)) == sent]
 
 
@@ -2778,6 +2778,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 for later in _inheriting_copies(store, c, self._version_order()):
                     later.update({k: c[k] for k in ("status", "resolved_in_version", "resolution_anchor_id",
                                                     "resolved_at", "resolved_by")})
+                    if isinstance(later.get("agent_snapshot"), dict):
+                        later["agent_snapshot"]["status"] = c["status"]
                 # An unsent pick keeps round_pending: it still goes with Send.
             if "response_text" in payload:
                 c["response_text"] = payload["response_text"]
@@ -3791,6 +3793,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                     and ("(revised verdict; was " in str(r.get("text"))
                                                          or str(r.get("text")).startswith("↺ Changed to ")))]
                             c["status"] = self._DECISION_STATUS_MAP.get(sent.get("verdict"), c.get("status"))
+                        else:  # stays recorded for the reviewer; a later note's Send must not deliver or carry it
+                            d["discarded"] = True
                     # A pending reopen stays recorded on the finding, unsent.
                     if c.get("round_pending") and (c.get("reopened") or [{}])[-1].get("by") in reviewer_authors:
                         c.pop("round_pending", None)

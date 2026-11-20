@@ -216,6 +216,7 @@ def test_the_newer_copy_follows_the_resolution_of_the_answer_it_shows(round_serv
     {"options": [{"id": "yes", "label": "Yes", "consequence": "Ship next month"},
                  {"id": "no", "label": "No", "consequence": "Wait"}]},
     {"consequences": {"accept": "Ship to production"}},
+    {"item_id": "another-plan", "catalog": True},
 ])
 def test_a_new_version_asking_a_changed_question_under_the_number_asks_again(round_server, tmp_path, change):
     _, fresh = _publish_over(round_server, tmp_path, _answered_prior(**change))
@@ -230,6 +231,23 @@ def test_a_discarded_answer_is_not_carried_to_the_new_version(round_server, tmp_
     if snapshot:  # pre-snapshot stores left a discarded first pick unmarked
         prior["agent_snapshot"] = {k: v for k, v in prior.items() if k != "decision"}
     _, fresh = _publish_over(round_server, tmp_path, prior)
+    assert not fresh.get("decision")
+
+
+def test_a_discarded_first_pick_stays_hidden_after_a_note_is_sent_and_never_carries(round_server, tmp_path):
+    directory, httpd = round_server
+    prior = dict(_card(), id="prior", version="v1", author="agent:test", status="open")
+    (directory / "comments.json").write_text(json.dumps({"schema_version": 2, "anchors": {"d:q1": [prior]}, "archived": {}}))
+    assert _reviewer_post(httpd, "/api/comments/prior/decision",
+                          {"verdict": "select", "option_id": "yes", "text": "Yes", "defer_push": True})[0] == 200
+    assert _reviewer_post(httpd, "/api/rounds/discard")[0] == 200
+    assert _reviewer_post(httpd, "/api/comments/prior/reply", {"text": "a note"})[0] in (200, 201)
+    assert _reviewer_post(httpd, "/api/rounds/submit")[0] == 200
+    stored = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"][0]
+    assert stored["decision"]["option_id"] == "yes" and not sync_server._sent_decision(stored)
+    _, draft = _stage_round(directory, tmp_path)
+    assert _ready(httpd, draft, [_card()])[0] == 200
+    _, fresh = json.loads((directory / "comments.json").read_text())["anchors"]["d:q1"]
     assert not fresh.get("decision")
 
 

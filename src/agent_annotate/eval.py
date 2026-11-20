@@ -476,7 +476,8 @@ def verdict_events(info):
     for c in info["comments"]:
         for d in list(c.get("decision_history") or []) + [c.get("decision") or {}]:
             key = (c.get("id"), d.get("ts"))
-            if not d.get("verdict") or c.get("round_pending") or d.get("round_pending") or d.get("discarded") or key in seen:
+            if (not d.get("verdict") or c.get("round_pending") or d.get("round_pending") or d.get("discarded")
+                    or d.get("inherited") or key in seen):
                 continue
             seen.add(key)
             out.append({"comment_id": c.get("id"), "anchor_id": c.get("anchor_id"),
