@@ -107,6 +107,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import ExtractionError, build_content_document, has_canvas_sentinels
+from .hooks.decision_state import is_live_card as _is_live_card
 from .hooks.decision_state import is_set_aside as _is_set_aside
 from .page_names import page_name
 from .paths import BUS_ROOT, MONITOR_OFFSET_ROOT, MONITOR_ROOT, PROJECTS_TOML, STATE_DIR, WEB_DIR
@@ -342,6 +343,38 @@ def _carry_unsent_feedback(prior: dict, fresh: dict) -> None:
         fresh["decision"] = decision
         prior.update(status="user_confirmed" if submitted.get("status") == "user_confirmed" else "addressed_by_agent",
                      response_text=f"Asked again in {fresh['version']}.")
+
+
+def _same_question(a: dict, b: dict) -> bool:
+    """Same prompt and choices; a reworded context or evidence label is still the same question."""
+    def key(card):
+        dr = card.get("decision_request") if isinstance(card.get("decision_request"), dict) else {}
+        return (str(dr.get("prompt") or "").strip(),
+                [o.get("id") if isinstance(o, dict) else o for o in dr.get("options") or []])
+    return bool(key(a)[0]) and key(a) == key(b)
+
+
+def _share_answer(answered: dict, card: dict) -> bool:
+    """A sent answer also answers another copy of the same numbered question, so it is never asked twice."""
+    decision = answered.get("decision") if isinstance(answered.get("decision"), dict) else {}
+    if (not decision.get("verdict") or decision.get("round_pending") or (card.get("decision") or {}).get("verdict")
+            or type(card.get("number")) is not int or card["number"] != answered.get("number")
+            or not _same_question(answered, card)):
+        return False
+    card["decision"] = json.loads(json.dumps(decision))
+    card.update({k: answered[k] for k in ("flagged_for_session", "flagged_at", "flagged_by", "delivery_id") if k in answered})
+    if decision["verdict"] == "accept":
+        card["status"] = "user_confirmed"
+    return True
+
+
+def _unanswered_copies(store: dict, card: dict) -> list[dict]:
+    """Live copies of this card's question in other versions that a sent answer on it also answers."""
+    root =card.get("origin_id") or card["id"]
+    return [c for c in store["anchors"].get(card.get("anchor_id"), [])
+            if c is not card and (c.get("origin_id") or c["id"]) == root and c.get("doc") == card.get("doc")
+            and c.get("number") == card.get("number") and _is_live_card(c)
+            and not (c.get("decision") or {}).get("verdict") and _same_question(c, card)]
 
 
 def _push_answers(comments: list[dict], authors: set[str] | None = None) -> list[dict]:
@@ -2453,6 +2486,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                 if publication:
                                     for prior in lineage:
                                         _carry_unsent_feedback(prior, fresh)
+                                answered = next((c for c in reversed(lineage) if (c.get("decision") or {}).get("verdict")
+                                                 and not c["decision"].get("round_pending")), None)
+                                if answered:
+                                    _share_answer(answered, fresh)
                         _assign_item_number(store, fresh, fresh.get("number"))
                         store["anchors"].setdefault(aid, []).append(fresh)
                         created += 1
@@ -3153,6 +3190,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         committing_decision = bool(decision.get("round_pending"))
                         if isinstance(c.get("decision"), dict):
                             c["decision"].pop("round_pending", None)
+                            for later in _unanswered_copies(store, c):
+                                _share_answer(c, later)
                         found = (anchor_id, c)
                         break
                 if found:
@@ -3546,6 +3585,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     if c.get("round_pending") and c.get("reopened") and c["reopened"][-1].get("by") in reviewer_authors:
                         reopens.append(c)
             comment_ids = list(dict.fromkeys(c["id"] for c in pending + reopens))
+            # An answer sent on an older copy also answers its newer copy (below).
+            sharing = {c["id"]: _unanswered_copies(store, c) for c in pending}
+            shared_ids = {copy["id"] for copies in sharing.values() for copy in copies}
+            undecided_ids = [i for i in undecided_ids if i not in shared_ids]
             # Open comments with new activity (general feedback, replies) go
             # out with the round: one Send is one prompt to the owner, not a
             # round prompt followed by a push prompt (Chang, 2026-10-10). The
@@ -3621,6 +3664,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 promote(self.artifact_dir, store, c)
                 _mark_notes_sent(c, now, self._reviewer_authors(author))
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)
+                for later in sharing[c["id"]]:
+                    _share_answer(c, later)
             for c in reopens:
                 c.pop("round_pending", None)
                 c.update(flagged_for_session=True, flagged_at=now, flagged_by=author)

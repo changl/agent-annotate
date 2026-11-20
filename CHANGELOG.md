@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- A sent answer stays with its question across versions. A new version that keeps an answered `#N` with the same prompt and options shows it answered, and an answer sent on the older copy after a newer version went up also answers the newer copy. A changed prompt or option set under the same number is a new question and is asked again. On 2026-11-19 FLD #39066-39073, #39109-39113 and #39118-39119 came back undecided after a republish and were answered twice.
+
 ## 2.32.2
 
 - `annotate board` now counts workers on every Mac. It asks this Mac, the M5 Max and the M1 Max 16 separately (`--include-remote` returned no M5 Max workers) and counts every active worker as live, `unverifiable` included, as FLD's `beads_turn.py` does. Each Mac counts once even when `ORCA_ENVIRONMENT` is set, and a task title `NAME: …` names worker `NAME`. A list limited to the caller's own Orca run, or a terminal list cut off at 1000, counts as an unchecked source, which blocks resets. On 2026-11-19 a check reported 0 of 8 FLD workers live while 16 were running on the M5 Max.
