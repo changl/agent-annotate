@@ -37,6 +37,9 @@ TESTS = (
     "tests/test_bench.py",
     "tests/test_mcp_server_build.py",
     "tests/test_review_access.py",
+    "tests/test_signin.py",
+    "tests/test_signin_matrix.py",
+    "tests/test_signin_browser.py",  # Google Chrome and node: the Ubuntu runner has both
     "tests/test_reviewer_authoring_boundary.py",
     "tests/test_delivery.py",
     "tests/test_board_checks_rules.py",

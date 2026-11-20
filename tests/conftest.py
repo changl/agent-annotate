@@ -8,12 +8,17 @@ The overrides are exported before the package is imported so every module
 that binds a root at import time sees the sandbox.
 """
 
+import atexit
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 _SANDBOX = Path(tempfile.mkdtemp(prefix="agent-annotate-tests-"))
+# The suite root goes when the run ends, wrapper or not. At exit, not in a fixture:
+# test_browser_ports.py drives _stop_test_servers by hand mid-run.
+atexit.register(shutil.rmtree, _SANDBOX, True)
 _SANDBOX_ENV = {
     "ANNOTATE_STATE_DIR": _SANDBOX / "state",
     "ANNOTATE_SWEEP_DIR": _SANDBOX / "sweeps",
