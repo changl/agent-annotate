@@ -34,7 +34,9 @@ def test_a_reasked_question_shows_the_earlier_sent_answer_in_rail_and_document(t
     path = directory / "comments.json"
     store = json.loads(path.read_text())
     store["anchors"]["d:q5"] = [_earlier(5, delivery_id="del-5")]
-    store["anchors"]["d:q6"] = [_earlier(6, round_pending=True, ts="2026-10-01T09:30:00Z", text="Draft only")]  # unsent: never shown
+    # A draft and a discarded pick are not answers the agent has: never shown.
+    store["anchors"]["d:q6"] = [_earlier(6, round_pending=True, ts="2026-10-01T09:30:00Z", text="Draft only")]
+    store["anchors"]["d:q7"] = [_earlier(7, discarded=True, delivery_id="del-7", ts="2026-10-01T09:45:00Z", text="Discarded")]
     path.write_text(json.dumps(store))
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -46,7 +48,7 @@ def test_a_reasked_question_shows_the_earlier_sent_answer_in_rail_and_document(t
                 pytest.skip("Google Chrome is not installed")
             browser = runner.chromium.launch(executable_path=str(CHROME), headless=True)
             try:
-                page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="en-US")
+                page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="en-US", timezone_id="UTC")
                 page.set_default_timeout(8000)
                 page.goto(f"http://127.0.0.1:{port}/#view=review", wait_until="networkidle")
                 ready(page)
