@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.8
+
+- A picture inside a Markdown table cell renders as a figure (asset copy, size, caption, viewer) like an own-line picture; it used to show its raw `![…](…)` reference and its file never reached `assets/`. A cell picture that can't be shown (missing, URL, wrong type, unreadable, too big) keeps its raw text and the publish warns with the reason, never refuses. FLD's live source has about 30 cell pictures.
+
 ## 2.32.7
 
 - Public `/annotate/auth/about`, `/annotate/auth/privacy` and `/annotate/auth/terms` pages on the Funnel host, which Google requires on the sign-in app's branding screen before it will publish the app.
