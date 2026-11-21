@@ -45,9 +45,20 @@ _board_lock = threading.Lock()
 
 def board(code: str = "fld") -> dict:
     """{id: [title, state]} from this project's own board (Running's lookup: `bd where` in its checkout), read only,
-    cached a minute. A project with no board it can reach gets none: never another project's titles."""
-    with _board_lock:  # one read at a time: overlapping requests wait and share it
-        return _board_read(code)
+    cached a minute. A project with no board it can reach gets none: never another project's titles.
+    The list takes 2-14 s, so only the first read waits; past a minute the last list answers and a new one runs in the background."""
+    c = _boards.get(code)
+    if c is None or not c["at"]:  # never read yet, or the first read is on its way
+        with _board_lock:  # one read at a time: overlapping requests wait and share it
+            return _board_read(code)
+    if time.time() - c["at"] > 60 and _board_lock.acquire(blocking=False):
+        def again():
+            try:
+                _board_read(code)
+            finally:
+                _board_lock.release()
+        threading.Thread(target=again, daemon=True).start()
+    return c["beads"]
 
 
 def _board_read(code: str) -> dict:
@@ -425,6 +436,8 @@ def _md_tables(f: Path, keep) -> list:
         elif re.fullmatch(r"\|[|\s:-]+", line.strip()):
             continue
         elif line.startswith("|"):
+            if cur is False:
+                continue  # a table not kept: its rows are never cleaned (Rebex has hundreds; r12 fix10 slowread)
             cells = [plain(re.sub(r"\*\*|`", "", c.strip()), 220) for c in line.strip().strip("|").split("|")]
             if cur is None:
                 cur = [sec, cells, []] if keep(cells) else False
@@ -435,6 +448,17 @@ def _md_tables(f: Path, keep) -> list:
         else:
             cur = None
     return out
+
+
+_isopt = lambda h: h and h[0].lower().split(" ")[0] in ("option", "options", "choice", "approach", "path")
+_opt_cache: dict = {}  # (file, mtime) -> its compared-option tables: Rebex has 600+ source files, each read once (r12 fix10 slowread)
+
+
+def _opt_tables(f: Path) -> list:
+    key = (str(f), f.stat().st_mtime_ns)
+    if key not in _opt_cache:
+        _opt_cache[key] = _md_tables(f, _isopt)
+    return [list(t) for t in _opt_cache[key]]  # copied() renames each table: the cached ones stay as read
 
 
 ANSWERS_SHOWN = 200  # the newest answers; the page record holds thousands
@@ -492,10 +516,9 @@ def copied(page_dir: Path, meta: dict) -> list:
                         "m": f"{len(ra):,} answers · from Rebex's page record" + (f" · the newest {ANSWERS_SHOWN} shown" if len(ra) > ANSWERS_SHOWN else ""),
                         "parts": [["Your answers, newest first", ["When", "Question", "Your answer"], ra[:ANSWERS_SHOWN]]]})
     if root:
-        isopt = lambda h: h and h[0].lower().split(" ")[0] in ("option", "options", "choice", "approach", "path")
         ct, seen = [], set()
         for f in sorted(root.glob("reviews/*/source/v*.md"), key=lambda p: -p.stat().st_mtime):
-            for t in _md_tables(f, isopt):
+            for t in _opt_tables(f):
                 k = json.dumps([t[1], t[2]])
                 if t[2] and k not in seen:
                     seen.add(k)

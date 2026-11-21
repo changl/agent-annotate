@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 
 from .questions import waiting as waiting_count  # one count everywhere: the Questions tab's waiting
@@ -83,12 +84,39 @@ def _day(ts: float, now: float) -> int | None:
 
 def _ts(s) -> float | None:
     try:
-        return calendar.timegm(time.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S"))
+        s = str(s)[:19]
+        if len(s) != 19 or s[10] != "T":
+            raise ValueError(s)
+        return calendar.timegm(datetime.fromisoformat(s).timetuple())  # strptime took 0.45 s over 2,000 stamps
     except ValueError:
         return None
 
 
+_rows: dict = {}  # page dir -> (when, its files' stamps, its row): the frame read waits on this at every reload (r12 fix10 slowread)
+
+
+def _stamps(d: Path) -> tuple:
+    out = []
+    for n in ("current.meta.json", "rounds.ndjson", "comments.json"):
+        try:
+            st = (d / n).stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
 def _page(d: Path, now: float) -> dict:
+    """A page's Home row, read again once its meta, Sends or notes change, or after TTL (its day columns move with the clock)."""
+    stamps, hit = _stamps(d), _rows.get(str(d))
+    if hit and hit[1] == stamps and now - hit[0] <= TTL:
+        return {**hit[2], "owner": _owner(d)}  # whether its session is alive is read every time
+    row = _page_read(d, now)
+    _rows[str(d)] = (now, stamps, row)
+    return dict(row)
+
+
+def _page_read(d: Path, now: float) -> dict:
     vday, aday, last = [0] * DAYS, [0] * DAYS, 0.0
     # when each version was published: the meta's history, since a copied page's files all carry the copy's time
     stamps = [t for h in _meta(d).get("history") or [] if isinstance(h, dict) and (t := _ts(h.get("ts")))]
