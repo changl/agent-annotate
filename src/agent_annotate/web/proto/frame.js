@@ -324,16 +324,20 @@
   function beadsCtl(phone) {
     const b = board(), ready = readyHere(), wy = waitTasks(), wyN = wy.length;
     if (S.other || (!b && !S.boardUrl)) return '';
+    // an unread board has no counts: never "Nothing ready" or "0 tasks", as Tasks (r12 fix14 frame)
+    const unread = !!(b && b.error), noRead = `The board could not be read just now.`;
     const wait = wyN ? `<button class="btn ghost" data-go="running/waiting" title="${pl(wyN, 'task', 'tasks')} on the bead board wait on you. Opens Running at Waiting" aria-label="${pl(wyN, 'task waits', 'tasks wait')} on you: open Running at Waiting"><span class="badge wait">${wyN} waiting</span></button>` : '';
-    if (phone) return `<button class="btn" data-go="running/tasks">${I('bead')} Beads${ready != null ? ` <span class="badge ok">${ready} ready</span>` : ''}</button>${wait.replace('btn ghost', 'btn')}`;
+    if (phone) return `<button class="btn" data-go="running/tasks"${unread ? ` aria-label="Beads: ${noRead} Opens Running to try again"` : ''}>${I('bead')} Beads${ready != null ? ` <span class="badge ok">${ready} ready</span>` : unread ? ' <span class="badge">not read</span>' : ''}</button>${wait.replace('btn ghost', 'btn')}`;
     const bt = id => (b && b.beads && b.beads[id]) || {};
     const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
     const rdy = b ? (b.tasks || []).filter(t => t.g === 'ready' && !t.chore) : [], wyM = wy.filter(x => x[2]).length;
     const open = b ? (b.tasks || []).length : 0;
-    const pop = `<div class="hpop" role="tooltip"><b>Bead board</b>${wyN ? `<div class="hp-h">Waiting${wyM ? ` · ${pl(wyM, 'merge', 'merges')} among them` : ''}</div>${wy.slice(0, 3).map(([id, , mg]) => `<button class="hp-t" data-go="running/waiting">${mg ? 'Merge: ' : ''}${esc(cut(bt(id).t || id, 52))} <span class="bid">· ${esc(id)}${bt(id).st ? ' · ' + esc(bt(id).st) : ''}</span></button>`).join('')}${wyN > 3 ? `<div class="small mut">and ${wyN - 3} more, all listed at the top of Running</div>` : ''}` : ''}
+    const pop = unread ? `<div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
+      <button class="hp-t" data-go="running/tasks">Open Running to try again</button></div>`
+      : `<div class="hpop" role="tooltip"><b>Bead board</b>${wyN ? `<div class="hp-h">Waiting${wyM ? ` · ${pl(wyM, 'merge', 'merges')} among them` : ''}</div>${wy.slice(0, 3).map(([id, , mg]) => `<button class="hp-t" data-go="running/waiting">${mg ? 'Merge: ' : ''}${esc(cut(bt(id).t || id, 52))} <span class="bid">· ${esc(id)}${bt(id).st ? ' · ' + esc(bt(id).st) : ''}</span></button>`).join('')}${wyN > 3 ? `<div class="small mut">and ${wyN - 3} more, all listed at the top of Running</div>` : ''}` : ''}
       <div class="hp-h">Ready to start</div>${rdy.slice(0, 5).map(t => `<button class="hp-t" data-go="running/tasks">${esc(cut(t.title || t.id, 52))} <span class="bid">· ${esc(t.id)} · ready</span></button>`).join('') || '<div class="small mut">Nothing ready</div>'}
       <div class="small mut" style="margin-top:4px">${pl(open, 'task not closed', 'tasks not closed')} on the board · click a count to open the board under Running${S.boardUrl ? ` · <a href="${esc(S.boardUrl)}" target="_blank" rel="noopener">the separate board ↗</a>` : ''}</div></div>`;
-    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}<span class="bl">Beads</span>${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
+    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : unread ? ': could not be read just now' : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}<span class="bl">Beads</span>${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
   }
 
   /* ---------- the last Send, in the header (catalog 14, 72) ---------- */

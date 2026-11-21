@@ -74,6 +74,24 @@ const setTimeout = () => 1;
 """)
 
 
+def test_unread_board_has_no_beads_counts(tmp_path):
+    """The header's Beads card and the phone menu's Beads say the board was not read: no "Nothing ready", no "0 tasks"."""
+    ctl = grab(FRAME, "  const board = () =>", "\n  }\n")
+    node(tmp_path, f"""
+const assert = require('assert');
+const esc = s => String(s), pl = (n, a, b) => `${{n}} ${{n === 1 ? a : b}}`, I = n => `<i>${{n}}</i>`;
+const S = {{run: {{board: {{error: 'RuntimeError: no'}}}}, other: null, boardUrl: ''}}, readyHere = () => null;
+{ctl}
+for (const h of [beadsCtl(), beadsCtl(true)]) {{
+  assert(!/Nothing ready|0 tasks|0 ready/.test(h), h);
+}}
+assert(beadsCtl().includes('could not be read just now') && beadsCtl().includes('data-go="running/tasks"'));
+assert(beadsCtl(true).includes('not read'));
+S.run.board = {{tasks: [], waiting: [], ready: 0}};
+assert(beadsCtl().includes('Nothing ready') && beadsCtl().includes('0 tasks not closed'));
+""")
+
+
 def test_unread_board_has_no_waiting_counts(tmp_path):
     """Frame 3: an unread board shows no "0" and no "no merge waiting", with the line and Try again Tasks has."""
     body = grab(RUN, "    const wy = new Set", "</section>`;")
