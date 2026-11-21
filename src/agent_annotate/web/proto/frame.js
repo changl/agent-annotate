@@ -63,7 +63,9 @@
   });
   const cache = {};
   // on a copy, the notes it simulated join each tab's feed (questions.js P.copyData), so a reload keeps them where they were written
-  const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = api(`proto/data/${area}.json`)
+  // a read with no answer in 20 s fails, so the tab offers Try again instead of reading for ever (r12 audit9 reference)
+  const late = () => new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20000));
+  const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = Promise.race([api(`proto/data/${area}.json`), late()])
     .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { delete cache[area]; throw e; }));
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
@@ -205,7 +207,12 @@
     Promise.resolve().then(() => t.render(view, ctx, anchor)).then(() => {
       const target = live() && anchor && document.getElementById(anchor);
       if (target) scrollClear(target);
-    }).catch(e => { if (!live()) return; view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} failed to draw: ${esc(e.message)}</p></div>`; console.error(e); });
+    }).catch(e => {
+      if (!live()) return;
+      view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} could not be read: ${esc(e.message)}</p><button class="btn sm" data-again>Try again</button></div>`;
+      view.querySelector('[data-again]').onclick = () => route();  // a failed read left no cache, so this reads afresh
+      console.error(e);
+    });
   }
   // Until the questions area registers: this version's real questions, read through today's API.
   async function questionsPreview(el) {

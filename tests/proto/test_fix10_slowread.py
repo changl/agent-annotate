@@ -105,6 +105,8 @@ def test_first_reading_waits_on_questions_alone():
     assert "(t.key === 'questions' ? Promise.resolve() : firstIn).then(() => t.chip(ctx))" in js
     start = js[js.index("async function start()"):]
     assert start.index("putCounts(await readCounts());") < start.index("firstRead();") and "Promise.race([readCounts()" not in js
+    # a stuck read fails at 20 s and the tab offers Try again (audit9 reference)
+    assert "Promise.race([api(`proto/data/${area}.json`), late()])" in js and "data-again>Try again" in js
 
 
 def test_frame_row_follows_its_files(tmp_path):
