@@ -391,15 +391,27 @@
   /* ---------- today and proposed: a comparison picture takes a pick, an answer that goes with Send (the mock's pickAB, audit6 #04) ---------- */
   const abPicks = () => ctx.prefs.get('draft:qab', {});  // {figure anchor: {side: current|proposed, cap}}; a draft, so it follows "Unsent answers and notes"
   function setAB(a, p) { const all = abPicks(); if (p) all[a] = p; else delete all[a]; ctx.prefs.set('draft:qab', all); }
-  const isAB = f => /\btoday\b[\s\S]*\b(proposed|this change|after)\b|\bbefore\b[\s\S]*\bafter\b/i.test((f.querySelector('figcaption') || {}).textContent || '')
-    || /before-after/i.test((f.querySelector('img') || {}).dataset?.full || '');
+  const capOf = f => ((f.querySelector(':scope > figcaption') || {}).textContent || '').trim();
+  // one picture holding both sides ("today on the left, this change on the right", "before … after"), or a Today/Before picture followed by its Proposed/After one
+  const isAB = f => /\btoday\b[\s\S]*\b(proposed|this change|after)\b|\bbefore\b[\s\S]*\bafter\b/i.test(capOf(f)) || /before-after/i.test((f.querySelector('img') || {}).dataset?.full || '');
+  const sideOf = f => /^(current|today|before)\b/i.test(capOf(f)) ? 'current' : /^(proposed|after)\b/i.test(capOf(f)) ? 'proposed' : '';
   function abBars(el) {
-    for (const f of el.querySelectorAll('figure[data-anchor-id]')) {
-      if (!isAB(f) || f.querySelector('.abpick')) continue;
-      const a = f.dataset.anchorId, p = abPicks()[a];
-      f.insertAdjacentHTML('beforeend', `<div class="abpick">${p ? `<span class="saved">${ic('tick')} You picked ${p.side === 'current' ? 'today\'s' : 'the proposed'} · goes with Send</span><button class="lk small" data-unab="${esc(a)}">Undo</button>`
-        : `<button class="btn sm" data-ab="${esc(a)}~current">Pick today's</button><button class="btn sm" data-ab="${esc(a)}~proposed">Pick the proposed</button>`}</div>`);
-    }
+    const figs = [...el.querySelectorAll('figure')].filter(f => !f.parentElement.closest('figure') && f.closest('[data-anchor-id]'));
+    const key = f => f.closest('[data-anchor-id]').dataset.anchorId;  // a picture in a table cell goes by its row
+    const bar = (f, a, sides, cap) => {
+      if (f.querySelector(':scope > .abpick')) return;
+      const p = abPicks()[a];
+      f.insertAdjacentHTML('beforeend', `<div class="abpick">${sides.map(s => p && p.side === s ? `<span class="saved">${ic('tick')} You picked ${sides.length > 1 ? (s === 'current' ? 'today\'s' : 'the proposed') : 'this'} · goes with Send</span><button class="lk small" data-unab="${esc(a)}">Undo</button>`
+        : `<button class="btn sm" data-ab="${esc(a)}~${s}" data-abcap="${esc(cap)}">Pick ${s === 'current' ? 'today\'s' : 'the proposed'}</button>`).join('')}</div>`);
+    };
+    // the page's own comparison block: Current and Proposed cells under one anchor
+    el.querySelectorAll('[data-anchor-id^="cmp:"]').forEach(c => { if (c.querySelector('[data-role=current]') && c.querySelector('[data-role=proposed]')) bar(c, c.dataset.anchorId, ['current', 'proposed'], capOf(c) || c.dataset.anchorId.slice(4)); });
+    figs.forEach((f, i) => {
+      if (f.closest('[data-anchor-id^="cmp:"]')) return;
+      if (isAB(f)) return bar(f, key(f), ['current', 'proposed'], capOf(f));
+      const g = figs[i + 1];
+      if (sideOf(f) === 'current' && g && sideOf(g) === 'proposed') { const cap = capOf(f) + ' / ' + capOf(g); bar(f, key(f), ['current'], cap); bar(g, key(f), ['proposed'], cap); }
+    });
   }
   // its section (or Earlier updates) opens; true when that changed what is drawn
   function openFor(a) {
@@ -408,7 +420,7 @@
     if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
     return [...S.open].join() !== was;
   }
-  const litFig = a => { const el = root.querySelector(`figure[data-anchor-id="${CSS.escape(a)}"]`); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
+  const litFig = a => { const el = root.querySelector(`[data-anchor-id="${CSS.escape(a)}"]:not(.qcard)`); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
   async function goAB(a) {
     openFor(a); S.view = 'doc'; ctx.prefs.set('q:view', 'doc');
     if (host) { drawHost(); S.goFig = a; return ctx.go('questions'); }
@@ -801,8 +813,8 @@
     if (ds.nlink) return copy(location.href.split('#')[0] + '#questions/n-' + ds.nlink, 'Link');
     if (ds.carried) { const [id, st] = ds.carried.split('~'); return carried(id, st); }
     if (ds.ab) {
-      const [a, side] = ds.ab.split('~'), f = t.closest('figure'), cap = ((f && f.querySelector('figcaption')) || {}).textContent || a;
-      setAB(a, {side, cap: cap.trim()}); draw(true);
+      const [a, side] = ds.ab.split('~');
+      setAB(a, {side, cap: ds.abcap || a}); draw(true);
       return ctx.toast('Picked · goes with Send', {undo: () => { setAB(a, null); draw(true); }});
     }
     if (ds.unab) { setAB(ds.unab, null); return draw(true); }
