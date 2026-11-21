@@ -24,8 +24,8 @@ def test_history_note_sits_beside_the_strip_at_desk_widths():
 
 
 def test_links_rereads_its_list_on_return():
-    """Running 5: returning to the tab reads links.json fresh behind the list on screen and redraws when it changed."""
-    assert "if (Date.now() - readAt > 15000) { readAt = Date.now();" in LINKS
+    """Running 5, audit11 running 4: every return reads links.json fresh behind the list on screen, with no throttle."""
+    assert "readAt" not in LINKS
     assert "ctx.data('links', true).then(F =>" in LINKS
     assert "let D = LD = await ctx.data('links');" in LINKS
 

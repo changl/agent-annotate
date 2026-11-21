@@ -315,6 +315,9 @@ GROUPS = [("ready", "Ready to start"), ("in_progress", "In progress"), ("waiting
 
 def board(code="fld", where=None):
     """This project's own board, read only; when it has none, empty sections and a plain line why. Never another project's board."""
+    if where is None and CHECKOUTS.get(code) and Path(CHECKOUTS[code]).is_dir():
+        # its checkout is here but `bd where` did not answer (a busy host): an unread board, never zero tasks (audit11 running 2)
+        raise RuntimeError("the board's location could not be read")
     if where is None:
         return {"tasks": [], "beads": {}, "waiting": [], "closed": None, "groups": [], "ready": 0,
                 "none": f"{NAMES.get(code, 'This project')} has no task board this page can read, so no tasks are listed."}
@@ -607,7 +610,8 @@ def build(page_dir: Path) -> dict:
 
 
 def _behind(page_dir: Path, got) -> None:
-    if time.time() - got[0] > TTL:
+    # an unread board is read again at once, so the page's Try again gets a fresh answer (audit11 running 2)
+    if time.time() - got[0] > TTL or "error" in (got[1].get("board") or {}):
         with _lock:
             start = str(page_dir) not in _busy
             _busy.add(str(page_dir))

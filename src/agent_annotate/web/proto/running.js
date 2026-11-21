@@ -92,8 +92,11 @@
     const prs = Array.isArray(d.prs) ? d.prs : [], po = S.open.has('prs'), opn = prs.filter(p => p.state === 'open').length;
     return `${waits}
       <section class="rsec" id="workers"><h2 class="ph">Workers <span class="cnt">${ws.length}</span> <span class="small mut nb">live on the three Macs</span></h2>${W.error ? `<p class="mut">Orca could not be read just now.</p>` : wsec}</section>
-      <div class="rgrid"><section class="rsec" id="tasks"><h2 class="ph">Tasks <span class="cnt">${b.tasks.length}</span> <span class="small mut nb">not closed on the board · ${b.ready || 0} ready</span></h2>
-          ${(b.groups || []).map(tgroup).join('')}<p class="small mut">${b.none ? esc(b.none) : `The ${esc(PNAME)} board, read only${b.closed ? `; the ${b.closed.toLocaleString()} closed tasks are not listed` : ''}.`}</p></section>
+      <div class="rgrid"><section class="rsec" id="tasks">${d.board && d.board.error
+          // an unread board has no count: never show zero for it (audit11 running 2)
+          ? `<h2 class="ph">Tasks</h2><p class="small mut">The ${esc(PNAME)} board could not be read just now. <button class="btn sm" data-reread>Try again</button></p>`
+          : `<h2 class="ph">Tasks <span class="cnt">${b.tasks.length}</span> <span class="small mut nb">not closed on the board · ${b.ready || 0} ready</span></h2>
+          ${(b.groups || []).map(tgroup).join('')}<p class="small mut">${b.none ? esc(b.none) : `The ${esc(PNAME)} board, read only${b.closed ? `; the ${b.closed.toLocaleString()} closed tasks are not listed` : ''}.`}</p>`}</section>
         <div><section class="rsec" id="jobs"><h2 class="ph">Scheduled jobs <span class="cnt${nfail ? ' bad' : ''}">${nfail ? nfail + ' failing' : jobs.length}</span></h2>${jobs.map(jrow).join('') || `<p class="mut small">${d.jobs && d.jobs.error ? 'Windmill could not be read just now.' : `${esc(PNAME)} has no scheduled jobs, so none are listed.`}</p>`}</section>
           <section class="rsec" id="prs"><h2 class="ph"><button class="fold" data-fold="prs" aria-expanded="${po}">${ic('chev')} Pull requests <span class="cnt">${opn ? opn + ' open' : prs.length}</span></button></h2>
             ${po ? prs.map(p => `<div class="line sub"><span class="grow"><b>${esc(p.id)}</b> · ${esc(cut(p.title, 110))}</span>${stPill(p.state === 'merged' ? 'closed' : p.state === 'open' ? 'in progress' : 'deferred').replace(/>[a-z ]+<\/span>$/, `>${esc(p.draft ? 'draft' : p.state)}</span>`)}<button class="ib" data-copy="${esc(p.url)}" title="Copy the link to ${esc(p.id)}" aria-label="Copy the link to ${esc(p.id)}">${ic('copy')}</button></div>`).join('') || `<p class="small mut">${d.prs && d.prs.error ? 'GitHub could not be read just now.' : `${esc(PNAME)} has no pull requests this page can read, so none are listed.`}</p>` : ''}</section></div></div>
@@ -295,6 +298,7 @@
     el.onclick = e => {
       const t = e.target.closest('button,a');
       if (!t || !el.contains(t)) return;
+      if (t.hasAttribute('data-reread')) return reread(t);
       const ds = t.dataset;
       if (ds.fold != null) { S.open.has(ds.fold) ? S.open.delete(ds.fold) : S.open.add(ds.fold); return draw(); }
       if (ds.task != null) { openTask(ds.task); return; }  // draw() sets the arrows' list to the task lines on screen
@@ -318,6 +322,18 @@
       const say = el.querySelector('[data-tcmsay]'), rm = el.querySelector('[data-untcm]');
       if (say) say.textContent = e.target.value.trim() ? 'Saved as you type · goes to the board with your next Send' : 'Goes to the board with your next Send';
       if (rm) rm.hidden = !e.target.value.trim(); };
+  }
+  // Try again on an unread board: the server answers from memory and builds afresh behind it, so read until the board answers
+  async function reread(btn) {
+    btn.disabled = true; btn.textContent = 'Reading the board…';
+    for (let i = 0; i < 30; i++) {  // up to about 90 s, then the line and Try again come back
+      const d = await CTX.data('running', true).catch(() => null);
+      if (d) D = own(d);
+      if (d && !(d.board || {}).error) break;
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (EL && EL.isConnected) draw();
+    CTX.refreshTop();
   }
   function openTask(id) { S.task = id; if (tabNow !== 'side') CTX.prefs.set('task', id); draw(); const ta = EL.querySelector('.tpanel .tpscroll'); if (ta) ta.scrollTop = 0; }
   // the same panel beside another tab (Questions' task links, audit4 questions 04); host carries .area-running for the panel's look

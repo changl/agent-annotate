@@ -76,18 +76,17 @@
     return ok;
   }
   const abs = u => new URL(u, location.href).href;
-  let readAt = Date.now();  // the last fresh read of links.json; the first, at page load, is the chip's
 
   async function render(el, ctx, anchor) {
     let D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
-    // coming back to the tab reads its list again behind what is on screen, so a link added since shows without a reload (audit10 running 5)
-    if (Date.now() - readAt > 15000) { readAt = Date.now();
-      ctx.data('links', true).then(F => { if (!w.isConnected || JSON.stringify(F) === JSON.stringify(D)) return;
-        D = LD = F; if (ON && ON.w === w) ON.D = F;
-        if (!w.contains(document.activeElement) || !document.activeElement.matches('input, textarea')) draw(w, ctx, D); }).catch(() => {}); }
+    // every return to the tab reads its list again behind what is on screen, so a link added since shows without a reload;
+    // no throttle: the server answers from its cache (audit10 running 5, audit11 running 4)
+    ctx.data('links', true).then(F => { if (!w.isConnected || JSON.stringify(F) === JSON.stringify(D)) return;
+      D = LD = F; if (ON && ON.w === w) ON.D = F;
+      if (!w.contains(document.activeElement) || !document.activeElement.matches('input, textarea')) draw(w, ctx, D); }).catch(() => {});
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
     if (ka && (D.kept || []).some(d => d.id === ka[1])) S.kept = ka[1];
     const dr = typed(ctx);  // the note he was typing before a reload reopens on its line, words and all (audit8 running 1)
