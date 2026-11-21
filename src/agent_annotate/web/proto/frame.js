@@ -349,9 +349,9 @@
     const unread = !!(S.runErr || (b && b.error)), unknown = !b && !unread;
     const noRead = unread ? 'The board could not be read just now.' : 'Reading the board…';
     if (unread || unknown) {
-      const lbl = `Beads: ${noRead} Opens Running${unread ? ' to try again' : ''}`, tag = unread ? 'not read' : '…';
-      if (phone) return `<button class="btn" data-go="running/tasks" aria-label="${lbl}">${I('bead')} Beads <span class="badge">${tag}</span></button>`;
-      return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="${lbl}">${I('bead')}<span class="bl">Beads</span>${unknown ? '<span class="badge" title="Reading the board">…</span>' : ''}</button><div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
+      const lbl = `Beads: ${noRead} Opens Running${unread ? ' to try again' : ''}`, tag = unread ? 'not read' : '…', tcls = unread ? 'badge' : 'badge grey';
+      if (phone) return `<button class="btn" data-go="running/tasks" aria-label="${lbl}">${I('bead')} Beads <span class="${tcls}">${tag}</span></button>`;
+      return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="${lbl}">${I('bead')}<span class="bl">Beads</span>${unknown ? '<span class="badge grey" title="Reading the board">…</span>' : ''}</button><div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
       <button class="hp-t" data-go="running/tasks">${unread ? 'Open Running to try again' : 'Open the board under Running'}</button></div></span>`;
     }
     const wait = wyN ? `<button class="btn ghost" data-go="running/waiting" title="${pl(wyN, 'task', 'tasks')} on the bead board wait on you. Opens Running at Waiting" aria-label="${pl(wyN, 'task waits', 'tasks wait')} on you: open Running at Waiting"><span class="badge wait">${wyN} waiting</span></button>` : '';
