@@ -1,5 +1,11 @@
 # agent-annotate — changelog
 
+## 2.32.7
+
+- Public `/annotate/auth/about`, `/annotate/auth/privacy` and `/annotate/auth/terms` pages on the Funnel host, which Google requires on the sign-in app's branding screen before it will publish the app.
+- The hourly sweep's launchd job runs at `ProcessType` Standard instead of Background; under load, Background confined it to the efficiency cores and the ownership check timed out (26 times in the log, 3 of 4 runs on 2026-11-20).
+- Tests only: the sign-in browser test gives Chrome's cold start its own 60 s budget; a fresh GitHub runner took up to 14.8 s to start Chrome.
+
 ## 2.32.6
 
 - Google sign-in stays on across every way a page server starts. With a `[signin]` table in `projects.toml`, each server reads its four sign-in values from Infisical at start, through a read-only machine identity whose client JSON is in the login keychain; nothing is written to disk or passed to child processes, and values already in the environment win. An `infisical run -- annotate ...` start was lost at the next `annotate revive`, launchd start or rollout restart. While Infisical or the keychain is unavailable (offline, 5xx, 429), share links keep working and the server retries every minute. README names the right Infisical folder, `/projects/agentannotate`.
