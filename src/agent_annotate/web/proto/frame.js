@@ -587,7 +587,8 @@
     }
     if (t.id === 'p-fab') { return sendable() && S.sendN && Promise.resolve().then(() => sendP.open(ctx)); }
     if (d.recheck !== undefined) {
-      if (S.newer) { S.loadedV = S.newer.v; S.newer = null; for (const k in cache) delete cache[k]; api.meta().then(m => { S.meta = m; }).finally(() => { route(); toast('Loaded the newer version'); }); return; }
+      // every tab's counts follow the new version at once: Questions re-reads, then the badges repaint (audit6 running #04, frame #03)
+      if (S.newer) { S.loadedV = S.newer.v; S.newer = null; for (const k in cache) delete cache[k]; if (sendP && sendP.newer) sendP.newer(); api.meta().then(m => { S.meta = m; }).finally(() => { route(); refreshTop(); toast('Loaded the newer version'); }); return; }
       checkNewer().then(found => { drawTop(); if (!found) toast('Up to date'); });
       return;
     }

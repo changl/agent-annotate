@@ -51,6 +51,35 @@ def _scrub(d: Path, old: Path) -> None:
             p.write_text(scrub_json(text) if p.suffix in (".json", ".ndjson") else scrub(text, escaped=True), encoding="utf-8")
 
 
+# the live delivery records (read only): a round's "delivery" in rounds.ndjson stays "queued"; its real state is kept here
+LIVE_DELIVERIES = Path.home() / ".claude" / "annotate-state" / "state" / "deliveries"
+
+
+def _deliveries(d: Path, slug: str, live: Path = LIVE_DELIVERIES) -> None:
+    """Each round in D's rounds.ndjson takes its real delivery state ("acknowledged": read by the agent), as the real page shows it (audit6 questions #03)."""
+    states = {}
+    for p in sorted(live.glob(f"*/{slug}.json")):
+        try:
+            states.update({k: r.get("state") for k, r in json.loads(p.read_text(encoding="utf-8")).get("deliveries", {}).items() if r.get("state")})
+        except (OSError, ValueError, AttributeError):
+            continue
+    path = d / "rounds.ndjson"
+    if not states or not path.is_file():
+        return
+    out = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            out.append(line)
+            continue
+        if isinstance(r, dict) and states.get(r.get("id")):
+            r["delivery"] = states[r["id"]]
+            line = json.dumps(r, ensure_ascii=False)
+        out.append(line)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def refresh(root: Path, key: str, name: str, src: Path) -> Path:
     """A fresh read-only copy of SRC at ROOT/reviews/proto-KEY; the old copy moves to trash."""
     dest = root / "reviews" / f"proto-{key}"
@@ -75,6 +104,7 @@ def refresh(root: Path, key: str, name: str, src: Path) -> Path:
     meta.update(name=name, ui="proto", proto_copy_of=key, proto_source=str(src))
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     assert "owner" not in json.loads(meta_path.read_text()) and not db.exists()
+    _deliveries(tmp, src.name)
     _scrub(tmp, dest)
     from .reference import stage_store
     stage_store(tmp)  # Rebex's working preview store; nothing for a project without one

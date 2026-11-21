@@ -121,7 +121,7 @@
   // a note another tab lists itself is counted once, under that tab's item
   const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id)); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
-  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + (gen().trim() ? 1 : 0); };
+  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0); };
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -265,7 +265,7 @@
   }
   function inflate(d) {  // "Earlier updates" carry their sections in a <template> until opened, as on today's page
     const tpl = d.querySelector(':scope > template');
-    if (tpl) { tpl.replaceWith(tpl.content.cloneNode(true)); placeCards(d); placeNotes(d); wrapTasks(d); indexRows(d); zoomBars(d); }
+    if (tpl) { tpl.replaceWith(tpl.content.cloneNode(true)); placeCards(d); placeNotes(d); abBars(d); wrapTasks(d); indexRows(d); zoomBars(d); }
   }
   function placeNotes(docEl) {
     D.notes.forEach((n, i) => {
@@ -388,6 +388,34 @@
       ${ns.length ? `<div class="qznotes">${ns.map(([n, no]) => noteBox(n, no)).join('')}</div>` : ''}</div>`;
   }
 
+  /* ---------- today and proposed: a comparison picture takes a pick, an answer that goes with Send (the mock's pickAB, audit6 #04) ---------- */
+  const abPicks = () => ctx.prefs.get('draft:qab', {});  // {figure anchor: {side: current|proposed, cap}}; a draft, so it follows "Unsent answers and notes"
+  function setAB(a, p) { const all = abPicks(); if (p) all[a] = p; else delete all[a]; ctx.prefs.set('draft:qab', all); }
+  const isAB = f => /\btoday\b[\s\S]*\b(proposed|this change|after)\b|\bbefore\b[\s\S]*\bafter\b/i.test((f.querySelector('figcaption') || {}).textContent || '')
+    || /before-after/i.test((f.querySelector('img') || {}).dataset?.full || '');
+  function abBars(el) {
+    for (const f of el.querySelectorAll('figure[data-anchor-id]')) {
+      if (!isAB(f) || f.querySelector('.abpick')) continue;
+      const a = f.dataset.anchorId, p = abPicks()[a];
+      f.insertAdjacentHTML('beforeend', `<div class="abpick">${p ? `<span class="saved">${ic('tick')} You picked ${p.side === 'current' ? 'today\'s' : 'the proposed'} · goes with Send</span><button class="lk small" data-unab="${esc(a)}">Undo</button>`
+        : `<button class="btn sm" data-ab="${esc(a)}~current">Pick today's</button><button class="btn sm" data-ab="${esc(a)}~proposed">Pick the proposed</button>`}</div>`);
+    }
+  }
+  // its section (or Earlier updates) opens; true when that changed what is drawn
+  function openFor(a) {
+    const at = DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(a)}"]`), sec = at && topSecs(DOC).find(s => s.contains(at)), was = [...S.open].join();
+    if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
+    if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
+    return [...S.open].join() !== was;
+  }
+  const litFig = a => { const el = root.querySelector(`figure[data-anchor-id="${CSS.escape(a)}"]`); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
+  async function goAB(a) {
+    openFor(a); S.view = 'doc'; ctx.prefs.set('q:view', 'doc');
+    if (host) { drawHost(); S.goFig = a; return ctx.go('questions'); }
+    await draw(true); if (openFor(a)) await draw(true);
+    litFig(a);
+  }
+
   /* ---------- the bar ---------- */
   const FILTERS = {
     need: q => !q.sent && !q.later && !q.closed,  // an answered card stays at its place in Waiting, with its Undo (#20)
@@ -420,7 +448,8 @@
       else if (w) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
       if (isClosing(q)) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>Closed: no answer needed</b>`, 'q:' + q.id, 'close:' + q.id]);
     }
-    for (const q of D.questions) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'q:' + q.id, 'reply:' + q.id]);
+    for (const q of D.questions) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'r:' + q.id, 'reply:' + q.id]);
+    for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q(), mine = myNotes(q);
     D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${(n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
@@ -436,7 +465,7 @@
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : 'Goes to the FastLane Drive agent session.'} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
-      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || (gen().trim() ? '' : '<p class="small mut">Nothing ready yet.</p>')}
+      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
       <h4>Not in this Send</h4><p class="small">${un || lat ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${n ? '' : 'disabled'}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${n ? '' : 'disabled'}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
@@ -470,7 +499,7 @@
       const docEl = root.querySelector('.qdoc');
       docEl.innerHTML = await loadDoc(D.version);
       DOC = docEl;
-      placeCards(docEl, true); placeNotes(docEl); wrapTasks(docEl); indexRows(docEl); foldSections(docEl);
+      placeCards(docEl, true); placeNotes(docEl); abBars(docEl); wrapTasks(docEl); indexRows(docEl); foldSections(docEl);
       docEl.insertAdjacentHTML('afterbegin', docHead(docEl));
       docEl.querySelectorAll('details.aa-earlier').forEach(d => { if (S.open.has('earlier')) { d.open = true; inflate(d); } });
       if (S.note) {
@@ -569,16 +598,27 @@
     try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
   }
   // the card, its section and the evidence open, scrolled to and lit together (#19, catalog 26)
-  async function jumpTo(id, view) {
-    const q = qOf(id); if (!q) return;
-    if (view && S.view !== view) { S.vy[S.view] = scrollY; S.view = view; ctx.prefs.set('q:view', view); }
+  // a card is shown: in Cards only a filter that lists it (an answered "later" one is under To send), in Document its section open (audit6 #02, frame #02)
+  function reveal(q) {
+    const id = q.id;
     S.hl = id; S.shut.delete(id); if (isDone(q)) S.open.add(id);
-    if (S.view === 'list' && !FILTERS[S.filter](q)) S.filter = q.later ? 'later' : q.sent ? 'wait' : q.closed ? 'arch' : 'need';
+    if (S.view === 'list' && !FILTERS[S.filter](q)) S.filter = ['need', 'later', 'ready', 'wait', 'arch'].find(k => FILTERS[k](q)) || 'need';
     if (S.view === 'doc' && DOC) { const c = DOC.querySelector(`#q-${CSS.escape(id)}`), sec = c && c.closest('section.qsec'); if (sec && !secOpen(sec)) S.open.has('d:' + sec.dataset.anchorId) ? S.open.delete('d:' + sec.dataset.anchorId) : S.open.add('d:' + sec.dataset.anchorId); }
     if (S.view === 'doc' && q.anchor && DOC && !DOC.querySelector(`#q-${CSS.escape(id)}`)) S.open.add('earlier');
+  }
+  // the part of the card a Send item names: its reply or its answer
+  function showAt(id, at) {
+    const c = at && document.getElementById('q-' + id);
+    const el = c && (at === 'reply' ? c.querySelector('[data-replytext]') : c.querySelector('.qopt[aria-pressed=true]') || c.querySelector('[data-words]'));
+    if (el) el.scrollIntoView({block: 'center'});
+  }
+  async function jumpTo(id, view, at) {
+    const q = qOf(id); if (!q) return;
+    if (view && S.view !== view) { S.vy[S.view] = scrollY; S.view = view; ctx.prefs.set('q:view', view); }
+    reveal(q);
     await draw(true);
     const el = document.getElementById('q-' + id); if (!el) return;
-    el.scrollIntoView({block: 'start'});
+    el.scrollIntoView({block: 'start'}); showAt(id, at);
     const ev = q.evidence[0] && root.querySelector(`[data-anchor-id="${CSS.escape(q.evidence[0].anchor)}"]:not(.qcard)`);
     for (const x of [el, ev]) if (x) { x.classList.add('qlit'); setTimeout(() => x.classList.remove('qlit'), 2500); }
   }
@@ -611,6 +651,8 @@
       }
       for (const q of replies) { await call(`api/comments/${encodeURIComponent(q.id)}/reply`, {text: draft(q.id).reply.trim()}); setDraft(q.id, {reply: null, replyOpen: null}); }
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
+      // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
+      for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
@@ -624,15 +666,15 @@
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
   async function discardAll() {
-    const keep = drafts(), g = gen(), q = Q(), notes = myNotes(q), total = sendCount();  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
+    const keep = drafts(), g = gen(), ab = abPicks(), q = Q(), notes = myNotes(q), total = sendCount();  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
     const all = {};
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
-    ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); S.armed = false; S.sendKey = false;
+    ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
     for (const n of notes) await call(`api/comments/${encodeURIComponent(n.id)}`, undefined, 'DELETE');
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
-      ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g);
+      ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
       await Promise.all(undos.map(u => u()));
       for (const n of notes) await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target});
       refresh();
@@ -644,6 +686,7 @@
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {close: true}); draw(true); }}); }
     else if (kind === 'reply') { const r = draft(id).reply; setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {reply: r}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
+    else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
       const again = () => x.note ? refresh() : draw(true);  // a note is a comment: read the list again once it is gone or back
@@ -654,6 +697,9 @@
   function sendGo(k) {
     S.armed = false; S.sendKey = false;
     if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
+    const at = k[0] === 'r' ? 'reply' : k[0] === 'q' ? 'answer' : null;  // "r:" a reply, "q:" an answer: the card opens at it
+    if (at) k = 'q:' + k.slice(2);
+    if (k.startsWith('ab:')) return goAB(k.slice(3));
     if (k.startsWith('n:')) {
       // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
       const n = D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
@@ -663,12 +709,12 @@
       if (host) { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }  // a note lives in the document
     }
     if (host) {  // opened over another tab: Questions opens at the item
-      drawHost();
+      drawHost(); S.goAt = at;
       if (k === 'need') { S.filter = 'need'; S.view = 'list'; ctx.prefs.set('q:view', 'list'); }
       return ctx.go('questions', k === 'need' ? undefined : (k[0] === 'q' ? 'q-' : 'n-') + k.slice(2));
     }
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
-    if (k.startsWith('q:')) return jumpTo(k.slice(2));
+    if (k.startsWith('q:')) return jumpTo(k.slice(2), null, at);
     if (k.startsWith('n:')) {
       const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
   }
@@ -754,9 +800,15 @@
     if (ds.ncopy) return copy((D.notes.find(x => x.id === ds.ncopy) || {}).text || '', 'Note');
     if (ds.nlink) return copy(location.href.split('#')[0] + '#questions/n-' + ds.nlink, 'Link');
     if (ds.carried) { const [id, st] = ds.carried.split('~'); return carried(id, st); }
+    if (ds.ab) {
+      const [a, side] = ds.ab.split('~'), f = t.closest('figure'), cap = ((f && f.querySelector('figcaption')) || {}).textContent || a;
+      setAB(a, {side, cap: cap.trim()}); draw(true);
+      return ctx.toast('Picked · goes with Send', {undo: () => { setAB(a, null); draw(true); }});
+    }
+    if (ds.unab) { setAB(ds.unab, null); return draw(true); }
     // a note: tap a picture spot, select words, or click a line, row or item of the document
     const evb = S.view === 'list' && t.closest('.qevb');  // Cards only: a card's copied evidence takes notes too (audit5 #03)
-    if (evb ? t.closest('.qnote,.qzm,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,figcaption,summary')) return;
+    if (evb ? t.closest('.qnote,.qzm,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,.abpick,figcaption,summary')) return;
     const img = e.target.closest('img');
     const anchorEl = e.target.closest('[data-anchor-id]');
     if (evb && (!anchorEl || !evb.contains(anchorEl))) return;
@@ -800,6 +852,7 @@
     const n = sendCount(), s = (host || root).querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
     $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
     $('[data-send]').disabled = !n; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n;
+    if ($('[data-snone]')) $('[data-snone]').hidden = !!gen().trim();  // General feedback is an item: the empty caption goes (audit6 frame #06)
     const b = root && root.querySelector('.qbsend');
     if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }
     if (ctx.refreshTop) ctx.refreshTop();
@@ -878,7 +931,7 @@
   P.tab({
     key: 'questions',
     chip: async c => {
-      ctx = ctx || c; D = D || sim(await c.data('questions'));
+      await load(c);  // a newer version marks the data stale: the chip counts the new one (audit6 running #04)
       const n = waitingCount(), later = D.questions.filter(FILTERS.later).length;
       if (!D.questions.length) return {empty: true};
       // the mock: always "N waiting", red while any wait, green at zero; set-aside ones only in the tip (audit4 frame 5)
@@ -894,9 +947,14 @@
       if (host) { host.remove(); host = null; }  // the Send opened over another tab now shows in this bar
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
-      if (anchor && anchor.startsWith('q-')) { const id = anchor.slice(2), q = qOf(id); if (q) { S.shut.delete(id); if (isDone(q)) S.open.add(id); S.hl = id; } }
+      const q0 = anchor && anchor.startsWith('q-') && qOf(anchor.slice(2));
+      if (q0) reveal(q0);
       el.onclick = onClick; el.oninput = onInput; el.onchange = onChange; el.onmouseover = onHover; evLit = '';
       await draw();
+      // Go to it from another tab: its folded section is known only once the document is drawn (audit6 frame #02)
+      if (q0 && S.view === 'doc') { const was = [...S.open].join(); reveal(q0); if ([...S.open].join() !== was) await draw(true); }
+      if (S.goFig) { const a = S.goFig; S.goFig = null; if (openFor(a)) await draw(true); setTimeout(() => litFig(a), 80); }
+      if (q0 && S.goAt) { const a = S.goAt; S.goAt = null; setTimeout(() => showAt(q0.id, a), 80); }  // after the frame's scroll to the card
     },
   });
   // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)
@@ -907,6 +965,7 @@
   P.send({
     count: async c => { await load(c); return sendCount(); },
     wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
+    newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
     // key: opened by ⌘↵, which asks for a second press; a second ⌘↵ sends. Off Questions the sheet opens over the tab on screen (r12 fix7 frame 1, 5)
     open: async (c, key) => {
