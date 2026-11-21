@@ -2,6 +2,7 @@
 .tab-questions{--text-primary:calc(16px * var(--fs,1))}  /* question context and what you type: 16 px at 100% (#100) */
 .qdoc.aa,.qevb.aa{font-size:calc(16px * var(--fs,1))}  /* the document itself reads at 16 px too (#25) */
 .tab-questions :is(.qdoc,.qevb) .lede{font-size:inherit}  /* content.css loads after this file, so one class more */
+.tab-questions :is(.qdoc,.qevb) a[href]{color:var(--color-primary)}
 .tab-questions :is(.qdoc,.qevb) th{word-break:normal;overflow-wrap:normal;hyphens:none}
 
 /* the bar: view switch, one row of group chips, progress, fold-all icons, Send */
@@ -167,7 +168,8 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 @media (max-width:600px){
   .ibt,.hide-ph{display:none}.ph-only{display:inline}
   .ib.ibw{width:30px;padding:0}
-  .qbar{top:90px}
+  .qbar{top:44px}  /* the phone has no tab strip: under the 44 px header, no blank band (#28) */
+  .qcard{scroll-margin-top:150px}
   .qcard{padding:8px 10px 6px}
   .qopts{grid-template-columns:minmax(0,1fr)}
   .qmarks{min-width:0}
