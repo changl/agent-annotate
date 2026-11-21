@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const P = window.Proto = window.Proto || {};
-  const S = {q: '', f: 'all', nv: 20, open: new Set(), wd: false, ref: false, nref: 60};
+  const S = {q: '', f: 'all', nv: 20, open: new Set(), wd: false, ref: false, nref: 60, wnOpen: null};
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const vn = v => String(v || '').replace(/^v/, '');
 
@@ -230,10 +230,26 @@
         before: p && p.revs[i] && p.revs[i][2] ? `<p class="small"><span class="mut">Agent's note on this revision:</span> ${esc(p.revs[i][2])}</p>` : ''});
     }
     const v = anchor, m = D.versions[v] || {}, hs = D.answers.filter(h => h.v === v);
+    S.wnOpen = null;
     P.viewVersion(el, ctx, {title: `Version ${vn(v)}`, src: `content?v=${encodeURIComponent(v)}`, onClose: close,
       before: `${m.note ? `<p class="small"><span class="mut">Agent's note on this version:</span> ${esc(m.note)}</p>` : ''}
-        <h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul>
-        ${v !== D.current ? `<p class="small mut">You answer today's questions in version ${esc(vn(D.current))}, in Questions.</p>` : ''}`});
+        ${v !== D.current ? waitingNow(v, ctx) : ''}
+        <h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul>`});
+    el.querySelector('.hv-view').addEventListener('click', e => { const b = e.target.closest('[data-wnfold], [data-qgo]'); if (!b) return;
+      // Questions scrolls to the card once its data is in; read it first so a cold load lands on the card too
+      if (b.dataset.qgo) return ctx.data('questions').catch(() => {}).then(() => ctx.go('questions', 'q-' + b.dataset.qgo));
+      S.wnOpen = b.getAttribute('aria-expanded') !== 'true'; el.querySelector('.h-wn').outerHTML = waitingNow(v, ctx); });
+  }
+  // an older version says which questions waiting now it held, and jumps to each in the current version (the mock's T8)
+  function waitingNow(v, ctx) {
+    const {esc, icon} = ctx, wq = D.waiting || [], cur = vn(D.current), hn = vn(v), inV = q => q.in.includes(v);
+    if (!wq.length) return '';
+    const op = S.wnOpen == null ? wq.some(inV) : S.wnOpen;  // open by default when this version held a question still waiting
+    return `<div class="h-wn"><button class="h-fold" data-wnfold aria-expanded="${op}">${icon('chev')}<b>Questions waiting now</b>
+        <span class="small mut">${wq.filter(inV).length} of ${wq.length} were in version ${esc(hn)}; you answer them in version ${esc(cur)}</span></button>
+      ${op ? `<ul class="h-list h-wnl">${wq.map(q => `<li><span class="h-qn">Q ${esc(q.n)}</span><span class="h-grow">${esc(q.q)}</span>
+        <span class="small mut">${inV(q) ? `in version ${esc(hn)} too` : `not in version ${esc(hn)}`} · asked in version ${esc(vn(q.from))}</span>
+        <button class="lk small" data-qgo="${esc(q.id)}">Open it in version ${esc(cur)} ›</button></li>`).join('')}</ul>` : ''}</div>`;
   }
 
   P.tab({key: 'history', render, chip: async ctx => ({text: (await ctx.data('history')).count.toLocaleString(), title: 'answers you sent'})});

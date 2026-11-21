@@ -48,9 +48,6 @@
 .area-running .mb,.rn-vtip .mb{font-size:var(--fs-xs);font-weight:700;border-radius:4px;padding:0 6px;border:1px solid var(--line);white-space:nowrap}
 .area-running .mb.codex,.rn-vtip .mb.codex{border-color:var(--color-primary);color:var(--color-primary)}.area-running .mb.claude,.rn-vtip .mb.claude{border-color:var(--orange);color:var(--warn-text)}
 .area-running .tbar,.rn-vtip .tbar{display:inline-block;width:70px;height:6px;border-radius:3px;background:var(--excerpt-bg);overflow:hidden;flex:none}.area-running .tbar i,.rn-vtip .tbar i{display:block;height:100%;background:var(--muted)}
-.area-running .wsq{display:flex;flex-wrap:wrap;gap:5px}
-.area-running .wsqi{width:30px;height:30px;border-radius:5px;border:0;background:var(--st);color:#fff;font-family:inherit;font-weight:700;font-size:var(--fs-xs);cursor:default;display:inline-flex;align-items:center;justify-content:center;padding:0}
-.area-running .wsqi.hatch{color:var(--color-base-content);background:repeating-linear-gradient(135deg,var(--st) 0 3px,transparent 3px 5px);box-shadow:inset 0 0 0 2px var(--st)}.area-running .wsqi:focus-visible,.area-running .wsqi:hover{outline:2px solid var(--color-base-content);outline-offset:1px}
 
 /* tasks, jobs, pull requests */
 .area-running .rgrid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:0 28px}
@@ -133,8 +130,6 @@
 /* the shared tooltip and the worker picture card */
 .rn-vtip{position:fixed;z-index:60;pointer-events:none;background:var(--color-base-100);color:var(--color-base-content);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px color-mix(in oklab,var(--color-base-content) 18%,transparent);padding:5px 9px;font-size:var(--fs-sm);max-width:300px}
 .rn-vtip>b{display:block;font-size:var(--fs-md)}.rn-vtip>span{color:var(--muted)}
-.rn-vtip .wcard{display:flex;flex-direction:column;gap:5px;min-width:220px}.rn-vtip .wcard-h{display:flex;align-items:center;gap:6px;font-size:var(--fs-md)}
-.rn-vtip .wcard-r{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}.rn-vtip .tbar.wide{width:120px}.rn-vtip .mut{color:var(--muted)}.rn-vtip .small{font-size:var(--fs-xs)}
 .rn-vtip .stuck-t{color:var(--warn-text)}.rn-vtip .pi{width:14px;height:14px;flex:none}
 
 /* the top-bar worker squares and their overview card */
@@ -171,7 +166,6 @@
   .area-running .tline .bid,.area-running .tl .bid{white-space:normal}
   .area-running .tpanel{top:0;width:100vw;z-index:40}
   .area-running .tseg .l{font-size:var(--fs-xs)}
-  .area-running .wsqi{width:36px;height:36px}
   .area-running .ajump{gap:4px 12px}
   .area-running .hbr{grid-template-columns:minmax(60px,7.5em) minmax(0,1fr) auto}
 }

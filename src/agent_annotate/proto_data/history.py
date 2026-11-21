@@ -10,6 +10,8 @@ import json
 import re
 from pathlib import Path
 
+from .questions import _asked, _flags  # one meaning of "waiting", the Questions tab's
+
 # The agent's words for "your answer no longer stands"; all show under one "overruled" tag (#117).
 _SYN = re.compile(r"\b(overrul\w*|supersed\w*|supercede\w*|overridden|overrides?)\b|(?:^|[.!?]\s+)(replaced) by", re.I)
 _WORD = (("overrul", "overruled"), ("supersed", "superseded"), ("superced", "superseded"),
@@ -130,4 +132,22 @@ def build(page_dir: Path) -> dict:
             plans.append({"id": m.parent.name, "t": _plain(pm.get("title") or m.parent.name, 100), "revs": revs})
 
     return {"current": meta.get("current") or "", "count": count, "sends": len(rounds), "answers": answers,
-            "versions": versions, "withdrawn": withdrawn, "plans": plans}
+            "versions": versions, "withdrawn": withdrawn, "plans": plans,
+            "waiting": waiting_now(comments, by_id, meta.get("current") or "")}
+
+
+def waiting_now(comments, by_id, v) -> list[dict]:
+    """The questions waiting now, as the Questions tab counts them, each with the versions it was carried through."""
+    out = []
+    for c in comments:
+        if not _asked(c, v) or any(_flags(c).values()):
+            continue
+        vs, seen, x = [], set(), c
+        while x and x["id"] not in seen:  # a carried card names the card it was carried from
+            seen.add(x["id"])
+            vs.append(x.get("version") or "")
+            x = by_id.get(x.get("origin_id"))
+        vs = sorted({s for s in vs if s}, key=lambda s: int(re.sub(r"\D", "", s) or 0))
+        out.append({"id": c["id"], "n": c.get("number") or 0, "q": _plain((c.get("decision_request") or {}).get("prompt") or c.get("text"), 220),
+                    "from": vs[0] if vs else v, "in": vs})
+    return sorted(out, key=lambda q: q["n"])

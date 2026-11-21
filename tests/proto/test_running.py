@@ -25,6 +25,13 @@ def test_only_orcas_read_only_lists_may_run():
             R.run_json(argv)
 
 
+def test_every_worker_draws_as_a_full_tile():
+    # the mock shows model, run time, last sign of life, report and Open terminal on every tile; no squares past 12 (finding 3)
+    from pathlib import Path
+    js = (Path(R.__file__).parents[1] / "web" / "proto" / "running.js").read_text()
+    assert "square(" not in js and "wsqi" not in js and "${g.map(tile).join('')}" in js
+
+
 def test_worker_title_prefers_words_over_codes():
     assert R.wtitle("BD-B5", "## Task: the prototype's Running tab\nmore") == "the prototype's Running tab"
     assert R.wtitle("r10-frame", "Prototype frame") == "Prototype frame"

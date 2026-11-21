@@ -21,6 +21,11 @@
 .h-fix,.h-cnt{display:inline-block;font-size:var(--fs-xs);font-weight:600;border-radius:6px;padding:0 6px;vertical-align:1px}
 .h-fix{color:var(--warn-text);border:1px solid color-mix(in oklab,var(--orange) 60%,transparent)}
 .h-cnt{color:var(--muted);background:color-mix(in oklab,var(--color-base-content) 10%,transparent)}
+/* an older version's questions waiting now, each with a jump to the current version */
+.h-wn{border-bottom:1px solid var(--line);margin-bottom:4px}
+.h-wnl li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.h-wnl .small{white-space:nowrap}
+.h-qn{font-size:var(--fs-xs);font-weight:700;color:var(--err-text);background:color-mix(in oklab,var(--color-error) 14%,transparent);border-radius:6px;padding:1px 6px;white-space:nowrap}
 
 /* full-size picture viewer */
 .pp-zoom{position:fixed;inset:0;z-index:60;overflow:auto;background:rgb(0 0 0 / .82);padding:0 0 24px}

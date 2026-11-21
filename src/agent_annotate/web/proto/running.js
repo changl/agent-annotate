@@ -67,11 +67,11 @@
     const count = list => list.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
     const wsec = ['M1 Max', 'M5 Max', 'M1 Max 16'].map(m => {
       const here = ws.filter(w => w.mac === m).sort((x, y) => WORDER.indexOf(x.s) - WORDER.indexOf(y.s)), v = W[m] || {};
-      const works = [...new Set(here.map(w => w.work || 'Other work'))], small = here.length > 12;  // past 12 a Mac's workers draw as squares
+      const works = [...new Set(here.map(w => w.work || 'Other work'))];
       return `<div class="mgrp${here.length ? '' : ' none'}" data-mac="${esc(m)}"><div class="mgh"><h3>${ic('mac')} ${esc(m)}</h3><span class="cnt">${pl(here.length, 'worker', 'workers')}</span>
           ${here.length ? stack(count(here)) : `<span class="small mut">${v.ok === false ? 'could not be read just now' : 'none for ' + PNAME}</span>`}<span class="spacer"></span>${lmark(m)}</div>
         ${works.map(o => { const g = here.filter(w => (w.work || 'Other work') === o);
-          return `<div class="wgrp"><div class="wgh"><b>${esc(o)}</b><span class="cnt">${g.length}</span></div><div class="${small ? 'wsq' : 'wgrid'}">${g.map(w => small ? square(w) : tile(w)).join('')}</div></div>`; }).join('')}</div>`; }).join('');
+          return `<div class="wgrp"><div class="wgh"><b>${esc(o)}</b><span class="cnt">${g.length}</span></div><div class="wgrid">${g.map(tile).join('')}</div></div>`; }).join('')}</div>`; }).join('');
     // Tasks: title · bead id · state; a click opens the task panel
     const tline = t => `<div class="line sub tl${S.task === t.id ? ' ev' : ''}"><button class="lk tbtn" data-task="${esc(t.id)}">${tref(t.id, t.title, t.st)}</button>
       <span class="grow"></span>${wy.has(t.id) ? `<span class="wyi" title="Waiting on you">${ic('hand', 'waiting on you')}</span>` : ''}${t.on.length ? `<span class="small mut nw" title="Waits on ${esc(t.on.map(x => tclean(x[1])).join('; '))}">${ic('link')} ${t.on.length}</span>` : ''}<span class="small mut nw">${esc(t.type)}</span></div>`;
@@ -96,21 +96,12 @@
       <p class="small mut rn-src">Read ${esc(new Date(d.built).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}; each source is read at most once a minute.</p>
       ${panel()}`;
   }
-  // a worker as a tile: state, model, time running, last sign of life, last report; no Stop
-  const tile = w => `<div class="wt st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}" tabindex="0" data-wk="${esc(JSON.stringify(w))}"><div class="wt1"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><b class="wn" title="${esc(w.name)}">${esc(wnm(w.name))}</b><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span>
+  // a worker as a tile, every worker, as in the mock: state and name with Open terminal; model, time running, last sign of life; last report; no Stop
+  const tile = w => `<div class="wt st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}"><div class="wt1"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><b class="wn" title="${esc(w.name)}">${esc(wnm(w.name))}</b>
         <button class="ib" data-term="${esc(wnm(w.name))}" title="Open its terminal in Orca" aria-label="Open the terminal of ${esc(wnm(w.name))} in Orca">${ic('term')}</button></div>
-      <div class="wt2"><span class="tbar" title="Running ${ago(w.mins)}"><i style="width:${Math.max(4, Math.min(100, (w.mins || 0) / 120 * 100))}%"></i></span><span class="small nw">${ago(w.mins)}</span>
+      <div class="wt2"><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span><span class="tbar" title="Running ${ago(w.mins)}"><i style="width:${Math.max(4, Math.min(100, (w.mins || 0) / 120 * 100))}%"></i></span><span class="small nw">${ago(w.mins)}</span>
         ${w.s !== 'failed' && w.heard != null ? `<span class="small nw ${w.s === 'stuck' ? 'stuck-t' : 'mut'}" title="Its last sign of life">${ic('pulse')} ${ago(w.heard)} ago</span>` : ''}</div>
       <div class="wt3 small" title="${esc(w.report || 'No report yet')}">${ic('msg')}<span class="${w.report ? '' : 'mut'}">${esc(scrub(w.report) || 'no report yet')}</span></div></div>`;
-  // past 12 on a Mac: one small square each, its model's first letter, coloured by state; hover or focus shows the picture card
-  const square = w => `<button class="wsqi st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}" data-wk="${esc(JSON.stringify(w))}" aria-label="${esc(wnm(w.name))}: ${WS[w.s][1]}, ${esc(mdl(w))}, ${ago(w.mins)}">${esc(mdl(w).charAt(0))}</button>`;
-  function card(w) {  // the picture card: what the tile shows, on a hover over a square
-    return `<div class="wcard-h"><i class="dot st-${WS[w.s][0]}"></i><b>${esc(wnm(w.name))}</b></div>
-      <div class="wcard-r"><span class="rn-pill st-${WS[w.s][0]}">${WS[w.s][1]}</span><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span><span class="small">${esc(w.mac)}</span></div>
-      <div class="wcard-r"><span class="tbar wide"><i style="width:${Math.max(4, Math.min(100, (w.mins || 0) / 120 * 100))}%"></i></span><span class="small nw">running ${ago(w.mins)}</span></div>
-      ${w.heard != null && w.s !== 'failed' ? `<div class="wcard-r small ${w.s === 'stuck' ? 'stuck-t' : 'mut'}">${ic('pulse')} last sign of life ${ago(w.heard)} ago</div>` : ''}
-      <div class="wcard-r small">${ic('msg')}<span>${esc(scrub(w.report) || 'no report yet')}</span></div>${w.work ? `<div class="small mut">${esc(w.work)}</div>` : ''}`;
-  }
 
   /* ------------------------------------------------------------ the task panel: review, status and comment */
   const PRI = ['most urgent', 'urgent', 'normal', 'low', 'lowest'];
@@ -320,15 +311,14 @@
     else if ((e.key === 'j' || e.key === 'ArrowDown') && pos < S.list.length - 1) { e.preventDefault(); openTask(S.list[pos + 1]); }
     else if ((e.key === 'k' || e.key === 'ArrowUp') && pos > 0) { e.preventDefault(); openTask(S.list[pos - 1]); }
   });
-  // one tooltip for every chart mark, and the picture card for a worker square or tile
+  // one tooltip for every chart mark
   (() => { let el;
     const show = (html, x, y) => { if (!el) { el = document.createElement('div'); el.className = 'rn-vtip'; el.setAttribute('role', 'tooltip'); document.body.append(el); }
       el.innerHTML = html; el.hidden = false; const r = el.getBoundingClientRect();
       el.style.left = Math.max(4, Math.min(innerWidth - r.width - 4, x + 12)) + 'px'; el.style.top = (y - r.height - 12 < 4 ? y + 18 : y - r.height - 12) + 'px'; };
     const hide = () => el && (el.hidden = true);
-    const body = t => { if (t.dataset.tip) { const [h, d] = t.dataset.tip.split('|'); return `<b>${esc(h)}</b><span>${esc(d)}</span>`; }
-      try { return `<div class="wcard">${card(JSON.parse(t.dataset.wk))}</div>`; } catch { return ''; } };
-    const find = e => e.target.closest && e.target.closest('.area-running [data-tip], .area-running .wsqi[data-wk]');
+    const body = t => { const [h, d] = t.dataset.tip.split('|'); return `<b>${esc(h)}</b><span>${esc(d)}</span>`; };
+    const find = e => e.target.closest && e.target.closest('.area-running [data-tip]');
     // pointermove alone missed hovers that arrive as mouse events only (some automation, #145); a tap on touch shows it too
     const at = e => { const t = find(e); t ? show(body(t), e.clientX, e.clientY) : hide(); };
     ['pointermove', 'mouseover', 'pointerdown'].forEach(n => document.addEventListener(n, at));

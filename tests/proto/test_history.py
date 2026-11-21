@@ -19,6 +19,12 @@ def _page(tmp_path):
          "decision": {"verdict": "select", "catalog_conflict": {"plan": "x"}}},
         {"id": "c3", "version": "v2", "status": "open", "author": "agent:claude", "text": "q3",
          "withdrawn": {"reason": "not asked again", "ts": "2026-11-02T11:00:00Z", "decision_request": {"prompt": "Old question?"}}},
+        # one question asked in v1, carried to v3 and waiting; one answered in v3; one left for later
+        {"id": "c4", "version": "v1", "status": "open", "author": "agent:claude", "number": 7, "decision_request": {"prompt": "Who drives?"}},
+        {"id": "c5", "version": "v3", "status": "open", "author": "agent:claude", "number": 7, "origin_id": "c4", "decision_request": {"prompt": "Who drives?"}},
+        {"id": "c6", "version": "v3", "status": "open", "author": "agent:claude", "number": 8, "decision_request": {"prompt": "Done?"},
+         "decision": {"verdict": "select", "text": "Yes"}},
+        {"id": "c7", "version": "v3", "status": "open", "author": "agent:claude", "number": 9, "decision_request": {"prompt": "Later?"}, "answer_later": True},
     ]
     (page / "comments.json").write_text(json.dumps({"anchors": {"a": comments}, "archived": {}}))
     rounds = [
@@ -43,6 +49,8 @@ def test_history_record(tmp_path):
     assert newest["ovr"][0] == "overruled" and oldest["ovr"][0] == "superseded"
     assert oldest["a"] == "Yes" and oldest["n"] == 101
     assert d["versions"]["v2"] == {"t": "2026-11-02", "note": "Second, for member@example.com", "items": 2, "open": 1}
+    # an older version jumps to each question waiting now: only c5, first asked in v1 (finding 10)
+    assert d["waiting"] == [{"id": "c5", "n": 7, "q": "Who drives?", "from": "v1", "in": ["v1", "v3"]}]
     assert d["withdrawn"] == [{"n": 0, "v": "v2", "t": "2026-11-02", "q": "Old question?", "why": "not asked again"}]
     assert [p["id"] for p in d["plans"]] == ["roadmap"] and len(d["plans"][0]["revs"]) == 2
     text = json.dumps(d)
