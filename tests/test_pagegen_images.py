@@ -176,19 +176,20 @@ def test_a_picture_in_a_table_cell_is_copied_and_rendered_as_a_figure(tmp_path):
     assert f"| Review | Wide ![Built review](assets/{copy.name}) |" in (slug_dir / "source" / "v1.md").read_text()
 
 
-def test_a_missing_picture_in_a_table_cell_warns_and_stays_text(tmp_path):
-    """Pages that predate cell pictures carry dead references; they must still publish."""
+@pytest.mark.parametrize("ref, reason", [
+    ("shots/missing.png", "image not found: shots/missing.png"),
+    ("https://example.com/a.png", "image must be a local file, not a URL"),
+    ("notes.txt", "image must be a .png, .jpg, .gif or .webp file"),
+    ("fake.png", "not a readable PNG, JPEG, GIF or WebP image"),
+])
+def test_a_bad_picture_in_a_table_cell_warns_and_stays_text(tmp_path, ref, reason):
+    """Cells were plain text before, so a page that published then must still publish."""
+    write(tmp_path / "fake.png", b"<script>alert(1)</script>")
+    write(tmp_path / "notes.txt", b"text")
     slug_dir = tmp_path / "slug"
-    result = generate(page(tmp_path, "| Screen | Built |\n|---|---|\n| Review | ![](shots/missing.png) |"), slug_dir)
-    assert "table picture not found, shown as text: shots/missing.png" in result["warnings"]
-    assert "<td>![](shots/missing.png)</td>" in canvas_of(slug_dir)
-
-
-def test_a_bad_picture_in_a_table_cell_is_still_refused(tmp_path):
-    slug_dir = tmp_path / "slug"
-    with pytest.raises(PageGenError, match="image must be a local file, not a URL"):
-        generate(page(tmp_path, "| Screen | Built |\n|---|---|\n| Review | ![](https://example.com/a.png) |"), slug_dir)
-    assert not slug_dir.exists()
+    result = generate(page(tmp_path, f"| Screen | Built |\n|---|---|\n| Review | ![]({ref}) |"), slug_dir)
+    assert any(w.startswith("table picture shown as text: " + reason) for w in result["warnings"])
+    assert f"<td>![]({ref})</td>" in canvas_of(slug_dir)
 
 
 def test_portrait_pair_renders_side_by_side_and_landscape_pair_stacks(tmp_path):

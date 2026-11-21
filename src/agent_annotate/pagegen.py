@@ -57,10 +57,6 @@ class PageGenError(Exception):
     """A document the generator refuses to turn into a page."""
 
 
-class ImageMissing(PageGenError):
-    """An image path that names no file."""
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Small helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -714,7 +710,7 @@ class ImageStore:
             candidates.append(self.page_dir / path)
         found = next((c for c in candidates if c.is_file()), None)
         if found is None:
-            raise ImageMissing(f"image not found: {ref} · fix: use a path relative to the markdown file")
+            raise PageGenError(f"image not found: {ref} · fix: use a path relative to the markdown file")
         if found.stat().st_size > MAX_IMAGE_BYTES:
             raise PageGenError(f"image is over 10 MB: {ref} · fix: shrink it below 10 MB")
         data = found.read_bytes()
@@ -937,14 +933,15 @@ class Renderer:
     def _cell(self, text: str) -> str:
         """A table cell's text, each picture in it rendered as a figure (its row is the anchor).
 
-        A missing file keeps the raw reference and warns, so pages that predate cell pictures still publish.
+        A picture that can't be shown keeps its raw reference and warns: cells were plain text before,
+        so no page that published then may be refused now.
         """
         out, pos = [], 0
         for m in _CELL_IMAGE.finditer(text):
             try:
                 fig = self._figure_html(m.group(1).strip(), m.group(2))
-            except ImageMissing:
-                self.images.warnings.append(f"table picture not found, shown as text: {m.group(2)}")
+            except PageGenError as exc:
+                self.images.warnings.append(f"table picture shown as text: {exc}")
                 fig = inline(m.group(0))
             out.append(inline(text[pos:m.start()]) + fig)
             pos = m.end()
