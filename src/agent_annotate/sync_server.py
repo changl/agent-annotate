@@ -4366,11 +4366,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         }
         if content_type.startswith("application/json") and self._is_proto():
             # Prototype page: mask addresses and review keys in every JSON reply.
-            from .proto_data import scrub_json
-            if representation is not None:
-                body = gzip.decompress(representation[0]) if representation[1] else representation[0]
-                representation = None
-            body = scrub_json(body.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
+            # Masked and gzipped once per body (proto_data.packed), not per request.
+            from .proto_data import packed
+            raw, raw_gz = representation if representation is not None else (body, False)
+            representation = packed(raw, raw_gz, compressible and _accepts_gzip(self.headers.get("Accept-Encoding", "")))
         compressed = False
         if representation is not None:
             body, compressed = representation

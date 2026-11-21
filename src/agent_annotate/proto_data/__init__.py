@@ -92,6 +92,34 @@ def scrub_json(text: str) -> str:
     return text if out is None else out
 
 
+_packed: dict = {}  # (sha256 of the body as given, given gzipped, want gzip, scrub) -> the reply bytes and whether gzipped
+_packed_lock = threading.Lock()
+_PACKED_BYTES = 64 << 20
+
+
+def packed(raw: bytes, raw_gz: bool, want_gz: bool, scrubbed: bool = True) -> tuple[bytes, bool]:
+    """A reply as sent: masked (JSON) and gzipped once per body, not on every request. On a loaded host each request's CPU
+    holds the GIL every other request waits on, the version's included: 1 MB running.json and the scripts were gzipped,
+    and the meta un-gzipped and gzipped again, per read (r12 fix13 perf)."""
+    key = (hashlib.sha256(raw).digest(), raw_gz, want_gz, scrubbed)
+    if (hit := _packed.get(key)) is not None:
+        return hit
+    import gzip
+    body = gzip.decompress(raw) if raw_gz else raw
+    if scrubbed:
+        body = scrub_json(body.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
+    out = (body, False)
+    if want_gz and body:
+        gz = gzip.compress(body, compresslevel=6, mtime=0)
+        if len(gz) < len(body):
+            out = (gz, True)
+    with _packed_lock:
+        _packed[key] = out
+        while sum(len(v[0]) for v in _packed.values()) > _PACKED_BYTES and len(_packed) > 1:
+            _packed.pop(next(iter(_packed)))  # the oldest first
+    return out
+
+
 def _scrubbed(text: str) -> str:
     try:
         out = json.dumps(_walk(json.loads(text)), ensure_ascii=False, separators=(",", ":"))
@@ -133,6 +161,41 @@ def prepared(area: str, page_dir) -> bytes:
     return body
 
 
+# Areas whose builds and minute-old rebuilds take 0.3-1 s of CPU (Copy library, Pages & links, History): built in one worker
+# process with its own warm caches. In this server they held the GIL that the version and counts reads wait on, and on a
+# loaded host that turned a second of CPU into 5-25 s for every read in flight (r12 fix13 perf).
+POOLED = {"reference", "links", "history"}
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _orphan_guard(parent: int) -> None:
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(5)
+        os._exit(0)  # the server is gone: so is its worker
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def _pooled(area: str, page_dir) -> bytes:
+    global _pool
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    with _pool_lock:
+        if _pool is None:
+            import multiprocessing
+            _pool = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"),
+                                        initializer=_orphan_guard, initargs=(os.getpid(),))
+        pool = _pool
+    try:
+        return pool.submit(prepared, area, str(page_dir)).result(timeout=60)
+    except BrokenProcessPool:  # the worker died: start another next time; this read is built here
+        with _pool_lock:
+            if _pool is pool:
+                _pool = None
+        return prepared(area, page_dir)
+
+
 def serve(handler, route_path: str):
     from .. import sync_server
 
@@ -142,7 +205,9 @@ def serve(handler, route_path: str):
             html = (web / "shell.html").read_bytes()
         except OSError:
             return handler._respond(500, b'{"error":"proto shell.html missing"}')
-        return handler._respond(200, html, "text/html; charset=utf-8", cache_control=sync_server._NO_STORE)
+        gz = sync_server._accepts_gzip(handler.headers.get("Accept-Encoding", ""))
+        return handler._respond(200, b"", "text/html; charset=utf-8", cache_control=sync_server._NO_STORE,
+                                representation=packed(html, False, gz, scrubbed=False))
     if route_path.startswith("/proto/p/"):  # a read-only copy of another project's page (frame.serve_other)
         from .frame import serve_other
         if m := _COPY_META.fullmatch(route_path):  # a copy follows its real page: a newer version starts copying behind this read
@@ -152,7 +217,7 @@ def serve(handler, route_path: str):
     if match := _AREA.fullmatch(route_path):
         t0 = time.perf_counter()
         try:
-            body = prepared(match[1], handler.artifact_dir)
+            body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir)
         except Exception as exc:  # an area's bug must not take the page down
             return handler._respond(500, json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode())
         # the server's own time, so a slow reading on a busy host can be told from slow code (r12 fix12 perf)
@@ -165,4 +230,8 @@ def serve(handler, route_path: str):
     if not match or match[1].startswith(".") or ".." in match[1] or not (web / match[1]).is_file():
         return handler._respond(404, b"Not found")
     target = web / match[1]
-    return handler._respond(200, target.read_bytes(), sync_server._mime(target.suffix))
+    mime = sync_server._mime(target.suffix)
+    gz = mime.split(";")[0] in ("text/html", "text/css", "application/javascript", "image/svg+xml") and \
+        sync_server._accepts_gzip(handler.headers.get("Accept-Encoding", ""))
+    # gzipped once per file content, not on each of the dozen reads a reload makes (r12 fix13 perf)
+    return handler._respond(200, b"", mime, representation=packed(target.read_bytes(), False, gz, scrubbed=False))
