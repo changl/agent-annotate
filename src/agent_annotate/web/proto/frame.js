@@ -94,8 +94,11 @@
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
       .then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
+    // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
+    if (area === 'running') { const n = ++runSeq; p.then(r => n === runSeq && putRun(r), () => n === runSeq && putRun(null, true)); }
     return p;
   };
+  let runSeq = 0;
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
   // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
@@ -122,15 +125,23 @@
     try { Object.keys(localStorage).filter(k => k.startsWith('annotate-proto:') && DRAFT.test(k.slice(15).replace(/^p\/[a-z0-9-]+:/, ''))).forEach(k => localStorage.removeItem(k)); } catch {}
   }
   // Folded sections (#80): every <details> an area draws, by tab and its summary, kept only while the switch is on.
-  const foldKey = d => S.tab + ':' + (d.id || d.className + ':' + ((d.querySelector('summary') || {}).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60));
+  // Reference draws one item at a time, so its folds belong to that item: two checklists with as many revisions never share one
+  const foldBase = d => S.tab + (S.tab === 'reference' ? '/' + (location.hash.split('/')[1] || '') : '') + ':' + (d.id || d.className + ':' + ((d.querySelector('summary') || {}).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60));
+  // folds that look alike (every Analytics "Table") are told apart by their order on the page, so each keeps its own (r12 audit14 frame 3)
+  function foldKeys() {
+    const seen = {}, m = new Map();
+    for (const d of document.querySelectorAll('#p-main details')) { const k = foldBase(d), n = seen[k] = (seen[k] || 0) + 1; m.set(d, n > 1 ? k + '#' + n : k); }
+    return m;
+  }
   function saveFold(e) {
     const d = e.target;
     if (!(d instanceof HTMLDetailsElement) || !d.closest('#p-main') || S.home || !remember('folds')) return;
-    prefs.set('folds', {...prefs.get('folds', {}), [foldKey(d)]: d.open});
+    prefs.set('folds', {...prefs.get('folds', {}), [foldKeys().get(d) || foldBase(d)]: d.open});
   }
   function restoreFolds(el) {
-    const on = remember('folds'), f = on ? prefs.get('folds', {}) : {};
-    el.querySelectorAll('details:not([data-pf])').forEach(d => { d.dataset.pf = '1'; const v = f[foldKey(d)]; if (on && v != null && d.open !== v) d.open = v; });
+    const on = remember('folds'), f = on ? prefs.get('folds', {}) : {}, fresh = el.querySelectorAll('details:not([data-pf])');
+    const ks = fresh.length ? foldKeys() : null;
+    fresh.forEach(d => { d.dataset.pf = '1'; const v = f[ks.get(d) || foldBase(d)]; if (on && v != null && d.open !== v) d.open = v; });
     // Questions' document sections fold with their own button (data-sfold, aria-expanded): pressed once, the first time each shows (#4)
     if (on) el.querySelectorAll('button[data-sfold]').forEach(b => {
       const k = S.tab + ':s:' + b.dataset.sfold, v = f[k];
@@ -343,7 +354,7 @@
   const waitTasks = () => { const b = board(); return b && Array.isArray(b.waiting) ? [...b.waiting].sort((a, c) => (c[2] ? 1 : 0) - (a[2] ? 1 : 0)) : []; };
   function beadsCtl(phone) {
     const b = board(), ready = readyHere(), wy = waitTasks(), wyN = wy.length;
-    if (S.other || (!b && !S.boardUrl)) return '';
+    if (S.other || (!b && !S.boardUrl && !prefs.get('hadBoard', false))) return '';
     // an unread board has no counts: never "Nothing ready" or "0 tasks", as Tasks (r12 fix14 frame)
     // before its first read the board is unknown, not empty: Questions' read may hold it back (r12 audit13 frame 2)
     const unread = !!(S.runErr || (b && b.error)), unknown = !b && !unread;
@@ -483,7 +494,15 @@
   function drawAll() { drawTop(); drawFab(); drawLayer(); }
   // Running's data: workers, scheduled jobs and the bead board, for the top bar and Home
   // runErr: the whole read failed (HTTP 503, no answer): Beads says the board could not be read, as Tasks does (r12 audit13 questions 4)
-  const readRun = () => data('running').then(r => { S.run = r || null; S.runErr = false; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null; }).catch(() => { S.runErr = true; S.ready = null; });
+  // a board once read keeps Beads in the header, so a failed read says so instead of dropping it (r12 audit14 running 3)
+  function putRun(r, err) {
+    if (err) { S.runErr = true; S.ready = null; } else {
+      S.run = r || null; S.runErr = false; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null;
+      if (r && r.board && !prefs.get('hadBoard', false)) prefs.set('hadBoard', true);
+    }
+    if (started) { drawTop(); if (S.menu === 'nav') drawLayer(); }
+  }
+  const readRun = () => data('running').then(() => {}, () => {});
   // Questions' three counts, read from one load and painted together: Send, the waiting badge and the Questions tab's chip.
   // A reload and a newer version show them with the version they belong to, never one before the others (r12 fix10 frame 1, running 2)
   const chipVal = c => c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
@@ -962,7 +981,7 @@
     route();
     addEventListener('hashchange', route);
     // the board comes from the same read as Running's: Beads changes in the same paint as Tasks, not after Questions (r12 audit13 running 4)
-    readRun().then(() => { drawTop(); if (S.menu === 'nav') drawLayer(); });
+    readRun();  // putRun paints Beads when it lands
     if (S.loadedV || S.warm) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
