@@ -1,10 +1,10 @@
-/* Reference tab: plans by topic, the go-live checklist, Windmill workflows and the project's documents (build-list stage 3).
-   Ported from round9/final/mock.html (reference, viewer, checklistHtml, ftree, docList) onto the module contract.
+/* Reference tab: plans by topic, the go-live checklist, Windmill workflows, designs, app text and findings (build-list stage 3); documents are in Pages & links.
+   Ported from round9/final/mock.html (reference, viewer, checklistHtml, ftree, the copy library's pairs view) onto the module contract.
    Saves use today's endpoints: api/plan-topics (rename, combine, move) and api/comments (notes, Undo = DELETE). */
 (function () {
   const P = window.Proto;
-  const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), dk: '', dsel: '', open: new Set(),
-    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map()};  // reopen: finding -> why, in memory only (the prototype sends nothing)
+  const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), open: new Set(),
+    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map(), cp: new Map(), cpEd: '', cq: ''};  // reopen and cp (copy-library choices): in memory only, the prototype sends nothing
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
@@ -17,10 +17,9 @@
   const ico = (n, l) => P.icon(n, l), pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
   const esc = s => ctx.esc(s);
   const dm = s => { const d = new Date(String(s).slice(0, 10) + 'T12:00'); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
-  const KN = {plan: 'Plans', check: 'Checklists', design: 'Diagrams and designs', text: 'App text', data: 'Sheets and findings', flow: 'Workflows', mem: 'Memory', doc: 'Documents'};
+  const KN = {plan: 'Plans', check: 'Checklists', design: 'Diagrams and designs', text: 'App text', data: 'Sheets and findings', flow: 'Workflows', mem: 'Memory'};  // documents: Pages & links
   const KG = {...KN, decision: 'Decisions'};  // group names: decisions are plans, listed apart from the topics
   const SN = {prop: ['Proposed', 'Waits on your decision: something the agent proposed'], ok: ['Approved', 'You approved it, or it was decided'], ref: ['For reference', 'Kept for looking things up']};
-  const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const BST = {closed: 'done', 'in progress': 'progress', blocked: 'blocked', deferred: 'waiting', open: 'none'};
 
   /* ---------- changed since you last looked: one time per entry, kept in this browser ---------- */
@@ -38,17 +37,16 @@
   function rows() {
     const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: stOf(p),
       g: p.kind !== 'plan' ? 'k:' + p.kind : p.id.startsWith('decision-') ? 'k:decision' : 't:' + p.topic, p, stamp: lastTs(p), s: p.topic}));
-    for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: x.find ? `${dm(x.d)} · ${pl(x.find.items.length, 'finding', 'findings')}` : `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`, kind: x.kind, st: stOf(x),
-      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: (x.md || (x.parts ? JSON.stringify(x.parts) : '') || (x.find ? x.find.conclusion + ' ' + x.find.items.map(f => f.label + ' ' + f.text).join(' ') : '') || x.note || '').slice(0, 20000)});  // finds words inside them too
+    for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: x.m || (x.find ? `${dm(x.d)} · ${pl(x.find.items.length, 'finding', 'findings')}` : `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`), kind: x.kind, st: stOf(x),
+      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: (x.md || (x.parts ? JSON.stringify(x.parts) : '') || (x.find ? x.find.conclusion + ' ' + x.find.items.map(f => f.label + ' ' + f.text).join(' ') : '')
+        || (x.copy ? x.copy.map(c => c[0] + ' ' + c[1]).join(' ') : '') || (x.fset ? x.fset.items.map(f => f.t + ' ' + f.a).join(' ') : '') || (x.blocks ? x.blocks.map(b => b[0] === 'img' ? b[2] : b[1]).join(' ') : '') || x.note || '').slice(0, 60000)});  // finds words inside them too
     for (const f of D.flows) out.push({id: f.id, t: f.t, m: `Windmill · runs ${f.when} · ${pl(nSteps(f.steps), 'step', 'steps')} · ${f.last ? `last run ${dm(f.last.at)}, ${f.last.ok ? 'passed' : 'failed'}` : 'not run yet'}`,
       kind: 'flow', st: 'ref', g: 'k:flow', f, stamp: f.edited, s: f.what + ' ' + JSON.stringify(f.steps.map(x => x.n))});
     out.forEach(r => r.ch = changed(r.id, r.stamp));
     out.push({id: 'mem:later', t: 'Memory tree', m: 'later: what the agents remember about this project, as a tree you can open', kind: 'mem', st: 'ref', g: 'k:mem', later: true});
     return out;
   }
-  const docId = f => 'doc:' + [f.g, f.sub, f.n].filter(Boolean).join('/');
-  const docs = () => D.docs.files.map(f => ({...f, id: docId(f), ch: changed(docId(f), f.d)}));
-  const countChanged = () => rows().filter(r => r.ch).length + docs().filter(f => f.ch).length;
+  const countChanged = () => rows().filter(r => r.ch).length;
 
   /* ---------- notes: any line, table, picture, chart or step takes one ---------- */
   const allNotes = () => [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))];
@@ -223,30 +221,27 @@
   }
 
   function list() {
-    const R = rows(), F = docs(), q = S.q.toLowerCase();
-    const hit = r => !q || (r.t + ' ' + r.m + ' ' + (r.s || '')).toLowerCase().includes(q), dhit = f => !q || (f.n + ' ' + f.sub + ' ' + (D.docs.groups[f.g] || '')).toLowerCase().includes(q);
+    const R = rows(), q = S.q.toLowerCase();
+    const hit = r => !q || (r.t + ' ' + r.m + ' ' + (r.s || '')).toLowerCase().includes(q);
     const inSt = r => S.sec === 'all' || r.st === S.sec, inK = r => !S.kind || r.kind === S.kind;
-    const shown = R.filter(r => hit(r) && inSt(r) && inK(r)), docsOn = F.length > 0 && (!S.kind || S.kind === 'doc') && (S.sec === 'all' || S.sec === 'ref');
-    const nd = F.filter(dhit).length;
-    const stN = s => R.filter(r => hit(r) && inK(r) && (s === 'all' || r.st === s)).length + ((!S.kind || S.kind === 'doc') && (s === 'all' || s === 'ref') ? nd : 0);
-    const kN = k => k === 'doc' ? (S.sec === 'all' || S.sec === 'ref' ? nd : 0) : R.filter(r => hit(r) && inSt(r) && r.kind === k).length;
+    const shown = R.filter(r => hit(r) && inSt(r) && inK(r));
+    const stN = s => R.filter(r => hit(r) && inK(r) && (s === 'all' || r.st === s)).length;
+    const kN = k => R.filter(r => hit(r) && inSt(r) && r.kind === k).length;
     // topics first (the mock's left column), then the kinds in their chip order
     const KO = [...Object.keys(KN), 'decision'], o = g => g[0] === 't' ? (g === 't:Plans' ? 99 : D.topics.indexOf(g.slice(2))) : 100 + KO.indexOf(g.slice(2));
     const gs = [...new Set(shown.map(r => r.g))].sort((a, b) => o(a) - o(b));
-    const nch = R.filter(r => r.ch).length + F.filter(f => f.ch).length;
-    const kinds = Object.keys(KN).filter(k => k === 'doc' ? F.length : R.some(r => r.kind === k));  // FastLane Drive has no app text; a copy has no project files
+    const nch = R.filter(r => r.ch).length;
+    const kinds = Object.keys(KN).filter(k => R.some(r => r.kind === k));  // FastLane Drive has no app text
     const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find a plan, checklist, design or workflow" aria-label="Find in Reference" value="${esc(S.q)}">
       <span class="rf-chips" role="group" aria-label="State">${['all', 'prop', 'ok', 'ref'].map(s => `<button class="chipb" data-sec="${s}" aria-pressed="${S.sec === s}" title="${s === 'all' ? 'Every item' : esc(SN[s][1])}">${s === 'all' ? 'All' : SN[s][0]} <span class="n">${stN(s)}</span></button>`).join('')}</span>
-      <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${kinds.map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k === 'doc' ? 'doc' : k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
+      <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${kinds.map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
       <span class="spacer"></span><span class="small mut rf-chl">${nch ? `${chg} ${pl(nch, 'item changed', 'items changed')} since you last looked · <button class="lk small" data-allseen>Mark all as seen</button>` : 'Nothing changed since you last looked'}</span></div>`;
     const lst = gs.length ? `<div class="r8list">${gs.map(g => { const rs = shown.filter(r => r.g === g);
-      return `<div class="r8g">${g[0] === 't' ? topicHead(g.slice(2), rs.length) : `<div class="r8gh">${ico(g === 'k:decision' ? 'plan' : g.slice(2))}<span class="gt">${KG[g.slice(2)]}</span><span class="n">${rs.length}</span></div>`}${(g === 'k:decision' && !q && !S.open.has(g) ? rs.slice(0, 6) : rs).map(r => r.kind === 'flow' ? flowRow(r) : row(r)).join('')}${g === 'k:decision' && !q && rs.length > 6 ? `<button class="lk small rf-more" data-fold="${g}">${S.open.has(g) ? 'Show the first 6' : `Show all ${rs.length}`}</button>` : ''}</div>`; }).join('')}</div>` : (docsOn && nd ? '' : '<p class="mut">Nothing matches.</p>');
-    return [bar + lst, docsOn ? docList(F.filter(dhit), F.length) : ''];  // documents go under the opened item, never between the list and it
+      return `<div class="r8g">${g[0] === 't' ? topicHead(g.slice(2), rs.length) : `<div class="r8gh">${ico(g === 'k:decision' ? 'plan' : g.slice(2))}<span class="gt">${KG[g.slice(2)]}</span><span class="n">${rs.length}</span></div>`}${(g === 'k:decision' && !q && !S.open.has(g) ? rs.slice(0, 6) : rs).map(r => r.kind === 'flow' ? flowRow(r) : row(r)).join('')}${g === 'k:decision' && !q && rs.length > 6 ? `<button class="lk small rf-more" data-fold="${g}">${S.open.has(g) ? 'Show the first 6' : `Show all ${rs.length}`}</button>` : ''}</div>`; }).join('')}</div>` : '<p class="mut">Nothing matches.</p>';
+    return bar + lst;
   }
 
-  /* ---------- documents: this project's files, like Finder's list view ---------- */
-  const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
-  const path = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
+  /* ---------- Markdown as blocks ---------- */
   function mdBlocks(t) {
     const out = [], L = t.replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
     let i = 0, para = [];
@@ -263,23 +258,6 @@
     }
     flush();
     return out;
-  }
-  function docView(f) {
-    const k = 'doc:' + f.id.slice(4);
-    return `<div class="viewer rf-docv"><div class="rf-acts"><span class="rf-dk k-md">${ico('file-md')}</span><b>${esc(f.n)}</b><span class="small mut">${esc(D.docs.groups[f.g] || '')}${f.sub ? ' / ' + esc(f.sub) : ''} · ${kb(f.kb)} · changed ${esc(dm(f.d))}</span><span class="spacer"></span><button class="btn sm" data-dopen="${esc(f.id)}">${ico('x')}Close</button></div>
-      <div class="doc">${mdBlocks(f.md).map((b, i) => block(b, `${k}~${i}`)).join('')}</div>
-      ${noteList(k + '~all')}<div class="rf-acts"><button class="btn sm" data-note="${esc(k)}~all">${ico('note')}Write a note</button><span class="small mut">Click any line to write a note on it</span></div></div>`;
-  }
-  function docList(F, total) {
-    const kinds = Object.keys(DK).filter(k => F.some(f => f.k === k)), sh = F.filter(f => !S.dk || f.k === S.dk);
-    const gs = Object.keys(D.docs.groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
-    const dic = k => `<span class="rf-dk k-${k}" title="${DK[k][1]}">${ico(DK[k][0], DK[k][1])}</span>`;
-    const drow = f => `<div class="doc9"${S.dsel === f.id ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="nm" data-dopen="${esc(f.id)}" ${f.md ? `aria-expanded="${S.dsel === f.id}" title="Open it here"` : 'title="Opens in a new tab"'}>${esc(f.n)}${f.md ? '' : ' ↗'} ${f.ch ? chg : ''}${f.sub ? `<span class="sub">${esc(f.sub)}</span>` : ''}</button><span class="sz">${kb(f.kb)}</span><span class="d9t">${esc(dm(f.d))}</span><button class="ib" data-copy="${esc(path(f))}" data-what="Path" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${ico('copy')}</button></div>${S.dsel === f.id && f.md ? docView(f) : ''}`;
-    return `<section class="rf-docs" aria-label="Documents"><div class="r8gh rf-dh">${ico('doc')}<span class="gt">Documents</span><span class="n">${pl(total, 'file', 'files')} in this project's folder · Markdown opens here, other kinds in a new tab</span></div>
-      <div class="docbar"><button class="chipb" data-dk="" aria-pressed="${!S.dk}">All <span class="n">${F.length}</span></button>${kinds.map(k => `<button class="chipb" data-dk="${k}" aria-pressed="${S.dk === k}" title="Only ${DK[k][1]} files">${dic(k)}${DK[k][1]} <span class="n">${F.filter(f => f.k === k).length}</span></button>`).join('')}</div>
-      ${gs.map(g => { const l = sh.filter(f => f.g === g), key = 'dg:' + g, op = !!S.q || S.open.has(key) || sh.some(f => f.id === S.dsel && f.g === g), all = S.open.has('dga:' + g), nchg = l.filter(f => f.ch).length;
-        return `<div class="rf-grp"><button class="fold" data-fold="${esc(key)}" aria-expanded="${op}"><span>${esc(D.docs.groups[g])}</span> <span class="small mut">${pl(l.length, 'file', 'files')}${nchg ? ` · ${nchg} changed` : ''}</span></button>
-          ${op ? l.slice(0, all ? l.length : 8).map(drow).join('') + (l.length > 8 ? `<button class="lk small rf-more" data-fold="dga:${esc(g)}">${all ? 'Show the first 8' : `Show all ${l.length}`}</button>` : '') : ''}</div>`; }).join('') || '<p class="mut">No document matches.</p>'}</section>`;
   }
 
   /* ---------- the go-live checklist: one row per item, filter chips as on GitHub's issue list ---------- */
@@ -358,11 +336,45 @@
       ${items}<details class="ddet"><summary>${pl(b.limits.length, 'limit', 'limits')} of this audit</summary><ul>${b.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>
       ${foot(k, stOf(x), '', 'Click a finding, its proof or the conclusion to write a note on it')}`;
   }
+  const head = x => `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.m || x.from)} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>`;
+  // the app's text library, as the mock's pairs view: Needs you first, 20 a group; every action is kept in memory and sends nothing
+  const RTE = [['bold', '<b>B</b>'], ['italic', '<i>I</i>'], ['strikeThrough', '<s>S</s>'], ['formatBlock:h3', 'Heading'], ['formatBlock:blockquote', 'Quote'], ['insertUnorderedList', '• List'], ['createLink', 'Link'], ['undo', '↶ Undo'], ['redo', '↷ Redo']];
+  const CST = {ok: '✓ Approved', held: 'Held back', old: 'Earlier wording chosen', edit: 'Edited'};
+  function copyView(x) {
+    const k = 'ref:' + x.id, q = (S.cq || '').toLowerCase(), rank = s => s === 'Done' ? 2 : s === 'Held back' ? 1 : 0, ckOf = i => `${k}~c~${i}`;
+    const L = x.copy.map((c, i) => [c, i]).filter(([c]) => !q || (c[0] + ' ' + c[1]).toLowerCase().includes(q));
+    const held = x.copy.filter((c, i) => { const s = S.cp.get(ckOf(i)); return s ? s.st === 'held' : c[2] === 'Held back'; }).length;
+    const grp = r => { const rs = L.filter(([c]) => rank(c[2]) === r), fk = `cpall:${x.id}:${r}`, all = S.open.has(fk) || !!q, n = rs.length;
+      if (!n) return '';
+      return `<tr><td colspan="3" class="small"><b>${['Needs you', 'Held back', 'Done'][r]}</b> <span class="mut">· ${pl(n, 'line', 'lines')}</span></td></tr>${(all ? rs : rs.slice(0, 20)).map(([[key, y, nd, old, alts], i]) => {
+        const ck = ckOf(i), s = S.cp.get(ck), ed = S.cpEd === ck, txt = s && s.st === 'old' ? esc(old) : s && s.st === 'edit' ? esc(s.text) : old && old !== y ? wdiff(old, y) : esc(y);
+        return `<tr><td class="rf-ck"><b>${esc(key)}</b><br><span class="tag">${esc(nd)}</span>${alts.length ? ` <span class="small mut">${pl(alts.length, 'other wording', 'other wordings')}, under Edit</span>` : ''}</td><td ${ed ? '' : at(ck, key)}>${ed ? '' : pin(ck)}${txt}${s ? `<span class="cst">${CST[s.st]}</span>${P.inertMark()}` : ''}${ed ? `<div class="rf-acts rf-rtb">${RTE.map(([c, l]) => `<button class="btn sm" data-rte="${c}">${l}</button>`).join('')}</div><div class="rf-rte" contenteditable="true" aria-label="Edit the text of ${esc(key)}">${esc(y)}</div>
+          ${alts.length ? `<div class="small mut">Other wordings: ${alts.map(a => `<button class="lk small" data-cpalt="${esc(a)}" title="Put this wording in the editor">${esc(cutq(a))}</button>`).join(' · ')}</div>` : ''}<div class="rf-acts"><button class="btn sm pri" data-cpsave="${esc(ck)}">Save</button><button class="btn sm" data-cpcancel>Cancel</button></div>` : ''}${noteList(ck)}</td>
+          <td class="rf-cact">${s ? `<button class="lk small" data-cpundo="${esc(ck)}">Undo</button>` : ed ? '' : `<button class="lk small" data-cpst="${esc(ck)}|ok">Approve</button> · <button class="lk small" data-cpst="${esc(ck)}|held">Hold back</button> · <button class="lk small" data-cped="${esc(ck)}">Edit</button>${old && old !== y ? ` · <button class="lk small" data-cpst="${esc(ck)}|old">Use earlier</button>` : ''}`}</td></tr>`; }).join('')}${n > 20 && !q ? `<tr><td colspan="3" class="small mut">${all ? `All ${n} shown` : `20 of ${n} shown`} · <button class="lk small" data-fold="${esc(fk)}" aria-expanded="${all}">${all ? 'Show the first 20' : `Show all ${n}`}</button></td></tr>` : ''}`; };
+    return `${head(x)}<p class="small mut">Lines that need you come first. Click a piece of text to write a note on it, or select words; approve, hold back, edit, or go back to the earlier wording.</p>
+      <div class="r8bar"><input type="search" id="rf-cq" placeholder="Find a piece of text or its key" aria-label="Find in the copy library" value="${esc(S.cq || '')}">${q ? `<span class="small mut">${pl(L.length, 'line matches', 'lines match')}</span>` : ''}</div>
+      <div class="tblw rf-copy"><table><tbody>${[0, 1, 2].map(grp).join('') || '<tr><td class="mut">Nothing matches.</td></tr>'}</tbody></table></div>
+      ${held > 1 ? `${noteList(k + '~held')}${S.note === k + '~held' ? '' : `<button class="btn sm" data-note="${esc(k)}~held">${ico('note')}Ask one question about the ${held} held-back lines</button>`}` : ''}
+      <p class="small mut">Earlier wording: the text before its latest change; newest: as it reads now. Removed words are struck, new words marked.</p>
+      ${foot(k, stOf(x), '', 'Click a piece of text, or select words, to write a note on it')}`;
+  }
+  // a findings set from the page's own register, as Rebex shows it: each finding, his answer and where it stands
+  const FST = {needs: 'Needs you', ready: 'Ready', waiting: 'Waiting on the agent', done: 'Done'};
+  function setView(x) {
+    const k = 'ref:' + x.id, F = x.fset.items, n = s => F.filter(f => f.st === s).length;
+    return `${head(x)}${x.fset.intro ? `<p ${at(k + '~i', 'Intro')}>${pin(k + '~i')}${esc(x.fset.intro)}</p>${noteList(k + '~i')}` : ''}
+      <div class="tiles">${[['needs', 'need you'], ['waiting', 'waiting on the agent: agreed, not done yet'], ['done', 'done']].map(([s, w]) => `<div><b>${n(s)}</b><span>${w}</span></div>`).join('')}</div>
+      <div class="doc">${block(['tbl', '', [['#', 'Finding', 'Your answer', 'Status'], ...F.map(f => [String(f.n), f.t + (f.why ? ' — ' + f.why : ''), f.a || '—', FST[f.st] + (f.note ? ' · ' + f.note : '')])], true], k + '~t')}</div>
+      ${foot(k, stOf(x), '', 'Click a finding to write a note on it')}`;
+  }
   function extraView(x) {
     if (x.find) return findView(x);
-    const k = 'ref:' + x.id, B = x.img ? [['img', x.img, x.note]] : x.md ? mdBlocks(x.md) : x.parts ? x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]) : [];
+    if (x.copy) return copyView(x);
+    if (x.fset) return setView(x);
+    const k = 'ref:' + x.id, B = x.blocks ? x.blocks.map(b => b[0] === 'img' ? ['img', new URL(b[1], location.origin + ctx.base).href, b[2]] : b)
+      : x.img ? [['img', x.img, x.note]] : x.md ? mdBlocks(x.md) : x.parts ? x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]) : [];
     // a designed message shows as the member sees it, sandboxed: no scripts run and its links go nowhere
-    const body = x.html ? `<iframe class="rf-embed" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
+    const body = x.html ? `<iframe class="rf-embed${x.wide ? ' wide' : ''}" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
     return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · changed ${esc(dm(x.d))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       ${x.note && (x.html || B.length) && !x.img ? `<p class="small mut">${esc(x.note)}</p>` : ''}<div class="doc">${body}</div>
       ${foot(k, stOf(x), '', 'Click any line or row, or select words, to write a note on them')}`;
@@ -387,8 +399,7 @@
     if (!here()) return;
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
     const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
-    const [lst, dl] = list();
-    el.innerHTML = `<div class="rf">${lst}${viewer()}${dl}${zoomView()}</div>`;
+    el.innerHTML = `<div class="rf">${list()}${viewer()}${zoomView()}</div>`;
     const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
@@ -439,23 +450,29 @@
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
-    if (d.allseen !== undefined) { markSeen([...rows().map(r => r.id), ...docs().map(f => f.id)]); return draw(); }
+    if (d.allseen !== undefined) { markSeen(rows().map(r => r.id)); return draw(); }
     if (d.fx) { S.fx.has(d.fx) ? S.fx.delete(d.fx) : S.fx.add(d.fx); return draw(); }
     if (d.rv !== undefined) { S.rv[S.sel] = +d.rv; return draw(); }
     if (d.marks !== undefined) { S.marks = !S.marks; return draw(); }
     if (d.clf !== undefined) { if (!d.clf) S.clf.clear(); else S.clf.has(d.clf) ? S.clf.delete(d.clf) : S.clf.add(d.clf); return draw(); }
-    if (d.dk !== undefined) { S.dk = d.dk; return draw(); }
     if (d.fold) { S.open.has(d.fold) ? S.open.delete(d.fold) : S.open.add(d.fold); return draw(); }
     if (d.copy) return copy(d.copy, d.what || (d.copy.startsWith('~/') ? 'Path' : 'Text'));
     if (d.link) return copy(location.origin + location.pathname + '#reference/' + encodeURIComponent(d.link), 'Link');
-    if (d.dopen) {
-      const f = docs().find(x => x.id === d.dopen);
-      if (!f) return;
-      markSeen([f.id]);
-      // shortcut: no route serves the project's files yet, so the prototype says what opens; its path still copies beside it
-      if (!f.md) return ctx.toast(`Opens “${f.n}” in a new tab${f.k === 'pdf' ? '; PDFs open in place later' : ''}`, {inert: true});
-      S.dsel = S.dsel === f.id ? '' : f.id; S.note = ''; return draw();
+    if (d.cpst) {  // Approve, Hold back or Use earlier: kept in memory, the copy sends nothing
+      const [ck, st] = d.cpst.split('|'), was = S.cp.get(ck);
+      S.cp.set(ck, {st}); draw();
+      return ctx.inert(st === 'ok' ? 'Text approved' : st === 'held' ? 'Text held back' : 'Earlier wording chosen', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
+    if (d.cpundo) { const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }); }
+    if (d.cped) { S.cpEd = d.cped; draw(); const t = el.querySelector('.rf-rte'); if (t) t.focus(); return; }
+    if (d.cpalt !== undefined) { const t = el.querySelector('.rf-rte'); if (t) t.textContent = d.cpalt; return; }  // an earlier wording into the editor
+    if (d.rte) { document.execCommand(d.rte.split(':')[0], false, d.rte.split(':')[1] || (d.rte === 'createLink' ? prompt('Link address') || '' : undefined)); return; }
+    if (d.cpsave) {
+      const ck = d.cpsave, t = el.querySelector('.rf-rte'), was = S.cp.get(ck);
+      S.cp.set(ck, {st: 'edit', text: t ? t.innerText.trim() : ''}); S.cpEd = ''; draw();
+      return ctx.inert('Edit saved', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
+    }
+    if (d.cpcancel !== undefined) { S.cpEd = ''; return draw(); }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
     if (d.zoom) {
@@ -535,6 +552,7 @@
   }
   function onInput(e) {
     if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
+    if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
     if (here() && e.target.dataset.reopen) S.reopen.set(e.target.dataset.reopen, e.target.value);
   }  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
@@ -558,6 +576,7 @@
         main._rf = true;
         main.addEventListener('click', onClick); main.addEventListener('change', onChange);
         main.addEventListener('input', onInput); main.addEventListener('keydown', onKey);
+        main.addEventListener('mousedown', e => { if (e.target.closest('[data-rte]')) e.preventDefault(); });  // the editor keeps its selection
         document.addEventListener('keydown', onDocKey, true);  // Esc closes the picture viewer wherever the focus is
       }
       draw();

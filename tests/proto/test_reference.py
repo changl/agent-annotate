@@ -40,7 +40,7 @@ def test_build(page):
     assert plans["go-live-checklist"]["kind"] == "check"
     assert d["checklist"]["items"] == [["iOS", "Sign-in works", "done", "Ops", "FLD-abc1"]]  # unknown state row dropped
     assert d["beads"] == {"FLD-abc1": ["Sign in", "open"], "FLD-xyz9": ["UAT", "closed"]}
-    assert d["flows"] == [] and d["docs"] == {"files": [], "groups": {}}
+    assert d["flows"] == [] and "docs" not in d  # documents are listed in Pages & links only
     assert [n["id"] for n in d["notes"]] == ["c1"]  # deleted and non-Reference notes left out
     assert d["notes"][0]["target"]["offset"] == {"dx": 0.25, "dy": 0.5}  # a spot note keeps its spot
     assert d["extras"] == []
@@ -64,7 +64,7 @@ def test_copy_gets_its_findings_register_not_fld_files(page, tmp_path, monkeypat
     monkeypatch.setattr(reference, "extras", lambda: [{"id": "chapter-owner-list"}])
     monkeypatch.setattr(reference, "flows", lambda: [{"id": "flow:x"}])
     d = reference.build(page)
-    assert d["flows"] == [] and d["docs"]["files"] == []
+    assert d["flows"] == [] and "docs" not in d
     [x] = d["extras"]
     assert x["id"] == "find:burnt-damascus-etching-audit-2026-10-27" and x["t"] == "Etching audit: Burnt Damascus knives" and x["kind"] == "data"
     f = x["find"]
@@ -148,3 +148,38 @@ def test_board_reads_only_the_projects_own_board(monkeypatch):
     assert reference.board("rebex") == {"RBX-1": ["T", ""]} and calls[0][:4] == ["bd", "-C", "/boards/rebex", "--readonly"]
     calls.clear()
     assert reference.board("leadory") == {} and calls == []
+
+
+def _rev(i, t):
+    return {"id": i, "delta": {"ops": [{"insert": t}]}}
+
+
+def test_copy_library_lists_every_line_needs_you_first(tmp_path):
+    """Rebex's App text (audit3 finding 2): each piece of text, its state, the wording before it, Needs you first."""
+    (tmp_path / "copy.json").write_text(json.dumps({"blocks": [
+        {"id": "a", "title": "Footer", "status": "done", "current": "r1", "revisions": [_rev("r1", "Ship fast")]},
+        {"id": "b", "title": "Hero", "status": "needs_you", "current": "r2", "revisions": [_rev("r1", "Old hero"), _rev("r2", "New hero for a@b.com")]},
+        {"id": "c", "title": "Terms", "status": "held", "current": "r1", "revisions": [_rev("r1", "Terms text"), _rev("r2", "Terms proposed")]}]}))
+    x = reference.copy_library(tmp_path)
+    assert [c[:4] for c in x["copy"]] == [["Hero", "New hero for member@example.com", "Needs you", "Old hero"],
+                                         ["Terms", "Terms text", "Held back", ""], ["Footer", "Ship fast", "Done", ""]]
+    assert x["copy"][0][4] == ["Old hero"] and x["copy"][1][4] == ["Terms proposed"] and x["m"] == "3 pieces of text · 1 needs you · 1 held back · 1 done"
+    assert reference.copy_library(tmp_path / "none") is None
+
+
+def test_finding_status_follows_the_live_findings_view():
+    """The live register's rule (findings.js statusOf): agreed-to-fix waits on the agent, keep is done, fixed is done."""
+    fs = reference._finding_status
+    assert fs({}) == "needs" and fs({"response_text": "On it"}) == "waiting" and fs({"fixed": True}) == "done"
+    assert fs({"decision": {"verdict": "select", "option_id": "fix"}}) == "waiting"
+    assert fs({"decision": {"verdict": "select", "option_id": "keep"}}) == "done"
+    assert fs({"decision": {"verdict": "select", "text": "Keep it"}, "decision_request": {"options": [{"id": "keep", "label": "Keep it"}]}}) == "done"
+
+
+def test_route_animation_is_listed_with_its_note_only(tmp_path):
+    """FastLane Drive's approved route animation (audit3 finding 8) is named by the UI lead's approvals; that record is not shown as the item."""
+    p = tmp_path / "planning/operations/orchestration/run_c9d587c967ba/reports/ui-lead"
+    p.mkdir(parents=True)
+    (p / "approved.md").write_text("# Approved\n\nthinking animation")
+    x = {i["id"]: i for i in reference.extras(tmp_path)}["route-animation"]
+    assert x["md"] == "" and "recordings are not on this Mac" in x["note"]

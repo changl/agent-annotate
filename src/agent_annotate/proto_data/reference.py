@@ -1,4 +1,5 @@
-"""Reference tab data: the page's plans by topic, the go-live checklist, Windmill workflows and the project's documents.
+"""Reference tab data: the page's plans by topic, the go-live checklist, Windmill workflows and the project's files and findings.
+(The project's documents are listed in Pages & links only; documents() serves it.)
 
 Reads the page dir; reads the page's own project's board (bd --readonly), FastLane Drive's project folder and the round-9 Windmill
 snapshot, all read only. Writes nothing.
@@ -203,13 +204,19 @@ EXTRAS = [
     ("email-designs", "Email change messages, alternate designs", "design", "prop", "design/alt-emails-v1/app/m3-confirm.html"),
     ("drive-screens", "Drive screens, before and after", "design", "ref", "design/page-v135/shots/390-screen-47-compare.png"),
     ("design-tokens", "Design tokens and platform mapping", "design", "ref", "design/tokens.json"),
+    # the approved "finding the way back" thinking animation (card 4909); its file names it, the recordings are not on this Mac
+    ("route-animation", "Route thinking animation; app store drive video", "design", "ref",
+     "planning/operations/orchestration/run_c9d587c967ba/reports/ui-lead/approved.md"),
     ("chapter-owner-list", "Chapter owner list; tester sheet", "data", "ref", "FLD Chapter Owner List.xlsx"),
     ("ask-nicole-word", "Ask Nicole, edited Word file", "data", "ref", "Ask-Nicole (edited).docx"),
 ]
 NOTE = {"store-review-notes": "Google Play review notes · the trader guide is left out: it holds a home address",
         "email-designs": "the “confirm your new email” message as the member sees it, 1 of 10 screens · addresses and links masked",
         "drive-screens": "Screen 47 on a phone: before and after, round 135",
+        "route-animation": "Opens here: a video player that takes a note at a moment. Not in this copy: the approved thinking animation's "
+                           "recordings are not on this Mac, and the only videos here are members' own uploads, private to them.",
         "chapter-owner-list": "a sheet of member names and contacts · its rows stay out of this copy"}
+NOTE_ONLY = {"route-animation"}  # listed with its note; the file is a record of approvals, not the item itself
 KIT_CSS = "design/apps-v2/kit/fld.css"
 
 
@@ -232,7 +239,7 @@ def extras(root: Path = FLD_DIR) -> list:
         item = {"id": iid, "t": title, "kind": kind, "st": st, "from": rel, "d": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}
         if iid in NOTE:
             item["note"] = NOTE[iid]
-        if p.suffix == ".xlsx":  # member data: listed, never read
+        if p.suffix == ".xlsx" or iid in NOTE_ONLY:  # member data: listed, never read
             item["md"] = ""
         elif p.suffix == ".png":
             import base64
@@ -306,6 +313,204 @@ def findings(meta: dict) -> list:
     return out
 
 
+COPY_ST = {"needs_you": "Needs you", "held": "Held back", "done": "Done"}
+
+
+def _delta_text(rev: dict | None) -> str:
+    return plain("".join(o["insert"] for o in ((rev or {}).get("delta") or {}).get("ops", []) if isinstance(o.get("insert"), str)), 600)
+
+
+def copy_library(page_dir: Path) -> dict | None:
+    """The page's Copy library (copy.json), as the mock reads it: each piece of text with its state, its current wording
+    and the wording before it. Every line, Needs you first."""
+    try:
+        blocks = json.loads((page_dir / "copy.json").read_text()).get("blocks") or []
+    except (OSError, ValueError):
+        return None
+    if not blocks:
+        return None
+    lines = []
+    for b in sorted(blocks, key=lambda b: list(COPY_ST).index(b["status"]) if b.get("status") in COPY_ST else 3):
+        rv = b.get("revisions") or []
+        ci = next((i for i, r in enumerate(rv) if r.get("id") == b.get("current")), len(rv) - 1)
+        lines.append([plain(b.get("title") or b.get("id") or "", 80), _delta_text(rv[ci] if rv else None),
+                      COPY_ST.get(b.get("status"), "Done"), _delta_text(rv[ci - 1]) if ci > 0 else "",
+                      list(dict.fromkeys(t for j, r in enumerate(rv) if j != ci and (t := _delta_text(r))))[-5:]])  # its other wordings, earlier and proposed
+    n = {s: sum(1 for x in lines if x[2] == s) for s in COPY_ST.values()}
+    return {"id": "copy-library", "t": "Copy library", "kind": "text", "st": "prop", "from": "copy.json",
+            "d": datetime.fromtimestamp((page_dir / "copy.json").stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+            "m": f"{len(lines)} pieces of text · " + " · ".join(f"{v} {k.lower()}" for k, v in n.items() if v), "copy": lines}
+
+
+def _blocks_html(t: str) -> list:
+    """Headings, paragraphs and list lines of an HTML page, in order, as Reference blocks."""
+    t = re.sub(r"<(script|style|nav|header|footer)\b.*?</\1>", "", t, flags=re.S | re.I)
+    return [["h" if tag[0] == "h" else "li" if tag == "li" else "p", plain(body, 2000)]
+            for tag, body in re.findall(r"<(h[1-4]|p|li)\b[^>]*>(.*?)</\1>", t, re.S | re.I) if plain(body, 2000)]
+
+
+def _md_tables(f: Path, keep) -> list:
+    """Markdown tables under their headings, as [heading, header, rows]; keep(header) picks which (round 9 build.py)."""
+    out, sec, cur = [], f.stem, None
+    for line in f.read_text(errors="ignore").splitlines():
+        if line.startswith("#"):
+            sec, cur = plain(line.lstrip("# "), 90), None
+        elif re.fullmatch(r"\|[|\s:-]+", line.strip()):
+            continue
+        elif line.startswith("|"):
+            cells = [plain(re.sub(r"\*\*|`", "", c.strip()), 220) for c in line.strip().strip("|").split("|")]
+            if cur is None:
+                cur = [sec, cells, []] if keep(cells) else False
+                if cur:
+                    out.append(cur)
+            elif cur:
+                cur[2].append(cells)
+        else:
+            cur = None
+    return out
+
+
+ANSWERS_SHOWN = 200  # the newest answers; the page record holds thousands
+
+
+def copied(page_dir: Path, meta: dict) -> list:
+    """A copied project's own Reference material, read only, from its page and its project folder, as the mock lists it
+    for Rebex: App text (Copy library, policies), designs (action images, preview store), sheets and findings."""
+    import csv
+    src = meta.get("proto_source")
+    root = Path(src).parents[1] if src and len(Path(src).parents) > 1 else None
+    out = []
+    lib = copy_library(page_dir)
+    if lib:
+        out.append(lib)
+    pol = root / "reviews" / "rebex-policies" / "current.html" if root else None
+    if pol and pol.is_file():
+        out.append({"id": "policies", "t": "Privacy, terms and shipping", "kind": "text", "st": "ref", "from": "reviews/rebex-policies/current.html",
+                    "d": datetime.fromtimestamp(pol.stat().st_mtime).strftime("%Y-%m-%d %H:%M"), "blocks": _blocks_html(pol.read_text(errors="ignore"))})
+    act = page_dir / "active-action-image-review.md"
+    if act.is_file():
+        bl, n = [], 0
+        for line in act.read_text(errors="ignore").splitlines():
+            n += line.startswith("### ")  # one product each
+            if m := re.match(r"!\[([^\]]*)\]\((assets/[^)\s]+)\)", line.strip()):
+                bl.append(["img", m.group(2), hide(m.group(1))])  # served from the copy's own assets
+            elif line.startswith("#"):
+                bl.append(["h", plain(line.lstrip("# "), 200)])
+            elif line.strip() and not line.startswith(("```", "---", "title:", "see:", "- ", "#")) and not re.match(r"#\d+ ", line):
+                bl.append(["p", plain(re.sub(r"\*\*", "", line), 600)])
+        out.append({"id": "action-images", "t": "Action images", "kind": "design", "st": "ref", "from": "active-action-image-review.md",
+                    "d": datetime.fromtimestamp(act.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    "m": f"{n} products in review · actual, before and after · from Rebex's page", "blocks": bl})
+    site = root / "prototype" / "site" if root else None
+    if site and (site / "index.html").is_file():  # drawn sandboxed with its own styles: no scripts run, links go nowhere
+        try:
+            css = (site / "css" / "site.css").read_text(errors="ignore")
+        except OSError:
+            css = ""
+        page = re.sub(r"<script\b.*?</script>", "", (site / "index.html").read_text(errors="ignore"), flags=re.S | re.I)
+        page = re.sub(r"(https?:)?//[^\s\"'<>)]+", "#", re.sub(r"<(link|img)\b[^>]*>", "", page))  # shop pictures are not carried
+        out.append({"id": "preview-store", "t": "Preview store", "kind": "design", "st": "ref", "from": "prototype/site/index.html", "wide": True,
+                    "d": datetime.fromtimestamp((site / "index.html").stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    "note": "Rebex's prototype store, its home page as drawn · shop pictures, fonts and outside links are dropped; browsing and the demo cart run on the real page",
+                    "html": hide(page.replace("</head>", f"<style>{re.sub(r'url[(][^)]*[)]', 'none', css)}</style></head>", 1))})
+    rounds = page_dir / "rounds.ndjson"
+    if rounds.is_file():
+        ra = []
+        for line in rounds.read_text(errors="ignore").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            for a in r.get("answers") or []:
+                ra.append([(a.get("ts") or r.get("ts") or "")[:10] + " · version " + str(r.get("version") or "").lstrip("v"),
+                           plain(a.get("prompt") or "General feedback", 160), plain((a.get("text") or a.get("verdict") or "").split("\n")[0], 200)])
+        ra.reverse()
+        if ra:
+            out.append({"id": "cutover-decisions", "t": "Cutover owner decisions", "kind": "data", "st": "ref", "from": "rounds.ndjson",
+                        "d": datetime.fromtimestamp(rounds.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        "m": f"{len(ra):,} answers · from Rebex's page record" + (f" · the newest {ANSWERS_SHOWN} shown" if len(ra) > ANSWERS_SHOWN else ""),
+                        "parts": [["Your answers, newest first", ["When", "Question", "Your answer"], ra[:ANSWERS_SHOWN]]]})
+    if root:
+        isopt = lambda h: h and h[0].lower().split(" ")[0] in ("option", "options", "choice", "approach", "path")
+        ct, seen = [], set()
+        for f in sorted(root.glob("reviews/*/source/v*.md"), key=lambda p: -p.stat().st_mtime):
+            for t in _md_tables(f, isopt):
+                k = json.dumps([t[1], t[2]])
+                if t[2] and k not in seen:
+                    seen.add(k)
+                    t[0] = f"{t[0]} · {f.parent.parent.name.replace('rebex-', '').replace('rebex', 'main page')}, version {f.stem[1:]}"
+                    ct.append(t)
+        if ct:
+            out.append({"id": "compared-options", "t": "Compared options", "kind": "data", "st": "ref", "from": "reviews/*/source",
+                        "d": datetime.fromtimestamp(max(p.stat().st_mtime for p in root.glob("reviews/*/source/v*.md"))).strftime("%Y-%m-%d %H:%M"),
+                        "m": f"{len(ct)} compared tables · from Rebex's pages", "parts": ct})
+    cat = root / "catalog" / "catalog.csv" if root else None
+    if cat and cat.is_file():
+        rows = list(csv.DictReader(cat.open(errors="ignore")))
+        out.append({"id": "product-catalog", "t": "Product catalog", "kind": "data", "st": "ref", "from": "catalog/catalog.csv",
+                    "d": datetime.fromtimestamp(cat.stat().st_mtime).strftime("%Y-%m-%d %H:%M"), "m": f"{len(rows)} products · Rebex's catalog sheet",
+                    "parts": [["Products", ["Product", "Steel", "Price", "Pictures", "Description"],
+                               [[plain(c.get("title") or "", 80), c.get("product_type") or "—", f"${c['price']}" if c.get("price") else "—",
+                                 c.get("image_count") or "0", plain(c.get("description_text") or "", 160) or "—"] for c in rows]]]})
+    return out + finding_sets(page_dir)
+
+
+def _finding_status(c: dict) -> str:
+    """findings.js statusOf: Needs you, Ready to send, Waiting on agent (agreed, not done yet) or Done."""
+    d = c.get("decision") or {}
+    if c.get("round_pending") or d.get("round_pending"):
+        return "ready"
+    if c.get("fixed"):
+        return "done"
+    if not d.get("verdict"):
+        return "waiting" if c.get("reopened") or c.get("response_text") else "needs"
+    choice = d.get("option_id") or d.get("option") or (d.get("text") if d.get("verdict") == "select" else None)
+    opts = [o for o in (c.get("decision_request") or {}).get("options") or [] if isinstance(o, dict)]
+    o = next((o for o in opts if o.get("id") == choice), None) or next((o for o in opts if o.get("label") == choice), None)
+    choice = o["id"] if o else choice
+    return "done" if choice in ("keep", "no") or d.get("verdict") == "reject" else "waiting"
+
+
+def _finding_answer(c: dict) -> str:
+    d = c.get("decision") or {}
+    if d.get("verdict"):
+        return plain(d.get("text") or d.get("verdict") or "", 120)
+    if c.get("response_text"):
+        opts = {o.get("id"): o.get("label") for o in (c.get("decision_request") or {}).get("options") or [] if isinstance(o, dict)}
+        return plain(opts.get("yes") or opts.get("fix") or "Agreed", 120)
+    return ""
+
+
+def finding_sets(page_dir: Path) -> list:
+    """The page's own findings groups (categories.json sets, their findings from the comments), as the live Findings view
+    reads them: each finding's number, title, the answer given and its state."""
+    from ..categories import _comments, comment_category, load_categories
+    try:
+        sets = load_categories(page_dir)["findings_sets"]
+        anchors = _comments(page_dir).get("anchors") or {}
+    except (OSError, ValueError):
+        return []
+    found = [c for items in anchors.values() for c in items if comment_category(c) == "findings" and c.get("status") != "deleted"]
+    out = []
+    for s in sets:
+        fs = sorted((c for c in found if (c.get("finding") or {}).get("set") == s["id"]), key=lambda c: c.get("number") or 0)
+        if not fs:
+            continue
+        items = [{"n": c.get("number") or i + 1, "t": plain((c.get("finding") or {}).get("title") or c.get("text") or "", 300),
+                  "why": plain(((c.get("decision_request") or {}).get("context") or ""), 600), "a": _finding_answer(c), "st": _finding_status(c),
+                  "note": plain(c.get("response_text") or "", 400)} for i, c in enumerate(fs)]
+        when = (s.get("created_at") or min((c.get("created_at") or "") for c in fs))[:16].replace("T", " ")
+        out.append({"id": "set:" + s["id"], "t": hide(s["label"]), "kind": "data", "st": "ref", "from": "Findings", "d": when,
+                    "m": f"{pl_(len(items), 'finding')} · " + " · ".join(f"{sum(1 for x in items if x['st'] == k)} {w}" for k, w in
+                                                                    (("needs", "need you"), ("waiting", "waiting on the agent"), ("done", "done")) if any(x["st"] == k for x in items)),
+                    "fset": {"intro": plain(s.get("intro") or "", 600), "items": items}})
+    return out
+
+
+def pl_(n: int, w: str) -> str:
+    return f"{n} {w}" + ("" if n == 1 else "s")
+
+
 def build(page_dir: Path) -> dict:
     page_dir = Path(page_dir)
     plans = list_plans(page_dir)
@@ -334,8 +539,9 @@ def build(page_dir: Path) -> dict:
     except (OSError, ValueError):
         meta = {}
     fld = not meta.get("proto_copy_of")  # a copy of another project gets its own audits, never FastLane Drive's files and workflows
-    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows() if fld else [], "docs": documents() if fld else {"files": [], "groups": {}},
-            "extras": (extras() if fld else []) + findings(meta),
+    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows() if fld else [],  # documents are listed in Pages & links only, as in the mock
+
+            "extras": (extras() if fld else copied(page_dir, meta)) + findings(meta),
             "beads": {i: beads[i] for i in sorted(ids) if i in beads}, "notes": notes(page_dir)}
 
 
