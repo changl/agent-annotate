@@ -33,6 +33,7 @@
   const COPY = (base.match(/\/proto\/p\/([a-z0-9-]+)\/$/) || [])[1] || '';
   const ROOT = COPY ? base.slice(0, -`proto/p/${COPY}/`.length) : base;
   async function api(path, body, method) {
+    if (COPY && (body !== undefined || method) && P.copyWrite) return P.copyWrite(path, body, method);  // a read-only copy writes nothing: questions.js answers it in memory
     const opts = body === undefined && !method ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
     const r = await fetch(base + path.replace(/^\//, ''), opts);

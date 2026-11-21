@@ -98,13 +98,18 @@ def test_second_note_keeps_the_first():
     assert "S.note = {anchor: anchorEl.dataset.anchorId" not in s  # every opener goes through openNote
 
 
-def test_copy_send_is_simulated():
-    """Round 12 third pass: on a read-only copy Send runs the same steps and writes nothing (no JS runner here)."""
-    s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
-    sim = s[s.index("async function simulate("):s.index("async function post(")]
-    assert "call(" not in sim and "ctx.api" not in sim  # no request leaves the page
-    assert "{inert: true}" in sim  # ends with "prototype: not sent"
-    assert "if (S.copyOf) return simulate(" in s
+def test_copy_writes_are_simulated():
+    """Round 12 third pass: on a read-only copy every write (Send, notes, Later, Close-undo, other tabs' notes)
+    is answered in memory and none reaches the server (no JS runner here)."""
+    web = questions.Path(questions.__file__).resolve().parents[1] / "web/proto"
+    s, f = (web / "questions.js").read_text(), (web / "frame.js").read_text()
+    assert "if (COPY && (body !== undefined || method) && P.copyWrite) return P.copyWrite(path, body, method);" in f
+    assert f.index("P.copyWrite(path") < f.index("await fetch(")  # the hook runs before any request
+    fake = s[s.index("function fake("):s.index("P.copyWrite = fake;")]
+    assert "fetch(" not in fake and "ctx.api" not in fake and "call(" not in fake
+    for act in ("answer-later", "restore", "archive", "decision", "reply", "'DELETE'", "'PUT'", "api/rounds/submit"):
+        assert act in fake, act
+    assert "throw" not in fake  # an unknown write (Reference's plan topics) is answered too, never "not found"
     assert "f.copyOf" in s  # the README contract: frame.json copyOf marks a copy
 
 

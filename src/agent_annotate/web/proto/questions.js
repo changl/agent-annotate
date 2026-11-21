@@ -33,9 +33,37 @@
   const ib = (k, label, attrs) => `<button class="ib sm" title="${esc(label)}" aria-label="${esc(label)}" ${attrs}>${ic(k)}</button>`;
   const ASKFILE = 'Please file a task on the board for this question.';
   const gen = () => ctx.prefs.get('q:general', '');
-  // A read-only copy (frame.json copyOf) takes no writes: its Send is simulated, kept in memory until a reload
-  const SIM = {};
-  const sim = d => { if (d) for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]); return d; };
+  // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
+  // every tab, and it is answered in memory until a reload. Questions shows the result through sim(); Reference and Links keep their own.
+  const SIM = {}, NOTES = {add: [], gone: new Set(), text: {}, sent: new Set()};
+  let simN = 0;
+  function fake(full, body, method) {
+    const path = full.split('?')[0], ts = new Date().toISOString();
+    const [, id, act] = path.match(/^api\/comments(?:\/([^/]+))?(?:\/([a-z-]+))?$/) || [];
+    const nid = id && decodeURIComponent(id), added = NOTES.add.find(n => n.id === nid), set = p => { SIM[nid] = {...SIM[nid], ...p}; };
+    if (path === 'api/comments') {
+      const n = {id: 'copy-' + ++simN, anchor: body.anchor_id, label: body.anchor_label, text: body.text, target: body.target, sent: false};
+      NOTES.add.push(n);
+      return {id: n.id, text: n.text, author_name: 'You', created_at: ts, version: body.version, target: n.target};
+    }
+    if (act === 'answer-later') set({later: !!body.on});
+    else if (act === 'restore') set({closed: false});
+    else if (act === 'archive') set({closed: true});
+    else if (act === 'decision') set({sent: true, read: false, decision: {...body, ts}});
+    else if (act === 'reply') { const cur = (D && D.questions.find(x => x.id === nid)) || {}; set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]}); }
+    else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); }
+    else if (id && !act && method === 'PUT') { if (added) added.text = body.text; else NOTES.text[nid] = body.text; }
+    else if (path === 'api/rounds/submit' && D) for (const n of D.notes) { if (!n.sent) NOTES.sent.add(n.id); }  // the Send takes every unsent note
+    return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
+  }
+  P.copyWrite = fake;
+  function sim(d) {
+    if (!d) return d;
+    for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
+    d.notes = d.notes.filter(n => !NOTES.gone.has(n.id)).concat(NOTES.add)
+      .map(n => ({...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)}));
+    return d;
+  }
 
   /* ---------- state of a question ---------- */
   const optLabel = (q, id) => (q.options.find(o => o.id === id) || {}).label || id;
@@ -502,23 +530,7 @@
     S.pending = {n, timer: setTimeout(() => post(answers, replies, closes), SEND_DELAY)};
     draw(true);
   }
-  // the same steps as post(), with nothing written: each card turns Sent, Closed or gains its reply in memory
-  async function simulate(answers, replies, closes) {
-    const ts = new Date().toISOString();
-    for (const q of answers) {
-      const d = draft(q.id), w = (d.words || '').trim();
-      SIM[q.id] = {...SIM[q.id], sent: true, read: false, decision: d.pick ? {verdict: 'select', text: optLabel(q, d.pick) + (w ? '\n\n' + w : ''), option_id: d.pick, ts} : {verdict: 'comment', text: w, ts}};
-      setDraft(q.id, {pick: null, words: null});
-    }
-    for (const q of replies) { SIM[q.id] = {...SIM[q.id], replies: [...(q.replies || []), {you: true, text: draft(q.id).reply.trim(), ts, sent: true}]}; setDraft(q.id, {reply: null, replyOpen: null}); }
-    for (const q of closes) { SIM[q.id] = {...SIM[q.id], closed: true}; setDraft(q.id, {close: null}); }
-    ctx.prefs.set('q:general', '');
-    S.pending = null;
-    await refresh();
-    ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: nothing saved in this copy`, {inert: true});
-  }
   async function post(answers, replies, closes) {
-    if (S.copyOf) return simulate(answers, replies, closes);
     try {
       for (const q of answers) {
         const d = draft(q.id), w = (d.words || '').trim();
@@ -532,7 +544,7 @@
       ctx.prefs.set('q:general', '');
       S.pending = null;
       await refresh();
-      ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: saved as a round in this copy`, {inert: true});
+      ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
     } catch (e) {
       S.pending = null; await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
