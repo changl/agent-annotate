@@ -84,6 +84,21 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .qzpic{position:relative;margin:12px auto;max-width:calc(100vw - 24px)}
 .qzpic img{display:block;width:100%;height:auto;cursor:crosshair}
 .qznotes{max-width:80ch;margin:0 auto;padding:0 16px}
+/* every picture's caption line, as the mock's: Picture N · caption · 25-100% · ⤢ Full size (audit14 #04, #05) */
+.aa .qcap,.qcap{font-size:var(--fs-sm);color:var(--muted);display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap;margin:4px 0;white-space:normal;overflow:visible;line-height:1.45}
+.qcap .qpicn{color:var(--color-base-content);font-weight:700}
+.qcap .qzm{margin-right:0}
+.qcap .aa-full{margin:0;font-size:inherit;font-weight:600;color:var(--color-primary)}
+[data-theme=dark] .qcap .aa-full{color:color-mix(in oklab,var(--color-primary) 55%,var(--color-base-content))}
+/* code: a Copy button at the top right of every block (#03) */
+.aa pre.qcodehost{position:relative;padding-right:84px;border:1px solid var(--line)}
+.qcodecopy{position:absolute;top:6px;right:6px}
+/* a published diagram, drawn by today's engine; the large-picture viewer shows it full screen (#06) */
+.qdgm{margin:12px 0 16px;--color-secondary:oklch(65% .2 300);--color-accent:oklch(70% .13 190)}
+.qdgmhost{background:var(--color-base-100);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto}
+.qdgmhost svg{display:block;max-width:100%;height:auto}
+.qzdgm{background:var(--color-base-100);border:1px solid var(--line);border-radius:8px;padding:12px;--color-secondary:oklch(65% .2 300);--color-accent:oklch(70% .13 190)}
+.qzdgm svg{display:block;width:100%;height:auto}
 
 /* the card: one column; context, then the choices side by side, then the words box (#136) */
 .qcard{border:1px solid var(--line);border-left:4px solid var(--color-error);border-radius:var(--radius-box);padding:8px 14px 6px;margin:10px 0 14px;background:var(--color-base-100);scroll-margin-top:140px;font-size:var(--fs-base);color:var(--color-base-content)}
