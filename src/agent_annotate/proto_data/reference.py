@@ -19,6 +19,7 @@ from pathlib import Path
 from ..categories import is_archive_plan, list_plans
 from ..plan_topics import file_plans
 from . import running, scrub
+from .questions import _mine
 
 FLD_DIR = Path("/Users/changlee/projects/FastLane Drive")
 # shortcut: the round-9 snapshot of `wmill flow get` / `job get` (build/r9_wmflows.py); read Windmill live when the prototype graduates
@@ -618,9 +619,11 @@ def notes(page_dir: Path) -> list:
         for c in items:
             if c.get("status") in ("deleted",):
                 continue
-            out.append({"id": c.get("id"), "a": anchor, "text": hide(c.get("text") or ""), "who": c.get("author_name") or "You",
+            out.append({"id": c.get("id"), "a": anchor, "l": hide(c.get("anchor_label") or ""), "text": hide(c.get("text") or ""), "who": c.get("author_name") or "You",
                         "at": (c.get("created_at") or "")[:16], "v": c.get("version"), "st": c.get("status"),
-                        "target": c.get("target")})  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
+                        "target": c.get("target"),  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
+                        # a Send flags every open note (sync_server rounds/submit), so an unsent one stays in the next Send after a reload
+                        "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")) or not _mine(c.get("author"))})
     return sorted(out, key=lambda n: n["at"])
 
 

@@ -26,7 +26,7 @@ def test_questions_lists_counts_removes_and_clears_the_queue():
     assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);" in s
     assert "const back = await x.remove(); await again();" in s  # Remove takes it out of its tab, with Undo
     assert "(await Promise.all(q.map(x => x.remove()))).filter(Boolean)" in s  # Discard all too
-    assert "if (ctx.queueSent) ctx.queueSent();" in s  # a Send clears every tab's items
+    assert "if (ctx.queueSent) ctx.queueSent(n);" in s  # a Send clears every tab's items
     assert "if (k.startsWith('x:'))" in s  # Go to it opens the item's own tab
     assert "wrote: path =>" in s  # notes written on other tabs reach Questions' list without a visit
 
@@ -60,3 +60,33 @@ def test_marker_on_edit_back_to_waiting_and_restore():
     assert "ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {undo: () => later(q, !on)});" in s
     assert "ctx.toast('Restored to waiting', {undo:" in s
     assert "ctx.toast('Note changed · goes with Send'" in s
+
+
+def test_send_opens_over_any_tab_at_any_count():
+    """r12 fix7 frame 1, 2, 5: ⌘↵ from any tab, Send at zero on the desk, the sheet over the tab on screen."""
+    f, s = _js("frame"), _js("questions")
+    key = f[f.index("// ⌘↵ from any other tab"):f.index("if (e.key === 'Enter' && e.target.dataset")]
+    assert "!onQuestions()" in key and "e.stopPropagation()" in key and "sendP.open(ctx, true)" in key
+    assert "off = !n && cls !== 'hide-ph'" in f  # the desk Send is never disabled
+    assert "(!S.sendN && !t.classList.contains('hide-ph'))" in f
+    op = s[s.index("open: async (c, key) =>"):]
+    assert "if (key && S.armed) return arm();" in op and "c.go('questions')" not in op  # never switches tab
+    assert "className: 'area-questions tab-questions qhost'" in op
+    assert "if (host) return drawHost();" in s and "(host || root).contains(t)" in s
+    assert "if (host && e.key === 'Escape' && S.armed)" in s
+
+
+def test_last_send_follows_a_new_send_and_skip_opens_the_phone_menu():
+    """r12 fix7 frame 3 and 4."""
+    f = _js("frame")
+    assert "queueSent: n => { if (n) S.sent = {ts: new Date().toISOString(), n};" in f
+    chip = f[f.index("function lastSendChip"):f.index("function settingsBody")]
+    assert "if (s && (COPY ||" in chip and "prototype: not sent" in chip and "delivered" not in chip[:chip.index("if (!r && !l)")]
+    assert "if (kind === 'tabs' && phoneQ.matches && !S.home) { S.menu = 'nav';" in f and "#p-layer .pm-tab" in f
+
+
+def test_discard_all_counts_items_as_send_lists_them():
+    """r12 fix7, questions 5: an answer and a reply on one question are two drafts."""
+    s = _js("questions")
+    body = s[s.index("async function discardAll()"):s.index("async function sendRemove")]
+    assert "total = sendCount()" in body and "Discarded ${pl(total, 'draft', 'drafts')}" in body

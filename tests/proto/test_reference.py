@@ -76,6 +76,17 @@ def test_copy_gets_its_findings_register_not_fld_files(page, tmp_path, monkeypat
     assert reference.build(page)["extras"] == [{"id": "chapter-owner-list"}]
 
 
+def test_notes_carry_a_sent_flag(tmp_path):
+    """r12 fix7: a plan note written before a reload stays in the next Send until a Send flags it."""
+    store = {"schema_version": 2, "archived": {}, "anchors": {"ref:p~v1~0": [
+        {"id": "open", "text": "a", "author": "member@example.com", "created_at": "2026-11-20T10:00"},
+        {"id": "flagged", "text": "b", "author": "member@example.com", "flagged_for_session": True, "created_at": "2026-11-20T10:01"},
+        {"id": "pushed", "text": "c", "author": "member@example.com", "delivery_id": "d1", "created_at": "2026-11-20T10:02"},
+        {"id": "agent", "text": "d", "author": "agent:claude", "created_at": "2026-11-20T10:03"}]}}
+    (tmp_path / "comments.json").write_text(json.dumps(store))
+    assert {n["id"]: n["sent"] for n in reference.notes(tmp_path)} == {"open": False, "flagged": True, "pushed": True, "agent": True}
+
+
 def test_hide_and_state():
     assert reference.hide("mail x.y@z.co or (555) 123-4567") == "mail member@example.com or a phone number"
     assert reference.state_of({"section": "approved", "title": "Draft"}) == "ok"

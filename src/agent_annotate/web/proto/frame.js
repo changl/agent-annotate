@@ -133,7 +133,8 @@
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
     refreshTop: () => refreshTop(),
-    queued, queueSent: () => SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }),
+    // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3)
+    queued, queueSent: n => { if (n) S.sent = {ts: new Date().toISOString(), n}; SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -301,7 +302,12 @@
   /* ---------- the last Send, in the header (catalog 14, 72) ---------- */
   const DELIV = {acknowledged: 'read by the agent', accepted: 'delivered', started: 'agent working on it', pending: 'saved, agent not told yet', queued: 'saved, agent not told yet', active_monitor: 'delivered', uncertain: 'not confirmed yet', superseded: 'not delivered: the page changed agents'};
   function lastSendChip(cls = 'hide-ph') {
-    const r = S.fd && S.fd.lastSend, l = S.deliv;
+    const r = S.fd && S.fd.lastSend, l = S.deliv, s = S.sent;
+    // a round sent in this visit outranks an older record: it is simulated here, so it never claims delivery (r12 fix7 frame 3)
+    if (s && (COPY || !l || !(new Date(l.updated_at || l.created_at) >= new Date(s.ts) - 5000))) {
+      const t = new Date(s.ts), at = t.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      return `<span class="chip ${cls} sentchip" title="Your last Send, ${esc(t.toLocaleString())}: ${esc(pl(s.n, 'item', 'items'))}, simulated on this copy. Nothing reached an agent.">Sent ${esc(at)} · prototype: not sent</span>`;
+    }
     if (!r && !l) return '';
     const iso = (l && (l.updated_at || l.created_at)) || r.ts, t = new Date(iso), st = (l && l.state) || r.delivery;
     if (isNaN(t)) return '';
@@ -341,8 +347,8 @@
       : o.alive ? `Your Send goes to ${who} · alive now` : `Your Send goes to ${who}${since ? ' · claimed the page ' + since.replace('since ', 'on ') : ''}`;
   }
   function sendBtn(cls) {
-    const n = S.sendN;
-    return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${n ? '' : ' aria-disabled="true"'} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${n ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
+    const n = S.sendN, off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
+    return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${off ? ' aria-disabled="true"' : ''} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${!off ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
   function drawTop() {
     const top = document.getElementById('p-top'), w = S.other ? S.other.waiting || 0 : waitingHere();
@@ -574,7 +580,7 @@
     if (d.tab && t.matches('.tab')) { ctx.go(d.tab); return; }
     if (d.send !== undefined) {
       S.menu = ''; drawAll();
-      if (!S.sendN || !sendable()) return toast('Nothing is ready to send yet');
+      if (!sendable() || (!S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');
       return Promise.resolve().then(() => sendP.open(ctx)).catch(err => toast('Send could not open: ' + err.message));
     }
     if (t.id === 'p-fab') { return sendable() && S.sendN && Promise.resolve().then(() => sendP.open(ctx)); }
@@ -631,12 +637,19 @@
   function onKey(e) {
     if (e.key === 'Escape' && (S.menu || S.sheet)) { S.menu = ''; S.sheet = ''; drawAll(); return; }
     if (e.key === 'Escape') {  // an area's own dialog in the page that does not close itself: its dismiss button
-      const x = !onQuestions() && document.querySelector('#p-main [role=dialog] :is([data-esc],[data-sendclose])');
+      const x = !onQuestions() && !document.body.classList.contains('qsheet-open') && document.querySelector('#p-main [role=dialog] :is([data-esc],[data-sendclose])');
       if (x) { e.preventDefault(); x.click(); }
       return;
     }
+    // ⌘↵ from any other tab, even while typing: the Send summary opens over it and asks for a second press (r12 fix7 frame 1)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !onQuestions() && !S.home && !S.other && !S.gated && sendable()) {
+      e.preventDefault(); e.stopPropagation();  // Questions' own ⌘↵ listens on window: this press is handled once
+      if (S.menu || S.sheet) { S.menu = ''; S.sheet = ''; drawAll(); }
+      Promise.resolve().then(() => sendP.open(ctx, true)).catch(err => toast('Send could not open: ' + err.message));
+      return;
+    }
     if (e.key === 'Enter' && e.target.dataset && e.target.dataset.fsin !== undefined) { e.target.blur(); return; }
-    if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || S.sheet || S.menu || S.gated) return;
+    if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || S.sheet || S.menu || S.gated || document.body.classList.contains('qsheet-open')) return;
     if (e.key === '?') { S.sheet = 'keys'; S.menu = ''; drawAll(); return; }
     if (historyKey(e)) return;
     questionKey(e);
@@ -657,6 +670,8 @@
   async function skipTo(kind) {
     // scroll-padding keeps the target clear of the pinned frame
     const focus = el => { if (!el) return false; if (!el.matches('a,button,input,textarea,[tabindex]')) el.tabIndex = -1; el.focus({preventScroll: true}); scrollClear(el); return true; };
+    // the phone's tabs live in its menu: open it, then focus the first tab (r12 fix7 frame 4)
+    if (kind === 'tabs' && phoneQ.matches && !S.home) { S.menu = 'nav'; S.sheet = ''; drawAll(); const b = document.querySelector('#p-layer .pm-tab'); if (b) b.focus(); return !!b; }
     if (kind === 'tabs') return focus(document.querySelector('#p-tabs .tab[aria-selected="true"]') || document.querySelector('#p-tabs .tab'));
     if (S.home || S.other || S.tab !== 'questions') ctx.go('questions');
     const m = document.getElementById('p-main'), vis = el => !!el && el.getClientRects().length > 0;

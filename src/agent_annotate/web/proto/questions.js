@@ -400,8 +400,19 @@
       <div class="acts"><button class="btn pri" data-send ${n ? '' : 'disabled'}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${n ? '' : 'disabled'}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
+  // the Send sheet over another tab (r12 fix7 frame 5): closing it leaves him where he was
+  let host = null;
+  const onQ = () => !!root && root.isConnected && root.classList.contains('tab-questions');
+  function drawHost() {
+    if (!S.armed && !S.pending) { host.remove(); host = null; }
+    else host.innerHTML = sendPanel(sendCount());
+    document.body.classList.toggle('qsheet-open', !!(host && S.armed));
+    if (ctx.refreshTop) ctx.refreshTop();
+  }
+
   /* ---------- draw ---------- */
   async function draw(keepScroll) {
+    if (host) return drawHost();
     const y = scrollY;
     const html = S.view === 'list' ? listView() : null;
     if (html != null) { root.innerHTML = bar() + html; }
@@ -553,7 +564,7 @@
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
-      if (ctx.queueSent) ctx.queueSent();  // the other tabs' items went with it: inert, each tab clears its own
+      if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       await refresh();
       ctx.toast(`Sent ${pl(n, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
@@ -564,14 +575,14 @@
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
   async function discardAll() {
-    const keep = drafts(), g = gen(), q = Q(), notes = myNotes(q);
+    const keep = drafts(), g = gen(), q = Q(), notes = myNotes(q), total = sendCount();  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
     const all = {};
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
     for (const n of notes) await call(`api/comments/${encodeURIComponent(n.id)}`, undefined, 'DELETE');
     await refresh();
-    ctx.toast(`Discarded ${pl(notes.length + Object.keys(keep).length + q.length + (g.trim() ? 1 : 0), 'draft', 'drafts')}`, {undo: async () => {
+    ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g);
       await Promise.all(undos.map(u => u()));
       for (const n of notes) await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target});
@@ -594,6 +605,11 @@
   function sendGo(k) {
     S.armed = false; S.sendKey = false;
     if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
+    if (host) {  // opened over another tab: Questions opens at the item
+      drawHost();
+      if (k === 'need') { S.filter = 'need'; S.view = 'list'; ctx.prefs.set('q:view', 'list'); }
+      return ctx.go('questions', k === 'need' ? undefined : (k[0] === 'q' ? 'q-' : 'n-') + k.slice(2));
+    }
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2));
     if (k.startsWith('n:')) { const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
@@ -618,7 +634,7 @@
     const card0 = e.target.closest('.qcard[data-q]');  // any click on a card makes it the one the keys act on
     if (card0 && S.hl !== card0.dataset.q) { root.querySelectorAll('.qcard.hl').forEach(x => x.classList.remove('hl')); S.hl = card0.dataset.q; card0.classList.add('hl'); }
     const t = e.target.closest('button,a,[data-anchor-id],img,.qsheet');
-    if (!t || !root.contains(t)) return;
+    if (!t || !(host || root).contains(t)) return;
     const ds = t.dataset, q = id => qOf(id);
     if (t.classList.contains('qsheet') && e.target !== t) return;  // a click inside the Send panel, not on its backdrop
     if (t.tagName === 'A') {  // links inside the document: "#d:q38833" jumps to the card, never to another tab
@@ -721,20 +737,21 @@
   }
   // typing General feedback inside the Send sheet: heading and buttons follow in place, the cursor stays (r12 fix6, questions 02)
   function sheetCount() {
-    const n = sendCount(), s = root.querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
+    const n = sendCount(), s = (host || root).querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
     $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
     $('[data-send]').disabled = !n; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n;
-    const b = root.querySelector('.qbsend');
+    const b = root && root.querySelector('.qbsend');
     if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }
     if (ctx.refreshTop) ctx.refreshTop();
   }
   function updateBar() {
-    const b = root.querySelector('.qbar'); if (!b) return;
+    const b = root && root.querySelector('.qbar'); if (!b) return;
     const tmp = document.createElement('div'); tmp.innerHTML = bar(); b.replaceWith(tmp.querySelector('.qbar'));
     if (ctx.refreshTop) ctx.refreshTop();
   }
   function onKey(e) {
-    if (!root || !root.isConnected || !root.classList.contains('tab-questions')) return;
+    if (host && e.key === 'Escape' && S.armed) { e.preventDefault(); S.armed = false; S.sendKey = false; return drawHost(); }
+    if (!onQ()) return;  // ⌘↵ on another tab is the frame's: it calls open(ctx, true)
     if (e.key === 'Escape') {  // closes the picture, the Send summary (drafts kept) or General feedback (#06)
       if (S.zoom || S.armed || S.gen) { e.preventDefault(); S.zoom = null; S.armed = false; S.sendKey = false; S.gen = false; draw(true); }
       return;
@@ -796,8 +813,8 @@
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       const fresh = stale; stale = false;
       D = sim(await c.data('questions', fresh));
-      // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
-      if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => '');
+      await findCopy(c);
+      if (host) { host.remove(); host = null; }  // the Send opened over another tab now shows in this bar
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       if (anchor && anchor.startsWith('q-')) { const id = anchor.slice(2), q = qOf(id); if (q) { S.shut.delete(id); if (isDone(q)) S.open.add(id); S.hl = id; } }
@@ -808,11 +825,23 @@
   // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)
   let stale = false;
   const load = async c => { ctx = ctx || c; if (!D || stale) { const fresh = !!D; stale = false; D = sim(await c.data('questions', fresh)); } };
+  // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
+  async function findCopy(c) { if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => ''); }
   P.send({
     count: async c => { await load(c); return sendCount(); },
     wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
-    open: c => { S.armed = true; S.gen = false; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); else c.go('questions'); },
+    // key: opened by ⌘↵, which asks for a second press; a second ⌘↵ sends. Off Questions the sheet opens over the tab on screen (r12 fix7 frame 1, 5)
+    open: async (c, key) => {
+      await load(c); await findCopy(c);
+      if (key && S.armed) return arm();
+      S.armed = true; S.sendKey = !!key; S.gen = false;
+      if (onQ()) return draw(true);
+      host = host || document.body.appendChild(Object.assign(document.createElement('div'), {className: 'area-questions tab-questions qhost'}));
+      host.onclick = onClick; host.oninput = onInput;
+      drawHost();
+      const b = key && host.querySelector('[data-send]:not([disabled])'); if (b) b.focus();
+    },
   });
   // shortcut: exposed for tests in a browser console only
   P.questionsState = () => ({S, D});
