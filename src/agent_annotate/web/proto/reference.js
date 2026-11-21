@@ -75,17 +75,32 @@
     const v = k.split('~')[1];
     return {category: 'plans', doc: 'plan:' + p.id, version: p.revs.some(r => r[0] === v) ? v : p.current};
   }
-  const pin = k => { const n = notesAt(k).length; return n ? `<span class="rf-pin" title="${pl(n, 'note', 'notes')} here">${ico('note')}${n}</span>` : ''; };
+  // a marker is a control: it lists the notes on its line or, on a picture, at its point, with + Comment (catalog 25, r12 audit15 reference 2)
+  const pin = k => { const n = notesAt(k).length; return n ? `<button class="rf-pin" data-spot="${esc(k)}" aria-expanded="${S.spot === k && !S.pin}" title="${pl(n, 'note', 'notes')} here: list them" aria-label="${pl(n, 'note', 'notes')} here: list them">${ico('note')}${n}</button>` : ''; };
+  const NK = () => P.notes;
   const cutq = s => s.length > 60 ? s.slice(0, 58).trimEnd() + '…' : s;
   // what a note is on: selected words, a spot on a picture (numbered as its pin), or the whole line
   const onWhat = (t, no) => !t ? '' : t.quote ? ` on “${esc(cutq(t.quote))}”` : t.offset ? ` at spot ${no || '+'} on the picture` : '';
-  const spotNo = (k, n) => notesAt(k).filter(x => x.target && x.target.offset).indexOf(n) + 1;
-  const spots = k => notesAt(k).filter(n => n.target && n.target.offset).map((n, i) => `<span class="pinm" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%">${i + 1}</span>`).join('')
+  const spotNo = (k, n) => notesAt(k).filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;  // a closed note leaves the picture
+  const spots = k => notesAt(k).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
     + (S.note === k && S.tgt && S.tgt.offset ? `<span class="pinm new" style="left:${S.tgt.offset.dx * 100}%;top:${S.tgt.offset.dy * 100}%">+</span>` : '');
+  // one note: his unsent one with Undo; a sent one with the shared lifecycle (Re-open, View resolution, Move, Close); a closed one folded with Re-open (r12 audit15 reference 3)
+  function noteLine(k, n) {
+    const K = NK(), hd = `${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}`, cls = `rf-nt${S.hl === n.id ? ' rf-hl' : ''}`;
+    if (n.closed) return `<div class="${cls} rf-closed" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('archive')} Note closed</span> <span class="mut">${esc(n.text)}</span><span class="nacts">${K.closedActs(n)}</span></div>`;
+    if (!n.sent) return `<div class="${cls}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${esc(n.text)}${mine.some(x => x.id === n.id) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`;
+    return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${esc(n.text)} ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span></div>`;
+  }
+  // the list a marker opens: on its line, or at a picture pin's point (S.pin)
+  function spotList(k, ns) {
+    const p = S.pin && ns.find(n => n.id === S.pin), sl = p ? NK().near(ns, p) : ns;
+    return NK().spot(ctx, sl.map(n => [n, (n.target && n.target.offset ? spotNo(k, n) : ns.indexOf(n) + 1) || '·']), p ? 'at this point' : 'on this line', `data-spotadd="${esc(k)}"${p ? ` data-spotpin="${esc(p.id)}"` : ''}`);
+  }
   function noteList(k, dlg) {
     const ns = notesAt(k), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
+    const list = S.spot === k && !S.full === !dlg && ns.length;
     if (!ns.length && !box) return '';
-    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt${S.hl === n.id ? ' rf-hl' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id && !x.sent) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n)).join('')}
       ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -441,8 +456,10 @@
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
     if (S.scroll) { const h = S.hl && el.querySelector('.rf-hl'), v = h || document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: h ? 'center' : 'start'});
       S.scroll = !!(S.hl && !h && Object.keys(loading).some(k => !blocks[k])); }  // a highlight in a revision still being read scrolls once it is drawn
+    const rs = S.res && el.querySelector(`[data-line="${CSS.escape(S.res)}"]`);
+    if (rs) { NK().lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
   }
-  const open = id => { S.sel = S.sel === id ? '' : id; S.note = S.hl = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
+  const open = id => { S.sel = S.sel === id ? '' : id; S.note = S.hl = S.res = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
   const copy = (t, what) => navigator.clipboard.writeText(t).then(() => ctx.toast(what + ' copied'), () => ctx.toast('Could not copy'));
   const fail = e => ctx.toast('Not saved: ' + e.message);
   // the server answers with the topics; a read-only copy's simulated write does not, so the change is made here
@@ -470,6 +487,7 @@
       const im = e.target.closest('img'), sel = getSelection(), q = String(sel || '').replace(/\s+/g, ' ').trim();
       if (im) { const r = im.getBoundingClientRect(); S.tgt = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; }
       else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300)} : null;
+      if (S.move) return moveNote(S.move, d.line, b.dataset.label || '', S.tgt);  // Move: this line is its new place
       S.note = d.line; draw(); return;
     }
     if (b.tagName === 'SUMMARY') { S.det = !b.parentElement.open; return; }  // kept across redraws
@@ -523,6 +541,20 @@
       return ctx.inert('Edit saved', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
     if (d.cpcancel !== undefined) { S.cpEd = ''; return draw(); }
+    // a marker's list and the note lifecycle: the code Questions uses (P.notes), so every tab behaves the same (r12 audit15 reference 2, 3)
+    const nt = id => allNotes().find(x => x.id === id);
+    if (d.spot !== undefined) { S.pin = ''; S.spot = S.spot === d.spot ? '' : d.spot; return draw(); }
+    if (d.pin) { const n = nt(d.pin); if (!n) return; const on = S.pin === n.id; S.pin = on ? '' : n.id; S.spot = on ? '' : n.a; return draw(); }
+    if (d.spotx !== undefined) { S.spot = S.pin = ''; return draw(); }
+    if (d.spotadd) { const p = d.spotpin && nt(d.spotpin); S.spot = S.pin = ''; S.note = d.spotadd; S.tgt = p ? {...p.target} : null; return draw(); }
+    if (d.spotgo) { S.spot = S.pin = ''; S.hl = d.spotgo; if (S.full) closeZoom(); else draw(); const x = el.querySelector(`[data-nid="${CSS.escape(d.spotgo)}"]`); if (x) x.scrollIntoView({block: 'center'}); return; }
+    const life = how => id => { const n = nt(id); return n && NK().set(ctx, n, how, ctx.api, async nid => { S.spot = S.pin = ''; S.hl = nid; draw(); ctx.refreshChips(); }); };
+    if (d.nclose) return life('close')(d.nclose);
+    if (d.nopen) return life('restore')(d.nopen);
+    if (d.nreopen) return life('reopen')(d.nreopen);
+    // a plan note's resolution is a line of that plan: its revision opens there, outlined; any other goes to History
+    if (d.nres) { const n = nt(d.nres); if (!n) return; if (!/^(ref|chk):/.test(n.ra || '')) return NK().goRes(ctx, n); S.res = n.ra; S.resGo = true; return goRef(itemOf(n.ra), '', n.ra)(); }
+    if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
     if (d.zoom) {
@@ -551,6 +583,11 @@
     if (d.trnsave) return renameTopic(d.trnsave, (document.getElementById('rf-trn').value || '').trim());
     if (d.tmerge) { S.tmerge = S.tmerge === d.tmerge ? '' : d.tmerge; return draw(); }
     if (d.tmergeto) return combine(S.tmerge, d.tmergeto);
+  }
+  function moveNote(id, a, l, target) {
+    const n = allNotes().find(x => x.id === id); S.move = ''; if (!n) return draw();
+    return NK().move(ctx, id, {anchor_id: n.a, anchor_label: n.l, target: n.target || null}, {anchor_id: a, anchor_label: l, target: target || null}, ctx.api,
+      p => { if (p) Object.assign(n, {a: p.anchor_id, l: p.anchor_label, target: p.target}); S.hl = p ? id : ''; draw(); });
   }
   async function undoNote(id) {
     try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); draw(); ctx.toast('Note taken back'); }
@@ -609,7 +646,7 @@
   function onKey(e) {
     if (!here() || S.full) return;
     if (e.target.id === 'rf-trn' && e.key === 'Enter') renameTopic(S.trn, e.target.value.trim());
-    if (e.key === 'Escape' && (S.trn || S.tmerge || S.note)) { S.trn = S.tmerge = S.note = ''; draw(); }
+    if (e.key === 'Escape' && (S.trn || S.tmerge || S.note || S.move || S.spot)) { S.trn = S.tmerge = S.note = S.move = S.spot = S.pin = ''; draw(); }
     if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
   }
 
@@ -653,6 +690,10 @@
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
           mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
           return async () => { keep(); mine = P.putBack(mine, wm, n.id); if (D && wd) D.notes = P.putBack(D.notes, wd, n.id); SNOTES = P.putBack(SNOTES, ws, n.id); keepDrafts(); redo(); }; }});
+      // a sent note he re-opened goes again, its own row; Remove puts it back as the agent left it, with Undo (P.notes, r12 audit15 reference 3)
+      if (D && P.notes) allNotes().filter(n => !/^doc:/.test(n.a) && P.notes.isReo(c, n)).forEach(n => it.push({key: 'reo:' + n.id, group: 'Notes', note: n.id,
+        html: P.notes.row(n, '↻', `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”`), go: goRef(itemOf(n.a), n.id, n.a),
+        remove: () => P.notes.set(c, n, 'unreopen', c.api, async () => redo(), true)}));
       if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },

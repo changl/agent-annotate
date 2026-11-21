@@ -40,7 +40,7 @@
       if (why) return fail(why, retried);
       box.innerHTML = '<iframe class="hv-if" title="The version, read-only"></iframe>';
       const f = box.querySelector('iframe');
-      f.onload = () => fit(f, ctx);
+      f.onload = () => fit(f, ctx, o.at);
       f.src = o.src;
     }
     function fail(why, retried) {
@@ -84,7 +84,7 @@
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
-  function fit(f, ctx) {
+  function fit(f, ctx, at) {
     let doc;
     try { doc = f.contentDocument; } catch { return; }
     if (!doc) return;
@@ -97,6 +97,19 @@
     const size = () => { f.style.height = Math.max(200, doc.documentElement.scrollHeight) + 'px'; };
     size();
     try { new ResizeObserver(size).observe(doc.body); } catch {}
+    // a resolution in this version: its spot opens, is scrolled to and stays outlined (r12 audit15 questions 3)
+    const spot = at && doc.querySelector(`[data-anchor-id="${CSS.escape(at)}"]`);
+    if (spot) {
+      for (let d = spot.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+      if (!spot.getClientRects().length) { const t = (spot.closest('section') || spot).querySelector('.annotate-unchanged-toggle[aria-expanded=false]'); if (t) t.click(); }
+      P.notes.lit(spot);
+      const go = () => { const top = document.getElementById('p-top'); size();
+        window.scrollTo({top: scrollY + f.getBoundingClientRect().top + spot.getBoundingClientRect().top - (top ? top.offsetHeight : 0) - 120}); };
+      requestAnimationFrame(go);
+      // the reader's lists and pictures can still grow after the jump: keep the spot in view until he scrolls or 3 s pass (r12 fix17)
+      const view = f.closest('.hv-view'), end = Date.now() + 3000, ro = new ResizeObserver(() => Date.now() < end ? go() : ro.disconnect()), stop = () => ro.disconnect();
+      if (view) { ro.observe(view); ro.observe(doc.body); for (const e of ['wheel', 'touchstart', 'keydown']) window.addEventListener(e, stop, {once: true}); }
+    }
     // a version's section index, beside "What you sent on it" (the mock's "Its sections"); each line scrolls to its section
     const secs = f.closest('.hv-view').querySelector('.h-secs');
     if (!secs) return;
@@ -379,12 +392,13 @@
     }
     box.innerHTML = html;
   }
-  function li(h, ctx) {
+  function li(h, ctx, ro) {
     const {esc} = ctx;
     const tag = h.ovr ? `<span class="h-ovr" tabindex="0">⤼ overruled<span class="h-tip" role="tooltip">The agent wrote “${esc(h.ovr[0])}”: ${esc(h.ovr[1])} Your answer stays here as you sent it.</span></span> ` : '';
-    // a card answered twice: the older answer is his earlier pick; the newest, on a card still asked, offers Change (catalog 52)
+    // a card answered twice: the older answer is his earlier pick; the newest, on a card still asked, offers Change (catalog 52);
+    // the read-only version reader (ro) shows the answer without Change, as the mock does (r12 audit15 running 1)
     const newest = h.id && D.answers.find(x => x.id === h.id), old = newest && newest !== h;
-    const ch = !old && h.ch ? ` <button class="lk small" data-hchange="${esc(h.id)}" title="Pick again on its card in Questions; this answer stays here">Change</button>` : '';
+    const ch = !ro && !old && h.ch ?` <button class="lk small" data-hchange="${esc(h.id)}" title="Pick again on its card in Questions; this answer stays here">Change</button>` : '';
     return `<li${old ? ' class="h-old"' : ''}>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b>${old ? ' <span class="small mut">· your earlier pick, changed since</span>' : ''}${ch}</li>`;
   }
   // a version published since he last looked carries Reference's "changed" mark until he opens it (catalog 68)
@@ -430,13 +444,14 @@
       return P.viewVersion(el, ctx, {title: `${p ? p.t : id}, revision ${i + 1}${p ? ` of ${p.revs.length}` : ''}`, src: `plans/${encodeURIComponent(id)}/${encodeURIComponent(v)}.html`, onClose: close,
         before: p && p.revs[i] && p.revs[i][2] ? `<p class="small"><span class="mut">Agent's note on this revision:</span> ${esc(p.revs[i][2])}</p>` : ''});
     }
-    const v = anchor, m = D.versions[v] || {}, hs = D.answers.filter(h => h.v === v);
+    // "<version>~<anchor>": a note's View resolution opens the version at that spot (r12 audit15 questions 3)
+    const v = anchor.split('~')[0], at = anchor.slice(v.length + 1), m = D.versions[v] || {}, hs = D.answers.filter(h => h.v === v);
     S.wnOpen = null;
-    P.viewVersion(el, ctx, {title: `Version ${vn(v)}`, src: `content?v=${encodeURIComponent(v)}`, onClose: close,
+    P.viewVersion(el, ctx, {title: `Version ${vn(v)}`, src: `content?v=${encodeURIComponent(v)}`, onClose: close, at,
       before: `${m.note ? `<p class="small"><span class="mut">Agent's note on this version:</span> ${esc(m.note)}</p>` : ''}
         ${v !== D.current ? waitingNow(v, ctx) : ''}
         <div class="h-cols"><div><h3 class="h-ph">Its sections</h3><div class="h-secs"><p class="small mut">Loading…</p></div></div>
-        <div><h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul></div></div>`});
+        <div><h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx, true)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul></div></div>`});
     el.querySelector('.hv-view').addEventListener('click', e => { const b = e.target.closest('[data-wnfold], [data-qgo]'); if (!b) return;
       // Questions scrolls to the card once its data is in; read it first so a cold load lands on the card too
       if (b.dataset.qgo) return ctx.data('questions').catch(() => {}).then(() => ctx.go('questions', 'q-' + b.dataset.qgo));

@@ -672,8 +672,9 @@ NOTE_ANCHORS = ("ref:", "doc:", "chk:")
 def notes(page_dir: Path) -> list:
     """The notes written in Reference (anchors ref:, doc:, chk:), oldest first, so each shows at its line."""
     from ..categories import _comments
-    out = []
-    for anchor, items in (_comments(page_dir).get("anchors") or {}).items():
+    out, store = [], _comments(page_dir)
+    # Close (today's archive) moves a note into "archived": it stays at its line, closed, with Re-open (r12 fix17)
+    for anchor, items in [kv for part in ("anchors", "archived") for kv in (store.get(part) or {}).items()]:
         if not anchor.startswith(NOTE_ANCHORS):
             continue
         for c in items:
@@ -681,6 +682,8 @@ def notes(page_dir: Path) -> list:
                 continue
             out.append({"id": c.get("id"), "a": anchor, "l": hide(c.get("anchor_label") or ""), "text": hide(c.get("text") or ""), "who": c.get("author_name") or "You",
                         "at": (c.get("created_at") or "")[:16], "v": c.get("version"), "st": c.get("status"),
+                        # Close, Re-open and View resolution, as on Questions' notes (r12 fix17)
+                        "closed": c.get("status") == "archived", "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"),
                         "target": c.get("target"),  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
                         # a Send flags every open note (sync_server rounds/submit), so an unsent one stays in the next Send after a reload
                         "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")) or not _mine(c.get("author"))})

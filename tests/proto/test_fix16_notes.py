@@ -116,7 +116,7 @@ def test_history_answers_offer_change(tmp_path):
     (page / "rounds.ndjson").write_text("".join(json.dumps(r) + "\n" for r in rounds))
     a = history.build(page)["answers"]
     assert [(x["a"], x["id"], x["ch"]) for x in a] == [("B", "c1", True), ("A", "c1", True)]
-    li = grab(HIST, "  function li(h, ctx) {", "\n  }")
+    li = grab(HIST, "  function li(h, ctx, ro) {", "\n  }")
     assert "your earlier pick, changed since" in li and "data-hchange" in li
 
 
@@ -124,7 +124,8 @@ def test_note_controls_and_marks_are_wired():
     """Findings 2, 7, 8, 9, 10: every new control has its handler; Close is today's archive, Re-open restore or PUT open."""
     for attr in ("spot", "spotx", "spotadd", "spotgo", "nclose", "nopen", "nreopen", "nres", "nmove", "change"):
         assert f"data-{attr}" in Q
-    assert "call(u + '/archive', {})" in Q and "call(u + '/restore', {})" in Q and "{status: status || 'open'}, 'PUT'" in Q
+    # fix17: the shared kit (P.notes); a resolved note's Re-open is a draft Send writes as open
+    assert "api(u + (how === 'close' ? '/archive' : '/restore'), {})" in Q and "{status: 'open'}, 'PUT'" in Q
     assert "strategy: 'manual-repin'" in Q and "if (S.move) return moveNote(" in Q
     assert "'⋯'" not in Q and "…</button>" not in Q  # no ⋯ menu (#139)
     assert "rf-new" in Q and "rf-new" in HIST and "markSeenQ" in Q and "seeV(ctx" in HIST

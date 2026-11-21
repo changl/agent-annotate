@@ -153,7 +153,10 @@
   function noteBox(ctx, D, k) {
     const {esc, icon} = ctx, ns = notesAt(D, k), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '';
     if (!ns.length && S.note !== k) return '';
-    return `<div class="l-notes">${ns.map(n => `<div class="l-nt${S.hl === n.id ? ' l-hl' : ''}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    // a sent note carries the lifecycle Questions and Reference use (P.notes: Re-open, View resolution, Move, Close); a closed one folds (r12 fix17)
+    const K = P.notes, cls = n => `l-nt${S.hl === n.id ? ' l-hl' : ''}${S.move === n.id ? ' moving' : ''}`;
+    return `<div class="l-notes">${ns.map(n => n.closed ? `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('archive')} Note closed <span class="mut">${esc(n.text)}</span> ${K.closedActs(n)}</div>`
+      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}${n.sent ? ` ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span>` : ''}</div>`).join('')}
       ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
   }
@@ -241,7 +244,19 @@
       if (!f.md) return ctx.toast(`Opens “${f.n}” in a new tab${f.k === 'pdf' ? '; PDFs open in place later' : ''}`, {inert: true});
       S.dsel = S.dsel === i ? -1 : i; draw(w, ctx, D);
     } else if (b.hasAttribute('data-goref')) ctx.go('reference', b.dataset.goref);
-    else if (b.dataset.bnote) { S.tgt = null; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
+    else if (b.dataset.nclose || b.dataset.nopen || b.dataset.nreopen || b.dataset.nres) {
+      const id = b.dataset.nclose || b.dataset.nopen || b.dataset.nreopen || b.dataset.nres, n = D.notes.concat(mine).find(x => x.id === id);
+      if (!n) return;
+      if (b.dataset.nres) return P.notes.goRes(ctx, n);
+      P.notes.set(ctx, n, b.dataset.nclose ? 'close' : b.dataset.nopen ? 'restore' : 'reopen', ctx.api, async nid => { S.hl = nid; draw(w, ctx, D); ctx.refreshChips(); });
+    } else if (b.dataset.nmove) { S.move = S.move === b.dataset.nmove ? '' : b.dataset.nmove; draw(w, ctx, D); if (S.move) ctx.toast('Click the bar or line for this note · Esc cancels'); }
+    else if (b.dataset.bnote && S.move) {  // Move: the next bar or Write a note it is pressed on takes the note
+      const n = D.notes.concat(mine).find(x => x.id === S.move), k = b.dataset.bnote; S.move = '';
+      if (!n || n.a === k) return draw(w, ctx, D);
+      const {l} = place(w, D, k, b);
+      P.notes.move(ctx, n.id, {anchor_id: n.a, anchor_label: n.l, target: n.target || null}, {anchor_id: k, anchor_label: l, target: null}, ctx.api,
+        p => { if (p) Object.assign(n, {a: p.anchor_id, l: p.anchor_label, target: p.target}); S.hl = p ? n.id : ''; draw(w, ctx, D); });
+    } else if (b.dataset.bnote) { S.tgt = null; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
     else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (w.querySelector('#l-nt').value || '').trim(), target = S.tgt || undefined;
@@ -367,7 +382,11 @@
         return () => { keep(); mine = P.putBack(mine, wm, n.id);
           if (LD) { LD.notes = P.putBack(LD.notes || [], wd || [], n.id); if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n); }  // a feed read while it was hidden lacks it
           const l = P.putBack(c.prefs.get('draft:lnotes', []), ws, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line});
-          c.prefs.set('draft:lnotes', l); redo(); }; }}))],
+          c.prefs.set('draft:lnotes', l); redo(); }; }})),
+    // a sent note he re-opened goes again as its own row; Remove puts it back as the agent left it (P.notes, r12 fix17)
+    ...(LD && P.notes ? LD.notes.filter(n => P.notes.isReo(c, n)).map(n => ({key: 'lreo:' + n.id, group: 'Notes', note: n.id,
+      html: P.notes.row(n, '↻', `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”`), go: () => goNote(c, n),
+      remove: () => P.notes.set(c, n, 'unreopen', c.api, async () => redo(), true)})) : [])],
     sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }

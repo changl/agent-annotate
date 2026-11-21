@@ -187,6 +187,7 @@ button.qmkb:hover,button.qmkb[aria-expanded=true]{outline:2px solid var(--color-
 .rf-new{display:inline-block;font-size:var(--fs-xs);font-weight:700;border-radius:9px;padding:0 7px;background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text);vertical-align:1px;white-space:nowrap}
 .qpinwrap{position:relative;display:inline-block;max-width:100%}
 .qpin{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
+button.qpin{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:inherit;z-index:1}button.qpin[aria-expanded=true]{box-shadow:0 0 0 2px #fff,0 0 0 5px var(--color-primary)}
 .qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}
 /* "Back to Q N": left above the evidence by a card's evidence jump (today's annotate-back-pill) */
 .qbackrow{margin:4px 0;scroll-margin-top:140px}
