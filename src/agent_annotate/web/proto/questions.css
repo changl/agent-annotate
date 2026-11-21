@@ -120,7 +120,7 @@ pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(-
 .qcard.folded .qfold{font-size:var(--fs-base);font-weight:600;padding:8px 0}
 .qcard.folded .qfold::before{margin-top:6px}
 .qsect{flex:none;font-weight:400;padding-top:2px}
-.qright{display:inline-flex;align-items:center;gap:8px;flex:none}
+.qright{display:inline-flex;align-items:center;gap:8px;flex:0 1 auto;min-width:0;max-width:100%;flex-wrap:wrap}  /* a long Sent line wraps; Change stays on screen (r12 audit16 questions 7) */
 .btn.quick{white-space:nowrap}
 .qt{min-width:0}
 .qnum{flex:none;font-weight:700;font-size:var(--fs-xs);border-radius:10px;padding:1px 7px;margin-top:2px;background:color-mix(in oklab,var(--color-error) 20%,var(--color-base-100));color:var(--err-text);white-space:nowrap}

@@ -88,3 +88,10 @@ def test_history_chart_point_lists_notes_with_the_lifecycle():
 def test_reference_picture_pin_is_a_control():
     """Reference 1: the viewer's numbered pin takes clicks, so it lists notes with + Comment instead of a blank composer."""
     assert "button.pinm{pointer-events:auto" in (WEB / "reference.css").read_text()
+
+
+def test_cards_only_sent_line_wraps_on_a_phone():
+    """Questions 7: the Cards only right side (Sent, read by the agent, Change) shrinks and wraps instead of running off a 390 px screen."""
+    css = (WEB / "questions.css").read_text()
+    rule = css[css.index(".qright{"):].split("}", 1)[0]
+    assert "flex:none" not in rule and "min-width:0" in rule and "flex-wrap:wrap" in rule and "max-width:100%" in rule
