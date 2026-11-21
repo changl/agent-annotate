@@ -4,8 +4,18 @@
 (function () {
   const P = window.Proto;
   const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), open: new Set(),
-    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map(), rsent: new Map(), appr: new Set(), hl: '', cp: new Map(), cpEd: '', cq: ''};  // reopen, rsent (sent reopens: [time, why]), appr (approved items) and cp (copy-library choices): in memory only, the prototype sends nothing
+    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map(), rsent: new Map(), appr: new Set(), hl: '', cp: new Map(), cpEd: '', cq: ''};  // reopen, rsent (sent reopens: [time, why]), appr (approved items) and cp (copy-library choices): kept in this browser, the prototype sends nothing
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
+  // reopen, rsent, cp and appr go with the next Send: kept in prefs (draft:ref) like every draft, so a reload keeps them while
+  // "Unsent answers and notes" is on (r12 fix8); notes come back from the server, or on a copy from its simulation (P.copyData)
+  let kept = false;
+  function restoreDrafts() {
+    if (kept || !ctx) return;
+    kept = true;
+    const s = ctx.prefs.get('draft:ref', null);
+    if (s) { S.reopen = new Map(s.reopen || []); S.rsent = new Map(s.rsent || []); S.cp = new Map(s.cp || []); S.appr = new Set(s.appr || []); }
+  }
+  const keepDrafts = () => { if (kept) ctx.prefs.set('draft:ref', {reopen: [...S.reopen], rsent: [...S.rsent], cp: [...S.cp], appr: [...S.appr]}); };
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
   // the store's own links are refused from inside its sandbox, so it asks this page to open the next of its pages
@@ -413,6 +423,7 @@
   /* ---------- draw and events ---------- */
   const here = () => el && el.isConnected && el.classList.contains('tab-reference');  // #p-main is shared by every tab
   function draw() {
+    keepDrafts();  // every change to a draft redraws, on this tab or from Send
     if (!here()) return;
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
     const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
@@ -581,7 +592,7 @@
   function onInput(e) {
     if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
-    if (here() && e.target.dataset.reopen) S.reopen.set(e.target.dataset.reopen, e.target.value);
+    if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
   }  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
@@ -598,7 +609,7 @@
   const itemOf = a => a.startsWith('chk:') && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
   const goRef = (id, nid) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true;
     if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
-  const redo = () => { if (here()) draw(); };
+  const redo = () => draw();  // draw keeps the drafts, then redraws only on this tab
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
     items: c => {
@@ -613,7 +624,8 @@
         it.push(out('cp:' + ck, 'Reference', `${c.esc(x.t)}, ${c.esc((x.copy[+m[2]] || [])[0] || 'line ' + (+m[2] + 1))} → ${what}`, x.id, () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
       for (const k of S.appr) { const id = k.slice(4), x = D.plans.find(p => p.id === id) || xOf(id);
         it.push(out('ap:' + k, 'Reference', `${c.esc(x ? x.t : id)} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
-      for (const n of allNotes()) if (!n.sent) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+      // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
+      for (const n of allNotes()) if (!n.sent && !/^doc:/.test(n.a)) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
         go: goRef(itemOf(n.a), n.id), remove: async () => {
           await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); D.notes = D.notes.filter(x => x.id !== n.id); redo();
           return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...noteMeta(n.a)}); mine.push({...n, id: b.id}); redo(); }; }});
@@ -624,9 +636,9 @@
       S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); redo(); },
   });
   Proto.tab({key: 'reference',
-    chip: async c => { ctx = c; D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
+    chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
-      ctx = c; el = main;
+      ctx = c; el = main; restoreDrafts();
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       unsort();
       taskBack = '';

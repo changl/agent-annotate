@@ -34,15 +34,31 @@
   const ASKFILE = 'Please file a task on the board for this question.';
   const gen = () => ctx.prefs.get('q:general', '');
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
-  // every tab, and it is answered in memory until a reload. Questions shows the result through sim(); Reference and Links keep their own.
+  // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
+  // "Unsent answers and notes" is on (r12 fix8). Questions shows it through sim(); Reference and Links through P.copyData.
   const SIM = {}, NOTES = {add: [], gone: new Set(), text: {}, sent: new Set()};
-  let simN = 0;
+  let simN = 0, simIn = false;
+  function simLoad() {
+    if (simIn || !P.ctx) return;
+    simIn = true;
+    const s = P.ctx.prefs.get('draft:copy', null);
+    if (!s) return;
+    Object.assign(SIM, s.sim || {});
+    NOTES.add = s.add || []; NOTES.gone = new Set(s.gone || []); NOTES.text = s.text || {}; NOTES.sent = new Set(s.sent || []);
+  }
+  const simSave = () => P.ctx.prefs.set('draft:copy', {sim: SIM, add: NOTES.add, gone: [...NOTES.gone], text: NOTES.text, sent: [...NOTES.sent]});
   function fake(full, body, method) {
+    simLoad();
+    const r = fakeWrite(full, body, method);
+    simSave();
+    return r;
+  }
+  function fakeWrite(full, body, method) {
     const path = full.split('?')[0], ts = new Date().toISOString();
     const [, id, act] = path.match(/^api\/comments(?:\/([^/]+))?(?:\/([a-z-]+))?$/) || [];
     const nid = id && decodeURIComponent(id), added = NOTES.add.find(n => n.id === nid), set = p => { SIM[nid] = {...SIM[nid], ...p}; };
-    if (path === 'api/comments') {
-      const n = {id: 'copy-' + ++simN, anchor: body.anchor_id, label: body.anchor_label, text: body.text, target: body.target, sent: false};
+    if (path === 'api/comments') {  // ids stay unique across reloads
+      const n = {id: `copy-${Date.now().toString(36)}-${++simN}`, anchor: body.anchor_id, label: body.anchor_label, text: body.text, target: body.target, sent: false, at: ts, version: body.version};
       NOTES.add.push(n);
       return {id: n.id, text: n.text, author_name: 'You', created_at: ts, version: body.version, target: n.target};
     }
@@ -57,6 +73,17 @@
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
   }
   P.copyWrite = fake;
+  // the copy's notes on Reference (ref:, chk:) and Pages & links (doc:), in their feeds' shape, so each tab lists its own after a reload
+  const FEED = {reference: /^(ref|chk):/, links: /^doc:/};
+  P.copyData = (area, d) => {
+    simLoad();
+    if (!FEED[area] || !d || !Array.isArray(d.notes)) return d;
+    const have = new Set(d.notes.map(n => n.id));
+    d.notes = d.notes.filter(n => !NOTES.gone.has(n.id)).map(n => n.id in NOTES.text ? {...n, text: NOTES.text[n.id]} : n)
+      .concat(NOTES.add.filter(n => FEED[area].test(n.anchor || '') && !have.has(n.id))
+        .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})));
+    return d;
+  };
   // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02)
   function carry(old, d) {
     const all = drafts(), ids = new Set(d.questions.map(q => q.id));
@@ -71,6 +98,7 @@
   }
   function sim(d) {
     if (!d) return d;
+    simLoad();
     if (D && D !== d && D.version !== d.version) carry(D, d);
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
     const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already

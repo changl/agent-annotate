@@ -78,7 +78,7 @@
   const abs = u => new URL(u, location.href).href;
 
   async function render(el, ctx, anchor) {
-    const D = await ctx.data('links');
+    const D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
@@ -132,7 +132,7 @@
   const badTitle = D => `${D.name}, the publish of ${badWhen(D).split(',')[0]}`;
 
   /* ---------- Documents (#16): kept on this page, then every file in the project's folder ---------- */
-  const notesAt = (D, k) => [...D.notes, ...mine].filter(n => n.a === k);
+  const notesAt = (D, k) => [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))].filter(n => n.a === k);
   const onWords = (esc, t) => t && t.quote ? ` on “${esc(t.quote.length > 60 ? t.quote.slice(0, 58).trimEnd() + '…' : t.quote)}”` : '';
   function noteBox(ctx, D, k) {
     const {esc, icon} = ctx, ns = notesAt(D, k);
@@ -286,7 +286,7 @@
   }
 
   // notes on kept documents go with the one Send, under Notes; Go to it opens that document (r12 fix6, running 4)
-  let ON = null;  // the Pages & links view on screen, to redraw it when Send takes a note back
+  let ON = null, LD = null;  // the Pages & links view on screen, to redraw it when Send takes a note back; LD: its feed
   const redo = () => { if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); };
   // Go to it opens the note's document and lands on the note, outlined, as the mock does (r12 fix8, running 3)
   async function goNote(c, n) {
@@ -297,18 +297,24 @@
     if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links');  // on screen: the same hash fires no hashchange
   }
   let KEPT = null;  // kept documents' titles, for Send before Pages & links has opened
+  // unsent notes from the feed (after a reload: the server's, or a copy's simulated ones) and from this visit, once each (r12 fix8)
+  const unsent = c => {
+    if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
+    const fd = (LD || {}).notes || [];
+    return [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a));
+  };
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
       const d = (KEPT || []).find(x => x.id === id);
       return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
-    ...mine.filter(n => !n.sent).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? (n.line.length > 50 ? n.line.slice(0, 49) + '…' : n.line) : n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? (n.line.length > 50 ? n.line.slice(0, 49) + '…' : n.line) : n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
       go: () => goNote(c, n),
       remove: async () => {
-        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); redo();
+        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); redo();
         return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }}))],
-    sent: c => { mine.forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); redo(); },
+    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); redo(); },
   });
-  P.tab({key: 'links', render, chip: async ctx => { const D = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
+  P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

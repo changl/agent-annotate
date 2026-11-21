@@ -59,7 +59,9 @@
     seen: () => api('api/seen'), readState: () => api('api/read-state'), copy: () => api('api/copy'),
   });
   const cache = {};
-  const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = api(`proto/data/${area}.json`).catch(e => { delete cache[area]; throw e; }));
+  // on a copy, the notes it simulated join each tab's feed (questions.js P.copyData), so a reload keeps them where they were written
+  const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = api(`proto/data/${area}.json`)
+    .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { delete cache[area]; throw e; }));
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
   // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
@@ -125,7 +127,7 @@
 
   const phoneQ = matchMedia('(max-width: 900px)');  // up to 900 the frame folds into its menu: the mock's desk header overflows below 1074 (#8)
   const S = {tab: 'questions', home: false, menu: '', sheet: '', meta: null, loadedV: '', newer: null, checked: '',
-    fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null};
+    fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null, sent: prefs.get('lastSend', null)};
   const ctx = {
     base, api, data, prefs, esc, toast, inert, remember,
     icon: (n, l) => P.icon(n, l),
@@ -133,8 +135,8 @@
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
     refreshTop: () => refreshTop(),
-    // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3)
-    queued, queueSent: n => { if (n) S.sent = {ts: new Date().toISOString(), n}; SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
+    // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
+    queued, queueSent: n => { if (n) prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
