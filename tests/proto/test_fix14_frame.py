@@ -38,7 +38,7 @@ def test_copy_status_names_the_copys_own_version(tmp_path):
 
 def test_reload_never_says_up_to_date_behind_its_copy(tmp_path):
     """Frame 2: the status read lands after the metadata read, and a background copy finishes; both go to blue, never "Up to date"."""
-    check = grab(FRAME, "  let copyWatch = 0;", "\n  }\n")
+    check = grab(FRAME, "  let copyWatch = 0", "    return true;\n  }\n")
     node(tmp_path, f"""
 const assert = require('assert');
 const COPY = 'rebex', S = {{loadedV: 'v438', menu: ''}};
@@ -87,6 +87,13 @@ for (const h of [beadsCtl(), beadsCtl(true)]) {{
 }}
 assert(beadsCtl().includes('could not be read just now') && beadsCtl().includes('data-go="running/tasks"'));
 assert(beadsCtl(true).includes('not read'));
+// the whole Running read failed, an earlier board still in memory: no stale count (r12 audit13 questions 4)
+S.run.board = {{tasks: [], waiting: [['b-1']], ready: 0}}; S.runErr = true;
+for (const h of [beadsCtl(), beadsCtl(true)]) assert(!/Nothing ready|tasks not closed|0 ready|1 waiting/.test(h) && h.includes('could not be read just now'), h);
+// not read yet, Questions holding the first read back: unknown, no count (r12 audit13 frame 2)
+S.runErr = false; S.run = null; S.boardUrl = 'https://board.example';
+for (const h of [beadsCtl(), beadsCtl(true)]) assert(!/Nothing ready|tasks not closed|0 ready|could not be read/.test(h) && h.includes('has not been read yet') && h.includes('…'), h);
+S.run = {{}};
 S.run.board = {{tasks: [], waiting: [], ready: 0}};
 assert(beadsCtl().includes('Nothing ready') && beadsCtl().includes('0 tasks not closed'));
 """)

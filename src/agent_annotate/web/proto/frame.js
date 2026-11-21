@@ -345,19 +345,25 @@
     const b = board(), ready = readyHere(), wy = waitTasks(), wyN = wy.length;
     if (S.other || (!b && !S.boardUrl)) return '';
     // an unread board has no counts: never "Nothing ready" or "0 tasks", as Tasks (r12 fix14 frame)
-    const unread = !!(b && b.error), noRead = `The board could not be read just now.`;
+    // before its first read the board is unknown, not empty: Questions' read may hold it back (r12 audit13 frame 2)
+    const unread = !!(S.runErr || (b && b.error)), unknown = !b && !unread;
+    const noRead = unread ? 'The board could not be read just now.' : 'The board has not been read yet.';
+    if (unread || unknown) {
+      const lbl = `Beads: ${noRead} Opens Running${unread ? ' to try again' : ''}`, tag = unread ? 'not read' : '…';
+      if (phone) return `<button class="btn" data-go="running/tasks" aria-label="${lbl}">${I('bead')} Beads <span class="badge">${tag}</span></button>`;
+      return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="${lbl}">${I('bead')}<span class="bl">Beads</span>${unknown ? '<span class="badge" title="The board has not been read yet">…</span>' : ''}</button><div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
+      <button class="hp-t" data-go="running/tasks">${unread ? 'Open Running to try again' : 'Open the board under Running'}</button></div></span>`;
+    }
     const wait = wyN ? `<button class="btn ghost" data-go="running/waiting" title="${pl(wyN, 'task', 'tasks')} on the bead board wait on you. Opens Running at Waiting" aria-label="${pl(wyN, 'task waits', 'tasks wait')} on you: open Running at Waiting"><span class="badge wait">${wyN} waiting</span></button>` : '';
-    if (phone) return `<button class="btn" data-go="running/tasks"${unread ? ` aria-label="Beads: ${noRead} Opens Running to try again"` : ''}>${I('bead')} Beads${ready != null ? ` <span class="badge ok">${ready} ready</span>` : unread ? ' <span class="badge">not read</span>' : ''}</button>${wait.replace('btn ghost', 'btn')}`;
+    if (phone) return `<button class="btn" data-go="running/tasks">${I('bead')} Beads${ready != null ? ` <span class="badge ok">${ready} ready</span>` : ''}</button>${wait.replace('btn ghost', 'btn')}`;
     const bt = id => (b && b.beads && b.beads[id]) || {};
     const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
     const rdy = b ? (b.tasks || []).filter(t => t.g === 'ready' && !t.chore) : [], wyM = wy.filter(x => x[2]).length;
     const open = b ? (b.tasks || []).length : 0;
-    const pop = unread ? `<div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
-      <button class="hp-t" data-go="running/tasks">Open Running to try again</button></div>`
-      : `<div class="hpop" role="tooltip"><b>Bead board</b>${wyN ? `<div class="hp-h">Waiting${wyM ? ` · ${pl(wyM, 'merge', 'merges')} among them` : ''}</div>${wy.slice(0, 3).map(([id, , mg]) => `<button class="hp-t" data-go="running/waiting">${mg ? 'Merge: ' : ''}${esc(cut(bt(id).t || id, 52))} <span class="bid">· ${esc(id)}${bt(id).st ? ' · ' + esc(bt(id).st) : ''}</span></button>`).join('')}${wyN > 3 ? `<div class="small mut">and ${wyN - 3} more, all listed at the top of Running</div>` : ''}` : ''}
+    const pop = `<div class="hpop" role="tooltip"><b>Bead board</b>${wyN ? `<div class="hp-h">Waiting${wyM ? ` · ${pl(wyM, 'merge', 'merges')} among them` : ''}</div>${wy.slice(0, 3).map(([id, , mg]) => `<button class="hp-t" data-go="running/waiting">${mg ? 'Merge: ' : ''}${esc(cut(bt(id).t || id, 52))} <span class="bid">· ${esc(id)}${bt(id).st ? ' · ' + esc(bt(id).st) : ''}</span></button>`).join('')}${wyN > 3 ? `<div class="small mut">and ${wyN - 3} more, all listed at the top of Running</div>` : ''}` : ''}
       <div class="hp-h">Ready to start</div>${rdy.slice(0, 5).map(t => `<button class="hp-t" data-go="running/tasks">${esc(cut(t.title || t.id, 52))} <span class="bid">· ${esc(t.id)} · ready</span></button>`).join('') || '<div class="small mut">Nothing ready</div>'}
       <div class="small mut" style="margin-top:4px">${pl(open, 'task not closed', 'tasks not closed')} on the board · click a count to open the board under Running${S.boardUrl ? ` · <a href="${esc(S.boardUrl)}" target="_blank" rel="noopener">the separate board ↗</a>` : ''}</div></div>`;
-    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : unread ? ': could not be read just now' : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}<span class="bl">Beads</span>${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
+    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}<span class="bl">Beads</span>${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
   }
 
   /* ---------- the last Send, in the header (catalog 14, 72) ---------- */
@@ -476,7 +482,8 @@
   }
   function drawAll() { drawTop(); drawFab(); drawLayer(); }
   // Running's data: workers, scheduled jobs and the bead board, for the top bar and Home
-  const readRun = () => data('running').then(r => { S.run = r || null; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null; }).catch(() => {});
+  // runErr: the whole read failed (HTTP 503, no answer): Beads says the board could not be read, as Tasks does (r12 audit13 questions 4)
+  const readRun = () => data('running').then(r => { S.run = r || null; S.runErr = false; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null; }).catch(() => { S.runErr = true; S.ready = null; });
   // Questions' three counts, read from one load and painted together: Send, the waiting badge and the Questions tab's chip.
   // A reload and a newer version show them with the version they belong to, never one before the others (r12 fix10 frame 1, running 2)
   const chipVal = c => c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
@@ -517,7 +524,7 @@
     S.stall.clear(); drawStall(); drawTop(); paintSend();  // every Send reads "…" again while it reads
     return retrying = Promise.all([
       v && api.meta().then(m => {
-        S.meta = m; S.loadedV = S.loadedV || m.current; S.checked = COPY ? S.checked : hhmm();
+        S.meta = m; S.loadedV = S.loadedV || m.current; S.checked = !COPY && m.current === S.loadedV ? hhmm() : S.checked;
         document.title = (m.name || 'This project') + ' · Agent Annotate';
       }, e => { S.stall.set('version', e.message); }),
       c && readCounts(true).then(putCounts),
@@ -670,13 +677,29 @@
   }
 
   /* ---------- a newer version: checked once a minute; the page changes only when he presses the icon ---------- */
-  let copyWatch = 0;
-  async function checkNewer() {
+  let copyWatch = 0, checkSeq = 0, checkLast = null;
+  // Reload's title, label and look, in place: a press keeps its focus, an open menu stays open
+  function paintReload() {
+    const el = typeof document !== 'undefined' && document.querySelector('#p-top [data-recheck]');
+    if (!el) return;
+    const t = document.createElement('template'); t.innerHTML = reloadBtn();
+    const n = t.content.firstElementChild;
+    el.className = n.className; el.title = n.title; el.setAttribute('aria-label', n.getAttribute('aria-label')); el.innerHTML = n.innerHTML;
+  }
+  // while any check is on its way Reload is neutral, never an earlier "Up to date"; only the latest check paints (r12 audit13 frame 3, questions 3, reference 2)
+  function checkNewer() {
+    const my = ++checkSeq;
+    S.checked = ''; paintReload();
+    return checkLast = checkOnce(my).finally(paintReload);
+  }
+  async function checkOnce(my) {
     // a copy whose real page moved on copies the newer version in the background: it says so, never "Up to date" (r12 fix10 slowread)
     let [m, cp] = await Promise.all([api.meta().catch(() => null), COPY ? api('proto/data/copies.json').catch(() => null) : null]);
+    if (my !== checkSeq) return checkLast;
     // a copy swapped in between the two reads leaves the metadata a version behind the copy: read it again (r12 audit12 frame 2)
     const ahead = () => !!(m && cp && cp.current && cp.current !== m.current && !(m.history || []).some(h => h.version === cp.current));
     if (ahead()) m = await api.meta().catch(() => null);
+    if (my !== checkSeq) return checkLast;
     // until the metadata reaches the copy's version, that version is still on its way: "Copying", then blue, never "Up to date"
     S.copying = (cp && cp.copying) || (ahead() ? cp.current : '');
     if (S.copying && !copyWatch) copyWatch = setTimeout(() => { copyWatch = 0; checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 10000);
@@ -686,6 +709,7 @@
     if (m.current === S.loadedV) { S.newer = null; return false; }
     const vs = (m.history || []).map(h => h.version), from = vs.indexOf(S.loadedV), fresh = new Set(from < 0 ? [m.current] : vs.slice(from + 1));
     const store = await api.comments().catch(() => ({anchors: {}}));
+    if (my !== checkSeq) return checkLast;
     // A question re-asked in each version is not new: count prompts he has not seen on screen yet.
     const all = Object.values(store.anchors || {}).flat(), prompt = c => (c.decision_request.prompt || c.text || '').trim();
     const seen = new Set(all.filter(c => c.decision_request && !fresh.has(c.version)).map(prompt));
