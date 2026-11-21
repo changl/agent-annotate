@@ -265,7 +265,7 @@
     const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
     const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
     const m = /^(.*?)~(\d+(?:~r\d+)?)$/.exec(k), le =m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
-    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', line: le ? le.textContent.trim().replace(/\s+/g, ' ') : ''};
+    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', line: le ? (le.cells ? [...le.cells].map(c => c.textContent).join(' ') : le.textContent).trim().replace(/\s+/g, ' ') : ''};
   }
   async function undoNote(id, w, ctx, D) {
     try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); draw(w, ctx, D); ctx.refreshChips(); ctx.toast('Note taken back'); }
