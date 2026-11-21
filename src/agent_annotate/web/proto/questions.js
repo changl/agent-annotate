@@ -518,7 +518,11 @@
   /* ---------- draw ---------- */
   async function draw(keepScroll) {
     if (host) return drawHost();
+    if (!root) return;  // Send was closed over another tab before Questions ever drew: a Remove's re-read has nothing to redraw (r12 audit10 frame 2)
     const y = scrollY;
+    // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
+    const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
+    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd};
     const html = S.view === 'list' ? listView() : null;
     if (html != null) {
       root.innerHTML = bar() + html;
@@ -546,6 +550,8 @@
     zoomBars(root);
     if (S.zoom) root.insertAdjacentHTML('beforeend', zoomView());
     document.body.classList.toggle('qsheet-open', !!(S.armed || S.zoom));
+    const back = keep && root.querySelector(keep.sel);
+    if (back && (!document.activeElement || document.activeElement === document.body)) { back.focus({preventScroll: true}); back.setSelectionRange(keep.a, keep.b); }
     if (keepScroll) scrollTo(0, y);
     ctx.refreshChips(); if (ctx.refreshTop) ctx.refreshTop();
   }

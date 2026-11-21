@@ -46,11 +46,14 @@
     if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
     const opts = !write ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
-    const r = await fetch(base + path.replace(/^\//, ''), opts);
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-    if (write) wrote(path);
-    return data;
+    const go = fetch(base + path.replace(/^\//, ''), opts).then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      if (write) wrote(path);
+      return data;
+    });
+    // every read, the version and metadata too, fails after 20 s so its tab or the frame offers Try again; a write is never cut short (r12 audit10 frame 1)
+    return write ? go : Promise.race([go, late()]);
   }
   // a note written on any tab changes the next Send: Questions re-reads its notes, and the Send count follows
   const wrote = path => { if (sendP && sendP.wrote) sendP.wrote(path); refreshSend(); };
@@ -146,7 +149,8 @@
 
   const phoneQ = matchMedia('(max-width: 900px)');  // up to 900 the frame folds into its menu: the mock's desk header overflows below 1074 (#8)
   const S = {tab: 'questions', home: false, menu: '', sheet: '', meta: null, loadedV: '', newer: null, checked: '',
-    fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null, sent: prefs.get('lastSend', null)};
+    fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null, sent: prefs.get('lastSend', null),
+    countsIn: false, stall: new Map()};  // stall: the frame's first reads that failed, 'version' or 'counts' -> why
   const ctx = {
     base, api, data, prefs, esc, toast, inert, remember,
     icon: (n, l) => P.icon(n, l),
@@ -217,7 +221,7 @@
     }).catch(e => {
       if (!live()) return;
       view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} could not be read: ${esc(e.message)}</p><button class="btn sm" data-again>Try again</button></div>`;
-      view.querySelector('[data-again]').onclick = () => route();  // a failed read left no cache, so this reads afresh
+      view.querySelector('[data-again]').onclick = () => { again(); route(); };  // a failed read left no cache, so this reads afresh, the frame's stalled reads too
       console.error(e);
     });
   }
@@ -245,7 +249,9 @@
     const nw = S.newer;
     if (nw) return `<button class="rl2 new" data-recheck title="A newer version is ready. Red: ${pl(nw.n, 'new question', 'new questions')}. Amber: ${pl(nw.fix, 'fix', 'fixes')} to your notes. Press to load it; your place and what you typed are kept." aria-label="Load the newer version: ${pl(nw.n, 'new question', 'new questions')}, ${pl(nw.fix, 'fix', 'fixes')}">${I('reload')}${nw.n ? `<span class="n q">${nw.n}</span>` : ''}${nw.fix ? `<span class="n f">${nw.fix}</span>` : ''}</button>`;
     if (S.copying) return `<button class="rl2 cp" data-recheck title="${esc(copyingText())} Reload turns blue when it is ready." aria-label="${esc(copyingText())} Check again">${I('reload')}<span>Copying ${esc(S.copying.replace(/^v/, ''))}…</span></button>`;
-    return `<button class="rl2" data-recheck title="Up to date${S.checked ? ', checked at ' + S.checked : ''}. The icon turns blue when the agent publishes a newer version; the page changes only when you press it." aria-label="Up to date. Check for a newer version">${I('reload')}</button>`;
+    // "Up to date" only once a check confirmed it: until then a copy may be behind its real page (r12 audit10 frame 5)
+    if (!S.checked) return `<button class="rl2" data-recheck title="Checking for a newer version. The icon turns blue when one is ready; the page changes only when you press it." aria-label="Check for a newer version">${I('reload')}</button>`;
+    return `<button class="rl2" data-recheck title="Up to date, checked at ${S.checked}. The icon turns blue when the agent publishes a newer version; the page changes only when you press it." aria-label="Up to date. Check for a newer version">${I('reload')}</button>`;
   }
   // the projects, as rows: the project dropdown and the phone's menu share them (mock: projRows)
   const isCur = x => !S.home && (x.this ? !S.other : S.other && S.other.key === x.key);
@@ -377,6 +383,12 @@
       : o.alive ? `Your Send goes to ${who} · alive now` : `Your Send goes to ${who}${since ? ' · claimed the page ' + since.replace('since ', 'on ') : ''}`;
   }
   function sendBtn(cls) {
+    // until the counts are in, Send never looks empty: it reads "…", or "?" once the read gave no answer (r12 audit10 frame 1);
+    // the last reading of this version (S.warm, fix12 perf) shows its count meanwhile, until the read stalls
+    if (sendable() && !S.countsIn && (!S.warm || S.stall.has('counts'))) {
+      const st = S.stall.has('counts'), tip = st ? 'What is ready to send could not be read: press Try again. Your saved answers and notes are kept.' : 'Reading what is ready to send…';
+      return `<button class="btn ${cls || ''}" data-send aria-disabled="true"${st ? '' : ' aria-busy="true"'} aria-label="Send: ${esc(tip)}" title="${esc(tip)}">${I('send')}<span class="bl">Send</span> ${st ? '?' : '…'}</button>`;
+    }
     const n = S.sendN, off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
     return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${off ? ' aria-disabled="true"' : ''} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${!off ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
@@ -437,9 +449,40 @@
     try {
       const [n, w, chip] = await Promise.all([sendP.count(ctx), sendP.waiting ? sendP.waiting(ctx) : null, qc ? qc(ctx) : undefined]);
       return {n: +n || 0, w: w == null ? null : +w || 0, chip};
-    } catch (e) { console.warn('counts', e); return null; }
+    } catch (e) {
+      console.warn('counts', e);
+      if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); }  // the first counts never came: the tab on screen offers Try again (r12 audit10 frame 1)
+      return null;
+    }
   }
-  const putCounts = c => { if (!c) return; S.sendN = c.n; if (c.w != null) S.qWait = c.w; if (c.chip !== undefined) S.chips.questions = chipVal(c.chip); };
+  const putCounts = c => {
+    if (!c) return;
+    S.sendN = c.n; if (c.w != null) S.qWait = c.w; if (c.chip !== undefined) S.chips.questions = chipVal(c.chip);
+    S.countsIn = true; if (S.stall.delete('counts')) drawStall();
+  };
+  const hhmm = () => new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  // A first read with no answer: a line above the tab on screen, whichever tab, with Try again (r12 audit10 frame 1, running 2)
+  const STALLED = {version: "The page's version", counts: 'What waits for you and what is ready to send'};
+  function drawStall() {
+    let el = document.getElementById('p-stall');
+    if (!el) { el = Object.assign(document.createElement('div'), {id: 'p-stall'}); document.getElementById('p-main').before(el); }
+    const ks = [...S.stall.keys()];
+    el.hidden = !ks.length || S.home || !!S.other;
+    el.innerHTML = el.hidden ? '' : `<div class="p-stall" role="alert">${I('warn')}<p>${ks.map(k => `${esc(STALLED[k])} could not be read: ${esc(S.stall.get(k))}.`).join(' ')} Your saved answers and notes are kept.</p><button class="btn sm" data-stallagain>Try again</button></div>`;
+  }
+  let retrying = null;
+  function again() {
+    if (retrying || !S.stall.size) return retrying;
+    const v = S.stall.has('version'), c = S.stall.has('counts');
+    S.stall.clear(); drawStall(); drawTop(); drawFab();  // Send reads "…" again while it reads
+    return retrying = Promise.all([
+      v && api.meta().then(m => {
+        S.meta = m; S.loadedV = S.loadedV || m.current; S.checked = COPY ? S.checked : hhmm();
+        document.title = (m.name || 'This project') + ' · Agent Annotate';
+      }, e => { S.stall.set('version', e.message); }),
+      c && readCounts().then(putCounts),
+    ]).finally(() => { retrying = null; drawStall(); drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); });
+  }
   let topTimer;
   function refreshTop() {
     clearTimeout(topTimer);
@@ -570,6 +613,7 @@
     S.home = key === 'home';
     S.menu = '';
     S.other = key === 'project' ? projs().find(x => x.key === anchor && !x.this) || null : null;
+    drawStall();
     if (key === 'project' && !S.other && S.fd) { location.replace('#home'); return; }
     if (S.other && S.other.href != null) { location.replace(ROOT + S.other.href + '#' + (byKey[sub] ? sub : 'questions')); return; }  // a project with its own prototype page
     if (S.home) { drawTabs(); drawAll(); drawHome(); return; }
@@ -588,7 +632,8 @@
     const [m, cp] = await Promise.all([api.meta().catch(() => null), COPY ? api('proto/data/copies.json').catch(() => null) : null]);
     S.copying = (cp && cp.copying) || '';
     if (S.copying && !copyWatch) copyWatch = setTimeout(() => { copyWatch = 0; checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 10000);
-    S.checked = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    // "Up to date" needs both answers: the version on screen is the page's, and (on a copy) no newer one is being copied (r12 audit10 frame 5)
+    S.checked = m && S.loadedV && m.current === S.loadedV && (cp || !COPY) && !S.copying ? hhmm() : '';
     if (!m || !S.loadedV) return false;
     if (m.current === S.loadedV) { S.newer = null; return false; }
     const vs = (m.history || []).map(h => h.version), from = vs.indexOf(S.loadedV), fresh = new Set(from < 0 ? [m.current] : vs.slice(from + 1));
@@ -615,7 +660,7 @@
   /* ---------- clicks and keys ---------- */
   function onClick(e) {
     // Only the frame's own controls: an area's buttons (its own data-send, data-close, ...) are never caught here.
-    const t = e.target.closest('#p-top button, #p-top a, #p-layer button, #p-layer a, #p-layer [data-scrim], #p-fab, #p-tabs button, .p-main.home button, .p-main.other button, #p-gate button, a.skip');
+    const t = e.target.closest('#p-top button, #p-top a, #p-layer button, #p-layer a, #p-layer [data-scrim], #p-fab, #p-tabs button, .p-main.home button, .p-main.other button, #p-gate button, #p-stall button, a.skip');
     if (!t) {
       if (S.menu && S.menu !== 'nav' && !e.target.closest('.menu')) { S.menu = ''; drawAll(); }
       return;
@@ -634,8 +679,10 @@
     if (d.tab && S.other) { S.menu = ''; location.hash = `project/${S.other.key}/${d.tab}`; return; }
     if (d.tab && t.matches('.pm-tab')) { S.menu = ''; ctx.go(d.tab); drawAll(); return; }
     if (d.tab && t.matches('.tab')) { ctx.go(d.tab); return; }
+    if (d.stallagain !== undefined) { again(); return; }
     if (d.send !== undefined) {
       S.menu = ''; drawAll();
+      if (sendable() && !S.countsIn) return S.stall.has('counts') ? again() : toast('Reading what is ready to send…');
       if (!sendable() || (!S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');
       return Promise.resolve().then(() => sendP.open(ctx)).catch(err => toast('Send could not open: ' + err.message));
     }
@@ -652,7 +699,7 @@
         }).finally(() => { S.settling = false; route(); refreshTop(); toast('Loaded the newer version'); });
         return;
       }
-      checkNewer().then(found => { drawTop(); if (!found) toast(S.copying ? copyingText() + ' Reload turns blue when it is ready.' : 'Up to date'); });
+      checkNewer().then(found => { drawTop(); if (!found) toast(S.copying ? copyingText() + ' Reload turns blue when it is ready.' : S.checked ? 'Up to date' : 'Could not check for a newer version just now'); });
       return;
     }
     if (d.sheet) { S.sheet = d.sheet; S.menu = ''; S.pErr = ''; drawAll(); return; }
@@ -819,7 +866,8 @@
     // one round on a busy host, not three: Questions' read and the tab scripts start with the frame's reads (r12 fix12 perf)
     (pre.questions = api('proto/data/questions.json')).catch(() => {});
     const scripts = Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
-    const [meta, who, fd, proj, board] = await Promise.all([api.meta(), api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null)));
+    let why = '';
+    const [meta, who, fd, proj, board] = await Promise.all([api.meta().catch(e => { why = e.message; return null; }), ...[api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null))]);
     S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
@@ -831,12 +879,14 @@
     S.meta = meta; S.settling = true;
     // the last reading of this same version paints at once, all three together, while Questions' read finishes (r12 fix12 perf)
     const was = remember('drafts') && meta && prefs.get('firstPaint', null);
-    if (was && was.v === meta.current) { S.sendN = was.n; S.qWait = was.w; S.chips.questions = was.chip; S.loadedV = was.v; }
+    if (was && was.v === meta.current) { S.sendN = was.n; S.qWait = was.w; S.chips.questions = was.chip; S.loadedV = was.v; S.warm = was.n > 0; }  // a remembered 0 may predate a draft: Send reads "…" (r12 fix12 frame 1)
+    if (!meta) S.stall.set('version', why || 'it came back empty');  // api() gives up on any read at 20 s
     route();
     addEventListener('hashchange', route);
     if (S.loadedV) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
+    if (meta && !COPY) S.checked = hhmm();  // the version just read is the page's own; a copy waits for its copy status
     drawTop(); drawFab();
     firstRead();
     if (COPY) checkNewer().then(() => drawTop());  // a copy refresh already running shows from the first paint on

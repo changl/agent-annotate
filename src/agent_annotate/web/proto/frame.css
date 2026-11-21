@@ -126,6 +126,11 @@ a.btn{color:inherit;font-weight:400}
 /* the area each tab draws into */
 .p-main{padding:12px 20px 90px;max-width:1920px;margin:0 auto}
 .p-empty{display:flex;align-items:center;gap:10px;color:var(--muted);padding:40px 0}
+/* a first read with no answer, above whichever tab is open (r12 audit10 frame 1) */
+.p-stall{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;max-width:1880px;margin:10px auto 0;padding:8px 12px;border:1px solid color-mix(in oklab,var(--color-warning) 60%,var(--line));border-radius:var(--radius-box);background:color-mix(in oklab,var(--color-warning) 12%,var(--color-base-100));color:var(--warn-text)}
+.p-stall p{margin:0;flex:1 1 260px}
+#p-stall{padding:0 20px}#p-stall[hidden]{display:none}
+@media (max-width:900px){#p-stall{padding:0 12px}}
 .p-qlist{list-style:none;margin:0;padding:0}.p-qlist li{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
 
 /* sheets: keyboard shortcuts, People */
