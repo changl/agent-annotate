@@ -162,6 +162,7 @@
       if (t.chip && !S.other) Promise.resolve().then(() => t.chip(ctx)).then(c => {
         S.chips[t.key] = c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
         if (!S.other) paintChip(t.key);
+        refreshSend();  // its tab's data is in: the drafts it restored now count in Send (r12 audit7 frame 2)
       }).catch(e => console.warn('chip', t.key, e));
     }
   }

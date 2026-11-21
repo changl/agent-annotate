@@ -18,9 +18,11 @@
   const drafts = () => ctx.prefs.get('q:drafts', {});
   const draft = id => drafts()[id] || {};
   function setDraft(id, patch) {
-    const all = drafts(), d = Object.assign({}, all[id], patch);
+    const all = drafts(), d = Object.assign({}, all[id], patch), q = D && D.questions.find(x => x.id === id);
+    delete d.p;
     for (const k of Object.keys(d)) if (d[k] === '' || d[k] == null || d[k] === false) delete d[k];
-    if (Object.keys(d).length) all[id] = d; else delete all[id];
+    // p: its question's words, so a browser reload onto a version that re-asks it under a new id finds it again (carry)
+    if (Object.keys(d).length) all[id] = {...d, p: q ? q.prompt : (all[id] || {}).p}; else delete all[id];
     ctx.prefs.set('q:drafts', all);
   }
   async function who() {
@@ -56,7 +58,8 @@
   function fakeWrite(full, body, method) {
     const path = full.split('?')[0], ts = new Date().toISOString();
     const [, id, act] = path.match(/^api\/comments(?:\/([^/]+))?(?:\/([a-z-]+))?$/) || [];
-    const nid = id && decodeURIComponent(id), added = NOTES.add.find(n => n.id === nid), set = p => { SIM[nid] = {...SIM[nid], ...p}; };
+    const nid = id && decodeURIComponent(id), added = NOTES.add.find(n => n.id === nid),
+      set = p => { SIM[nid] = {...SIM[nid], ...p, p: ((D && D.questions.find(x => x.id === nid)) || {}).prompt || (SIM[nid] || {}).p}; };
     if (path === 'api/comments') {  // ids stay unique across reloads
       const n = {id: `copy-${Date.now().toString(36)}-${++simN}`, anchor: body.anchor_id, label: body.anchor_label, text: body.text, target: body.target, sent: false, at: ts, version: body.version};
       NOTES.add.push(n);
@@ -84,22 +87,25 @@
         .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})));
     return d;
   };
-  // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02)
+  // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02),
+  // after a browser reload too, when the old version is no longer in memory: each keeps its question's words (p) (r12 audit7 frame 1, questions 1)
   function carry(old, d) {
-    const all = drafts(), ids = new Set(d.questions.map(q => q.id));
-    let moved = false;
-    for (const q of old.questions) {
-      const nq = !ids.has(q.id) && d.questions.find(x => x.prompt === q.prompt);
-      if (!nq) continue;
-      if (all[q.id] && !all[nq.id]) { all[nq.id] = all[q.id]; delete all[q.id]; moved = true; }
-      if (SIM[q.id] && !SIM[nq.id]) { SIM[nq.id] = SIM[q.id]; delete SIM[q.id]; }
+    const all = drafts(), ids = new Set(d.questions.map(q => q.id)), was = new Map(((old || {}).questions || []).map(q => [q.id, q.prompt]));
+    let moved = false, simMoved = false;
+    for (const [box, put] of [[all, () => { moved = true; }], [SIM, () => { simMoved = true; }]]) {
+      for (const id of Object.keys(box)) {
+        const words = was.get(id) || box[id].p, nq = !ids.has(id) && words && d.questions.find(x => x.prompt === words);
+        if (!nq || box[nq.id]) continue;
+        box[nq.id] = {...box[id], p: words}; delete box[id]; put();
+      }
     }
     if (moved) ctx.prefs.set('q:drafts', all);
+    if (simMoved) simSave();
   }
   function sim(d) {
     if (!d) return d;
     simLoad();
-    if (D && D !== d && D.version !== d.version) carry(D, d);
+    if (!D || (D !== d && D.version !== d.version)) carry(D, d);
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
     const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id) && !added.has(n.id)).concat(NOTES.add)
@@ -993,7 +999,17 @@
   });
   // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)
   let stale = false;
-  const load = async c => { ctx = ctx || c; if (!D || stale) { const fresh = !!D; stale = false; D = sim(await c.data('questions', fresh)); } };
+  // one read at a time: a count asked while a read is on its way waits for it, never counting the old version (r12 audit7 running 1)
+  let reading = null;
+  const load = async c => {
+    ctx = ctx || c;
+    for (;;) {
+      if (reading) { await reading; continue; }  // marked stale meanwhile: read again
+      if (D && !stale) return;
+      const fresh = !!D; stale = false;
+      reading = c.data('questions', fresh).then(d => { D = sim(d); }).finally(() => { reading = null; });
+    }
+  };
   // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
   async function findCopy(c) { if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => ''); }
   P.send({
