@@ -22,7 +22,8 @@
     Object.assign(byKey[spec.key], spec);
     if (started) { drawTabs(); if (!S.home && !S.other && S.tab === spec.key) show(S.tab, null); }
   };
-  // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary, wrote(path) hears every write.
+  // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary, wrote(path) hears every write,
+  // saved(ctx) -> what its sheet lists now from the saved drafts alone, at once (the count until the reads are in).
   let sendP = null;
   P.send = spec => { sendP = spec; if (started) refreshTop(); };
   const sendable = () => !!sendP;  // a read-only copy's Send is simulated by Questions: it writes nothing
@@ -518,13 +519,17 @@
   }
   // The Send count, the moment a draft is added or removed on any tab: only the Send buttons repaint, so a box he types in keeps its focus
   let sendT;
+  const savedN = () => { try { return +sendP.saved(ctx) || 0; } catch (e) { console.warn('send saved', e); return S.sendN; } };
   function refreshSend() {
     clearTimeout(sendT);
     sendT = setTimeout(async () => {
-      if (!started || !sendable() || S.settling) return;
-      const n = await Promise.resolve().then(() => sendP.count(ctx)).then(x => +x || 0, () => S.sendN);
-      if (n === S.sendN || S.settling) return;
-      S.sendN = n;
+      if (!started || !sendable()) return;
+      // until the counts are in, Send counts the saved drafts, as its sheet lists them: a cleared one leaves the count at once (r12 fix14)
+      const pre = !S.countsIn && sendP.saved;
+      if (S.settling && !pre) return;
+      const n = pre ? savedN() : await Promise.resolve().then(() => sendP.count(ctx)).then(x => +x || 0, () => S.sendN);
+      if (pre ? n === S.sendN && S.warm === n > 0 : n === S.sendN || S.settling) return;
+      S.sendN = n; if (pre) S.warm = n > 0;
       if (sendP.changed) sendP.changed();  // an open Send summary lists what the count now holds (r12 fix10 reference 2)
       paintSend(); keepPaint();
     }, 30);
@@ -901,10 +906,12 @@
     // the last reading of this same version paints at once, all three together, while Questions' read finishes (r12 fix12 perf)
     const was = remember('drafts') && meta && prefs.get('firstPaint', null);
     if (was && was.v === meta.current) { S.sendN = was.n; S.qWait = was.w; S.chips.questions = was.chip; S.loadedV = was.v; S.warm = was.n > 0; }  // a remembered 0 may predate a draft: Send reads "…" (r12 fix12 frame 1)
+    // Send's number before any read is what its sheet lists from the saved drafts; "…" only when nothing is saved (r12 fix14)
+    if (sendable() && sendP.saved) { S.sendN = savedN(); S.warm = S.sendN > 0; }
     if (!meta) S.stall.set('version', why || 'it came back empty');  // api() gives up on any read at 20 s
     route();
     addEventListener('hashchange', route);
-    if (S.loadedV) { drawTop(); drawFab(); }
+    if (S.loadedV || S.warm) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
     if (meta && !COPY) S.checked = hhmm();  // the version just read is the page's own; a copy waits for its copy status

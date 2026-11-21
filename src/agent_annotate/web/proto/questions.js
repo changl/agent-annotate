@@ -144,7 +144,16 @@
   const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
   // before the questions are read, the answers, Closes and replies count from what was saved (r12 audit11 frame 1)
   const savedQs = () => Object.keys(drafts()).map(id => ({id, pre: true}));
-  const sendCount = () => { const q = Q(); return (D ? D.questions : savedQs()).reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + (D ? myNotes(q).length : 0) + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
+  // his unsent notes (line, paragraph, chart point) as last read, so Send lists and counts each from its saved record while the questions are still on their way (r12 fix14 questions 1, running 1)
+  const savedNotes = () => ctx.prefs.get('draft:qnotes', []);
+  function notesNow(q) {
+    const own = new Set(q.map(x => x.note).filter(Boolean));
+    if (!D) return savedNotes().filter(n => !own.has(n.id));
+    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version}));
+    if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
+    return l;
+  }
+  const sendCount = () => { const q = Q(); return (D ? D.questions : savedQs()).reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + notesNow(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -488,9 +497,9 @@
     }
     for (const q of qs) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On ${q.pre ? qn(q) : 'Q ' + esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'r:' + q.id, 'reply:' + q.id]);
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
-    const q = Q(), mine = D ? myNotes(q) : [];
+    const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    (D ? D.notes : []).forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
@@ -652,11 +661,15 @@
     ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {undo: () => delNote(c.id, true)});
   }
   async function delNote(id, quiet) {
-    const n = D.notes.find(x => x.id === id);
+    const n = (D ? D.notes : savedNotes()).find(x => x.id === id), v = n && (n.v || (D && D.version));
     if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE');
-    await refresh();
-    if (!quiet && n) ctx.toast('Note removed', {undo: async () => { await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target}); refresh(); }});
+    ctx.prefs.set('draft:qnotes', savedNotes().filter(x => x.id !== id));  // the count follows at once, before any re-read
+    await (D ? refresh() : draw(true));
+    if (!quiet && n) ctx.toast('Note removed', {undo: async () => {
+      const b = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: v, target: n.target});
+      if (!D) ctx.prefs.set('draft:qnotes', [...savedNotes(), {...n, id: b.id}]);
+      await (D ? refresh() : draw(true)); }});
   }
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
@@ -782,7 +795,7 @@
     if (at) k = 'q:' + k.slice(2);
     if (k.startsWith('ab:')) return goAB(k.slice(3));
     // a note another tab owns, listed here before that tab claimed it: Go to it opens its own tab, never Questions (audit9 running 1)
-    const on = k.startsWith('n:') && D.notes.find(x => x.id === k.slice(2)), a = (on && on.anchor) || '';
+    const on = k.startsWith('n:') && (D ? D.notes : savedNotes()).find(x => x.id === k.slice(2)), a = (on && on.anchor) || '';
     const own = /^chart:/.test(a) ? ['history'] : /^ref:/.test(a) ? ['reference', a.slice(4).split('~')[0]] : /^chk:/.test(a) ? ['reference'] : /^doc:/.test(a) ? ['links'] : null;
     if (own) { host ? drawHost() : draw(true); return ctx.go(...own); }
     const nn = k === 'nn:' && typingNote();  // the note still being typed: its open editor (audit7 #03)
@@ -792,7 +805,7 @@
     if (nq) { S.view = 'list'; ctx.prefs.set('q:view', 'list'); reveal(nq); }
     if (k.startsWith('n:') || nn) {
       // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
-      const n = nn || D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
+      const n = nn || on, at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
       const sec = at && topSecs(DOC).find(s => s.contains(at));
       if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
       if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
@@ -1049,6 +1062,8 @@
     },
     render: async (el, c, anchor) => {
       ctx = c; root = el;
+      // listening before the reads: Send can open here while they finish, and its Go to it works on the first click (r12 fix14 questions 2)
+      el.onclick = onClick; el.oninput = onInput; el.onchange = onChange; el.onmouseover = onHover;
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       const fresh = stale; stale = false;
@@ -1095,6 +1110,7 @@
   async function findCopy(c) { if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => ''); }
   P.send({
     count: async (c, again) => { await load(c, again); return sendCount(); },
+    saved: c => { ctx = ctx || c; return sendCount(); },  // what Send lists now, from the saved drafts alone while no read is in (r12 fix14)
     wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)

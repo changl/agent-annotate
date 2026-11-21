@@ -22,7 +22,7 @@ def test_frame_owns_one_queue_and_repaints_send():
 
 def test_questions_lists_counts_removes_and_clears_the_queue():
     s = _js("questions")
-    assert "+ (D ? myNotes(q).length : 0) + q.length +" in s  # the count includes every queued item, each note once
+    assert "+ notesNow(q).length + q.length +" in s  # the count includes every queued item, each note once
     assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);" in s
     assert "try { back = await x.remove(); }" in s  # Remove takes it out of its tab, with Undo
     assert "(await Promise.all(q.map(x => x.remove()))).filter(Boolean)" in s  # Discard all too

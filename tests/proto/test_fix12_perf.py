@@ -123,5 +123,5 @@ def test_first_reading_paints_the_last_reading_and_starts_questions_early():
     assert start.index("const scripts = Promise.all(") < start.index("await Promise.all([api.meta()")
     # the same version's last reading paints with its counts, only while drafts are kept
     assert "remember('drafts') && meta && prefs.get('firstPaint', null)" in start and "was.v === meta.current" in start
-    assert start.index("if (S.loadedV) { drawTop(); drawFab(); }") < start.index("putCounts(await readCounts());")
+    assert start.index("if (S.loadedV || S.warm) { drawTop(); drawFab(); }") < start.index("putCounts(await readCounts());")
     assert "prefs.set('firstPaint'" in js
