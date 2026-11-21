@@ -80,4 +80,4 @@ def test_remove_and_undo_before_the_tab_has_its_data():
     assert "if (!here() || !D) return;" in REF
     rm = Q[Q.index("function sendRemove("):]
     assert "const keep = draft(id), meta = {p: keep.p, n: keep.n, pl: keep.pl};" in rm
-    assert "x.note && D ? refresh() : draw(true)" in rm
+    assert "Promise.resolve(draw(true)).then(() => x.note && D && refresh())" in rm  # r12 fix15: drawn at once, re-read after

@@ -415,9 +415,9 @@
   }
   // One Send state for the header, the phone menu and the floating button (r12 audit11 frame 1, questions 1, reference 2, running 1):
   // '' shows the count; "…" while the counts are read; "?" once that read failed.
-  // Until the counts are in, the number is what the Send sheet lists from the saved drafts, read at each paint, so the two never disagree;
+  // The number is what the Send sheet lists now (from the saved drafts until the read is in), read at each paint, so the two never disagree;
   // "…" and "?" only when nothing is saved, pending or failed (r12 audit13 frame 1, questions 1, reference 1)
-  const sendNum = () => !S.countsIn && sendable() && sendP.saved ? savedN() : S.sendN;
+  const sendNum = () => sendable() && sendP.saved ? savedN() : S.sendN;
   const sendSt = () => !sendable() || S.countsIn || sendNum() > 0 ? '' : S.stall.has('counts') ? '?' : '…';
   const SENDTIP = {'…': 'Counting what is ready to send… Press to see what you saved.', '?': 'What is ready to send could not be counted: press Try again. Press Send to see what you saved.'};
   // every Send on screen repaints together, so none keeps an old state
@@ -532,7 +532,7 @@
   }
   let topTimer;
   function refreshTop() {
-    if (started && !S.countsIn) paintSend();  // a draft added or removed before the counts are in: Send follows its sheet in the same paint
+    if (started) paintSend();  // a draft added or removed on any tab: Send follows its sheet in the same paint
     clearTimeout(topTimer);
     topTimer = setTimeout(async () => {
       if (S.settling) return;  // a newer version is loading: its counts paint with it

@@ -40,8 +40,11 @@ assert.strictEqual(sendSt(), ''); assert.strictEqual(sendNum(), 4);
 saved = 3; assert.strictEqual(sendNum(), 3);  // a Remove: read at the next paint, no timer
 saved = 0; assert.strictEqual(sendSt(), '?');
 S.stall.clear(); assert.strictEqual(sendSt(), '…');
+S.countsIn = true; saved = 2; assert.strictEqual(sendNum(), 2);  // once read too: the sheet's rows, never a count a timer leaves behind
 """)
-    assert "if (started && !S.countsIn) paintSend();" in FRAME  # every tab's change repaints Send in the same task
+    assert "if (started) paintSend();" in FRAME  # every tab's change repaints Send in the same task
+    assert "Promise.resolve(draw(true)).then(() => x.note && D && refresh())" in Q  # the sheet redraws in that task too
+    assert "D.notes.forEach(x => { x.sent = true; });" in Q  # Send reads 0 with the receipt
     assert "const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);" in Q
 
 

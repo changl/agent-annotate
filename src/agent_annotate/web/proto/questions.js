@@ -745,6 +745,7 @@
       for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
+      D.notes.forEach(x => { x.sent = true; });  // the round took every unsent note: Send reads 0 with the receipt, before the re-read
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
@@ -785,7 +786,8 @@
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
       // a note is a comment: read the list again once it is gone or back; never before the receipt, which a slow read must not hold back (r12 audit11 frame 2)
-      const again = () => (x.note && D ? refresh() : draw(true)).catch(e => { console.warn('send relist', e); return draw(true); });
+      // the sheet redraws at once, in the paint its Send count moves in (r12 audit13 reference 1); a note's re-read follows
+      const again = () => Promise.resolve(draw(true)).then(() => x.note && D && refresh()).catch(e => { console.warn('send relist', e); return draw(true); });
       let back;
       try { back = await x.remove(); } catch (e) { again(); return ctx.toast('Could not remove it: ' + e.message); }
       ctx.toast('Removed from Send', back ? {undo: async () => { await back(); again(); }} : {});
