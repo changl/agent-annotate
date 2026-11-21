@@ -14,6 +14,9 @@
   ];
   const byKey = Object.fromEntries(TABS.map(t => [t.key, t]));
   let started = false;
+  // the other tabs' chips read their data only once the first reading is in: five reads at once kept Questions' waiting (r12 fix10 slowread)
+  let firstRead;
+  const firstIn = new Promise(r => { firstRead = r; });
   P.tab = spec => {
     if (!spec || !byKey[spec.key]) return console.warn('Proto.tab: unknown key', spec && spec.key);
     Object.assign(byKey[spec.key], spec);
@@ -167,7 +170,7 @@
     nav.innerHTML = TABS.map(t => `<button class="tab ${t.tone}" role="tab" data-tab="${t.key}" aria-selected="${!S.home && t.key === S.tab}">${I(t.icon)}<span class="tl">${esc(t.label)}</span><span class="cw" data-chip="${t.key}"></span></button>`).join('');
     for (const t of TABS) {
       paintChip(t.key);
-      if (t.chip && !S.other) Promise.resolve().then(() => t.chip(ctx)).then(c => {
+      if (t.chip && !S.other) (t.key === 'questions' ? Promise.resolve() : firstIn).then(() => t.chip(ctx)).then(c => {
         S.chips[t.key] = c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
         if (!S.other) paintChip(t.key);
         refreshSend();  // its tab's data is in: the drafts it restored now count in Send (r12 audit7 frame 2)
@@ -793,12 +796,14 @@
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
     // the version waits for its counts however slow the read: never Version with Send 0 before the restored count (r12 fix11 frame)
+    // a failed read resolves at once, and no read waits past 20 s (r12 audit9 frame 2, fix10 slowread)
     S.meta = meta; S.settling = true;
     route();
     addEventListener('hashchange', route);
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
     drawTop(); drawFab();
+    firstRead();
     refreshTop();  // counts, workers, the board and the last Send
     setInterval(() => { checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 60000);
   }

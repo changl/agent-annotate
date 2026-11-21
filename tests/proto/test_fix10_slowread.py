@@ -98,6 +98,15 @@ def test_compared_options_skip_other_tables_and_read_each_file_once(tmp_path, mo
     assert len(cleaned) == n and reference._opt_tables(f)[0][0] == "Pick"  # cached, and a caller's rename stays its own
 
 
+def test_first_reading_waits_on_questions_alone():
+    """Only Questions' read runs before the first reading; the version waits for its counts with no cap (audit9 frame 2)."""
+    from pathlib import Path
+    js = (Path(frame.__file__).parents[1] / "web" / "proto" / "frame.js").read_text()
+    assert "(t.key === 'questions' ? Promise.resolve() : firstIn).then(() => t.chip(ctx))" in js
+    start = js[js.index("async function start()"):]
+    assert start.index("putCounts(await readCounts());") < start.index("firstRead();") and "Promise.race([readCounts()" not in js
+
+
 def test_frame_row_follows_its_files(tmp_path):
     d = tmp_path / "page"
     (d / "versions").mkdir(parents=True)

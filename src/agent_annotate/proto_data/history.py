@@ -72,8 +72,31 @@ def overruled(comment: dict):
     return None
 
 
+_built: dict = {}  # page dir -> (its files' stamps, the build): FastLane Drive's takes 5 s, and every reload's chip asked again
+
+
+def _stamp(f: Path):
+    try:
+        st = f.stat()
+        return f.name, st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
 def build(page_dir: Path) -> dict:
+    """_build, read again only once one of the files it reads changes (r12 fix10 slowread)."""
     page_dir = Path(page_dir)
+    stamps = tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "rounds.ndjson")) + tuple(
+        _stamp(m) + (m.parent.name,) for m in sorted((page_dir / "plans").glob("*/meta.json")) if _stamp(m))
+    hit = _built.get(str(page_dir))
+    if hit and hit[0] == stamps:
+        return hit[1]
+    out = _build(page_dir)
+    _built[str(page_dir)] = (stamps, out)
+    return out
+
+
+def _build(page_dir: Path) -> dict:
     meta = json.loads((page_dir / "current.meta.json").read_bytes())
     comments = _comments(page_dir)
     by_id = {c["id"]: c for c in comments}
