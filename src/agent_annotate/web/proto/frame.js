@@ -33,7 +33,7 @@
   const COPY = (base.match(/\/proto\/p\/([a-z0-9-]+)\/$/) || [])[1] || '';
   const ROOT = COPY ? base.slice(0, -`proto/p/${COPY}/`.length) : base;
   async function api(path, body, method) {
-    if (COPY && (body !== undefined || method) && P.copyWrite) return P.copyWrite(path, body, method);  // a read-only copy writes nothing: questions.js answers it in memory
+    if (COPY && (body !== undefined || method) && P.copyWrite) { wroteAt = Date.now(); return P.copyWrite(path, body, method); }  // a read-only copy writes nothing: questions.js answers it in memory
     const opts = body === undefined && !method ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
     const r = await fetch(base + path.replace(/^\//, ''), opts);
@@ -98,11 +98,13 @@
     prefs.set('folds', f);
   }
 
-  let toastTimer;
+  let toastTimer, wroteAt = 0;
   function toast(msg, opts = {}) {
     const el = document.getElementById('p-toast');
     clearTimeout(toastTimer);
-    el.innerHTML = `<div class="p-toast" role="status"><span>${esc(msg)}</span>${opts.inert ? P.inertMark() : ''}${opts.undo ? '<button class="lk" data-undo>Undo</button>' : ''}</div>`;
+    // On a copy every simulated write says so, whichever tab drew it: an undoable change, or a toast just after a write
+    const mark = opts.inert || (COPY && (opts.undo || Date.now() - wroteAt < 3000));
+    el.innerHTML = `<div class="p-toast" role="status"><span>${esc(msg)}</span>${mark ? P.inertMark() : ''}${opts.undo ? '<button class="lk" data-undo>Undo</button>' : ''}</div>`;
     const undo = el.querySelector('[data-undo]');
     if (undo) undo.onclick = () => { el.innerHTML = ''; opts.undo(); };
     toastTimer = setTimeout(() => { el.innerHTML = ''; }, opts.undo ? 9000 : 5000);
@@ -355,7 +357,7 @@
   }
   function drawFab() {
     const f = document.getElementById('p-fab');
-    f.hidden = !(S.sendN && !S.home && !S.other && !COPY && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); on a copy the phone keeps Questions' bar Send
+    f.hidden = !(S.sendN && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
     f.innerHTML = `${I('send')}Send ${S.sendN || ''}`;
     f.setAttribute('aria-label', `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
   }

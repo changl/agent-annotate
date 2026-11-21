@@ -103,7 +103,7 @@ def test_copy_writes_are_simulated():
     is answered in memory and none reaches the server (no JS runner here)."""
     web = questions.Path(questions.__file__).resolve().parents[1] / "web/proto"
     s, f = (web / "questions.js").read_text(), (web / "frame.js").read_text()
-    assert "if (COPY && (body !== undefined || method) && P.copyWrite) return P.copyWrite(path, body, method);" in f
+    assert "if (COPY && (body !== undefined || method) && P.copyWrite) { wroteAt = Date.now(); return P.copyWrite(path, body, method); }" in f
     assert f.index("P.copyWrite(path") < f.index("await fetch(")  # the hook runs before any request
     fake = s[s.index("function fake("):s.index("P.copyWrite = fake;")]
     assert "fetch(" not in fake and "ctx.api" not in fake and "call(" not in fake
@@ -111,6 +111,21 @@ def test_copy_writes_are_simulated():
         assert act in fake, act
     assert "throw" not in fake  # an unknown write (Reference's plan topics) is answered too, never "not found"
     assert "f.copyOf" in s  # the README contract: frame.json copyOf marks a copy
+
+
+def test_third_check_fixes_stay():
+    """Round 12 audit3 (no JS runner here): Close cannot join an answer; the copy's marker, floating Send and receipt."""
+    web = questions.Path(questions.__file__).resolve().parents[1] / "web/proto"
+    s, f, c = (web / "questions.js").read_text(), (web / "frame.js").read_text(), (web / "questions.css").read_text()
+    # questions 01: an answered card offers no Close, and a stale close draft never joins its answer in Send
+    assert "${done ? '' : ibw('archive', 'Close'" in s
+    assert "const isClosing = q => !q.closed && !isDraft(q) && !!draft(q.id).close;" in s
+    # questions 02 / reference 05: the frame marks every undoable or just-written toast on a copy
+    assert "const mark = opts.inert || (COPY && (opts.undo || Date.now() - wroteAt < 3000));" in f
+    # frame 03: a copy floats Send like FastLane Drive; Questions' bar Send stays hidden on the phone
+    assert "!COPY && S.menu !== 'nav'" not in f and ".qcopy" not in c
+    # frame 04: the receipt counts every item it sent
+    assert "Sent ${pl(n, 'item', 'items')}" in s
 
 
 def test_mask_covers_company_and_keeps_images():

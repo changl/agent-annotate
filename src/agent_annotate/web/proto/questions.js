@@ -68,7 +68,7 @@
   /* ---------- state of a question ---------- */
   const optLabel = (q, id) => (q.options.find(o => o.id === id) || {}).label || id;
   const isDraft = q => { const d = draft(q.id); return !!(d.pick || (d.words || '').trim()); };
-  const isClosing = q => !q.closed && !!draft(q.id).close;  // Close goes with Send, Undo until then (#23)
+  const isClosing = q => !q.closed && !isDraft(q) && !!draft(q.id).close;  // Close goes with Send, Undo until then (#23); an answer outranks it, so one card is one decision (r12 audit3 #01)
   const hasReply = q => !!(draft(q.id).reply || '').trim();
   const isDone = q => q.closed || q.sent || q.later || isDraft(q) || isClosing(q);
   const isWaiting = q => !isDone(q);
@@ -139,7 +139,7 @@
       return `<div class="${cls} folded qline" id="q-${q.id}" data-q="${q.id}"><div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="false" title="Open the whole card here, with its evidence">${numChip(q)}<span class="qt">${esc(q.prompt)}</span><span class="small mut qsect hide-ph">${esc(cut(secTitle(q), 40))}</span></button>${marks}<span class="qright">${right}</span></div></div>`;
     }
     const done = isDone(q), rp = d.replyOpen || (d.reply || '').trim();
-    const acts = `${done ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${q.closed || q.sent || isClosing(q) ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
+    const acts = `${done ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${done ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
     const title = done && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="Fold this card">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
     const head = `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;
     const cx = q.context ? `<div class="qctx p-primary">${q.context.split('\n').map(p => `<p>${beadText(esc(p))}</p>`).join('')}</div>` : '';
@@ -527,10 +527,10 @@
     const n = sendCount();
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes), SEND_DELAY)};
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n), SEND_DELAY)};
     draw(true);
   }
-  async function post(answers, replies, closes) {
+  async function post(answers, replies, closes, n) {
     try {
       for (const q of answers) {
         const d = draft(q.id), w = (d.words || '').trim();
@@ -544,7 +544,7 @@
       ctx.prefs.set('q:general', '');
       S.pending = null;
       await refresh();
-      ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
+      ctx.toast(`Sent ${pl(n, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
     } catch (e) {
       S.pending = null; await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
@@ -766,7 +766,6 @@
       D = sim(await c.data('questions'));
       // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
       if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => '');
-      el.classList.toggle('qcopy', !!S.copyOf);  // the frame shows no floating Send on a copy, so the phone keeps this bar's
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       if (anchor && anchor.startsWith('q-')) { const id = anchor.slice(2), q = qOf(id); if (q) { S.shut.delete(id); if (isDone(q)) S.open.add(id); S.hl = id; } }

@@ -184,7 +184,6 @@ table.qpics{table-layout:fixed;width:100%}
   .qsheet{padding:8px 0 0}
   .qsend{border-radius:var(--radius-box) var(--radius-box) 0 0;min-height:calc(100vh - 8px)}
   .qbsend{display:none}  /* one Send on the phone: the floating one (#28) */
-  .qcopy .qbsend{display:inline-flex}  /* a read-only copy has no floating Send: this one stays */
   .qsend.sending{top:auto;bottom:70px;left:8px;right:8px;width:auto;min-height:0}
   .qdoch select{max-width:100%}
   .qrow{grid-template-columns:1fr}
