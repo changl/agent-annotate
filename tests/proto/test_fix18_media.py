@@ -53,6 +53,28 @@ assert.strictEqual(blockHtml(['tbl', [['h'], ['x']]], 0, esc).includes('data-lin
 """)
 
 
+def test_table_cell_pictures_draw_as_today(tmp_path):
+    bh = grab(LNK, "  const rowsOf", "+ after; };\n")
+    node(tmp_path, STUB + MEDIA + f"""
+P.ctx.prefs = {{get: (k, d) => d}};
+{bh}
+const B = M.blocks("| Step | Shot |\\n| --- | --- |\\n| One | ![Before](proto/doc/a.png) then ![After](proto/doc/b.png) |\\n| Two | ![Gone]() |\\n\\nSee ![x](proto/doc/c.png) inline.\\n");
+assert.deepStrictEqual(B.map(b => b[0]), ['tbl', 'p']);
+assert.deepStrictEqual(B[0][4][1][1].map(p => p[0]), ['img', 't', 'img']);
+assert.deepStrictEqual(B[0][4][1][1][0], ['img', 'proto/doc/a.png', 'Before', 1]);
+assert.strictEqual(B[0][4][2][1][0][1], 'Gone (picture not found)');
+assert.strictEqual(B[0][4][0][0], null);  // a cell without a picture stays text
+assert.ok(!B[1][1].includes('<img'));  // a picture inside a sentence: today refuses it, so it is not drawn
+const t = blockHtml(B[0], 0, esc, i => '');
+assert.strictEqual((t.match(/<figure class="mfig">/g) || []).length, 2);
+assert.match(t, /<tr data-line="0~r1" tabindex="0"><td>One<\\/td><td><figure class="mfig"><img src="proto\\/doc\\/a.png"/);
+assert.match(t, /<b class="qpicn">Picture 2<\\/b>/);
+assert.strictEqual((t.match(/data-lzoom/g) || []).length, 10);
+assert.ok(!t.includes('tap a spot'));  // no spot notes on these pictures
+""")
+    assert "P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))" in REF and "data-zsrc" in REF
+
+
 def test_full_size_toolbar_never_covers_the_picture():
     assert ".tab-reference .zoomv .zbar{position:sticky;top:0;" in REFCSS
     assert "padding:52px" not in REFCSS
@@ -71,6 +93,8 @@ def test_feed_resolves_pictures_as_the_release_does(tmp_path):
     assert out[1] == "![Ok2](assets/a b.png)"  # not a picture line to the release either (a space ends the path)
     assert out[2:6] == ["![Web]()", "![Up]()", "![Txt]()", "![Missing]()"]
     assert out[6] == "inline ![x](assets/a%20b.png) stays"
+    cell = reference.doc_pictures("| A |\n| --- |\n| ![Cell](assets/a%20b.png) and ![Web](https://x.test/y.png) |", md, tmp_path)
+    assert cell.split("\n")[2] == "| ![Cell](proto/doc/design/out/assets/a%20b.png) and ![Web]() |"  # each cell picture, as _CELL_IMAGE
     assert reference.doc_picture("design/out/assets/a b.png", tmp_path)
     for bad in ("secret.png", "design/../secret.png", "design/notes.txt", "design/.hidden/a.png", ""):
         assert reference.doc_picture(bad, tmp_path) is None

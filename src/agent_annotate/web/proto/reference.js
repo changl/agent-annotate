@@ -214,7 +214,9 @@
     const [kind, t, x, hd] = b, tg = tag || '', a = at(k, kind === 'img' ? 'Picture: ' + x : kind === 'tbl' ? 'Table: ' + x[0].join(' · ') : t);
     // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
     const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
-    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${esc(c)}</th>` : `<td>${ci ? '' : pin(rk(ri))}${beadIn(esc(c))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
+    // a picture in a table cell: Proto.media's figure, its row the anchor (as today); Full size finds it by row and file
+    const cpic = r => p => { const z = zOf(r), za = ` data-zk="${esc(r)}" data-zsrc="${esc(p[1])}"`; return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za); };
+    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${P.media.cell(b[4], ri, ci, c, esc, cpic(k))}</th>` : `<td>${ci ? '' : pin(rk(ri))}${P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
       : kind === 'img' ? (n => `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
       : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}${P.media.code(t)}${tg}</div>`
       : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
@@ -542,7 +544,7 @@
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
     if (d.zoom) {
-      const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-line="${CSS.escape(k)}"] img`);
+      const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-line="${CSS.escape(k)}"] img${d.zsrc ? `[src="${CSS.escape(d.zsrc)}"]` : ''}`);
       ctx.prefs.set('ref-zoom', {...ctx.prefs.get('ref-zoom', {}), [k]: +d.zoom});
       S.full = im ? {k, src: im.getAttribute('src'), cap: im.dataset.zcap, z: +d.zoom} : {...S.full, z: +d.zoom};
       if (S.note !== k) S.note = '';

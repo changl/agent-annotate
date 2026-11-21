@@ -135,7 +135,7 @@
 .tab-reference .pinm{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
 .tab-reference button.pinm{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:inherit;z-index:1}.tab-reference button.pinm[aria-expanded=true]{box-shadow:0 0 0 2px #fff,0 0 0 5px var(--color-primary)}
 .tab-reference .pinm.new{background:var(--color-warning);color:#000}
-.tab-reference figure img{cursor:crosshair}
+.tab-reference figure img{cursor:crosshair}.tab-reference td figure img,.tab-reference th figure img{cursor:auto}
 .tab-reference .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;vertical-align:middle}
 .tab-reference .seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:inherit}.tab-reference .seg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
 .tab-reference .zoomv{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:0 16px 16px}

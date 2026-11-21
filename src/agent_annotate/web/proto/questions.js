@@ -581,11 +581,17 @@
     copyBtn: () => `<button class="btn sm qcodecopy" data-codecopy title="Copy the command" aria-label="Copy the command">${ic('copy')}<span>Copy</span></button>`,
     code: (t, a = '') => `<pre class="qcodehost"${a}><code>${esc(t)}</code>${M.copyBtn()}</pre>`,
     // the one Markdown reader (Reference plans and files, Pages & links documents): blocks of [kind, text, ...]:
-    // ['h'|'p'|'li'|'pre', text], ['tbl', its text, rows, true], ['img', src, description, its number from 1].
-    // A picture on its own line is drawn, as today's release does; one with no file the feed could find keeps its description
+    // ['h'|'p'|'li'|'pre', text], ['tbl', its text, rows, true, cells with pictures], ['img', src, description, its number from 1].
+    // As today's release: a picture on its own line or inside a table cell is drawn; one in a sentence or a list line is not
+    // (today's `annotate new` refuses a page with one). One with no file the feed could find keeps its description.
     blocks(t) {
       const out = [], L = String(t || '').replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
       let i = 0, para = [], pics = 0, m;
+      const gone = alt => ['t', `${inl(alt) || 'Picture'} (picture not found)`];
+      // a cell with pictures as its parts: ['t', text] and ['img', src, description, number] (pagegen.PageBuilder._cell)
+      const cellParts = x => { const ps = [], re = /!\[([^\]]*)\]\(\s*([^)\s]*)\s*\)/g; let pos = 0, c;
+        while ((c = re.exec(x))) { ps.push(['t', inl(x.slice(pos, c.index))], c[2] ? ['img', c[2], inl(c[1]), ++pics] : gone(c[1])); pos = re.lastIndex; }
+        return ps.length ? [...ps, ['t', inl(x.slice(pos))]].filter(p => p[0] !== 't' || p[1].trim()) : null; };
       const flush = () => { if (para.length) out.push(['p', inl(para.join(' '))]); para = []; };
       if (L[0] === '---') { i = 1; while (i < L.length && L[i] !== '---') i++; i++; }  // front matter
       while (i < L.length) {
@@ -593,7 +599,10 @@
         if (/^\s*```/.test(l)) { flush(); const b = []; i++; while (i < L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++; out.push(['pre', b.join('\n')]); continue; }
         if ((m = /^\s*!\[([^\]]*)\]\(\s*([^)\s]*)\s*\)\s*$/.exec(l))) { flush(); out.push(m[2] ? ['img', m[2], inl(m[1]), ++pics] : ['p', `${inl(m[1]) || 'Picture'} (picture not found)`]); i++; continue; }
         if (/^#{1,6}\s/.test(l)) { flush(); out.push(['h', inl(l.replace(/^#+\s*/, ''))]); i++; continue; }
-        if (/^\s*\|/.test(l)) { flush(); const r = []; while (i < L.length && /^\s*\|/.test(L[i])) { const c = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => inl(x.trim())); if (!c.every(x => /^:?-{2,}:?$/.test(x))) r.push(c); i++; } out.push(['tbl', r.flat().join(' '), r, true]); continue; }
+        if (/^\s*\|/.test(l)) { flush(); const r = [], cp = [];
+          while (i < L.length && /^\s*\|/.test(L[i])) { const raw = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => x.trim()), c = raw.map(inl);
+            if (!c.every(x => /^:?-{2,}:?$/.test(x))) { r.push(c); cp.push(raw.map(cellParts)); } i++; }
+          out.push(['tbl', r.flat().join(' '), r, true, ...cp.flat().some(Boolean) ? [cp] : []]); continue; }
         if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { flush(); out.push(['li', inl(l.replace(/^\s*([-*+]|\d+\.)\s+/, ''))]); i++; continue; }
         if (!l.trim() || /^(-{3,}|\*{3,})$/.test(l.trim())) { flush(); i++; continue; }
         para.push(l.trim()); i++;
@@ -601,6 +610,11 @@
       flush();
       return out;
     },
+    // a picture with its caption line; `fa` and `za` are the reader's own data for Full size and the size buttons.
+    // No "tap a spot" hint: these pictures (Pages & links, Reference table cells) take no spot notes
+    fig: (src, alt, n, z, fa = '', za = '', a = '') => `<figure class="mfig"${a}><img src="${esc(src)}" alt="${esc(alt || 'Picture')}" data-zcap="${esc(M.title(n, alt))}" loading="lazy"><figcaption class="qcap">${M.line(M.label(n), alt ? esc(M.bare(n, alt)) : '', M.ctl(z, src, fa, za), '')}</figcaption></figure>`,
+    // a table cell: its text through `txt`, or, when it holds pictures (cp from blocks), each picture through `img`
+    cell: (cp, ri, ci, c, txt, img) => { const ps = cp && cp[ri] && cp[ri][ci]; return ps ? ps.map(p => p[0] === 'img' ? img(p) : txt(p[1])).join(' ') : txt(c); },
     // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width
     view(src, cap, z, from) {
       let v = document.getElementById('p-mview');

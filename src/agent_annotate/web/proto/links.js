@@ -17,10 +17,11 @@
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
   // each body row of a table takes its own note (line <i>~r<n>), as in Reference; the header row notes the whole table
   const blockHtml = (b, i, esc, line, tag = '', ins = false) => { const [k, t] = b, a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
-    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '';
-      return `<div class="l-tw"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
-    if (k === 'img') { const M = P.media, z = (P.ctx && P.ctx.prefs.get('zoomDef', 75)) || 75, cap = M.title(b[3], b[2]), bare = M.bare(b[3], b[2]);
-      return `<figure class="l-fig"${a}><img src="${esc(t)}" alt="${esc(b[2] || 'Picture')}" data-zcap="${esc(cap)}" loading="lazy"><figcaption class="qcap">${M.line(M.label(b[3]), bare ? esc(bare) : '',M.ctl(z, t, ` data-lzoom="${z}"`, ' data-lzoom'))}</figcaption>${tag}</figure>${after}`; }
+    // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here
+    const pic = (src, alt, n, a = '') => { const z = (P.ctx && P.ctx.prefs.get('zoomDef', 75)) || 75; return P.media.fig(src, alt, n, z, ` data-lzoom="${z}"`, ' data-lzoom', a); };
+    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, p => pic(p[1], p[2], p[3]));
+      return `<div class="l-tw"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
+    if (k === 'img') return pic(t, b[2], b[3], a).replace(/<\/figure>$/, `${tag}</figure>`) + after;
     return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a) : `<p${a}>${x}${tag}</p>`) + after; };
   const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
   // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood

@@ -175,6 +175,8 @@ MD_INLINE = 120_000  # a longer Markdown file is listed but opens nowhere
 
 DOC_PIC = "proto/doc/"  # where the page serves a document's picture (proto_data.serve)
 _PIC_LINE = re.compile(r"^(\s*!\[[^\]\n]*\]\(\s*)([^)\s]+)(\s*\)\s*)$", re.M)  # a picture on its own line, as pagegen._IMAGE
+_TABLE_LINE = re.compile(r"^\s*\|.*$", re.M)
+_PIC_CELL = re.compile(r"(!\[[^\]\n]*\]\(\s*)([^)\s]+)(\s*\))")  # each picture in a table cell, as pagegen._CELL_IMAGE
 
 
 def doc_picture(rel: str, root: Path = FLD_DIR) -> Path | None:
@@ -210,7 +212,7 @@ def doc_pictures(text: str, md: Path, root: Path = FLD_DIR) -> str:
             if rel and doc_picture(rel, root):
                 url = DOC_PIC + urllib.parse.quote(rel)
         return m[1] + url + m[3]
-    return _PIC_LINE.sub(one, text)
+    return _TABLE_LINE.sub(lambda t: _PIC_CELL.sub(one, t[0]), _PIC_LINE.sub(one, text))
 
 
 def documents(root: Path = FLD_DIR) -> dict:
