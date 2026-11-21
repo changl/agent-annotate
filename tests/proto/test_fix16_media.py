@@ -3,6 +3,7 @@
 import html
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -39,10 +40,30 @@ diagrams(doc); doc.querySelectorAll('script').forEach(n => n.remove()); numberPi
 const out = document.getElementById('out'); out.innerHTML = doc.body.innerHTML; zoomBars(out);
 out.dataset.mounted = mounted.join(',');
 </script></body>""")
-    r = subprocess.run([str(CHROME), "--headless=new", "--disable-gpu", "--no-first-run", f"--user-data-dir={tmp_path / 'c'}",
-                        "--allow-file-access-from-files", "--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr
-    return r.stdout[r.stdout.index('<div id="out"'):]
+    # Chrome's own shutdown after --dump-dom can hang until its teardown watchdog exits 2, so read the dump
+    # and end Chrome ourselves, as tests/browser does with its server (terminate, then wait)
+    proc = subprocess.Popen([str(CHROME), "--headless=new", "--disable-gpu", "--no-first-run", f"--user-data-dir={tmp_path / 'c'}",
+                             "--allow-file-access-from-files", "--dump-dom", page.as_uri()],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    guard = threading.Timer(60, proc.kill)  # the old run's limit, if Chrome never dumps at all
+    guard.start()
+    dom = ""
+    try:
+        for line in proc.stdout:
+            dom += line
+            if "</html>" in line:
+                break
+    finally:
+        guard.cancel()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+    assert "</html>" in dom, "Chrome did not dump the page"
+    return dom[dom.index('<div id="out"'):]
 
 
 def test_every_picture_gets_zoom_full_size_and_label_not_only_a_previewed_one(tmp_path):
