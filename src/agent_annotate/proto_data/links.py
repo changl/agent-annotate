@@ -7,6 +7,7 @@ live page registry (read only) for pages kept under the FastLane Drive folder. E
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import re
@@ -21,6 +22,7 @@ MASK = "member@example.com"
 # documents kept on this page (mock round 9): the usage audit page and the go-live load test's k6 summary
 USAGE_AUDIT = FLD_DIR / "planning/operations/usage-audit-2026-11-06/page/current.html"
 LOAD_TEST = FLD_DIR / "planning/operations/orchestration/run_d169910aea33/reports/go-live-backend-2"
+ROADMAP = FLD_DIR / "planning/05-roadmap.md"
 
 
 class _Blocks(HTMLParser):
@@ -110,7 +112,14 @@ def _pages() -> list[dict]:
             name = _plain(meta.get("name") or slug, 80)
             pages[slug] = {"name": name, "url": url, "why": _why(name, folder),
                            "versions": len(hist), "last": str((hist[-1] if hist else {}).get("ts") or "")[:10]}
-    return list(pages.values())
+    out = list(pages.values())
+    # the delivery roadmap is long, so the mock lists it as its own page; here it opens as Reference's roadmap item
+    try:
+        when = datetime.fromtimestamp(ROADMAP.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d")
+        out.append({"name": "Delivery roadmap", "ref": "delivery-roadmap", "why": _why("roadmap", ROADMAP.parent), "versions": 1, "last": when})
+    except OSError:
+        pass
+    return out
 
 
 def build(page_dir: Path) -> dict:
@@ -139,6 +148,11 @@ def build(page_dir: Path) -> dict:
                {"name": "reviews/fld-stack-round8", "what": "the live page's record", "path": "~/projects/fastlane-drive/reviews/fld-stack-round8"},
                {"name": "annotate-proto/reviews/fld-proto", "what": "this prototype copy", "path": "~/" + str(page_dir.relative_to(Path.home())) if page_dir.is_relative_to(Path.home()) else str(page_dir)}]
     links = [{"name": board.get("label") or "Beads", "what": "the project's task board", "url": board["url"]}] if board.get("url") else []
+    # the live page's named Admin and Linear links, with their descriptions, as its Documents sidebar shows them
+    for m in _json(page_dir / "project.json").get("modules") or []:
+        for it in (m.get("items") or []) if isinstance(m, dict) and m.get("kind") == "links" else []:
+            if isinstance(it, dict) and str(it.get("url") or "").startswith("https://") and re.search(r"^Admin\b|\bLinear\b", str(it.get("label") or "")):
+                links.append({"name": _plain(it["label"], 90), "what": _plain(it.get("description") or "", 400), "url": hide(it["url"]), "ic": "ext"})
     # the tester server's address is in no record the prototype reads, so its row says so instead of linking (mock #82)
     links.append({"name": "Tester server", "what": "its address is not in this project's record yet", "url": ""})
     hist = meta.get("history") or []
@@ -152,6 +166,6 @@ def build(page_dir: Path) -> dict:
 def _kept_notes(page_dir: Path) -> list:
     """Notes on the kept documents and their chart bars; an unreadable comment store shows none rather than breaking the tab."""
     try:
-        return [n for n in notes(page_dir) if str(n["a"]).startswith("doc:kept-")]
+        return [n for n in notes(page_dir) if str(n["a"]).startswith("doc:")]
     except (OSError, ValueError):
         return []

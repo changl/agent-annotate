@@ -103,6 +103,7 @@
 .tab-reference .doc{padding:8px 12px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-field);min-width:0}
 .tab-reference .doc p,.tab-reference .doc h4{margin:0 0 8px;max-width:110ch}
 .tab-reference .doc h4{font-size:var(--fs-base);margin-top:12px}
+.tab-reference .rf-embed{display:block;width:390px;max-width:100%;height:760px;border:1px solid var(--line);border-radius:var(--radius-field);background:#000;margin:4px auto}
 .tab-reference .doc .li{padding-left:16px;position:relative}.tab-reference .doc .li::before{content:"•";position:absolute;left:4px}
 .tab-reference [data-line]{cursor:pointer;border-radius:3px;scroll-margin-top:100px}
 .tab-reference [data-line]:hover{background:var(--excerpt-bg);outline:1px dashed var(--faint)}

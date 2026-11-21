@@ -38,6 +38,8 @@
 .l-doc p{margin:4px 0}
 .l-doc .l-li{padding-left:12px}
 .l-doc pre{white-space:pre-wrap;font-size:var(--fs-sm)}
+.l-doc [data-line]{cursor:pointer;border-radius:3px}
+.l-doc [data-line]:hover{background:var(--excerpt-bg);outline:1px dashed var(--faint)}
 .l-tw table{border-collapse:collapse;font-size:var(--fs-sm);width:100%}
 .l-tw th,.l-tw td{border:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
 .l-chart{margin:6px 0 10px}

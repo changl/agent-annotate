@@ -186,17 +186,27 @@ def documents(root: Path = FLD_DIR) -> dict:
     return {"files": files, "groups": groups}
 
 
-# project files the approved mock files under Reference (round9/final/build/build.py, setref): id, title, kind, state, path.
-# Left out as in the mock: the trader guide (a home address), the chapter owner and tester sheets (member data).
+# project files the approved mock files under Reference (round9/final/build/build.py setref, round5/project/build/ref.py):
+# id, title, kind, state, path. As in the mock, the trader guide's text (a home address) and the sheets' rows (member data)
+# stay out; the guide keeps its place in the title and the sheet is listed without its contents.
 EXTRAS = [
+    ("delivery-roadmap", "Delivery roadmap, car-first revision", "plan", "ref", "planning/05-roadmap.md"),
     ("delivery-scope", "Delivery scope", "plan", "ref", "planning/04-delivery-scope.md"),
     ("stack-choice", "Stack choice: Railway, Matrix or Payload", "plan", "ok", "planning/02-stack-decision.md"),
     ("legal-review-list", "Legal review list", "check", "ref", "planning/10-legal-review-list.csv"),
-    ("store-review-notes", "App store review notes", "check", "ref",
+    ("store-review-notes", "App store review notes and trader guide", "check", "ref",
      "planning/operations/orchestration/run_c9d587c967ba/reports/store-review-cards/src/droid-review-store-review-droid.md"),
+    ("email-designs", "Email change messages, alternate designs", "design", "prop", "design/alt-emails-v1/app/m3-confirm.html"),
+    ("drive-screens", "Drive screens, before and after", "design", "ref", "design/page-v135/shots/390-screen-47-compare.png"),
     ("design-tokens", "Design tokens and platform mapping", "design", "ref", "design/tokens.json"),
+    ("chapter-owner-list", "Chapter owner list; tester sheet", "data", "ref", "FLD Chapter Owner List.xlsx"),
     ("ask-nicole-word", "Ask Nicole, edited Word file", "data", "ref", "Ask-Nicole (edited).docx"),
 ]
+NOTE = {"store-review-notes": "Google Play review notes · the trader guide is left out: it holds a home address",
+        "email-designs": "the “confirm your new email” message as the member sees it, 1 of 10 screens · addresses and links masked",
+        "drive-screens": "Screen 47 on a phone: before and after, round 135",
+        "chapter-owner-list": "a sheet of member names and contacts · its rows stay out of this copy"}
+KIT_CSS = "design/apps-v2/kit/fld.css"
 
 
 def _flat(o, p=""):
@@ -216,7 +226,23 @@ def extras(root: Path = FLD_DIR) -> list:
         if not p.is_file():
             continue
         item = {"id": iid, "t": title, "kind": kind, "st": st, "from": rel, "d": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}
-        if p.suffix == ".md":
+        if iid in NOTE:
+            item["note"] = NOTE[iid]
+        if p.suffix == ".xlsx":  # member data: listed, never read
+            item["md"] = ""
+        elif p.suffix == ".png":
+            import base64
+            item["img"] = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+        elif p.suffix == ".html":  # shown sandboxed with its design kit inlined: no scripts, links go nowhere, addresses masked
+            try:
+                kit = (root / KIT_CSS).read_text(errors="ignore")
+            except OSError:
+                kit = ""
+            page = re.sub(r"<script\b.*?</script>", "", p.read_text(errors="ignore"), flags=re.S | re.I)
+            page = re.sub(r"<link\b[^>]*>", "", page)
+            page = re.sub(r"(https?:)?//[^\s\"'<>)]+", "#", page)
+            item["html"] = hide(page.replace("</head>", f"<style>{re.sub(r'url[(][^)]*[)]', 'none', kit)}</style></head>", 1))
+        elif p.suffix == ".md":
             item["md"] = hide(p.read_text(errors="ignore"))
         elif p.suffix == ".csv":  # one table per section: a change in the first column starts one, and its first row is the header
             parts = []

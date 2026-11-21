@@ -6,6 +6,13 @@
   const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), dk: '', dsel: '', open: new Set(),
     trn: '', tmerge: '', note: '', scroll: false};
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
+  // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
+  let taskBack = '';
+  const backFromTask = () => { if (taskBack && location.hash.startsWith('#running')) { const id = taskBack; taskBack = ''; setTimeout(() => ctx.go('reference', id), 0); } };
+  // capture phase: Running redraws its panel away while handling the same event
+  document.addEventListener('click', e => { if (e.target.closest('.tab-running .tpanel [data-task=""]')) backFromTask(); }, true);
+  addEventListener('keydown', e => { if (e.key === 'Escape' && document.querySelector('.tab-running .tpanel') && !(e.target.closest && e.target.closest('textarea,input'))) backFromTask(); }, true);
+  addEventListener('hashchange', () => { if (!location.hash.startsWith('#running')) taskBack = ''; });
   const blocks = {}, loading = {};
   const ico = (n, l) => P.icon(n, l), pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
   const esc = s => ctx.esc(s);
@@ -32,7 +39,7 @@
     const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: stOf(p),
       g: p.kind !== 'plan' ? 'k:' + p.kind : p.id.startsWith('decision-') ? 'k:decision' : 't:' + p.topic, p, stamp: lastTs(p), s: p.topic}));
     for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`, kind: x.kind, st: stOf(x),
-      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: x.md ? x.md.slice(0, 20000) : JSON.stringify(x.parts).slice(0, 20000)});  // finds words inside them too
+      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: (x.md || (x.parts ? JSON.stringify(x.parts) : '') || x.note || '').slice(0, 20000)});  // finds words inside them too
     for (const f of D.flows) out.push({id: f.id, t: f.t, m: `Windmill · runs ${f.when} · ${pl(nSteps(f.steps), 'step', 'steps')} · ${f.last ? `last run ${dm(f.last.at)}, ${f.last.ok ? 'passed' : 'failed'}` : 'not run yet'}`,
       kind: 'flow', st: 'ref', g: 'k:flow', f, stamp: f.edited, s: f.what + ' ' + JSON.stringify(f.steps.map(x => x.n))});
     out.forEach(r => r.ch = changed(r.id, r.stamp));
@@ -328,7 +335,7 @@
     return `<div class="rf-acts rf-vh">${ico(p.kind)}<b class="rf-vt">${esc(p.t)}</b>${stPill(st)}<span class="spacer"></span>
         <button class="ib" data-link="${esc(p.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       ${isCheck ? checklistHtml() + `<details class="rf-det"${S.det ? ' open' : ''}><summary>The checklist plan as written, with its ${pl(n, 'revision', 'revisions')}</summary>${revbar}${text}</details>` : revbar + text}
-      ${foot(k, st, p.kind === 'plan' ? `<label class="small mut rf-topic">Topic <select data-move="${esc(p.id)}" aria-label="Topic">${p.topic === 'Unsorted' ? '<option selected>Unsorted</option>' : ''}${topics.map(t => `<option${t === p.topic ? ' selected' : ''}>${esc(t)}</option>`).join('')}<option value="__new">New topic…</option></select></label>` : '',
+      ${foot(k, st, p.kind === 'plan' ? `<label class="small mut rf-topic">Topic <select data-move="${esc(p.id)}" aria-label="Topic"><option${p.topic === 'Unsorted' ? ' selected' : ''}>Unsorted</option>${topics.map(t => `<option${t === p.topic ? ' selected' : ''}>${esc(t)}</option>`).join('')}<option value="__new">New topic…</option></select></label>` : '',
         `Click any line, table, picture${isCheck ? ', row or the chart' : ''} or select words to write a note on them. To ask for another version, say so in a note.`)}`;
   }
   // the plan footer, as in the mock: a note, where it is filed, its topic
@@ -337,9 +344,11 @@
       ${topic}<span class="spacer"></span><span class="small mut">${hint}</span></div>`;
   // a project file the mock files under Reference: Markdown as text, sheets as tables, each line and row open to a note
   function extraView(x) {
-    const k = 'ref:' + x.id, B = x.md ? mdBlocks(x.md) : x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]);
+    const k = 'ref:' + x.id, B = x.img ? [['img', x.img, x.note]] : x.md ? mdBlocks(x.md) : x.parts ? x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]) : [];
+    // a designed message shows as the member sees it, sandboxed: no scripts run and its links go nowhere
+    const body = x.html ? `<iframe class="rf-embed" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
     return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · changed ${esc(dm(x.d))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
-      <div class="doc">${B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || '<p class="mut">This file has no text.</p>'}</div>
+      ${x.note && (x.html || B.length) && !x.img ? `<p class="small mut">${esc(x.note)}</p>` : ''}<div class="doc">${body}</div>
       ${foot(k, stOf(x), '', 'Click any line or row, or select words, to write a note on them')}`;
   }
   function flowView(f) {
@@ -372,7 +381,11 @@
   const open = id => { S.sel = S.sel === id ? '' : id; S.note = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
   const copy = (t, what) => navigator.clipboard.writeText(t).then(() => ctx.toast(what + ' copied'), () => ctx.toast('Could not copy'));
   const fail = e => ctx.toast('Not saved: ' + e.message);
-  const topics = cfg => { if (cfg && cfg.topics) { const names = cfg.topics.map(t => t.name); D.topics = (D.topics.includes('Unsorted') ? ['Unsorted'] : []).concat(names); } };
+  const topics = cfg => { if (cfg && cfg.topics) { const names = cfg.topics.map(t => t.name); D.topics = (D.topics.includes('Unsorted') ? ['Unsorted'] : []).concat(names); } unsort(); };
+  // shortcut: back-to-Unsorted is kept in this browser (plan_topics has no unsort move); add one to plan_topics when the prototype graduates
+  const unsorted = () => ctx.prefs.get('ref-unsort', []);
+  const unsort = () => { const u = unsorted(); D.plans.forEach(p => { if (u.includes(p.id)) p.topic = 'Unsorted'; }); if (u.length && !D.topics.includes('Unsorted')) D.topics = ['Unsorted', ...D.topics]; };
+  const setUnsort = (ids, on) => { const u = unsorted().filter(x => !ids.includes(x)); ctx.prefs.set('ref-unsort', on ? [...u, ...ids] : u); };
   async function topicChange(body, done, undo, msg) {
     try { topics(await ctx.api('api/plan-topics', body)); done(); draw(); ctx.toast(msg, {undo: async () => { try { await undo(); draw(); } catch (e) { fail(e); } }}); }
     catch (e) { fail(e); }
@@ -393,7 +406,7 @@
     if (b.tagName !== 'BUTTON') return;
     if (S.tmerge && d.tmerge === undefined && d.tmergeto === undefined) S.tmerge = '';
     if (d.ref !== undefined) return open(d.ref);
-    if (d.task) { ctx.prefs.set('task', d.task); return ctx.go('running', d.task); }  // Running opens the task kept in prefs
+    if (d.task) { ctx.prefs.set('task', d.task); ctx.go('running', d.task); taskBack = S.sel; return; }  // Running opens the task kept in prefs
     if (d.retry) return retry(S.sel, d.retry);
     if (d.plansec) {
       const p = D.plans.find(x => x.id === S.sel) || xOf(S.sel), f = filed(), was = f[p.id];
@@ -458,8 +471,10 @@
     const ps = D.plans.filter(p => p.topic === 'Unsorted');
     S.trn = S.tmerge = '';
     try {
+      const ids = ps.map(p => p.id);
+      setUnsort(ids, false);
       for (const [i, p] of ps.entries()) { topics(await ctx.api('api/plan-topics', {move: p.id, topic, ...(isNew && !i ? {new: true} : {})})); p.topic = topic; }
-      draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”. A plan cannot go back to Unsorted, so this has no Undo; each plan's Topic menu still moves it.`);
+      draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”`, {undo: () => { setUnsort(ids, true); unsort(); draw(); }});
     } catch (e) { draw(); fail(e); }
   }
   function renameTopic(old, to) {
@@ -485,8 +500,14 @@
     const p = D.plans.find(x => x.id === s.dataset.move), old = p.topic;
     let topic = s.value, isNew = false;
     if (topic === '__new') { topic = (prompt('Name the new topic') || '').trim(); isNew = true; if (!topic) return draw(); }
-    topicChange({move: p.id, topic, ...(isNew ? {new: true} : {})}, () => { p.topic = topic; },
-      old === 'Unsorted' ? async () => ctx.toast('It stays in “' + topic + '”: an item cannot go back to Unsorted') : async () => { topics(await ctx.api('api/plan-topics', {move: p.id, topic: old})); p.topic = old; },
+    const back = () => { setUnsort([p.id], true); unsort(); };  // to Unsorted, as the mock allows
+    if (topic === 'Unsorted') {
+      if (old === 'Unsorted') return;
+      back(); draw();
+      return ctx.toast('Moved back to “Unsorted”', {undo: () => { setUnsort([p.id], false); p.topic = old; draw(); }});
+    }
+    topicChange({move: p.id, topic, ...(isNew ? {new: true} : {})}, () => { setUnsort([p.id], false); p.topic = topic; },
+      old === 'Unsorted' ? async () => back() : async () => { topics(await ctx.api('api/plan-topics', {move: p.id, topic: old})); p.topic = old; },
       `Moved to “${topic}”`);
   }
   function onInput(e) { if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); } }
@@ -500,10 +521,12 @@
   }
 
   Proto.tab({key: 'reference',
-    chip: async c => { ctx = c; D = await c.data('reference'); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
+    chip: async c => { ctx = c; D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
       ctx = c; el = main;
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
+      unsort();
+      taskBack = '';
       const id = anchor ? decodeURIComponent(anchor) : '';
       if (id && (D.plans.some(p => p.id === id) || D.flows.some(f => f.id === id) || xOf(id))) { S.sel = id; S.scroll = true; markSeen([id]); }
       if (!main._rf) {

@@ -70,6 +70,25 @@ def test_extras(tmp_path):
     assert x["ask-nicole-word"]["md"] == "# Intro\n\nBody & more"
 
 
+def test_extras_carry_the_mocks_entries(tmp_path):
+    """The roadmap, the email designs, the drive screens and the chapter sheet, each masked or left without member data."""
+    for d in ("planning", "design/alt-emails-v1/app", "design/apps-v2/kit", "design/page-v135/shots"):
+        (tmp_path / d).mkdir(parents=True)
+    (tmp_path / "planning" / "05-roadmap.md").write_text("# Roadmap\n\ncar first")
+    (tmp_path / "design/apps-v2/kit/fld.css").write_text("body{color:red;background:url(img/x.png)}")
+    (tmp_path / "design/alt-emails-v1/app/m3-confirm.html").write_text(
+        '<html><head><link rel="stylesheet" href="../kit.css"></head><body><script>alert(1)</script><a href="https://x.y/z">pat@gmail.com</a></body></html>')
+    (tmp_path / "design/page-v135/shots/390-screen-47-compare.png").write_bytes(b"\x89PNG")
+    (tmp_path / "FLD Chapter Owner List.xlsx").write_bytes(b"PK member rows")
+    x = {i["id"]: i for i in reference.extras(tmp_path)}
+    assert x["delivery-roadmap"]["t"] == "Delivery roadmap, car-first revision" and x["delivery-roadmap"]["kind"] == "plan"
+    h = x["email-designs"]["html"]
+    assert "color:red" in h and "url(" not in h and "<script" not in h and "<link" not in h and "x.y" not in h and "gmail" not in h
+    assert x["drive-screens"]["img"].startswith("data:image/png;base64,") and "Screen 47" in x["drive-screens"]["note"]
+    assert x["chapter-owner-list"]["md"] == "" and "member rows" not in str(x["chapter-owner-list"])
+    assert [e[1] for e in reference.EXTRAS if e[0] == "store-review-notes"] == ["App store review notes and trader guide"]
+
+
 def test_documents(tmp_path):
     (tmp_path / "planning" / "go-live").mkdir(parents=True)
     (tmp_path / "planning" / "go-live" / "plan.md").write_text("ring a@b.com")
