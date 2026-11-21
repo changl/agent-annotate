@@ -211,7 +211,10 @@
 
   async function click(e, w, ctx, D) {
     const zb = e.target.closest('.l-doc [data-lzoom]');  // a picture's size or ⤢ Full size: the shared viewer, not a new tab
-    if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'), k = zb.dataset.pk; return P.media.view(im.getAttribute('src'), im.dataset.zcap, +(zb.dataset.zoom || P.media.zoom(k)), zb, k); }
+    if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'), k = zb.dataset.pk, z = +(zb.dataset.zoom || P.media.zoom(k));
+      let from = zb;
+      if (S.move) { const all = [...w.querySelectorAll('.l-doc [data-lzoom]')], i = all.indexOf(zb); S.move = ''; draw(w, ctx, D); from = w.querySelectorAll('.l-doc [data-lzoom]')[i] || null; }  // the viewer ends a Move, as in Reference (r12 audit17 reference 4)
+      return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k); }
     const b = e.target.closest('button');
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target

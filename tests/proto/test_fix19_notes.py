@@ -82,6 +82,7 @@ def test_escape_viewer_close_and_leaving_cancel_move():
     assert "S.full = null; S.move = ''; draw();" in REF
     assert "ctx = c; el = main; S.move = '';" in REF
     assert "render: async (main, c" in REF and "S.move = '';" in L and "S.cmove = '';" in HIST
+    assert "if (S.move) { const all = [...w.querySelectorAll('.l-doc [data-lzoom]')]" in L  # the shared viewer ends a Move
     assert "ctx = c; root = el; S.move = null;" in Q
 
 
