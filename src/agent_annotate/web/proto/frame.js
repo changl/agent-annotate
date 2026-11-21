@@ -46,7 +46,7 @@
     const write = body !== undefined || !!method;
     if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
     const opts = !write ? {cache: 'no-store'}
-      : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
+      : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body), keepalive: method === 'DELETE'};  // a removal finishing as the page closes still lands
     const go = fetch(base + path.replace(/^\//, ''), opts).then(async r => {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
@@ -58,6 +58,23 @@
   }
   // a note written on any tab changes the next Send: Questions re-reads its notes, and the Send count follows
   const wrote = path => { if (sendP && sendP.wrote) sendP.wrote(path); refreshSend(); };
+  // A note removed from Send or its tab leaves the store only once its Undo is gone: Undo keeps the very record, its id, number,
+  // time and every field (r12 audit13 frame 4, questions 2). Until then every feed hides it; kept in prefs, a reload hides it too and finishes the removal.
+  const TAKEN = new Map(), takenT = {}, TAKE_MS = 10000;  // the Undo toast lasts 9 s
+  const keepTaken = () => prefs.set('taken', Object.fromEntries(TAKEN));
+  function finishTake(id) {
+    const path = TAKEN.get(id); clearTimeout(takenT[id]); delete takenT[id];
+    if (!path) return Promise.resolve();
+    return api(path, undefined, 'DELETE').catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
+      .finally(() => { TAKEN.delete(id); keepTaken(); });
+  }
+  const take = (id, path) => {
+    TAKEN.set(id, path); keepTaken(); takenT[id] = setTimeout(() => finishTake(id), TAKE_MS);
+    return () => { clearTimeout(takenT[id]); delete takenT[id]; TAKEN.delete(id); keepTaken(); };
+  };
+  // a saved-draft list with the removed record id back at its old place, from was (the list before Remove); later changes kept
+  P.putBack = (now, was, id) => { const i = was.findIndex(x => x.id === id), l = now.filter(x => x.id !== id); if (i >= 0) l.splice(Math.min(i, l.length), 0, was[i]); return l; };
+  const unTaken = d => d && Array.isArray(d.notes) && TAKEN.size ? {...d, notes: d.notes.filter(n => !TAKEN.has(n.id))} : d;
   // Today's page API, as the live shell calls it. Writes land in this copy only; delivery is sandboxed.
   Object.assign(api, {
     meta: () => api('current.meta.json'), comments: () => api('comments.json'), project: () => api('api/project'),
@@ -76,7 +93,7 @@
     const got = (!fresh && pre[area]) || api(`proto/data/${area}.json`);
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
-      .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
+      .then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
     return p;
   };
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
@@ -159,6 +176,8 @@
     go(tab, anchor) { location.hash = tab + (anchor ? '/' + encodeURIComponent(anchor) : ''); },
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
+    // take(id, path) -> Undo: the note is hidden now and its DELETE goes when Undo is gone; taken(id); takeNow(): every pending one goes (before a Send)
+    take, taken: id => TAKEN.has(id), takeNow: () => Promise.all([...TAKEN.keys()].map(finishTake)),
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
@@ -389,8 +408,11 @@
       : o.alive ? `Your Send goes to ${who} · alive now` : `Your Send goes to ${who}${since ? ' · claimed the page ' + since.replace('since ', 'on ') : ''}`;
   }
   // One Send state for the header, the phone menu and the floating button (r12 audit11 frame 1, questions 1, reference 2, running 1):
-  // '' shows the count; "…" while the counts are read; "?" once that read failed. The last reading of this version (S.warm, fix12 perf) counts meanwhile, until the read stalls.
-  const sendSt = () => !sendable() || S.countsIn || (S.warm && !S.stall.has('counts')) ? '' : S.stall.has('counts') ? '?' : '…';
+  // '' shows the count; "…" while the counts are read; "?" once that read failed.
+  // Until the counts are in, the number is what the Send sheet lists from the saved drafts, read at each paint, so the two never disagree;
+  // "…" and "?" only when nothing is saved, pending or failed (r12 audit13 frame 1, questions 1, reference 1)
+  const sendNum = () => !S.countsIn && sendable() && sendP.saved ? savedN() : S.sendN;
+  const sendSt = () => !sendable() || S.countsIn || sendNum() > 0 ? '' : S.stall.has('counts') ? '?' : '…';
   const SENDTIP = {'…': 'Counting what is ready to send… Press to see what you saved.', '?': 'What is ready to send could not be counted: press Try again. Press Send to see what you saved.'};
   // every Send on screen repaints together, so none keeps an old state
   function paintSend() {
@@ -401,7 +423,7 @@
     // until the counts are in, Send never looks empty: it reads "…", or "?" once the read gave no answer (r12 audit10 frame 1); pressed, it opens with what was saved
     const st = sendSt();
     if (st) return `<button class="btn ${cls || ''}" data-send${st === '…' ? ' aria-busy="true"' : ''} aria-label="Send: ${esc(SENDTIP[st])}" title="${esc(SENDTIP[st])}">${I('send')}<span class="bl">Send</span> ${st}</button>`;
-    const n = S.sendN, off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
+    const n = sendNum(), off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
     return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${off ? ' aria-disabled="true"' : ''} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${!off ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
   function drawTop() {
@@ -436,11 +458,11 @@
   }
   function drawFab() {
     const f = document.getElementById('p-fab');
-    const st = sendSt();
-    f.hidden = !((S.sendN || st) && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
-    f.innerHTML = `${I('send')}Send ${st || S.sendN || ''}`;
+    const st = sendSt(), n = sendNum();
+    f.hidden = !((n || st) && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
+    f.innerHTML = `${I('send')}Send ${st || n || ''}`;
     f.classList.toggle('unk', !!st);  // not purple until the count is known
-    f.setAttribute('aria-label', st ? 'Send: ' + SENDTIP[st] : `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
+    f.setAttribute('aria-label', st ? 'Send: ' + SENDTIP[st] : `Send: ${pl(n, 'thing is', 'things are')} ready`);
     if (st === '…') f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy');
   }
   function drawLayer() {
@@ -503,6 +525,7 @@
   }
   let topTimer;
   function refreshTop() {
+    if (started && !S.countsIn) paintSend();  // a draft added or removed before the counts are in: Send follows its sheet in the same paint
     clearTimeout(topTimer);
     topTimer = setTimeout(async () => {
       if (S.settling) return;  // a newer version is loading: its counts paint with it
@@ -889,6 +912,8 @@
     new MutationObserver(() => { if (!S.home) restoreFolds(main); }).observe(main, {childList: true, subtree: true});
     addEventListener('scroll', onScroll, {passive: true});
     phoneQ.addEventListener('change', () => { S.menu = ''; drawAll(); });
+    // removals whose Undo went with the last visit: hidden from the first read, and they finish now
+    for (const [id, path] of Object.entries(prefs.get('taken', {}))) TAKEN.set(id, path);
     // one round on a busy host, not three: Questions' read and the tab scripts start with the frame's reads (r12 fix12 perf)
     (pre.questions = api('proto/data/questions.json')).catch(() => {});
     const scripts = Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
@@ -898,6 +923,7 @@
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
     await scripts;
+    [...TAKEN.keys()].forEach(finishTake);  // after the scripts: a copy's removal goes to its in-memory store (P.copyWrite)
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
     // the version waits for its counts however slow the read: never Version with Send 0 before the restored count (r12 fix11 frame)

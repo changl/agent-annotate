@@ -119,6 +119,7 @@
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
     const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id) && !added.has(n.id)).concat(NOTES.add)
+      .filter(n => !(P.ctx && P.ctx.taken(n.id)))  // removed, its Undo still open (frame take)
       .map(n => ({...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)}));
     return d;
   }
@@ -153,7 +154,8 @@
     if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
     return l;
   }
-  const sendCount = () => { const q = Q(); return (D ? D.questions : savedQs()).reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + notesNow(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
+  // counted from the very rows the Send sheet lists, plus General feedback, so the number and the rows never disagree (r12 audit13 reference 1)
+  const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -661,16 +663,17 @@
     ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {undo: () => delNote(c.id, true)});
   }
   async function delNote(id, quiet) {
-    const n = (D ? D.notes : savedNotes()).find(x => x.id === id), v = n && (n.v || (D && D.version));
+    const n = (D ? D.notes : savedNotes()).find(x => x.id === id);
     if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     const was = savedNotes();
-    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));  // the count follows at once, not after the server's answer
-    try { await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE'); } catch (e) { ctx.prefs.set('draft:qnotes', was); throw e; }
-    await (D ? refresh() : draw(true));
-    if (!quiet && n) ctx.toast('Note removed', {undo: async () => {
-      const b = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: v, target: n.target});
-      if (!D) ctx.prefs.set('draft:qnotes', [...savedNotes(), {...n, id: b.id}]);
-      await (D ? refresh() : draw(true)); }});
+    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));  // the count follows at once
+    // the record stays in the store until Undo is gone, so Undo puts back the very note (r12 audit13 frame 4, questions 2)
+    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${await who()}`);
+    if (D) D.notes = D.notes.filter(x => x.id !== id);
+    await draw(true);
+    const back = async () => { keep(); ctx.prefs.set('draft:qnotes', P.putBack(savedNotes(), was, id)); await (D ? refresh() : draw(true)); };
+    if (!quiet && n) ctx.toast('Note removed', {undo: back});
+    return back;
   }
   async function copy(text, what) {
     try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
@@ -725,6 +728,7 @@
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
+      await ctx.takeNow();  // a note removed with its Undo still open leaves first, so the round never carries it
       for (const q of answers) {
         const d = draft(q.id), w = (d.words || '').trim();
         const body = d.pick ? {verdict: 'select', text: optLabel(q, d.pick) + (w ? '\n\n' + w : ''), option_id: d.pick, defer_push: true} : {verdict: 'comment', text: w, defer_push: true};
@@ -759,14 +763,13 @@
     const tn = typingNote(); if (tn) { S.note = null; ctx.prefs.set('q:newnote', null); }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
-    for (const n of notes) await call(`api/comments/${encodeURIComponent(n.id)}`, undefined, 'DELETE');
+    const backs = []; for (const n of notes) backs.push(await delNote(n.id, true));  // kept until Undo is gone: Undo puts back the very notes
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
       if (tn) { S.note = tn; ctx.prefs.set('q:newnote', tn); }
       await Promise.all(undos.map(u => u()));
-      for (const n of notes) await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target});
-      refresh();
+      for (const b of backs.reverse()) await b();  // last out, first back: each returns to its own place
     }});
   }
   async function sendRemove(k) {

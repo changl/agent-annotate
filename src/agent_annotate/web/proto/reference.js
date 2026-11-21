@@ -643,8 +643,10 @@
       if (D) SNOTES = allNotes().filter(n => !n.sent && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
       for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
         go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: async () => {
-          await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
-          return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...(n.m || (D ? noteMeta(n.a) : {}))}); mine.push({...n, id: b.id, who: 'You', v: b.version}); if (!D) SNOTES.push({...n, id: b.id}); keepDrafts(); redo(); }; }});
+          // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
+          const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
+          mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
+          return async () => { keep(); mine = P.putBack(mine, wm, n.id); if (D && wd) D.notes = P.putBack(D.notes, wd, n.id); SNOTES = P.putBack(SNOTES, ws, n.id); keepDrafts(); redo(); }; }});
       if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },

@@ -63,7 +63,7 @@ assert.deepStrictEqual(savedC(ctx).map(n => n.text), ['point']);
 
 
 def test_send_count_and_rows_share_the_saved_notes():
-    assert "+ notesNow(q).length + q.length +" in Q
+    assert "const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);" in Q  # r12 fix15: counted from the rows
     items = grab(Q, "function sendItems() {", "\n  }")
     assert "for (const n of notesNow(q))" in items and "n.i" in items
     assert "saved: c => { ctx = ctx || c; return sendCount(); }" in Q
@@ -89,4 +89,4 @@ def test_questions_listens_before_its_reads():
 def test_undo_puts_back_the_saved_plan_record():
     """Frame 1: the note's plan revision, document and category are kept with it and re-sent by Undo."""
     assert "m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}" in REF
-    assert "...(n.m || (D ? noteMeta(n.a) : {}))" in REF
+    assert "const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id))" in REF  # r12 fix15: Undo keeps the very record

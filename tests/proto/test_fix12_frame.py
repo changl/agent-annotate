@@ -22,7 +22,7 @@ def test_a_stalled_count_offers_try_again_and_send_never_looks_empty():
     rc = FRAME[FRAME.index("async function readCounts(again)"):FRAME.index("const putCounts")]
     assert "if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); paintSend(); }" in rc
     assert "S.countsIn = true; if (S.stall.delete('counts')) drawStall();" in FRAME
-    assert "const sendSt = () => !sendable() || S.countsIn || (S.warm && !S.stall.has('counts')) ? '' : S.stall.has('counts') ? '?' : '…';" in FRAME
+    assert "const sendSt = () => !sendable() || S.countsIn || sendNum() > 0 ? '' : S.stall.has('counts') ? '?' : '…';" in FRAME  # r12 fix15: a saved draft shows its count
     assert "data-stallagain" in FRAME and "if (d.stallagain !== undefined) { again(); return; }" in FRAME
     assert "#p-stall button" in FRAME  # the frame's click handler takes the notice's button
     assert "onclick = () => { again(); route(); }" in FRAME  # a tab's own Try again re-reads the frame's stalled reads too

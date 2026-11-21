@@ -218,10 +218,13 @@
   // takes a saved note back (its Undo icon, Send's Remove); returns what puts it back
   async function takeC(ctx, n) {
     const was = ctx.prefs.get('draft:hcnotes', []);
-    ctx.prefs.set('draft:hcnotes', was.filter(x => x.id !== n.id));  // Send's count follows at once, not after the server's answer
-    try { await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); } catch (e) { ctx.prefs.set('draft:hcnotes', was); throw e; }
+    ctx.prefs.set('draft:hcnotes', was.filter(x => x.id !== n.id));  // Send's count follows at once
+    // the record stays in the store until Undo is gone: Undo puts back the very note, its saved version too (r12 audit13 questions 2, running 2)
+    const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));
     dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
-    return async () => { const c = await ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text}); CN.push({...n, id: c.id, sent: false}); redrawH(); ctx.refreshChips(); };
+    // its saved record goes back too, so every later first Send lists it before Questions answers (r12 audit13 running 2)
+    return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text});
+      ctx.prefs.set('draft:hcnotes', l); CN.push({...n, sent: false}); redrawH(); ctx.refreshChips(); };
   }
   const setT = (id, t) => [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) x.text = t; });
   // a saved note on a point, as the mock's noteBox: Edit, Undo, Copy note and Copy note link; Edit opens its own wording (audit10 running 3)
