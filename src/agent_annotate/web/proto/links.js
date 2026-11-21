@@ -301,8 +301,18 @@
   const unsent = c => {
     if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
     const fd = (LD || {}).notes || [];
-    return [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a));
+    return [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
   };
+  // the line a note sits on, read back from its document after a reload, so Send still names it by its line (audit7 running 5)
+  const blockText = b => !b ? '' : b[0] === 'tbl' ? b[1].map(r => r.join(' ')).join(' ') : (b[0] === 'li' ? '• ' : '') + String(b[1]).replace(/\s+/g, ' ').trim();
+  function lineOf(n) {
+    if (n.line || !LD) return n.line || '';
+    let m = /^doc:kept-([^~]+)~p~(\d+)$/.exec(n.a);  // a kept document's line (~<n> alone is a chart bar, named in its label)
+    if (m) { const d = (LD.kept || []).find(x => x.id === m[1]); return d ? blockText((d.blocks || [])[+m[2]]) : ''; }
+    m = /^(doc:.+)~(\d+)$/.exec(n.a);  // a line of a Markdown file in the project's folder
+    const f = m && ((LD.docs || {}).files || []).find(f => f.md && docKey(f) === m[1]);
+    return f ? blockText(mdBlocks(f.md)[+m[2]]) : '';
+  }
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
       const d = (KEPT || []).find(x => x.id === id);

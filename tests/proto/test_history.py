@@ -5,8 +5,8 @@ import json
 from agent_annotate.proto_data import history
 
 
-def _page(tmp_path):
-    page = tmp_path / "page"
+def _page(tmp_path, long=False):
+    page = tmp_path / ("long" if long else "page")
     (page / "plans" / "roadmap").mkdir(parents=True)
     (page / "plans" / "archive-2026-11-01").mkdir(parents=True)
     (page / "current.meta.json").write_text(json.dumps({"current": "v3", "history": [
@@ -29,9 +29,9 @@ def _page(tmp_path):
     (page / "comments.json").write_text(json.dumps({"anchors": {"a": comments}, "archived": {}}))
     rounds = [
         {"id": "r1", "ts": "2026-11-01T12:00:00Z", "version": "v1", "by": "me@gmail.com", "answers": [
-            {"comment_id": "c1", "number": 101, "prompt": "Ship it?", "text": "Yes\nmore words", "ts": "2026-11-01T11:59:00Z"},
+            {"comment_id": "c1", "number": 101, "prompt": "Ship it?", "text": "Yes\nmore words" + (" word" * 80 + " end." if long else ""), "ts": "2026-11-01T11:59:00Z"},
             {"comment_id": "c1", "number": 101, "prompt": "Ship it?", "text": "Yes"}]},
-        {"id": "r2", "ts": "2026-11-02T12:00:00Z", "version": "v2", "answers": [
+        {"id": "r2", "ts": "2026-11-02T12:00:00Z", "version": "v2", "delivery": "acknowledged", "answers": [
             {"comment_id": "c2", "number": 102, "prompt": "Pick?", "verdict": "select", "text": "B, mail me@gmail.com"}]},
     ]
     (page / "rounds.ndjson").write_text("\n".join(json.dumps(r) for r in rounds) + '\n{"id": "cut sho')
@@ -47,8 +47,10 @@ def test_history_record(tmp_path):
     assert [a["v"] for a in d["answers"]] == ["v2", "v1"]  # newest first; the repeat in one Send listed once
     newest, oldest = d["answers"]
     assert newest["ovr"][0] == "overruled" and oldest["ovr"][0] == "superseded"
-    assert oldest["a"] == "Yes" and oldest["n"] == 101
-    assert d["versions"]["v2"] == {"t": "2026-11-02", "note": "Second, for member@example.com", "items": 2, "open": 1}
+    assert oldest["a"] == "Yes more words" and oldest["n"] == 101  # in full, not cut to its first line (audit7 running 3)
+    assert oldest["at"] == "2026-11-01T12:00:00Z" and oldest["dl"] == "" and newest["dl"] == "acknowledged"  # the Send's time and delivery (audit7 running 2)
+    assert history.build(_page(tmp_path, long=True))["answers"][-1]["a"].endswith("end.")  # a long answer is not cut mid-word
+    assert d["versions"]["v2"] == {"t": "2026-11-02", "at": "2026-11-02T10:00:00Z", "note": "Second, for member@example.com", "items": 2, "open": 1}
     # an older version jumps to each question waiting now: only c5, first asked in v1 (finding 10)
     assert d["waiting"] == [{"id": "c5", "n": 7, "q": "Who drives?", "from": "v1", "in": ["v1", "v3"]}]
     assert d["withdrawn"] == [{"n": 0, "v": "v2", "t": "2026-11-02", "q": "Old question?", "why": "not asked again"}]

@@ -8,6 +8,10 @@
   const S = {q: '', f: 'all', nv: 20, open: new Set(), wd: false, ref: false, nref: 60, wnOpen: null};
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const vn = v => String(v || '').replace(/^v/, '');
+  // a Send or a version in the browser's local time, as the header and the real page date it (audit7 running 2)
+  const when = (iso, day) => { const t = new Date(iso); return iso && !isNaN(t) ? t.toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : day || ''; };
+  // a Send's delivery state, in the header's words (frame.js DELIV)
+  const DELIV = {acknowledged: 'read by the agent', accepted: 'delivered', started: 'agent working on it', pending: 'saved, agent not told yet', queued: 'saved, agent not told yet', active_monitor: 'delivered', uncertain: 'not confirmed yet', superseded: 'not delivered: the page changed agents'};
 
   /* ---------- a version or plan revision, read-only, with a close bar; says why when it fails to load ---------- */
   P.viewVersion = function (host, ctx, o) {
@@ -176,9 +180,11 @@
   };
 
   /* ---------- the tab ---------- */
-  let D = null;
+  let D = null, R = null;
   async function render(el, ctx, anchor) {
     D = await ctx.data('history');
+    // the copy's findings audits and Copy library, from Reference's own data (the top bar's Reference chip has read it already)
+    R = await ctx.data('reference').catch(() => null);
     const {esc, icon} = ctx;
     if (anchor) return openView(el, ctx, anchor);
     const chips = [['all', 'All', ''], ['q', 'Questions', 'q'], ['ref', 'Reference', 'ref']]
@@ -213,11 +219,11 @@
         const m = D.versions[v] || {}, eye = `<button class="ib" data-hv="${esc(v)}" title="Open version ${esc(vn(v))} read-only" aria-label="Open version ${esc(vn(v))} read-only">${icon('eye')}</button>`;
         const note = m.note ? `<div class="small h-note">${fix(m.note)}<span class="mut">Agent's note:</span> ${esc(m.note)}</div>` : '';
         if (!hs.length) return `<div class="h-grp h-none" id="h-${esc(v)}"><div class="h-gh"><span class="h-fold h-nofold"><b>Version ${esc(vn(v))}</b>
-          <span class="small mut"><span class="h-dot">· </span>published ${esc(m.t || '')} · no answers sent${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}</span></span>${eye}</div>${note}</div>`;
+          <span class="small mut"><span class="h-dot">· </span>published ${esc(when(m.at, m.t))} · no answers sent${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}</span></span>${eye}</div>${note}</div>`;
         const top = first && !q; first = false;
         const op = !!q || top !== S.open.has(v);
         return `<div class="h-grp" id="h-${esc(v)}"><div class="h-gh"><button class="h-fold" data-fold="${esc(v)}" aria-expanded="${op}">${icon('chev')}<b>Version ${esc(vn(v))}</b>
-          <span class="small mut"><span class="h-dot">· </span>sent ${esc(hs[0].t)} · ${pl(hs.length, 'answer', 'answers')}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${top ? ' · newest Send' : ''}</span></button>
+          <span class="small mut"><span class="h-dot">· </span>sent ${esc(when(hs[0].at, hs[0].t))} · ${pl(hs.length, 'answer', 'answers')}${DELIV[hs[0].dl] ? ` · ${DELIV[hs[0].dl]}` : ''}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${top ? ' · newest Send' : ''}</span></button>
           ${eye}</div>${note}
           ${op ? `<ul class="h-list">${hs.map(h => li(h, ctx)).join('')}</ul>` : ''}</div>`;
       }).join('') || (q ? '<p class="mut">No past answer matches.</p>' : '<p class="mut">No answers sent on this page yet.</p>');
@@ -243,8 +249,12 @@
       const rows = revs.slice(0, S.nref).map(x => `<div class="h-line">${icon(/checklist/i.test(x.p.t) ? 'check' : 'plan')}<span class="h-grow"><b>${esc(x.p.t)}</b> · ${x.n > 1 ? `revisions ${x.lo + 1} to ${x.i + 1} of ${x.p.revs.length} <span class="h-cnt">${x.n}</span>` : `revision ${x.i + 1} of ${x.p.revs.length}`}${x.labs.size ? ` · <span class="mut">${esc([...x.labs].join(', '))}</span>` : ''}</span>
         <span class="small mut">${esc(x.r[1])}</span><button class="ib" data-hp="${esc(x.p.id)}~${esc(x.r[0])}" title="Open this revision read-only" aria-label="Open ${esc(x.p.t)}, revision ${x.i + 1}, read-only">${icon('eye')}</button></div>`).join('');
       const more = revs.length > S.nref ? `<button class="btn sm" data-refmore>Show ${Math.min(60, revs.length - S.nref)} more</button>` : '';
-      html += S.f === 'ref' ? (rows + more || '<p class="mut">No Reference changes match.</p>')
-        : revs.length ? `<div class="h-grp"><button class="h-fold" data-refall aria-expanded="${op}">${icon('chev')}<b>Reference changes</b> <span class="small mut">${pl(all.length, 'revision', 'revisions')} of ${pl(D.plans.length, 'plan', 'plans')}</span></button>${op ? rows + more : ''}</div>` : '';
+      // a copy's findings audits and its Copy library head the list, each with its eye into Reference, as the mock shows Rebex's (#114, audit7 running 4)
+      const ex = ((R && R.extras) || []).filter(x => (x.find || x.id === 'copy-library') && (!q || x.t.toLowerCase().includes(q)));
+      const rb = ex.map(x => `<div class="h-line">${icon(x.find ? 'data' : 'text')}<span class="h-grow">${esc(x.t)} · ${x.find ? pl(x.find.items.length, 'finding', 'findings') : esc(String(x.m || '').split(' · ')[0])}</span>
+        <button class="ib" data-href="${esc(x.id)}" title="Open it in Reference" aria-label="Open ${esc(x.t)} in Reference">${icon('eye')}</button></div>`).join('');
+      html += S.f === 'ref' ? (rb + rows + more || '<p class="mut">No Reference changes match.</p>')
+        : revs.length || rb ? `<div class="h-grp"><button class="h-fold" data-refall aria-expanded="${op}">${icon('chev')}<b>Reference changes</b> <span class="small mut">${[revs.length && `${pl(all.length, 'revision', 'revisions')} of ${pl(D.plans.length, 'plan', 'plans')}`, ex.length && pl(ex.length, 'audit or library', 'audits and libraries')].filter(Boolean).join(' · ')}</span></button>${op ? rb + rows + more : ''}</div>` : '';
     }
     box.innerHTML = html;
   }
@@ -263,6 +273,7 @@
     else if (b.hasAttribute('data-refmore')) { S.nref += 60; draw(el, ctx); }
     else if (b.dataset.hv) ctx.go('history', b.dataset.hv);
     else if (b.dataset.hp) ctx.go('history', 'plan~' + b.dataset.hp);
+    else if (b.dataset.href) ctx.go('reference', b.dataset.href);
   }
 
   function openView(el, ctx, anchor) {

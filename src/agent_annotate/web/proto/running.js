@@ -30,7 +30,7 @@
   };
   Object.keys(ICONS).forEach(k => { if (!P.ICONS[k]) P.ICONS[k] = ICONS[k]; });
 
-  const S = {open: new Set(), ask: '', rerun: new Map(), task: '', list: []};
+  const S = {open: new Set(), ask: '', rerun: new Map(), task: '', list: [], peek: ''};
   let CTX = null, EL = null, D = null;
 
   /* ------------------------------------------------------------ the chip: only the most urgent state */
@@ -98,11 +98,20 @@
           <section class="rsec" id="prs"><h2 class="ph"><button class="fold" data-fold="prs" aria-expanded="${po}">${ic('chev')} Pull requests <span class="cnt">${opn ? opn + ' open' : prs.length}</span></button></h2>
             ${po ? prs.map(p => `<div class="line sub"><span class="grow"><b>${esc(p.id)}</b> · ${esc(cut(p.title, 110))}</span>${stPill(p.state === 'merged' ? 'closed' : p.state === 'open' ? 'in progress' : 'deferred').replace(/>[a-z ]+<\/span>$/, `>${esc(p.draft ? 'draft' : p.state)}</span>`)}<button class="ib" data-copy="${esc(p.url)}" title="Copy the link to ${esc(p.id)}" aria-label="Copy the link to ${esc(p.id)}">${ic('copy')}</button></div>`).join('') || `<p class="small mut">${d.prs && d.prs.error ? 'GitHub could not be read just now.' : `${esc(PNAME)} has no pull requests this page can read, so none are listed.`}</p>` : ''}</section></div></div>
       <p class="small mut rn-src">Read ${esc(new Date(d.built).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}; each source is read at most once a minute.</p>
-      ${panel()}`;
+      ${panel()}${termSheet(ws)}`;
+  }
+  // Open terminal on a phone or iPad: Orca's terminal can't show here, so the worker's last report and Bring it forward on the Mac (the mock's termSheet, #120)
+  function termSheet(ws) {
+    const w = S.peek && ws.find(x => x.name === S.peek); if (!w) return '';
+    return `<div class="sheet rn-peek" role="dialog" aria-label="Terminal of ${esc(wnm(w.name))}"><div class="box"><div class="tpbar"><b>${esc(wnm(w.name))}</b><span class="spacer"></span><button class="ib" data-peek="" aria-label="Close">${ic('x')}</button></div>
+      <p class="small">Its terminal is in Orca on the ${esc(w.mac || 'M1 Max')}. A phone or iPad can't show an Orca terminal from this page, so here is what it said last; Bring it forward puts it on the Mac's screen.</p>
+      <div class="wt st-${WS[w.s][0]}"><div class="wt2"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><span>${WS[w.s][1]}</span><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span><span class="small">${ago(w.mins)}</span></div>
+        <div class="wt3 small">${ic('msg')}<span class="${w.report ? '' : 'mut'}">${esc(scrub(w.report) || 'no report yet')}</span></div></div>
+      <p><button class="btn pri" data-termmac="${esc(w.name)}">${ic('term')} Bring it forward on the Mac</button> <button class="btn" data-peek="">Close</button>${P.inertMark()}</p></div></div>`;
   }
   // a worker as a tile, every worker, as in the mock: state and name with Open terminal; model, time running, last sign of life; last report; no Stop
   const tile = w => `<div class="wt st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}"><div class="wt1"><i class="dot st-${WS[w.s][0]}" role="img" aria-label="${WS[w.s][1]}"></i><b class="wn" title="${esc(w.name)}">${esc(wnm(w.name))}</b>
-        <button class="ib" data-term="${esc(wnm(w.name))}" title="Open its terminal in Orca" aria-label="Open the terminal of ${esc(wnm(w.name))} in Orca">${ic('term')}</button></div>
+        <button class="ib" data-term="${esc(w.name)}" title="Open its terminal in Orca" aria-label="Open the terminal of ${esc(wnm(w.name))} in Orca">${ic('term')}</button></div>
       <div class="wt2"><span class="mb ${esc(w.agent)}">${esc(mdl(w))}</span><span class="tbar" title="Running ${ago(w.mins)}"><i style="width:${Math.max(4, Math.min(100, (w.mins || 0) / 120 * 100))}%"></i></span><span class="small nw">${ago(w.mins)}</span>
         ${w.s !== 'failed' && w.heard != null ? `<span class="small nw ${w.s === 'stuck' ? 'stuck-t' : 'mut'}" title="Its last sign of life">${ic('pulse')} ${ago(w.heard)} ago</span>` : ''}</div>
       <div class="wt3 small" title="${esc(w.report || 'No report yet')}">${ic('msg')}<span class="${w.report ? '' : 'mut'}">${esc(scrub(w.report) || 'no report yet')}</span></div></div>`;
@@ -289,7 +298,10 @@
       const ds = t.dataset;
       if (ds.fold != null) { S.open.has(ds.fold) ? S.open.delete(ds.fold) : S.open.add(ds.fold); return draw(); }
       if (ds.task != null) { openTask(ds.task); return; }  // draw() sets the arrows' list to the task lines on screen
-      if (ds.term) return CTX.inert(`${ds.term}: its terminal opens in Orca`);
+      if (ds.term) { if (innerWidth < 900) { S.peek = ds.term; return draw(); } return CTX.inert(`${wnm(ds.term)}: its terminal opens in Orca`); }
+      if (ds.peek != null) { S.peek = ds.peek; return draw(); }
+      if (ds.termmac) { const w = mine(D).find(x => x.name === ds.termmac); S.peek = ''; draw();
+        return CTX.inert(`Orca brought the terminal of ${wnm(ds.termmac)} forward on the ${(w && w.mac) || 'M1 Max'}`); }
       if (ds.ask != null) { S.ask = ds.ask; return draw(); }
       if (ds.rerun) { const p = ds.rerun; S.rerun.set(p, Date.now()); S.ask = ''; draw();
         return CTX.inert('Rerun started', () => { S.rerun.delete(p); draw(); }); }
@@ -315,6 +327,7 @@
     EL = host; tabNow = 'side'; S.list = list; bind(host); openTask(id);
   };
   addEventListener('keydown', e => {
+    if (e.key === 'Escape' && S.peek && EL && EL.isConnected) { S.peek = ''; return draw(); }
     if (!EL || !EL.isConnected || !EL.classList.contains('tab-running') || !S.task || e.target.closest('textarea,input')) return;
     const pos = S.list.indexOf(S.task);
     if (e.key === 'Escape') openTask('');

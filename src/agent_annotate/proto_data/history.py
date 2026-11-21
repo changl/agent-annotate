@@ -90,13 +90,15 @@ def build(page_dir: Path) -> dict:
                 continue
             count += 1
             q = _plain(a.get("prompt") or "General feedback", 220)
-            text = _plain(str(a.get("text") or a.get("verdict") or "").split("\n")[0], 220)
-            key = (r.get("id"), q, text)
+            text = _plain(a.get("text") or a.get("verdict") or "", 6000)  # in full, as the real History shows it (audit7 running 3)
+            key = (r.get("id"), q, _plain(str(a.get("text") or a.get("verdict") or "").split("\n")[0], 220))
             if key in seen:  # the same answer twice in one Send is listed once
                 continue
             seen.add(key)
+            # "at" is the Send's own time, shown in the browser's local time as the header shows it; "dl" its delivery state (audit7 running 2)
             answers.append({"n": a.get("number") or 0, "q": q, "a": text, "v": r.get("version") or "",
-                            "t": str(a.get("ts") or r.get("ts") or "")[:10], "ovr": ovr.get(a.get("comment_id")) or ovr_q.get(q)})
+                            "t": str(a.get("ts") or r.get("ts") or "")[:10], "at": str(r.get("ts") or a.get("ts") or ""),
+                            "dl": str(r.get("delivery") or ""), "ovr": ovr.get(a.get("comment_id")) or ovr_q.get(q)})
     answers.reverse()  # newest first
 
     items, open_items = {}, {}
@@ -105,7 +107,7 @@ def build(page_dir: Path) -> dict:
         items[v] = items.get(v, 0) + 1
         open_items[v] = open_items.get(v, 0) + (c.get("status") == "open")
     hist = [h for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
-    versions = {h["version"]: {"t": str(h.get("ts") or "")[:10], "note": _plain(h.get("label"), 200),
+    versions = {h["version"]: {"t": str(h.get("ts") or "")[:10], "at": str(h.get("ts") or ""), "note": _plain(h.get("label"), 200),
                                "items": items.get(h["version"], 0), "open": open_items.get(h["version"], 0)}
                 for h in hist}
 
