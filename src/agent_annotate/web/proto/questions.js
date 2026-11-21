@@ -663,8 +663,9 @@
   async function delNote(id, quiet) {
     const n = (D ? D.notes : savedNotes()).find(x => x.id === id), v = n && (n.v || (D && D.version));
     if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
-    await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE');
-    ctx.prefs.set('draft:qnotes', savedNotes().filter(x => x.id !== id));  // the count follows at once, before any re-read
+    const was = savedNotes();
+    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));  // the count follows at once, not after the server's answer
+    try { await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE'); } catch (e) { ctx.prefs.set('draft:qnotes', was); throw e; }
     await (D ? refresh() : draw(true));
     if (!quiet && n) ctx.toast('Note removed', {undo: async () => {
       const b = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: v, target: n.target});

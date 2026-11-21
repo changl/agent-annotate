@@ -80,7 +80,7 @@
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
         remove: () => takeC(ctx, n)}))],
     sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
-      savedC(ctx).forEach(n => { n.sent = true; }); },
+      savedC(ctx).forEach(n => { n.sent = true; }); ctx.prefs.set('draft:hcnotes', []); },
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
@@ -207,12 +207,20 @@
   const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
   // saved and not yet sent; Questions' feed is read here too, so Send lists them before History is opened
+  // kept as saved records too (draft:hcnotes): while that feed is held or failed, Send lists them from what was saved (r12 fix14 running 1)
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
-    return allC().filter(n => !n.sent); };
+    const m = ctx.prefs.get('draft:hcnotes', []);
+    if (!QD) return [...m, ...CN.filter(n => !n.sent && !m.some(x => x.id === n.id))];
+    const l = allC().filter(n => !n.sent), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text}));
+    if (JSON.stringify(s) !== JSON.stringify(m)) ctx.prefs.set('draft:hcnotes', s);
+    return l; };
   const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };
   // takes a saved note back (its Undo icon, Send's Remove); returns what puts it back
   async function takeC(ctx, n) {
-    await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
+    const was = ctx.prefs.get('draft:hcnotes', []);
+    ctx.prefs.set('draft:hcnotes', was.filter(x => x.id !== n.id));  // Send's count follows at once, not after the server's answer
+    try { await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); } catch (e) { ctx.prefs.set('draft:hcnotes', was); throw e; }
+    dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
     return async () => { const c = await ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text}); CN.push({...n, id: c.id, sent: false}); redrawH(); ctx.refreshChips(); };
   }
   const setT = (id, t) => [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) x.text = t; });
