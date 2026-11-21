@@ -85,10 +85,11 @@
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
     if (ka && (D.kept || []).some(d => d.id === ka[1])) S.kept = ka[1];
     const dr = typed(ctx);  // the note he was typing before a reload reopens on its line, words and all (audit8 running 1)
-    if (dr && !ka && (!S.note || S.note === dr.a)) { openAt(D, dr.a); S.note = dr.a; S.tgt = dr.tgt || null; S.hl = ''; }
+    const back = dr && (!ka || dr.a.startsWith(`doc:kept-${ka[1]}~`) || dr.a === `doc:kept-${ka[1]}`) && (!S.note || S.note === dr.a);
+    if (back) { openAt(D, dr.a); S.note = dr.a; S.tgt = dr.tgt || null; S.hl = ''; }
     draw(w, ctx, D); ON = {w, ctx, D};
-    if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
-    else if (dr && S.note === dr.a) { const t = w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } }
+    if (back) { const t = w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } }
+    else if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
     w.onclick = e => click(e, w, ctx, D);
     w.oninput = e => { if (e.target.id !== 'l-nt' || !S.note) return;
       const was = !!typed(ctx);

@@ -30,7 +30,7 @@
 /* Questions asked per version: the mock's compact strip over the version list; a point takes a note */
 .h-chart{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;margin:4px 0 8px}
 .h-ctl{min-width:180px}
-.h-chart svg{flex:1;min-width:260px;max-width:820px;max-height:64px;height:auto;display:block}
+.h-chart>svg{flex:1;min-width:260px;max-width:820px;max-height:64px;height:auto;display:block}
 .h-cpt{fill:var(--color-primary);cursor:pointer}
 .h-cpt:hover,.h-cpt:focus,.h-cpt.on{fill:#d62850;outline:none}
 .h-cax{font-size:10px;fill:currentColor;opacity:.6}
@@ -71,5 +71,5 @@
   .pp-zhint{display:none}
   .hv-view{padding:6px 8px 10px;margin:4px -4px 12px}
   .h-cols{grid-template-columns:minmax(0,1fr)}
-  .h-chart svg{min-width:0;width:100%}
+  .h-chart>svg{flex:1 1 100%;min-width:0;width:100%}
 }
