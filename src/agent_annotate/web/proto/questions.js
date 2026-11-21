@@ -33,6 +33,9 @@
   const ib = (k, label, attrs) => `<button class="ib sm" title="${esc(label)}" aria-label="${esc(label)}" ${attrs}>${ic(k)}</button>`;
   const ASKFILE = 'Please file a task on the board for this question.';
   const gen = () => ctx.prefs.get('q:general', '');
+  // A read-only copy (frame.json copyOf) takes no writes: its Send is simulated, kept in memory until a reload
+  const SIM = {};
+  const sim = d => { if (d) for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]); return d; };
 
   /* ---------- state of a question ---------- */
   const optLabel = (q, id) => (q.options.find(o => o.id === id) || {}).label || id;
@@ -353,7 +356,7 @@
     const it = sendItems(), g = {}, un = waitingCount(), lat = D.questions.filter(FILTERS.later).length;
     it.forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
-      <p class="small mut">Goes to the FastLane Drive agent session. Nothing goes until you press Send. ${P.inertMark()}</p>
+      <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : 'Goes to the FastLane Drive agent session.'} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || (gen().trim() ? '' : '<p class="small mut">Nothing ready yet.</p>')}
@@ -428,7 +431,7 @@
 
   /* ---------- actions ---------- */
   const qOf = id => D.questions.find(q => q.id === id);
-  async function refresh() { D = await ctx.data('questions', true); await draw(true); }
+  async function refresh() { D = sim(await ctx.data('questions', true)); await draw(true); }
   function pick(q, opt) {
     const was = draft(q.id).pick;
     setDraft(q.id, {pick: was === opt ? null : opt});
@@ -499,7 +502,23 @@
     S.pending = {n, timer: setTimeout(() => post(answers, replies, closes), SEND_DELAY)};
     draw(true);
   }
+  // the same steps as post(), with nothing written: each card turns Sent, Closed or gains its reply in memory
+  async function simulate(answers, replies, closes) {
+    const ts = new Date().toISOString();
+    for (const q of answers) {
+      const d = draft(q.id), w = (d.words || '').trim();
+      SIM[q.id] = {...SIM[q.id], sent: true, read: false, decision: d.pick ? {verdict: 'select', text: optLabel(q, d.pick) + (w ? '\n\n' + w : ''), option_id: d.pick, ts} : {verdict: 'comment', text: w, ts}};
+      setDraft(q.id, {pick: null, words: null});
+    }
+    for (const q of replies) { SIM[q.id] = {...SIM[q.id], replies: [...(q.replies || []), {you: true, text: draft(q.id).reply.trim(), ts, sent: true}]}; setDraft(q.id, {reply: null, replyOpen: null}); }
+    for (const q of closes) { SIM[q.id] = {...SIM[q.id], closed: true}; setDraft(q.id, {close: null}); }
+    ctx.prefs.set('q:general', '');
+    S.pending = null;
+    await refresh();
+    ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: nothing saved, this is a read-only copy of ${S.copyOf}'s page`, {inert: true});
+  }
   async function post(answers, replies, closes) {
+    if (S.copyOf) return simulate(answers, replies, closes);
     try {
       for (const q of answers) {
         const d = draft(q.id), w = (d.words || '').trim();
@@ -723,7 +742,7 @@
   P.tab({
     key: 'questions',
     chip: async c => {
-      ctx = ctx || c; D = D || await c.data('questions');
+      ctx = ctx || c; D = D || sim(await c.data('questions'));
       const n = waitingCount(), later = D.questions.filter(FILTERS.later).length;
       if (n) return {text: `${n} waiting`, tone: 'red', title: pl(n, 'question waits', 'questions wait') + ' for your answer'};
       return later ? {text: `${later} later`, title: pl(later, 'question', 'questions') + ' set aside to answer later'} : null;
@@ -732,7 +751,9 @@
       ctx = c; root = el;
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
-      D = await c.data('questions');
+      D = sim(await c.data('questions'));
+      if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => (f && f.copyOf) || '', () => '');
+      el.classList.toggle('qcopy', !!S.copyOf);  // the frame shows no floating Send on a copy, so the phone keeps this bar's
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       if (anchor && anchor.startsWith('q-')) { const id = anchor.slice(2), q = qOf(id); if (q) { S.shut.delete(id); if (isDone(q)) S.open.add(id); S.hl = id; } }
@@ -740,7 +761,7 @@
       await draw();
     },
   });
-  const load = async c => { ctx = ctx || c; D = D || await c.data('questions'); };
+  const load = async c => { ctx = ctx || c; D = D || sim(await c.data('questions')); };
   P.send({
     count: async c => { await load(c); return sendCount(); },
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here

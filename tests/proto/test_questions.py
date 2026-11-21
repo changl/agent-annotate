@@ -98,5 +98,15 @@ def test_second_note_keeps_the_first():
     assert "S.note = {anchor: anchorEl.dataset.anchorId" not in s  # every opener goes through openNote
 
 
+def test_copy_send_is_simulated():
+    """Round 12 third pass: on a read-only copy Send runs the same steps and writes nothing (no JS runner here)."""
+    s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
+    sim = s[s.index("async function simulate("):s.index("async function post(")]
+    assert "call(" not in sim and "ctx.api" not in sim  # no request leaves the page
+    assert "{inert: true}" in sim  # ends with "prototype: not sent"
+    assert "if (S.copyOf) return simulate(" in s
+    assert "f.copyOf" in s  # the README contract: frame.json copyOf marks a copy
+
+
 def test_mask_covers_company_and_keeps_images():
     assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"
