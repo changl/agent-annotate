@@ -66,7 +66,9 @@ def test_sixth_check_send_fixes():
     assert "['need', 'later', 'ready', 'wait', 'arch'].find(k => FILTERS[k](q))" in s and "if (q0 && S.view === 'doc')" in s
     assert "'r:' + q.id" in s and "showAt(id, at)" in s  # a reply's Go to it opens the card at the reply
     # questions #04: a today-and-proposed picture takes a pick that joins Answers in Send, with Undo
-    assert "Pick today's" in s and "Pick the proposed" in s and "data-unab" in s and "Object.keys(abPicks()).length" in s
+    assert "Pick ${s === 'current' ? 'today\\'s' : 'the proposed'}" in s and "data-unab" in s and "Object.keys(abPicks()).length" in s
+    assert '[data-anchor-id^="cmp:"]' in s and "^(current|today|before)" in s  # the page's Current/Proposed blocks and Before/After pairs
+    assert "ctx.refreshChips();  // a Remove or Undo over another tab" in s  # the Questions chip follows a Remove over Running
     assert "padding:60px 16px" in c and "max-height:calc(100vh - 90px)" in c  # questions #05: the phone's inset summary
     assert "body.qsheet-open .p-toastwrap{z-index:45}" in c  # frame #01: Undo over the sheet
     assert "data-snone" in s  # frame #06

@@ -478,7 +478,7 @@
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
-      <h4>Not in this Send</h4><p class="small">${un || lat ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
+      <h4>Not in this Send</h4><p class="small">${un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${n ? '' : 'disabled'}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${n ? '' : 'disabled'}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
@@ -489,7 +489,7 @@
     if (!S.armed && !S.pending) { host.remove(); host = null; }
     else host.innerHTML = sendPanel(sendCount());
     document.body.classList.toggle('qsheet-open', !!(host && S.armed));
-    if (ctx.refreshTop) ctx.refreshTop();
+    ctx.refreshChips();  // a Remove or Undo over another tab moves the Questions count too
   }
 
   /* ---------- draw ---------- */
