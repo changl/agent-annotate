@@ -255,6 +255,45 @@ def test_renamed_topic_keeps_its_controls_on_a_copy():
     assert s.count("topics(await ctx.api(") == 1  # every topic write goes through topicApi
 
 
+def test_reference_js_parses():
+    """A syntax error leaves the tab reading 'not built yet'."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    r = subprocess.run([node, "--check", str(WEB / "reference.js")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_edited_copy_shows_its_wording_in_send():
+    """Audit5 finding 1: Send lists the saved, formatted replacement, not an empty quote."""
+    s = (WEB / "reference.js").read_text()
+    assert "edited: “<span class=\"rf-sendrt\">${s.html}</span>”" in s and "s.text" not in s
+
+
+def test_sent_reopen_keeps_its_status_and_reason():
+    """Audit5 finding 2: after Send the finding reads Reopened · sent, and the timeline keeps the reason."""
+    s = (WEB / "reference.js").read_text()
+    assert "if (why.trim()) S.rsent.set(fk, [t, why]);" in s
+    assert "Reopened · sent ${esc(rs[0])}" in s and "you reopened “${esc(f.label)}” at ${esc(t)}" in s
+
+
+def test_go_to_a_checklist_note_opens_the_checklist():
+    """Audit5 finding 3: a checklist row's note (chk:N) opens the checklist and highlights the note."""
+    s = (WEB / "reference.js").read_text()
+    assert "a.startsWith('chk:') && D.checklist ? D.checklist.plan" in s and "go: goRef(itemOf(n.a), n.id)" in s
+    assert "S.hl === n.id ? ' rf-hl' : ''" in s
+
+
+def test_whole_item_approve_joins_send():
+    """Audit5 finding 5: Approve beside Write a note adds a Reference approval to Send, with Undo."""
+    s = (WEB / "reference.js").read_text()
+    assert "data-appr=\"${esc(k)}\"" in s and "'✓ Approved · Undo' : 'Approve'" in s
+    assert "→ <b>approved</b>" in s and "S.appr.clear()" in s
+
+
 def test_copy_library_actions_fit_a_phone():
     """Audit4 finding 7: at 390 each action stays on one line instead of breaking a letter at a time."""
     css = (WEB / "reference.css").read_text()

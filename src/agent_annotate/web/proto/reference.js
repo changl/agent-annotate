@@ -4,7 +4,7 @@
 (function () {
   const P = window.Proto;
   const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), open: new Set(),
-    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map(), cp: new Map(), cpEd: '', cq: ''};  // reopen and cp (copy-library choices): in memory only, the prototype sends nothing
+    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map(), rsent: new Map(), appr: new Set(), hl: '', cp: new Map(), cpEd: '', cq: ''};  // reopen, rsent (sent reopens: [time, why]), appr (approved items) and cp (copy-library choices): in memory only, the prototype sends nothing
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
@@ -72,7 +72,7 @@
   function noteList(k, dlg) {
     const ns = notesAt(k), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
     if (!ns.length && !box) return '';
-    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id && !x.sent) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt${S.hl === n.id ? ' rf-hl' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id && !x.sent) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
       ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -321,21 +321,22 @@
   }
   // the plan footer, as in the mock: a note, where it is filed, its topic
   const foot = (k, st, topic, hint) => `${noteList(k + '~all')}<div class="rf-acts"><button class="btn sm" data-note="${esc(k)}~all">${ico('note')}Write a note</button>
+      <button class="btn sm${S.appr.has(k) ? ' rec' : ''}" data-appr="${esc(k)}" title="Approve it as a whole; goes with your next Send">${S.appr.has(k) ? '✓ Approved · Undo' : 'Approve'}</button>
       <span class="small mut">Filed as</span><span class="seg" role="group" aria-label="Filed as">${['prop', 'ok', 'ref'].map(s => `<button data-plansec="${s}" aria-pressed="${st === s}" title="${esc(SN[s][1])}">${SN[s][0]}</button>`).join('')}</span>
       ${topic}<span class="spacer"></span><span class="small mut">${hint}</span></div>`;
   // a project file the mock files under Reference: Markdown as text, sheets as tables, each line and row open to a note
   // an audit as a findings register, as the mock shows Rebex's etching audit: what was screened, the conclusion, each finding with its proof, Reopen
   function findView(x) {
     const b = x.find, k = 'ref:' + x.id, seen = b.items.filter(f => f.state === 'Rebex mark seen').length;
-    const items = b.items.map((f, i) => { const fk = `${x.id}~${i}`, op = (i === 0) !== S.open.has('fd:' + fk), r = S.reopen.get(fk);
-      return `<div class="grp"><div class="rf-fh"><button class="fold" data-fold="fd:${esc(fk)}" aria-expanded="${op}">${esc(f.label)}</button><span class="tag${f.state === 'No Rebex mark' ? ' high' : ''}">${esc(f.state)}</span>${r !== undefined ? `<span class="saved">Reopened</span>${P.inertMark()}<button class="lk small" data-unreopen="${esc(fk)}">Undo</button>` : `<button class="lk small" data-freopen="${esc(fk)}" title="Say it is not settled, with why; the audit's record stays">Reopen</button>`}</div>
+    const items = b.items.map((f, i) => { const fk = `${x.id}~${i}`, op = (i === 0) !== S.open.has('fd:' + fk), r = S.reopen.get(fk), rs = S.rsent.get(fk);
+      return `<div class="grp"><div class="rf-fh"><button class="fold" data-fold="fd:${esc(fk)}" aria-expanded="${op}">${esc(f.label)}</button><span class="tag${f.state === 'No Rebex mark' ? ' high' : ''}">${esc(f.state)}</span>${rs && r === undefined ? `<span class="saved">Reopened · sent ${esc(rs[0])}</span>` : r !== undefined ? `<span class="saved">Reopened</span>${P.inertMark()}<button class="lk small" data-unreopen="${esc(fk)}">Undo</button>` : `<button class="lk small" data-freopen="${esc(fk)}" title="Say it is not settled, with why; the audit's record stays">Reopen</button>`}</div>
         ${r !== undefined ? `<textarea id="rf-ro-${i}" data-reopen="${esc(fk)}" rows="2" placeholder="Why reopen it?" aria-label="Why reopen ${esc(f.label)}">${esc(r)}</textarea>` : ''}
         ${op ? `${block(['p', f.text], `${k}~f~${i}`)}${f.src ? `<div class="figs">${block(['img', f.src, 'Proof: ' + f.label], `${k}~f${i}`)}</div>` : ''}
         <div class="rf-acts small"><span class="grow mut">Proof file: ${esc(f.file)} · fingerprint ${esc(f.sha)} · the original is kept unchanged; this is a copy</span><button class="lk small" data-copy="${esc(f.file)}" data-what="Path">Copy path</button></div>` : ''}</div>`; }).join('');
     return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · audited ${esc(dm(b.when))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       <div class="tiles">${b.screened.map(([n, w]) => `<div><b>${n.toLocaleString()}</b><span>${esc(w)} screened</span></div>`).join('')}<div><b>${b.items.length}</b><span>findings, ${seen} with the Rebex mark</span></div></div>
       <p ${at(k + '~c', 'Conclusion')}>${pin(k + '~c')}<b>Conclusion:</b> ${esc(b.conclusion)}</p>${noteList(k + '~c')}
-      <p class="small"><b>Timeline:</b> audited ${esc(b.when)} · ${b.untouched ? 'no original photo or catalog choice changed' : 'originals changed'}</p>
+      <p class="small"><b>Timeline:</b> audited ${esc(b.when)} · ${b.untouched ? 'no original photo or catalog choice changed' : 'originals changed'}${b.items.map((f, i) => [f, S.rsent.get(`${x.id}~${i}`)]).filter(([, rs]) => rs).map(([f, [t, why]]) => ` · you reopened “${esc(f.label)}” at ${esc(t)}: “${esc(cutq(why))}”`).join('')}</p>
       ${items}<details class="ddet"><summary>${pl(b.limits.length, 'limit', 'limits')} of this audit</summary><ul>${b.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>
       ${foot(k, stOf(x), '', 'Click a finding, its proof or the conclusion to write a note on it')}`;
   }
@@ -419,9 +420,9 @@
     const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
-    if (S.scroll) { S.scroll = false; const v = document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: 'start'}); }
+    if (S.scroll) { S.scroll = false; const h = S.hl && el.querySelector('.rf-hl'), v = h || document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: h ? 'center' : 'start'}); }
   }
-  const open = id => { S.sel = S.sel === id ? '' : id; S.note = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
+  const open = id => { S.sel = S.sel === id ? '' : id; S.note = S.hl = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
   const copy = (t, what) => navigator.clipboard.writeText(t).then(() => ctx.toast(what + ' copied'), () => ctx.toast('Could not copy'));
   const fail = e => ctx.toast('Not saved: ' + e.message);
   // the server answers with the topics; a read-only copy's simulated write does not, so the change is made here
@@ -467,6 +468,11 @@
       S.reopen.set(fk, ''); draw();
       const t = el.querySelector(`[data-reopen="${CSS.escape(fk)}"]`); if (t) t.focus();
       return ctx.inert('Finding reopened', () => { S.reopen.delete(fk); draw(); });
+    }
+    if (d.appr) {  // approve the whole item: goes with the next Send, kept in memory
+      const k = d.appr, on = !S.appr.has(k), flip = v => { v ? S.appr.add(k) : S.appr.delete(k); draw(); };
+      flip(on);
+      return ctx.inert(on ? 'Approved; goes with your next Send' : 'Approval taken back', () => flip(!on));
     }
     if (d.unreopen) { const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }); }
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
@@ -588,7 +594,10 @@
   // what Reference says goes with the next Send, in the one Send (r12 fix6): reopened findings with their why (reference 5),
   // copy-library choices, and notes written here (reference 4), which a plan's own version keeps out of Questions' list
   // notes from an earlier visit are listed too, while reference.json says they are unsent (r12 fix7)
-  const goRef = id => () => ctx.go('reference', id);
+  // Go to it: opens the item (a checklist row's note opens the checklist) and, for a note, highlights it; the same hash fires no hashchange, so redraw then
+  const itemOf = a => a.startsWith('chk:') && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
+  const goRef = (id, nid) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true;
+    if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
   const redo = () => { if (here()) draw(); };
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
@@ -599,15 +608,20 @@
         const [id, i] = fk.split('~'), f = (((xOf(id) || {}).find || {}).items || [])[+i] || {};
         it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(f.label || fk)}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why))); }
       for (const [ck, s] of S.cp) { const m = /^ref:(.+)~c~(\d+)$/.exec(ck), x = m && xOf(m[1]); if (!x) continue;
-        const what = s.st === 'edit' ? `edited: “${c.esc(cutq(s.text || ''))}”` : `<b>${{ok: 'approved', held: 'held back', old: 'earlier wording'}[s.st]}</b>`;
+        // an edit shows its saved wording with its formatting: s.html is already cleaned to the editor's own tags (rich)
+        const what = s.st === 'edit' ? `edited: “<span class="rf-sendrt">${s.html}</span>”` : `<b>${{ok: 'approved', held: 'held back', old: 'earlier wording'}[s.st]}</b>`;
         it.push(out('cp:' + ck, 'Reference', `${c.esc(x.t)}, ${c.esc((x.copy[+m[2]] || [])[0] || 'line ' + (+m[2] + 1))} → ${what}`, x.id, () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
+      for (const k of S.appr) { const id = k.slice(4), x = D.plans.find(p => p.id === id) || xOf(id);
+        it.push(out('ap:' + k, 'Reference', `${c.esc(x ? x.t : id)} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       for (const n of allNotes()) if (!n.sent) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
-        go: goRef(n.a.replace(/^ref:/, '').split('~')[0]), remove: async () => {
+        go: goRef(itemOf(n.a), n.id), remove: async () => {
           await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); D.notes = D.notes.filter(x => x.id !== n.id); redo();
           return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...noteMeta(n.a)}); mine.push({...n, id: b.id}); redo(); }; }});
       return it;
     },
-    sent: () => { S.reopen.clear(); S.cp.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); redo(); },
+    sent: () => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
+      for (const [fk, why] of S.reopen) if (why.trim()) S.rsent.set(fk, [t, why]);
+      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); redo(); },
   });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
