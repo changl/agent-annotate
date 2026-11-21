@@ -160,6 +160,7 @@ _ORDERED = re.compile(r"^\d+[.)]\s+(.*)$")
 _KPI = re.compile(r"^kpi:\s*(.*)$", re.IGNORECASE)
 _IMAGE = re.compile(r"^!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)$")
 _INLINE_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_CELL_IMAGE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)")  # a picture inside a table cell
 
 
 def _is_table_sep(line: str) -> bool:
@@ -436,6 +437,9 @@ def _image_refs(text: str, refs: dict[str, str]) -> str:
         if image and image.group(2) in refs:
             at = line.rfind(image.group(2))  # the path, not alt text that repeats it
             lines[i] = line[:at] + refs[image.group(2)] + line[at + len(image.group(2)):]
+        elif fenced is None and line.lstrip().startswith("|"):
+            lines[i] = _CELL_IMAGE.sub(lambda m: m.string[m.start():m.start(2)] + refs.get(m.group(2), m.group(2))
+                                       + m.string[m.end(2):m.end()], line)
         pair = _COMPARE_IMAGE.match(line) if fenced == "compare" else None
         if pair and pair.group(2) in refs:
             lines[i] = pair.group(1) + refs[pair.group(2)] + pair.group(3)
@@ -914,13 +918,24 @@ class Renderer:
 
     def figure(self, caption: str, ref: str) -> None:
         self.ensure_section()
-        src, size = self.images.resolve(ref)
         aid = self._unique(f"fig:{slugify(caption or Path(ref).stem, 40)}")
         self.reg(aid, caption or Path(ref).name, "figure", parent=self.parent)
+        self.parts.append(self._figure_html(caption, ref, f' data-anchor-id="{aid}"'))
+
+    def _figure_html(self, caption: str, ref: str, attrs: str = "") -> str:
+        src, size = self.images.resolve(ref)
         orient = "portrait" if size and size[1] > size[0] else "landscape"
         cap = f"<figcaption>{inline(caption)}</figcaption>" if caption else ""
-        self.parts.append(f'<figure class="aa-figure" data-orient="{orient}" data-anchor-id="{aid}">'
-                          f"{_img(src, size, caption or Path(ref).name)}{cap}</figure>")
+        return (f'<figure class="aa-figure" data-orient="{orient}"{attrs}>'
+                f"{_img(src, size, caption or Path(ref).name)}{cap}</figure>")
+
+    def _cell(self, text: str) -> str:
+        """A table cell's text, each picture in it rendered as a figure (its row is the anchor)."""
+        out, pos = [], 0
+        for m in _CELL_IMAGE.finditer(text):
+            out.append(inline(text[pos:m.start()]) + self._figure_html(m.group(1).strip(), m.group(2)))
+            pos = m.end()
+        return "".join(out) + inline(text[pos:])
 
     def compare(self, raw: str) -> None:
         self.ensure_section()
@@ -991,7 +1006,7 @@ class Renderer:
             aid = self._unique(f"{tid}:row:{key}")
             self.reg(aid, cells[0] if cells else key, "row", parent=tid)
             padded = list(cells) + [""] * (len(header) - len(cells))
-            tds = "".join(f"<td>{inline(c)}</td>" for c in padded[: len(header)])
+            tds = "".join(f"<td>{self._cell(c)}</td>" for c in padded[: len(header)])
             body.append(f'<tr data-anchor-id="{aid}">{tds}</tr>')
         self.parts.append(
             f'<div class="wrap"><table data-anchor-id="{tid}">'
@@ -1323,7 +1338,7 @@ def _full_plan_warnings(slug_dir: Path, version: str, blocks: list[dict]) -> lis
 # No author input: the comparison is on the rendered section, so anything that
 # changes the HTML — a word, a link target, a table cell — counts as a change.
 # ────────────────────────────────────────────────────────────────────────────
-_HAS_IMAGES = re.compile(r"^\s*(?:!\[|(?:```|~~~)\s*compare\s*$)", re.MULTILINE | re.IGNORECASE)
+_HAS_IMAGES = re.compile(r"^\s*(?:!\[|\|.*!\[|(?:```|~~~)\s*compare\s*$)", re.MULTILINE | re.IGNORECASE)
 _SECTION_RE = re.compile(
     r'<section data-anchor-id="([^"]+)"(?: [a-z-]+="[^"]*")*>(.*?)</section>', re.DOTALL)
 
