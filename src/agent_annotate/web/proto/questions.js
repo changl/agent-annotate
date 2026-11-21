@@ -60,7 +60,8 @@
   function sim(d) {
     if (!d) return d;
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
-    d.notes = d.notes.filter(n => !NOTES.gone.has(n.id)).concat(NOTES.add)
+    const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already
+    d.notes = d.notes.filter(n => !NOTES.gone.has(n.id) && !added.has(n.id)).concat(NOTES.add)
       .map(n => ({...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)}));
     return d;
   }
@@ -74,8 +75,12 @@
   const isWaiting = q => !isDone(q);
   const cardOpen = q => isDone(q) ? S.open.has(q.id) : !S.shut.has(q.id);
   const waitingCount = () => (D ? D.questions.filter(isWaiting).length : 0);
+  // what the other tabs queued for the next Send (frame's P.queue): tasks, replies, Reference changes, their notes
+  const Q = () => (ctx && ctx.queued ? ctx.queued() : []);
+  // a note another tab lists itself is counted once, under that tab's item
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id)); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
-  const sendCount = () => D ? D.questions.reduce((n, q) => n + (q.closed ? 0 : isDraft(q) + isClosing(q) + hasReply(q)), 0) + D.notes.filter(x => !x.sent).length + (gen().trim() ? 1 : 0) : 0;
+  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + (gen().trim() ? 1 : 0); };
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -375,14 +380,17 @@
       if (isClosing(q)) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>Closed: no answer needed</b>`, 'q:' + q.id, 'close:' + q.id]);
     }
     for (const q of D.questions) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'q:' + q.id, 'reply:' + q.id]);
-    D.notes.forEach((n, i) => { if (!n.sent) it.push(['Notes', `${mk(i + 1)}${(n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    const q = Q(), mine = myNotes(q);
+    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${(n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
   }
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
     const it = sendItems(), g = {}, un = waitingCount(), lat = D.questions.filter(FILTERS.later).length;
-    it.forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
+    const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
+    it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : 'Goes to the FastLane Drive agent session.'} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
@@ -459,7 +467,7 @@
 
   /* ---------- actions ---------- */
   const qOf = id => D.questions.find(q => q.id === id);
-  async function refresh() { D = sim(await ctx.data('questions', true)); await draw(true); }
+  async function refresh() { stale = false; D = sim(await ctx.data('questions', true)); await draw(true); }
   function pick(q, opt) {
     const was = draft(q.id).pick;
     setDraft(q.id, {pick: was === opt ? null : opt});
@@ -469,13 +477,16 @@
   async function later(q, on) {
     await call(`api/comments/${encodeURIComponent(q.id)}/answer-later`, {on});
     q.later = on; draw(true);
-    if (on) ctx.toast('Set aside for later', {undo: () => later(q, false)});
+    ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {undo: () => later(q, !on)});
   }
   function close(q) {
     setDraft(q.id, {close: true}); S.open.delete(q.id); draw(true);
     ctx.toast('Closed: no answer needed · goes with Send', {undo: () => { setDraft(q.id, {close: null}); draw(true); }});
   }
-  async function reopen(q) { await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}); q.closed = false; S.open.delete(q.id); draw(true); }
+  async function reopen(q) {
+    await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}); q.closed = false; S.open.delete(q.id); draw(true);
+    ctx.toast('Restored to waiting', {undo: async () => { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); q.closed = true; draw(true); }});
+  }
   function undo(q) {
     const keep = draft(q.id);
     setDraft(q.id, {pick: null, words: null}); S.open.delete(q.id); draw(true);
@@ -542,6 +553,7 @@
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
+      if (ctx.queueSent) ctx.queueSent();  // the other tabs' items went with it: inert, each tab clears its own
       S.pending = null;
       await refresh();
       ctx.toast(`Sent ${pl(n, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
@@ -552,27 +564,36 @@
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
   async function discardAll() {
-    const keep = drafts(), g = gen(), notes = D.notes.filter(x => !x.sent);
+    const keep = drafts(), g = gen(), q = Q(), notes = myNotes(q);
     const all = {};
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); S.armed = false; S.sendKey = false;
+    const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
     for (const n of notes) await call(`api/comments/${encodeURIComponent(n.id)}`, undefined, 'DELETE');
     await refresh();
-    ctx.toast(`Discarded ${pl(notes.length + Object.keys(keep).length + (g.trim() ? 1 : 0), 'draft', 'drafts')}`, {undo: async () => {
+    ctx.toast(`Discarded ${pl(notes.length + Object.keys(keep).length + q.length + (g.trim() ? 1 : 0), 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g);
+      await Promise.all(undos.map(u => u()));
       for (const n of notes) await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target});
       refresh();
     }});
   }
-  function sendRemove(k) {
+  async function sendRemove(k) {
     const [kind, id] = [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)];
     if (kind === 'ans') { const keep = draft(id); setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {pick: keep.pick, words: keep.words}); draw(true); }}); }
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {close: true}); draw(true); }}); }
     else if (kind === 'reply') { const r = draft(id).reply; setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {reply: r}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
+    else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
+      const x = Q().find(i => i.key === id); if (!x) return;
+      const again = () => x.note ? refresh() : draw(true);  // a note is a comment: read the list again once it is gone or back
+      const back = await x.remove(); await again();
+      ctx.toast('Removed from Send', back ? {undo: async () => { await back(); again(); }} : {});
+    }
   }
   function sendGo(k) {
     S.armed = false; S.sendKey = false;
+    if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2));
     if (k.startsWith('n:')) { const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
@@ -686,15 +707,26 @@
   async function saveNote(id, text) {
     S.note = null;
     if (!text.trim()) return delNote(id);
+    const was = (D.notes.find(x => x.id === id) || {}).text;
     await call(`api/comments/${encodeURIComponent(id)}`, {text}, 'PUT');
-    return refresh();
+    await refresh();
+    ctx.toast('Note changed · goes with Send', was == null || was === text ? {} : {undo: async () => { await call(`api/comments/${encodeURIComponent(id)}`, {text: was}, 'PUT'); refresh(); }});
   }
   function onInput(e) {
     const t = e.target, ds = t.dataset;
     if (ds.words) { const was = isDraft(qOf(ds.words)); setDraft(ds.words, {words: t.value}); if (was !== isDraft(qOf(ds.words))) { ctx.refreshChips(); updateBar(); } }
     else if (ds.replytext) { const was = hasReply(qOf(ds.replytext)); setDraft(ds.replytext, {reply: t.value, replyOpen: true}); if (was !== hasReply(qOf(ds.replytext))) updateBar(); }
-    else if (t.hasAttribute('data-general')) { const was = !!gen().trim(); ctx.prefs.set('q:general', t.value); if (was !== !!t.value.trim() && !S.armed) updateBar(); }
+    else if (t.hasAttribute('data-general')) { const was = !!gen().trim(); ctx.prefs.set('q:general', t.value); if (was !== !!t.value.trim()) S.armed ? sheetCount() : updateBar(); }
     else if (t.hasAttribute('data-notetext') && t.closest('[data-newnote]') && S.note) { S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an unsaved note survives a reload (#08)
+  }
+  // typing General feedback inside the Send sheet: heading and buttons follow in place, the cursor stays (r12 fix6, questions 02)
+  function sheetCount() {
+    const n = sendCount(), s = root.querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
+    $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
+    $('[data-send]').disabled = !n; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n;
+    const b = root.querySelector('.qbsend');
+    if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }
+    if (ctx.refreshTop) ctx.refreshTop();
   }
   function updateBar() {
     const b = root.querySelector('.qbar'); if (!b) return;
@@ -762,7 +794,8 @@
       ctx = c; root = el;
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
-      D = sim(await c.data('questions'));
+      const fresh = stale; stale = false;
+      D = sim(await c.data('questions', fresh));
       // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
       if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => '');
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
@@ -772,9 +805,12 @@
       await draw();
     },
   });
-  const load = async c => { ctx = ctx || c; D = D || sim(await c.data('questions')); };
+  // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)
+  let stale = false;
+  const load = async c => { ctx = ctx || c; if (!D || stale) { const fresh = !!D; stale = false; D = sim(await c.data('questions', fresh)); } };
   P.send({
     count: async c => { await load(c); return sendCount(); },
+    wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
     open: c => { S.armed = true; S.gen = false; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); else c.go('questions'); },
   });

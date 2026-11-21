@@ -72,7 +72,7 @@
   function noteList(k, dlg) {
     const ns = notesAt(k), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
     if (!ns.length && !box) return '';
-    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    return `<div class="rf-notes">${ns.map(n => `<div class="rf-nt"><span class="rf-nw">${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}</span> ${esc(n.text)}${mine.some(x => x.id === n.id && !x.sent) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
       ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -512,7 +512,7 @@
       try {
         const target = S.tgt || undefined;
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)});
-        mine.push({id: c.id, a: k, text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
+        mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
         S.note = ''; S.tgt = null; draw(); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id)});
       } catch (er) { fail(er); }
@@ -585,6 +585,30 @@
     if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
   }
 
+  // what Reference says goes with the next Send, in the one Send (r12 fix6): reopened findings with their why (reference 5),
+  // copy-library choices, and notes written here (reference 4), which a plan's own version keeps out of Questions' list
+  // shortcut: notes from an earlier visit are not listed (reference.json has no sent flag); add one if that matters
+  const goRef = id => () => ctx.go('reference', id);
+  const redo = () => { if (here()) draw(); };
+  const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
+  if (Proto.queue) Proto.queue({
+    items: c => {
+      if (!D) return [];
+      const it = [];
+      for (const [fk, why] of S.reopen) { if (!why.trim()) continue;
+        const [id, i] = fk.split('~'), f = (((xOf(id) || {}).find || {}).items || [])[+i] || {};
+        it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(f.label || fk)}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why))); }
+      for (const [ck, s] of S.cp) { const m = /^ref:(.+)~c~(\d+)$/.exec(ck), x = m && xOf(m[1]); if (!x) continue;
+        const what = s.st === 'edit' ? `edited: “${c.esc(cutq(s.text || ''))}”` : `<b>${{ok: 'approved', held: 'held back', old: 'earlier wording'}[s.st]}</b>`;
+        it.push(out('cp:' + ck, 'Reference', `${c.esc(x.t)}, ${c.esc((x.copy[+m[2]] || [])[0] || 'line ' + (+m[2] + 1))} → ${what}`, x.id, () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
+      for (const n of mine) if (!n.sent) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+        go: goRef(n.a.replace(/^ref:/, '').split('~')[0]), remove: async () => {
+          await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); D.notes = D.notes.filter(x => x.id !== n.id); redo();
+          return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...noteMeta(n.a)}); mine.push({...n, id: b.id}); redo(); }; }});
+      return it;
+    },
+    sent: () => { S.reopen.clear(); S.cp.clear(); mine.forEach(n => { n.sent = true; }); redo(); },
+  });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {

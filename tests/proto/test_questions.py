@@ -103,7 +103,8 @@ def test_copy_writes_are_simulated():
     is answered in memory and none reaches the server (no JS runner here)."""
     web = questions.Path(questions.__file__).resolve().parents[1] / "web/proto"
     s, f = (web / "questions.js").read_text(), (web / "frame.js").read_text()
-    assert "if (COPY && (body !== undefined || method) && P.copyWrite) { wroteAt = Date.now(); return P.copyWrite(path, body, method); }" in f
+    assert "const write = body !== undefined || !!method;" in f
+    assert "if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path); return r; }" in f
     assert f.index("P.copyWrite(path") < f.index("await fetch(")  # the hook runs before any request
     fake = s[s.index("function fake("):s.index("P.copyWrite = fake;")]
     assert "fetch(" not in fake and "ctx.api" not in fake and "call(" not in fake

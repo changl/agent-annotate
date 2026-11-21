@@ -55,7 +55,7 @@
     if (anchor === 'people') return people(w, ctx, D);
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
     if (ka && (D.kept || []).some(d => d.id === ka[1])) S.kept = ka[1];
-    draw(w, ctx, D);
+    draw(w, ctx, D); ON = {w, ctx, D};
     if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
     w.onclick = e => click(e, w, ctx, D);
   }
@@ -107,7 +107,7 @@
   function noteBox(ctx, D, k) {
     const {esc, icon} = ctx, ns = notesAt(D, k);
     if (!ns.length && S.note !== k) return '';
-    return `<div class="l-notes">${ns.map(n => `<div class="l-nt">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    return `<div class="l-notes">${ns.map(n => `<div class="l-nt">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
       ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note"></textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -191,8 +191,9 @@
       const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = b.closest('[data-docname]');
       const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
       try {
-        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', text, target});
-        mine.push({id: c.id, a: k, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
+        const l = d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links';
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target});
+        mine.push({id: c.id, a: k, l, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         S.note = ''; S.tgt = null; draw(w, ctx, D); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
       } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
@@ -242,5 +243,16 @@
     draw();
   }
 
+  // notes on kept documents go with the one Send, under Notes; Go to it opens that document (r12 fix6, running 4)
+  let ON = null;  // the Pages & links view on screen, to redraw it when Send takes a note back
+  const redo = () => { if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); };
+  if (P.queue) P.queue({
+    items: c => mine.filter(n => !n.sent).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+      go: () => c.go('links', (/^doc:(kept-[^~]+)/.exec(n.a) || [])[1]),
+      remove: async () => {
+        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); redo();
+        return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }})),
+    sent: () => { mine.forEach(n => { n.sent = true; }); redo(); },
+  });
   P.tab({key: 'links', render, chip: async ctx => { const D = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

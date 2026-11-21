@@ -19,10 +19,16 @@
     Object.assign(byKey[spec.key], spec);
     if (started) { drawTabs(); if (!S.home && !S.other && S.tab === spec.key) show(S.tab, null); }
   };
-  // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary.
+  // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary, wrote(path) hears every write.
   let sendP = null;
   P.send = spec => { sendP = spec; if (started) refreshTop(); };
   const sendable = () => !!sendP;  // a read-only copy's Send is simulated by Questions: it writes nothing
+  // The one Send queue (r12 fix6): what any tab says "goes with your next Send". An area registers a source,
+  // P.queue({items: ctx => [{key, group, html, go(), remove() -> undo or null, note?: comment id}], sent: ctx => {}});
+  // Questions lists the items in its Send under their group, counts them, and calls sent() on every source after a Send.
+  const SRC = [];
+  P.queue = src => { SRC.push(src); refreshSend(); };
+  const queued = () => SRC.flatMap(s => { try { return s.items(ctx) || []; } catch (e) { console.warn('queue', e); return []; } });
   // Kept so an area's call does no harm: the frame draws the mock's worker squares itself, per project, with the overview on hover and focus (#12)
   P.bar = () => {};
 
@@ -33,14 +39,18 @@
   const COPY = (base.match(/\/proto\/p\/([a-z0-9-]+)\/$/) || [])[1] || '';
   const ROOT = COPY ? base.slice(0, -`proto/p/${COPY}/`.length) : base;
   async function api(path, body, method) {
-    if (COPY && (body !== undefined || method) && P.copyWrite) { wroteAt = Date.now(); return P.copyWrite(path, body, method); }  // a read-only copy writes nothing: questions.js answers it in memory
-    const opts = body === undefined && !method ? {cache: 'no-store'}
+    const write = body !== undefined || !!method;
+    if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
+    const opts = !write ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
     const r = await fetch(base + path.replace(/^\//, ''), opts);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    if (write) wrote(path);
     return data;
   }
+  // a note written on any tab changes the next Send: Questions re-reads its notes, and the Send count follows
+  const wrote = path => { if (sendP && sendP.wrote) sendP.wrote(path); refreshSend(); };
   // Today's page API, as the live shell calls it. Writes land in this copy only; delivery is sandboxed.
   Object.assign(api, {
     meta: () => api('current.meta.json'), comments: () => api('comments.json'), project: () => api('api/project'),
@@ -123,6 +133,7 @@
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
     refreshTop: () => refreshTop(),
+    queued, queueSent: () => SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }),
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -387,6 +398,19 @@
       drawTop(); drawFab(); if (S.menu === 'nav') drawLayer();
       if (S.home) drawHome();  // its row for this page shows the same waiting count
     }, 300);
+  }
+  // The Send count, the moment a draft is added or removed on any tab: only the Send buttons repaint, so a box he types in keeps its focus
+  let sendT;
+  function refreshSend() {
+    clearTimeout(sendT);
+    sendT = setTimeout(async () => {
+      if (!started || !sendable()) return;
+      const n = await Promise.resolve().then(() => sendP.count(ctx)).then(x => +x || 0, () => S.sendN);
+      if (n === S.sendN) return;
+      S.sendN = n;
+      document.querySelectorAll('#p-top [data-send], #p-layer [data-send]').forEach(b => { b.outerHTML = sendBtn(b.classList.contains('hide-ph') ? 'hide-ph' : ''); });
+      drawFab();
+    }, 30);
   }
 
   /* ---------- the phone's menu, People and keyboard shortcuts ---------- */
@@ -704,6 +728,7 @@
     document.addEventListener('keydown', onKey);
     document.addEventListener('toggle', saveFold, true);
     document.addEventListener('click', saveSecFold, true);  // before Questions turns the section over
+    document.addEventListener('click', refreshSend); document.addEventListener('input', refreshSend);  // after the tab's own handler changed a draft
     if (!remember('drafts')) dropStoredDrafts();  // left over from before the switch went off (#4)
     // areas redraw their cards and sections: keep the highlight on the same question and the folds as he left them
     const main = document.getElementById('p-main');

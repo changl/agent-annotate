@@ -19,7 +19,7 @@
       ${o.before || ''}<div class="hv-frame"></div></div>`;
     host.querySelector('[data-hv-close]').onclick = o.onClose;
     const box = host.querySelector('.hv-frame');
-    let told = false;
+    const told = () => TELL.has(o.src);
     async function load(retried) {
       box.innerHTML = `<p class="small mut">${icon('reload')} Loading…</p>`;
       let why = '';
@@ -42,15 +42,23 @@
       box.innerHTML = `<div class="hv-err" role="alert">${icon('warn')}<div><b>${esc(o.failTitle || 'This version could not load.')}</b> ${esc(why)} Nothing you wrote is lost.
         ${retried ? `<span class="small mut">Retried at ${at}: still failing.</span>` : ''}
         <div class="hv-acts"><button class="btn sm" data-retry>${icon('reload')} Retry</button>
-        ${told ? `<span class="small h-ok">${icon('tick')} The agent is told with your next Send</span> <button class="lk small" data-untell>Undo</button>` : `<button class="btn sm" data-tell>${icon('msg')} Tell the agent</button>`}${P.inertMark()}</div></div></div>`;
+        ${told() ? `<span class="small h-ok">${icon('tick')} The agent is told with your next Send</span> <button class="lk small" data-untell>Undo</button>` : `<button class="btn sm" data-tell>${icon('msg')} Tell the agent</button>`}${P.inertMark()}</div></div></div>`;
       box.querySelector('[data-retry]').onclick = () => load(true);
       // Undo sits beside the done line, as in the mock (#107); nothing is sent in the prototype
       const tell = box.querySelector('[data-tell]'), untell = box.querySelector('[data-untell]');
-      if (tell) tell.onclick = () => { told = true; fail(why, retried); };
-      if (untell) untell.onclick = () => { told = false; fail(why, retried); };
+      const again = () => { if (box.isConnected) fail(why, retried); };
+      if (tell) tell.onclick = () => { TELL.set(o.src, {text: (o.failTitle || 'This version could not load.').replace(/\.$/, '') + '; please republish it.', go: location.hash.slice(1), again}); again(); };
+      if (untell) untell.onclick = () => { TELL.delete(o.src); again(); };
     }
     load(false);
   };
+  // "Tell the agent" about a page that could not load goes with the one Send, under Replies to the agent (r12 fix6, running 2)
+  const TELL = new Map();
+  if (P.queue) P.queue({
+    items: ctx => [...TELL].map(([src, t]) => ({key: 'tell:' + src, group: 'Replies to the agent', html: `About the page that could not load: “${ctx.esc(t.text)}”`,
+      go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); t.again(); return () => { TELL.set(src, t); t.again(); }; }})),
+    sent: () => { const l = [...TELL.values()]; TELL.clear(); l.forEach(t => t.again()); },
+  });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
   function fit(f, ctx) {
