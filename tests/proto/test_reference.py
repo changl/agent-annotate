@@ -183,3 +183,68 @@ def test_route_animation_is_listed_with_its_note_only(tmp_path):
     (p / "approved.md").write_text("# Approved\n\nthinking animation")
     x = {i["id"]: i for i in reference.extras(tmp_path)}["route-animation"]
     assert x["md"] == "" and "recordings are not on this Mac" in x["note"]
+
+
+def test_preview_store_is_staged_working(tmp_path):
+    """Audit4 finding 1: the store runs (Shop Damascus opens, Quick add fills the demo cart) with this Mac's pictures."""
+    from PIL import Image
+    proj, page = tmp_path / "rebex", tmp_path / "proto-rebex"
+    site = proj / "prototype" / "site"
+    (site / "js").mkdir(parents=True)
+    (proj / "catalog" / "site-images" / "chef").mkdir(parents=True)
+    page.mkdir()
+    (page / "current.meta.json").write_text(json.dumps({"proto_copy_of": "rebex", "proto_source": str(proj / "reviews" / "rebex")}))
+    (site / "css").mkdir()
+    (site / "css" / "site.css").write_text(".hero{color:red}")
+    page_html = ('<head><link href="https://fonts.googleapis.com/x" rel="stylesheet"><link rel="stylesheet" href="css/site.css"></head>'
+                 '<a href="collection-damascus.html">Shop Damascus</a><img src="https://rebexcutlery.com/cdn/shop/files/DSC_1.jpg?v=2&width=800"> help@rebex.com'
+                 '<script src="js/products.js"></script>\n<script src="js/site.js"></script>')
+    (site / "index.html").write_text(page_html)
+    (site / "collection-damascus.html").write_text(page_html.replace("help@rebex.com", '<a href="https://elsewhere.com/x">out</a>'))
+    (site / "js" / "site.js").write_text('const CDN = "https://rebexcutlery.com/cdn/shop/";\nconst img = (p, w) => CDN + p + "&width=" + (w || 600);\n'
+                                         'const save = () => localStorage.setItem(KEY, "[]"); const t = "</script>";')
+    (site / "js" / "products.js").write_text('window.P = {a: {img: "files/DSC_1.jpg?v=9"}, b: {img: "products/1.jpg?v=9"}};')
+    Image.new("RGB", (2000, 1000)).save(proj / "catalog" / "site-images" / "chef" / "01-DSC_1.jpg")
+    (proj / "catalog" / "download-log.json").write_text(json.dumps({"results": [
+        {"ok": True, "path": "site-images/chef/01-DSC_1.jpg"}, {"ok": False, "path": "site-images/chef/02-1.jpg"}]}))
+    assert reference.stage_store(page) == 1  # products/1.jpg was never downloaded
+    out = page / reference.STORE
+    assert sorted(p.name for p in out.iterdir()) == ["collection-damascus.html", "index.html"]  # each page whole: nothing else to request
+    idx = (out / "index.html").read_text()
+    assert 'href="collection-damascus.html"' in idx and "fonts.googleapis" not in idx and "<style>.hero{color:red}</style>" in idx
+    assert '<img src="data:image/jpeg;base64,' in idx and "cdn/" not in idx.split("<script>")[0]  # the picture travels with the page
+    assert "help@rebex.com" not in idx and "elsewhere.com" not in (out / "collection-damascus.html").read_text()
+    js = idx.split("<script>")[2]
+    assert js.startswith("var rbxStore=") and "rbxStore.setItem(KEY" in js  # the sandboxed store keeps its cart without storage
+    assert '(RBX_PICS[p.split("?")[0]] || "")' in js and '"files/DSC_1.jpg": "data:image/jpeg;base64,' in js and '"products/1.jpg": ""' in js
+    assert "<\\/script>" in js and js.count("</script>") == 1
+    [x] = [x for x in reference.copied(page, json.loads((page / "current.meta.json").read_text())) if x["id"] == "preview-store"]
+    assert x["src"] == "assets/preview-store/index.html" and "html" not in x
+    s = (WEB / "reference.js").read_text()
+    assert 'sandbox="allow-scripts" src="${esc(new URL(x.src' in s
+    # its links are refused from inside the sandbox: the store asks the page to open the next one, unless the click was a Quick add
+    assert "!e.defaultPrevented" in js and "window.parent.postMessage({rbxStore:h},'*')" in js
+    assert "e.source === f.contentWindow" in s and "/^[\\w-]+\\.html(\\?[\\w=&%.-]*)?$/.test(h)) f.src = new URL(h, f.src).href" in s
+
+
+WEB = reference.Path(reference.__file__).resolve().parents[1] / "web" / "proto"
+
+
+def test_copy_library_save_keeps_formatting():
+    """Audit4 finding 2: Save keeps Bold and the other editor formatting, cleaned to the editor's own tags."""
+    s = (WEB / "reference.js").read_text()
+    assert "S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''})" in s and "s.st === 'edit' ? s.html" in s
+    assert "innerText.trim()" not in s
+
+
+def test_renamed_topic_keeps_its_controls_on_a_copy():
+    """Audit4 finding 3: a copy's simulated write returns no topics, so rename, combine and new topics change the list here."""
+    s = (WEB / "reference.js").read_text()
+    assert "else if (b.rename) D.topics = D.topics.map(t => t === b.rename ? b.to : t);" in s
+    assert s.count("topics(await ctx.api(") == 1  # every topic write goes through topicApi
+
+
+def test_copy_library_actions_fit_a_phone():
+    """Audit4 finding 7: at 390 each action stays on one line instead of breaking a letter at a time."""
+    css = (WEB / "reference.css").read_text()
+    assert ".tab-reference .rf-copy td.rf-cact .lk{white-space:nowrap" in css

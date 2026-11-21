@@ -110,6 +110,22 @@ def test_a_copy_shows_only_its_own_project(tmp_path, monkeypatch):
     assert d["pages"] == [] and d["folders"] == [] and d["links"] == []
 
 
+def test_a_copy_lists_its_copy_library(tmp_path, monkeypatch):
+    """Audit4 finding 6: Rebex's Copy library is one of its pages, with a link; the row opens App text in Reference."""
+    rbx, registry, page = tmp_path / "rebex", tmp_path / "state", tmp_path / "proto-rebex"
+    for p in (rbx / "reviews" / "rebex", registry, page):
+        p.mkdir(parents=True)
+    monkeypatch.setattr(links, "REGISTRY", registry)
+    (page / "current.meta.json").write_text(json.dumps({"name": "Rebex", "proto_copy_of": "rebex", "proto_source": str(rbx / "reviews" / "rebex")}))
+    (page / "copy.json").write_text(json.dumps({"blocks": [{"id": "a", "title": "Hero", "status": "needs_you", "current": "r1",
+                                                            "revisions": [{"id": "r1", "delta": {"ops": [{"insert": "Hi"}]}}]}]}))
+    [p] = links.build(page)["pages"]
+    assert p["name"] == "Copy library" and p["ref"] == "copy-library" and p["why"] == "the app's text, in Reference · 1 pieces of text"
+    assert "versions" not in p
+    s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()
+    assert "p.versions != null ?" in s  # no "undefined versions" on the library row
+
+
 def test_kept_document_lines_take_notes():
     """Audit 3 finding 4: a paragraph of a kept document (the Usage audit) opens the note composer, like a Markdown file's."""
     s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()

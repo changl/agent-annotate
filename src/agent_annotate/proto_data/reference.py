@@ -342,6 +342,72 @@ def copy_library(page_dir: Path) -> dict | None:
             "m": f"{len(lines)} pieces of text · " + " · ".join(f"{v} {k.lower()}" for k, v in n.items() if v), "copy": lines}
 
 
+STORE = "assets/preview-store"  # under assets/, so the page server serves it: sandboxed, scripts allowed
+# The server refuses the sandboxed store's own requests for styles, scripts and pictures (cross-site), so each page is
+# staged whole: its styles, the two scripts and the pictures inlined. The sandbox has no storage either, so the demo cart
+# and colour choice live in the frame's name, which lasts while he browses the store's pages in the frame.
+STORE_SHIM = ("var rbxStore=(function(){try{window.localStorage.length;return window.localStorage}catch(e){}"
+              "var all=function(){try{return JSON.parse(window.name)||{}}catch(e){return {}}};"
+              "return {getItem:function(k){var a=all();return k in a?a[k]:null},"
+              "setItem:function(k,v){var a=all();a[k]=String(v);window.name=JSON.stringify(a)}}})();\n"
+              "window.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]'),h=a&&a.getAttribute('href');"
+              "if(h&&!e.defaultPrevented&&/^[\\w-]+\\.html/.test(h)&&window.parent!==window){e.preventDefault();window.parent.postMessage({rbxStore:h},'*')}});\n")
+STORE_IMG = 'CDN + p + "&width=" + (w || 600)'  # site.js: how it names a shop picture
+PIC = re.compile(r"cdn/((?:products|files)/[^\"'?&\s)]+)[^\"'\s)]*")
+
+
+def stage_store(copy_dir: Path) -> int:
+    """Rebex's prototype store into a copy's assets/preview-store/, as the mock builds it (round9/final/build/build.py):
+    its pages, working, the shop's pictures swapped for this Mac's downloaded copies (600 px), fonts and outside links
+    dropped. Reads the project folder only; returns how many pictures were not on this Mac."""
+    import base64
+    import io
+    src = (json.loads((copy_dir / "current.meta.json").read_text()).get("proto_source") or "")
+    root = Path(src).parents[1] if src else None
+    site, out = (root / "prototype" / "site" if root else None), copy_dir / STORE
+    if not site or not (site / "index.html").is_file():
+        return 0
+    try:
+        log = json.loads((root / "catalog" / "download-log.json").read_text())["results"]
+    except (OSError, ValueError, KeyError):
+        log = []
+    local = {Path(r["path"]).name.split("-", 1)[1]: root / "catalog" / r["path"] for r in log if r.get("ok") and "-" in Path(r.get("path") or "").name}
+    pics, miss = {}, set()
+
+    def pic(p: str) -> str:
+        if p not in pics:
+            try:
+                from PIL import Image
+                im = Image.open(local[Path(p).name]).convert("RGB")
+                im.thumbnail((600, 600))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=70)
+                pics[p] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+            except (KeyError, ImportError, OSError):
+                pics[p] = ""
+                miss.add(p)
+        return pics[p]
+
+    def read(rel: str) -> str:
+        t = (site / rel).read_text(errors="ignore") if (site / rel).is_file() else ""
+        t = re.sub(r"<link[^>]+fonts\.googleapis\.com[^>]*>", "", t)
+        return hide(re.sub(r"https?://[^\s\"'<>)]+", "#", t.replace("https://rebexcutlery.com/cdn/shop/", "cdn/")))
+
+    logo = site / "img" / "logo-mono.png"
+    css = read("css/site.css").replace("../img/logo-mono.png", "data:image/png;base64," + base64.b64encode(logo.read_bytes()).decode() if logo.is_file() else "")
+    products, js = read("js/products.js"), read("js/site.js").replace("localStorage", "rbxStore")
+    names = {p: pic(p) for p in re.findall(r"\"((?:products|files)/[^\"?]+)\?v=", products)}
+    js = STORE_SHIM + f"var RBX_PICS={json.dumps(names)};\n" + js.replace(STORE_IMG, '(RBX_PICS[p.split("?")[0]] || "")')
+    inline = lambda s: s.replace("</script", "<\\/script")
+    out.mkdir(parents=True, exist_ok=True)
+    for f in site.glob("*.html"):
+        t = read(f.name).replace('<link rel="stylesheet" href="css/site.css">', f"<style>{css}</style>")
+        t = t.replace('<script src="js/products.js"></script>', f"<script>{inline(products)}</script>")
+        t = t.replace('<script src="js/site.js"></script>', f"<script>{inline(js)}</script>")
+        (out / f.name).write_text(PIC.sub(lambda m: pic(m[1]) or m[0], t))
+    return len(miss)
+
+
 def _blocks_html(t: str) -> list:
     """Headings, paragraphs and list lines of an HTML page, in order, as Reference blocks."""
     t = re.sub(r"<(script|style|nav|header|footer)\b.*?</\1>", "", t, flags=re.S | re.I)
@@ -401,18 +467,12 @@ def copied(page_dir: Path, meta: dict) -> list:
         out.append({"id": "action-images", "t": "Action images", "kind": "design", "st": "ref", "from": "active-action-image-review.md",
                     "d": datetime.fromtimestamp(act.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                     "m": f"{n} products in review · actual, before and after · from Rebex's page", "blocks": bl})
-    site = root / "prototype" / "site" if root else None
-    if site and (site / "index.html").is_file():  # drawn sandboxed with its own styles: no scripts run, links go nowhere
-        try:
-            css = (site / "css" / "site.css").read_text(errors="ignore")
-        except OSError:
-            css = ""
-        page = re.sub(r"<script\b.*?</script>", "", (site / "index.html").read_text(errors="ignore"), flags=re.S | re.I)
-        page = re.sub(r"(https?:)?//[^\s\"'<>)]+", "#", re.sub(r"<(link|img)\b[^>]*>", "", page))  # shop pictures are not carried
-        out.append({"id": "preview-store", "t": "Preview store", "kind": "design", "st": "ref", "from": "prototype/site/index.html", "wide": True,
-                    "d": datetime.fromtimestamp((site / "index.html").stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    "note": "Rebex's prototype store, its home page as drawn · shop pictures, fonts and outside links are dropped; browsing and the demo cart run on the real page",
-                    "html": hide(page.replace("</head>", f"<style>{re.sub(r'url[(][^)]*[)]', 'none', css)}</style></head>", 1))})
+    staged = page_dir / STORE / "index.html"
+    if staged.is_file():  # the working store copy.sh staged (stage_store): pages, scripts and this Mac's pictures
+        out.append({"id": "preview-store", "t": "Preview store", "kind": "design", "st": "ref", "from": "prototype/site", "wide": True,
+                    "d": datetime.fromtimestamp(staged.stat().st_mtime).strftime("%Y-%m-%d %H:%M"), "src": f"{STORE}/index.html",
+                    "note": "Rebex's prototype store, working: browse lines, open a product, add to the demo cart. "
+                            "Pictures are this Mac's downloaded copies; fonts and outside links are dropped."})
     rounds = page_dir / "rounds.ndjson"
     if rounds.is_file():
         ra = []
@@ -562,3 +622,8 @@ def notes(page_dir: Path) -> list:
                         "at": (c.get("created_at") or "")[:16], "v": c.get("version"), "st": c.get("status"),
                         "target": c.get("target")})  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
     return sorted(out, key=lambda n: n["at"])
+
+
+if __name__ == "__main__":  # copy.sh: python3 -m agent_annotate.proto_data.reference <copy dir>  (stages Rebex's preview store)
+    import sys
+    print(f"preview store staged; {stage_store(Path(sys.argv[1]))} pictures not on this Mac")

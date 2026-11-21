@@ -67,7 +67,7 @@
     // each page says why it is its own page, so he can choose between them (#81); counts follow
     const me = pageRow(D.name, `the review page you answer on today; its rounds are the versions in History · this prototype copy, ${pl(D.versions, 'version', 'versions')}`, ctx.base,
       `<button class="lk" data-goq>${esc(D.name)}</button>`);
-    const others = D.pages.map(p => pageRow(p.name, `${esc(p.why || 'its own page')} · ${pl(p.versions, 'version', 'versions')}${p.last ? ` · last ${esc(dm(p.last))}` : ''}`, p.ref ? `#reference/${encodeURIComponent(p.ref)}` : p.url,
+    const others = D.pages.map(p => pageRow(p.name, `${esc(p.why || 'its own page')}${p.versions != null ? ` · ${pl(p.versions, 'version', 'versions')}` : ''}${p.last ? ` · last ${esc(dm(p.last))}` : ''}`, p.ref ? `#reference/${encodeURIComponent(p.ref)}` : p.url,
       p.ref ? `<button class="lk" data-goref="${esc(p.ref)}">${esc(p.name)}</button>` : `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)} ${icon('ext')}</a>`)).join('');
     const ppl = 1 + ctx.prefs.get('people', []).length;
     const arch = S.arch ? D.archived.map(a => a.url ? `<div class="l-line l-subrow">${icon('archive')}<span class="l-grow"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.t)} ${icon('ext')}</a>

@@ -8,6 +8,9 @@
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
+  // the store's own links are refused from inside its sandbox, so it asks this page to open the next of its pages
+  addEventListener('message', e => { const f = document.querySelector('iframe.rf-embed[src]'), h = e.data && e.data.rbxStore;
+    if (f && e.source === f.contentWindow && typeof h === 'string' && /^[\w-]+\.html(\?[\w=&%.-]*)?$/.test(h)) f.src = new URL(h, f.src).href; });
   const backFromTask = () => { if (taskBack && location.hash.startsWith('#running')) { const id = taskBack; taskBack = ''; setTimeout(() => ctx.go('reference', id), 0); } };
   // capture phase: Running redraws its panel away while handling the same event
   document.addEventListener('click', e => { if (e.target.closest('.tab-running .tpanel [data-task=""]')) backFromTask(); }, true);
@@ -340,6 +343,17 @@
   // the app's text library, as the mock's pairs view: Needs you first, 20 a group; every action is kept in memory and sends nothing
   const RTE = [['bold', '<b>B</b>'], ['italic', '<i>I</i>'], ['strikeThrough', '<s>S</s>'], ['formatBlock:h3', 'Heading'], ['formatBlock:blockquote', 'Quote'], ['insertUnorderedList', '• List'], ['createLink', 'Link'], ['undo', '↶ Undo'], ['redo', '↷ Redo']];
   const CST = {ok: '✓ Approved', held: 'Held back', old: 'Earlier wording chosen', edit: 'Edited'};
+  // the editor's formatting, kept on Save: only the tags its buttons make, links only to web or mail addresses
+  const RICH = /^(B|STRONG|I|EM|S|STRIKE|DEL|U|H3|BLOCKQUOTE|UL|OL|LI|A|BR|P|DIV)$/;
+  function rich(h) {
+    const t = document.createElement('template'); t.innerHTML = h;
+    (function walk(n) { for (const e of [...n.children]) { walk(e);
+      if (!RICH.test(e.tagName)) { e.replaceWith(...e.childNodes); continue; }
+      const href = e.tagName === 'A' && /^(https?:|mailto:)/i.test(e.getAttribute('href') || '') ? e.getAttribute('href') : null;
+      [...e.attributes].forEach(a => e.removeAttribute(a.name));
+      if (href) { e.setAttribute('href', href); e.setAttribute('target', '_blank'); e.setAttribute('rel', 'noopener'); } } })(t.content);
+    return t.innerHTML.trim();
+  }
   function copyView(x) {
     const k = 'ref:' + x.id, q = (S.cq || '').toLowerCase(), rank = s => s === 'Done' ? 2 : s === 'Held back' ? 1 : 0, ckOf = i => `${k}~c~${i}`;
     const L = x.copy.map((c, i) => [c, i]).filter(([c]) => !q || (c[0] + ' ' + c[1]).toLowerCase().includes(q));
@@ -347,7 +361,7 @@
     const grp = r => { const rs = L.filter(([c]) => rank(c[2]) === r), fk = `cpall:${x.id}:${r}`, all = S.open.has(fk) || !!q, n = rs.length;
       if (!n) return '';
       return `<tr><td colspan="3" class="small"><b>${['Needs you', 'Held back', 'Done'][r]}</b> <span class="mut">· ${pl(n, 'line', 'lines')}</span></td></tr>${(all ? rs : rs.slice(0, 20)).map(([[key, y, nd, old, alts], i]) => {
-        const ck = ckOf(i), s = S.cp.get(ck), ed = S.cpEd === ck, txt = s && s.st === 'old' ? esc(old) : s && s.st === 'edit' ? esc(s.text) : old && old !== y ? wdiff(old, y) : esc(y);
+        const ck = ckOf(i), s = S.cp.get(ck), ed = S.cpEd === ck, txt = s && s.st === 'old' ? esc(old) : s && s.st === 'edit' ? s.html : old && old !== y ? wdiff(old, y) : esc(y);
         return `<tr><td class="rf-ck"><b>${esc(key)}</b><br><span class="tag">${esc(nd)}</span>${alts.length ? ` <span class="small mut">${pl(alts.length, 'other wording', 'other wordings')}, under Edit</span>` : ''}</td><td ${ed ? '' : at(ck, key)}>${ed ? '' : pin(ck)}${txt}${s ? `<span class="cst">${CST[s.st]}</span>${P.inertMark()}` : ''}${ed ? `<div class="rf-acts rf-rtb">${RTE.map(([c, l]) => `<button class="btn sm" data-rte="${c}">${l}</button>`).join('')}</div><div class="rf-rte" contenteditable="true" aria-label="Edit the text of ${esc(key)}">${esc(y)}</div>
           ${alts.length ? `<div class="small mut">Other wordings: ${alts.map(a => `<button class="lk small" data-cpalt="${esc(a)}" title="Put this wording in the editor">${esc(cutq(a))}</button>`).join(' · ')}</div>` : ''}<div class="rf-acts"><button class="btn sm pri" data-cpsave="${esc(ck)}">Save</button><button class="btn sm" data-cpcancel>Cancel</button></div>` : ''}${noteList(ck)}</td>
           <td class="rf-cact">${s ? `<button class="lk small" data-cpundo="${esc(ck)}">Undo</button>` : ed ? '' : `<button class="lk small" data-cpst="${esc(ck)}|ok">Approve</button> · <button class="lk small" data-cpst="${esc(ck)}|held">Hold back</button> · <button class="lk small" data-cped="${esc(ck)}">Edit</button>${old && old !== y ? ` · <button class="lk small" data-cpst="${esc(ck)}|old">Use earlier</button>` : ''}`}</td></tr>`; }).join('')}${n > 20 && !q ? `<tr><td colspan="3" class="small mut">${all ? `All ${n} shown` : `20 of ${n} shown`} · <button class="lk small" data-fold="${esc(fk)}" aria-expanded="${all}">${all ? 'Show the first 20' : `Show all ${n}`}</button></td></tr>` : ''}`; };
@@ -374,9 +388,11 @@
     const k = 'ref:' + x.id, B = x.blocks ? x.blocks.map(b => b[0] === 'img' ? ['img', new URL(b[1], location.origin + ctx.base).href, b[2]] : b)
       : x.img ? [['img', x.img, x.note]] : x.md ? mdBlocks(x.md) : x.parts ? x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]) : [];
     // a designed message shows as the member sees it, sandboxed: no scripts run and its links go nowhere
-    const body = x.html ? `<iframe class="rf-embed${x.wide ? ' wide' : ''}" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
+    // a working page (Rebex's store) runs its own scripts in an opaque sandbox: it cannot reach this page or its saves
+    const body = x.src ? `<iframe class="rf-embed wide" sandbox="allow-scripts" src="${esc(new URL(x.src, location.origin + ctx.base).href)}" title="${esc(x.t)}"></iframe>`
+      : x.html ? `<iframe class="rf-embed${x.wide ? ' wide' : ''}" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
     return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · changed ${esc(dm(x.d))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
-      ${x.note && (x.html || B.length) && !x.img ? `<p class="small mut">${esc(x.note)}</p>` : ''}<div class="doc">${body}</div>
+      ${x.note && (x.src || x.html || B.length) && !x.img ? `<p class="small mut">${esc(x.note)}</p>` : ''}<div class="doc">${body}</div>
       ${foot(k, stOf(x), '', 'Click any line or row, or select words, to write a note on them')}`;
   }
   function flowView(f) {
@@ -408,13 +424,19 @@
   const open = id => { S.sel = S.sel === id ? '' : id; S.note = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
   const copy = (t, what) => navigator.clipboard.writeText(t).then(() => ctx.toast(what + ' copied'), () => ctx.toast('Could not copy'));
   const fail = e => ctx.toast('Not saved: ' + e.message);
-  const topics = cfg => { if (cfg && cfg.topics) { const names = cfg.topics.map(t => t.name); D.topics = (D.topics.includes('Unsorted') ? ['Unsorted'] : []).concat(names); } unsort(); };
+  // the server answers with the topics; a read-only copy's simulated write does not, so the change is made here
+  const topics = (cfg, b) => { if (cfg && cfg.topics) { const names = cfg.topics.map(t => t.name); D.topics = (D.topics.includes('Unsorted') ? ['Unsorted'] : []).concat(names); }
+    else if (b.rename) D.topics = D.topics.map(t => t === b.rename ? b.to : t);
+    else if (b.merge) D.topics = D.topics.filter(t => t !== b.merge);
+    else if (b.new && !D.topics.includes(b.topic)) D.topics = [...D.topics, b.topic];
+    unsort(); };
+  const topicApi = async b => topics(await ctx.api('api/plan-topics', b), b);
   // shortcut: back-to-Unsorted is kept in this browser (plan_topics has no unsort move); add one to plan_topics when the prototype graduates
   const unsorted = () => ctx.prefs.get('ref-unsort', []);
   const unsort = () => { const u = unsorted(); D.plans.forEach(p => { if (u.includes(p.id)) p.topic = 'Unsorted'; }); if (u.length && !D.topics.includes('Unsorted')) D.topics = ['Unsorted', ...D.topics]; };
   const setUnsort = (ids, on) => { const u = unsorted().filter(x => !ids.includes(x)); ctx.prefs.set('ref-unsort', on ? [...u, ...ids] : u); };
   async function topicChange(body, done, undo, msg) {
-    try { topics(await ctx.api('api/plan-topics', body)); done(); draw(); ctx.toast(msg, {undo: async () => { try { await undo(); draw(); } catch (e) { fail(e); } }}); }
+    try { await topicApi(body); done(); draw(); ctx.toast(msg, {undo: async () => { try { await undo(); draw(); } catch (e) { fail(e); } }}); }
     catch (e) { fail(e); }
   }
 
@@ -469,7 +491,7 @@
     if (d.rte) { document.execCommand(d.rte.split(':')[0], false, d.rte.split(':')[1] || (d.rte === 'createLink' ? prompt('Link address') || '' : undefined)); return; }
     if (d.cpsave) {
       const ck = d.cpsave, t = el.querySelector('.rf-rte'), was = S.cp.get(ck);
-      S.cp.set(ck, {st: 'edit', text: t ? t.innerText.trim() : ''}); S.cpEd = ''; draw();
+      S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''}); S.cpEd = ''; draw();
       return ctx.inert('Edit saved', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
     if (d.cpcancel !== undefined) { S.cpEd = ''; return draw(); }
@@ -513,7 +535,7 @@
     try {
       const ids = ps.map(p => p.id);
       setUnsort(ids, false);
-      for (const [i, p] of ps.entries()) { topics(await ctx.api('api/plan-topics', {move: p.id, topic, ...(isNew && !i ? {new: true} : {})})); p.topic = topic; }
+      for (const [i, p] of ps.entries()) { await topicApi({move: p.id, topic, ...(isNew && !i ? {new: true} : {})}); p.topic = topic; }
       draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”`, {undo: () => { setUnsort(ids, true); unsort(); draw(); }});
     } catch (e) { draw(); fail(e); }
   }
@@ -522,7 +544,7 @@
     if (old === 'Unsorted') return unsortedTo(to, !D.topics.includes(to));
     const set = (a, b) => D.plans.forEach(p => { if (p.topic === a) p.topic = b; });
     topicChange({rename: old, to}, () => { S.trn = ''; set(old, to); },
-      async () => { topics(await ctx.api('api/plan-topics', {rename: to, to: old})); set(to, old); }, `Topic renamed to “${to}”`);
+      async () => { await topicApi({rename: to, to: old}); set(to, old); }, `Topic renamed to “${to}”`);
   }
   function combine(from, into) {
     if (from === 'Unsorted') return unsortedTo(into, false);
@@ -530,7 +552,7 @@
     S.tmerge = '';
     topicChange({merge: from, into}, () => moved.forEach(p => p.topic = into),
       async () => {  // no un-combine endpoint: recreate the topic and move its plans back (its title words stay with the other topic)
-        for (const [i, p] of moved.entries()) topics(await ctx.api('api/plan-topics', {move: p.id, topic: from, ...(i ? {} : {new: true})}));
+        for (const [i, p] of moved.entries()) await topicApi({move: p.id, topic: from, ...(i ? {} : {new: true})});
         moved.forEach(p => p.topic = from);
       }, `“${from}” combined into “${into}”`);
   }
@@ -547,7 +569,7 @@
       return ctx.toast('Moved back to “Unsorted”', {undo: () => { setUnsort([p.id], false); p.topic = old; draw(); }});
     }
     topicChange({move: p.id, topic, ...(isNew ? {new: true} : {})}, () => { setUnsort([p.id], false); p.topic = topic; },
-      old === 'Unsorted' ? async () => back() : async () => { topics(await ctx.api('api/plan-topics', {move: p.id, topic: old})); p.topic = old; },
+      old === 'Unsorted' ? async () => back() : async () => { await topicApi({move: p.id, topic: old}); p.topic = old; },
       `Moved to “${topic}”`);
   }
   function onInput(e) {

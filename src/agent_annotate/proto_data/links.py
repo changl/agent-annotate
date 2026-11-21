@@ -15,7 +15,7 @@ import re
 from html.parser import HTMLParser
 
 from .history import _comments, _plain
-from .reference import FLD_DIR, documents, hide, notes
+from .reference import FLD_DIR, copy_library, documents, hide, notes
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
 FLD_SOURCE = PROJECT / "reviews" / "fld-stack-round8"
@@ -134,9 +134,12 @@ def _earlier(root: Path | None, modules: list | None) -> list[dict]:
     return out
 
 
-def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: bool = True) -> list[dict]:
+def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: bool = True, page_dir: Path | None = None) -> list[dict]:
     if root is None:
         return []
+    # a copy's Copy library (Rebex's App text) is one of its pages, as in the mock: the row opens it in Reference
+    cl = copy_library(page_dir) if page_dir and not fld else None
+    lib = [{"name": "Copy library", "ref": cl["id"], "why": f"the app's text, in Reference · {cl['m'].split(' · ')[0]}", "last": cl["d"][:10]}] if cl else []
     pages = {}
     for rec_file in sorted(REGISTRY.glob("*.json")):
         for slug, rec in (_json(rec_file).get("slugs") or {}).items():
@@ -148,7 +151,7 @@ def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: b
             pages[slug] = _page(folder, name, url, _why(name, folder, source))
     out = list(pages.values())
     if not fld:
-        return out
+        return out + lib
     # the delivery roadmap is long, so the mock lists it as its own page; here it opens as Reference's roadmap item
     try:
         when = datetime.fromtimestamp(ROADMAP.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d")
@@ -208,7 +211,7 @@ def build(page_dir: Path) -> dict:
     hist = meta.get("history") or []
     return {"name": _plain(meta.get("name") or "This page", 80), "current": meta.get("current") or "",
             "current_t": str((hist[-1] if hist else {}).get("ts") or "")[:16].replace("T", " "),
-            "versions": len(hist), "pages": _pages(root, source, fld), "archived": archived,
+            "versions": len(hist), "pages": _pages(root, source, fld, page_dir), "archived": archived,
             "folders": folders, "links": links, "people": list(people.values()),
             # kept documents and the folder index are FastLane Drive's files; a copy has none kept on its page
             "kept": kept() if fld else [], "docs": documents() if fld else {"files": [], "groups": {}}, "notes": _kept_notes(page_dir)}
