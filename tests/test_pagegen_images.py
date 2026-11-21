@@ -163,6 +163,35 @@ def test_bad_images_are_refused_in_one_line_and_nothing_is_written(tmp_path, lin
     assert not slug_dir.exists()
 
 
+def test_a_picture_in_a_table_cell_is_copied_and_rendered_as_a_figure(tmp_path):
+    shot = write(tmp_path / "shots" / "built.png", png(1440, 900))
+    src = page(tmp_path, "| Screen | Built |\n|---|---|\n| Review | Wide ![Built review](shots/built.png) |")
+    slug_dir = tmp_path / "slug"
+    generate(src, slug_dir)
+    copy = next((slug_dir / "assets").iterdir())
+    assert copy.read_bytes() == shot.read_bytes()
+    assert (f'<td>Wide <figure class="aa-figure" data-orient="landscape"><img src="assets/{copy.name}" '
+            f'data-img="{copy.name[:4].upper()}" alt="Built review" width="1440" height="900"') in canvas_of(slug_dir)
+    assert "<figcaption>Built review</figcaption></figure></td>" in canvas_of(slug_dir)
+    assert f"| Review | Wide ![Built review](assets/{copy.name}) |" in (slug_dir / "source" / "v1.md").read_text()
+
+
+@pytest.mark.parametrize("ref, reason", [
+    ("shots/missing.png", "image not found: shots/missing.png"),
+    ("https://example.com/a.png", "image must be a local file, not a URL"),
+    ("notes.txt", "image must be a .png, .jpg, .gif or .webp file"),
+    ("fake.png", "not a readable PNG, JPEG, GIF or WebP image"),
+])
+def test_a_bad_picture_in_a_table_cell_warns_and_stays_text(tmp_path, ref, reason):
+    """Cells were plain text before, so a page that published then must still publish."""
+    write(tmp_path / "fake.png", b"<script>alert(1)</script>")
+    write(tmp_path / "notes.txt", b"text")
+    slug_dir = tmp_path / "slug"
+    result = generate(page(tmp_path, f"| Screen | Built |\n|---|---|\n| Review | ![]({ref}) |"), slug_dir)
+    assert any(w.startswith("table picture shown as text: " + reason) for w in result["warnings"])
+    assert f"<td>![]({ref})</td>" in canvas_of(slug_dir)
+
+
 def test_portrait_pair_renders_side_by_side_and_landscape_pair_stacks(tmp_path):
     write(tmp_path / "p1.png", png(390, 844))
     write(tmp_path / "p2.png", png(390, 844, (120, 180, 120)))
