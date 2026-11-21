@@ -53,7 +53,7 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .qsecm .badge.qw{background:color-mix(in oklab,var(--color-error) 18%,var(--color-base-100));color:var(--err-text)}
 .qsecm .badge.ok{background:color-mix(in oklab,var(--st-done) 18%,var(--color-base-100));color:var(--ok-text)}
 .qnew{font-size:var(--fs-xs);font-weight:700;color:var(--color-primary)}
-.qsec.qshut > :not(h2){display:none}
+.qsec.qshut > :not(h2,.qsecans){display:none}
 .qtiles{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
 .qtiles > div{border:1px solid var(--line);border-radius:var(--radius-field);padding:8px 12px;background:var(--color-base-100);display:flex;flex-direction:column}
 .qtiles b{font-size:20px}.qtiles span{font-size:var(--fs-sm);color:var(--muted)}
@@ -157,6 +157,17 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 .nacts{display:inline-flex;gap:0;vertical-align:middle;margin-left:4px}
 .qmk{display:inline-flex;align-items:center;gap:2px;min-width:18px;height:18px;padding:0 5px 0 4px;border-radius:9px;background:var(--color-primary);color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:1px}
 .qmk svg.pi{width:11px;height:11px}.qmk.sent{background:var(--faint)}
+/* a marker is a button: every note on its spot (catalog 25); a closed note is one muted line; Move outlines the note it carries */
+button.qmkb{border:0;cursor:pointer;font:inherit;font-size:11px;font-weight:700}
+button.qmkb:hover,button.qmkb[aria-expanded=true]{outline:2px solid var(--color-primary);outline-offset:1px}
+.qnote.closed{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 8px;color:var(--muted)}
+.qnote.closed .mut{flex:1;min-width:0}
+.qnote.moving{outline:2px dashed var(--color-primary);outline-offset:2px}
+.qspot{border:1px solid var(--color-primary);border-radius:var(--radius-box,8px);padding:6px 10px;margin:6px 0;background:var(--color-base-100);max-width:80ch;box-shadow:0 4px 14px color-mix(in oklab,var(--color-base-content) 14%,transparent)}
+.qspoth{display:flex;align-items:center;gap:8px}
+.qspot .qhist{margin:6px 0 0;padding-left:0;list-style:none}.qspot .qhist li{padding:3px 0;border-top:1px solid var(--line)}
+/* new activity since he last looked: Reference's "changed" mark (catalog 68) */
+.rf-new{display:inline-block;font-size:var(--fs-xs);font-weight:700;border-radius:9px;padding:0 7px;background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text);vertical-align:1px;white-space:nowrap}
 .qpinwrap{position:relative;display:inline-block;max-width:100%}
 .qpin{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
 .qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}

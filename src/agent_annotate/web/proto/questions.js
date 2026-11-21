@@ -69,10 +69,15 @@
     if (act === 'answer-later') set({later: !!body.on});
     else if (act === 'restore') set({closed: false});
     else if (act === 'archive') set({closed: true});
-    else if (act === 'decision') set({sent: true, read: false, decision: {...body, ts}});
+    else if (act === 'decision') {  // a changed answer keeps the earlier pick under Decided before, as the server's decision_history does
+      const cur = (D && D.questions.find(x => x.id === nid)) || {}, prev = cur.sent && cur.decision;
+      set({sent: true, read: false, decision: {...body, ts}, ...(prev ? {earlier: [{v: D.version, t: String(prev.ts || '').slice(0, 10), q: cur.prompt, a: (prev.text || '').split('\n\n')[0], own: true}, ...(cur.earlier || [])]} : {})});
+    }
     else if (act === 'reply') { const cur = (D && D.questions.find(x => x.id === nid)) || {}; set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]}); }
     else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); }
-    else if (id && !act && method === 'PUT') { if (added) added.text = body.text; else NOTES.text[nid] = body.text; }
+    else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; }
+    // a note's Re-open (status) or Move (anchor): kept like Close, by the note's id
+    else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
     else if (path === 'api/rounds/submit' && D) for (const n of D.notes) { if (!n.sent) NOTES.sent.add(n.id); }  // the Send takes every unsent note
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
   }
@@ -81,6 +86,8 @@
   const FEED = {reference: /^(ref|chk):/, links: /^doc:/};
   P.copyData = (area, d) => {
     simLoad();
+    // the copy's notes join the questions feed for every tab that reads it, so History lists a chart note from any read (r12 audit14 running 1)
+    if (area === 'questions') return d && Array.isArray(d.notes) ? simNotes(d) : d;
     if (!FEED[area] || !d || !Array.isArray(d.notes)) return d;
     const have = new Set(d.notes.map(n => n.id));
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id)).map(n => n.id in NOTES.text ? {...n, text: NOTES.text[n.id]} : n)
@@ -117,11 +124,27 @@
     simLoad();
     if (!D || (D !== d && D.version !== d.version)) carry(D, d);
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
+    simNotes(d);
+    if (ctx) keepSaved(d);
+    return d;
+  }
+  const NOTEP = ['closed', 'status', 'anchor', 'label', 'target'];
+  function simNotes(d) {
+    simLoad();
     const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id) && !added.has(n.id)).concat(NOTES.add)
       .filter(n => !(P.ctx && P.ctx.taken(n.id)))  // removed, its Undo still open (frame take)
-      .map(n => ({...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)}));
+      .map(n => { const s = SIM[n.id] || {}, o = {...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)};
+        for (const k of NOTEP) if (k in s) o[k] = s[k];
+        return o; });
     return d;
+  }
+  // a saved note the read predates stays: no late or stale read removes its row (r12 audit14 questions 1, running 1)
+  const after = (r, d) => !!r.at && !!d.at && Date.parse(r.at) >= Date.parse(d.at);
+  function keepSaved(d) {
+    const have = new Set(d.notes.map(n => n.id));
+    for (const r of savedNotes()) if (!have.has(r.id) && r.v === d.version && after(r, d) && !(P.ctx && P.ctx.taken(r.id)))
+      d.notes.push({id: r.id, anchor: r.anchor, label: r.label, text: r.text, target: r.target, sent: false, at: r.at});
   }
 
   /* ---------- state of a question ---------- */
@@ -137,7 +160,7 @@
   const Q = () => (ctx && ctx.queued ? ctx.queued() : []);
   // a note another tab lists itself is counted once, under that tab's item
   // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !x.closed && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
@@ -150,7 +173,7 @@
   function notesNow(q) {
     const own = new Set(q.map(x => x.note).filter(Boolean));
     if (!D) return savedNotes().filter(n => !own.has(n.id));
-    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version}));
+    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at}));
     if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
     return l;
   }
@@ -163,7 +186,9 @@
     if (w) return `<span class="saved">${ic('tick')} Answered in words · goes with Send</span><button class="lk small" data-undo="${q.id}">Undo</button>`;
     if (isClosing(q)) return `<span class="saved">${ic('archive')} Closed: no answer needed · goes with Send</span><button class="lk small" data-unclose="${q.id}">Undo</button>`;
     if (q.closed) return `<span class="saved">${ic('archive')} Closed: no answer needed</span><button class="lk small" data-reopen="${q.id}">Undo</button>`;
-    if (q.sent) return `<span class="saved">${ic('send')} Sent ${esc(fmt(q.decision.ts))}</span>${q.read ? `<span class="qread">${ic('eye')} read by the agent</span>` : '<span class="small mut">not read yet</span>'}`;
+    // a sent answer shows what he picked, with Change for a new pick; the old one stays under Decided before (catalog 52)
+    if (q.sent) { const dc = q.decision || {}, was = (dc.option_id && optLabel(q, dc.option_id)) || (dc.text || '').split('\n')[0];
+      return `<span class="saved">${ic('send')} Sent${was ? ': ' + esc(cut(was, 40)) : ''} · ${esc(fmt(dc.ts))}</span>${q.read ? `<span class="qread">${ic('eye')} read by the agent</span>` : '<span class="small mut">not read yet</span>'}<button class="lk small" data-change="${q.id}" title="Pick again: the new answer goes with your next Send; this one stays under Decided before">Change</button>`; }
     if (q.later) return `<span class="small mut">${ic('later')} Set aside</span><button class="lk small" data-unlater="${q.id}">Back to waiting</button>`;
     return '';
   }
@@ -171,7 +196,11 @@
   const IMPW = {high: 'High impact', medium: 'Medium impact', low: 'Low impact'};
   const impMark = q => IMPW[q.impact] ? `<span class="impw ${q.impact}" title="${IMPW[q.impact]}: how much the agent says this answer changes"><span class="imp ${q.impact}" aria-hidden="true"><i></i><i></i><i></i></span>${q.impact === 'medium' ? 'Med' : q.impact[0].toUpperCase() + q.impact.slice(1)}</span>` : '<span class="impw none" aria-hidden="true"></span>';
   const blkMark = q => q.blocking ? `<span class="blkp" title="A task on the board waits on this answer">${ic('block')}Blocks a task</span>` : '';
-  const numChip = q => `<span class="qnum">Q ${esc(q.n)}</span>`;
+  // the agent wrote on it since he last looked: Reference's "changed" mark and its 14-day first look; opening the card clears it (catalog 68)
+  const firstLook = () => { let b = ctx.prefs.get('q-first'); if (!b) { b = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 16); ctx.prefs.set('q-first', b); } return b; };
+  const isNew = q => !!q.act && String(q.act).replace(' ', 'T') > (ctx.prefs.get('q-seen', {})[q.id] || firstLook());
+  const markSeenQ = ids => { const s = ctx.prefs.get('q-seen', {}), now = new Date().toISOString().slice(0, 19); ids.forEach(i => s[i] = now); ctx.prefs.set('q-seen', s); };
+  const numChip = q => `<span class="qnum">Q ${esc(q.n)}</span>${isNew(q) ? '<span class="rf-new" title="The agent wrote here since you last looked">new</span>' : ''}`;
 
   function taskChip(id) {
     const b = (D.beads || {})[id];
@@ -231,7 +260,7 @@
     const asked = (d.reply || '').trim() === ASKFILE;
     const ask = asked ? `<span class="saved">${ic('tick')} Asked to file one · goes with Send</span> <button class="lk small" data-askfile="${q.id}">Undo</button>`
       : `<button class="lk small" data-askfile="${q.id}" title="A reply to the agent, sent with your next Send">Ask the agent to file one</button>`;
-    const meta = `<div class="qmeta">${bead ? `<span>${ic('task')} ${taskChip(bead)}</span>` : `<span>${ic('task')} No task on the board yet · <button class="lk small" data-board title="Open the bead board under Running">Open the board</button> · ${ask}</span>`}${plan ? `<span>Plan: <button class="lk small" data-plan="${esc(plan.id)}">${esc(cut(plan.t, 40))}</button> · ${esc(PLANST[plan.st] || 'For reference')}</span>` : ''}<button class="dfold" data-fold="hs${q.id}" aria-expanded="${hso}" title="Your earlier answers on the same topic">${ic('hist')} Decided before · ${q.earlier.length}</button>${q.evidence.length && !inList ? `<button class="lk small" data-ev="${esc(q.evidence[0].anchor)}" data-evq="${q.id}">${ic('place')} ${esc(cut(q.evidence[0].label || 'Its evidence', 40))}</button>` : ''}</div>${hso ? `<ul class="qhist">${q.earlier.length ? q.earlier.map(h => `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — ${esc(cut(h.q, 140))} → <b>${esc(cut(h.a, 160))}</b></li>`).join('') : '<li class="mut">Nothing decided on this before.</li>'}</ul>` : ''}`;
+    const meta = `<div class="qmeta">${bead ? `<span>${ic('task')} ${taskChip(bead)}</span>` : `<span>${ic('task')} No task on the board yet · <button class="lk small" data-board title="Open the bead board under Running">Open the board</button> · ${ask}</span>`}${plan ? `<span>Plan: <button class="lk small" data-plan="${esc(plan.id)}">${esc(cut(plan.t, 40))}</button> · ${esc(PLANST[plan.st] || 'For reference')}</span>` : ''}<button class="dfold" data-fold="hs${q.id}" aria-expanded="${hso}" title="Your earlier answers on the same topic">${ic('hist')} Decided before · ${q.earlier.length}</button>${q.evidence.length && !inList ? `<button class="lk small" data-ev="${esc(q.evidence[0].anchor)}" data-evq="${q.id}">${ic('place')} ${esc(cut(q.evidence[0].label || 'Its evidence', 40))}</button>` : ''}</div>${hso ? `<ul class="qhist">${q.earlier.length ? q.earlier.map(h => h.own ? `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — <b>Your earlier pick on this card:</b> ${esc(cut(h.a, 160))} <span class="small mut">· changed since</span></li>` : `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — ${esc(cut(h.q, 140))} → <b>${esc(cut(h.a, 160))}</b></li>`).join('') : '<li class="mut">Nothing decided on this before.</li>'}</ul>` : ''}`;
     const norec = !q.rec ? `<p class="small mut">The agent gave no recommendation${q.options.length ? '' : ' and no choices'}.</p>` : '';
     const an = `${norec}<div class="qopts">${q.options.map((o, i) => `<button class="qopt${o.id === q.rec ? ' rec' : ''}" data-pick="${q.id}" data-opt="${esc(o.id)}" aria-pressed="${d.pick === o.id}">${o.id === q.rec ? '<span class="rl">Recommended</span>' : ''}<b>${i + 1}. ${esc(o.label)}</b>${o.c ? `<span>${esc(o.c)}</span>` : ''}</button>`).join('')}</div>
       <textarea class="qwords" data-words="${q.id}" aria-label="Answer in words" placeholder="${q.options.length ? 'Answer in words. With no choice picked, this is your answer; with one, it goes with it.' : 'Your answer: there are no choices'}">${esc(d.words || '')}</textarea>
@@ -306,7 +335,7 @@
     D.notes.forEach((n, i) => {
       const el = docEl.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
       if (!el) return;
-      const t = n.target || {};
+      const t = n.closed ? {} : n.target || {};
       if (t.tag === 'img' && t.offset) {
         const img = el.tagName === 'IMG' ? el : t.image ? el.querySelector(`img[data-img="${CSS.escape(t.image)}"]`) || el.querySelector('img') : el.querySelector('img');
         if (img) pinOn(img, i + 1, t.offset);
@@ -314,6 +343,10 @@
       const after = el.tagName === 'TR' ? el.closest('table').closest('.wrap') || el.closest('table') : el;
       after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', noteBox(n, i + 1));
     });
+    if (S.spot) {  // the open marker's list, under the spot's notes
+      const boxes = [...docEl.querySelectorAll('.qnote[data-note]')].filter(b => (D.notes.find(n => n.id === b.dataset.note) || {}).anchor === S.spot);
+      if (boxes.length) boxes.at(-1).insertAdjacentHTML('afterend', spotBox(S.spot));
+    }
     for (const c of D.carried || []) {  // his note from an earlier version, at its line here (#16)
       const el = docEl.querySelector(`[data-anchor-id="${CSS.escape(c.anchor)}"]`);
       if (el) (el.tagName === 'TR' ? el.closest('.wrap') || el.closest('table') : el).insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', carriedBox(c));
@@ -341,13 +374,33 @@
     }
   }
   const mk = (no, sent) => `<span class="qmk${sent ? ' sent' : ''}" title="Your note ${no}${sent ? ', sent' : ''}">${ic('note')}${no}</span>`;
+  // a marker in the document is a control: it lists every note on its spot, with + Comment for another (catalog 25)
+  const mkb = (no, n) => `<button class="qmk qmkb${n.sent || n.closed ? ' sent' : ''}" data-spot="${esc(n.anchor)}" aria-expanded="${S.spot === n.anchor}" title="Every note on this spot" aria-label="Note ${no}: every note on this spot">${ic('note')}${no}</button>`;
   const KIND = t => t.quote ? `on “${esc(cut(t.quote, 50))}”` : t.tag === 'img' ? 'at this spot' : t.tag === 'tr' ? 'on this row' : /^h\d$/.test(t.tag || '') ? 'on this heading' : 'on this line';
+  // the agent marked it addressed: resolved, or addressed and waiting for him
+  const isResolved = n => n.status === 'resolved_in_version' || n.status === 'addressed_by_agent' || n.status === 'user_confirmed';
+  const noteNo = n => D.notes.indexOf(n) + 1;
+  const closedNotes = () => D.notes.filter(n => n.closed);  // closed notes sit under Closed with their Re-open (catalog 64)
   function noteBox(n, no) {
     const t = n.target || {}, what = KIND(t);
     if (S.note && S.note.edit === n.id) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
-    const acts = n.sent ? ib('edit', 'Correct it; the fix goes with your next Send', `data-nfix="${n.id}"`) + ib('copy', 'Copy the note text', `data-ncopy="${n.id}"`)
-      : ib('edit', 'Edit this note', `data-nedit="${n.id}"`) + ib('undo', 'Undo: remove this note', `data-ndel="${n.id}"`) + ib('copy', 'Copy the note text', `data-ncopy="${n.id}"`) + ib('link', 'Copy a link to this note', `data-nlink="${n.id}"`);
-    return `<div class="qnote${n.sent ? ' sent' : ''}" id="n-${n.id}" data-note="${n.id}">${mk(no, n.sent)}<b>Note ${no} ${what}:</b> ${esc(n.text)} <span class="${n.sent ? 'mut' : 'saved'}">· ${n.sent ? 'sent' : 'goes with Send'}</span><span class="nacts">${acts}</span></div>`;
+    const id = esc(n.id), move = S.move === n.id;
+    // a closed note folds to one line, its Re-open beside it, as an answered card keeps its Undo (#138)
+    if (n.closed) return `<div class="qnote sent closed" id="n-${id}" data-note="${id}">${mkb(no, n)}<span class="saved">${ic('archive')} Note ${no} closed</span> <span class="mut">${esc(cut(n.text, 80))}</span><span class="nacts">${ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${id}"`)}</span></div>`;
+    const res = isResolved(n), view = res && n.rv && n.ra ? `<button class="lk small" data-nres="${id}">${ic('eye')} View resolution in ${esc(String(n.rv).replace(/^v/, 'version '))}</button>` : '';
+    const mv = (D.version && ibw('place', move ? 'Moving' : 'Move', move ? 'Click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${move}"`));
+    const acts = n.sent ? ibw('edit', 'Correct', 'Correct it; the fix goes with your next Send', `data-nfix="${id}"`) + mv + ibw('copy', 'Copy', 'Copy the note text', `data-ncopy="${id}"`) + ibw('link', 'Link', 'Copy a link to this note', `data-nlink="${id}"`)
+        + (res ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '') + ibw('archive', 'Close', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`)
+      : ibw('edit', 'Edit', 'Edit this note', `data-nedit="${id}"`) + ibw('undo', 'Remove', 'Undo: remove this note', `data-ndel="${id}"`) + mv + ibw('copy', 'Copy', 'Copy the note text', `data-ncopy="${id}"`) + ibw('link', 'Link', 'Copy a link to this note', `data-nlink="${id}"`);
+    const st = res ? `<span class="saved">· ${ic('tick')} ${n.status === 'resolved_in_version' ? `resolved${n.rv ? ' in ' + esc(String(n.rv).replace(/^v/, 'version ')) : ''}` : 'addressed by the agent'}</span>` : `<span class="${n.sent ? 'mut' : 'saved'}">· ${n.sent ? 'sent' : 'goes with Send'}</span>`;
+    return `<div class="qnote${n.sent ? ' sent' : ''}${move ? ' moving' : ''}" id="n-${id}" data-note="${id}">${mkb(no, n)}<b>Note ${no} ${what}:</b> ${esc(n.text)} ${st} ${view}<span class="nacts">${acts}</span></div>`;
+  }
+  // every note on one spot, opened from its marker, with + Comment for another (today's pin popover, catalog 25)
+  function spotBox(a) {
+    const ns = D.notes.filter(n => n.anchor === a), first = ns[0];
+    if (!first) return '';
+    return `<div class="qspot" role="dialog" aria-label="Notes on this spot"><div class="qspoth"><b class="small">${pl(ns.length, 'note', 'notes')} ${KIND(first.target || {})}</b><span class="spacer"></span><button class="btn sm pri" data-spotadd="${esc(a)}">${ic('plus')} Comment</button><button class="ib sm" data-spotx title="Close this list" aria-label="Close this list" data-esc>${ic('x')}</button></div>
+      <ul class="qhist">${ns.map(n => `<li>${mk(noteNo(n), n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : isResolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`;
   }
   function newNoteBox() {
     const n = S.note, fx = n.fixOf ? ' · fix to a sent note' : '';
@@ -374,6 +427,10 @@
       const last = h.lastChild; if (last && last.nodeType === 3) last.nodeValue = last.nodeValue.replace(/:\s*\d+\s+cards?\s*$/i, '');
       h.insertAdjacentHTML('afterbegin', `<button class="qsecf" data-sfold="${esc(a)}" aria-expanded="${open}" title="${open ? 'Fold this section' : 'Open this section'}"></button>`);
       h.insertAdjacentHTML('beforeend', `<span class="qsecm">${nq ? `<span class="badge qw">${pl(nq, 'question waiting', 'questions waiting')}</span>` : qs.length ? `<span class="badge ok">${qs.length} of ${qs.length} decided</span>` : ''}${since === '' ? '<span class="qnew">new in this version</span>' : since ? `<span class="small mut">unchanged since version ${esc(since.slice(1))}</span>` : ''}</span>`);
+      // folded after a reload, a section keeps the answers still to send on their lines under its heading, each with its Undo (r12 #09)
+      S.kept = S.kept || new Set();  // once kept this visit it stays, so its Undo never drops it into the folded section
+      const keep = open ? [] : qs.filter(q => (isDraft(q) || isClosing(q) || S.kept.has(q.id)) && S.kept.add(q.id)).map(q => sec.querySelector(`#q-${CSS.escape(q.id)}`)).filter(Boolean);
+      if (keep.length) { const box = document.createElement('div'); box.className = 'qsecans'; box.append(...keep); h.after(box); }
     }
     const first = topSecs(docEl)[0], t = D.tiles, h2 = first && first.querySelector(':scope > h2');
     if (t && h2) h2.insertAdjacentHTML('afterend', `<div class="qtiles">${[[t.versions, 'versions published', ''], [t.open, 'notes still open', 'warn'], [t.addressed, 'notes the agent addressed', 'ok'], [t.sends, 'Sends received', '']].map(([n, w, c]) => `<div class="${c}"><b>${Number(n).toLocaleString()}</b><span>${w}</span></div>`).join('')}</div>`);
@@ -417,7 +474,7 @@
   function zoomView() {
     if (!S.zoom) return '';
     const {src, cap, z, img} = S.zoom;
-    const ns = D.notes.map((n, i) => [n, i + 1]).filter(([n]) => (n.target || {}).tag === 'img' && (n.target.image_src === src || (img && n.target.image === img)));
+    const ns = D.notes.map((n, i) => [n, i + 1]).filter(([n]) => !n.closed && (n.target || {}).tag === 'img' && (n.target.image_src === src || (img && n.target.image === img)));
     return `<div class="qzoom" role="dialog" aria-label="Full-size picture"><div class="qzbar"><b class="small">${esc(cut(cap, 60))}</b><span class="qzm">${[25, 50, 75, 100].map(x => `<button data-zoomto="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width · tap a spot to write a note · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>Close</button></div>
       <div class="qzpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap)}" data-zimg>${ns.map(([n, no]) => `<span class="qpin" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%">${no}</span>`).join('')}</div>
       ${ns.length ? `<div class="qznotes">${ns.map(([n, no]) => noteBox(n, no)).join('')}</div>` : ''}</div>`;
@@ -469,7 +526,7 @@
     later: q => q.later && !q.closed && !isDraft(q) && !q.sent,
     ready: q => isDraft(q) || isClosing(q) || hasReply(q), wait: q => q.sent, arch: q => q.closed || isClosing(q)};
   function bar() {
-    const cnt = k => D.questions.filter(FILTERS[k]).length, lv = S.view === 'list';
+    const cnt = k => D.questions.filter(FILTERS[k]).length + (k === 'arch' ? closedNotes().length : 0), lv = S.view === 'list';
     const decided = D.questions.filter(q => !isWaiting(q) && !q.later).length, all = D.questions.length;
     const chips = [['need', `Waiting ${waitingCount()}`], ['later', `<span class="hide-ph">Answer later</span><span class="ph-only">Later</span> ${cnt('later')}`], ['ready', `To send ${cnt('ready')}`], ['wait', `Sent ${cnt('wait')}`], ['arch', `Closed ${cnt('arch')}`]];
     const vsw = `<span class="qseg" role="group" aria-label="View">${[['doc', 'doc', 'Document', 'The review document, each card at its evidence'], ['list', 'list', 'Cards only', 'Only the cards, open; each folds once answered']].map(([v, k, t, tip]) => `<button data-view="${v}" aria-pressed="${S.view === v}" title="${tip}">${ic(k)}<span class="hide-ph">${t}</span></button>`).join('')}</span>`;
@@ -573,13 +630,13 @@
     ctx.refreshChips(); if (ctx.refreshTop) ctx.refreshTop();
   }
   function listView() {
-    const list = D.questions.filter(FILTERS[S.filter] || FILTERS.need);
+    const list = D.questions.filter(FILTERS[S.filter] || FILTERS.need), shut = S.filter === 'arch' ? closedNotes() : [];
     if (!DOC) loadDoc(D.version).then(h => { DOC = document.createElement('div'); DOC.innerHTML = h; if (S.view === 'list') draw(true); });
-    return `<div class="qlist">${list.length ? list.map(q => {
+    return `<div class="qlist">${list.length || shut.length ? list.map(q => {
       const open = cardOpen(q);
       if (!open) return card(q);
       return `<div class="qitem">${card(q).replace('<div class="qbody">', `<div class="qbody">${evidence(q)}`)}</div>`;
-    }).join('') : `<p class="mut">${S.filter === 'wait' ? 'Nothing sent from this version yet.' : 'Nothing here.'}</p>`}</div>`;
+    }).join('') + shut.map(n => noteBox(n, noteNo(n))).join('') : `<p class="mut">${S.filter === 'wait' ? 'Nothing sent from this version yet.' : 'Nothing here.'}</p>`}</div>`;
   }
   // a card's evidence, copied from the document into Cards only: its lines, rows, tables and every picture (#01)
   function evHtml(el) {
@@ -659,8 +716,12 @@
     const n = S.note; S.note = null; ctx.prefs.set('q:newnote', null);
     if (!text.trim()) return draw(true);
     const c = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text, version: D.version, target: n.target});
-    await refresh();
+    // listed at once from its stored record: Send, its count and the document never wait on the re-read (r12 audit14 questions 1)
+    if (c && c.id && !D.notes.some(x => x.id === c.id)) D.notes.push({id: c.id, anchor: n.anchor, label: n.label, text: c.text || text, target: n.target, sent: false, at: c.created_at || new Date().toISOString()});
+    notesNow(Q());
     ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {undo: () => delNote(c.id, true)});
+    await draw(true);
+    await refresh();
   }
   async function delNote(id, quiet) {
     const n = (D ? D.notes : savedNotes()).find(x => x.id === id);
@@ -848,6 +909,7 @@
   function onClick(e) {
     const card0 = e.target.closest('.qcard[data-q]');  // any click on a card makes it the one the keys act on
     if (card0 && S.hl !== card0.dataset.q) { root.querySelectorAll('.qcard.hl').forEach(x => x.classList.remove('hl')); S.hl = card0.dataset.q; card0.classList.add('hl'); }
+    if (card0 && card0.querySelector('.qhead .rf-new')) { markSeenQ([card0.dataset.q]); card0.querySelectorAll('.qhead .rf-new').forEach(x => x.remove()); }  // reading it clears its mark
     const t = e.target.closest('button,a,[data-anchor-id],img,.qsheet');
     if (!t || !(host || root).contains(t)) return;
     const ds = t.dataset, q = id => qOf(id);
@@ -871,6 +933,7 @@
     if (ds.sfold) { const k = 'd:' + ds.sfold; S.open.has(k) ? S.open.delete(k) : S.open.add(k); return draw(true); }
     if (t.hasAttribute('data-secall')) { const secs = DOC ? topSecs(DOC) : [], open = !secs.some(secOpen); for (const s of secs) (open === secDefault(s)) ? S.open.delete('d:' + s.dataset.anchorId) : S.open.add('d:' + s.dataset.anchorId); return draw(true); }
     if (ds.qref) { const qq = D.questions.find(x => String(x.n) === ds.qref); return qq ? jumpTo(qq.id) : ctx.go('history'); }
+    if (ds.change) { S.open.add(ds.change); return draw(true).then(() => { const o = root.querySelector(`#q-${CSS.escape(ds.change)} .qopts`); if (o) { o.scrollIntoView({block: 'center'}); (o.querySelector('button') || o).focus({preventScroll: true}); } markSeenQ([ds.change]); }); }
     if (ds.pick) return pick(q(ds.pick), ds.opt);
     if (ds.undo) return undo(q(ds.undo));
     if (ds.later) return later(q(ds.later), true);
@@ -920,6 +983,15 @@
     if (ds.ncopy) return copy((D.notes.find(x => x.id === ds.ncopy) || {}).text || '', 'Note');
     if (ds.nlink) return copy(location.href.split('#')[0] + '#questions/n-' + ds.nlink, 'Link');
     if (ds.carried) { const [id, st] = ds.carried.split('~'); return carried(id, st); }
+    if (ds.spot != null) { S.spot = S.spot === ds.spot ? null : ds.spot; return draw(true); }
+    if (t.hasAttribute('data-spotx')) { S.spot = null; return draw(true); }
+    if (ds.spotadd) { const f = D.notes.find(n => n.anchor === ds.spotadd) || {}; S.spot = null; return openNote({anchor: ds.spotadd, label: f.label || '', target: {schema: 1, tag: (f.target || {}).tag || 'p'}}); }
+    if (ds.spotgo) { S.spot = null; return draw(true).then(() => litNote(ds.spotgo)); }
+    if (ds.nclose) return noteState(ds.nclose, 'close');
+    if (ds.nopen) return noteState(ds.nopen, 'restore');
+    if (ds.nreopen) return noteState(ds.nreopen, 'reopen');
+    if (ds.nres) return goResolution(ds.nres);
+    if (ds.nmove) { S.move = S.move === ds.nmove ? null : ds.nmove; draw(true); if (S.move) ctx.toast('Click the new spot for this note in the document · Esc cancels'); return; }
     if (ds.ab) {
       const [a, side] = ds.ab.split('~');
       setAB(a, {side, cap: ds.abcap || a}); draw(true);
@@ -928,7 +1000,7 @@
     if (ds.unab) { setAB(ds.unab, null); return draw(true); }
     // a note: tap a picture spot, select words, or click a line, row or item of the document
     const evb = S.view === 'list' && t.closest('.qevb');  // Cards only: a card's copied evidence takes notes too (audit5 #03)
-    if (evb ? t.closest('.qnote,.qzm,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,.abpick,figcaption,summary')) return;
+    if (evb ? t.closest('.qnote,.qspot,.qzm,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qspot,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,.abpick,figcaption,summary')) return;
     const img = e.target.closest('img');
     const anchorEl = e.target.closest('[data-anchor-id]');
     if (evb && (!anchorEl || !evb.contains(anchorEl))) return;
@@ -937,7 +1009,46 @@
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src')}; }
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
+    if (S.move) return moveNote(S.move, {anchor: anchorEl.dataset.anchorId, label, target});
     return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});
+  }
+  const litNote = id => { const el = document.getElementById('n-' + id); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
+  // Close, Re-open and the closed note's Re-open: today's archive, PUT status open and restore; each with Undo (#138, catalog 64)
+  async function noteState(id, how, status) {
+    const n = D.notes.find(x => x.id === id); if (!n) return;
+    const was = n.status, u = `api/comments/${encodeURIComponent(id)}`;
+    try {
+      if (how === 'close') await call(u + '/archive', {});
+      else if (how === 'restore') await call(u + '/restore', {});
+      else await call(u, {status: status || 'open'}, 'PUT');
+    } catch (e) { return ctx.toast('Not changed: ' + e.message); }
+    if (how === 'close') n.closed = true; else if (how === 'restore') n.closed = false; else n.status = status || 'open';
+    S.spot = null; await draw(true); litNote(id);
+    if (status) return;  // an Undo itself
+    const undo = how === 'close' ? () => noteState(id, 'restore', 'x') : how === 'restore' ? () => noteState(id, 'close', 'x') : () => noteState(id, 'reopen', was);
+    ctx.toast(how === 'close' ? 'Note closed: it is under Closed' : how === 'restore' ? 'Note re-opened' : 'Note re-opened: the agent looks at it again with your next Send', {undo});
+  }
+  // where the agent addressed it: in this version's document, or the version that resolved it in History (today's View resolution)
+  async function goResolution(id) {
+    const n = D.notes.find(x => x.id === id); if (!n || !n.ra) return;
+    if (n.rv && n.rv !== D.version) return ctx.go('history', n.rv);
+    if (S.view !== 'doc') { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }
+    openFor(n.ra); await draw(true);
+    const el = root.querySelector(`[data-anchor-id="${CSS.escape(n.ra)}"]:not(.qcard)`);
+    if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); }
+  }
+  // Move: the next click in the document is its new spot; today's manual re-pin, with Undo (catalog 65)
+  async function moveNote(id, to) {
+    S.move = null;
+    const n = D.notes.find(x => x.id === id); if (!n) return draw(true);
+    const was = {anchor_id: n.anchor, anchor_label: n.label, target: n.target || null};
+    const put = async (p, again) => {
+      await call(`api/comments/${encodeURIComponent(id)}`, {...p, reanchor: {strategy: 'manual-repin', confidence: 1.0, ts: new Date().toISOString()}}, 'PUT');
+      Object.assign(n, {anchor: p.anchor_id, label: p.anchor_label, target: p.target});
+      notesNow(Q()); await draw(true); litNote(id);
+      if (again) ctx.toast('Note moved', {undo: () => put(was, false)});
+    };
+    try { await put({anchor_id: to.anchor, anchor_label: to.label, target: to.target}, true); } catch (e) { ctx.toast('Not moved: ' + e.message); draw(true); }
   }
   // an evidence jump leaves "Back to Q N" just above the evidence, one at a time, as today's page does (catalog 32, audit8 #04)
   function backPill(el, qid) {
@@ -995,7 +1106,7 @@
     if (host && e.key === 'Escape' && S.armed) { e.preventDefault(); S.armed = false; S.sendKey = false; return drawHost(); }
     if (!onQ()) return;  // ⌘↵ on another tab is the frame's: it calls open(ctx, true)
     if (e.key === 'Escape') {  // closes the picture, the Send summary (drafts kept) or General feedback (#06)
-      if (S.zoom || S.armed || S.gen) { e.preventDefault(); S.zoom = null; S.armed = false; S.sendKey = false; S.gen = false; draw(true); }
+      if (S.zoom || S.armed || S.gen || S.spot || S.move) { e.preventDefault(); S.zoom = null; S.armed = false; S.sendKey = false; S.gen = false; S.spot = null; S.move = null; draw(true); }
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {

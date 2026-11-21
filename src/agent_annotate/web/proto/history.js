@@ -204,14 +204,17 @@
     t.scrollIntoView({block: 'center'}); t.classList.add('lit');
     setTimeout(() => { if (S.hl === id) S.hl = ''; S.hlT = ''; document.querySelectorAll('[data-cnote].lit').forEach(e => e.classList.remove('lit')); }, 2500); };
   const qpv = () => Object.entries(D.versions || {}).filter(([v]) => /^v\d+$/.test(v)).sort((a, b) => +vn(a[0]) - +vn(b[0])).slice(-40);
-  const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
+  const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => !n.closed && /^chart:/.test(n.anchor || '')); };
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
   // saved and not yet sent; Questions' feed is read here too, so Send lists them before History is opened
   // kept as saved records too (draft:hcnotes): while that feed is held or failed, Send lists them from what was saved (r12 fix14 running 1)
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     const m = ctx.prefs.get('draft:hcnotes', []);
     if (!QD) return [...m, ...CN.filter(n => !n.sent && !m.some(x => x.id === n.id))];
-    const l = allC().filter(n => !n.sent), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text}));
+    // a saved record the read predates stays: no late or stale read removes its row (r12 audit14 running 1)
+    const inQ = new Set((QD.notes || []).map(n => n.id)), l0 = allC().filter(n => !n.sent && !n.closed);
+    const l = [...l0, ...m.filter(r => !inQ.has(r.id) && !l0.some(x => x.id === r.id) && r.at && QD.at && Date.parse(r.at) >= Date.parse(QD.at) && !ctx.taken(r.id))];
+    const s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at}));
     if (JSON.stringify(s) !== JSON.stringify(m)) ctx.prefs.set('draft:hcnotes', s);
     return l; };
   const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };
@@ -223,7 +226,7 @@
     const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));
     dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
     // its saved record goes back too, so every later first Send lists it before Questions answers (r12 audit13 running 2)
-    return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text});
+    return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at});
       ctx.prefs.set('draft:hcnotes', l); CN.push({...n, sent: false}); redrawH(); ctx.refreshChips(); };
   }
   const setT = (id, t) => [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) x.text = t; });
@@ -273,7 +276,7 @@
     if (!text) return ctx.toast('Write something first');
     try {
       const c = await ctx.api('api/comments', {anchor_id: 'chart:' + v, anchor_label: CLAB(v), text});
-      CN.push({id: c.id, anchor: 'chart:' + v, label: CLAB(v), text: c.text || text});
+      CN.push({id: c.id, anchor: 'chart:' + v, label: CLAB(v), text: c.text || text, at: c.created_at || new Date().toISOString()});
       S.cn = ''; ctx.prefs.set('draft:hnote', null); draw(el, ctx); ctx.refreshChips();
       ctx.toast('Note saved', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== c.id);
         if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== c.id); redrawH(); ctx.refreshChips(); }});
@@ -335,11 +338,12 @@
       html += vers.slice(0, S.nv).map(([v, hs]) => {
         const m = D.versions[v] || {}, eye = `<button class="ib" data-hv="${esc(v)}" title="Open version ${esc(vn(v))} read-only" aria-label="Open version ${esc(vn(v))} read-only">${icon('eye')}</button>`;
         const note = m.note ? `<div class="small h-note">${fix(m.note)}<span class="mut">Agent's note:</span> ${esc(m.note)}</div>` : '';
-        if (!hs.length) return `<div class="h-grp h-none" id="h-${esc(v)}"><div class="h-gh"><span class="h-fold h-nofold"><b>Version ${esc(vn(v))}</b>
+        const nw = newV(ctx, v, [m.at, hs[0] && hs[0].at].filter(Boolean).sort().at(-1)) ? ' <span class="rf-new" title="New since you last looked">new</span>' : '';
+        if (!hs.length) return `<div class="h-grp h-none" id="h-${esc(v)}" data-hseen="${esc(v)}"><div class="h-gh"><span class="h-fold h-nofold"><b>Version ${esc(vn(v))}</b>${nw}
           <span class="small mut"><span class="h-dot">· </span>published ${esc(when(m.at, m.t))} · no answers sent${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}</span></span>${eye}</div>${note}</div>`;
         const top = first && !q; first = false;
         const op = !!q || top !== S.open.has(v);
-        return `<div class="h-grp" id="h-${esc(v)}"><div class="h-gh"><button class="h-fold" data-fold="${esc(v)}" aria-expanded="${op}">${icon('chev')}<b>Version ${esc(vn(v))}</b>
+        return `<div class="h-grp" id="h-${esc(v)}" data-hseen="${esc(v)}"><div class="h-gh"><button class="h-fold" data-fold="${esc(v)}" aria-expanded="${op}">${icon('chev')}<b>Version ${esc(vn(v))}</b>${nw}
           <span class="small mut"><span class="h-dot">· </span>sent ${esc(when(hs[0].at, hs[0].t))} · ${pl(hs.length, 'answer', 'answers')}${DELIV[hs[0].dl] ? ` · ${DELIV[hs[0].dl]}` : ''}${m.items ? ` · ${pl(m.items, 'item', 'items')}, ${m.open} still open` : ''}${top ? ' · newest Send' : ''}</span></button>
           ${eye}</div>${note}
           ${op ? `<ul class="h-list">${hs.map(h => li(h, ctx)).join('')}</ul>` : ''}</div>`;
@@ -378,8 +382,15 @@
   function li(h, ctx) {
     const {esc} = ctx;
     const tag = h.ovr ? `<span class="h-ovr" tabindex="0">⤼ overruled<span class="h-tip" role="tooltip">The agent wrote “${esc(h.ovr[0])}”: ${esc(h.ovr[1])} Your answer stays here as you sent it.</span></span> ` : '';
-    return `<li>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b></li>`;
+    // a card answered twice: the older answer is his earlier pick; the newest, on a card still asked, offers Change (catalog 52)
+    const newest = h.id && D.answers.find(x => x.id === h.id), old = newest && newest !== h;
+    const ch = !old && h.ch ? ` <button class="lk small" data-hchange="${esc(h.id)}" title="Pick again on its card in Questions; this answer stays here">Change</button>` : '';
+    return `<li${old ? ' class="h-old"' : ''}>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b>${old ? ' <span class="small mut">· your earlier pick, changed since</span>' : ''}${ch}</li>`;
   }
+  // a version published since he last looked carries Reference's "changed" mark until he opens it (catalog 68)
+  const hFirst = ctx => { let b = ctx.prefs.get('h-first'); if (!b) { b = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 16); ctx.prefs.set('h-first', b); } return b; };
+  const newV = (ctx, v, at) => !!at && String(at).replace(' ', 'T') > (ctx.prefs.get('h-seen', {})[v] || hFirst(ctx));
+  const seeV = (ctx, v) => { const s = ctx.prefs.get('h-seen', {}); s[v] = new Date().toISOString().slice(0, 19); ctx.prefs.set('h-seen', s); };
   async function click(e, el, ctx) {
     const pt = e.target.closest('[data-cpt]');
     if (pt) {  // a marked point opens its saved note to edit, not a blank one (audit10 running 3)
@@ -388,9 +399,12 @@
       else { S.ce = ''; S.cn = S.cn === v ? '' : v; }
       draw(el, ctx); return focusC(el);
     }
+    const g = e.target.closest('[data-hseen]');  // reading a version clears its mark
+    if (g && g.querySelector('.rf-new')) { seeV(ctx, g.dataset.hseen); g.querySelectorAll('.h-gh .rf-new').forEach(x => x.remove()); }
     const b = e.target.closest('button');
     if (!b) return;
     const ds = b.dataset, cn = id => allC().find(x => x.id === id);
+    if (ds.hchange) return ctx.go('questions', 'q-' + ds.hchange);
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
     if (ds.csavee) return editC(el, ctx, ds.csavee);
     if (ds.cned) { S.cn = ''; S.ce = ds.cned; draw(el, ctx); return focusC(el); }

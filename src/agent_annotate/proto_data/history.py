@@ -119,7 +119,11 @@ def _build(page_dir: Path) -> dict:
                 continue
             seen.add(key)
             # "at" is the Send's own time, shown in the browser's local time as the header shows it; "dl" its delivery state (audit7 running 2)
-            answers.append({"n": a.get("number") or 0, "q": q, "a": text, "v": r.get("version") or "",
+            # "id" its card; "ch" the card is still asked in the current version, so the newest answer offers Change (catalog 52)
+            c = by_id.get(a.get("comment_id")) or {}
+            answers.append({"id": a.get("comment_id"), "ch": bool(c.get("decision_request")) and c.get("status") != "archived"
+                            and c.get("version") == meta.get("current"),
+                            "n": a.get("number") or 0, "q": q, "a": text, "v": r.get("version") or "",
                             "t": str(a.get("ts") or r.get("ts") or "")[:10], "at": str(r.get("ts") or a.get("ts") or ""),
                             "dl": str(r.get("delivery") or ""), "ovr": ovr.get(a.get("comment_id")) or ovr_q.get(q)})
     answers.reverse()  # newest first

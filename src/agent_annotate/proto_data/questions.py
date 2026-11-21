@@ -11,6 +11,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import store
@@ -239,9 +240,12 @@ def build(page_dir: Path) -> dict:
             continue
         dr = c.get("decision_request")
         if not dr:
-            if _mine(c.get("author")) and c.get("status") != "archived":
+            if _mine(c.get("author")):
+                # closed (today's archive) notes come too, for Closed and Re-open; a resolved one names where the agent addressed it
                 notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
-                              "target": c.get("target"), "sent": bool(c.get("flagged_for_session") or c.get("delivery_id"))})
+                              "target": c.get("target"), "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")),
+                              "at": c.get("created_at"), "status": c.get("status"), "closed": c.get("status") == "archived",
+                              "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id")})
             continue
         if not _asked(c, v):
             continue  # withdrawn by the agent
@@ -276,7 +280,13 @@ def build(page_dir: Path) -> dict:
             "evidence": ev, "later": f["later"], "decision": d, "replies": replies,
             "sent": sent, "read": sent and c.get("status") in ("addressed_by_agent", "resolved_in_version"),
             "bead": bead,
-            "earlier": sorted(earlier, key=lambda r: r["t"], reverse=True)[:8],
+            # his own earlier picks on this card, a sent answer he changed (decision_history), first
+            "earlier": [{"v": c.get("version"), "t": str(h.get("ts") or "")[:10], "q": _mask(dr.get("prompt", "")),
+                         "a": _mask((h.get("text") or "").split("\n\n")[0]), "own": True}
+                        for h in reversed(c.get("decision_history") or []) if isinstance(h, dict) and not h.get("discarded") and h.get("text")][:4]
+                       + sorted(earlier, key=lambda r: r["t"], reverse=True)[:8],
+            # the agent's last word on it: new activity until he opens the card
+            "act": max((r.get("ts") or "" for r in c.get("replies") or [] if not _mine(r.get("author"))), default=None),
         })
     qs.sort(key=lambda q: q["n"] or 0)
     closed = sum(1 for c in allc if c.get("decision_request") and c.get("status") == "archived")
@@ -289,7 +299,9 @@ def build(page_dir: Path) -> dict:
              "open": sum(1 for c in notes_all if c.get("status") == "open"),
              "addressed": sum(1 for c in notes_all if c.get("status") in ("addressed_by_agent", "resolved_in_version", "user_confirmed")),
              "sends": _count_lines(page_dir / "rounds.ndjson")}
-    return {"version": v, "questions": qs, "notes": notes, "closed": closed, "beads": beads,
+    # when this answer was read: a saved note newer than it is kept though this answer lacks it (r12 audit14 questions 1, running 1)
+    at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"version": v, "at": at, "questions": qs, "notes": notes, "closed": closed, "beads": beads,
             "done": len(rows), "tiles": tiles, "since": _since(page_dir, meta, v), "carried": _carried(page_dir, notes_all, v, page),
             "pics": carried_pictures(page_dir)}
 
