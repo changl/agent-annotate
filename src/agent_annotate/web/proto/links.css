@@ -53,6 +53,7 @@
 .l-bv{white-space:nowrap;display:inline-flex;align-items:center;gap:3px}
 .l-notes{margin:4px 0 8px}
 .l-nt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0}
+.l-nt.l-hl{outline:2px solid var(--color-primary);outline-offset:2px;border-radius:4px}
 .l-nbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:6px 8px}
 .l-nacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
 /* a kept document with revisions (the admin meeting), as the mock's reader */

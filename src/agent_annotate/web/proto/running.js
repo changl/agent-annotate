@@ -404,7 +404,8 @@
       if (!D) { ctx.data('running').then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {}); return []; }
       const B = (D.board || {}).beads || {}, tst = ctx.prefs.get('tst', {}), out = [];
       const ttl = id => `${esc(cut(tclean((B[id] || {}).t || id), 60))} <span class="bid">${esc(id)}</span>`;
-      const go = id => () => { ctx.prefs.set('task', id); ctx.go('running'); };
+      // from Running itself the hash is already #running, so no hashchange redraws: open the task here (r12 fix8, running 1)
+      const go = id => () => { ctx.prefs.set('task', id); if (location.hash === '#running' && tabNow === 'running' && EL && EL.isConnected) openTask(id); else ctx.go('running'); };
       for (const [id, st] of Object.entries(tst)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, go: go(id),
         remove: () => { const a = ctx.prefs.get('tst', {}); delete a[id]; ctx.prefs.set('tst', a); redraw(); return () => { ctx.prefs.set('tst', {...ctx.prefs.get('tst', {}), [id]: st}); redraw(); }; }});
       for (const id of Object.keys(B)) { const k = 'tcm:' + id, c = ctx.prefs.get(k, '');

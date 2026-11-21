@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const P = window.Proto = window.Proto || {};
-  const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false};
+  const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false, hl: '', scroll: false};
   let mine = [];  // notes written here this visit, so Undo can take them back
   const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
@@ -125,6 +125,7 @@
       let t;
       q.oninput = () => { clearTimeout(t); t = setTimeout(() => { S.dq = q.value.trim(); S.dsel = -1; draw(w, ctx, D); const n = w.querySelector('#l-dq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 150); };
     }
+    if (S.scroll) { S.scroll = false; const h = w.querySelector('.l-hl'); if (h) h.scrollIntoView({block: 'center'}); }
   }
   // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed
   const badWhen = D => { const [d, t] = String(D.current_t || '').split(' '); return d ? `${dm(d)}${t ? ', ' + t : ''}` : 'today'; };
@@ -136,7 +137,7 @@
   function noteBox(ctx, D, k) {
     const {esc, icon} = ctx, ns = notesAt(D, k);
     if (!ns.length && S.note !== k) return '';
-    return `<div class="l-notes">${ns.map(n => `<div class="l-nt">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
+    return `<div class="l-notes">${ns.map(n => `<div class="l-nt${S.hl === n.id ? ' l-hl' : ''}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
       ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note"></textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -148,6 +149,10 @@
       <p class="small mut">The line marks the ${c.gate.toLocaleString()} ms gate · ${esc(c.axis)}</p></figure>
       ${c.pts.map((_, i) => noteBox(ctx, D, `doc:kept-${d.id}~${i}`)).join('')}`;
   }
+  // Approve beside Write a note, as in the mock; it goes with the one Send under Reference (r12 fix8, reference 3)
+  const apprs = ctx => ctx.prefs.get('draft:lappr', []);
+  const apprBtn = (ctx, id) => { const on = apprs(ctx).includes(id);
+    return `<button class="btn sm${on ? ' rec' : ''}" data-kappr="${ctx.esc(id)}" aria-pressed="${on}">${on ? '✓ Approved · Undo' : 'Approve'}</button>`; };
   const keptBody = (ctx, D, d) => { const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`);
     return d.revs ? revDoc(ctx, D, d, line) : blocksHtml(d.blocks || [], ctx.esc, line); };
   function docsHtml(ctx, D, copyBtn) {
@@ -155,7 +160,7 @@
     const keptRows = kept.map(d => `<div class="l-line"><span class="l-grow"><button class="lk l-left" data-kept="${esc(d.id)}" aria-expanded="${S.kept === d.id}">${icon('doc')} ${esc(d.t)}</button><span class="small mut l-sub">${esc(d.sub)}</span></span>${copyBtn(`#links/kept-${encodeURIComponent(d.id)}`, d.t)}</div>
       ${S.kept === d.id ? `<div class="l-doc" data-doc="doc:kept-${esc(d.id)}~p" data-docname="${esc(d.t)}"><div class="l-dbar"><b>${esc(d.t)}</b><span class="small mut">read-only · select words to write a note on them</span><span class="spacer"></span><button class="btn sm" data-kept="${esc(d.id)}">${icon('x')} Close</button></div>
         ${d.chart ? chartHtml(ctx, D, d) : ''}${keptBody(ctx, D, d)}${noteBox(ctx, D, `doc:kept-${d.id}`)}
-        <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button><span class="small mut">Click any line to write a note on it</span></div></div>` : ''}`).join('');
+        <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button>${apprBtn(ctx, d.id)}<span class="small mut">Click any line to write a note on it</span></div></div>` : ''}`).join('');
     const q = S.dq.toLowerCase(), hit = f => !q || `${f.n} ${f.sub} ${groups[f.g] || ''}`.toLowerCase().includes(q);
     const sh = F.filter(f => hit(f) && (!S.dk || f.k === S.dk)), kinds = Object.keys(DK).filter(k => F.some(f => f.k === k));
     const gs = Object.keys(groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
@@ -205,6 +210,7 @@
     else if (b.hasAttribute('data-bad')) { S.view = S.view === 'bad' ? '' : 'bad'; draw(w, ctx, D); }
     else if (b.hasAttribute('data-people')) ctx.go('links', 'people');
     else if (b.hasAttribute('data-goq')) ctx.go('questions');
+    else if (b.dataset.kappr) { const id = b.dataset.kappr, a = apprs(ctx); ctx.prefs.set('draft:lappr', a.includes(id) ? a.filter(x => x !== id) : [...a, id]); draw(w, ctx, D); ctx.refreshTop(); }
     else if (b.dataset.kept) { S.kept = S.kept === b.dataset.kept ? '' : b.dataset.kept; S.note = ''; draw(w, ctx, D); }
     else if (b.dataset.rv) { const [id, i] = b.dataset.rv.split('~'); S.rv[id] = +i; draw(w, ctx, D); }
     else if (b.hasAttribute('data-marks')) { S.marks = !S.marks; draw(w, ctx, D); }
@@ -225,8 +231,11 @@
       const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
       try {
         const l = d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links';
+        // the line it is on, so Send names it by its line as the mock does (r12 fix8, running 3)
+        const m = /^(.*)~(\d+)$/.exec(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
+        const line = le ? le.textContent.trim().replace(/\s+/g, ' ') : '';
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target});
-        mine.push({id: c.id, a: k, l, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
+        mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         S.note = ''; S.tgt = null; draw(w, ctx, D); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
       } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
@@ -279,13 +288,27 @@
   // notes on kept documents go with the one Send, under Notes; Go to it opens that document (r12 fix6, running 4)
   let ON = null;  // the Pages & links view on screen, to redraw it when Send takes a note back
   const redo = () => { if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); };
+  // Go to it opens the note's document and lands on the note, outlined, as the mock does (r12 fix8, running 3)
+  async function goNote(c, n) {
+    const D = await c.data('links'), kept = (/^doc:kept-([^~]+)/.exec(n.a) || [])[1];
+    if (kept) S.kept = kept;
+    else { const f = ((D.docs || {}).files || []).findIndex(f => n.a === docKey(f) || n.a.startsWith(docKey(f) + '~')); if (f >= 0) S.dsel = f; }
+    S.hl = n.id; S.note = ''; S.scroll = true;
+    if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links');  // on screen: the same hash fires no hashchange
+  }
+  let KEPT = null;  // kept documents' titles, for Send before Pages & links has opened
   if (P.queue) P.queue({
-    items: c => mine.filter(n => !n.sent).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
-      go: () => c.go('links', (/^doc:(kept-[^~]+)/.exec(n.a) || [])[1]),
+    items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
+      const d = (KEPT || []).find(x => x.id === id);
+      return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`,
+        go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
+        remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
+    ...mine.filter(n => !n.sent).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? (n.line.length > 50 ? n.line.slice(0, 49) + '…' : n.line) : n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+      go: () => goNote(c, n),
       remove: async () => {
         await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); redo();
-        return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }})),
-    sent: () => { mine.forEach(n => { n.sent = true; }); redo(); },
+        return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }}))],
+    sent: c => { mine.forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); redo(); },
   });
   P.tab({key: 'links', render, chip: async ctx => { const D = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

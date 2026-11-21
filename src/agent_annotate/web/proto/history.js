@@ -19,6 +19,7 @@
       ${o.before || ''}<div class="hv-frame"></div></div>`;
     host.querySelector('[data-hv-close]').onclick = o.onClose;
     const box = host.querySelector('.hv-frame');
+    CX = ctx;
     const told = () => TELL.has(o.src);
     async function load(retried) {
       box.innerHTML = `<p class="small mut">${icon('reload')} Loading…</p>`;
@@ -54,12 +55,17 @@
     load(false);
   };
   // "Tell the agent" about a page that could not load goes with the one Send, under Replies to the agent (r12 fix6, running 2)
-  const TELL = new Map(), LIVE = new Map();
+  // kept in prefs as a draft, so it survives a reload with "Unsent answers and notes" on, as task drafts do (r12 fix8, running 2)
+  let CX;
+  const all = () => ({...(CX ? CX.prefs.get('draft:tell', {}) : {})}), put = a => CX && CX.prefs.set('draft:tell', a);
+  const TELL = {has: s => s in all(), set: (s, t) => put({...all(), [s]: t}), delete: s => { const a = all(); delete a[s]; put(a); },
+    keys: () => Object.keys(all()), clear: () => put({}), [Symbol.iterator]: () => Object.entries(all())[Symbol.iterator]()};
+  const LIVE = new Map();
   const again = src => { const f = LIVE.get(src); if (f) f(); };
   if (P.queue) P.queue({
-    items: ctx => [...TELL].map(([src, t]) => ({key: 'tell:' + src, group: 'Replies to the agent', html: `About the page that could not load: “${ctx.esc(t.text)}”`,
+    items: ctx => (CX = ctx, [...TELL]).map(([src, t]) => ({key: 'tell:' + src, group: 'Replies to the agent', html: `About the page that could not load: “${ctx.esc(t.text)}”`,
       go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); again(src); return () => { TELL.set(src, t); again(src); }; }})),
-    sent: () => { const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); },
+    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); },
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
