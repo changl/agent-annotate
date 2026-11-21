@@ -173,6 +173,46 @@ DOC_GROUPS = {"": "Project folder", "planning": "Planning", "design": "Design", 
 MD_INLINE = 120_000  # a longer Markdown file is listed but opens nowhere
 
 
+DOC_PIC = "proto/doc/"  # where the page serves a document's picture (proto_data.serve)
+_PIC_LINE = re.compile(r"^(\s*!\[[^\]\n]*\]\(\s*)([^)\s]+)(\s*\)\s*)$", re.M)  # a picture on its own line, as pagegen._IMAGE
+
+
+def doc_picture(rel: str, root: Path = FLD_DIR) -> Path | None:
+    """The picture file at rel under the project's document folders (planning, design, analysis, outputs), or None:
+    an image of at most 10 MB, as today's release takes, inside the folder, never a hidden one."""
+    from ..images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES
+    parts = Path(rel).parts
+    if not parts or parts[0] not in ("planning", "design", "analysis", "outputs") or any(p.startswith(".") or p == ".." for p in parts):
+        return None
+    p = root / rel
+    try:
+        real, top = p.resolve(), root.resolve()
+        ok = real.is_relative_to(top) and real.suffix.lower() in IMAGE_SUFFIXES and real.is_file() and real.stat().st_size <= MAX_IMAGE_BYTES
+    except OSError:
+        return None
+    return p if ok else None
+
+
+def doc_pictures(text: str, md: Path, root: Path = FLD_DIR) -> str:
+    """Each picture line's file found as today's release finds it (pagegen.ImageStore: relative to the Markdown file's folder,
+    or an absolute path), linked to where the page serves it; a URL or a file not found keeps its description only."""
+    import urllib.parse
+
+    def one(m: re.Match) -> str:
+        ref, url = m[2], ""
+        if not re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)", ref):
+            p = Path(urllib.parse.unquote(ref)).expanduser()
+            p = p if p.is_absolute() else md.parent / p
+            try:
+                rel = Path(os.path.normpath(p)).relative_to(root).as_posix()
+            except ValueError:
+                rel = ""
+            if rel and doc_picture(rel, root):
+                url = DOC_PIC + urllib.parse.quote(rel)
+        return m[1] + url + m[3]
+    return _PIC_LINE.sub(one, text)
+
+
 def documents(root: Path = FLD_DIR) -> dict:
     """This project's own document files (his #111): planning, design, analysis and outputs, two folders deep.
     Markdown carries its text (emails and phone numbers masked) so it opens in place."""
@@ -197,7 +237,7 @@ def documents(root: Path = FLD_DIR) -> dict:
             row = {"n": hide(name), "g": group, "sub": "/".join(rel.parts[(2 if top == "planning" else 1):]), "k": kind,
                    "kb": max(1, round(st.st_size / 1024)), "d": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")}
             if kind == "md" and st.st_size <= MD_INLINE:
-                row["md"] = hide(p.read_text(errors="ignore"))
+                row["md"] = hide(doc_pictures(p.read_text(errors="ignore"), p, root))
             files.append(row)
     groups = {g: DOC_GROUPS.get(g) or g.split("/")[-1].replace("-", " ").capitalize() for g in {f["g"] for f in files}}
     return {"files": files, "groups": groups}
@@ -266,7 +306,7 @@ def extras(root: Path = FLD_DIR) -> list:
             page = re.sub(r"(https?:)?//[^\s\"'<>)]+", "#", page)
             item["html"] = hide(page.replace("</head>", f"<style>{re.sub(r'url[(][^)]*[)]', 'none', kit)}</style></head>", 1))
         elif p.suffix == ".md":
-            item["md"] = hide(p.read_text(errors="ignore"))
+            item["md"] = hide(doc_pictures(p.read_text(errors="ignore"), p, root))
         elif p.suffix == ".csv":  # one table per section: a change in the first column starts one, and its first row is the header
             parts = []
             for r in csv.reader(p.open(errors="ignore")):

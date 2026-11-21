@@ -214,6 +214,14 @@ def serve(handler, route_path: str):
             from .copies import fresh
             fresh(Path(handler.artifact_dir).parent / f"proto-{m[1]}")
         return serve_other(handler, route_path)
+    if route_path.startswith("/proto/doc/"):  # a picture a FastLane Drive Markdown document shows (reference.doc_pictures)
+        from .links import _json, _scope
+        from .reference import doc_picture
+        fld = _scope(_json(Path(handler.artifact_dir) / "current.meta.json"))[2]
+        pic = fld and doc_picture(urllib.parse.unquote(route_path[len("/proto/doc/"):]))
+        if not pic:
+            return handler._respond(404, b"Not found")
+        return handler._respond(200, pic.read_bytes(), sync_server._mime(pic.suffix.lower()), cache_control="private, max-age=300")
     if match := _AREA.fullmatch(route_path):
         t0 = time.perf_counter()
         try:

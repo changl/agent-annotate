@@ -200,7 +200,7 @@
   // the caption line every document reader shares (Proto.media, with Questions): "Picture N · caption · 25-100% · ⤢ Full size"
   let picN = 0;  // pictures numbered in reading order, from 1 in each document the viewer draws
   const zoomBar = (k, src, cap, n) => { const za = ` data-zk="${esc(k)}"`;
-    return `<figcaption class="qcap">${P.media.line(P.media.label(n), cap ? esc(cap) : '', P.media.ctl(zOf(k), src, ` data-zoom="${zOf(k)}"${za}`, za))}</figcaption>`; };
+    return `<figcaption class="qcap">${P.media.line(P.media.label(n), cap ? esc(P.media.bare(n, cap)) : '',P.media.ctl(zOf(k), src, ` data-zoom="${zOf(k)}"${za}`, za))}</figcaption>`; };
   function zoomView() {
     const f = S.full;
     if (!f) return '';
@@ -215,7 +215,7 @@
     // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
     const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
     const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${esc(c)}</th>` : `<td>${ci ? '' : pin(rk(ri))}${beadIn(esc(c))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
-      : kind === 'img' ? (n => `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(`Picture ${n}${x ? ' · ' + x : ''}`)}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
+      : kind === 'img' ? (n => `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
       : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}${P.media.code(t)}${tg}</div>`
       : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
     return body + noteList(k);
@@ -275,24 +275,8 @@
     return bar + lst;
   }
 
-  /* ---------- Markdown as blocks ---------- */
-  function mdBlocks(t) {
-    const out = [], L = t.replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
-    let i = 0, para = [];
-    const flush = () => { if (para.length) out.push(['p', inl(para.join(' '))]); para = []; };
-    if (L[0] === '---') { i = 1; while (i < L.length && L[i] !== '---') i++; i++; }  // front matter
-    while (i < L.length) {
-      const l = L[i];
-      if (/^\s*```/.test(l)) { flush(); const b = []; i++; while (i < L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++; out.push(['pre', b.join('\n')]); continue; }
-      if (/^#{1,6}\s/.test(l)) { flush(); out.push(['h', inl(l.replace(/^#+\s*/, ''))]); i++; continue; }
-      if (/^\s*\|/.test(l)) { flush(); const r = []; while (i < L.length && /^\s*\|/.test(L[i])) { const c = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => inl(x.trim())); if (!c.every(x => /^:?-{2,}:?$/.test(x))) r.push(c); i++; } out.push(['tbl', r.flat().join(' '), r, true]); continue; }
-      if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { flush(); out.push(['li', inl(l.replace(/^\s*([-*+]|\d+\.)\s+/, ''))]); i++; continue; }
-      if (!l.trim() || /^(-{3,}|\*{3,})$/.test(l.trim())) { flush(); i++; continue; }
-      para.push(l.trim()); i++;
-    }
-    flush();
-    return out;
-  }
+  /* ---------- Markdown as blocks: the one reader, shared with Pages & links (Proto.media) ---------- */
+  const mdBlocks = t => P.media.blocks(t);
 
   /* ---------- the go-live checklist: one row per item, filter chips as on GitHub's issue list ---------- */
   const CM = {done: ['ok', 'Done', 'done'], 'in progress': ['in', 'In progress', 'progress'], 'not started': ['todo', 'Not started', 'none'], blocked: ['blocked', 'Blocked', 'blocked'],

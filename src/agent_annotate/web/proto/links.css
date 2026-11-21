@@ -37,6 +37,7 @@
 .l-doc h4{margin:12px 0 4px}
 .l-doc p{margin:4px 0}
 .l-doc .l-li{padding-left:12px}
+.l-doc .l-fig{margin:10px 0}.l-doc .l-fig img{display:block;max-width:100%;height:auto;border-radius:var(--radius-field)}
 .l-doc pre{white-space:pre-wrap;font-size:var(--fs-sm)}
 .l-doc [data-line]{cursor:pointer;border-radius:3px}
 .l-doc [data-line]:hover{background:var(--excerpt-bg);outline:1px dashed var(--faint)}

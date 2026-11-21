@@ -11,29 +11,17 @@
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
   const fpath = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
   const dm = d => { const t = new Date(String(d).slice(0, 10) + 'T12:00'); return isNaN(t) ? String(d || '') : t.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
-  // shortcut: the same small Markdown reader as Reference's; share one copy when the prototype graduates
-  function mdBlocks(t) {
-    const out = [], L = t.replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
-    let i = 0, para = [];
-    const flush = () => { if (para.length) out.push(['p', inl(para.join(' '))]); para = []; };
-    if (L[0] === '---') { i = 1; while (i < L.length && L[i] !== '---') i++; i++; }
-    while (i < L.length) {
-      const l = L[i];
-      if (/^\s*```/.test(l)) { flush(); const b = []; i++; while (i < L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++; out.push(['pre', b.join('\n')]); continue; }
-      if (/^#{1,6}\s/.test(l)) { flush(); out.push(['h', inl(l.replace(/^#+\s*/, ''))]); i++; continue; }
-      if (/^\s*\|/.test(l)) { flush(); const r = []; while (i < L.length && /^\s*\|/.test(L[i])) { const c = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => inl(x.trim())); if (!c.every(x => /^:?-{2,}:?$/.test(x))) r.push(c); i++; } out.push(['tbl', r]); continue; }
-      if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { flush(); out.push(['li', inl(l.replace(/^\s*([-*+]|\d+\.)\s+/, ''))]); i++; continue; }
-      if (!l.trim() || /^(-{3,}|\*{3,})$/.test(l.trim())) { flush(); i++; continue; }
-      para.push(l.trim()); i++;
-    }
-    flush();
-    return out;
-  }
+  const mdBlocks = t => P.media.blocks(t);  // the one Markdown reader, shared with Reference (Proto.media)
+  const rowsOf = b => Array.isArray(b[1]) ? b[1] : b[2];  // a kept document's table is [tbl, rows]; a Markdown one [tbl, text, rows]
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
-  const blockHtml = ([k, t], i, esc, line, tag = '', ins = false) => { const a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
-    return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a)
-      : k === 'tbl' ? `<div class="l-tw"${a}><table>${t.map((r, ri) => `<tr>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>` : `<p${a}>${x}${tag}</p>`) + after; };
+  // each body row of a table takes its own note (line <i>~r<n>), as in Reference; the header row notes the whole table
+  const blockHtml = (b, i, esc, line, tag = '', ins = false) => { const [k, t] = b, a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
+    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '';
+      return `<div class="l-tw"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
+    if (k === 'img') { const M = P.media, z = (P.ctx && P.ctx.prefs.get('zoomDef', 75)) || 75, cap = M.title(b[3], b[2]), bare = M.bare(b[3], b[2]);
+      return `<figure class="l-fig"${a}><img src="${esc(t)}" alt="${esc(b[2] || 'Picture')}" data-zcap="${esc(cap)}" loading="lazy"><figcaption class="qcap">${M.line(M.label(b[3]), bare ? esc(bare) : '',M.ctl(z, t, ` data-lzoom="${z}"`, ' data-lzoom'))}</figcaption>${tag}</figure>${after}`; }
+    return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a) : `<p${a}>${x}${tag}</p>`) + after; };
   const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
   // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood
   // shortcut: no "changed" pairing or word-by-word marks as Reference has; share Reference's alignBlocks when the prototype graduates
@@ -209,8 +197,10 @@
   }
 
   async function click(e, w, ctx, D) {
+    const zb = e.target.closest('.l-doc [data-lzoom]');  // a picture's size or ⤢ Full size: the shared viewer, not a new tab
+    if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'); return P.media.view(im.getAttribute('src'), im.dataset.zcap, +(zb.dataset.zoom || zb.dataset.lzoom), zb); }
     const b = e.target.closest('button');
-    const ln = !b && !e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
+    const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target
       const sel = getSelection(), q = sel && !sel.isCollapsed ? String(sel).trim() : '';
       S.tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300)} : null;
@@ -274,7 +264,7 @@
   function place(w, D, k, el) {
     const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
     const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
-    const m = /^(.*)~(\d+)$/.exec(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
+    const m = /^(.*?)~(\d+(?:~r\d+)?)$/.exec(k), le =m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
     return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', line: le ? le.textContent.trim().replace(/\s+/g, ' ') : ''};
   }
   async function undoNote(id, w, ctx, D) {
@@ -352,14 +342,16 @@
     return l;
   };
   // the line a note sits on, read back from its document after a reload, so Send still names it by its line (audit7 running 5)
-  const blockText = b => !b ? '' : b[0] === 'tbl' ? b[1].map(r => r.join(' ')).join(' ') : (b[0] === 'li' ? '• ' : '') + String(b[1]).replace(/\s+/g, ' ').trim();
+  // `r`: a table's body row, by its number
+  const blockText = (b, r) => !b ? '' : b[0] === 'tbl' ? (r ? [rowsOf(b)[r] || []] : rowsOf(b)).map(x => x.join(' ')).join(' ') : b[0] === 'img' ? `Picture ${b[3]}${b[2] ? ': ' + b[2] : ''}`
+    : (b[0] === 'li' ? '• ' : '') + String(b[1]).replace(/\s+/g, ' ').trim();
   function lineOf(n) {
     if (n.line || !LD) return n.line || '';
-    let m = /^doc:kept-([^~]+)~p~(\d+)$/.exec(n.a);  // a kept document's line (~<n> alone is a chart bar, named in its label)
-    if (m) { const d = (LD.kept || []).find(x => x.id === m[1]); return d ? blockText((d.blocks || [])[+m[2]]) : ''; }
-    m = /^(doc:.+)~(\d+)$/.exec(n.a);  // a line of a Markdown file in the project's folder
+    let m = /^doc:kept-([^~]+)~p~(\d+)(?:~r(\d+))?$/.exec(n.a);  // a kept document's line (~<n> alone is a chart bar, named in its label)
+    if (m) { const d = (LD.kept || []).find(x => x.id === m[1]); return d ? blockText((d.blocks || [])[+m[2]], +m[3]) : ''; }
+    m = /^(doc:.+?)~(\d+)(?:~r(\d+))?$/.exec(n.a);  // a line of a Markdown file in the project's folder
     const f = m && ((LD.docs || {}).files || []).find(f => f.md && docKey(f) === m[1]);
-    return f ? blockText(mdBlocks(f.md)[+m[2]]) : '';
+    return f ? blockText(mdBlocks(f.md)[+m[2]], +m[3]) : '';
   }
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});

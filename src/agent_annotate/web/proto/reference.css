@@ -137,8 +137,9 @@
 .tab-reference figure img{cursor:crosshair}
 .tab-reference .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;vertical-align:middle}
 .tab-reference .seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:inherit}.tab-reference .seg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
-.tab-reference .zoomv{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:52px 16px 16px}
-.tab-reference .zoomv .zbar{position:fixed;top:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);z-index:41}
+.tab-reference .zoomv{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:0 16px 16px}
+/* sticky, not fixed: the picture starts under the toolbar however many lines it wraps to (390 px: two) */
+.tab-reference .zoomv .zbar{position:sticky;top:0;margin:0 -16px 12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);z-index:41}
 .tab-reference .zoomv .pic{display:block;max-width:fit-content;margin:0 auto;cursor:crosshair}
 .tab-reference .zoomv .pic img{display:block;width:100%;max-width:100%;height:auto}
 .tab-reference .zoomv .zn{max-width:760px;margin:8px auto}.tab-reference .zoomv .zn:empty{display:none}

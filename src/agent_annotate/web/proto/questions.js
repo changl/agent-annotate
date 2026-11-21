@@ -542,11 +542,16 @@
     let n = 0;
     for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) r.querySelectorAll('img,figure.qdgm').forEach(x => { x.dataset.pic = ++n; });
   }
-  const picName = x => x && x.dataset.pic ? `Picture ${x.dataset.pic}${x.alt ? ' · ' + x.alt : ''}` : (x && x.alt) || '';
+  const picName = x => x && x.dataset.pic ? P.media.title(x.dataset.pic, x.alt) : (x && x.alt) || '';
   // one picture line and one code Copy for every document reader: Questions, Reference plans and the Copy library,
   // and Pages & links documents call these, so a picture or a command reads and works the same in each (r12 audit15 reference #4, #5)
   const M = P.media = {
-    label: (n, title) => `<b class="qpicn"${title ? ` title="${esc(title)}"` : ''}>Picture ${n}</b>`,
+    lead: n => new RegExp(`^\\s*Picture\\s+${n}(?!\\d)\\s*[—–:·.,-]?\\s*`, 'i'),  // a caption that already says "Picture N —"
+    // a viewer's title, "Picture N · caption", with the number once when the caption already starts with it (r12 audit16 running 5)
+    title: (n, cap) => !cap ? `Picture ${n}` : M.lead(n).test(cap) ? cap.trim() : `Picture ${n} · ${cap}`,
+    // the caption beside its "Picture N" label, without a repeat of the label
+    bare: (n, cap) => String(cap || '').replace(M.lead(n), ''),
+    label:(n, title) => `<b class="qpicn"${title ? ` title="${esc(title)}"` : ''}>Picture ${n}</b>`,
     // the size buttons and ⤢ Full size; `za` goes on each size button and `fa` on Full size: the reader's own data
     ctl: (z, href, fa = '', za = '') => `<span class="qzm" role="group" aria-label="Open full size at">${[25, 50, 75, 100].map(v => `<button data-zoom="${v}"${za} aria-pressed="${v === z}" title="Open full size at ${v}% of the screen width">${v}%</button>`).join('')}</span><a class="aa-full" href="${esc(href)}" target="_blank" rel="noopener"${fa}>⤢ Full size</a>`,
     tap: '<span class="hide-ph">· tap a spot to write a note</span>',
@@ -554,6 +559,42 @@
     line: (lab, cap, ctl, tap = M.tap) => `${lab}<span>·</span>${cap ? `<span class="qcapt">${cap}</span><span>·</span>` : ''}${ctl}${tap}`,
     copyBtn: () => `<button class="btn sm qcodecopy" data-codecopy title="Copy the command" aria-label="Copy the command">${ic('copy')}<span>Copy</span></button>`,
     code: (t, a = '') => `<pre class="qcodehost"${a}><code>${esc(t)}</code>${M.copyBtn()}</pre>`,
+    // the one Markdown reader (Reference plans and files, Pages & links documents): blocks of [kind, text, ...]:
+    // ['h'|'p'|'li'|'pre', text], ['tbl', its text, rows, true], ['img', src, description, its number from 1].
+    // A picture on its own line is drawn, as today's release does; one with no file the feed could find keeps its description
+    blocks(t) {
+      const out = [], L = String(t || '').replace(/\r/g, '').split('\n'), inl = s => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|`)(.+?)\1/g, '$2').replace(/<[^>]+>/g, '');
+      let i = 0, para = [], pics = 0, m;
+      const flush = () => { if (para.length) out.push(['p', inl(para.join(' '))]); para = []; };
+      if (L[0] === '---') { i = 1; while (i < L.length && L[i] !== '---') i++; i++; }  // front matter
+      while (i < L.length) {
+        const l = L[i];
+        if (/^\s*```/.test(l)) { flush(); const b = []; i++; while (i < L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++; out.push(['pre', b.join('\n')]); continue; }
+        if ((m = /^\s*!\[([^\]]*)\]\(\s*([^)\s]*)\s*\)\s*$/.exec(l))) { flush(); out.push(m[2] ? ['img', m[2], inl(m[1]), ++pics] : ['p', `${inl(m[1]) || 'Picture'} (picture not found)`]); i++; continue; }
+        if (/^#{1,6}\s/.test(l)) { flush(); out.push(['h', inl(l.replace(/^#+\s*/, ''))]); i++; continue; }
+        if (/^\s*\|/.test(l)) { flush(); const r = []; while (i < L.length && /^\s*\|/.test(L[i])) { const c = L[i].trim().replace(/^\||\|$/g, '').split('|').map(x => inl(x.trim())); if (!c.every(x => /^:?-{2,}:?$/.test(x))) r.push(c); i++; } out.push(['tbl', r.flat().join(' '), r, true]); continue; }
+        if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { flush(); out.push(['li', inl(l.replace(/^\s*([-*+]|\d+\.)\s+/, ''))]); i++; continue; }
+        if (!l.trim() || /^(-{3,}|\*{3,})$/.test(l.trim())) { flush(); i++; continue; }
+        para.push(l.trim()); i++;
+      }
+      flush();
+      return out;
+    },
+    // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width
+    view(src, cap, z, from) {
+      let v = document.getElementById('p-mview');
+      if (!v) {
+        v = document.body.appendChild(Object.assign(document.createElement('div'), {id: 'p-mview', className: 'mview'}));
+        Object.entries({role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full-size picture'}).forEach(([k, x]) => v.setAttribute(k, x));
+        v.onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.mz) M.view(M._v.src, M._v.cap, +b.dataset.mz); else if (b && b.hasAttribute('data-mclose')) M.closeView(); };
+        if (!M._esc) document.addEventListener('keydown', M._esc = e => { if (e.key === 'Escape' && document.getElementById('p-mview')) { e.preventDefault(); e.stopPropagation(); M.closeView(); } }, true);
+      }
+      M._v = {src, cap, from: from || (M._v && M._v.from)};
+      v.innerHTML = `<div class="zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="qzm" role="group" aria-label="Size">${[25, 50, 75, 100].map(x => `<button data-mz="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-mclose>Close</button></div>
+        <div class="pic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || 'Picture')}"></div>`;
+      v.querySelector('[data-mclose]').focus();
+    },
+    closeView() { const v = document.getElementById('p-mview'); if (v) v.remove(); const f = M._v && M._v.from; M._v = null; if (f && f.isConnected) f.focus(); },
     // a code Copy clicked: the command as written, then "Copied" for 2 seconds
     async onCopy(btn) {
       const p = btn.closest('pre').cloneNode(true); p.querySelectorAll('.qcodecopy').forEach(b => b.remove());
@@ -573,7 +614,7 @@
       const lab = M.label(x.dataset.pic, x.dataset.img && 'IMG ' + x.dataset.img);
       const fig = !dgm && x.closest('figure'), fc = fig && fig.querySelectorAll('img').length === 1 && fig.querySelector(':scope > figcaption');
       // a caption under the picture takes the line; a compare cell's label above it does not
-      if (fc && x.compareDocumentPosition(fc) & Node.DOCUMENT_POSITION_FOLLOWING) { fc.classList.add('qcap'); fc.innerHTML = M.line(lab, fc.innerHTML, ctl); }
+      if (fc && x.compareDocumentPosition(fc) & Node.DOCUMENT_POSITION_FOLLOWING) { fc.classList.add('qcap'); fc.innerHTML = M.line(lab, M.bare(x.dataset.pic, fc.innerHTML), ctl); }
       else if (dgm) { x.insertAdjacentHTML('beforeend', `<figcaption class="qcap">${M.line(lab, 'Diagram', ctl, '')}</figcaption>`); mountDgm(x); }
       else at.insertAdjacentHTML('afterend', `<div class="qcap qpicbar">${M.line(lab, '', ctl)}</div>`);
     }

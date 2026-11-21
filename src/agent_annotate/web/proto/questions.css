@@ -91,6 +91,11 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .qcap .aa-full{margin:0;font-size:inherit;font-weight:600;color:var(--color-primary)}
 [data-theme=dark] .qcap .aa-full{color:color-mix(in oklab,var(--color-primary) 55%,var(--color-base-content))}
 /* code: a Copy button at the top right of every block, in every document reader (#03; audit15 reference #5) */
+/* Proto.media.view: the Full size viewer of a reader with no picture notes (Pages & links); the toolbar is sticky so it never covers the picture */
+.mview{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:0 16px 16px}
+.mview .zbar{position:sticky;top:0;margin:0 -16px 12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);color:var(--color-base-content)}
+.mview .spacer{flex:1}
+.mview .pic{display:block;max-width:100%;margin:0 auto}.mview .pic img{display:block;width:100%;height:auto}
 pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(--line);background:var(--excerpt-bg);border-radius:var(--radius-field);white-space:pre-wrap;overflow-wrap:anywhere}
 .aa pre.qcodehost{padding-right:84px}
 .qcodecopy{position:absolute;top:6px;right:6px}
