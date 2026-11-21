@@ -45,7 +45,7 @@ def test_reference_drafts_are_kept_and_restored():
 
 def test_each_note_returns_to_its_own_tab():
     """Reference 1: after a reload a document note is listed by Pages & links, not Reference or Questions."""
-    assert "!n.sent && !/^doc:/.test(n.a)) it.push(" in REF
+    assert "!n.sent && !/^doc:/.test(n.a)).map(" in REF
     assert "...unsent(c).map(n => ({key: 'ln:'" in LINKS
 
 

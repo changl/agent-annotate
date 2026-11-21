@@ -29,4 +29,4 @@ def test_kept_document_approve_goes_with_send():
     """Reference 3: Approve beside Write a note, listed under Reference in Send, with Undo."""
     assert "${apprBtn(ctx, d.id)}" in LINKS
     assert "'✓ Approved · Undo' : 'Approve'" in LINKS
-    assert "group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`" in LINKS
+    assert "group: 'Reference', html: `${c.esc(d ? d.t : tl[id] || id)} → <b>approved</b>`" in LINKS

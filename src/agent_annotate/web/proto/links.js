@@ -322,8 +322,11 @@
   // unsent notes from the feed (after a reload: the server's, or a copy's simulated ones) and from this visit, once each (r12 fix8)
   const unsent = c => {
     if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
-    const fd = (LD || {}).notes || [];
-    return [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
+    // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
+    const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
+    const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
+    if (LD) { const s = l.map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line})); if (JSON.stringify(s) !== JSON.stringify(c.prefs.get('draft:lnotes', []))) c.prefs.set('draft:lnotes', s); }
+    return l;
   };
   // the line a note sits on, read back from its document after a reload, so Send still names it by its line (audit7 running 5)
   const blockText = b => !b ? '' : b[0] === 'tbl' ? b[1].map(r => r.join(' ')).join(' ') : (b[0] === 'li' ? '• ' : '') + String(b[1]).replace(/\s+/g, ' ').trim();
@@ -338,8 +341,9 @@
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
       // the feed the tab or its chip already read names it at once; never the internal id (audit7 reference 5)
-      const d = (KEPT || (LD || {}).kept || (ON ? ON.D.kept : null) || []).find(x => x.id === id);
-      return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`,
+      const d = (KEPT || (LD || {}).kept || (ON ? ON.D.kept : null) || []).find(x => x.id === id), tl = c.prefs.get('draft:lappr-t', {});
+      if (d && tl[id] !== d.t) c.prefs.set('draft:lappr-t', {...tl, [id]: d.t});  // its title, for Send before the feed is in after a reload (r12 fix10)
+      return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : tl[id] || id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
     ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut(d.line || d.l || 'Pages & links', 50))}”: ${c.esc(cut(d.text.trim(), 140))}`,
@@ -349,9 +353,9 @@
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? cut(n.line, 50) : n.l || 'Pages & links')}”: ${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
       remove: async () => {
-        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); redo();
+        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', c.prefs.get('draft:lnotes', []).filter(x => x.id !== n.id)); redo();
         return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }}))],
-    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []);
+    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }
       redo(); },

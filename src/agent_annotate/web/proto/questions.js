@@ -1051,6 +1051,10 @@
     count: async c => { await load(c); return sendCount(); },
     wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
+    // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
+    changed: async () => { const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
+      if (!S.armed || !s || (s.contains(a) && /^(TEXTAREA|INPUT)$/.test(a.tagName))) return;
+      const f = s.contains(a) && a.matches('[data-send]'); await draw(true); const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus(); },
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
     // key: opened by ⌘↵, which asks for a second press; a second ⌘↵ sends. Off Questions the sheet opens over the tab on screen (r12 fix7 frame 1, 5)
     open: async (c, key) => {

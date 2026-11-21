@@ -75,6 +75,12 @@
       delete mem[k];
       try { localStorage.setItem(store(k), JSON.stringify(v)); } catch {}
     },
+    // the saved keys matching re: a tab lists its drafts from these before its data is in (r12 fix10 frame 1)
+    keys(re) {
+      const ks = new Set(Object.keys(mem)), pre = store('');
+      try { for (const k of Object.keys(localStorage)) if (k.startsWith(pre)) ks.add(k.slice(pre.length)); } catch {}
+      return [...ks].filter(k => re.test(k));
+    },
   };
   const REM = {folds: true, tab: true, drafts: true};
   const remember = kind => ({...REM, ...prefs.get('rem', {})})[kind] !== false;
@@ -114,6 +120,7 @@
   function toast(msg, opts = {}) {
     const el = document.getElementById('p-toast');
     clearTimeout(toastTimer);
+    if (S.sentPaint) { S.sentPaint = false; drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); }  // the last-Send chip changes with the receipt (r12 fix10 frame 4)
     // On a copy every simulated write says so, whichever tab drew it: an undoable change, or a toast just after a write
     const mark = opts.inert || (COPY && (opts.undo || Date.now() - wroteAt < 3000));
     el.innerHTML = `<div class="p-toast" role="status"><span>${esc(msg)}</span>${mark ? P.inertMark() : ''}${opts.undo ? '<button class="lk" data-undo>Undo</button>' : ''}</div>`;
@@ -136,7 +143,7 @@
     refreshChips: () => { drawTabs(); refreshTop(); },
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
-    queued, queueSent: n => { if (n) prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
+    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -393,17 +400,30 @@
   function drawAll() { drawTop(); drawFab(); drawLayer(); }
   // Running's data: workers, scheduled jobs and the bead board, for the top bar and Home
   const readRun = () => data('running').then(r => { S.run = r || null; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null; }).catch(() => {});
+  // Questions' three counts, read from one load and painted together: Send, the waiting badge and the Questions tab's chip.
+  // A reload and a newer version show them with the version they belong to, never one before the others (r12 fix10 frame 1, running 2)
+  const chipVal = c => c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
+  async function readCounts() {
+    if (!sendable()) return null;
+    const qc = byKey.questions.chip;
+    try {
+      const [n, w, chip] = await Promise.all([sendP.count(ctx), sendP.waiting ? sendP.waiting(ctx) : null, qc ? qc(ctx) : undefined]);
+      return {n: +n || 0, w: w == null ? null : +w || 0, chip};
+    } catch (e) { console.warn('counts', e); return null; }
+  }
+  const putCounts = c => { if (!c) return; S.sendN = c.n; if (c.w != null) S.qWait = c.w; if (c.chip !== undefined) S.chips.questions = chipVal(c.chip); };
   let topTimer;
   function refreshTop() {
     clearTimeout(topTimer);
     topTimer = setTimeout(async () => {
+      if (S.settling) return;  // a newer version is loading: its counts paint with it
       await Promise.all([
-        sendable() ? Promise.resolve().then(() => sendP.count(ctx)).then(n => { S.sendN = +n || 0; }).catch(e => console.warn('send count', e)) : null,
-        sendP && sendP.waiting ? Promise.resolve().then(() => sendP.waiting(ctx)).then(n => { S.qWait = +n || 0; }).catch(e => console.warn('waiting', e)) : null,
+        readCounts().then(c => { if (S.settling) return; putCounts(c); if (c) { paintChip('questions'); drawTop(); drawFab(); } }),
         readRun(),
         data('frame', true).then(d => { S.fd = d; }).catch(() => {}),
         api.delivery().then(d => { S.deliv = d && d.latest; }).catch(() => {}),
       ]);
+      if (S.settling) return;
       drawTop(); drawFab(); if (S.menu === 'nav') drawLayer();
       if (S.home) drawHome();  // its row for this page shows the same waiting count
     }, 300);
@@ -413,10 +433,11 @@
   function refreshSend() {
     clearTimeout(sendT);
     sendT = setTimeout(async () => {
-      if (!started || !sendable()) return;
+      if (!started || !sendable() || S.settling) return;
       const n = await Promise.resolve().then(() => sendP.count(ctx)).then(x => +x || 0, () => S.sendN);
-      if (n === S.sendN) return;
+      if (n === S.sendN || S.settling) return;
       S.sendN = n;
+      if (sendP.changed) sendP.changed();  // an open Send summary lists what the count now holds (r12 fix10 reference 2)
       document.querySelectorAll('#p-top [data-send], #p-layer [data-send]').forEach(b => { b.outerHTML = sendBtn(b.classList.contains('hide-ph') ? 'hide-ph' : ''); });
       drawFab();
     }, 30);
@@ -589,7 +610,16 @@
     if (t.id === 'p-fab') { return sendable() && S.sendN && Promise.resolve().then(() => sendP.open(ctx)); }
     if (d.recheck !== undefined) {
       // every tab's counts follow the new version at once: Questions re-reads, then the badges repaint (audit6 running #04, frame #03)
-      if (S.newer) { S.loadedV = S.newer.v; S.newer = null; for (const k in cache) delete cache[k]; if (sendP && sendP.newer) sendP.newer(); api.meta().then(m => { S.meta = m; }).finally(() => { route(); refreshTop(); toast('Loaded the newer version'); }); return; }
+      // the version, Send, the waiting badge and the Questions chip change in one paint, and only then does it say so (r12 fix10 running 2)
+      if (S.settling) return;
+      if (S.newer) {
+        const v = S.newer.v; S.settling = true;
+        for (const k in cache) delete cache[k]; if (sendP && sendP.newer) sendP.newer();
+        Promise.all([api.meta().catch(() => null), readCounts()]).then(([m, c]) => {
+          if (m) S.meta = m; S.loadedV = (m && m.current) || v; S.newer = null; putCounts(c);
+        }).finally(() => { S.settling = false; route(); refreshTop(); toast('Loaded the newer version'); });
+        return;
+      }
       checkNewer().then(found => { drawTop(); if (!found) toast('Up to date'); });
       return;
     }
@@ -755,11 +785,15 @@
     addEventListener('scroll', onScroll, {passive: true});
     phoneQ.addEventListener('change', () => { S.menu = ''; drawAll(); });
     const [meta, who, fd, proj, board] = await Promise.all([api.meta(), api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null)));
-    S.meta = meta; S.loadedV = meta && meta.current; S.who = who; S.fd = fd; S.board = board;
+    S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
-    document.title = projName() + ' · Agent Annotate';
+    document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
     await Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
     started = true;
+    // the first paint carries the counts with the version: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
+    // shortcut: a Questions read slower than 4 s paints without the counts, which follow when it lands
+    putCounts(await Promise.race([readCounts(), new Promise(r => setTimeout(r, 4000, null))]));
+    S.meta = meta; S.loadedV = meta && meta.current;
     route();
     addEventListener('hashchange', route);
     refreshTop();  // counts, workers, the board and the last Send

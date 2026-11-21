@@ -13,7 +13,7 @@ a,.lk{color:var(--color-primary);font-weight:600;background:none;border:0;paddin
 .mut{color:var(--muted)}.small{font-size:var(--fs-sm)}.err-t{color:var(--err-text);font-weight:600}
 .grow{flex:1;min-width:0}
 .ri8{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
-kbd{border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:var(--fs-xs);font-family:inherit}
+kbd{border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:var(--fs-xs);font-family:inherit;white-space:nowrap;overflow-wrap:normal}  /* a keycap never splits (r12 fix10 frame 5) */
 [hidden]{display:none!important}
 
 /* larger primary text (#100): question context and what you type, 16 px at 100% */
@@ -233,6 +233,7 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
 /* toast */
 /* centred between 12 px margins, not from left:50%, so a long message gets the screen's width instead of half of it (fix3) */
 .p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto;z-index:40}
+body:has(.qsend.sending) .p-toastwrap{display:none}  /* an earlier notice goes away while Send counts down: nothing covers its Undo (r12 fix10 frame 2) */
 .p-toast{display:flex;flex-wrap:wrap;row-gap:4px;align-items:center;gap:12px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-box);padding:8px 14px;box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 25%,transparent)}
 .p-toast .lk{color:var(--color-base-100);text-decoration:underline;white-space:nowrap}  /* the mock's: on a phone the links wrap as whole links */
 .p-toast .p-inert{color:inherit;border-color:currentColor}  /* the toast is inverted: the marker takes its text colour */

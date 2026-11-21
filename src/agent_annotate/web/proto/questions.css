@@ -30,7 +30,8 @@
 .qsend .qhist li{padding:4px 0}
 .qsend .acts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
 .qsend .btn.pri kbd{background:transparent;color:inherit;border-color:currentColor}
-.qsendkey{margin:8px 0;padding:6px 10px;border-radius:var(--radius-field);background:color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));font-size:var(--fs-sm);display:flex;align-items:center;gap:6px}
+.qsendkey{margin:8px 0;padding:6px 10px;border-radius:var(--radius-field);background:color-mix(in oklab,var(--color-primary) 14%,var(--color-base-100));font-size:var(--fs-sm);overflow-wrap:normal}  /* one line of text: it wraps between words, as the mock's (r12 fix10 frame 5) */
+.qsendkey svg{vertical-align:-3px;margin-right:4px}
 .qsend.sending{position:fixed;top:136px;right:20px;z-index:12;display:flex;align-items:center;gap:10px;width:auto}
 .warn-t{color:var(--warn-text)}
 .abpick{margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}  /* today and proposed: pick a side (the mock's abpick) */

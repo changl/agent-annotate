@@ -40,7 +40,7 @@ def test_each_tab_queues_its_next_send_items():
     assert "group: 'Replies to the agent', html: `About the page that could not load:" in hist
     assert "TELL.set(o.src" in hist and "let told" not in hist
     # reference 4 and 5: notes, reopen reasons and copy-library choices
-    assert "Finding “${c.esc(f.label || fk)}” → <b>reopened</b>" in ref and "if (!why.trim()) continue;" in ref
+    assert "Finding “${c.esc(name('ro:' + fk, f.label, 'a finding'))}” → <b>reopened</b>" in ref and "if (!why.trim()) continue;" in ref
     assert "group: 'Notes', note: n.id" in ref and "for (const [ck, s] of S.cp)" in ref
     # running 4: notes on kept documents
     assert "group: 'Notes', note: n.id" in links and "mine.includes(n) && !n.sent" in links
@@ -79,7 +79,7 @@ def test_send_opens_over_any_tab_at_any_count():
 def test_last_send_follows_a_new_send_and_skip_opens_the_phone_menu():
     """r12 fix7 frame 3 and 4."""
     f = _js("frame")
-    assert "queueSent: n => { if (n) prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n});" in f
+    assert "queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; }" in f
     chip = f[f.index("function lastSendChip"):f.index("function settingsBody")]
     assert "if (s && (COPY ||" in chip and "prototype: not sent" in chip and "delivered" not in chip[:chip.index("if (!r && !l)")]
     assert "if (kind === 'tabs' && phoneQ.matches && !S.home) { S.menu = 'nav';" in f and "#p-layer .pm-tab" in f

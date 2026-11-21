@@ -13,9 +13,12 @@
     if (kept || !ctx) return;
     kept = true;
     const s = ctx.prefs.get('draft:ref', null);
-    if (s) { S.reopen = new Map(s.reopen || []); S.rsent = new Map(s.rsent || []); S.cp = new Map(s.cp || []); S.appr = new Set(s.appr || []); }
+    if (s) { S.reopen = new Map(s.reopen || []); S.rsent = new Map(s.rsent || []); S.cp = new Map(s.cp || []); S.appr = new Set(s.appr || []); LBL = s.lbl || {}; SNOTES = s.notes || []; }
   }
-  const keepDrafts = () => { if (kept) ctx.prefs.set('draft:ref', {reopen: [...S.reopen], rsent: [...S.rsent], cp: [...S.cp], appr: [...S.appr]}); };
+  // what Send names each draft and the unsent notes, saved with the drafts: after a reload Send lists them at once,
+  // while reference.json is still on its way or if it fails (r12 fix10 frame 1, reference 2); the feed replaces them once in
+  let LBL = {}, SNOTES = [];
+  const keepDrafts = () => { if (kept) ctx.prefs.set('draft:ref', {reopen: [...S.reopen], rsent: [...S.rsent], cp: [...S.cp], appr: [...S.appr], lbl: LBL, notes: SNOTES}); };
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
   // the store's own links are refused from inside its sandbox, so it asks this page to open the next of its pages
@@ -45,7 +48,7 @@
   /* ---------- rows ---------- */
   // shortcut: filing (Proposed, Approved, For reference) is kept in this browser; no reviewer endpoint moves a plan between sections yet
   const filed = () => ctx.prefs.get('ref-file', {}), stOf = p => filed()[p.id] || p.st;
-  const lastTs = p => p.revs[p.revs.length - 1][1], xOf = id => (D.extras || []).find(x => x.id === id);
+  const lastTs = p => p.revs[p.revs.length - 1][1], xOf = id => ((D && D.extras) || []).find(x => x.id === id);
   const nSteps = ss => ss.reduce((n, s) => n + 1 + nSteps(s.sub || []) + (s.br || []).reduce((m, b) => m + nSteps(b[1]), 0), 0);
   function rows() {
     const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: stOf(p),
@@ -608,40 +611,45 @@
   // copy-library choices, and notes written here (reference 4), which a plan's own version keeps out of Questions' list
   // notes from an earlier visit are listed too, while reference.json says they are unsent (r12 fix7)
   // Go to it: opens the item (a checklist row's note opens the checklist) and, for a note, highlights it; the same hash fires no hashchange, so redraw then
-  const itemOf = a => a.startsWith('chk:') && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
+  const itemOf = a => a.startsWith('chk:') && D && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
   // a note in a folded copy group or on an older plan revision: open that group or revision first (r12 fix9)
   function reach(a) {
     const m = /^ref:([^~]+)~(.+)~(\d+)$/.exec(a || ''), x = m && xOf(m[1]), p = m && D.plans.find(q => q.id === m[1]);
     if (m && m[2] === 'c' && x && x.copy && x.copy[+m[3]]) { S.cq = ''; S.open.add(`cpall:${x.id}:${cpRank(x.copy[+m[3]][2])}`); }
     else if (p) { const i = p.revs.findIndex(r => r[0] === m[2]); if (i >= 0) S.rv[p.id] = i; if (D.checklist && D.checklist.plan === p.id) S.det = true; }
   }
-  const goRef = (id, nid, a) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true; reach(a);
+  // before reference.json is in, the item is reached once render has it (r12 fix10 reference 1)
+  const goRef = (id, nid, a) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true; if (D) reach(a); else S.reach = a;
     if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
   const redo = () => draw();  // draw keeps the drafts, then redraws only on this tab
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
     items: c => {
-      if (!D) return [];
-      const it = [];
+      ctx = ctx || c; restoreDrafts();  // listed from what was saved, before reference.json is in (r12 fix10 frame 1)
+      const it = [], was = JSON.stringify([LBL, SNOTES]);
+      const name = (k, fresh, none) => fresh ? (LBL[k] = fresh) : LBL[k] || none;  // with the data: its name, kept for the next reload
       for (const [fk, why] of S.reopen) { if (!why.trim()) continue;
         const [id, i] = fk.split('~'), f = (((xOf(id) || {}).find || {}).items || [])[+i] || {};
-        it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(f.label || fk)}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why))); }
-      for (const [ck, s] of S.cp) { const m = /^ref:(.+)~c~(\d+)$/.exec(ck), x = m && xOf(m[1]); if (!x) continue;
+        it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(name('ro:' + fk, f.label, 'a finding'))}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why))); }
+      for (const [ck, s] of S.cp) { const m = /^ref:(.+)~c~(\d+)$/.exec(ck), x = m && xOf(m[1]); if (!m || (D && !x)) continue;
         // an edit shows its saved wording with its formatting: s.html is already cleaned to the editor's own tags (rich)
         const what = s.st === 'edit' ? `edited: “<span class="rf-sendrt">${s.html}</span>”` : `<b>${{ok: 'approved', held: 'held back', old: 'earlier wording'}[s.st]}</b>`;
-        it.push(out('cp:' + ck, 'Reference', `${c.esc(x.t)}, ${c.esc((x.copy[+m[2]] || [])[0] || 'line ' + (+m[2] + 1))} → ${what}`, x.id, () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
-      for (const k of S.appr) { const id = k.slice(4), x = D.plans.find(p => p.id === id) || xOf(id);
-        it.push(out('ap:' + k, 'Reference', `${c.esc(x ? x.t : id)} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
+        const nm = name('cp:' + ck, x && `${x.t}, ${(x.copy[+m[2]] || [])[0] || 'line ' + (+m[2] + 1)}`, `Copy library, line ${+m[2] + 1}`);
+        it.push(out('cp:' + ck, 'Reference', `${c.esc(nm)} → ${what}`, m[1], () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
+      for (const k of S.appr) { const id = k.slice(4), x = (D && D.plans.find(p => p.id === id)) || xOf(id);
+        it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
-      for (const n of allNotes()) if (!n.sent && !/^doc:/.test(n.a)) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
-        go: goRef(itemOf(n.a), n.id, n.a), remove: async () => {
-          await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); D.notes = D.notes.filter(x => x.id !== n.id); redo();
-          return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...noteMeta(n.a)}); mine.push({...n, id: b.id}); redo(); }; }});
+      if (D) SNOTES = allNotes().filter(n => !n.sent && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a)}));
+      for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+        go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: async () => {
+          await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
+          return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...(D ? noteMeta(n.a) : {})}); mine.push({...n, id: b.id, who: 'You'}); if (!D) SNOTES.push({...n, id: b.id}); keepDrafts(); redo(); }; }});
+      if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },
     sent: () => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
       for (const [fk, why] of S.reopen) if (why.trim()) S.rsent.set(fk, [t, why]);
-      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); redo(); },
+      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); SNOTES = []; keepDrafts(); redo(); },
   });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
@@ -649,6 +657,7 @@
       ctx = c; el = main; restoreDrafts();
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       unsort();
+      if (S.reach) { reach(S.reach); S.reach = ''; }  // Go to it pressed before the data was in (r12 fix10 reference 1)
       taskBack = '';
       const id = anchor ? decodeURIComponent(anchor) : '';
       if (id && (D.plans.some(p => p.id === id) || D.flows.some(f => f.id === id) || xOf(id))) { S.sel = id; S.scroll = true; markSeen([id]); }
