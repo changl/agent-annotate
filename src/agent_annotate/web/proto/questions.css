@@ -90,8 +90,9 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .qcap .qzm{margin-right:0}
 .qcap .aa-full{margin:0;font-size:inherit;font-weight:600;color:var(--color-primary)}
 [data-theme=dark] .qcap .aa-full{color:color-mix(in oklab,var(--color-primary) 55%,var(--color-base-content))}
-/* code: a Copy button at the top right of every block (#03) */
-.aa pre.qcodehost{position:relative;padding-right:84px;border:1px solid var(--line)}
+/* code: a Copy button at the top right of every block, in every document reader (#03; audit15 reference #5) */
+pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(--line);background:var(--excerpt-bg);border-radius:var(--radius-field);white-space:pre-wrap;overflow-wrap:anywhere}
+.aa pre.qcodehost{padding-right:84px}
 .qcodecopy{position:absolute;top:6px;right:6px}
 /* a published diagram, drawn by today's engine; the large-picture viewer shows it full screen (#06) */
 .qdgm{margin:12px 0 16px;--color-secondary:oklch(65% .2 300);--color-accent:oklch(70% .13 190)}

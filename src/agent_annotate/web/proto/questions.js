@@ -486,6 +486,25 @@
     for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) r.querySelectorAll('img,figure.qdgm').forEach(x => { x.dataset.pic = ++n; });
   }
   const picName = x => x && x.dataset.pic ? `Picture ${x.dataset.pic}${x.alt ? ' · ' + x.alt : ''}` : (x && x.alt) || '';
+  // one picture line and one code Copy for every document reader: Questions, Reference plans and the Copy library,
+  // and Pages & links documents call these, so a picture or a command reads and works the same in each (r12 audit15 reference #4, #5)
+  const M = P.media = {
+    label: (n, title) => `<b class="qpicn"${title ? ` title="${esc(title)}"` : ''}>Picture ${n}</b>`,
+    // the size buttons and ⤢ Full size; `za` goes on each size button and `fa` on Full size: the reader's own data
+    ctl: (z, href, fa = '', za = '') => `<span class="qzm" role="group" aria-label="Open full size at">${[25, 50, 75, 100].map(v => `<button data-zoom="${v}"${za} aria-pressed="${v === z}" title="Open full size at ${v}% of the screen width">${v}%</button>`).join('')}</span><a class="aa-full" href="${esc(href)}" target="_blank" rel="noopener"${fa}>⤢ Full size</a>`,
+    tap: '<span class="hide-ph">· tap a spot to write a note</span>',
+    // the mock's caption line: "Picture N · caption · 25-100% · ⤢ Full size · tap a spot to write a note" (caption is HTML)
+    line: (lab, cap, ctl, tap = M.tap) => `${lab}<span>·</span>${cap ? `<span class="qcapt">${cap}</span><span>·</span>` : ''}${ctl}${tap}`,
+    copyBtn: () => `<button class="btn sm qcodecopy" data-codecopy title="Copy the command" aria-label="Copy the command">${ic('copy')}<span>Copy</span></button>`,
+    code: (t, a = '') => `<pre class="qcodehost"${a}><code>${esc(t)}</code>${M.copyBtn()}</pre>`,
+    // a code Copy clicked: the command as written, then "Copied" for 2 seconds
+    async onCopy(btn) {
+      const p = btn.closest('pre').cloneNode(true); p.querySelectorAll('.qcodecopy').forEach(b => b.remove());
+      try { await navigator.clipboard.writeText(p.textContent.replace(/\n$/, '')); } catch { P.ctx.toast('Copy failed: your browser blocked it'); return; }
+      P.ctx.toast('Command copied');
+      btn.innerHTML = ic('tick') + '<span>Copied</span>'; setTimeout(() => { btn.innerHTML = ic('copy') + '<span>Copy</span>'; }, 2000);
+    },
+  };
   function zoomBars(el) {
     for (const x of el.querySelectorAll('[data-pic]:not([data-pbar])')) {
       if (x.closest('.qzoom')) continue;
@@ -493,18 +512,18 @@
       const dgm = x.tagName === 'FIGURE', src = dgm ? 'dgm:' + x.dataset.dgm : x.dataset.full || x.getAttribute('src'), z = zoomOf(src);
       const at = x.parentElement.classList.contains('qpinwrap') ? x.parentElement : x;
       const old = at.nextElementSibling; if (old && old.matches('a.aa-full')) old.remove();
-      const ctl = `<span class="qzm" role="group" aria-label="Open full size at">${[25, 50, 75, 100].map(v => `<button data-zoom="${v}" aria-pressed="${v === z}" title="Open full size at ${v}% of the screen width">${v}%</button>`).join('')}</span><a class="aa-full" href="${dgm ? '#' : esc(src)}" target="_blank" rel="noopener" data-zfull="${esc(src)}" data-zcap="${esc(dgm ? `Picture ${x.dataset.pic} · Diagram` : picName(x))}"${x.dataset.img ? ` data-zid="${esc(x.dataset.img)}"` : ''}${dgm ? ` data-zdgm="${esc(x.dataset.dgm)}"` : ''}>⤢ Full size</a>`;
-      const lab = `<b class="qpicn"${x.dataset.img ? ` title="IMG ${esc(x.dataset.img)}"` : ''}>Picture ${x.dataset.pic}</b>`, tap = '<span class="hide-ph">· tap a spot to write a note</span>';
+      const ctl = M.ctl(z, dgm ? '#' : src, ` data-zfull="${esc(src)}" data-zcap="${esc(dgm ? `Picture ${x.dataset.pic} · Diagram` : picName(x))}"${x.dataset.img ? ` data-zid="${esc(x.dataset.img)}"` : ''}${dgm ? ` data-zdgm="${esc(x.dataset.dgm)}"` : ''}`);
+      const lab = M.label(x.dataset.pic, x.dataset.img && 'IMG ' + x.dataset.img);
       const fig = !dgm && x.closest('figure'), fc = fig && fig.querySelectorAll('img').length === 1 && fig.querySelector(':scope > figcaption');
       // a caption under the picture takes the line; a compare cell's label above it does not
-      if (fc && x.compareDocumentPosition(fc) & Node.DOCUMENT_POSITION_FOLLOWING) { fc.classList.add('qcap'); fc.innerHTML = `${lab}<span>·</span><span class="qcapt">${fc.innerHTML}</span><span>·</span>${ctl}${tap}`; }
-      else if (dgm) { x.insertAdjacentHTML('beforeend', `<figcaption class="qcap">${lab}<span>·</span><span class="qcapt">Diagram</span><span>·</span>${ctl}</figcaption>`); mountDgm(x); }
-      else at.insertAdjacentHTML('afterend', `<div class="qcap qpicbar">${lab}<span>·</span>${ctl}${tap}</div>`);
+      if (fc && x.compareDocumentPosition(fc) & Node.DOCUMENT_POSITION_FOLLOWING) { fc.classList.add('qcap'); fc.innerHTML = M.line(lab, fc.innerHTML, ctl); }
+      else if (dgm) { x.insertAdjacentHTML('beforeend', `<figcaption class="qcap">${M.line(lab, 'Diagram', ctl, '')}</figcaption>`); mountDgm(x); }
+      else at.insertAdjacentHTML('afterend', `<div class="qcap qpicbar">${M.line(lab, '', ctl)}</div>`);
     }
     for (const pre of el.querySelectorAll('pre')) {
       if (pre.closest('.qzoom') || pre.querySelector(':scope > .qcodecopy')) continue;
       pre.classList.add('qcodehost');
-      pre.insertAdjacentHTML('beforeend', `<button class="btn sm qcodecopy" data-codecopy title="Copy the command" aria-label="Copy the command">${ic('copy')}<span>Copy</span></button>`);
+      pre.insertAdjacentHTML('beforeend', M.copyBtn());
     }
     el.querySelectorAll('img').forEach(i => { i.loading = 'eager'; });
   }
@@ -1020,10 +1039,7 @@
     if (ds.back) { root.querySelectorAll('.qbackrow').forEach(x => x.remove()); const c = document.getElementById('q-' + ds.back); if (c) { c.scrollIntoView({block: 'start', behavior: 'smooth'}); c.classList.add('qlit'); setTimeout(() => c.classList.remove('qlit'), 2000); } return; }
     if (ds.indoc) { S.open.add(ds.indoc); return jumpTo(ds.indoc, 'doc'); }
     if (ds.zoom) { const a = t.closest('.qzm').nextElementSibling, src = a && a.dataset.zfull; if (!src) return; const per = ctx.prefs.get('q:zoomPer', {}); per[src] = +ds.zoom; ctx.prefs.set('q:zoomPer', per); S.zoom = zoomAt(a, +ds.zoom); return draw(true); }
-    if (t.hasAttribute('data-codecopy')) {
-      const p = t.closest('pre').cloneNode(true); p.querySelectorAll('.qcodecopy').forEach(b => b.remove());
-      return copy(p.textContent.replace(/\n$/, ''), 'Command').then(ok => { if (!ok) return; t.innerHTML = ic('tick') + '<span>Copied</span>'; setTimeout(() => { t.innerHTML = ic('copy') + '<span>Copy</span>'; }, 2000); });
-    }
+    if (t.hasAttribute('data-codecopy')) return M.onCopy(t);
     if (ds.zoomto) { S.zoom.z = +ds.zoomto; const per = ctx.prefs.get('q:zoomPer', {}); per[S.zoom.src] = +ds.zoomto; ctx.prefs.set('q:zoomPer', per); return draw(true); }
     if (t.hasAttribute('data-zclose')) { S.zoom = null; return draw(true); }
     if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src}}; S.zoom = null; return openNote(next, true); }

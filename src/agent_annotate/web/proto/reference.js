@@ -182,7 +182,10 @@
 
   /* pictures open full size at 25-100% of the screen width, each remembering its own; the default comes from the settings menu */
   const ZS = [25, 50, 75, 100], zOf = k => ctx.prefs.get('ref-zoom', {})[k] || ctx.prefs.get('zoomDef', 75);
-  const zoomBar = (k, src, cap) => `<figcaption>${cap ? esc(cap) + ' · ' : ''}<span class="seg zm" role="group" aria-label="Open full size at">${ZS.map(z => `<button data-zoom="${z}" data-zk="${esc(k)}" aria-label="Open at ${z}%" aria-pressed="${z === zOf(k)}">${z}%</button>`).join('')}</span> <button class="lk small" data-zoom="${zOf(k)}" data-zk="${esc(k)}">⤢ Full size</button> · tap a spot to write a note</figcaption>`;
+  // the caption line every document reader shares (Proto.media, with Questions): "Picture N · caption · 25-100% · ⤢ Full size"
+  let picN = 0;  // pictures numbered in reading order, from 1 in each document the viewer draws
+  const zoomBar = (k, src, cap, n) => { const za = ` data-zk="${esc(k)}"`;
+    return `<figcaption class="qcap">${P.media.line(P.media.label(n), cap ? esc(cap) : '', P.media.ctl(zOf(k), src, ` data-zoom="${zOf(k)}"${za}`, za))}</figcaption>`; };
   function zoomView() {
     const f = S.full;
     if (!f) return '';
@@ -197,8 +200,8 @@
     // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
     const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
     const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${esc(c)}</th>` : `<td>${ci ? '' : pin(rk(ri))}${beadIn(esc(c))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
-      : kind === 'img' ? `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x)}${tg}</figure>`
-      : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}<pre><code>${esc(t)}</code></pre><button class="btn sm" data-copy="${esc(t)}">${ico('copy')}Copy</button>${tg}</div>`
+      : kind === 'img' ? (n => `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(`Picture ${n}${x ? ' · ' + x : ''}`)}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
+      : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}${P.media.code(t)}${tg}</div>`
       : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
     return body + noteList(k);
   }
@@ -421,6 +424,7 @@
   function viewer() {
     const p = D.plans.find(x => x.id === S.sel), f = !p && D.flows.find(x => x.id === S.sel), x = !p && !f && xOf(S.sel);
     if (!p && !f && !x) return '';
+    picN = 0;
     return `<div class="viewer" id="rf-viewer">${p ? planView(p) : f ? flowView(f) : extraView(x)}</div>`;
   }
 
@@ -469,7 +473,9 @@
       S.note = d.line; draw(); return;
     }
     if (b.tagName === 'SUMMARY') { S.det = !b.parentElement.open; return; }  // kept across redraws
-    if (b.tagName !== 'BUTTON') return;
+    if (b.matches('a[data-zoom]')) e.preventDefault();  // ⤢ Full size opens the viewer here, not a new tab
+    else if (b.tagName !== 'BUTTON') return;
+    if (d.codecopy !== undefined) return P.media.onCopy(b);
     if (S.tmerge && d.tmerge === undefined && d.tmergeto === undefined) S.tmerge = '';
     if (d.ref !== undefined) return open(d.ref);
     if (d.task) { ctx.prefs.set('task', d.task); ctx.go('running', d.task); taskBack = S.sel; return; }  // Running opens the task kept in prefs
@@ -522,7 +528,7 @@
     if (d.zoom) {
       const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-line="${CSS.escape(k)}"] img`);
       ctx.prefs.set('ref-zoom', {...ctx.prefs.get('ref-zoom', {}), [k]: +d.zoom});
-      S.full = im ? {k, src: im.getAttribute('src'), cap: im.getAttribute('alt'), z: +d.zoom} : {...S.full, z: +d.zoom};
+      S.full = im ? {k, src: im.getAttribute('src'), cap: im.dataset.zcap, z: +d.zoom} : {...S.full, z: +d.zoom};
       if (S.note !== k) S.note = '';
       return draw();
     }

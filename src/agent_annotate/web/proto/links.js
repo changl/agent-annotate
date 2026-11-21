@@ -32,7 +32,7 @@
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
   const blockHtml = ([k, t], i, esc, line, tag = '', ins = false) => { const a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
-    return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? `<pre${a}><code>${esc(t)}</code></pre>`
+    return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a)
       : k === 'tbl' ? `<div class="l-tw"${a}><table>${t.map((r, ri) => `<tr>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>` : `<p${a}>${x}${tag}</p>`) + after; };
   const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
   // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood
@@ -216,6 +216,7 @@
       return;
     }
     if (!b) return;
+    if (b.hasAttribute('data-codecopy')) return P.media.onCopy(b);  // the code Copy every document reader shares
     if (b.dataset.copylink || b.dataset.copypath) {
       const key = b.dataset.copylink || b.dataset.copypath, path = !!b.dataset.copypath;
       const ok = await copyText(path ? key : abs(key));

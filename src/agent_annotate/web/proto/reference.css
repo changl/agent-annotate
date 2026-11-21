@@ -111,8 +111,7 @@
 .tab-reference figure img{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--line)}
 .tab-reference figcaption{font-size:var(--fs-sm);color:var(--muted);margin-top:4px}
 .tab-reference .rf-code{position:relative;margin:6px 0 10px}
-.tab-reference .rf-code pre{margin:0;padding:8px 10px;background:var(--excerpt-bg);border-radius:var(--radius-field);white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
-.tab-reference .rf-code .btn{position:absolute;top:4px;right:4px}
+.tab-reference .rf-code pre{margin:0;font-size:var(--fs-sm)}
 /* plan tables wrap at every width, task ids included: no sideways scroll */
 .tab-reference .tblw{margin:6px 0 10px}
 .tab-reference .tblw table{width:100%;border-collapse:collapse;font-size:var(--fs-md);table-layout:auto}
@@ -138,7 +137,6 @@
 .tab-reference figure img{cursor:crosshair}
 .tab-reference .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;vertical-align:middle}
 .tab-reference .seg button{border:0;background:none;padding:3px 10px;cursor:pointer;color:inherit}.tab-reference .seg button[aria-pressed=true]{background:var(--color-base-content);color:var(--color-base-100)}
-.tab-reference .seg.zm button{font-size:var(--fs-xs);padding:1px 7px}
 .tab-reference .zoomv{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:52px 16px 16px}
 .tab-reference .zoomv .zbar{position:fixed;top:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);z-index:41}
 .tab-reference .zoomv .pic{display:block;max-width:fit-content;margin:0 auto;cursor:crosshair}

@@ -31,6 +31,7 @@ def run(tmp_path):
     page = tmp_path / "t.html"
     page.write_text(f"""<!doctype html><body><template id="src">{DOC}</template><div id="out"></div><script>
 const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);
+const P = {{}};  // the shared picture and code helpers hang on Proto (fix17)
 const ic = k => '<svg data-i="' + k + '"></svg>', ctx = {{prefs: {{get: (k, d) => d}}}}, mounted = [];
 function mountDgm(f) {{ mounted.push(f.dataset.dgm); }}
 const zoomOf = src => (ctx.prefs.get('q:zoomPer', {{}}))[src] || ctx.prefs.get('zoomDef', 75);
