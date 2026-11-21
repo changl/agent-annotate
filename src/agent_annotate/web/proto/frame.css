@@ -54,7 +54,7 @@ a.btn{color:inherit;font-weight:400}
 .who{font-weight:600}
 .av{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--color-primary);color:var(--color-primary-content);font-size:var(--fs-xs);font-weight:700;flex:none}
 .av.big{width:36px;height:36px;font-size:var(--fs-lg)}
-.p-bar{display:inline-flex;align-items:center;min-width:0}
+.p-bar{display:inline-flex;align-items:center;flex:none}
 .p-bar:empty{display:none}
 .rl2{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:none;border-radius:var(--radius-field);padding:3px 6px;cursor:pointer;color:var(--muted);min-height:30px}
 .rl2 svg.pi{width:18px;height:18px}
@@ -173,6 +173,56 @@ a.btn{color:inherit;font-weight:400}
 .spark .sa,.hleg .sa{fill:var(--orange)}
 .hleg{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:12px}
 .hleg span{display:inline-flex;align-items:center;gap:5px}
+.stack.ws i{opacity:1}.stack.ws i.working{background:var(--s-working)}.stack.ws i.stuck{background:var(--s-stuck)}.stack.ws i.failed{background:var(--s-failed)}.stack.ws i.done{background:var(--s-done)}
+
+/* top bar: workers and failing jobs beside the version, with a hover card (mock: workerDots, wkCard) */
+.wdots{display:inline-flex;align-items:center;gap:1px;padding:2px 4px;border-radius:var(--radius-field)}
+.wd{border:0;background:none;padding:4px 2px;cursor:pointer;display:inline-grid;place-items:center;position:relative;border-radius:4px}.wd:hover{background:var(--excerpt-bg)}
+.wsep{width:1px;height:14px;background:var(--line);margin:0 5px}
+.dt.stuck{box-shadow:0 0 0 2px color-mix(in oklab,var(--s-stuck) 30%,transparent)}
+.dt.job{border-radius:2px;background:var(--s-failed);clip-path:polygon(20% 0,50% 30%,80% 0,100% 20%,70% 50%,100% 80%,80% 100%,50% 70%,20% 100%,0 80%,30% 50%,0 20%)}
+.hov{position:relative}
+.hpop{display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:30;min-width:240px;max-width:340px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-box);box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 18%,transparent);padding:8px 10px;text-align:left;font-size:.86rem;font-weight:400;white-space:normal;color:var(--color-base-content);cursor:default}
+.hpop::before{content:"";position:absolute;left:0;right:0;top:-8px;height:8px}  /* a bridge, so the pointer can travel from the control into its card */
+.hpop b{display:block;margin-bottom:2px}
+.hov:hover>.hpop,.hov:focus-within>.hpop{display:block}
+.bdchip{display:inline-flex;align-items:center}.bdchip>.hpop{left:auto;right:0;transform:none;min-width:330px}
+.hp-h{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:6px 0 2px}
+.hp-t{display:block;width:100%;text-align:left;border:0;background:none;padding:3px 4px;border-radius:4px;cursor:pointer;color:inherit;font:inherit}.hp-t:hover{background:var(--excerpt-bg)}
+.bid{color:var(--muted);font-size:.79rem;white-space:nowrap}
+.wkg{display:inline-grid;grid-auto-flow:column;grid-template-rows:repeat(6,var(--c));grid-auto-columns:var(--c);gap:1px;padding:3px 4px;border:0;background:none;border-radius:4px;cursor:pointer;--c:4px}
+.wkg:hover{background:var(--excerpt-bg)}
+.wkg i{display:block;border-radius:1px;background:var(--s-working)}.wkg i.stuck{background:var(--s-stuck)}.wkg i.failed{background:var(--s-failed)}.wkg i.done{background:var(--s-done)}.wkg i.later,.wkg i.stopped{background:none;box-shadow:inset 0 0 0 1px var(--s-later)}
+.wcnt{display:inline-flex;align-items:center;gap:7px;font-size:.79rem;font-weight:700;margin-left:2px;white-space:nowrap}.wcnt span{display:inline-flex;align-items:center;gap:3px}.wcnt .dt{width:8px;height:8px}
+.wcnt .tot{color:var(--muted)}.wcnt .tot.jf{color:var(--err-text)}
+.wdots>.hpop.wcard{left:0;transform:none;width:460px;max-width:calc(100vw - 16px);min-width:0;padding:10px 12px}
+.wc-top{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}.wc-top b{display:inline;margin:0;font-size:1rem}
+.wc-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:1px}.wc-bar i{display:block;min-width:3px}
+.wc-bar i.working{background:var(--s-working)}.wc-bar i.stuck{background:var(--s-stuck)}.wc-bar i.failed{background:var(--s-failed)}.wc-bar i.done{background:var(--s-done)}.wc-bar i.later{background:var(--line)}
+.wc-leg{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:.79rem;color:var(--muted);margin:4px 0 2px}.wc-leg span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.wc-leg .dt{width:8px;height:8px}
+.wc-sp{display:block;width:100%;height:26px}.wc-sp rect{fill:color-mix(in oklab,var(--s-working) 70%,var(--color-base-100))}.wc-sp rect.now{fill:var(--s-working)}.wc-spl{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted)}
+.wc-mac{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;gap:3px 8px;align-items:center;font-size:.86rem}.wc-mac .wc-bar{height:8px}
+.wc-row{display:grid;grid-template-columns:10px minmax(0,1fr) max-content;gap:0 8px;align-items:center;width:100%;border:0;background:none;text-align:left;padding:3px 4px;border-radius:4px;cursor:pointer;color:inherit;font:inherit}
+.wc-row:hover{background:var(--excerpt-bg)}.wc-row .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-row .mt{display:inline-flex;gap:6px;align-items:center;font-size:.79rem;color:var(--muted);white-space:nowrap}
+.wc-row .rp{grid-column:2/-1;font-size:.79rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mdl{font-size:.72rem;border:1px solid var(--line);border-radius:8px;padding:0 6px;white-space:nowrap}
+.stuck-t{color:var(--warn-text);font-weight:600}
+.chip.ok{background:var(--done-bg);color:var(--ok-text)}
+.chip.err{background:color-mix(in oklab,var(--color-error) 18%,var(--color-base-100));color:var(--err-text)}
+
+.p-view{display:contents}  /* one tab's render box: layout as if drawn straight into the page */
+
+/* the highlighted question: F, A, 1–9 and C act on it (mock: .ecard.hl) */
+.qcard.p-hl{box-shadow:0 0 0 3px color-mix(in oklab,var(--color-primary) 45%,transparent)}
+
+/* another project's tab, until the copy carries its material */
+.p-other{max-width:860px}.p-other .acts{display:flex;gap:8px;flex-wrap:wrap}
+
+/* signed out: the sign-in screen covers the page (mock: .gate) */
+body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!important}
+.gate{max-width:460px;margin:12vh auto;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-box);padding:24px;text-align:center}
+.gate .btn{margin:6px 0}.gate .ph{justify-content:center;text-align:center}
 
 /* inert actions: "prototype: not sent" */
 .p-inert{display:inline-block;font-size:var(--fs-xs);font-weight:600;color:var(--warn-text);border:1px dashed color-mix(in oklab,var(--color-warning) 60%,transparent);border-radius:8px;padding:0 6px;white-space:nowrap}
@@ -188,6 +238,10 @@ a.btn{color:inherit;font-weight:400}
 
 @media (min-width:601px) and (max-width:1500px){.brand .full{display:none}}
 @media (min-width:601px) and (max-width:1200px){.verchip,.who .hide-ph{display:none}}
+@media (min-width:601px) and (max-width:1340px){.sentchip{display:none}}
+@media (min-width:601px) and (max-width:1500px){.wcnt .tot:not(.jf){display:none}.top{gap:6px}.bdchip>.btn+.btn{padding-inline:2px}}
+/* larger Text size: the project name gives way first so the bar never scrolls sideways */
+.top>.dd.hide-ph{min-width:0}.top>.dd.hide-ph>.btn{max-width:100%}.top>.dd.hide-ph>.btn>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:900px){.htiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* phone: 390 px designed in its own right (#134, #135) */
@@ -210,7 +264,11 @@ a.btn{color:inherit;font-weight:400}
   .menu.right{right:-4px}
   .pmenu{display:block;position:fixed;top:44px;left:0;right:0;bottom:0;z-index:11;overflow:auto;background:var(--color-base-100);border-top:1px solid var(--line);padding:6px 10px 24px;overscroll-behavior:contain}
   .pm-tab{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:9px 8px;border-radius:var(--radius-field);cursor:pointer;color:inherit;text-align:left;font-weight:600;min-height:44px}
-  .pm-tab>span:first-of-type{flex:1}
+  .pm-tab>span.pl{flex:none}  /* the count sits next to its tab name (mock) */
+  .top .dd:has(>.who){display:none}  /* Settings live in the menu on a phone (mock) */
+  .wdots{gap:0;padding:0}.wd{padding:4px 1px}.wdots .wd:nth-child(n+5){display:none}
+  .wkg{--c:3px;padding:2px}.wcnt .tot{display:none}
+  .wdots>.hpop.wcard{display:none!important}  /* no hover on a phone: a tap opens Running */
   .pm-tab svg.pi{width:20px;height:20px;stroke:var(--ac);stroke-width:1.8}
   .pm-tab[aria-selected=true]{background:color-mix(in oklab,var(--ac) 12%,var(--color-base-100));box-shadow:inset 3px 0 0 var(--ac)}
   .pm-acts{display:flex;flex-wrap:wrap;gap:8px;padding:8px 4px 2px}

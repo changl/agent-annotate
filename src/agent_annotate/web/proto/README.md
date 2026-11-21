@@ -21,6 +21,15 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 - Home (`#home`) reads `proto/data/frame.json`. On this project's row it shows `running.json`'s `workers: [{name, state}]` and `jobs: [{name, failing}]` when present.
 - Use `.p-primary` for question context; textareas and text inputs are already 16 px at 100% (`--fs-primary`).
 
+**Added in round 12 (frame; all backward compatible):**
+- `render(el)` now gets a fresh box inside `<main>` (`div.p-view`, same `area-<area> tab-<key>` classes, `display:contents`). A render that finishes after the tab changed paints into a detached box, so it never lands on another tab.
+- `Proto.bar` is optional: without it the frame draws worker dots from `running.json` (`workers` by Mac, `jobs`, `board`).
+- Keys F/A (next/previous open question), 1–9 (pick an option), C (answer box) act on `.qcard[data-q]` (`.qopt[data-pick]`, `textarea[data-words]`); the highlighted card gets `p-hl`. Esc clicks `#p-main [role=dialog] [data-esc]` or `[data-sendclose]`.
+- With Unsent answers off, prefs keys `q:drafts`, `q:general`, `tst`, `tcm:*`, `draft:*` stay in memory only, and stored ones are dropped at load.
+- With Folds on, any `<details>` in `#p-main` keeps its open state by tab and summary text.
+- `frame.json` gains `code` (fld, rebex, annotate, ...), project `code` and `owner` (`{agent, at, alive}`), and `lastSend` (`{ts, delivery, n}`).
+- Routes: `#project/<key>/<tab>` shows another project; any `[data-go="<tab>/<anchor>"]` in the frame jumps there.
+
 **ctx**
 - `base`: the page's URL, ending in `/`. Use relative paths.
 - `data(area, fresh)`: promise of `GET proto/data/<area>.json`, cached until Reload or `fresh`.
