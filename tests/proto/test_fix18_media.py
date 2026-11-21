@@ -42,7 +42,7 @@ const B = M.blocks("{FIXTURE}"), line = i => `<n:${{i}}>`;
 const fig = blockHtml(B[2], 2, esc, line);
 assert.match(fig, /<b class="qpicn">Picture 1<\\/b>/);
 assert.strictEqual((fig.match(/data-zoom="(25|50|75|100)" data-lzoom/g) || []).length, 4);
-assert.match(fig, /<a class="aa-full" href="proto\\/doc\\/design\\/a.png"[^>]* data-lzoom="75">⤢ Full size<\\/a>/);
+assert.match(fig, /<a class="aa-full" href="proto\\/doc\\/design\\/a.png"[^>]* data-lzoom="75" data-pk="~2">⤢ Full size<\\/a>/);  // its key: the document (none here) and its place
 assert.match(fig, /data-zcap="Picture 1 · Audit PNG"/);
 const t = blockHtml(B[5], 5, esc, line);
 assert.match(t, /<tr><th>A/);  // the header row notes the whole table
@@ -72,7 +72,7 @@ assert.match(t, /<b class="qpicn">Picture 2<\\/b>/);
 assert.strictEqual((t.match(/data-lzoom/g) || []).length, 10);
 assert.ok(!t.includes('tap a spot'));  // no spot notes on these pictures
 """)
-    assert "P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))" in REF and "data-zsrc" in REF
+    assert "P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))" in REF and "P.media.pk(r, j)" in REF
 
 
 def test_full_size_toolbar_never_covers_the_picture():

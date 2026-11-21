@@ -43,6 +43,8 @@
 .l-doc [data-line]:hover{background:var(--excerpt-bg);outline:1px dashed var(--faint)}
 .l-tw table{border-collapse:collapse;font-size:var(--fs-sm);width:100%}
 .l-tw th,.l-tw td{border:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+/* as Reference's tables: a column keeps short words whole beside a cell picture, its share of the width at most (r12 audit17 questions 4) */
+.l-tw{container-type:inline-size}.l-tw th,.l-tw td{min-width:min(6.5em,calc(100cqi / var(--c,1) - 2px))}
 .l-chart{margin:6px 0 10px}
 /* the mock's barChart: six columns in one row, the limit a horizontal dashed line labelled at its end */
 .l-bars{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr)) auto;max-width:900px;margin:6px 0}

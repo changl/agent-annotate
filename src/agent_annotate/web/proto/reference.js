@@ -66,7 +66,8 @@
 
   /* ---------- notes: any line, table, picture, chart or step takes one ---------- */
   const allNotes = () => [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))];
-  const notesAt = k => allNotes().filter(n => n.a === k);
+  // `old`: on a picture, its spots also include the point notes saved under its key before this one (Proto.media.was)
+  const notesAt = (k, old) => { const o = old && P.media.was(k); return allNotes().filter(n => n.a === k || (o && n.a === o && n.target && n.target.offset)); };
   const planOf = k => { const m = /^ref:([^~]+)~/.exec(k); return m && D.plans.find(p => p.id === m[1]); };
   function noteMeta(k) {
     if (k.startsWith('chk:') && D.checklist) return {category: 'plans', doc: 'plan:' + D.checklist.plan, version: D.checklist.version};
@@ -81,8 +82,8 @@
   const cutq = s => s.length > 60 ? s.slice(0, 58).trimEnd() + '…' : s;
   // what a note is on: selected words, a spot on a picture (numbered as its pin), or the whole line
   const onWhat = (t, no) => !t ? '' : t.quote ? ` on “${esc(cutq(t.quote))}”` : t.offset ? ` at spot ${no || '+'} on the picture` : '';
-  const spotNo = (k, n) => notesAt(k).filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;  // a closed note leaves the picture
-  const spots = k => notesAt(k).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
+  const spotNo = (k, n) => notesAt(k, true).filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;  // a closed note leaves the picture
+  const spots = k => notesAt(k, true).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
     + (S.note === k && S.tgt && S.tgt.offset ? `<span class="pinm new" style="left:${S.tgt.offset.dx * 100}%;top:${S.tgt.offset.dy * 100}%">+</span>` : '');
   // one note: his unsent one with Undo; a sent one with the shared lifecycle (Re-open, View resolution, Move, Close); a closed one folded with Re-open (r12 audit15 reference 3)
   function noteLine(k, n) {
@@ -97,7 +98,7 @@
     return NK().spot(ctx, sl.map(n => [n, (n.target && n.target.offset ? spotNo(k, n) : ns.indexOf(n) + 1) || '·']), p ? 'at this point' : 'on this line', `data-spotadd="${esc(k)}"${p ? ` data-spotpin="${esc(p.id)}"` : ''}`);
   }
   function noteList(k, dlg) {
-    const ns = notesAt(k), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
+    const ns = notesAt(k, dlg), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
     const list = S.spot === k && !S.full === !dlg && ns.length;
     if (!ns.length && !box) return '';
     return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n)).join('')}
@@ -117,14 +118,25 @@
     try { const j = doc.getElementById('embedded-captures'); if (j) emb = JSON.parse(j.textContent); } catch {}
     doc.querySelectorAll(CHROME).forEach(e => e.remove());
     doc.querySelectorAll('br').forEach(b => b.replaceWith('\u0001'));  // a line break starts a new line, as in the mock
-    const img = e => { const h = e.getAttribute('data-embedded'), s = (e.getAttribute('src') || '').replace(/^\/annotate\/reviews\/[^/]+\//, '');
-      const u = h && emb[h] ? pic(h, emb[h]) : s && !s.startsWith('data:') ? new URL(s, location.origin + ctx.base).href : s.startsWith('data:image/') ? s : '';
-      if (u) out.push(['img', u, e.getAttribute('alt') || '']); };
+    const srcOf = e => { const h = e.getAttribute('data-embedded'), s = (e.getAttribute('src') || '').replace(/^\/annotate\/reviews\/[^/]+\//, '');
+      return h && emb[h] ? pic(h, emb[h]) : s && !s.startsWith('data:') ? new URL(s, location.origin + ctx.base).href : s.startsWith('data:image/') ? s : ''; };
+    const img = e => { const u = srcOf(e); if (u) out.push(['img', u, e.getAttribute('alt') || '']); };
+    // a table cell with pictures as the parts Proto.media.blocks gives a Markdown cell: ['t', text] and ['img', src, caption],
+    // so a published plan's table draws its pictures as the folder reader does (r12 audit17 reference 5); a figure's caption is its picture's
+    const cellParts = c => { if (!c.querySelector('img')) return null; const ps = [];
+      (function each(n) { for (const x of n.childNodes) {
+        if (x.nodeType === 3) { const t = clean(x.textContent); if (t) ps.push(['t', t]); }
+        else if (x.nodeType !== 1 || x.tagName === 'FIGCAPTION') continue;
+        else if (x.tagName === 'IMG') { const u = srcOf(x), al = x.getAttribute('alt') || ''; ps.push(u ? ['img', u, al] : ['t', `${al || 'Picture'} (picture not found)`]); }
+        else if (x.querySelector('img')) each(x);
+        else { const t = clean(x.textContent); if (t) ps.push(['t', t]); } } })(c);
+      return ps; };
     (function walk(n) {
       for (const e of n.children) {
         const t = e.tagName;
         if (/^H[1-6]$/.test(t)) { const x = T(e); if (x) out.push(['h', x]); }
-        else if (t === 'TABLE') { const r = [...e.rows].map(row => [...row.cells].map(T)).filter(row => row.some(Boolean)); if (r.length) out.push(['tbl', r.flat().join(' '), r, !!e.querySelector('th')]); }
+        else if (t === 'TABLE') { const rs = [...e.rows].filter(row => [...row.cells].some(c => T(c) || c.querySelector('img'))), r = rs.map(row => [...row.cells].map(T)), cp = rs.map(row => [...row.cells].map(cellParts));
+          if (r.length) out.push(['tbl', r.flat().join(' '), r, !!e.querySelector('th'), ...cp.flat().some(Boolean) ? [cp] : []]); }
         else if (t === 'PRE') out.push(['pre', e.textContent.replace(/\n+$/, '')]);
         else if (t === 'IMG') img(e);
         else if (t === 'LI') { const c = e.cloneNode(true); c.querySelectorAll('ul,ol,table,pre').forEach(x => x.remove()); const x = T(c); if (x) out.push(['li', x]); e.querySelectorAll(':scope > ul, :scope > ol').forEach(walk); }
@@ -196,7 +208,7 @@
     return `<button class="rf-bd lk st-${BST[b[1]] || 'none'}" data-task="${id}" title="Open its task: ${esc(t)}"><i class="dot"></i>${esc(cut)} · <code>${id}</code> · ${esc(b[1])}</button>`; });
 
   /* pictures open full size at 25-100% of the screen width, each remembering its own; the default comes from the settings menu */
-  const ZS = [25, 50, 75, 100], zOf = k => ctx.prefs.get('ref-zoom', {})[k] || ctx.prefs.get('zoomDef', 75);
+  const ZS = [25, 50, 75, 100], zOf = k => P.media.zoom(k);  // by the picture's key (Proto.media.pk)
   // the caption line every document reader shares (Proto.media, with Questions): "Picture N · caption · 25-100% · ⤢ Full size"
   let picN = 0;  // pictures numbered in reading order, from 1 in each document the viewer draws
   const zoomBar = (k, src, cap, n) => { const za = ` data-zk="${esc(k)}"`;
@@ -214,10 +226,13 @@
     const [kind, t, x, hd] = b, tg = tag || '', a = at(k, kind === 'img' ? 'Picture: ' + x : kind === 'tbl' ? 'Table: ' + x[0].join(' · ') : t);
     // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
     const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
-    // a picture in a table cell: Proto.media's figure, its row the anchor (as today); Full size finds it by row and file
-    const cpic = r => p => { const z = zOf(r), za = ` data-zk="${esc(r)}" data-zsrc="${esc(p[1])}"`; return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za); };
-    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${P.media.cell(b[4], ri, ci, c, esc, cpic(k))}</th>` : `<td>${ci ? '' : pin(rk(ri))}${P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => ri === 0 && hd ? '' : noteList(rk(ri))).join('')}`
-      : kind === 'img' ? (n => `<figure ${a}>${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
+    // a picture in a table cell: Proto.media's figure, clicked its row takes the note (as today); its own key (row and
+    // order in the row) gives Full size its title, size and point notes, so two of one file in a row stay apart (r12 audit17 #2)
+    const cpic = r => (p, j) => { const pk = P.media.pk(r, j), z = zOf(pk), za = ` data-zk="${esc(pk)}"`;
+      return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za, ` data-pk="${esc(pk)}"`).replace(/^<figure[^>]*>/, f => f + pin(pk)); };
+    const rowPics = (ri, r) => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => P.media.pk(r, j + 1));
+    const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${P.media.cell(b[4], ri, ci, c, esc, cpic(k))}</th>` : `<td>${ci ? '' : pin(rk(ri))}${P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => [ri === 0 && hd ? '' : noteList(rk(ri)), ...rowPics(ri, rk(ri)).map(pk => noteList(pk))].join('')).join('')}`
+      : kind === 'img' ? (n => `<figure ${a} data-pk="${esc(k)}">${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
       : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}${P.media.code(t)}${tg}</div>`
       : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
     return body + noteList(k);
@@ -544,8 +559,8 @@
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
     if (d.zoom) {
-      const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-line="${CSS.escape(k)}"] img${d.zsrc ? `[src="${CSS.escape(d.zsrc)}"]` : ''}`);
-      ctx.prefs.set('ref-zoom', {...ctx.prefs.get('ref-zoom', {}), [k]: +d.zoom});
+      const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-pk="${CSS.escape(k)}"] img`);  // the picture by its own key
+      P.media.setZoom(k, +d.zoom);
       S.full = im ? {k, src: im.getAttribute('src'), cap: im.dataset.zcap, z: +d.zoom} : {...S.full, z: +d.zoom};
       if (S.note !== k) S.note = '';
       return draw();

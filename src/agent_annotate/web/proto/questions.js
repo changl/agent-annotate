@@ -613,18 +613,31 @@
     // a picture with its caption line; `fa` and `za` are the reader's own data for Full size and the size buttons.
     // No "tap a spot" hint: these pictures (Pages & links, Reference table cells) take no spot notes
     fig: (src, alt, n, z, fa = '', za = '', a = '') => `<figure class="mfig"${a}><img src="${esc(src)}" alt="${esc(alt || 'Picture')}" data-zcap="${esc(M.title(n, alt))}" loading="lazy"><figcaption class="qcap">${M.line(M.label(n), alt ? esc(M.bare(n, alt)) : '', M.ctl(z, src, fa, za), '')}</figcaption></figure>`,
-    // a table cell: its text through `txt`, or, when it holds pictures (cp from blocks), each picture through `img`
-    cell: (cp, ri, ci, c, txt, img) => { const ps = cp && cp[ri] && cp[ri][ci]; return ps ? ps.map(p => p[0] === 'img' ? img(p) : txt(p[1])).join(' ') : txt(c); },
-    // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width
-    view(src, cap, z, from) {
+    // a table cell: its text through `txt`, or, when it holds pictures (cp from blocks), each picture through `img(part, j)`,
+    // j its order in the row from 1, so two pictures of one file in a row stay two pictures (r12 audit17 reference 2)
+    cell: (cp, ri, ci, c, txt, img) => { const ps = cp && cp[ri] && cp[ri][ci]; if (!ps) return txt(c);
+      let j = cp[ri].slice(0, ci).flat().filter(p => p && p[0] === 'img').length;
+      return ps.map(p => p[0] === 'img' ? img(p, ++j) : txt(p[1])).join(' '); },
+    // one key per picture, from its document and place: a picture on its own line is its block's anchor; one in a table
+    // cell is its row's anchor and its order in the row (~p1, ~p2). Every reader keys its title, size and point notes by it
+    pk: (place, j) => j ? `${place}~p${j}` : place,
+    // a row's first picture also shows the point notes saved on the row, before its pictures had keys of their own
+    was: k => /~r\d+~p1$/.test(k) ? k.replace(/~p1$/, '') : '',
+    // the size each picture was last opened at, by its key; the settings menu's default before that
+    zoom: k => { const p = P.ctx && P.ctx.prefs; return (p && k && p.get('ref-zoom', {})[k]) || (p && p.get('zoomDef', 75)) || 75; },
+    setZoom: (k, z) => { const p = P.ctx && P.ctx.prefs; if (p && k) p.set('ref-zoom', {...p.get('ref-zoom', {}), [k]: z}); },
+    // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width;
+    // with its key `k`, the size picked is remembered for that picture and shows pressed on its caption line (r12 audit17 reference 6)
+    view(src, cap, z, from, k) {
       let v = document.getElementById('p-mview');
       if (!v) {
         v = document.body.appendChild(Object.assign(document.createElement('div'), {id: 'p-mview', className: 'mview'}));
         Object.entries({role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full-size picture'}).forEach(([k, x]) => v.setAttribute(k, x));
-        v.onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.mz) M.view(M._v.src, M._v.cap, +b.dataset.mz); else if (b && b.hasAttribute('data-mclose')) M.closeView(); };
+        v.onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.mz) M.view(M._v.src, M._v.cap, +b.dataset.mz, M._v.from, M._v.k); else if (b && b.hasAttribute('data-mclose')) M.closeView(); };
         if (!M._esc) document.addEventListener('keydown', M._esc = e => { if (e.key === 'Escape' && document.getElementById('p-mview')) { e.preventDefault(); e.stopPropagation(); M.closeView(); } }, true);
       }
-      M._v = {src, cap, from: from || (M._v && M._v.from)};
+      M._v = {src, cap, from: from || (M._v && M._v.from), k};
+      if (k) { M.setZoom(k, z); document.querySelectorAll(`button[data-zoom][data-pk="${CSS.escape(k)}"]`).forEach(x => x.setAttribute('aria-pressed', String(+x.dataset.zoom === z))); }
       v.innerHTML = `<div class="zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="qzm" role="group" aria-label="Size">${[25, 50, 75, 100].map(x => `<button data-mz="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-mclose>Close</button></div>
         <div class="pic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || 'Picture')}"></div>`;
       v.querySelector('[data-mclose]').focus();

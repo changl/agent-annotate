@@ -117,7 +117,7 @@
 .tab-reference .tblw table{width:100%;border-collapse:collapse;font-size:var(--fs-md);table-layout:auto}
 .tab-reference .tblw td,.tab-reference .tblw th{border:1px solid var(--line);padding:4px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere;word-break:break-word}
 .tab-reference .tblw th{font-weight:600;background:var(--excerpt-bg)}
-@media (min-width:701px){.tab-reference .tblw{container-type:inline-size}.tab-reference .tblw td,.tab-reference .tblw th{min-width:min(6.5em,calc(100cqi / var(--c,1) - 2px))}}
+.tab-reference .tblw{container-type:inline-size}.tab-reference .tblw td,.tab-reference .tblw th{min-width:min(6.5em,calc(100cqi / var(--c,1) - 2px))}  /* every width: a cell picture leaves short words whole (r12 audit17 questions 4) */
 .tab-reference del{background:color-mix(in oklab,var(--color-error) 18%,transparent);color:var(--err-text)}
 .tab-reference ins{background:var(--done-bg);color:var(--ok-text);text-decoration:none}
 .tab-reference .rf-tag{font-size:var(--fs-xs);border-radius:4px;padding:0 6px;white-space:nowrap;border:1px solid var(--orange);color:var(--warn-text);margin-left:6px}

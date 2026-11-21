@@ -13,14 +13,17 @@
   const dm = d => { const t = new Date(String(d).slice(0, 10) + 'T12:00'); return isNaN(t) ? String(d || '') : t.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
   const mdBlocks = t => P.media.blocks(t);  // the one Markdown reader, shared with Reference (Proto.media)
   const rowsOf = b => Array.isArray(b[1]) ? b[1] : b[2];  // a kept document's table is [tbl, rows]; a Markdown one [tbl, text, rows]
+  let docK = '';  // the document being drawn, set by its view: its pictures' keys start with it
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
   // each body row of a table takes its own note (line <i>~r<n>), as in Reference; the header row notes the whole table
   const blockHtml = (b, i, esc, line, tag = '', ins = false) => { const [k, t] = b, a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
-    // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here
-    const pic = (src, alt, n, a = '') => { const z = (P.ctx && P.ctx.prefs.get('zoomDef', 75)) || 75; return P.media.fig(src, alt, n, z, ` data-lzoom="${z}"`, ' data-lzoom', a); };
-    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, p => pic(p[1], p[2], p[3]));
-      return `<div class="l-tw"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
+    // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here,
+    // at the size last picked for it, by its key: the document and its place (Proto.media.pk)
+    const pic = (src, alt, n, a = '', place = String(i)) => { const pk = esc(docK + '~' + place), z = P.media.zoom(docK + '~' + place);
+      return P.media.fig(src, alt, n, z, ` data-lzoom="${z}" data-pk="${pk}"`, ` data-lzoom data-pk="${pk}"`, a); };
+    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, (p, j) => pic(p[1], p[2], p[3], '', P.media.pk(`${i}~r${ri}`, j)));
+      return `<div class="l-tw" style="--c:${Math.max(1, ...R.map(r => r.length))}"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
     if (k === 'img') return pic(t, b[2], b[3], a).replace(/<\/figure>$/, `${tag}</figure>`) + after;
     return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a) : `<p${a}>${x}${tag}</p>`) + after; };
   const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
@@ -170,7 +173,7 @@
   const apprs = ctx => ctx.prefs.get('draft:lappr', []);
   const apprBtn = (ctx, id) => { const on = apprs(ctx).includes(id);
     return `<button class="btn sm${on ? ' rec' : ''}" data-kappr="${ctx.esc(id)}" aria-pressed="${on}">${on ? '✓ Approved · Undo' : 'Approve'}</button>`; };
-  const keptBody = (ctx, D, d) => { const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`);
+  const keptBody = (ctx, D, d) => { const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`); docK = `doc:kept-${d.id}~p`;
     return d.revs ? revDoc(ctx, D, d, line) : blocksHtml(d.blocks || [], ctx.esc, line); };
   function docsHtml(ctx, D, copyBtn) {
     const {esc, icon} = ctx, kept = D.kept || [], F = ((D.docs || {}).files || []).map((f, i) => ({...f, i})), groups = (D.docs || {}).groups || {};
@@ -199,6 +202,7 @@
   const docKey = f => 'doc:' + [f.g, f.sub, f.n].filter(Boolean).join('/');  // the same key Reference uses, so notes show in both
   function mdView(ctx, D, f, dic, groups) {
     const {esc, icon} = ctx, k = docKey(f);
+    docK = k;
     return `<div class="l-doc" data-doc="${esc(k)}" data-docname="${esc(f.n)}"><div class="l-dbar">${dic('md')}<b>${esc(f.n)}</b><span class="small mut">${esc(groups[f.g] || '')}${f.sub ? ' / ' + esc(f.sub) : ''} · ${kb(f.kb)} · changed ${esc(dm(f.d))} · select words to write a note on them</span><span class="spacer"></span><button class="btn sm" data-dopen="${f.i}">${icon('x')} Close</button></div>
       ${blocksHtml(mdBlocks(f.md), esc, i => noteBox(ctx, D, `${k}~${i}`))}${noteBox(ctx, D, `${k}~all`)}
       <div class="l-nacts"><button class="btn sm" data-bnote="${esc(k)}~all">${icon('note')} Write a note</button><span class="small mut">Click any line to write a note on it</span></div></div>`;
@@ -206,7 +210,7 @@
 
   async function click(e, w, ctx, D) {
     const zb = e.target.closest('.l-doc [data-lzoom]');  // a picture's size or ⤢ Full size: the shared viewer, not a new tab
-    if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'); return P.media.view(im.getAttribute('src'), im.dataset.zcap, +(zb.dataset.zoom || zb.dataset.lzoom), zb); }
+    if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'), k = zb.dataset.pk; return P.media.view(im.getAttribute('src'), im.dataset.zcap, +(zb.dataset.zoom || P.media.zoom(k)), zb, k); }
     const b = e.target.closest('button');
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target
