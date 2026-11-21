@@ -626,6 +626,14 @@
   function sendGo(k) {
     S.armed = false; S.sendKey = false;
     if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
+    if (k.startsWith('n:')) {
+      // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
+      const n = D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
+      const sec = at && topSecs(DOC).find(s => s.contains(at));
+      if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
+      if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
+      if (host) { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }  // a note lives in the document
+    }
     if (host) {  // opened over another tab: Questions opens at the item
       drawHost();
       if (k === 'need') { S.filter = 'need'; S.view = 'list'; ctx.prefs.set('q:view', 'list'); }
@@ -634,11 +642,6 @@
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2));
     if (k.startsWith('n:')) {
-      // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
-      const n = D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
-      const sec = at && topSecs(DOC).find(s => s.contains(at));
-      if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
-      if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
       const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
   }
   // a task opens its full record beside Questions, Running's own panel, not in another tab (#27, audit4 04); ↑ ↓ step through the tasks on screen
@@ -831,6 +834,9 @@
     const lit = q ? q.evidence.flatMap(v => [...root.querySelectorAll(`[data-anchor-id="${CSS.escape(v.anchor)}"]:not(.qcard)`)].map(line).filter(Boolean))
       : a ? D.questions.filter(x => x.evidence.some(v => v.anchor === a.dataset.anchorId)).map(x => document.getElementById('q-' + x.id)).filter(Boolean) : [];
     if (a && lit.length) lit.push(a);
+    // the line the card sits under (above its group of cards), when it is part of its evidence: the mock's lit line
+    const sib = q && c.previousElementSibling, prev = sib && !sib.matches('.qcard,.qnote') ? sib : q && c.parentElement.matches('.cards') ? c.parentElement.previousElementSibling : null;
+    if (prev && !prev.matches('.qcard,.qnote') && q.evidence.some(v => { const e = root.querySelector(`[data-anchor-id="${CSS.escape(v.anchor)}"]:not(.qcard)`); return e && e.contains(prev); })) lit.push(prev);
     lit.forEach(x => x.classList.add('evh'));
   }
   addEventListener('keydown', onKey);
