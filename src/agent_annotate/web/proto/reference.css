@@ -133,6 +133,7 @@
 /* pictures: pins at the spot a note is on; the full-size viewer, as in the mock */
 .tab-reference .qpinwrap{position:relative;display:inline-block;max-width:100%;vertical-align:top}
 .tab-reference .pinm{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--color-primary);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center;box-shadow:0 0 0 2px #fff;pointer-events:none}
+.tab-reference button.pinm{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:inherit;z-index:1}.tab-reference button.pinm[aria-expanded=true]{box-shadow:0 0 0 2px #fff,0 0 0 5px var(--color-primary)}
 .tab-reference .pinm.new{background:var(--color-warning);color:#000}
 .tab-reference figure img{cursor:crosshair}
 .tab-reference .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-field);overflow:hidden;vertical-align:middle}

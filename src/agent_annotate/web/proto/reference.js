@@ -537,7 +537,7 @@
     if (d.nopen) return life('restore')(d.nopen);
     if (d.nreopen) return life('reopen')(d.nreopen);
     // a plan note's resolution is a line of that plan: its revision opens there, outlined; any other goes to History
-    if (d.nres) { const n = nt(d.nres); if (!n) return; if (!/^(ref|chk):/.test(n.ra || '')) return NK().goRes(ctx, n); S.res = n.ra; S.resGo = true; return goRef(itemOf(n.ra), '', n.ra)(); }
+    if (d.nres) { const n = nt(d.nres); return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
@@ -649,6 +649,9 @@
   const goRef = (id, nid, a) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true; if (D) reach(a); else S.reach = a;
     if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
   const redo = () => draw();  // draw keeps the drafts, then redraws only on this tab
+  // the notes kit's hooks: Send's Go to it on a re-opened note, a redraw, and a resolution on a plan line, opened there and outlined
+  (P.noteHooks = P.noteHooks || {}).reference = {go: r => goRef(itemOf(r.a), r.id, r.a)(), redo,
+    res: n => { S.res = n.ra; S.resGo = true; return goRef(itemOf(n.ra), '', n.ra)(); }};
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
     items: c => {
@@ -674,10 +677,7 @@
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
           mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
           return async () => { keep(); mine = P.putBack(mine, wm, n.id); if (D && wd) D.notes = P.putBack(D.notes, wd, n.id); SNOTES = P.putBack(SNOTES, ws, n.id); keepDrafts(); redo(); }; }});
-      // a sent note he re-opened goes again, its own row; Remove puts it back as the agent left it, with Undo (P.notes, r12 audit15 reference 3)
-      if (D && P.notes) allNotes().filter(n => !/^doc:/.test(n.a) && P.notes.isReo(c, n)).forEach(n => it.push({key: 'reo:' + n.id, group: 'Notes', note: n.id,
-        html: P.notes.row(n, '↻', `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”`), go: goRef(itemOf(n.a), n.id, n.a),
-        remove: () => P.notes.set(c, n, 'unreopen', c.api, async () => redo(), true)}));
+      // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
       if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },

@@ -42,9 +42,24 @@
   const stOf = n => n.status !== undefined ? n.status : n.st;
   const NK = P.notes = {
     resolved: n => ['resolved_in_version', 'addressed_by_agent', 'user_confirmed'].includes(stOf(n)),
+    // the one draft store for every tab's Re-open: id → the note's record (status, spot, words, tab), so Send lists it
+    // from the record alone, before any tab's feed answers (r12 audit16 frame 1)
     reo: c => c.prefs.get('draft:reopen', {}),
-    isReo: (c, n) => !!n.sent && !n.closed && n.id in NK.reo(c),
-    setReo(c, id, was) { const m = NK.reo(c); if (was === undefined) delete m[id]; else m[id] = was; c.prefs.set('draft:reopen', m); },
+    isReo(c, n) {
+      if (!n.sent || n.closed) return false;
+      const m = NK.reo(c);
+      if (typeof m[n.id] === 'string') { m[n.id] = {...NK.rec(n), st: m[n.id]}; c.prefs.set('draft:reopen', m); }  // a status saved before records
+      return n.id in m;
+    },
+    tabOf: a => /^doc:/.test(a) ? 'links' : /^(ref|chk):/.test(a) ? 'reference' : /^chart:/.test(a) ? 'history' : 'questions',
+    rec: n => { const a = n.anchor || n.a || '', t = n.target || {};
+      return {st: stOf(n), a, tab: NK.tabOf(a), text: n.text || '', on: t.quote || n.line || n.label || n.l || '', img: t.tag === 'img'}; },
+    put(c, id, r) { const m = NK.reo(c); if (r) m[id] = r; else delete m[id]; c.prefs.set('draft:reopen', m); },
+    setReo(c, n, on) { NK.put(c, n.id, on ? NK.rec(n) : null); },
+    // each tab tells the kit how to show a note and redraw (go(record), redo(), res(note) for a resolution on that tab);
+    // P.noteHooks, since the tabs' scripts load in any order
+    hooks: P.noteHooks = P.noteHooks || {},
+    redo: tab => { const h = NK.hooks[tab]; if (h && h.redo) h.redo(); },
     // the words after a sent note: re-opened, resolved, addressed or sent
     words: (c, n) => NK.isReo(c, n) ? `<span class="saved">· re-opened · goes with Send</span>`
       : NK.resolved(n) ? `<span class="saved">· ${ic('tick')} ${stOf(n) === 'resolved_in_version' ? `resolved${n.rv ? ' in ' + esc(String(n.rv).replace(/^v/, 'version ')) : ''}` : 'addressed by the agent'}</span>` : '<span class="mut">· sent</span>',
@@ -58,7 +73,7 @@
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
       const u = `api/comments/${encodeURIComponent(n.id)}`;
-      if (how === 'reopen' || how === 'unreopen') NK.setReo(c, n.id, how === 'reopen' ? stOf(n) : undefined);
+      if (how === 'reopen' || how === 'unreopen') NK.setReo(c, n, how === 'reopen');
       else {
         try { await api(u + (how === 'close' ? '/archive' : '/restore'), {}); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
         n.closed = how === 'close';
@@ -83,12 +98,19 @@
     spot: (c, ns, kind, add) => `<div class="qspot" role="dialog" aria-label="Notes at this marker"><div class="qspoth"><b class="small">${pl(ns.length, 'note', 'notes')} ${kind}</b><span class="spacer"></span><button class="btn sm pri" ${add}>${ic('plus')} Comment</button><button class="ib sm" data-spotx title="Close this list" aria-label="Close this list" data-esc>${ic('x')}</button></div>
       <ul class="qhist">${ns.map(([n, no]) => `<li>${mk(no, n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : NK.isReo(c, n) ? 're-opened · goes with Send' : NK.resolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`,
     // View resolution in another version: History opens it at the resolution, scrolled to and lit, as today's page does (r12 audit15 questions 3)
-    goRes: (c, n) => c.go('history', `${n.rv}~${n.ra}`),
+    // a resolution on a Reference or Pages & links line opens that line there, outlined (the tab's res hook)
+    goRes: (c, n) => { const t = NK.tabOf(n.ra || ''), h = NK.hooks[t]; return t !== 'questions' && h && h.res ? h.res(n) : c.go('history', `${n.rv}~${n.ra}`); },
     // the resolution's spot, outlined where View resolution lands (History's version reader, a Reference plan line)
     lit: e => { e.style.cssText += ';outline:3px solid #7c3aed;outline-offset:4px;border-radius:4px;background:color-mix(in oklab,#7c3aed 16%,transparent)'; e.setAttribute('data-resolution', ''); },
     // the notes at a picture pin: on the same picture, within a few percent of its point
     near: (ns, p) => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && (n.target.image || '') === (p.target.image || '') && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
   };
+  // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
+  const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
+  if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
+    html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : `On “${esc(cut(r.on || TABN[r.tab] || '', 50))}”`),
+    go: () => { const h = NK.hooks[r.tab]; if (h && h.go) h.go({id, ...r}); else c.go(r.tab); },
+    remove: () => { NK.put(c, id, null); NK.redo(r.tab); return () => { NK.put(c, id, r); NK.redo(r.tab); }; }}))});
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
   // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
   // "Unsent answers and notes" is on (r12 fix8). Questions shows it through sim(); Reference and Links through P.copyData.
@@ -215,9 +237,8 @@
   const Q = () => (ctx && ctx.queued ? ctx.queued() : []);
   // a note another tab lists itself is counted once, under that tab's item
   // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
-  // a sent note he re-opened goes again, as its own row (r12 audit15 questions 2)
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => (!x.sent || NK.isReo(ctx, x)) && !x.closed && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
-  const isRo = n => D ? NK.isReo(ctx, n) : !!n.ro;
+  // a sent note he re-opened is the kit's own Send row, listed from the one draft store on every tab (r12 audit16 frame 1)
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !x.closed && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
@@ -230,7 +251,7 @@
   function notesNow(q) {
     const own = new Set(q.map(x => x.note).filter(Boolean));
     if (!D) return savedNotes().filter(n => !own.has(n.id));
-    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at, ...(isRo(n) ? {ro: true} : {})}));
+    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at}));
     if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
     return l;
   }
@@ -734,8 +755,7 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    for (const n of notesNow(q)) it.push(isRo(n) ? ['Notes', NK.row(n, D ? D.notes.indexOf(n) + 1 : n.i, on(n)), 'n:' + n.id, 'reopen:' + n.id]
-      : ['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
@@ -1006,8 +1026,8 @@
     const tn = typingNote(); if (tn) { S.note = null; ctx.prefs.set('q:newnote', null); }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
-    // kept until Undo is gone: Undo puts back the very notes; a re-opened one goes back to how the agent left it
-    const backs = []; for (const n of notes) backs.push(NK.isReo(ctx, n) ? await NK.set(ctx, n, 'unreopen', call, noteRedraw, true) : await delNote(n.id, true));
+    // kept until Undo is gone: Undo puts back the very notes (a re-opened one is the kit's queue row, removed above)
+    const backs = []; for (const n of notes) backs.push(await delNote(n.id, true));
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
@@ -1024,12 +1044,6 @@
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
     else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
-    else if (kind === 'reopen') {  // the note goes back to how the agent left it; Undo re-opens it, row and count together
-      const n = (D ? D.notes : savedNotes()).find(x => x.id === id), was = savedNotes(); if (!n) return;
-      if (!D) ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));
-      const back = await NK.set(ctx, n, 'unreopen', call, noteRedraw, true);
-      if (back) ctx.toast('Removed from Send', {undo: async () => { if (!D) ctx.prefs.set('draft:qnotes', was); await back(); }});
-    }
     else if (kind === 'newnote') { const n = typingNote(); S.note = null; ctx.prefs.set('q:newnote', null); draw(true); ctx.toast('Note removed', {undo: () => { S.note = n; ctx.prefs.set('q:newnote', n); draw(true); }}); }
     else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
@@ -1213,6 +1227,7 @@
   const litNote = id => { const el = document.getElementById('n-' + id); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
   // Close, Re-open and the closed note's Re-open: the shared lifecycle (P.notes.set), each with Undo (#138, catalog 64)
   const noteRedraw = async id => { S.spot = S.pin = null; notesNow(Q()); await draw(true); if (!host) litNote(id); };
+  NK.hooks.questions = {go: r => sendGo('n:' + r.id), redo: () => draw(true)};
   function noteState(id, how, quiet) {
     const n = D.notes.find(x => x.id === id);
     return n ? NK.set(ctx, n, how, call, noteRedraw, quiet) : null;

@@ -217,7 +217,8 @@
     t.scrollIntoView({block: 'center'}); t.classList.add('lit');
     setTimeout(() => { if (S.hl === id) S.hl = ''; S.hlT = ''; document.querySelectorAll('[data-cnote].lit').forEach(e => e.classList.remove('lit')); }, 2500); };
   const qpv = () => Object.entries(D.versions || {}).filter(([v]) => /^v\d+$/.test(v)).sort((a, b) => +vn(a[0]) - +vn(b[0])).slice(-40);
-  const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => !n.closed && /^chart:/.test(n.anchor || '')); };
+  // a closed note stays on its point, folded with Re-open, as on every tab (the notes kit, r12 audit16 frame 6)
+  const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
   // saved and not yet sent; Questions' feed is read here too, so Send lists them before History is opened
   // kept as saved records too (draft:hcnotes): while that feed is held or failed, Send lists them from what was saved (r12 fix14 running 1)
@@ -251,8 +252,11 @@
     if (S.ce === x.id) return `<div class="qnote h-cnote" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}</b> <span class="small mut">· goes with your next Send</span>
       <textarea id="h-et" rows="3" aria-label="${what}">${esc(x.text)}</textarea>
       <div class="h-nacts"><button class="btn sm pri" data-csavee="${id}">Save</button><button class="btn sm" data-ccancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
-    const acts = (x.sent ? '' : ib('edit', 'Edit this note', 'data-cned') + ib('undo', 'Undo: remove this note', 'data-cdel')) + ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
-    return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} <span class="${x.sent ? 'mut' : 'saved'}">· ${x.sent ? 'sent' : 'goes with Send'}</span><span class="nacts">${acts}</span></div>`;
+    // a sent one carries the notes kit's lifecycle (Re-open, View resolution, Move, Close); a closed one folds with Re-open (r12 audit16 frame 6)
+    const K = P.notes, cp = ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
+    if (x.closed) return `<div class="qnote small h-cnote sent closed${lit}" id="hn-${id}" data-cnote="${id}">${mk}<span class="saved">${icon('archive')} ${what} closed</span> <span class="mut">${esc(x.text)}</span><span class="nacts">${K.closedActs(x)}</span></div>`;
+    const acts = x.sent ? K.acts(ctx, x, S.cmove === x.id) + cp : ib('edit', 'Edit this note', 'data-cned') + ib('undo', 'Undo: remove this note', 'data-cdel') + cp;
+    return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${S.cmove === x.id ? ' moving' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} ${x.sent ? `${K.words(ctx, x)} ${K.view(x)}` : '<span class="saved">· goes with Send</span>'}<span class="nacts">${acts}</span></div>`;
   }
   async function editC(el, ctx, id) {
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
@@ -265,6 +269,17 @@
       ctx.toast('Note changed · goes with Send', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(id), {text: was}, 'PUT'); setT(id, was); redrawH(); ctx.refreshTop(); }});
     } catch (er) { S.ce = id; draw(el, ctx); ctx.toast(`The note was not changed: ${er.message}`); }
   }
+  // Move: the kit's re-pin to the point he clicks, with Undo
+  function moveC(el, ctx, v) {
+    const x = allC().find(n => n.id === S.cmove); S.cmove = '';
+    if (!x || x.anchor === 'chart:' + v) return draw(el, ctx);
+    return P.notes.move(ctx, x.id, {anchor_id: x.anchor, anchor_label: x.label, target: x.target || null}, {anchor_id: 'chart:' + v, anchor_label: CLAB(v), target: null}, ctx.api,
+      p => { if (p) [...CN, ...((QD && QD.notes) || [])].forEach(n => { if (n.id === x.id) Object.assign(n, {anchor: p.anchor_id, label: p.anchor_label, target: p.target}); });
+        S.hl = p ? x.id : ''; S.hlT = ''; redrawH(); if (p && onH()) litC(HE.el); });
+  }
+  // the notes kit's hooks: Send's Go to it on a re-opened chart note, and a redraw
+  (P.noteHooks = P.noteHooks || {}).history = {redo: () => redrawH(),
+    go: r => { S.cn = ''; S.q = ''; S.hl = r.id; S.hlT = ''; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else P.ctx.go('history'); }};
   async function copyC(ctx, text, what) {
     try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
   }
@@ -272,10 +287,12 @@
     const {esc, icon} = ctx, vs = qpv();
     if (vs.length < 2) return '';
     const n = m => m.items || 0, mx = Math.max(1, ...vs.map(([, m]) => n(m))), X = i => 34 + i * 20, Y = k => 50 - k / mx * 42;
-    const pts = vs.map(([v, m], i) => { const on = S.cn === v || cnotes(v).length > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
-      return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-label="${esc(t)}. Write a note on it"><title>${esc(t)}</title></circle>`; }).join('');
+    // a marked point is a marker: it lists its notes, with Go to it and + Comment (the notes kit's spot list, r12 audit16 frame 6)
+    const pts = vs.map(([v, m], i) => { const k = cnotes(v).length, on = S.cn === v || k > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
+      return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-expanded="${S.cspot === v}" aria-label="${esc(t)}. ${k ? `${pl(k, 'note', 'notes')}: list them` : 'Write a note on it'}"><title>${esc(t)}</title></circle>`; }).join('');
     const order = allC();
-    const notes = vs.flatMap(([v]) => cnotes(v).map(x => cbox(ctx, x, order.indexOf(x) + 1, v))).join('');
+    const notes = vs.flatMap(([v]) => [...(S.cspot === v && cnotes(v).length ? [P.notes.spot(ctx, cnotes(v).map(x => [x, order.indexOf(x) + 1]), `on version ${esc(vn(v))}`, `data-spotadd="${esc(v)}"`)] : []),
+      ...cnotes(v).map(x => cbox(ctx, x, order.indexOf(x) + 1, v))]).join('');
     const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
@@ -326,6 +343,7 @@
     wrap.onkeydown = e => {
       if (e.target.id === 'h-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); saveC(el, ctx); }
       else if (e.target.id === 'h-et' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); editC(el, ctx, S.ce); }
+      else if (e.key === 'Escape' && S.cmove) { S.cmove = ''; draw(el, ctx); }
       else if (e.target.dataset && e.target.dataset.cpt && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', {bubbles: true})); }
     };
     draw(el, ctx);
@@ -407,10 +425,12 @@
   const seeV = (ctx, v) => { const s = ctx.prefs.get('h-seen', {}); s[v] = new Date().toISOString().slice(0, 19); ctx.prefs.set('h-seen', s); };
   async function click(e, el, ctx) {
     const pt = e.target.closest('[data-cpt]');
-    if (pt) {  // a marked point opens its saved note to edit, not a blank one (audit10 running 3)
-      const v = pt.dataset.cpt, mine = cnotes(v).filter(n => !n.sent).at(-1);
-      if (mine) { S.cn = ''; S.ce = S.ce === mine.id ? '' : mine.id; }
-      else { S.ce = ''; S.cn = S.cn === v ? '' : v; }
+    if (pt) {  // Move: this point takes the note; a marked point lists its notes; a bare one opens a new note (r12 audit16 frame 6)
+      const v = pt.dataset.cpt;
+      if (S.cmove) return moveC(el, ctx, v);
+      S.ce = '';
+      if (cnotes(v).length) { S.cn = ''; S.cspot = S.cspot === v ? '' : v; return draw(el, ctx); }
+      S.cspot = ''; S.cn = S.cn === v ? '' : v;
       draw(el, ctx); return focusC(el);
     }
     const g = e.target.closest('[data-hseen]');  // reading a version clears its mark
@@ -419,6 +439,16 @@
     if (!b) return;
     const ds = b.dataset, cn = id => allC().find(x => x.id === id);
     if (ds.hchange) return ctx.go('questions', 'q-' + ds.hchange);
+    // the marker list and a sent note's lifecycle: the notes kit, as on every tab
+    if (ds.spotx !== undefined) { S.cspot = ''; return draw(el, ctx); }
+    if (ds.spotadd) { S.cspot = ''; S.ce = ''; S.cn = ds.spotadd; draw(el, ctx); return focusC(el); }
+    if (ds.spotgo) { S.cspot = ''; S.hl = ds.spotgo; S.hlT = ''; draw(el, ctx); return litC(el); }
+    const life = how => { const x = cn(ds.nclose || ds.nopen || ds.nreopen); return x && P.notes.set(ctx, x, how, ctx.api, async id => { S.cspot = ''; S.hl = id; S.hlT = ''; draw(el, ctx); litC(el); ctx.refreshChips(); }); };
+    if (ds.nclose) return life('close');
+    if (ds.nopen) return life('restore');
+    if (ds.nreopen) return life('reopen');
+    if (ds.nres) { const x = cn(ds.nres); return x && P.notes.goRes(ctx, x); }
+    if (ds.nmove) { S.cmove = S.cmove === ds.nmove ? '' : ds.nmove; draw(el, ctx); if (S.cmove) ctx.toast('Click the point for this note · Esc cancels'); return; }
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
     if (ds.csavee) return editC(el, ctx, ds.csavee);
     if (ds.cned) { S.cn = ''; S.ce = ds.cned; draw(el, ctx); return focusC(el); }

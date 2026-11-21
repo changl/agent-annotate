@@ -69,7 +69,7 @@ def test_reopen_is_its_own_send_row_with_remove_and_undo(tmp_path):
     post = grab(Q, "  async function post(", "\n  }")
     assert post.index("{status: 'open'}, 'PUT'") < post.index("api/rounds/submit") < post.index("ctx.prefs.set('draft:reopen', {})")
     items = grab(Q, "  function sendItems() {", "\n  }")
-    assert "isRo(n) ? ['Notes', NK.row(" in items and "'reopen:' + n.id" in items
+    assert "'reopen:'" not in items and "isRo" not in Q  # the kit lists re-opens (test_fix18_notes)
 
 
 def test_reference_uses_the_shared_kit_and_lists_its_reopened_notes():
@@ -78,10 +78,10 @@ def test_reference_uses_the_shared_kit_and_lists_its_reopened_notes():
         assert call in REF, call
     for attr in ("data-spot=", "data-pin=", "spotadd", "spotgo", "nclose", "nopen", "nreopen", "nres", "nmove"):
         assert attr in REF, attr
-    assert "P.notes.isReo(c, n)" in REF and "key: 'reo:' + n.id" in REF
+    assert "key: 'reo:'" not in REF and "P.noteHooks" in REF
     assert "<button class=\"rf-pin\" data-spot=" in REF  # the marker is a control, not a span
     # a plan note's resolution opens its plan revision at that line, outlined by the shared lit()
-    assert "S.res = n.ra" in REF and "NK().lit(rs)" in REF
+    assert "S.res = n.ra" in REF and "lit(rs)" in REF
 
 
 def test_reference_notes_keep_closed_ones_and_their_resolution(tmp_path):
@@ -132,7 +132,7 @@ def test_links_notes_use_the_shared_kit():
     L = (WEB / "links.js").read_text()
     assert "K.words(ctx, n)} ${K.view(n)}" in L and "K.acts(ctx, n, S.move === n.id)" in L
     assert "P.notes.set(ctx, n, b.dataset.nclose ? 'close'" in L and "P.notes.goRes(ctx, n)" in L and "P.notes.move(" in L
-    assert "P.notes.isReo(c, n)" in L and "P.notes.set(c, n, 'unreopen'" in L
+    assert "lreo:" not in L and "P.noteHooks" in L
 
 
 def test_version_reader_has_no_change(tmp_path):
