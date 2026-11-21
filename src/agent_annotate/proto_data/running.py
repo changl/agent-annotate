@@ -486,7 +486,7 @@ def usage(code="fld"):
 def orca_history():
     db = _orca_db()
     runs = {i: proj_of(o) for i, o in db.execute("select id, objective from runs")}
-    orc = defaultdict(lambda: {"workers": 0, "ok": 0, "failed": 0, "stopped": 0, "codex": 0, "claude": 0, "weeks": Counter(), "days": Counter()})
+    orc = defaultdict(lambda: {"workers": 0, "ok": 0, "failed": 0, "stopped": 0, "codex": 0, "claude": 0, "weeks": Counter()})
     for run, st, at, wst, so in db.execute("select d.run_id, d.status, d.dispatched_at, w.state, w.start_options from dispatch_contexts d "
                                           "left join worker_dispatches w on w.dispatch_id = d.id"):
         o = orc[runs.get(run, "other")]
@@ -499,11 +499,9 @@ def orca_history():
             o[ag] += 1
         if at:
             o["weeks"][datetime.fromisoformat(at).strftime("%G-W%V")] += 1
-            o["days"][at[:10]] += 1
     since = (db.execute("select min(created_at) from dispatch_contexts").fetchone()[0] or "")[:10]
     db.close()
-    return {p: {**{k: v for k, v in o.items() if k not in ("weeks", "days")}, "weeks": sorted(o["weeks"].items())[-10:],
-                "days": sorted(o["days"].items())[-30:]} for p, o in orc.items()}, since
+    return {p: {**o, "weeks": sorted(o["weeks"].items())[-10:]} for p, o in orc.items()}, since
 
 
 def hours(now=None, code="fld"):

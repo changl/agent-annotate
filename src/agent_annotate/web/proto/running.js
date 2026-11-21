@@ -228,7 +228,7 @@
       <div class="agrid">
         ${acard('Workers by project and outcome', stacks(orcRows.map(([p, o]) => [N[p] || p, {done: o.ok, failed: Math.max(0, o.failed - o.stopped), stopped: o.stopped}, p === PROJ]), [['done', 'finished', 'done'], ['failed', 'failed', 'failed'], ['stopped', 'stopped by a coordinator', 'none']]) + tbl(['Project', 'Workers', 'Finished', 'Failed', 'Stopped'], orcRows.map(([p, o]) => [N[p] || p, o.workers, o.ok, o.failed, o.stopped])),
           `Orca's record on this Mac since ${esc(A.orcaSince)}. Work run from the M5 Max's own coordinators is in its record, not here.`)}
-        ${oc && oc.days.length ? acard(`Workers started per day · ${PNAME}`, lchart(oc.days.map(([d, n]) => [dm(d), n]), {t: 'Workers per day'}) + tbl(['Day', 'Workers'], oc.days), "Orca workers started each day, from this Mac's record.") : ''}
+        ${oc && oc.weeks.length ? acard(`Workers per week · ${PNAME}`, lchart(oc.weeks.map(([w, n]) => [w.replace(/^\d+-W/, 'week '), n]), {t: 'Workers per week'}) + tbl(['Week', 'Workers'], oc.weeks), 'Orca workers started each ISO week, this Mac.') : ''}
         ${oc && oc.codex + oc.claude ? acard('Which agent ran the workers', donut(oc.codex, oc.claude, 'Codex', 'Claude', 'workers') + tbl(['Agent', 'Workers'], [['Codex', oc.codex], ['Claude', oc.claude]]),`Orca's record on this Mac since ${esc(A.orcaSince)}.`) : ''}
         ${acard('Claude Code sessions by project', hbars(sesRows.map(([p, n]) => [N[p] || p, n, p === PROJ])) + tbl(['Project', 'Sessions'], sesRows.map(([p, n]) => [N[p] || p, n])),
           `Session transcripts under the Claude Code folder on this Mac, by the folder each ran in; ${(ses.other || 0).toLocaleString()} sessions in other folders left out. Codex sessions are not counted yet.`)}
