@@ -121,12 +121,15 @@ def test_serve_other_reads_the_copy_and_nothing_writes_to_it(tmp_path):
     for d in (this, copy):
         (d / "current.html").write_text("<html><body>x</body></html>")
     web = Path(frame.__file__).resolve().parents[1] / "web"
-    httpd = ReviewHTTPServer(("127.0.0.1", 0), make_handler(this, skill_dir=web, public_base_path="/review", slug="fld-proto"))
+    handler = make_handler(this, skill_dir=web, public_base_path="/review", slug="fld-proto")
+    # published behind tailscale serve: only this page's slug has a publish record
+    handler._published_proxy_origins = lambda self: {("https", "page.example.ts.net", 443)} if self.slug == "fld-proto" else set()
+    httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-    def call(method, path):
+    def call(method, path, **headers):
         c = http.client.HTTPConnection(*httpd.server_address, timeout=5)
-        c.request(method, path, body=b"{}" if method != "GET" else None, headers={"Content-Type": "application/json"})
+        c.request(method, path, body=b"{}" if method != "GET" else None, headers={"Content-Type": "application/json", **headers})
         r = c.getresponse()
         out = (r.status, r.getheader("Location"), r.read())
         c.close()
@@ -136,6 +139,11 @@ def test_serve_other_reads_the_copy_and_nothing_writes_to_it(tmp_path):
         status, _, body = call("GET", "/review/proto/p/rebex/current.meta.json")
         assert status == 200 and json.loads(body)["name"] == "Rebex"
         assert json.loads(call("GET", "/review/current.meta.json")[2])["name"] == "fld-proto"  # this page is untouched by the swap
+        # through the proxy the copy is trusted on this page's published origin (it has no publish record of its own)
+        tailnet = {"Host": "page.example.ts.net", "Tailscale-User-Login": "member@example.com"}
+        status, _, body = call("GET", "/review/proto/p/rebex/current.meta.json", **tailnet)
+        assert status == 200 and json.loads(body)["name"] == "Rebex"
+        assert call("GET", "/review/proto/p/rebex/current.meta.json", Host="other.example.ts.net")[0] == 403
         assert call("GET", "/review/proto/p/rebex")[:2] == (308, "/review/proto/p/rebex/")
         assert call("GET", "/review/proto/p/nope/")[0] == 404
         assert call("GET", "/review/proto/p/bare/")[0] == 404

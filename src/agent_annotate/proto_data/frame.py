@@ -227,10 +227,13 @@ def serve_other(handler, route_path: str):
         if cls is None:
             # its own folder, bus name and caches: nothing of this page (its store, last Send) shows on the copy
             cls = _bound[(base, m[1])] = type(f"Copy_{m[1]}", (base,), {
+                "_published_proxy_origins": lambda self: self._page_origins,
                 "artifact_dir": copy.resolve(), "slug": copy.name, "_store_responses": {}, "_store_snapshot": None,
                 "_meta_snapshot": None, "_meta_responses": {}, "_meta_response_lock": threading.Lock(),
                 "_history_responses": {}, "_history_response_lock": threading.Lock(), "_history_bus_cache": {}})
     path = handler.path
+    # the copy has no publish record of its own: it is trusted on this page's published origins
+    handler._page_origins = handler._published_proxy_origins()
     handler.__class__, handler.path = cls, path.replace(f"/proto/p/{m[1]}", "", 1)
     try:
         return handler.do_GET()
