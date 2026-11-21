@@ -22,7 +22,7 @@
   // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary.
   let sendP = null;
   P.send = spec => { sendP = spec; if (started) refreshTop(); };
-  const sendable = () => sendP && !COPY;  // a read-only copy sends nothing (RR1)
+  const sendable = () => !!sendP;  // a read-only copy's Send is simulated by Questions: it writes nothing
   // Kept so an area's call does no harm: the frame draws the mock's worker squares itself, per project, with the overview on hover and focus (#12)
   P.bar = () => {};
 
@@ -330,11 +330,6 @@
     const n = S.sendN;
     return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${n ? '' : ' aria-disabled="true"'} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${n ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
-  // A read-only copy answers nothing: in Send's place, where his answers go (RR1). Its bead counts would be FastLane Drive's, so none.
-  function roChip(cls) {
-    const u = (projs().find(x => x.this) || {}).url;
-    return `<a class="chip rochip ${cls || ''}" ${u ? `href="${esc(u)}" target="_blank" rel="noopener"` : ''} title="A read-only copy of ${esc(projName())}'s page, made for this prototype. Answers and Send stay on its own page${u ? ': this opens it' : ''}.">Read-only copy${u ? ' ↗' : ''}</a>`;
-  }
   function drawTop() {
     const top = document.getElementById('p-top'), w = S.other ? S.other.waiting || 0 : waitingHere();
     const cur = byKey[S.tab] || TABS[0];
@@ -349,7 +344,7 @@
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
     if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
     const ver = S.meta ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}</span>` : '';
-    top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${COPY ? roChip('hide-ph') : beadsCtl() + sendBtn('hide-ph')}${who}`;
+    top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${beadsCtl()}${sendBtn('hide-ph')}${who}`;
     drawBar();
   }
   function drawBar() {
@@ -358,7 +353,7 @@
   }
   function drawFab() {
     const f = document.getElementById('p-fab');
-    f.hidden = !(S.sendN && !S.home && !S.other && !COPY && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1)
+    f.hidden = !(S.sendN && !S.home && !S.other && !COPY && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); on a copy the phone keeps Questions' bar Send
     f.innerHTML = `${I('send')}Send ${S.sendN || ''}`;
     f.setAttribute('aria-label', `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
   }
@@ -393,7 +388,7 @@
   /* ---------- the phone's menu, People and keyboard shortcuts ---------- */
   function navMenu() {
     const tabs = S.home ? '' : `<nav aria-label="Tabs">${TABS.map(t => { const c = chipOf(t.key); return `<button class="pm-tab ${t.tone}${c && c.empty ? ' empty' : ''}" role="tab" data-tab="${t.key}" aria-selected="${S.tab === t.key}">${I(t.icon)}<span class="pl">${esc(t.label)}</span><span data-chip="${t.key}">${chipHtml(c)}</span></button>`; }).join('')}</nav>
-      ${S.other ? '' : `<div class="pm-acts">${COPY ? roChip('') : sendBtn('') + beadsCtl(true)}</div>`}`;
+      ${S.other ? '' : `<div class="pm-acts">${sendBtn('') + beadsCtl(true)}</div>`}`;
     return `<div class="pmenu" role="dialog" aria-label="Menu">${tabs}<h3>Projects</h3>${projRows()}<button class="mi" data-home${S.home ? ' aria-current="page"' : ''}><span class="nm ri8">${I('home')} All projects</span></button><div class="smb">${settingsBody()}</div></div>`;
   }
   const KEYS = [['F', 'next question'], ['A', 'previous question'], ['1–9', 'pick that choice on the highlighted question'], ['C', 'write words on the highlighted question'],

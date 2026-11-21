@@ -214,5 +214,8 @@ def test_second_audit_fixes_stay():
     assert ".hov:hover>.hpop,.hov:focus-within>.hpop{display:block}" in css and ".wdots .wsep+.wd.jd{display:inline-grid}" in css
     # 13 History's arrows are listed and work
     assert "['← →', 'older or newer version, while one is open in History']" in js and "if (historyKey(e)) return;" in js
-    # RR1 a read-only copy never opens another page's Send
-    assert "const sendable = () => sendP && !COPY;" in js
+    # RR1 a read-only copy shows its own (simulated) Send in the header, never "Read-only copy"
+    assert "const sendable = () => !!sendP;" in js and "roChip" not in js and "${beadsCtl()}${sendBtn('hide-ph')}" in js
+    # fix3: the phone toast takes the screen's width (not half of it), wraps its links whole and sits above the floating Send
+    assert ".p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto" in css
+    assert "flex-wrap:wrap;row-gap:4px" in css and "text-decoration:underline;white-space:nowrap" in css and ".p-toastwrap{bottom:82px}" in css

@@ -227,9 +227,10 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
 .p-inert{display:inline-block;font-size:var(--fs-xs);font-weight:600;color:var(--warn-text);border:1px dashed color-mix(in oklab,var(--color-warning) 60%,transparent);border-radius:8px;padding:0 6px;white-space:nowrap}
 
 /* toast */
-.p-toastwrap{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:40;max-width:calc(100vw - 24px)}
-.p-toast{display:flex;align-items:center;gap:12px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-box);padding:8px 14px;box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 25%,transparent)}
-.p-toast .lk{color:var(--color-base-100);text-decoration:underline}
+/* centred between 12 px margins, not from left:50%, so a long message gets the screen's width instead of half of it (fix3) */
+.p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto;z-index:40}
+.p-toast{display:flex;flex-wrap:wrap;row-gap:4px;align-items:center;gap:12px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-box);padding:8px 14px;box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 25%,transparent)}
+.p-toast .lk{color:var(--color-base-100);text-decoration:underline;white-space:nowrap}  /* the mock's: on a phone the links wrap as whole links */
 .p-toast .p-inert{color:inherit;border-color:currentColor}  /* the toast is inverted: the marker takes its text colour */
 
 /* desk only: the phone's menu button, title, menu and floating Send */
@@ -244,7 +245,6 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
 /* jumps and skips land below the pinned top bar and tabs (#6, #7) */
 html{scroll-padding-top:98px}
 a.mi{text-decoration:none}
-a.rochip{color:var(--muted);font-weight:600}
 .dim{opacity:.75}
 /* larger Text size: the project name gives way first so the bar never scrolls sideways */
 .top>.dd.hide-ph{min-width:0}.top>.dd.hide-ph>.btn{max-width:100%}.top>.dd.hide-ph>.btn>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -286,6 +286,7 @@ a.rochip{color:var(--muted);font-weight:600}
   .pmenu .smb{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}
   .fab{display:inline-flex;align-items:center;gap:8px;position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:9;height:52px;padding:0 20px 0 16px;border:0;border-radius:26px;background:var(--color-primary);color:var(--color-primary-content);font-weight:700;font-size:var(--fs-base);box-shadow:0 4px 14px color-mix(in oklab,#000 30%,transparent);cursor:pointer}
   .fab svg.pi{width:20px;height:20px;stroke-width:1.8}
+  .p-toastwrap{bottom:82px}.p-toast{border-radius:var(--radius-field)}  /* the mock's phone toast: above the floating Send */
   .sheet{padding:12px 8px}
   .sheet .box{max-height:calc(100vh - 24px);padding:14px}
   .prow{grid-template-columns:32px minmax(0,1fr) 32px}
