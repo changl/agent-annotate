@@ -44,7 +44,7 @@ def test_header_menu_and_fab_share_one_state():
 
 def test_send_opens_while_counts_are_unknown():
     """Reference 2: a "…" or "?" Send opens the sheet; only a known zero says nothing is ready."""
-    assert "if (!sendable() || (!sendSt() && !S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');\n      return openSend();" in FRAME
+    assert "if (sendOff(t.classList.contains('hide-ph') ? 'hide-ph' : '')) return toast('Nothing is ready to send yet');\n      return openSend();" in FRAME
     assert "if (t.id === 'p-fab') return openSend();" in FRAME
     sheet = grab(Q, "function openSheet(c, key) {", "\n  }")
     assert "if (!D || stale) readFor(c);" in sheet and "if (onQ() && D) return draw(true);" in sheet

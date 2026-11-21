@@ -430,6 +430,9 @@
   // "…" and "?" only when nothing is saved, pending or failed (r12 audit13 frame 1, questions 1, reference 1)
   const sendNum = () => sendable() && sendP.saved ? savedN() : S.sendN;
   const sendSt = () => !sendable() || S.countsIn || sendNum() > 0 ? '' : S.stall.has('counts') ? '?' : '…';
+  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock.
+  // Its paint and its press both ask this, so a Send that shows a number always opens (r12 audit15 questions 1)
+  const sendOff = cls => !sendable() || (!sendSt() && !sendNum() && cls !== 'hide-ph');
   const SENDTIP = {'…': 'Counting what is ready to send… Press to see what you saved.', '?': 'What is ready to send could not be counted: press Try again. Press Send to see what you saved.'};
   // every Send on screen repaints together, so none keeps an old state
   function paintSend() {
@@ -440,7 +443,7 @@
     // until the counts are in, Send never looks empty: it reads "…", or "?" once the read gave no answer (r12 audit10 frame 1); pressed, it opens with what was saved
     const st = sendSt();
     if (st) return `<button class="btn ${cls || ''}" data-send${st === '…' ? ' aria-busy="true"' : ''} aria-label="Send: ${esc(SENDTIP[st])}" title="${esc(SENDTIP[st])}">${I('send')}<span class="bl">Send</span> ${st}</button>`;
-    const n = sendNum(), off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
+    const n = sendNum(), off = sendOff(cls);
     return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${off ? ' aria-disabled="true"' : ''} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${!off ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
   function drawTop() {
@@ -774,7 +777,7 @@
     if (d.send !== undefined) {
       S.menu = ''; drawAll();
       // while the counts are unknown or failed, Send opens at once with what was saved (r12 audit11 frame 1, questions 1)
-      if (!sendable() || (!sendSt() && !S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');
+      if (sendOff(t.classList.contains('hide-ph') ? 'hide-ph' : '')) return toast('Nothing is ready to send yet');
       return openSend();
     }
     if (t.id === 'p-fab') return openSend();

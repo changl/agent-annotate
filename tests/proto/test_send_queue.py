@@ -67,8 +67,8 @@ def test_send_opens_over_any_tab_at_any_count():
     f, s = _js("frame"), _js("questions")
     key = f[f.index("// ⌘↵ from any other tab"):f.index("if (e.key === 'Enter' && e.target.dataset")]
     assert "!onQuestions()" in key and "e.stopPropagation()" in key and "openSend(true)" in key
-    assert "off = !n && cls !== 'hide-ph'" in f  # the desk Send is never disabled
-    assert "(!sendSt() && !S.sendN && !t.classList.contains('hide-ph'))" in f
+    assert "off = sendOff(cls)" in f and "!sendNum() && cls !== 'hide-ph')" in f  # the desk Send is never disabled
+    assert "sendOff(t.classList.contains('hide-ph') ? 'hide-ph' : '')" in f
     op = s[s.index("function openSheet(c, key) {"):]
     assert "if (key && S.armed) return arm();" in op and "c.go('questions')" not in op  # never switches tab
     assert "className: 'area-questions tab-questions qhost'" in op
