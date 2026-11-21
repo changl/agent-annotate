@@ -155,8 +155,10 @@ def _recopy(at: str, key: str, name: str, src: Path) -> None:
 
 
 def build(page_dir) -> dict:
-    """<copy>/proto/data/copies.json: the newer version being copied into this copy, "" when none (and starts it when behind)."""
-    return {"copying": fresh(Path(page_dir))}
+    """<copy>/proto/data/copies.json: the newer version being copied into this copy, "" when none (and starts it when behind),
+    and the version the copy holds, read after: the frame says "Up to date" only when that is the one on screen (r12 audit12 frame 2)."""
+    copying = fresh(Path(page_dir))
+    return {"copying": copying, "current": _current(Path(page_dir))}
 
 
 if __name__ == "__main__":

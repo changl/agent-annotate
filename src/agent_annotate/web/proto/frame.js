@@ -641,11 +641,15 @@
   let copyWatch = 0;
   async function checkNewer() {
     // a copy whose real page moved on copies the newer version in the background: it says so, never "Up to date" (r12 fix10 slowread)
-    const [m, cp] = await Promise.all([api.meta().catch(() => null), COPY ? api('proto/data/copies.json').catch(() => null) : null]);
-    S.copying = (cp && cp.copying) || '';
+    let [m, cp] = await Promise.all([api.meta().catch(() => null), COPY ? api('proto/data/copies.json').catch(() => null) : null]);
+    // a copy swapped in between the two reads leaves the metadata a version behind the copy: read it again (r12 audit12 frame 2)
+    const ahead = () => !!(m && cp && cp.current && cp.current !== m.current && !(m.history || []).some(h => h.version === cp.current));
+    if (ahead()) m = await api.meta().catch(() => null);
+    // until the metadata reaches the copy's version, that version is still on its way: "Copying", then blue, never "Up to date"
+    S.copying = (cp && cp.copying) || (ahead() ? cp.current : '');
     if (S.copying && !copyWatch) copyWatch = setTimeout(() => { copyWatch = 0; checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 10000);
-    // "Up to date" needs both answers: the version on screen is the page's, and (on a copy) no newer one is being copied (r12 audit10 frame 5)
-    S.checked = m && S.loadedV && m.current === S.loadedV && (cp || !COPY) && !S.copying ? hhmm() : '';
+    // "Up to date" needs both answers to name the version on screen: the page's metadata and (on a copy) the copy itself (r12 audit10 frame 5, audit12 frame 2)
+    S.checked = m && S.loadedV && m.current === S.loadedV && (!COPY || (cp && cp.current === S.loadedV)) && !S.copying ? hhmm() : '';
     if (!m || !S.loadedV) return false;
     if (m.current === S.loadedV) { S.newer = null; return false; }
     const vs = (m.history || []).map(h => h.version), from = vs.indexOf(S.loadedV), fresh = new Set(from < 0 ? [m.current] : vs.slice(from + 1));

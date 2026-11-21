@@ -30,7 +30,7 @@ def test_copy_follows_its_real_page(tmp_path):
     t = time.monotonic()
     assert copies.fresh(copy) == "v2" and time.monotonic() - t < 1  # the real page moved on: copied behind, no read waits
     assert json.loads((copy / "current.meta.json").read_text())["current"] == "v1"  # the copy serves its own version meanwhile
-    assert copies.fresh(copy) == "v2" and copies.build(copy) == {"copying": "v2"}  # one copy at a time, and the frame is told
+    assert copies.fresh(copy) == "v2" and copies.build(copy) == {"copying": "v2", "current": "v1"}  # one copy at a time, and the frame is told
     for _ in range(600):
         if not copies._busy:
             break

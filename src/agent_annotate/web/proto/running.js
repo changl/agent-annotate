@@ -54,10 +54,13 @@
     const wy = new Set(b.waiting.map(x => x[0]));
     // Waiting: only the tasks whose own notes on the board say they wait on him; merges marked
     const wyo = S.open.has('wy'), wyl = [...b.waiting].sort((x, y) => y[2] - x[2]), merges = b.waiting.filter(x => x[2]).length;
-    const waits = `<section class="wyband" id="waiting"><div class="wgh"><span class="wyi">${ic('hand')}</span><b>Waiting</b><span class="cnt">${b.waiting.length}</span>
-        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}</span></div>
-      ${b.waiting.length ? wyl.slice(0, wyo ? wyl.length : 4).map(([id, need, mg]) => `<div class="line sub">${mg ? `<span class="mg" title="A merge waiting for you">${ic('merge', 'merge')}</span>` : '<span></span>'}<button class="lk tbtn" data-task="${esc(id)}">${tref(id, (B[id] || {}).t || id, (B[id] || {}).st)}</button><span class="grow small mut">${esc(need)}</span></div>`).join('')
-        : `<p class="small mut">${b.none ? esc(b.none) : d.board && d.board.error ? 'The board could not be read just now.' : 'Nothing waits on you.'}</p>`}
+    // an unread board has no counts here either: no "0", no "no merge waiting", as Tasks (r12 audit12 frame 3)
+    const unread = d.board && d.board.error;
+    const waits = `<section class="wyband" id="waiting"><div class="wgh"><span class="wyi">${ic('hand')}</span><b>Waiting</b>${unread ? '' : `<span class="cnt">${b.waiting.length}</span>
+        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}</span>`}</div>
+      ${unread ? `<p class="small mut">The ${esc(PNAME)} board could not be read just now. <button class="btn sm" data-reread>Try again</button></p>`
+        : b.waiting.length ? wyl.slice(0, wyo ? wyl.length : 4).map(([id, need, mg]) => `<div class="line sub">${mg ? `<span class="mg" title="A merge waiting for you">${ic('merge', 'merge')}</span>` : '<span></span>'}<button class="lk tbtn" data-task="${esc(id)}">${tref(id, (B[id] || {}).t || id, (B[id] || {}).st)}</button><span class="grow small mut">${esc(need)}</span></div>`).join('')
+        : `<p class="small mut">${b.none ? esc(b.none) : 'Nothing waits on you.'}</p>`}
       ${b.waiting.length > 4 ? `<button class="lk small" data-fold="wy" aria-expanded="${wyo}">${wyo ? 'Show the first 4' : `Show all ${b.waiting.length}`}</button>` : ''}</section>`;
     // Workers: by machine, then by the work they belong to
     const ws = mine(d), W = d.workers || {}, L = d.load || {};
@@ -324,8 +327,10 @@
       if (rm) rm.hidden = !e.target.value.trim(); };
   }
   // Try again on an unread board: the server answers from memory and builds afresh behind it, so read until the board answers
-  async function reread(btn) {
-    btn.disabled = true; btn.textContent = 'Reading the board…';
+  async function reread() {
+    const bs = EL.querySelectorAll('[data-reread]');  // Waiting's and Tasks': one read for both
+    if ([...bs].some(b => b.disabled)) return;
+    bs.forEach(b => { b.disabled = true; b.textContent = 'Reading the board…'; });
     for (let i = 0; i < 30; i++) {  // up to about 90 s, then the line and Try again come back
       const d = await CTX.data('running', true).catch(() => null);
       if (d) D = own(d);

@@ -34,7 +34,7 @@ def test_reload_says_up_to_date_only_once_confirmed():
     neutral = rb[rb.index("if (!S.checked)"):rb.index("\n", rb.index("if (!S.checked)"))]
     assert "Up to date" not in neutral
     cn = FRAME[FRAME.index("async function checkNewer()"):FRAME.index("/* ---------- theme")]
-    assert "S.checked = m && S.loadedV && m.current === S.loadedV && (cp || !COPY) && !S.copying ? hhmm() : '';" in cn
+    assert "S.checked = m && S.loadedV && m.current === S.loadedV && (!COPY || (cp && cp.current === S.loadedV)) && !S.copying ? hhmm() : '';" in cn
     assert "if (meta && !COPY) S.checked = hhmm();" in FRAME
 
 
