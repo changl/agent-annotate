@@ -283,8 +283,18 @@ def test_sent_reopen_keeps_its_status_and_reason():
 def test_go_to_a_checklist_note_opens_the_checklist():
     """Audit5 finding 3: a checklist row's note (chk:N) opens the checklist and highlights the note."""
     s = (WEB / "reference.js").read_text()
-    assert "a.startsWith('chk:') && D.checklist ? D.checklist.plan" in s and "go: goRef(itemOf(n.a), n.id)" in s
+    assert "a.startsWith('chk:') && D.checklist ? D.checklist.plan" in s and "go: goRef(itemOf(n.a), n.id, n.a)" in s
     assert "S.hl === n.id ? ' rf-hl' : ''" in s
+
+
+def test_go_to_reaches_a_folded_copy_line_and_an_older_revision():
+    """Audit7 findings 1 and 2: Go to it opens the note's copy group, or the revision it was written on, even after a reload."""
+    s = (WEB / "reference.js").read_text()
+    assert "S.open.add(`cpall:${x.id}:${cpRank(x.copy[+m[3]][2])}`)" in s and "rank = cpRank" in s  # same fold key as the group's Show all
+    assert "const i = p.revs.findIndex(r => r[0] === m[2]); if (i >= 0) S.rv[p.id] = i;" in s
+    assert "S.scroll = true; reach(a);" in s
+    # a revision read after the jump still scrolls its highlighted note into view once drawn
+    assert "S.scroll = !!(S.hl && !h && Object.keys(loading).some(k => !blocks[k]));" in s
 
 
 def test_whole_item_approve_joins_send():

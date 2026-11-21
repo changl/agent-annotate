@@ -365,8 +365,9 @@
       if (href) { e.setAttribute('href', href); e.setAttribute('target', '_blank'); e.setAttribute('rel', 'noopener'); } } })(t.content);
     return t.innerHTML.trim();
   }
+  const cpRank = s => s === 'Done' ? 2 : s === 'Held back' ? 1 : 0;  // copy groups: Needs you, Held back, Done
   function copyView(x) {
-    const k = 'ref:' + x.id, q = (S.cq || '').toLowerCase(), rank = s => s === 'Done' ? 2 : s === 'Held back' ? 1 : 0, ckOf = i => `${k}~c~${i}`;
+    const k = 'ref:' + x.id, q = (S.cq || '').toLowerCase(), rank = cpRank, ckOf = i => `${k}~c~${i}`;
     const L = x.copy.map((c, i) => [c, i]).filter(([c]) => !q || (c[0] + ' ' + c[1]).toLowerCase().includes(q));
     const held = x.copy.filter((c, i) => { const s = S.cp.get(ckOf(i)); return s ? s.st === 'held' : c[2] === 'Held back'; }).length;
     const grp = r => { const rs = L.filter(([c]) => rank(c[2]) === r), fk = `cpall:${x.id}:${r}`, all = S.open.has(fk) || !!q, n = rs.length;
@@ -431,7 +432,8 @@
     const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
-    if (S.scroll) { S.scroll = false; const h = S.hl && el.querySelector('.rf-hl'), v = h || document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: h ? 'center' : 'start'}); }
+    if (S.scroll) { const h = S.hl && el.querySelector('.rf-hl'), v = h || document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: h ? 'center' : 'start'});
+      S.scroll = !!(S.hl && !h && Object.keys(loading).some(k => !blocks[k])); }  // a highlight in a revision still being read scrolls once it is drawn
   }
   const open = id => { S.sel = S.sel === id ? '' : id; S.note = S.hl = ''; if (S.sel) { markSeen([id]); S.scroll = true; } history.replaceState(null, '', '#reference' + (S.sel ? '/' + encodeURIComponent(S.sel) : '')); draw(); };
   const copy = (t, what) => navigator.clipboard.writeText(t).then(() => ctx.toast(what + ' copied'), () => ctx.toast('Could not copy'));
@@ -607,7 +609,13 @@
   // notes from an earlier visit are listed too, while reference.json says they are unsent (r12 fix7)
   // Go to it: opens the item (a checklist row's note opens the checklist) and, for a note, highlights it; the same hash fires no hashchange, so redraw then
   const itemOf = a => a.startsWith('chk:') && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
-  const goRef = (id, nid) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true;
+  // a note in a folded copy group or on an older plan revision: open that group or revision first (r12 fix9)
+  function reach(a) {
+    const m = /^ref:([^~]+)~(.+)~(\d+)$/.exec(a || ''), x = m && xOf(m[1]), p = m && D.plans.find(q => q.id === m[1]);
+    if (m && m[2] === 'c' && x && x.copy && x.copy[+m[3]]) { S.cq = ''; S.open.add(`cpall:${x.id}:${cpRank(x.copy[+m[3]][2])}`); }
+    else if (p) { const i = p.revs.findIndex(r => r[0] === m[2]); if (i >= 0) S.rv[p.id] = i; if (D.checklist && D.checklist.plan === p.id) S.det = true; }
+  }
+  const goRef = (id, nid, a) => () => { S.sel = id; S.hl = nid || ''; S.note = ''; S.scroll = true; reach(a);
     if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
   const redo = () => draw();  // draw keeps the drafts, then redraws only on this tab
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
@@ -626,7 +634,7 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(x ? x.t : id)} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       for (const n of allNotes()) if (!n.sent && !/^doc:/.test(n.a)) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
-        go: goRef(itemOf(n.a), n.id), remove: async () => {
+        go: goRef(itemOf(n.a), n.id, n.a), remove: async () => {
           await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x !== n); D.notes = D.notes.filter(x => x.id !== n.id); redo();
           return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...noteMeta(n.a)}); mine.push({...n, id: b.id}); redo(); }; }});
       return it;
