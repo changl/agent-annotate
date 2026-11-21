@@ -62,6 +62,14 @@
     const size = () => { f.style.height = Math.max(200, doc.documentElement.scrollHeight) + 'px'; };
     size();
     try { new ResizeObserver(size).observe(doc.body); } catch {}
+    // a version's section index, beside "What you sent on it" (the mock's "Its sections"); each line scrolls to its section
+    const secs = f.closest('.hv-view').querySelector('.h-secs');
+    if (!secs) return;
+    const hs = [...doc.querySelectorAll('h2')].filter(h => h.textContent.trim());
+    secs.innerHTML = hs.map((h, i) => `<button class="lk h-sec" data-sec="${i}">${ctx.esc(h.textContent.trim())}</button>`).join('') || '<p class="small mut">No sections in this version.</p>';
+    secs.onclick = e => { const b = e.target.closest('[data-sec]'); if (!b) return;
+      const top = document.getElementById('p-top');
+      window.scrollTo({top: scrollY + f.getBoundingClientRect().top + hs[+b.dataset.sec].getBoundingClientRect().top - (top ? top.offsetHeight : 0) - 8, behavior: 'smooth'}); };
   }
 
   /* ---------- each picture remembers its own size (#118): 25 / 50 / 75 / 100 %, kept per picture ---------- */
@@ -234,7 +242,8 @@
     P.viewVersion(el, ctx, {title: `Version ${vn(v)}`, src: `content?v=${encodeURIComponent(v)}`, onClose: close,
       before: `${m.note ? `<p class="small"><span class="mut">Agent's note on this version:</span> ${esc(m.note)}</p>` : ''}
         ${v !== D.current ? waitingNow(v, ctx) : ''}
-        <h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul>`});
+        <div class="h-cols"><div><h3 class="h-ph">Its sections</h3><div class="h-secs"><p class="small mut">Loading…</p></div></div>
+        <div><h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul></div></div>`});
     el.querySelector('.hv-view').addEventListener('click', e => { const b = e.target.closest('[data-wnfold], [data-qgo]'); if (!b) return;
       // Questions scrolls to the card once its data is in; read it first so a cold load lands on the card too
       if (b.dataset.qgo) return ctx.data('questions').catch(() => {}).then(() => ctx.go('questions', 'q-' + b.dataset.qgo));

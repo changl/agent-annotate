@@ -344,7 +344,8 @@
     const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${w} waiting</span>` : ''} ▾</button>${projMenu}</div>`;
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
     if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
-    const ver = S.meta ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}</span>` : '';
+    const hv = S.tab === 'history' && S.meta ? decodeURIComponent(location.hash.split('/')[1] || '') : '';  // an older version open in History, as the mock's header marks it
+    const ver = S.meta ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}${/^v\d+$/.test(hv) && hv !== S.meta.current ? ` · viewing ${esc(hv.slice(1))} (older)` : ''}</span>` : '';
     top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${beadsCtl()}${sendBtn('hide-ph')}${who}`;
     drawBar();
   }

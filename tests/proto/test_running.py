@@ -65,9 +65,11 @@ def test_usage_parses_the_daily_reports(tmp_path, monkeypatch):
     (tmp_path / "2026-11-19.md").write_text("Total $617.40 across 12,345 requests\nPeak concurrent workers (any time): 9\nMerged app commits: 14\n"
                                             "Cache writes: x (1.5M / 2.0M tokens)\nBy role: orchestrator $300, design-ui $40\n")
     (tmp_path / "2026-11-18.md").write_text("no totals here")
-    monkeypatch.setattr(R, "USAGE", tmp_path)
-    assert R.usage() == [{"d": "2026-11-19", "usd": 617.4, "req": 12345, "peak": 9, "commits": 14, "cacheM": 3.5,
-                          "roles": [["orchestrator", 300], ["design-ui", 40]]}]
+    monkeypatch.setattr(R, "USAGE", {"fld": tmp_path})
+    assert R.usage("fld") == [{"d": "2026-11-19", "usd": 617.4, "req": 12345, "peak": 9, "commits": 14, "cacheM": 3.5,
+                               "roles": [["orchestrator", 300], ["design-ui", 40]]}]
+    # another project's copy never shows FastLane Drive's reports as its own
+    assert R.usage("rebex") == R.usage("annotate") == []
 
 
 def test_build_serves_the_snapshot_and_refreshes_once_in_the_background(tmp_path, monkeypatch):

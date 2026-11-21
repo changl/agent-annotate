@@ -5,7 +5,7 @@ Sources, each read at most once a minute (the whole result is cached; a stale co
 - scheduled jobs and runs: `wmill schedule list` and `wmill job list` with the stored login (no token is read or passed here);
 - tasks: this page's own project's board (found by `bd where` from its checkout) through `bd --readonly`; none when it has no board;
 - pull requests: `gh search prs`, read only;
-- daily usage: FastLane Drive's usage reports; Analytics: the page's own record and the other review pages' records;
+- daily usage: the page's own project's usage reports (only FastLane Drive keeps any); Analytics: the page's own record and the other review pages' records;
 - machine load: the launchd recorder's file (~/.local/share/machine-load/load.tsv) on this Mac, and on the others through `ssh`, read only.
 Nothing here writes outside the page dir; the only write is the snapshot file proto-running.json in it.
 """
@@ -27,7 +27,8 @@ from pathlib import Path
 
 HOME = Path.home()
 FLD_BOARD = HOME / "projects/FastLane Drive/fld-main"
-USAGE = HOME / "projects/FastLane Drive/planning/operations/usage-reports"
+# each project's daily usage reports, by project tag; a project not listed keeps none (only FastLane Drive does on this Mac)
+USAGE = {"fld": HOME / "projects/FastLane Drive/planning/operations/usage-reports"}
 ORCA_DB = HOME / "Library/Application Support/Orca/orchestration.db"
 LOAD_TSV = HOME / ".local/share/machine-load/load.tsv"
 PROJECTS = HOME / "projects"
@@ -38,7 +39,7 @@ REPOS = {"fld": ["--owner", GH_OWNER], "rebex": ["--repo", "changl/shopify-rebex
 JOBP = [(r"^f/(fld_ops|sweep|uat|usage|ops)/", "fld"), (r"^f/test/", "annotate"), (r"^u/[^/]+/mac_daily_update$", "multimac"), (r"^u/[^/]+/windmill_", "windmill")]
 TTL = 60  # seconds a read stays fresh: the page never asks a source more than once a minute
 SNAP = "proto-running.json"
-SNAPV = 2  # a saved snapshot of an older shape (jobs without proj, pull requests not per project) is not served
+SNAPV = 3  # a saved snapshot of an older shape (jobs without proj, pull requests or usage not per project) is not served
 MACS = [("M1 Max", None), ("M5 Max", "M5Max"), ("M1 Max 16", "M1Max16")]
 # each project's checkout, by project tag; `bd where` run there finds its own board. A project not listed has none.
 CHECKOUTS = {"fld": FLD_BOARD, "rebex": PROJECTS / "rebex/repo", "annotate": PROJECTS / "agent-annotate/codex"}
@@ -465,9 +466,10 @@ def page_record(d: Path):
     return q, sorted([w, *v] for w, v in weeks.items())[-12:], comeback, qpv
 
 
-def usage():
+def usage(code="fld"):
+    """This project's own daily usage reports, newest 30; none when it keeps none."""
     use = []
-    for f in sorted(USAGE.glob("2026-*.md")):
+    for f in sorted(USAGE[code].glob("2026-*.md")) if code in USAGE else []:
         t = f.read_text(errors="ignore")
         g = lambda r, d=None: (lambda m: m.groups() if m else d)(re.search(r, t))
         tot = g(r"Total \$([\d,.]+) across ([\d,]+) requests")
@@ -545,7 +547,7 @@ def analytics(page_dir: Path, code="fld"):
         agg["ttvMed"] = round(statistics.median(m)) if m else None
         qa[p] = agg
     orca, since = safe(orca_history, ({}, ""))
-    return {"names": NAMES, "qa": qa, "qaWeeks": weeks, "comeback": comeback, "qpv": qpv, "usage": safe(usage, []),
+    return {"names": NAMES, "qa": qa, "qaWeeks": weeks, "comeback": comeback, "qpv": qpv, "usage": safe(lambda: usage(code), []),
             "orca": orca, "orcaSince": since, "sessions": safe(sessions, {})}
 
 

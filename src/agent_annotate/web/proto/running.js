@@ -244,7 +244,7 @@
         ${acard('Requests per day', lchart(U.map(d => [dm(d.d), d.req]), {t: 'Requests per day'}) + tbl(['Day', 'Requests'], U.map(d => [d.d, d.req])), `${PNAME}'s daily usage reports.`)}
         ${acard('Most workers at once, per day', cols(U.map(d => [dm(d.d), d.peak]), {t: 'Most workers at once', gate: [8, 'cap 8'], hl: U.length - 1}) + tbl(['Day', 'Workers at once'], U.map(d => [d.d, d.peak])), `${PNAME}'s daily usage reports.`)}
         ${roles.length ? acard(`Where ${dm(last.d)}'s spend went, by role`, segbar([...roles.slice(0, 5), ...(roles.length > 5 ? [['Other roles', roles.slice(5).reduce((s, x) => s + x[1], 0)]] : [])], 'dollars') + tbl(['Role', 'Dollars'], roles), "The newest daily usage report's split by worker role: the five largest, the rest as other roles.") : ''}
-      </div>` : `<p class="mut">No usage reports could be read.</p>`}</div>`;
+      </div>` : PROJ === 'fld' ? `<p class="mut">No usage reports could be read.</p>` : `<p class="mut dim">Nothing yet: ${PNAME} keeps no usage reports. FastLane Drive's daily reports are the only ones on this Mac.</p>`}</div>`;
     const SV = `<div class="agrp" id="an-saves"><h2 class="ph">What this page saves</h2>${savesHtml(q, cb)}</div>`;
     return `<nav class="ajump small" aria-label="Analytics groups">${[['an-qa', 'Questions and answers'], ['an-work', 'Sessions and workers'], ['an-use', 'Usage and cost'], ['an-mac', 'Machine load'], ['an-saves', 'What this page saves']].map(([i, t]) => `<a href="#analytics/${i}">${t}</a>`).join('')}</nav>${QA}${SW}${UC}${loadGroup()}${SV}`;
   }

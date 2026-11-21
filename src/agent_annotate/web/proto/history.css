@@ -46,6 +46,10 @@
 .hv-err{display:flex;gap:10px;align-items:flex-start;border:1px solid color-mix(in oklab,var(--color-error) 45%,transparent);background:color-mix(in oklab,var(--color-error) 8%,var(--color-base-100));border-radius:var(--radius-box);padding:10px 12px;margin:6px 0}
 .hv-err>svg.pi{color:var(--err-text);margin-top:2px}
 .hv-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+/* an older version: its sections beside what you sent on it, as in the mock; one column on a phone */
+.h-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 24px;margin-bottom:8px}
+.h-secs{max-height:320px;overflow-y:auto;padding:0 0 4px 22px}
+.h-sec{display:block;width:100%;text-align:left;padding:5px 0;border-top:1px solid color-mix(in oklab,var(--line) 60%,transparent)}
 
 @media (max-width:600px){
   .h-bar input[type=search]{flex:1 1 100%}
@@ -53,4 +57,5 @@
   .h-dot{display:none}
   .pp-zhint{display:none}
   .hv-view{padding:6px 8px 10px;margin:4px -4px 12px}
+  .h-cols{grid-template-columns:minmax(0,1fr)}
 }
