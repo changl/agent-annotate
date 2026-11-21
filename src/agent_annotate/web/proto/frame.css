@@ -214,7 +214,6 @@ a.btn{color:inherit;font-weight:400}
 .p-view{display:contents}  /* one tab's render box: layout as if drawn straight into the page */
 
 /* the highlighted question: F, A, 1–9 and C act on it (mock: .ecard.hl) */
-.qcard.p-hl{box-shadow:0 0 0 3px color-mix(in oklab,var(--color-primary) 45%,transparent)}
 
 /* another project's tab, until the copy carries its material */
 .p-other{max-width:860px}.p-other .acts{display:flex;gap:8px;flex-wrap:wrap}

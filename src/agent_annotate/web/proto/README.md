@@ -24,7 +24,7 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 **Added in round 12 (frame; all backward compatible):**
 - `render(el)` now gets a fresh box inside `<main>` (`div.p-view`, same `area-<area> tab-<key>` classes, `display:contents`). A render that finishes after the tab changed paints into a detached box, so it never lands on another tab.
 - `Proto.bar` is optional: without it the frame draws worker dots from `running.json` (`workers` by Mac, `jobs`, `board`).
-- Keys F/A (next/previous open question), 1–9 (pick an option), C (answer box) act on `.qcard[data-q]` (`.qopt[data-pick]`, `textarea[data-words]`); the highlighted card gets `p-hl`. Esc clicks `#p-main [role=dialog] [data-esc]` or `[data-sendclose]`.
+- Keys: Questions owns F, A, 1–9, C and Esc on its tab. From any other tab (or Home) the frame opens Questions on F or A, waits for `.qcard[data-q]`, then dispatches the same key on `body`. On other tabs Esc clicks `#p-main [role=dialog] [data-esc]` or `[data-sendclose]`.
 - With Unsent answers off, prefs keys `q:drafts`, `q:general`, `tst`, `tcm:*`, `draft:*` stay in memory only, and stored ones are dropped at load.
 - With Folds on, any `<details>` in `#p-main` keeps its open state by tab and summary text.
 - `frame.json` gains `code` (fld, rebex, annotate, ...), project `code` and `owner` (`{agent, at, alive}`), and `lastSend` (`{ts, delivery, n}`).

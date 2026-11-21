@@ -94,8 +94,9 @@ def test_broken_items_keep_their_fixes():
     assert "addEventListener('toggle', saveFold, true)" in js and "restoreFolds(main)" in js
     # 6 a reload with Open tab off starts on Questions
     assert "nav.type === 'reload' && !remember('tab')" in js
-    # 7 F, A, 1-9 and C act on the highlighted question; Esc closes an area's dialog
-    assert "k === 'f' || k === 'a'" in js and "textarea[data-words]" in js and "[data-sendclose]" in js
+    # 7 F and A from any tab open Questions and hand the key over; Esc closes an area's dialog
+    assert "if ((k !== 'f' && k !== 'a') || onQuestions()) return;" in js and "new KeyboardEvent('keydown'" in js
+    assert "[data-sendclose]" in js
     # 8 sign out shows the sign-in screen
     assert "function signOut" in js and "body.p-gated" in css
     # the Running fixer's stale render: each render draws into its own box

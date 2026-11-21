@@ -549,60 +549,20 @@
     }
   }
   const typing = el => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-  /* the highlighted question (mock: S.hl): F and A move it, 1–9 pick, C writes; it lives on .qcard[data-q] by id (#7) */
-  const cards = () => [...document.querySelectorAll('#p-main .qcard[data-q]')].filter(c => c.offsetParent || c.closest('details'));
-  const isOpenQ = c => !c.matches('.answered,.sent,.closed');
-  const cardOf = id => id && document.getElementById('q-' + id);
-  function paintHl() {
-    document.querySelectorAll('#p-main .qcard.p-hl').forEach(c => { if (c.dataset.q !== S.hl) c.classList.remove('p-hl'); });
-    const c = cardOf(S.hl);
-    if (c && !c.classList.contains('p-hl')) c.classList.add('p-hl');
-  }
-  function hlTo(c) {
-    if (!c) return;
-    S.hl = c.dataset.q;
-    for (let d = c.closest('details'); d; d = d.parentElement.closest('details')) d.open = true;  // its section opens (mock: openSecOf)
-    const fold = c.classList.contains('folded') && c.querySelector('[data-fold]');
-    if (fold) fold.click();
-    paintHl();
-    (cardOf(S.hl) || c).scrollIntoView({block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
-  }
-  // from an answered card, F and A step on from its place in the page, not from the top (mock 48)
-  function step(fwd) {
-    const all = cards(), k = all.findIndex(c => c.dataset.q === S.hl);
-    if (k < 0) return all.filter(isOpenQ)[0];
-    return fwd ? all.slice(k + 1).find(isOpenQ) : all.slice(0, k).reverse().find(isOpenQ);
-  }
+  const onQuestions = () => !S.home && !S.other && S.tab === 'questions';
+  // Questions owns F, A, 1–9, C and Esc on its tab; from any other tab F and A open Questions and hand the key over (#7)
   async function questionKey(e) {
     const k = e.key.toLowerCase();
-    if (k === 'f' || k === 'a') {
-      if (S.home || S.other || S.tab !== 'questions') ctx.go('questions');
-      for (let i = 0; i < 30 && !cards().length; i++) await new Promise(r => setTimeout(r, 100));  // the tab may still be drawing
-      hlTo(step(k === 'f') || cards().filter(isOpenQ)[0]);
-      return true;
-    }
-    const c = cardOf(S.hl);
-    if (!c || S.tab !== 'questions') return false;
-    if (/^[1-9]$/.test(k)) {
-      const o = c.querySelectorAll('.qopt[data-pick]')[+k - 1];
-      if (!o) return false;
-      const ids = cards().map(x => x.dataset.q), at = ids.indexOf(S.hl);
-      o.click();
-      await new Promise(r => setTimeout(r, 60));  // Questions redraws the card
-      hlTo(ids.slice(at + 1).map(cardOf).find(x => x && isOpenQ(x)));
-      return true;
-    }
-    if (k === 'c') {
-      e.preventDefault();
-      const w = c.querySelector('textarea[data-words]');
-      if (w) { w.focus(); return true; }
-    }
-    return false;
+    if ((k !== 'f' && k !== 'a') || onQuestions()) return;
+    e.preventDefault();
+    ctx.go('questions');
+    for (let i = 0; i < 30 && !document.querySelector('#p-main .qcard[data-q]'); i++) await new Promise(r => setTimeout(r, 100));  // the tab may still be drawing
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {key: k, bubbles: true}));
   }
   function onKey(e) {
     if (e.key === 'Escape' && (S.menu || S.sheet)) { S.menu = ''; S.sheet = ''; drawAll(); return; }
-    if (e.key === 'Escape') {  // an area's own dialog in the page (the Send summary): its dismiss button
-      const x = document.querySelector('#p-main [role=dialog] :is([data-esc],[data-sendclose])');
+    if (e.key === 'Escape') {  // an area's own dialog in the page that does not close itself: its dismiss button
+      const x = !onQuestions() && document.querySelector('#p-main [role=dialog] :is([data-esc],[data-sendclose])');
       if (x) { e.preventDefault(); x.click(); }
       return;
     }
@@ -664,7 +624,7 @@
     if (!remember('drafts')) dropStoredDrafts();  // left over from before the switch went off (#4)
     // areas redraw their cards and sections: keep the highlight on the same question and the folds as he left them
     const main = document.getElementById('p-main');
-    new MutationObserver(() => { if (S.hl) paintHl(); if (!S.home) restoreFolds(main); }).observe(main, {childList: true, subtree: true});
+    new MutationObserver(() => { if (!S.home) restoreFolds(main); }).observe(main, {childList: true, subtree: true});
     addEventListener('scroll', onScroll, {passive: true});
     phoneQ.addEventListener('change', () => { S.menu = ''; drawAll(); });
     const [meta, who, fd, proj, board] = await Promise.all([api.meta(), api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null)));
