@@ -9,7 +9,9 @@
   const cut = (s, n) => { s = String(s || ''); return s.length <= n ? s : s.slice(0, n).replace(/\s+\S*$/, '') + '…'; };
   const ago = m => m == null ? '' : m < 1 ? 'under a minute' : m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : pl(Math.round(m / 1440), 'day', 'days');
   const dm = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', {day: 'numeric', month: 'short'});
-  const PROJ = 'fld', PNAME = 'FastLane Drive';
+  let PROJ = 'fld', PNAME = 'FastLane Drive';
+  // the page's own project (a read-only copy is Rebex's or Agent Annotate's), as running.py read it
+  const own = d => { if (d && d.proj) { PROJ = d.proj; PNAME = d.pname || d.proj; } return d; };
   // worker state → the page's one colour per state: working is in progress, no sign of life is blocked, failed is failed
   const WS = {working: ['progress', 'working'], stuck: ['blocked', 'no sign of life'], failed: ['failed', 'failed'], done: ['done', 'done']};
   const WORDER = ['failed', 'stuck', 'working', 'done'];
@@ -53,7 +55,7 @@
     const waits = `<section class="wyband" id="waiting"><div class="wgh"><span class="wyi">${ic('hand')}</span><b>Waiting</b><span class="cnt">${b.waiting.length}</span>
         <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}</span></div>
       ${b.waiting.length ? wyl.slice(0, wyo ? wyl.length : 4).map(([id, need, mg]) => `<div class="line sub">${mg ? `<span class="mg" title="A merge waiting for you">${ic('merge', 'merge')}</span>` : '<span></span>'}<button class="lk tbtn" data-task="${esc(id)}">${tref(id, (B[id] || {}).t || id, (B[id] || {}).st)}</button><span class="grow small mut">${esc(need)}</span></div>`).join('')
-        : `<p class="small mut">${d.board && d.board.error ? 'The board could not be read just now.' : 'Nothing waits on you.'}</p>`}
+        : `<p class="small mut">${b.none ? esc(b.none) : d.board && d.board.error ? 'The board could not be read just now.' : 'Nothing waits on you.'}</p>`}
       ${b.waiting.length > 4 ? `<button class="lk small" data-fold="wy" aria-expanded="${wyo}">${wyo ? 'Show the first 4' : `Show all ${b.waiting.length}`}</button>` : ''}</section>`;
     // Workers: by machine, then by the work they belong to
     const ws = mine(d), W = d.workers || {}, L = d.load || {};
@@ -89,7 +91,7 @@
     return `${waits}
       <section class="rsec" id="workers"><h2 class="ph">Workers <span class="cnt">${ws.length}</span> <span class="small mut nb">live on the three Macs</span></h2>${W.error ? `<p class="mut">Orca could not be read just now.</p>` : wsec}</section>
       <div class="rgrid"><section class="rsec" id="tasks"><h2 class="ph">Tasks <span class="cnt">${b.tasks.length}</span> <span class="small mut nb">not closed on the board · ${b.ready || 0} ready</span></h2>
-          ${(b.groups || []).map(tgroup).join('')}<p class="small mut">The ${PNAME} board, read only${b.closed ? `; the ${b.closed.toLocaleString()} closed tasks are not listed` : ''}.</p></section>
+          ${(b.groups || []).map(tgroup).join('')}<p class="small mut">${b.none ? esc(b.none) : `The ${esc(PNAME)} board, read only${b.closed ? `; the ${b.closed.toLocaleString()} closed tasks are not listed` : ''}.`}</p></section>
         <div><section class="rsec" id="jobs"><h2 class="ph">Scheduled jobs <span class="cnt${nfail ? ' bad' : ''}">${nfail ? nfail + ' failing' : jobs.length}</span></h2>${jobs.map(jrow).join('') || `<p class="mut small">${d.jobs && d.jobs.error ? 'Windmill could not be read just now.' : 'No scheduled jobs.'}</p>`}</section>
           <section class="rsec" id="prs"><h2 class="ph"><button class="fold" data-fold="prs" aria-expanded="${po}">${ic('chev')} Pull requests <span class="cnt">${opn ? opn + ' open' : prs.length}</span></button></h2>
             ${po ? prs.map(p => `<div class="line sub"><span class="grow"><b>${esc(p.id)}</b> · ${esc(cut(p.title, 110))}</span>${stPill(p.state === 'merged' ? 'closed' : p.state === 'open' ? 'in progress' : 'deferred').replace(/>[a-z ]+<\/span>$/, `>${esc(p.draft ? 'draft' : p.state)}</span>`)}<button class="ib" data-copy="${esc(p.url)}" title="Copy the link to ${esc(p.id)}" aria-label="Copy the link to ${esc(p.id)}">${ic('copy')}</button></div>`).join('') || '<p class="small mut">None.</p>' : ''}</section></div></div>
@@ -341,7 +343,7 @@
   async function render(el, ctx, anchor, tab) {
     CTX = ctx; EL = el; tabNow = tab;
     if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p></div>`;
-    D = await ctx.data('running');
+    D = own(await ctx.data('running'));
     if (!el.classList.contains('tab-' + tab)) return;  // another tab opened while this one read its data: never draw over it
     tabNow = tab;
     if (tab === 'running') S.task = ctx.prefs.get('task', '');
@@ -354,7 +356,7 @@
   /* ------------------------------------------------------------ the top-bar worker squares and their overview card (#131) */
   let BOPEN = false;
   async function bar(el, ctx) {
-    const d = await ctx.data('running'), ws = mine(d).sort((x, y) => WORDER.indexOf(x.s) - WORDER.indexOf(y.s));
+    const d = own(await ctx.data('running')), ws = mine(d).sort((x, y) => WORDER.indexOf(x.s) - WORDER.indexOf(y.s));
     const jobs = (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.failing), c = ws.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
     if (!ws.length && !jobs.length) { el.innerHTML = ''; return; }
     const sq = ws.slice(0, 24).map(w => `<i class="st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}"></i>`).join('');
@@ -386,7 +388,7 @@
   }
   P.bar({render: bar});
 
-  P.tab({key: 'running', chip: async ctx => urgent(await ctx.data('running')), render: (el, ctx, a) => render(el, ctx, a, 'running')});
+  P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});
   P._running = {urgent, mine, wnm, mdl};  // for tests
 })();

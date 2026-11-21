@@ -74,7 +74,7 @@ def test_build_serves_the_snapshot_and_refreshes_once_in_the_background(tmp_path
     calls = []
     monkeypatch.setattr(R, "_compute", lambda d: calls.append(d) or {"workers": {}, "built": "now"})
     monkeypatch.setattr(R, "_mem", {})
-    (tmp_path / R.SNAP).write_text(json.dumps({"workers": {}, "built": "earlier"}))
+    (tmp_path / R.SNAP).write_text(json.dumps({"workers": {}, "built": "earlier", "proj": "other"}))
     old = time.time() - 600
     os.utime(tmp_path / R.SNAP, (old, old))
     first = R.build(tmp_path)
@@ -92,3 +92,52 @@ def test_build_computes_on_a_cold_start(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "_compute", lambda d: {"built": "cold"})
     monkeypatch.setattr(R, "_mem", {})
     assert R.build(tmp_path) == {"built": "cold", "age": 0}
+
+
+def _copy(tmp_path, name, meta, board=None):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "current.meta.json").write_text(json.dumps({"ui": "proto", **meta}))
+    if board:
+        (d / "project.json").write_text(json.dumps({"board": board}))
+    return d
+
+
+def test_each_copy_is_its_own_project(tmp_path):
+    # needs running (fix2/frame): Rebex's copy listed FastLane Drive's beads because the board was hard-coded
+    assert R.project(_copy(tmp_path, "proto-rebex", {"name": "Rebex", "proto_copy_of": "rebex"})) == "rebex"
+    assert R.project(_copy(tmp_path, "proto-agent-annotate", {"name": "Agent Annotate", "proto_copy_of": "agent-annotate"},
+                           {"project": "agent-annotate"})) == "annotate"
+    assert R.project(_copy(tmp_path, "fld-proto", {"name": "FastLane Drive (prototype)"}, {"project": "fld"})) == "fld"
+
+
+def test_board_reads_only_the_board_bd_where_found(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(R, "CHECKOUTS", {"rebex": tmp_path})
+    monkeypatch.setattr(R, "run_json", lambda argv, timeout=30: calls.append(argv) or {"path": "/boards/rebex/.beads"})
+    where = R.board_dir("rebex")
+    assert str(where) == "/boards/rebex" and calls[0] == ["bd", "-C", str(tmp_path), "where", "--json"]
+    calls.clear()
+    monkeypatch.setattr(R, "run_json", lambda argv, timeout=30: calls.append(argv) or ({"count": 3} if "count" in argv else []))
+    R.board("rebex", where)
+    assert calls and all(a[:4] == ["bd", "-C", "/boards/rebex", "--readonly"] for a in calls)
+
+
+def test_no_board_means_empty_sections_and_a_line_never_another_board(tmp_path, monkeypatch):
+    def never(*a, **k):
+        raise AssertionError("no board may be read")
+    monkeypatch.setattr(R, "run_json", never)
+    assert R.board_dir("leadory") is None
+    monkeypatch.setattr(R, "CHECKOUTS", {"rebex": tmp_path / "gone"})
+    assert R.board_dir("rebex") is None
+    b = R.board("leadory", None)
+    assert (b["tasks"], b["beads"], b["waiting"], b["groups"]) == ([], {}, [], [])
+    assert b["none"].startswith("Leadory has no task board")
+
+
+def test_a_snapshot_of_another_project_is_not_served(tmp_path, monkeypatch):
+    d = _copy(tmp_path, "proto-rebex", {"name": "Rebex", "proto_copy_of": "rebex"})
+    (d / R.SNAP).write_text(json.dumps({"board": {"tasks": [{"id": "FLD-1"}]}, "built": "old"}))  # written before boards were per project
+    monkeypatch.setattr(R, "_compute", lambda p: {"board": {"tasks": []}, "proj": "rebex", "built": "fresh"})
+    monkeypatch.setattr(R, "_mem", {})
+    assert R.build(d)["built"] == "fresh"

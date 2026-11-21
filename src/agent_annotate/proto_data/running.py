@@ -3,7 +3,7 @@
 Sources, each read at most once a minute (the whole result is cached; a stale copy is served while a fresh one is built):
 - workers: this Mac's Orca record (orchestration.db, read only) and `orca orchestration worker-list --environment` for the other Macs;
 - scheduled jobs and runs: `wmill schedule list` and `wmill job list` with the stored login (no token is read or passed here);
-- tasks: the FastLane Drive board through `bd --readonly`;
+- tasks: this page's own project's board (found by `bd where` from its checkout) through `bd --readonly`; none when it has no board;
 - pull requests: `gh search prs`, read only;
 - daily usage: FastLane Drive's usage reports; Analytics: the page's own record and the other review pages' records;
 - machine load: the launchd recorder's file (~/.local/share/machine-load/load.tsv) on this Mac, and on the others through `ssh`, read only.
@@ -35,6 +35,8 @@ GH_OWNER = "Fast-Lane-Drive"
 TTL = 60  # seconds a read stays fresh: the page never asks a source more than once a minute
 SNAP = "proto-running.json"
 MACS = [("M1 Max", None), ("M5 Max", "M5Max"), ("M1 Max 16", "M1Max16")]
+# each project's checkout, by project tag; `bd where` run there finds its own board. A project not listed has none.
+CHECKOUTS = {"fld": FLD_BOARD, "rebex": PROJECTS / "rebex/repo", "annotate": PROJECTS / "agent-annotate/codex"}
 NAMES = {"fld": "FastLane Drive", "rebex": "Rebex", "annotate": "Agent Annotate", "leadory": "Leadory", "windmill": "Windmill",
          "cheer": "Cheer ticketing", "multimac": "Three Macs", "other": "Other"}
 
@@ -92,6 +94,29 @@ def proj_of(s):
     return "other"
 
 
+def project(page_dir: Path) -> str:
+    """The page's project tag, read as the frame reads it: a copy's source project, else its board's, else its name."""
+    def read(name):
+        try:
+            x = json.loads((Path(page_dir) / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return x if isinstance(x, dict) else {}
+    meta, b = read("current.meta.json"), read("project.json").get("board") or {}
+    return proj_of(meta.get("proto_copy_of") or (b.get("project") if isinstance(b, dict) else "") or meta.get("name") or "")
+
+
+def board_dir(code: str) -> Path | None:
+    """Where the project's own board lives, from `bd where` in its checkout; None when it has no reachable board."""
+    co = CHECKOUTS.get(code)
+    if not co or not Path(co).is_dir():
+        return None
+    try:
+        return Path(run_json(["bd", "-C", str(co), "where", "--json"], timeout=20)["path"]).parent
+    except Exception:
+        return None
+
+
 def mins_since(s, now=None):
     if not s:
         return None
@@ -130,7 +155,7 @@ def _record(db, task_id):
     return clean(re.sub(r"\s*\(.*", "", (r[0] if r else "") or ""), 60), ("" if rep in ("Question", "Status") else rep[:140])
 
 
-_BEAD = re.compile(r"\bFLD-[a-z0-9]+(?:\.\d+)*\b")
+_BEAD = re.compile(r"\b(?:FLD|RBX|agent-annotate)-[a-z0-9]+(?:\.\d+)*\b")
 
 
 def _bead(db, task_id):
@@ -140,16 +165,16 @@ def _bead(db, task_id):
     return m.group(0) if m else None
 
 
-def group_work(out):
-    """Workers grouped by the real work: the board epic (else the task) their brief names. Every FLD worker shares one run,
-    so the run's objective said the same thing on every Mac."""
+def group_work(out, code="fld", where=None):
+    """Workers grouped by the real work: the board epic (else the task) their brief names, read from this page's own board
+    (where) for this project's workers only. Every FLD worker shares one run, so the run's objective said the same thing on every Mac."""
     ws = [w for m in (out.get("workers") or {}).values() if isinstance(m, dict) for w in m.get("workers") or []]
     beads = (out.get("board") or {}).get("beads") or {}
-    roots = {w["bead"].split(".")[0] for w in ws if w.get("bead")}
+    roots = {w["bead"].split(".")[0] for w in ws if w.get("bead") and w.get("proj") == code}
     titles = {k: beads[k]["t"] for k in roots if k in beads}
     missing = sorted(roots - titles.keys())
-    if missing:  # closed epics are not on Running's open list
-        rows = safe(lambda: run_json(["bd", "-C", str(FLD_BOARD), "--readonly", "show", *missing, "--json"], timeout=60), [])
+    if missing and where:  # closed epics are not on Running's open list
+        rows = safe(lambda: run_json(["bd", "-C", str(where), "--readonly", "show", *missing, "--json"], timeout=60), [])
         titles.update({r["id"]: r.get("title") or "" for r in rows if isinstance(r, dict) and r.get("id")})
     for w in ws:
         b = w.pop("bead", None)
@@ -282,8 +307,12 @@ def _cut(s, n=2500):
 GROUPS = [("ready", "Ready to start"), ("in_progress", "In progress"), ("waiting", "Waiting on another task"), ("blocked", "Blocked"), ("deferred", "Deferred")]
 
 
-def board():
-    bd = ["bd", "-C", str(FLD_BOARD), "--readonly"]
+def board(code="fld", where=None):
+    """This project's own board, read only; when it has none, empty sections and a plain line why. Never another project's board."""
+    if where is None:
+        return {"tasks": [], "beads": {}, "waiting": [], "closed": None, "groups": [], "ready": 0,
+                "none": f"{NAMES.get(code, 'This project')} has no task board this page can read, so no tasks are listed."}
+    bd = ["bd", "-C", str(where), "--readonly"]
     rows = run_json([*bd, "list", "--status", "open,in_progress,blocked,deferred", "--flat", "--limit", "0", "--json"], timeout=60)
     ready = {b["id"] for b in run_json([*bd, "ready", "--limit", "0", "--json"], timeout=60)}
     closed = safe(lambda: run_json([*bd, "count", "--status", "closed", "--json"]).get("count"), None)
@@ -461,10 +490,10 @@ def orca_history():
                 "days": sorted(o["days"].items())[-30:]} for p, o in orc.items()}, since
 
 
-def hours(now=None):
+def hours(now=None, code="fld"):
     """This project's workers at once, hour by hour over the last 24 hours, oldest first, from the same Orca record."""
     db = _orca_db()
-    fld = {i for i, o in db.execute("select id, objective from runs") if proj_of(o) == "fld"}
+    fld = {i for i, o in db.execute("select id, objective from runs") if proj_of(o) == code}
     rows = [(r, a, c) for r, a, c in db.execute("select run_id, dispatched_at, completed_at from dispatch_contexts "
                                                 "where dispatched_at > datetime('now', '-7 day')") if r in fld]
     db.close()
@@ -481,15 +510,15 @@ def sessions():
     return dict(ses)
 
 
-def analytics(page_dir: Path):
+def analytics(page_dir: Path, code="fld"):
     pages = {}
     for f in sorted(PROJECTS.glob("*/reviews/*/rounds.ndjson")):
         p = proj_of(f.parts[len(PROJECTS.parts)])
-        if p != "fld":  # this project's numbers come from the page's own record below
+        if p != code:  # this project's numbers come from the page's own record below
             pages.setdefault(p, []).append(f.parent)
     qa = {}
     own, weeks, comeback, qpv = page_record(page_dir)
-    qa["fld"] = own
+    qa[code] = own
     for p, ds in pages.items():
         agg = {"sel": 0, "rec": 0, "sends": 0, "words": 0, "meds": []}
         for d in ds:
@@ -509,12 +538,15 @@ def analytics(page_dir: Path):
 # ---------------------------------------------------------------- build, cached
 
 def _compute(page_dir: Path) -> dict:
+    code = project(page_dir)
+    where = board_dir(code)
     with ThreadPoolExecutor(6) as ex:
         f = {k: ex.submit(safe, fn, None) for k, fn in
-             (("workers", workers), ("board", board), ("jobs", jobs), ("prs", prs), ("load", machine_load), ("hours", hours), ("an", lambda: analytics(page_dir)))}
+             (("workers", workers), ("board", lambda: board(code, where)), ("jobs", jobs), ("prs", prs), ("load", machine_load),
+              ("hours", lambda: hours(code=code)), ("an", lambda: analytics(page_dir, code)))}
         out = {k: v.result() for k, v in f.items()}
-    safe(lambda: group_work(out), {})
-    out["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    safe(lambda: group_work(out, code, where), {})
+    out.update(proj=code, pname=NAMES.get(code, code), built=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     return mask(out)
 
 
@@ -541,6 +573,8 @@ def build(page_dir: Path) -> dict:
     if got is None and (page_dir / SNAP).exists():
         try:
             got = ((page_dir / SNAP).stat().st_mtime, json.loads((page_dir / SNAP).read_text()))
+            if got[1].get("proj") != project(page_dir):
+                raise ValueError("a snapshot from before boards were per project, or of another project")
             with _lock:
                 _mem[key] = got
         except (OSError, ValueError):
