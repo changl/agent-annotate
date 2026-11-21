@@ -785,10 +785,11 @@
   async function delNote(id, quiet) {
     const n = (D ? D.notes : savedNotes()).find(x => x.id === id);
     if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
-    const was = savedNotes();
-    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));  // the count follows at once
+    // the identity read comes first: the saved record, the count and the sheet's row then leave in one task, never the count alone (r12 audit14 reference 1)
+    const as = await who(), was = savedNotes();
+    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));
     // the record stays in the store until Undo is gone, so Undo puts back the very note (r12 audit13 frame 4, questions 2)
-    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${await who()}`);
+    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${as}`);
     if (D) D.notes = D.notes.filter(x => x.id !== id);
     await draw(true);
     const back = async () => { keep(); ctx.prefs.set('draft:qnotes', P.putBack(savedNotes(), was, id)); await (D ? refresh() : draw(true)); };

@@ -129,3 +129,10 @@ def test_note_controls_and_marks_are_wired():
     assert "'⋯'" not in Q and "…</button>" not in Q  # no ⋯ menu (#139)
     assert "rf-new" in Q and "rf-new" in HIST and "markSeenQ" in Q and "seeV(ctx" in HIST
     assert ".qsec.qshut > :not(h2,.qsecans){display:none}" in (WEB / "questions.css").read_text()
+
+
+def test_remove_waits_for_identity_before_dropping_the_row():
+    """Reference 1: Remove drops the saved row (Send's count) only after the identity read, in step with the sheet's redraw."""
+    body = Q[Q.index("async function delNote"):]
+    body = body[:body.index("\n  }\n")]
+    assert body.index("await who()") < body.index("ctx.prefs.set('draft:qnotes'")
