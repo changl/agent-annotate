@@ -57,6 +57,10 @@ class PageGenError(Exception):
     """A document the generator refuses to turn into a page."""
 
 
+class ImageMissing(PageGenError):
+    """An image path that names no file."""
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Small helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -693,6 +697,7 @@ class ImageStore:
         self.base_dir, self.page_dir = base_dir, page_dir
         self.cache: dict[str, tuple[str, tuple[int, int] | None]] = {}
         self.staged: dict[str, bytes] = {}
+        self.warnings: list[str] = []
 
     def resolve(self, ref: str) -> tuple[str, tuple[int, int] | None]:
         if ref in self.cache:
@@ -709,7 +714,7 @@ class ImageStore:
             candidates.append(self.page_dir / path)
         found = next((c for c in candidates if c.is_file()), None)
         if found is None:
-            raise PageGenError(f"image not found: {ref} · fix: use a path relative to the markdown file")
+            raise ImageMissing(f"image not found: {ref} · fix: use a path relative to the markdown file")
         if found.stat().st_size > MAX_IMAGE_BYTES:
             raise PageGenError(f"image is over 10 MB: {ref} · fix: shrink it below 10 MB")
         data = found.read_bytes()
@@ -930,10 +935,18 @@ class Renderer:
                 f"{_img(src, size, caption or Path(ref).name)}{cap}</figure>")
 
     def _cell(self, text: str) -> str:
-        """A table cell's text, each picture in it rendered as a figure (its row is the anchor)."""
+        """A table cell's text, each picture in it rendered as a figure (its row is the anchor).
+
+        A missing file keeps the raw reference and warns, so pages that predate cell pictures still publish.
+        """
         out, pos = [], 0
         for m in _CELL_IMAGE.finditer(text):
-            out.append(inline(text[pos:m.start()]) + self._figure_html(m.group(1).strip(), m.group(2)))
+            try:
+                fig = self._figure_html(m.group(1).strip(), m.group(2))
+            except ImageMissing:
+                self.images.warnings.append(f"table picture not found, shown as text: {m.group(2)}")
+                fig = inline(m.group(0))
+            out.append(inline(text[pos:m.start()]) + fig)
             pos = m.end()
         return "".join(out) + inline(text[pos:])
 
@@ -1551,7 +1564,7 @@ def generate(source: Path, slug_dir: Path, version: str | None = None,
     if banner:
         canvas = canvas.replace('<div class="aa">', f'<div class="aa">{banner}', 1)
     warnings = _full_plan_warnings(slug_dir, version, blocks) if "full_plan" in meta else []
-    warnings += warnings_layout
+    warnings += warnings_layout + images.warnings
     from .decision_quality import decision_warnings
     for card in cards:
         warnings += [f"{card['anchor_id']}: {warning}" for warning in decision_warnings(card.get("decision_request") or {})]
