@@ -20,8 +20,10 @@ BEAD = re.compile(r"\bFLD-[a-z0-9]+(?:\.\d+)*\b")
 # shortcut: the board path is fixed to FastLane Drive's checkout; take it from the project record when other pages use this UI
 BOARD = os.environ.get("ANNOTATE_PROTO_BOARD", "/Users/changlee/projects/FastLane Drive/fld-main")
 STATE = {"closed": "done", "in_progress": "progress", "blocked": "blocked", "deferred": "none", "open": "waiting"}
-_board: dict = {"at": 0.0, "ids": None, "beads": {}}
-_board_lock = threading.Lock()
+_board: dict = {"at": 0.0, "asked": set(), "beads": {}, "busy": False}
+_board_lock = threading.Lock()  # guards _board
+_read_lock = threading.Lock()  # one board read at a time
+SNAP = "proto-qbeads.json"  # the last board read, so a restarted server answers at once too
 
 
 def _mine(author) -> bool:
@@ -33,25 +35,69 @@ def _mask(s):
     return scrub(s) if isinstance(s, str) else s
 
 
-def _beads(ids: set[str]) -> dict:
-    """The named tasks, read only; cached a minute, one board read at a time (as Reference does)."""
+def _read(ids: set[str]) -> dict | None:
+    """One `bd show` of the named tasks, read only. It takes 2-10 s, so no request waits on it after the first (r12 fix10 slowread)."""
+    try:
+        out = subprocess.run(["bd", "-C", BOARD, "--readonly", "show", *sorted(ids), "--json"],
+                             capture_output=True, text=True, timeout=20)
+        rows = json.loads(out.stdout or "[]")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return {r["id"]: {"title": _mask(r.get("title", "")), "status": r.get("status", ""),
+                      "state": STATE.get(r.get("status"), "none")}
+            for r in rows if isinstance(rows, list) and isinstance(r, dict) and r.get("id")}
+
+
+def _store(page_dir: Path, ids: set[str], got: dict | None) -> None:
+    with _board_lock:
+        if got is not None:
+            _board["beads"] = {**_board["beads"], **got}
+        _board["asked"] = _board["asked"] | ids
+        _board["at"] = time.time()
+        snap = json.dumps({"asked": sorted(_board["asked"]), "beads": _board["beads"]}, ensure_ascii=False)
+    try:
+        tmp = page_dir / (SNAP + ".tmp")
+        tmp.write_text(snap)
+        tmp.replace(page_dir / SNAP)
+    except OSError:
+        pass
+
+
+def _refresh(page_dir: Path, ids: set[str]) -> None:
+    try:
+        with _read_lock:
+            _store(page_dir, ids, _read(ids))
+    finally:
+        with _board_lock:
+            _board["busy"] = False
+
+
+def _beads(ids: set[str], page_dir: Path) -> dict:
+    """The named tasks, read only. The last read answers at once; past a minute a new one runs in the background and
+    the next read shows it (as Running does). Only tasks no read has asked about yet wait for the board."""
     if not ids or not Path(BOARD).is_dir():
         return {}
-    key = tuple(sorted(ids))
-    with _board_lock:
-        if _board["ids"] == key and time.time() - _board["at"] <= 60:
-            return _board["beads"]
+    if not _board["asked"]:  # a restarted server starts from the last read it saved
         try:
-            out = subprocess.run(["bd", "-C", BOARD, "--readonly", "show", *key, "--json"],
-                                 capture_output=True, text=True, timeout=20)
-            rows = json.loads(out.stdout or "[]")
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            rows = []
-        beads = {r["id"]: {"title": _mask(r.get("title", "")), "status": r.get("status", ""),
-                           "state": STATE.get(r.get("status"), "none")}
-                 for r in rows if isinstance(rows, list) and isinstance(r, dict) and r.get("id")}
-        _board.update(at=time.time(), ids=key, beads=beads)
-        return beads
+            snap, at = json.loads((page_dir / SNAP).read_text()), (page_dir / SNAP).stat().st_mtime
+            with _board_lock:
+                if not _board["asked"]:
+                    _board.update(asked=set(snap["asked"]), beads=dict(snap["beads"]), at=at)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    with _board_lock:
+        missing = ids - _board["asked"]
+        start = not missing and not _board["busy"] and time.time() - _board["at"] > 60
+        if start:
+            _board["busy"] = True
+    if missing:  # the first read, or a version naming new tasks
+        with _read_lock:
+            if ids - _board["asked"]:
+                _store(page_dir, missing, _read(missing))
+    elif start:
+        threading.Thread(target=_refresh, args=(page_dir, ids), daemon=True).start()
+    with _board_lock:
+        return {i: _board["beads"][i] for i in ids if i in _board["beads"]}
 
 
 def _decision(d):
@@ -60,10 +106,24 @@ def _decision(d):
     return {k: d.get(k) for k in ("verdict", "text", "option_id", "ts", "round_pending")}
 
 
+_all_cache: dict = {}  # page dir -> (comments.json's stamp, its cards): FastLane Drive's is 17 MB, 0.6 s to parse each read
+
+
 def _all(page_dir: Path) -> list:
+    try:
+        st = (page_dir / "comments.json").stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    got = _all_cache.get(str(page_dir))
+    if stamp and got and got[0] == stamp:
+        return got[1]
     comments = store.read_comments(page_dir)
     # Close (today's archive) moves a card into "archived": it stays in place on the page, closed
-    return [c for part in ("anchors", "archived") for cs in (comments.get(part) or {}).values() for c in cs]
+    cards = [c for part in ("anchors", "archived") for cs in (comments.get(part) or {}).values() for c in cs]
+    if stamp:
+        _all_cache[str(page_dir)] = (stamp, cards)
+    return cards
 
 
 def _asked(c, v) -> bool:
@@ -199,7 +259,7 @@ def build(page_dir: Path) -> dict:
         })
     qs.sort(key=lambda q: q["n"] or 0)
     closed = sum(1 for c in allc if c.get("decision_request") and c.get("status") == "archived")
-    beads = _beads(ids | set(BEAD.findall(page)))
+    beads = _beads(ids | set(BEAD.findall(page)), page_dir)
     for q in qs:  # a task the board says is blocked waits on this answer too
         q["blocking"] = q["blocking"] or (beads.get(q["bead"]) or {}).get("state") == "blocked"
     notes_all = [c for c in allc if not c.get("decision_request") and not c.get("parent_id") and _mine(c.get("author"))]
