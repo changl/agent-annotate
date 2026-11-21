@@ -1,12 +1,18 @@
 """The prototype frame's data: this page's waiting count and every project's read-only home counts.
 
 Projects are the review folders under ANNOTATE_PROTO_PROJECTS_ROOT (default ~/projects/*/reviews/*), read only.
+Prototype pages beside this one (the FastLane Drive copy, and read-only copies of other projects' pages made by
+copy_other.py as reviews/proto-<project>) stand in for their project's row, and serve_other() serves them.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
+import re
+import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 from .questions import waiting as waiting_count  # one count everywhere: the Questions tab's waiting
@@ -24,15 +30,69 @@ def _root() -> Path:
     return Path(os.environ.get("ANNOTATE_PROTO_PROJECTS_ROOT") or Path.home() / "projects")
 
 
+def _registry() -> Path:
+    return Path(os.environ.get("ANNOTATE_PROTO_REGISTRY") or Path.home() / ".claude/annotate-state/state")
+
+
+def _urls() -> dict[str, str]:
+    """Each live page's address by its folder, read only from the live registry; never a key (fragment and query cut)."""
+    out = {}
+    for f in _registry().glob("*.json"):
+        try:
+            slugs = json.loads(f.read_text(encoding="utf-8")).get("slugs") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        for r in slugs.values() if isinstance(slugs, dict) else ():
+            url = isinstance(r, dict) and (r.get("public_url") or r.get("url"))
+            if isinstance(url, str) and url.startswith("https://") and r.get("slug_dir"):
+                out[str(r["slug_dir"])] = url.split("#")[0].split("?")[0]
+    return out
+
+
+def _meta(d: Path) -> dict:
+    try:
+        m = json.loads((d / "current.meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return m if isinstance(m, dict) else {}
+
+
+def _copies(page_dir: Path) -> list[dict]:
+    """The prototype pages beside this one: the writable FastLane Drive copy (href "") and read-only copies (proto/p/<key>/)."""
+    out = []
+    for d in sorted(page_dir.parent.iterdir()):
+        m = _meta(d)
+        if m.get("ui") != "proto":
+            continue
+        of = m.get("proto_copy_of")
+        if of and d.name != f"proto-{of}":
+            continue  # serve_other finds a copy by this name only
+        try:
+            board = json.loads((d / "project.json").read_text(encoding="utf-8")).get("board") or {}
+        except (OSError, ValueError, AttributeError):
+            board = {}
+        out.append({"dir": d, "of": of, "name": m.get("name") or d.name, "this": d.resolve() == page_dir.resolve(), "src": m.get("proto_source"),
+                    "code": proj_of(of or board.get("project") or m.get("name") or ""), "href": f"proto/p/{of}/" if of else ""})
+    return out
+
+
 def _day(ts: float, now: float) -> int | None:
     age = int((now - ts) // 86400)
     return DAYS - 1 - age if 0 <= age < DAYS else None
 
 
+def _ts(s) -> float | None:
+    try:
+        return calendar.timegm(time.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
 def _page(d: Path, now: float) -> dict:
     vday, aday, last = [0] * DAYS, [0] * DAYS, 0.0
-    for v in (d / "versions").glob("*.html"):
-        m = v.stat().st_mtime
+    # when each version was published: the meta's history, since a copied page's files all carry the copy's time
+    stamps = [t for h in _meta(d).get("history") or [] if isinstance(h, dict) and (t := _ts(h.get("ts")))]
+    for m in stamps or [v.stat().st_mtime for v in (d / "versions").glob("*.html")]:
         last = max(last, m)
         if (i := _day(m, now)) is not None:
             vday[i] += 1
@@ -40,10 +100,10 @@ def _page(d: Path, now: float) -> dict:
     if rounds.is_file():
         for line in rounds.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
-                ts = time.mktime(time.strptime(json.loads(line)["ts"][:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+                ts = _ts(json.loads(line)["ts"])
             except (ValueError, KeyError, TypeError):
                 continue
-            if (i := _day(ts, now)) is not None:
+            if ts and (i := _day(ts, now)) is not None:
                 aday[i] += 1
     try:
         waiting = waiting_count(d)
@@ -83,13 +143,16 @@ def _newest(a: dict | None, b: dict | None) -> dict | None:
 
 def _projects(now: float) -> list[dict]:
     out: dict[str, dict] = {}
+    urls, newest = _urls(), {}
     for d in sorted(_root().glob("*/reviews/*")):
         if not (d / "current.meta.json").is_file():
             continue
         key = d.parent.parent.name
         p = out.setdefault(key, {"key": key, "name": NAMES.get(key, key.replace("-", " ").capitalize()), "code": proj_of(key),
-                                 "pages": 0, "waiting": 0, "vday": [0] * DAYS, "aday": [0] * DAYS, "last": 0.0, "owner": None})
+                                 "pages": 0, "waiting": 0, "vday": [0] * DAYS, "aday": [0] * DAYS, "last": 0.0, "owner": None, "url": None})
         one = _page(d, now)
+        if str(d) in urls and one["last"] >= newest.get(key, -1.0):  # its newest page with an address: where its tabs link
+            p["url"], newest[key] = urls[str(d)], one["last"]
         p["owner"] = _newest(p["owner"], one["owner"])
         p["pages"] += 1
         p["waiting"] += one["waiting"]
@@ -114,17 +177,65 @@ def build(page_dir: Path) -> dict:
     this = _page(page_dir, now)
     # code: the project tag Running's workers carry (running.proj_of), so Home and the top bar can match them
     this.update(key="this", name=meta.get("name") or page_dir.name, pages=1, this=True,
-                code=proj_of(board.get("project") or meta.get("name") or ""))
+                code=proj_of(meta.get("proto_copy_of") or board.get("project") or meta.get("name") or ""), href="",
+                src=meta.get("proto_source"))
     hit = _cache.get(str(_root()))
     if not hit or now - hit[0] > TTL:
         hit = _cache[str(_root())] = (now, _projects(now))
-    projects = [this] + [dict(p) for p in hit[1]]
-    if not this["owner"]:  # a copy has no owner of its own: the project's own session stands in
-        this["owner"] = next((p["owner"] for p in projects[1:] if p["code"] == this["code"] and p["owner"]), None)
+    real = [dict(p) for p in hit[1]]
+    # one row a project: a prototype page stands in for its project's own row (#2, #11)
+    rows = [this]
+    for c in _copies(page_dir):
+        if c["this"]:
+            continue
+        row = _page(c["dir"], now)
+        row.update(key=c["of"] or "fld-proto", name=c["name"], pages=1, code=c["code"], href=c["href"], src=c["src"])
+        rows.append(row)
+    urls = _urls()
+    for row in rows:
+        mine = next((p for p in real if p["code"] == row["code"]), None)
+        if mine:
+            row["owner"] = row["owner"] or mine["owner"]  # a copy has no owner of its own: the project's session stands in
+        row["url"] = urls.get(row.pop("src", None) or "") or (mine or {}).get("url")
+    took = {r["code"] for r in rows}
+    projects = rows + [p for p in real if p["code"] == "other" or p["code"] not in took]
     for p in projects:
         p["lastAgoH"] = _ago(p.pop("last"), now)
-    return {"days": DAYS, "asOf": time.strftime("%-d %b %H:%M", time.localtime(hit[0])),
+    return {"days": DAYS, "asOf": time.strftime("%-d %b %H:%M", time.localtime(hit[0])), "copyOf": meta.get("proto_copy_of"),
             "waiting": this["waiting"], "projects": projects, "lastSend": _last_send(page_dir)}
+
+
+_OTHER = re.compile(r"/proto/p/([a-z0-9][a-z0-9-]{0,40})(/.*)?")
+_bound: dict = {}
+_bound_lock = threading.Lock()
+
+
+def serve_other(handler, route_path: str):
+    """GET /proto/p/<key>/... : the read-only copy reviews/proto-<key> beside this page, on this server.
+    Only GETs reach here; every write route matches /api/... at the root, so writes to a copy 404."""
+    m = _OTHER.fullmatch(route_path)
+    copy = Path(handler.artifact_dir).parent / f"proto-{m[1]}" if m else None
+    meta = _meta(copy) if copy else {}
+    if not m or meta.get("ui") != "proto" or meta.get("proto_copy_of") != m[1]:
+        return handler._respond(404, b"Not found")
+    if not m[2]:
+        q = urllib.parse.urlparse(handler.path).query
+        return handler._respond(308, b"", extra_headers={"Location": urllib.parse.urlparse(handler.path).path + "/" + (f"?{q}" if q else "")})
+    base = type(handler)
+    with _bound_lock:
+        cls = _bound.get((base, m[1]))
+        if cls is None:
+            # its own folder, bus name and caches: nothing of this page (its store, last Send) shows on the copy
+            cls = _bound[(base, m[1])] = type(f"Copy_{m[1]}", (base,), {
+                "artifact_dir": copy.resolve(), "slug": copy.name, "_store_responses": {}, "_store_snapshot": None,
+                "_meta_snapshot": None, "_meta_responses": {}, "_meta_response_lock": threading.Lock(),
+                "_history_responses": {}, "_history_response_lock": threading.Lock(), "_history_bus_cache": {}})
+    path = handler.path
+    handler.__class__, handler.path = cls, path.replace(f"/proto/p/{m[1]}", "", 1)
+    try:
+        return handler.do_GET()
+    finally:
+        handler.__class__, handler.path = base, path
 
 
 def _last_send(d: Path) -> dict | None:

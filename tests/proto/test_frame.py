@@ -63,12 +63,89 @@ def test_project_code_owner_and_last_send(tmp_path, monkeypatch):
     data = frame.build(this)
 
     by = {p["key"]: p for p in data["projects"]}
-    assert by["rebex"]["code"] == "rebex" and by["fastlane-drive"]["code"] == "fld"
+    assert by["rebex"]["code"] == "rebex" and "fastlane-drive" not in by  # the copy is FastLane Drive's one row
     assert by["rebex"]["owner"] == {"agent": "claude", "at": "2026-11-20T08:00:00Z", "alive": True}
-    assert by["fastlane-drive"]["owner"]["alive"] is False
     # a copy has no owner of its own: its project's session stands in, so Settings can name where a Send goes
-    assert by["this"]["code"] == "fld" and by["this"]["owner"]["agent"] == "codex"
+    assert by["this"]["code"] == "fld" and by["this"]["owner"]["agent"] == "codex" and by["this"]["owner"]["alive"] is False
     assert data["lastSend"] == {"ts": "2026-11-20T09:00:00Z", "delivery": "acknowledged", "n": 2}
+
+
+def _proto(d, **meta):
+    _page(d)
+    m = json.loads((d / "current.meta.json").read_text())
+    m.update(ui="proto", **meta)
+    (d / "current.meta.json").write_text(json.dumps(m))
+    return d
+
+
+def test_copies_stand_in_for_their_projects_one_row_each(tmp_path, monkeypatch):
+    root = tmp_path / "projects"
+    src = _page(root / "rebex" / "reviews" / "rebex", waiting=1)
+    _page(root / "fastlane-drive" / "reviews" / "page")
+    _page(root / "leadory" / "reviews" / "plan")
+    this = _proto(tmp_path / "reviews" / "fld-proto")
+    (this / "project.json").write_text(json.dumps({"board": {"project": "fastlane-drive"}}))
+    # copied today, published two days ago: the meta's history dates it, not the copy's file times
+    two_days = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 2 * 86400))
+    _proto(tmp_path / "reviews" / "proto-rebex", name="Rebex", proto_copy_of="rebex", proto_source=str(src), history=[{"version": "v1", "ts": two_days}])
+    _proto(tmp_path / "reviews" / "misnamed", name="X", proto_copy_of="leadory")  # serve_other could never find it
+    reg = tmp_path / "registry"
+    reg.mkdir()
+    (reg / "s.json").write_text(json.dumps({"slugs": {"r": {"slug_dir": str(src), "public_url": "https://host.example/annotate/reviews/rebex/#review=SECRET"}}}))
+    monkeypatch.setenv("ANNOTATE_PROTO_PROJECTS_ROOT", str(root))
+    monkeypatch.setenv("ANNOTATE_PROTO_REGISTRY", str(reg))
+    frame._cache.clear()
+
+    data = frame.build(this)
+
+    codes = [p["code"] for p in data["projects"] if p["code"] != "other"]
+    assert len(codes) == len(set(codes)), codes  # one FastLane Drive row, one Rebex row (#2, #11)
+    by = {p["key"]: p for p in data["projects"]}
+    assert "fastlane-drive" not in by and by["this"]["code"] == "fld" and by["this"]["href"] == ""
+    rebex = by["rebex"]
+    assert rebex["href"] == "proto/p/rebex/" and rebex["name"] == "Rebex"
+    assert rebex["url"] == "https://host.example/annotate/reviews/rebex/"  # its real page, never its key
+    assert rebex["vday"][frame.DAYS - 3] == 1 and sum(rebex["vday"]) == 1
+    assert "href" not in by["leadory"] and "SECRET" not in json.dumps(data)  # a project without a copy keeps its summary
+
+
+def test_serve_other_reads_the_copy_and_nothing_writes_to_it(tmp_path):
+    import http.client
+    import threading
+    from agent_annotate.sync_server import ReviewHTTPServer, make_handler
+
+    reviews = tmp_path / "reviews"
+    this = _proto(reviews / "fld-proto")
+    copy = _proto(reviews / "proto-rebex", name="Rebex", proto_copy_of="rebex")
+    _proto(reviews / "proto-bare", name="Bare")  # no proto_copy_of: not a served copy
+    for d in (this, copy):
+        (d / "current.html").write_text("<html><body>x</body></html>")
+    web = Path(frame.__file__).resolve().parents[1] / "web"
+    httpd = ReviewHTTPServer(("127.0.0.1", 0), make_handler(this, skill_dir=web, public_base_path="/review", slug="fld-proto"))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    def call(method, path):
+        c = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+        c.request(method, path, body=b"{}" if method != "GET" else None, headers={"Content-Type": "application/json"})
+        r = c.getresponse()
+        out = (r.status, r.getheader("Location"), r.read())
+        c.close()
+        return out
+
+    try:
+        status, _, body = call("GET", "/review/proto/p/rebex/current.meta.json")
+        assert status == 200 and json.loads(body)["name"] == "Rebex"
+        assert json.loads(call("GET", "/review/current.meta.json")[2])["name"] == "fld-proto"  # this page is untouched by the swap
+        assert call("GET", "/review/proto/p/rebex")[:2] == (308, "/review/proto/p/rebex/")
+        assert call("GET", "/review/proto/p/nope/")[0] == 404
+        assert call("GET", "/review/proto/p/bare/")[0] == 404
+        before = (copy / "comments.json").read_text()
+        for method in ("POST", "PUT", "DELETE"):
+            assert call(method, "/review/proto/p/rebex/api/comments")[0] in (404, 405), method
+        assert (copy / "comments.json").read_text() == before
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 # The broken frame items are browser behaviour; these pin the code that fixes each, so a later edit cannot drop it quietly.
@@ -103,3 +180,31 @@ def test_broken_items_keep_their_fixes():
     assert "view.isConnected" in js and ".p-view{display:contents}" in css
     # 17 three skip links
     assert shell.count('class="skip"') == 3
+
+
+def test_second_audit_fixes_stay():
+    js, css = _src("frame.js"), _src("frame.css")
+    # 1 a project with a prototype page of its own opens it; any other shows the dimmed empty state with its own page's link
+    assert "location.replace(ROOT + S.other.href" in js and '<p class="mut dim">Nothing yet:' in js
+    # 3 the unsaved inline note is a draft like the rest
+    assert "q:newnote" in js[js.index("const DRAFT"):js.index("const GLOBAL")]
+    # 4 Questions' own section folds are remembered and pressed back once
+    assert "document.addEventListener('click', saveSecFold, true)" in js and "button[data-sfold]" in js[js.index("function restoreFolds"):js.index("function saveSecFold")]
+    # 5 Open tab off: another project's tab returns to Questions on reload too
+    assert "`#project/${anchor}/questions`" in js
+    # 6, 7 jumps and skips land clear of the pinned frame and of a tab's own pinned bar
+    assert js.count("scrollClear(") >= 3 and "html{scroll-padding-top:98px}" in css
+    # 7 the document skip leaves Cards only, and never lands on a card's evidence
+    assert "[data-view=\"doc\"]" in js and "'.aa.qdoc'" in js
+    # 8 up to 900 the frame folds into its menu, and areas' pinned bars sit under its 44 px header
+    assert "matchMedia('(max-width: 900px)')" in js and "@media (max-width:900px){" in css and "#p-main .qbar,#p-main .ajump{top:44px}" in css
+    # 9 another project's scheduled jobs, by their Windmill folder
+    assert "const jobsOf = code =>" in js
+    # 10 no desk width hides the last Send
+    assert "sentchip" not in css
+    # 12 the overview opens on hover and focus; the phone keeps a failing job's red mark
+    assert ".hov:hover>.hpop,.hov:focus-within>.hpop{display:block}" in css and ".wdots .wsep+.wd.jd{display:inline-grid}" in css
+    # 13 History's arrows are listed and work
+    assert "['← →', 'older or newer version, while one is open in History']" in js and "if (historyKey(e)) return;" in js
+    # RR1 a read-only copy never opens another page's Send
+    assert "const sendable = () => sendP && !COPY;" in js

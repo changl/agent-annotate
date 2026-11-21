@@ -113,6 +113,9 @@ def serve(handler, route_path: str):
         except OSError:
             return handler._respond(500, b'{"error":"proto shell.html missing"}')
         return handler._respond(200, html, "text/html; charset=utf-8", cache_control=sync_server._NO_STORE)
+    if route_path.startswith("/proto/p/"):  # a read-only copy of another project's page (frame.serve_other)
+        from .frame import serve_other
+        return serve_other(handler, route_path)
     if match := _AREA.fullmatch(route_path):
         try:
             body = json.dumps(build(match[1], handler.artifact_dir), ensure_ascii=False).encode()

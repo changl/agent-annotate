@@ -22,13 +22,16 @@
   // The area that owns answering registers Send: count(ctx) -> number ready, open(ctx) opens its Send summary.
   let sendP = null;
   P.send = spec => { sendP = spec; if (started) refreshTop(); };
-  // An optional top-bar slot beside the version (Running's worker squares): render(el, ctx).
-  let barP = null;
-  P.bar = spec => { barP = spec; if (started) drawBar(); };
+  const sendable = () => sendP && !COPY;  // a read-only copy sends nothing (RR1)
+  // Kept so an area's call does no harm: the frame draws the mock's worker squares itself, per project, with the overview on hover and focus (#12)
+  P.bar = () => {};
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const base = location.pathname.replace(/[^/]*$/, '');  // the page's directory URL, always ending in "/"
+  // A read-only copy of another project's page is served under <root>/proto/p/<key>/ (frame.py serve_other)
+  const COPY = (base.match(/\/proto\/p\/([a-z0-9-]+)\/$/) || [])[1] || '';
+  const ROOT = COPY ? base.slice(0, -`proto/p/${COPY}/`.length) : base;
   async function api(path, body, method) {
     const opts = body === undefined && !method ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)};
@@ -47,20 +50,23 @@
   const cache = {};
   const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = api(`proto/data/${area}.json`).catch(e => { delete cache[area]; throw e; }));
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
-  const DRAFT = /^(q:drafts|q:general|tst|tcm:.*|draft:.*)$/;
+  const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
+  // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
+  const GLOBAL = /^(theme|fs|rem|optsFirst|zoomDef)$/;
+  const store = k => 'annotate-proto:' + (COPY && !GLOBAL.test(k) ? `p/${COPY}:` : '') + k;
   const mem = {};
   const prefs = {
-    get(k, d) { if (k in mem) return mem[k] == null ? d : mem[k]; try { const v = JSON.parse(localStorage.getItem('annotate-proto:' + k) || 'null'); return v == null ? d : v; } catch { return d; } },
+    get(k, d) { if (k in mem) return mem[k] == null ? d : mem[k]; try { const v = JSON.parse(localStorage.getItem(store(k)) || 'null'); return v == null ? d : v; } catch { return d; } },
     set(k, v) {
       if (DRAFT.test(k) && !remember('drafts')) { mem[k] = v; return; }
       delete mem[k];
-      try { localStorage.setItem('annotate-proto:' + k, JSON.stringify(v)); } catch {}
+      try { localStorage.setItem(store(k), JSON.stringify(v)); } catch {}
     },
   };
   const REM = {folds: true, tab: true, drafts: true};
   const remember = kind => ({...REM, ...prefs.get('rem', {})})[kind] !== false;
   function dropStoredDrafts() {
-    try { Object.keys(localStorage).filter(k => k.startsWith('annotate-proto:') && DRAFT.test(k.slice(15))).forEach(k => localStorage.removeItem(k)); } catch {}
+    try { Object.keys(localStorage).filter(k => k.startsWith('annotate-proto:') && DRAFT.test(k.slice(15).replace(/^p\/[a-z0-9-]+:/, ''))).forEach(k => localStorage.removeItem(k)); } catch {}
   }
   // Folded sections (#80): every <details> an area draws, by tab and its summary, kept only while the switch is on.
   const foldKey = d => S.tab + ':' + (d.id || d.className + ':' + ((d.querySelector('summary') || {}).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60));
@@ -72,6 +78,23 @@
   function restoreFolds(el) {
     const on = remember('folds'), f = on ? prefs.get('folds', {}) : {};
     el.querySelectorAll('details:not([data-pf])').forEach(d => { d.dataset.pf = '1'; const v = f[foldKey(d)]; if (on && v != null && d.open !== v) d.open = v; });
+    // Questions' document sections fold with their own button (data-sfold, aria-expanded): pressed once, the first time each shows (#4)
+    if (on) el.querySelectorAll('button[data-sfold]').forEach(b => {
+      const k = S.tab + ':s:' + b.dataset.sfold, v = f[k];
+      if (v == null || secDone.has(k)) return;
+      secDone.add(k);
+      if ((b.getAttribute('aria-expanded') === 'true') !== v) b.click();
+    });
+  }
+  const secDone = new Set();
+  function saveSecFold(e) {
+    const b = e.target.closest && e.target.closest('#p-main button[data-sfold], #p-main [data-secall]');
+    if (!b || !e.isTrusted || S.home || !remember('folds')) return;
+    const all = [...document.querySelectorAll('#p-main button[data-sfold]')], f = {...prefs.get('folds', {})};
+    // one section turns over; "Collapse all" opens every section when none is open, else folds them all
+    const opened = b.dataset.sfold != null ? b.getAttribute('aria-expanded') !== 'true' : !all.some(x => x.getAttribute('aria-expanded') === 'true');
+    for (const x of b.dataset.sfold != null ? [b] : all) { f[S.tab + ':s:' + x.dataset.sfold] = opened; secDone.add(S.tab + ':s:' + x.dataset.sfold); }
+    prefs.set('folds', f);
   }
 
   let toastTimer;
@@ -87,7 +110,7 @@
   // An action that would reach a real agent or system: look done, say so, offer Undo, reach nothing.
   const inert = (msg, undo) => toast(msg, {inert: true, undo: undo || (() => {})});
 
-  const phoneQ = matchMedia('(max-width: 600px)');
+  const phoneQ = matchMedia('(max-width: 900px)');  // up to 900 the frame folds into its menu: the mock's desk header overflows below 1074 (#8)
   const S = {tab: 'questions', home: false, menu: '', sheet: '', meta: null, loadedV: '', newer: null, checked: '',
     fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null};
   const ctx = {
@@ -106,8 +129,8 @@
   // A chip is {text, tone, title} or {empty: true}; empty dims the tab and reads "nothing yet" (#93).
   const chipHtml = c => !c ? '' : c.empty ? '<span class="ct none">nothing yet</span>'
     : c.text == null || c.text === '' ? '' : `<span class="ct ${esc(c.tone || '')}"${c.title ? ` title="${esc(c.title)}"` : ''}>${esc(c.text)}</span>`;
-  // Another project's tabs carry only what Home knows about it: its waiting questions.
-  const chipOf = key => !S.other ? S.chips[key] : key === 'questions' && S.other.waiting ? {text: `${S.other.waiting} waiting`, tone: 'red'} : null;
+  // A project with no copy here: every tab dimmed, "nothing yet" (#1, #93)
+  const chipOf = key => !S.other ? S.chips[key] : {empty: true};
   function paintChip(key) {
     const c = chipOf(key);
     document.querySelectorAll(`#p-top [data-chip="${key}"], #p-tabs [data-chip="${key}"], #p-layer [data-chip="${key}"]`).forEach(el => { el.innerHTML = chipHtml(c); });
@@ -126,6 +149,14 @@
     }
   }
 
+  // Scroll to an element's top, clear of the pinned frame (scroll-padding) and of a tab's own pinned bar such as Questions' strip (#6, #7)
+  function scrollClear(el) {
+    el.scrollIntoView({block: 'start'});
+    const r = el.getBoundingClientRect();
+    let c = document.elementFromPoint(Math.max(0, Math.min(r.left + 8, innerWidth - 1)), Math.max(0, r.top + 2));
+    while (c && c !== document.body && !/sticky|fixed/.test(getComputedStyle(c).position)) c = c.parentElement;
+    if (c && c !== document.body && !c.contains(el) && !el.contains(c)) scrollBy(0, r.top - c.getBoundingClientRect().bottom - 8);
+  }
   function show(key, anchor) {
     const t = byKey[key] || TABS[0];
     S.tab = t.key;
@@ -144,7 +175,7 @@
     const live = () => view.isConnected;
     Promise.resolve().then(() => t.render(view, ctx, anchor)).then(() => {
       const target = live() && anchor && document.getElementById(anchor);
-      if (target) target.scrollIntoView({block: 'start'});
+      if (target) scrollClear(target);
     }).catch(e => { if (!live()) return; view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} failed to draw: ${esc(e.message)}</p></div>`; console.error(e); });
   }
   // Until the questions area registers: this version's real questions, read through today's API.
@@ -173,9 +204,13 @@
   }
   // the projects, as rows: the project dropdown and the phone's menu share them (mock: projRows)
   const isCur = x => !S.home && (x.this ? !S.other : S.other && S.other.key === x.key);
+  // a prototype page of its own (the FastLane Drive copy, a read-only copy): a link to it; any other project: its summary here
+  const projOpen = (x, tag, cls, inner) => x.href != null && !x.this
+    ? `<a class="${cls}" ${tag} href="${esc(ROOT + x.href)}#questions">${inner}</a>`
+    : `<button class="${cls}" ${tag} ${x.this ? 'data-gothis' : `data-proj="${esc(x.key)}"`}>${inner}</button>`;
   function projRows() {
     return projs().map(x => { const st = (workersOf(x.code) || []).filter(w => w.s === 'stuck').length;
-      return `<button class="mi" role="menuitem" ${x.this ? 'data-gothis' : `data-proj="${esc(x.key)}"`}${isCur(x) ? ' aria-current="page"' : ''}><span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}</button>`; }).join('');
+      return projOpen(x, `role="menuitem"${isCur(x) ? ' aria-current="page"' : ''}`, 'mi', `<span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}`); }).join('');
   }
 
   /* ---------- workers and scheduled jobs, from Running's data (mock: workerDots, wkCard) ---------- */
@@ -190,8 +225,11 @@
     const all = Array.isArray(w) ? w : w && typeof w === 'object' ? Object.entries(w).flatMap(([mac, v]) => ((v && v.workers) || []).map(x => ({...x, mac}))) : null;
     return all && all.filter(x => x.proj === code).map(x => ({...x, s: x.s || x.state || 'working'}));
   }
-  // shortcut: the Windmill schedules Running reads are FastLane Drive's; other projects' jobs are not read yet
-  const jobsOf = code => S.run && Array.isArray(S.run.jobs) && code === thisCode() ? S.run.jobs : null;
+  // Running reads every enabled schedule in the Windmill workspace; each belongs to a project by its folder (#9).
+  // shortcut: folders by path, until a schedule carries its project; no folder is Rebex's
+  const JOBP = [[/^f\/(fld_ops|sweep|uat|usage|ops)\//, 'fld'], [/^f\/test\//, 'annotate'], [/^u\/[^/]+\/mac_daily_update$/, 'multimac'], [/^u\/[^/]+\/windmill_/, 'windmill']];
+  const jobProj = p => (JOBP.find(([re]) => re.test(p || '')) || [])[1] || 'other';
+  const jobsOf = code => S.run && Array.isArray(S.run.jobs) && code && code !== 'other' ? S.run.jobs.filter(j => jobProj(j.path) === code) : null;
   const countBy = ws => ws.reduce((c, w) => (c[w.s] = (c[w.s] || 0) + 1, c), {});
   const curCode = () => S.other ? S.other.code : thisCode();
   const runHash = anchor => S.other ? `project/${S.other.key}/running` : 'running' + (anchor ? '/' + anchor : '');
@@ -223,7 +261,7 @@
     const sorted = [...ws].sort((a, b) => WORDER.indexOf(a.s) - WORDER.indexOf(b.s)), c = countBy(ws);
     const sum = ws.length ? Object.entries(c).map(([s, n]) => `${n} ${SL[s]}`).join(', ') : 'no workers running';
     const dot = w => `<button class="wd" data-go="${runHash('workers')}" title="${esc(w.name)}: ${esc(SL[w.s] || w.s)}" aria-label="${esc(w.name)}: ${esc(SL[w.s] || w.s)}"><i class="dt ${esc(w.s)}"></i></button>`;
-    const job = j => `<button class="wd" data-go="${runHash('jobs')}" title="Scheduled job failing: ${esc(j.name)}" aria-label="Scheduled job failing: ${esc(j.name)}"><i class="dt job"></i></button>`;
+    const job = j => `<button class="wd jd" data-go="${runHash('jobs')}" title="Scheduled job failing: ${esc(j.name)}" aria-label="Scheduled job failing: ${esc(j.name)}"><i class="dt job"></i></button>`;
     const viz = ws.length <= MAX ? sorted.map(dot).join('') : `<button class="wkg" data-go="${runHash('workers')}" aria-label="${pl(ws.length, 'worker', 'workers')}: ${esc(sum)}. Open them under Running">${sorted.map(w => `<i class="${esc(w.s)}"></i>`).join('')}</button><span class="wcnt">${['failed', 'stuck', 'working'].filter(s => c[s]).map(s => `<span title="${c[s]} ${SL[s]}"><i class="dt ${s}"></i>${c[s]}</span>`).join('')}<span class="tot hide-ph" title="${pl(ws.length, 'worker', 'workers')} in all">${pl(ws.length, 'worker', 'workers')}</span></span>`;
     return `<span class="wdots hov" role="group" aria-label="Workers: ${esc(sum)}">${ws.length ? viz : `<span class="small mut wd0" title="No workers running">no workers</span>`}${fail.length ? `<span class="wsep" aria-hidden="true"></span>${fail.map(job).join('')}<span class="wcnt"><span class="tot jf err-t" title="${pl(fail.length, 'scheduled job is', 'scheduled jobs are')} failing">${pl(fail.length, 'job failing', 'jobs failing')}</span></span>` : ''}${ws.length || fail.length ? wkCard(ws, c, fail) : ''}</span>`;
   }
@@ -243,7 +281,7 @@
     const pop = `<div class="hpop" role="tooltip"><b>Bead board</b>${wyN ? `<div class="hp-h">Waiting${wyM ? ` · ${pl(wyM, 'merge', 'merges')} among them` : ''}</div>${wy.slice(0, 3).map(([id, , mg]) => `<button class="hp-t" data-go="running/waiting">${mg ? 'Merge: ' : ''}${esc(cut(bt(id).t || id, 52))} <span class="bid">· ${esc(id)}${bt(id).st ? ' · ' + esc(bt(id).st) : ''}</span></button>`).join('')}${wyN > 3 ? `<div class="small mut">and ${wyN - 3} more, all listed at the top of Running</div>` : ''}` : ''}
       <div class="hp-h">Ready to start</div>${rdy.slice(0, 5).map(t => `<button class="hp-t" data-go="running/tasks">${esc(cut(t.title || t.id, 52))} <span class="bid">· ${esc(t.id)} · ready</span></button>`).join('') || '<div class="small mut">Nothing ready</div>'}
       <div class="small mut" style="margin-top:4px">${pl(open, 'task not closed', 'tasks not closed')} on the board · click a count to open the board under Running${S.boardUrl ? ` · <a href="${esc(S.boardUrl)}" target="_blank" rel="noopener">the separate board ↗</a>` : ''}</div></div>`;
-    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}Beads${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
+    return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="Bead board${ready != null ? ': ' + pl(ready, 'task ready', 'tasks ready') : ''}${wyN ? `, ${wyN} waiting` : ''}. Opens the board under Running">${I('bead')}<span class="bl">Beads</span>${ready != null ? `<span class="badge ok" title="${pl(ready, 'task is', 'tasks are')} ready to start on the bead board">${ready} ready</span>` : ''}</button>${wait}${pop}</span>`;
   }
 
   /* ---------- the last Send, in the header (catalog 14, 72) ---------- */
@@ -290,7 +328,12 @@
   }
   function sendBtn(cls) {
     const n = S.sendN;
-    return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${n ? '' : ' aria-disabled="true"'} title="${n ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}Send${n ? ' ' + n : ''}</button>`;
+    return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${n ? '' : ' aria-disabled="true"'} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${n ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
+  }
+  // A read-only copy answers nothing: in Send's place, where his answers go (RR1). Its bead counts would be FastLane Drive's, so none.
+  function roChip(cls) {
+    const u = (projs().find(x => x.this) || {}).url;
+    return `<a class="chip rochip ${cls || ''}" ${u ? `href="${esc(u)}" target="_blank" rel="noopener"` : ''} title="A read-only copy of ${esc(projName())}'s page, made for this prototype. Answers and Send stay on its own page${u ? ': this opens it' : ''}.">Read-only copy${u ? ' ↗' : ''}</a>`;
   }
   function drawTop() {
     const top = document.getElementById('p-top'), w = S.other ? S.other.waiting || 0 : waitingHere();
@@ -304,20 +347,18 @@
     const who = `<div class="dd"><button class="btn ghost who" data-menu="me" aria-haspopup="menu" aria-expanded="${S.menu === 'me'}" title="Settings, people and sign out"><span class="av" aria-hidden="true">${esc(myName()[0])}</span><span class="hide-ph">${esc(myName())}</span> ▾</button>${me}</div>`;
     const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${w} waiting</span>` : ''} ▾</button>${projMenu}</div>`;
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
-    if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="chip hide-ph verchip" title="The version on screen">Newest version</span><span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
+    if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
     const ver = S.meta ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}</span>` : '';
-    top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${beadsCtl()}${sendBtn('hide-ph')}${who}`;
+    top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${COPY ? roChip('hide-ph') : beadsCtl() + sendBtn('hide-ph')}${who}`;
     drawBar();
   }
   function drawBar() {
     const el = document.getElementById('p-bar');
-    if (!el || S.home) return;
-    if (barP) Promise.resolve().then(() => barP.render(el, ctx)).catch(e => console.warn('bar', e));
-    else el.innerHTML = workerDots();
+    if (el && !S.home) el.innerHTML = workerDots();
   }
   function drawFab() {
     const f = document.getElementById('p-fab');
-    f.hidden = !(S.sendN && !S.home && S.menu !== 'nav');
+    f.hidden = !(S.sendN && !S.home && !S.other && !COPY && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1)
     f.innerHTML = `${I('send')}Send ${S.sendN || ''}`;
     f.setAttribute('aria-label', `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
   }
@@ -338,7 +379,7 @@
     clearTimeout(topTimer);
     topTimer = setTimeout(async () => {
       await Promise.all([
-        sendP ? Promise.resolve().then(() => sendP.count(ctx)).then(n => { S.sendN = +n || 0; }).catch(e => console.warn('send count', e)) : null,
+        sendable() ? Promise.resolve().then(() => sendP.count(ctx)).then(n => { S.sendN = +n || 0; }).catch(e => console.warn('send count', e)) : null,
         sendP && sendP.waiting ? Promise.resolve().then(() => sendP.waiting(ctx)).then(n => { S.qWait = +n || 0; }).catch(e => console.warn('waiting', e)) : null,
         readRun(),
         data('frame', true).then(d => { S.fd = d; }).catch(() => {}),
@@ -352,12 +393,12 @@
   /* ---------- the phone's menu, People and keyboard shortcuts ---------- */
   function navMenu() {
     const tabs = S.home ? '' : `<nav aria-label="Tabs">${TABS.map(t => { const c = chipOf(t.key); return `<button class="pm-tab ${t.tone}${c && c.empty ? ' empty' : ''}" role="tab" data-tab="${t.key}" aria-selected="${S.tab === t.key}">${I(t.icon)}<span class="pl">${esc(t.label)}</span><span data-chip="${t.key}">${chipHtml(c)}</span></button>`; }).join('')}</nav>
-      ${S.other ? '' : `<div class="pm-acts">${sendBtn('')}${beadsCtl(true)}</div>`}`;
+      ${S.other ? '' : `<div class="pm-acts">${COPY ? roChip('') : sendBtn('') + beadsCtl(true)}</div>`}`;
     return `<div class="pmenu" role="dialog" aria-label="Menu">${tabs}<h3>Projects</h3>${projRows()}<button class="mi" data-home${S.home ? ' aria-current="page"' : ''}><span class="nm ri8">${I('home')} All projects</span></button><div class="smb">${settingsBody()}</div></div>`;
   }
   const KEYS = [['F', 'next question'], ['A', 'previous question'], ['1–9', 'pick that choice on the highlighted question'], ['C', 'write words on the highlighted question'],
     ['⌘↵', 'open the Send summary, from anywhere, even while typing an answer; in a note box it saves the note'], ['⌘↵ again', 'send, once the Send summary is open'],
-    ['Esc', 'close a menu, sheet or picture'], ['J K', 'next or previous task, while a task is open'], ['?', 'this list']];
+    ['Esc', 'close a menu, sheet or picture'], ['J K', 'next or previous task, while a task is open'], ['← →', 'older or newer version, while one is open in History'], ['?', 'this list']];
   const keysSheet = () => `<div class="sheet" data-scrim><div class="box" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2 class="ph">${I('keys')} Keyboard shortcuts</h2><ul class="keys">${KEYS.map(([k, t]) => `<li><kbd>${k}</kbd><span>${t}</span></li>`).join('')}</ul><div class="acts"><button class="btn" data-close>Close</button></div></div></div>`;
   const ROLE = {owner: 'Owner', view: 'Can view', send: 'Can answer and send'}, ROLEIC = {owner: 'key', view: 'eye', send: 'edit'};
   const ROLEHINT = {owner: 'Sees every project and is the only one who can change who has access', view: 'Reads the page, its questions, Reference and History; cannot answer, write notes or send', send: 'Also answers questions, writes notes and presses Send'};
@@ -402,12 +443,14 @@
     const allWs = once.flatMap(r => r.ws || []), c = countBy(allWs), failJ = once.reduce((s, r) => s + (r.jobs || []).filter(j => j.failing).length, 0);
     const spark = r => { const bw = 8, g = 2, W = days * (bw + g);
       return `<svg class="spark" viewBox="0 0 ${W} 30" preserveAspectRatio="none" width="${W}" height="30" role="img" aria-label="${pl(r.vday.reduce((s, n) => s + n, 0), 'version', 'versions')} and ${pl(r.aday.reduce((s, n) => s + n, 0), 'answer round', 'answer rounds')} in ${days} days">${r.vday.map((n, i) => `<g><title>${days - 1 - i ? `${days - 1 - i} days ago` : 'today'}: ${pl(n, 'version', 'versions')} published, ${pl(r.aday[i], 'answer round', 'answer rounds')} from you</title><rect class="sb0" x="${i * (bw + g)}" y="0" width="${bw}" height="24"/>${n ? `<rect class="sb" x="${i * (bw + g)}" y="${24 - Math.max(2, n / maxV * 24)}" width="${bw}" height="${Math.max(2, n / maxV * 24)}"/>` : ''}${r.aday[i] ? `<rect class="sa" x="${i * (bw + g)}" y="26" width="${bw}" height="4"/>` : ''}</g>`).join('')}</svg>`; };
-    const unread = what => `<span class="small mut" title="${what[0].toUpperCase() + what.slice(1)}: not read for this project yet"><span class="ph-only">${what} </span>—</span>`;
-    const dots = ws => !ws ? unread('workers') : ws.length ? ws.slice(0, 16).map(w => `<i class="dt ${esc(w.s)}" title="${esc(w.name)}: ${esc(SL[w.s] || w.s)}"></i>`).join('') + (ws.length > 16 ? `<span class="small mut">+${ws.length - 16} more</span>` : '') : '<span class="small mut">no workers</span>';
-    const jobsCell = js => !js ? unread('scheduled jobs') : js.length ? js.map(j => `<i class="dq ${j.failing ? 'bad' : 'ok'}" title="${esc(j.name)}: ${j.failing ? 'failing' : 'fine'}"></i>`).join('') : '<span class="small mut">no scheduled jobs</span>';
-    const row = r => `<div class="hrow" role="row"><span class="hc nm" role="cell"><i class="hd ${r.health[0]}" title="${esc(r.health[1])}" aria-label="${esc(r.health[1])}"></i><button class="lk" ${r.this ? 'data-gothis' : `data-proj="${esc(r.key)}"`}>${esc(r.name)}</button><span class="small mut hpg">${pl(r.pages, 'page', 'pages')}</span></span>
+    const unread = what => `<span class="small mut" title="${what[0].toUpperCase() + what.slice(1)}: not read yet"><span class="ph-only">${what} </span>—</span>`;
+    const dots = (ws, r) => !ws ? (S.run && r.code === 'other' ? `<span class="small mut" title="Workers of projects without a tag of their own are not split by project"><span class="ph-only">workers </span>—</span>` : unread('workers')) : ws.length ? ws.slice(0, 16).map(w => `<i class="dt ${esc(w.s)}" title="${esc(w.name)}: ${esc(SL[w.s] || w.s)}"></i>`).join('') + (ws.length > 16 ? `<span class="small mut">+${ws.length - 16} more</span>` : '') : '<span class="small mut">no workers</span>';
+    const jobsCell = (js, r) => !js ? (S.run && r.code === 'other' ? `<span class="small mut" title="${esc(r.name)} gathers projects with no Windmill folder of their own">no scheduled jobs</span>` : unread('scheduled jobs'))
+      : js.length ? js.map(j => `<i class="dq ${j.failing ? 'bad' : 'ok'}" title="${esc(j.name)}: ${j.failing ? 'failing' : 'fine'}"></i>`).join('')
+      : `<span class="small mut" title="No enabled Windmill schedule on this Mac belongs to ${esc(r.name)}">no scheduled jobs</span>`;
+    const row = r => `<div class="hrow" role="row"><span class="hc nm" role="cell"><i class="hd ${r.health[0]}" title="${esc(r.health[1])}" aria-label="${esc(r.health[1])}"></i>${projOpen(r, '', 'lk', esc(r.name))}<span class="small mut hpg">${pl(r.pages, 'page', 'pages')}</span></span>
       <span class="hc wt" role="cell" title="${pl(r.waiting, 'question', 'questions')} waiting">${r.waiting ? `<span class="wbar"><i style="width:${Math.max(4, r.waiting / maxW * 100)}%"></i></span><b class="err-t">${r.waiting} waiting</b>` : '<span class="small mut">nothing waiting</span>'}</span>
-      <span class="hc wk" role="cell">${dots(r.ws)}</span><span class="hc jb" role="cell">${jobsCell(r.jobs)}</span>
+      <span class="hc wk" role="cell">${dots(r.ws, r)}</span><span class="hc jb" role="cell">${jobsCell(r.jobs, r)}</span>
       <span class="hc ac" role="cell">${spark(r)}</span><span class="hc ls small mut" role="cell">${ago(r.lastAgoH)}</span></div>`;
     const tile = (big, sub, cls, viz) => `<div class="htile ${cls}"><b>${big}</b><span>${sub}</span>${viz || ''}</div>`;
     el.innerHTML = `<section class="home"><div class="hhead"><h2 class="ph">All projects</h2><span class="small mut">from the project pages on this Mac · ${esc(fd.asOf || '')}</span></div>
@@ -419,20 +462,16 @@
       <p class="small mut hleg"><span><i class="hd ok"></i>fine</span><span><i class="hd warn"></i>questions wait, nothing new in a week</span><span><i class="hd bad"></i>a job failing or a worker with no sign of life</span><span><i class="hd idle"></i>quiet</span><span><i class="dt working"></i>working</span><span><i class="dt stuck"></i>no sign of life</span><span><svg width="8" height="10"><rect class="sb" width="8" height="10"/></svg> versions published a day</span><span><svg width="8" height="4"><rect class="sa" width="8" height="4"/></svg> a day you answered</span></p></section>`;
   }
 
-  // Another project, opened from Home or the project menu (#1): its six tabs and top bar, with what Home knows of it.
-  // shortcut: the copy carries one project's material; the others' tabs say so until the server serves each project's page
+  // A project with no copy in the prototype (#1): its six tabs stay, dimmed, and each says why, with a link through to its own page.
+  // Rebex and Agent Annotate are carried as read-only copies (copy.sh), so their rows open their own prototype pages instead.
   function drawOther() {
     const o = S.other, el = document.getElementById('p-main'), t = byKey[S.tab] || TABS[0];
     el.className = 'p-main other tab-' + t.key;
-    const ws = o.code && o.code !== 'other' ? workersOf(o.code) : null, c = countBy(ws || []);
-    const h = o.lastAgoH, last = h == null ? 'no page yet' : h < 1 ? 'under an hour ago' : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
-    const what = {questions: 'questions', reference: 'reference', running: 'workers and tasks', analytics: 'analytics', history: 'history', links: 'pages and links'}[t.key];
+    const what = {questions: 'questions', reference: 'reference material', running: 'workers and tasks', analytics: 'analytics', history: 'history', links: 'pages and links'}[t.key];
+    const own = o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">Open ${esc(o.name)}'s own page ↗</a>` : `${esc(o.name)} has no page address on this Mac.`;
     el.innerHTML = `<section class="p-other"><h2 class="ph">${I(t.icon)} ${esc(o.name)} · ${esc(t.label)}</h2>
-      <div class="htiles">${[[o.waiting || 0, 'questions waiting', o.waiting ? 'bad' : ''], [pl(o.pages, 'page', 'pages'), 'on this Mac', ''],
-        [ws ? ws.length : '—', ws ? `workers${ws.length ? ': ' + Object.entries(c).map(([s, n]) => `${n} ${SL[s]}`).join(', ') : ''}` : 'workers: not read for this project yet', c.stuck || c.failed ? 'warn' : ''], [last, 'last update', '']]
-        .map(([b, s, cls]) => `<div class="htile ${cls}"><b>${esc(String(b))}</b><span>${esc(s)}</span></div>`).join('')}</div>
-      <p class="p-primary">This prototype copy carries ${esc(projName())}'s material only, so ${esc(o.name)}'s ${what} stay on its own page for now.</p>
-      <p class="acts"><button class="btn" data-gothis>Back to ${esc(projName())}</button><button class="btn ghost" data-home>${I('home')} All projects</button></p></section>`;
+      <p class="mut dim">Nothing yet: ${esc(o.name)}'s ${what} are not copied into this prototype, which carries ${esc(projs().filter(x => x.href != null).map(x => x.name).join(', '))} only. ${own}</p>
+      <p class="acts"><button class="btn ghost" data-home>${I('home')} All projects</button></p></section>`;
   }
 
   /* ---------- routing ---------- */
@@ -442,11 +481,15 @@
     // A reload with "Open tab" off starts on Questions, even though the address still names the last tab (#80).
     const nav = !routed && performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     routed = true;
-    if (nav && nav.type === 'reload' && !remember('tab') && byKey[key]) { key = 'questions'; anchor = ''; history.replaceState(null, '', '#questions'); }
+    if (nav && nav.type === 'reload' && !remember('tab')) {
+      if (byKey[key]) { key = 'questions'; anchor = ''; history.replaceState(null, '', '#questions'); }
+      if (key === 'project' && sub && sub !== 'questions') { sub = 'questions'; history.replaceState(null, '', `#project/${anchor}/questions`); }  // another project's too (#5)
+    }
     S.home = key === 'home';
     S.menu = '';
     S.other = key === 'project' ? projs().find(x => x.key === anchor && !x.this) || null : null;
     if (key === 'project' && !S.other && S.fd) { location.replace('#home'); return; }
+    if (S.other && S.other.href != null) { location.replace(ROOT + S.other.href + '#' + (byKey[sub] ? sub : 'questions')); return; }  // a project with its own prototype page
     if (S.home) { drawTabs(); drawAll(); drawHome(); return; }
     if (S.other) { S.tab = byKey[sub] ? sub : 'questions'; drawTabs(); drawAll(); drawOther(); return; }
     const tab = byKey[key] ? key : remember('tab') ? prefs.get('tab', 'questions') : 'questions';
@@ -505,10 +548,10 @@
     if (d.tab && t.matches('.tab')) { ctx.go(d.tab); return; }
     if (d.send !== undefined) {
       S.menu = ''; drawAll();
-      if (!S.sendN || !sendP) return toast('Nothing is ready to send yet');
+      if (!S.sendN || !sendable()) return toast('Nothing is ready to send yet');
       return Promise.resolve().then(() => sendP.open(ctx)).catch(err => toast('Send could not open: ' + err.message));
     }
-    if (t.id === 'p-fab') { return sendP && Promise.resolve().then(() => sendP.open(ctx)); }
+    if (t.id === 'p-fab') { return sendable() && S.sendN && Promise.resolve().then(() => sendP.open(ctx)); }
     if (d.recheck !== undefined) {
       if (S.newer) { S.loadedV = S.newer.v; S.newer = null; for (const k in cache) delete cache[k]; api.meta().then(m => { S.meta = m; }).finally(() => { route(); toast('Loaded the newer version'); }); return; }
       checkNewer().then(found => { drawTop(); if (!found) toast('Up to date'); });
@@ -569,17 +612,42 @@
     if (e.key === 'Enter' && e.target.dataset && e.target.dataset.fsin !== undefined) { e.target.blur(); return; }
     if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || S.sheet || S.menu || S.gated) return;
     if (e.key === '?') { S.sheet = 'keys'; S.menu = ''; drawAll(); return; }
+    if (historyKey(e)) return;
     questionKey(e);
+  }
+  // ← → step to the older or newer version while one is open in History (#13)
+  function historyKey(e) {
+    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || S.home || S.other || S.tab !== 'history') return false;
+    const v = decodeURIComponent(location.hash.replace(/^#/, '').split('/')[1] || ''), vs = ((S.meta && S.meta.history) || []).map(h => h.version), i = v ? vs.indexOf(v) : -1;
+    const to = i < 0 ? null : vs[i + (e.key === 'ArrowLeft' ? -1 : 1)];
+    if (!to) return false;
+    e.preventDefault();
+    ctx.go('history', to);
+    return true;
   }
 
   /* ---------- skip links (#17): tabs, questions, the review document ---------- */
+  // (#7) the first card he can see, opening its folded section if every card is folded away; the document view, never a card's evidence
   async function skipTo(kind) {
-    const focus = el => { if (!el) return false; if (!el.matches('a,button,input,textarea,[tabindex]')) el.tabIndex = -1; el.focus(); el.scrollIntoView({block: 'start'}); return true; };
+    // scroll-padding keeps the target clear of the pinned frame
+    const focus = el => { if (!el) return false; if (!el.matches('a,button,input,textarea,[tabindex]')) el.tabIndex = -1; el.focus({preventScroll: true}); scrollClear(el); return true; };
     if (kind === 'tabs') return focus(document.querySelector('#p-tabs .tab[aria-selected="true"]') || document.querySelector('#p-tabs .tab'));
     if (S.home || S.other || S.tab !== 'questions') ctx.go('questions');
-    const m = document.getElementById('p-main'), sel = kind === 'questions' ? '.qcard, .qlist' : '.aa.qdoc, .aa';
-    for (let i = 0; i < 30 && !m.querySelector(sel); i++) await new Promise(r => setTimeout(r, 100));  // the tab may still be drawing
-    return focus(m.querySelector(sel) || m);
+    const m = document.getElementById('p-main'), vis = el => !!el && el.getClientRects().length > 0;
+    const wait = async test => { for (let i = 0; i < 30 && !test(); i++) await new Promise(r => setTimeout(r, 100)); return test(); };  // the tab may still be drawing
+    if (kind !== 'questions') {
+      await wait(() => vis(m.querySelector('.aa.qdoc')) || m.querySelector('[data-view="doc"]'));
+      const b = m.querySelector('[data-view="doc"]');
+      if (!vis(m.querySelector('.aa.qdoc')) && b) b.click();  // Cards only: back to the document first
+      return focus(await wait(() => [...m.querySelectorAll('.aa.qdoc')].find(vis)) || m);
+    }
+    const card = () => [...m.querySelectorAll('.qcard[data-q]')].find(vis);
+    await wait(() => m.querySelector('.qcard[data-q]'));
+    if (!card()) {
+      const c = m.querySelector('.qcard[data-q]'), sec = c && c.closest('section.qsec'), b = sec && sec.querySelector(':scope > h2 [data-sfold]');
+      if (b) { b.click(); await wait(card); }
+    }
+    return focus(card() || m);
   }
 
   /* ---------- sign out (#8): the sign-in screen covers the page; signing in comes back to the same place ---------- */
@@ -621,6 +689,7 @@
     document.addEventListener('change', onChange);
     document.addEventListener('keydown', onKey);
     document.addEventListener('toggle', saveFold, true);
+    document.addEventListener('click', saveSecFold, true);  // before Questions turns the section over
     if (!remember('drafts')) dropStoredDrafts();  // left over from before the switch went off (#4)
     // areas redraw their cards and sections: keep the highlight on the same question and the folds as he left them
     const main = document.getElementById('p-main');

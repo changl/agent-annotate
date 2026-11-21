@@ -235,16 +235,26 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
 /* desk only: the phone's menu button, title, menu and floating Send */
 .mbtn,.ptitle,.pmenu,.fab,.ph-only{display:none}
 
-@media (min-width:601px) and (max-width:1500px){.brand .full{display:none}}
-@media (min-width:601px) and (max-width:1200px){.verchip,.who .hide-ph{display:none}}
-@media (min-width:601px) and (max-width:1340px){.sentchip{display:none}}
-@media (min-width:601px) and (max-width:1500px){.wcnt .tot:not(.jf){display:none}.top{gap:6px}.bdchip>.btn+.btn{padding-inline:2px}}
+/* the mock's desk steps: the brand keeps its house to 1500, the version and his name go at 1300; the last Send stays (#10) */
+@media (min-width:901px) and (max-width:1500px){.brand .full{display:none}}
+@media (min-width:901px) and (max-width:1300px){.verchip,.who .hide-ph{display:none}}
+@media (min-width:901px) and (max-width:1500px){.wcnt .tot:not(.jf){display:none}.top{gap:6px}.bdchip>.btn+.btn{padding-inline:2px}}
+/* below iPad landscape (1024) the desk header and six tabs fit once the words beside their icons go; titles and labels keep them (#8) */
+@media (min-width:901px) and (max-width:1023px){.top .wcnt,.top .bl,.tab svg.pi{display:none}.tab{padding:0 9px}}
+/* jumps and skips land below the pinned top bar and tabs (#6, #7) */
+html{scroll-padding-top:98px}
+a.mi{text-decoration:none}
+a.rochip{color:var(--muted);font-weight:600}
+.dim{opacity:.75}
 /* larger Text size: the project name gives way first so the bar never scrolls sideways */
 .top>.dd.hide-ph{min-width:0}.top>.dd.hide-ph>.btn{max-width:100%}.top>.dd.hide-ph>.btn>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:900px){.htiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
-/* phone: 390 px designed in its own right (#134, #135) */
-@media (max-width:600px){
+/* phone: 390 px designed in its own right (#134, #135). The mock folds at 700 but its desk header overflows up to 1073,
+   so the frame folds up to 900 and nothing scrolls sideways at any width (#8) */
+@media (max-width:900px){
+  html{scroll-padding-top:52px}
+  #p-main .qbar,#p-main .ajump{top:44px}  /* areas pin their bars under the 90 px desk frame; this one is 44 */
   .hide-ph{display:none!important}
   .top{height:44px;gap:2px;padding:3px 6px}
   .top.hid{transform:translateY(-100%)}
@@ -266,6 +276,7 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
   .pm-tab>span.pl{flex:none}  /* the count sits next to its tab name (mock) */
   .top .dd:has(>.who){display:none}  /* Settings live in the menu on a phone (mock) */
   .wdots{gap:0;padding:0}.wd{padding:4px 1px}.wdots .wd:nth-child(n+5){display:none}
+  .wdots .wsep+.wd.jd{display:inline-grid}  /* a failing job keeps its red mark however many workers come first (#12) */
   .wkg{--c:3px;padding:2px}.wcnt .tot{display:none}
   .wdots>.hpop.wcard{display:none!important}  /* no hover on a phone: a tap opens Running */
   .pm-tab svg.pi{width:20px;height:20px;stroke:var(--ac);stroke-width:1.8}
@@ -291,5 +302,5 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
   .hrow>.hc.ac .spark{width:140px;height:22px}
   .hrow:not(.hh)>.hc.wk .dt{width:9px;height:9px}
   .wbar,.hpg{display:none}
-  .ph-only{display:inline}
+  .ph-only{display:inline!important}  /* areas show theirs only to 600; the phone frame needs them as far as 900 */
 }
