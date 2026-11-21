@@ -233,9 +233,11 @@
   const projs = () => ((S.fd && S.fd.projects) || []).map(x => x.this ? {...x, waiting: waitingHere()} : x);
   // One ready count: Running's, read from the board with `bd ready`.
   const readyHere = () => S.ready != null ? S.ready : null;
+  const copyingText = () => `Copying version ${S.copying.replace(/^v/, '')} from the real page; this copy shows its current version until then.`;
   function reloadBtn() {
     const nw = S.newer;
     if (nw) return `<button class="rl2 new" data-recheck title="A newer version is ready. Red: ${pl(nw.n, 'new question', 'new questions')}. Amber: ${pl(nw.fix, 'fix', 'fixes')} to your notes. Press to load it; your place and what you typed are kept." aria-label="Load the newer version: ${pl(nw.n, 'new question', 'new questions')}, ${pl(nw.fix, 'fix', 'fixes')}">${I('reload')}${nw.n ? `<span class="n q">${nw.n}</span>` : ''}${nw.fix ? `<span class="n f">${nw.fix}</span>` : ''}</button>`;
+    if (S.copying) return `<button class="rl2 cp" data-recheck title="${esc(copyingText())} Reload turns blue when it is ready." aria-label="${esc(copyingText())} Check again">${I('reload')}<span>Copying ${esc(S.copying.replace(/^v/, ''))}…</span></button>`;
     return `<button class="rl2" data-recheck title="Up to date${S.checked ? ', checked at ' + S.checked : ''}. The icon turns blue when the agent publishes a newer version; the page changes only when you press it." aria-label="Up to date. Check for a newer version">${I('reload')}</button>`;
   }
   // the projects, as rows: the project dropdown and the phone's menu share them (mock: projRows)
@@ -565,8 +567,12 @@
   }
 
   /* ---------- a newer version: checked once a minute; the page changes only when he presses the icon ---------- */
+  let copyWatch = 0;
   async function checkNewer() {
-    const m = await api.meta().catch(() => null);
+    // a copy whose real page moved on copies the newer version in the background: it says so, never "Up to date" (r12 fix10 slowread)
+    const [m, cp] = await Promise.all([api.meta().catch(() => null), COPY ? api('proto/data/copies.json').catch(() => null) : null]);
+    S.copying = (cp && cp.copying) || '';
+    if (S.copying && !copyWatch) copyWatch = setTimeout(() => { copyWatch = 0; checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 10000);
     S.checked = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     if (!m || !S.loadedV) return false;
     if (m.current === S.loadedV) { S.newer = null; return false; }
@@ -631,7 +637,7 @@
         }).finally(() => { S.settling = false; route(); refreshTop(); toast('Loaded the newer version'); });
         return;
       }
-      checkNewer().then(found => { drawTop(); if (!found) toast('Up to date'); });
+      checkNewer().then(found => { drawTop(); if (!found) toast(S.copying ? copyingText() + ' Reload turns blue when it is ready.' : 'Up to date'); });
       return;
     }
     if (d.sheet) { S.sheet = d.sheet; S.menu = ''; S.pErr = ''; drawAll(); return; }
@@ -811,6 +817,7 @@
     S.loadedV = meta && meta.current; S.settling = false;
     drawTop(); drawFab();
     firstRead();
+    if (COPY) checkNewer().then(() => drawTop());  // a copy refresh already running shows from the first paint on
     refreshTop();  // counts, workers, the board and the last Send
     setInterval(() => { checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 60000);
   }

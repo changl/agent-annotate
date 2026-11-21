@@ -8,13 +8,15 @@ back to FastLane Drive's. The project's other pages come from the live page regi
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import re
 from html.parser import HTMLParser
 
-from .history import _comments, _plain
+from .history import _comments, _plain, _stamp
 from .reference import FLD_DIR, copy_library, documents, hide, notes
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
@@ -181,8 +183,33 @@ def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: b
     return out
 
 
+_built: dict = {}  # page dir -> [its own files' stamps, when built, the build]: 0.7-5.5 s a build, and every reload asked (r12 fix10 slowread)
+_again = threading.Lock()
+
+
+def _stamps(page_dir: Path) -> tuple:
+    return tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "project.json")) + tuple(
+        _stamp(m) + (m.parent.name,) for m in sorted((page_dir / "plans").glob("archive-*/meta.json")) if _stamp(m))
+
+
 def build(page_dir: Path) -> dict:
-    page_dir = Path(page_dir)
+    """_build, again at once when this page's own files change; the other pages, registry and kept documents it reads
+    are read again behind the answer once it is a minute old (up to a minute behind)."""
+    page_dir, now = Path(page_dir), time.time()
+    stamps, hit = _stamps(page_dir), _built.get(str(page_dir))
+    if not hit or hit[0] != stamps:
+        hit = _built[str(page_dir)] = [stamps, now, _build(page_dir)]
+    elif now - hit[1] > 60 and _again.acquire(blocking=False):
+        def again():
+            try:
+                _built[str(page_dir)] = [stamps, time.time(), _build(page_dir)]
+            finally:
+                _again.release()
+        threading.Thread(target=again, daemon=True).start()
+    return hit[2]
+
+
+def _build(page_dir: Path) -> dict:
     meta = _json(page_dir / "current.meta.json")
     archived = []
     for m in sorted((page_dir / "plans").glob("archive-*/meta.json"), reverse=True):

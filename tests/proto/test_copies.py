@@ -1,6 +1,7 @@
 """Read-only copies follow their real page (audit5 questions #02), and the fifth check's Questions fixes stay."""
 
 import json
+import time
 from pathlib import Path
 
 from agent_annotate.proto_data import copies
@@ -26,7 +27,15 @@ def test_copy_follows_its_real_page(tmp_path):
     assert not copies.fresh(copy)  # same version: nothing to do
     (copy / "versions" / "v1.html").write_text("<p>kept scrubbed v1</p>")
     _real(real, "v2", "someone@gmail.com")
-    assert copies.fresh(copy)  # the real page moved on: the copy is taken again
+    t = time.monotonic()
+    assert copies.fresh(copy) == "v2" and time.monotonic() - t < 1  # the real page moved on: copied behind, no read waits
+    assert json.loads((copy / "current.meta.json").read_text())["current"] == "v1"  # the copy serves its own version meanwhile
+    assert copies.fresh(copy) == "v2" and copies.build(copy) == {"copying": "v2"}  # one copy at a time, and the frame is told
+    for _ in range(600):
+        if not copies._busy:
+            break
+        time.sleep(0.1)
+    assert copies.fresh(copy) == ""  # the copy is current: Reload turns blue on the minute's check
     assert json.loads((copy / "current.meta.json").read_text())["current"] == "v2"
     assert (copy / "versions" / "v1.html").read_text() == "<p>kept scrubbed v1</p>"  # a published version is reused, not scrubbed again
     assert "someone@gmail.com" not in (copy / "versions" / "v2.html").read_text()
@@ -34,9 +43,9 @@ def test_copy_follows_its_real_page(tmp_path):
     assert any(p.name.startswith("proto-rebex-") for p in (root / "trash").iterdir())  # the old copy went to trash
 
 
-def test_copy_meta_route_refreshes_first():
+def test_copy_meta_route_starts_the_copy():
     s = (WEB.parent.parent / "proto_data/__init__.py").read_text()
-    assert "_COPY_META" in s and "fresh(" in s and "_bound.pop" in s
+    assert "_COPY_META" in s and "fresh(" in s and "_bound.pop" in Path(copies.__file__).read_text()
 
 
 def test_fifth_check_questions_fixes():

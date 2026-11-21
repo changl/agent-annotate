@@ -1,8 +1,8 @@
 """Read-only copies of other projects' pages (Rebex, Agent Annotate), kept at their real page's latest version.
 
 copy.sh makes them on every restart: python3 -m agent_annotate.proto_data.copies ROOT KEY NAME SRC.
-The server also calls fresh() before it serves a copy's meta, so Reload (and the minute's check) on a copy finds a newer
-version as soon as the real page has one. The real page is only read: an APFS clone, then the clone is changed:
+The server calls fresh() as it serves a copy's meta (and <copy>/proto/data/copies.json): a newer version on the real page
+is copied in the background, and the frame says so until the copy turns Reload blue. The real page is only read: an APFS clone, then the clone is changed:
 - page.db forgets its bus file first, so nothing the store does while exporting can reach the real bus;
 - page.db goes back to JSON (db_off) and is moved to trash;
 - owner, lease, delivery, workspace and move keys leave the meta; "ui": "proto" and "proto_copy_of": KEY are set;
@@ -114,26 +114,49 @@ def refresh(root: Path, key: str, name: str, src: Path) -> Path:
     return dest
 
 
-def fresh(copy: Path) -> bool:
-    """Before a copy's meta is served: re-copy it when its real page has a newer version. True when it was re-copied."""
+_busy: dict = {}  # copy folder -> the newer version being copied into it
+
+
+def fresh(copy: Path) -> str:
+    """When the real page has a newer version: start one background re-copy (one at a time per copy) and return that version;
+    "" when the copy is current. No request waits for it (up to 120 s): the copy serves its own version until the swap (r12 fix10 slowread)."""
     try:
         meta = json.loads((copy / "current.meta.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
+        return ""
     key, src = meta.get("proto_copy_of"), Path(meta.get("proto_source") or "")
     if meta.get("ui") != "proto" or not key or not src.is_dir():
-        return False
-    with _lock:  # one re-copy at a time; a second request waits, then finds it current
-        if _current(src) in ("", _current(copy)):
-            return False
-        # its own process: the scrub is CPU-bound and would hold up every other request of this server
-        try:
-            subprocess.run([sys.executable, "-m", "agent_annotate.proto_data.copies", str(copy.parents[1]), key, meta.get("name") or key, str(src)],
-                           check=True, stdout=subprocess.DEVNULL, timeout=120)
-        except (subprocess.SubprocessError, OSError) as exc:  # the last copy keeps serving; a half-made one stays in trash/
-            print(f"copy of {key} not refreshed: {exc}", file=sys.stderr)
-            return False
-        return True
+        return ""
+    newer, at = _current(src), str(Path(copy).resolve())
+    with _lock:
+        if at in _busy:
+            return _busy[at]
+        if newer in ("", str(meta.get("current") or "")):
+            return ""
+        _busy[at] = newer
+    threading.Thread(target=_recopy, args=(at, key, meta.get("name") or key, src), daemon=True).start()
+    return newer
+
+
+def _recopy(at: str, key: str, name: str, src: Path) -> None:
+    # its own process: the scrub is CPU-bound and would hold up every other request of this server
+    try:
+        subprocess.run([sys.executable, "-m", "agent_annotate.proto_data.copies", str(Path(at).parents[1]), key, name, str(src)],
+                       check=True, stdout=subprocess.DEVNULL, timeout=120)
+        from .frame import _bound, _bound_lock
+        with _bound_lock:  # the served copy's caches belong to the old folder
+            for k in [k for k in _bound if k[1] == key]:
+                _bound.pop(k)
+    except (subprocess.SubprocessError, OSError) as exc:  # the last copy keeps serving; a half-made one stays in trash/
+        print(f"copy of {key} not refreshed: {exc}", file=sys.stderr)
+    finally:
+        with _lock:
+            _busy.pop(at, None)
+
+
+def build(page_dir) -> dict:
+    """<copy>/proto/data/copies.json: the newer version being copied into this copy, "" when none (and starts it when behind)."""
+    return {"copying": fresh(Path(page_dir))}
 
 
 if __name__ == "__main__":

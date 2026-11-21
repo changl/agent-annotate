@@ -107,6 +107,26 @@ def test_first_reading_waits_on_questions_alone():
     assert start.index("putCounts(await readCounts());") < start.index("firstRead();") and "Promise.race([readCounts()" not in js
     # a stuck read fails at 20 s and the tab offers Try again (audit9 reference)
     assert "Promise.race([api(`proto/data/${area}.json`), late()])" in js and "data-again>Try again" in js
+    # a copy that is copying a newer version says so, never "Up to date"; blue Reload follows once it is in
+    assert "api('proto/data/copies.json')" in js and 'class="rl2 cp"' in js and "S.copying ? copyingText()" in js
+
+
+def test_links_read_once_until_the_page_changes(tmp_path, monkeypatch):
+    from agent_annotate.proto_data import links
+    d = tmp_path / "page"
+    d.mkdir()
+    (d / "current.meta.json").write_text(json.dumps({"current": "v1", "history": []}))
+    built = []
+    monkeypatch.setattr(links, "_build", lambda p: built.append(p) or {"n": len(built)})
+    assert links.build(d) == links.build(d) == {"n": 1}  # a repeat read is the last build
+    links._built[str(d)][1] -= 120
+    assert links.build(d) == {"n": 1}  # a minute old: answered at once, built again behind
+    for _ in range(40):
+        if links.build(d) == {"n": 2}:
+            break
+        time.sleep(0.05)
+    (d / "comments.json").write_text("{}")
+    assert links.build(d) == {"n": 3}  # a note on this page: built again before the answer
 
 
 def test_frame_row_follows_its_files(tmp_path):

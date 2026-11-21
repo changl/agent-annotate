@@ -116,13 +116,10 @@ def serve(handler, route_path: str):
             return handler._respond(500, b'{"error":"proto shell.html missing"}')
         return handler._respond(200, html, "text/html; charset=utf-8", cache_control=sync_server._NO_STORE)
     if route_path.startswith("/proto/p/"):  # a read-only copy of another project's page (frame.serve_other)
-        from .frame import _bound, _bound_lock, serve_other
-        if m := _COPY_META.fullmatch(route_path):  # a copy follows its real page: Reload never says "Up to date" while it is behind
+        from .frame import serve_other
+        if m := _COPY_META.fullmatch(route_path):  # a copy follows its real page: a newer version starts copying behind this read
             from .copies import fresh
-            if fresh(Path(handler.artifact_dir).parent / f"proto-{m[1]}"):
-                with _bound_lock:  # the served copy's caches belong to the old folder
-                    for k in [k for k in _bound if k[1] == m[1]]:
-                        _bound.pop(k)
+            fresh(Path(handler.artifact_dir).parent / f"proto-{m[1]}")
         return serve_other(handler, route_path)
     if match := _AREA.fullmatch(route_path):
         try:

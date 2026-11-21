@@ -63,6 +63,7 @@ a.btn{color:inherit;font-weight:400}
 [data-theme=dark] .rl2.new{color:color-mix(in oklab,var(--color-primary) 45%,var(--color-base-content))}
 .rl2 .n{font-size:var(--fs-xs);font-weight:700;min-width:18px;height:18px;line-height:18px;border-radius:9px;padding:0 5px;text-align:center}
 .rl2 .n.q{background:var(--color-error);color:var(--color-error-content)}
+.rl2.cp span{font-size:var(--fs-xs);font-weight:600}
 .rl2 .n.f{background:var(--color-warning);color:var(--color-warning-content)}
 
 /* menus: the project dropdown and the menu under your name */
