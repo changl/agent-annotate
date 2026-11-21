@@ -515,7 +515,7 @@
     ctx.prefs.set('q:general', '');
     S.pending = null;
     await refresh();
-    ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: nothing saved, this is a read-only copy of ${S.copyOf}'s page`, {inert: true});
+    ctx.toast(`Sent ${pl(answers.length, 'answer', 'answers')}: nothing saved in this copy`, {inert: true});
   }
   async function post(answers, replies, closes) {
     if (S.copyOf) return simulate(answers, replies, closes);
@@ -752,7 +752,8 @@
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       D = sim(await c.data('questions'));
-      if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => (f && f.copyOf) || '', () => '');
+      // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
+      if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => '');
       el.classList.toggle('qcopy', !!S.copyOf);  // the frame shows no floating Send on a copy, so the phone keeps this bar's
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
