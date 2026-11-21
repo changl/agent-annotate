@@ -24,22 +24,23 @@ DOC = """<article class="aa"><section data-anchor-id="s:a"><h2>A</h2>
 </section></article>"""
 
 
-def run(tmp_path):
+def run(tmp_path, doc=DOC, extra=""):
     if not CHROME.exists():
         pytest.skip("Chrome not installed")
     code = grab(QS, "  function diagrams(doc) {", "    el.querySelectorAll('img').forEach(i => { i.loading = 'eager'; });\n  }\n")
     page = tmp_path / "t.html"
-    page.write_text(f"""<!doctype html><body><template id="src">{DOC}</template><div id="out"></div><script>
+    page.write_text(f"""<!doctype html><body><template id="src">{doc}</template><div id="out"></div><script>
 const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);
 const P = {{}};  // the shared picture and code helpers hang on Proto (fix17)
 const ic = k => '<svg data-i="' + k + '"></svg>', ctx = {{prefs: {{get: (k, d) => d}}}}, mounted = [];
 function mountDgm(f) {{ mounted.push(f.dataset.dgm); }}
-const zoomOf = src => (ctx.prefs.get('q:zoomPer', {{}}))[src] || ctx.prefs.get('zoomDef', 75);
+const zoomOf = (k, src) => (ctx.prefs.get('ref-zoom', {{}}))[k] || (ctx.prefs.get('q:zoomPer', {{}}))[src] || ctx.prefs.get('zoomDef', 75);
 {code}
 const doc = new DOMParser().parseFromString(document.getElementById('src').innerHTML, 'text/html');
 diagrams(doc); doc.querySelectorAll('script').forEach(n => n.remove()); numberPics(doc);
 const out = document.getElementById('out'); out.innerHTML = doc.body.innerHTML; zoomBars(out);
 out.dataset.mounted = mounted.join(',');
+{extra}
 </script></body>""")
     # Chrome's own shutdown after --dump-dom can hang until its teardown watchdog exits 2, so read the dump
     # and end Chrome ourselves, as tests/browser does with its server (terminate, then wait)

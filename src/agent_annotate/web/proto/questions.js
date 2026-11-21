@@ -438,7 +438,7 @@
       if (!el) return;
       const t = n.closed ? {} : n.target || {};
       if (t.tag === 'img' && t.offset) {
-        const img = el.tagName === 'IMG' ? el : t.image ? el.querySelector(`img[data-img="${CSS.escape(t.image)}"]`) || el.querySelector('img') : el.querySelector('img');
+        const img = noteImg(el, t);
         if (img) pinOn(img, i + 1, t.offset, n);
       } else if (t.quote) markQuote(el, t.quote);
       const after = el.tagName === 'TR' ? el.closest('table').closest('.wrap') || el.closest('table') : el;
@@ -564,7 +564,8 @@
   /* ---------- pictures: size buttons open the in-page viewer, with its notes (#24) ---------- */
   // every picture and diagram, not only a large one the server previewed (its ⤢ Full size link), gets the mock's
   // caption line: "Picture N · caption · 25-100% · ⤢ Full size" (audit14 #04, #05); every code block gets Copy (#03)
-  const zoomOf = src => (ctx.prefs.get('q:zoomPer', {}))[src] || ctx.prefs.get('zoomDef', 75);
+  // a size picked before keys (by file) still opens until this picture's own size is picked
+  const zoomOf = (k, src) => (ctx.prefs.get('ref-zoom', {}))[k] || (ctx.prefs.get('q:zoomPer', {}))[src] || ctx.prefs.get('zoomDef', 75);
   // a published diagram (today's <!-- DIAGRAM:name --> and its diagram-spec-name script) becomes one figure (#06)
   function diagrams(doc) {
     for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) {
@@ -580,8 +581,16 @@
   }
   function numberPics(doc) {  // once per document, "Earlier updates" included, so a picture keeps its number
     let n = 0;
-    for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) r.querySelectorAll('img,figure.qdgm').forEach(x => { x.dataset.pic = ++n; });
+    for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) r.querySelectorAll('img,figure.qdgm').forEach(x => {
+      x.dataset.pic = ++n;
+      // its key, as in every reader: its place (its anchor and its order there), not its file, so two copies of one file keep their own size and notes (r12 audit17 #2)
+      const a = x.closest('[data-anchor-id]');
+      x.dataset.pk = !a ? 'pic:' + n : a === x ? a.dataset.anchorId : P.media.pk(a.dataset.anchorId, [...a.querySelectorAll('img,figure.qdgm')].indexOf(x) + 1);
+    });
   }
+  // a point note's picture: its key, or for a note saved before keys its image id, then the first of its file, then the first picture
+  const noteImg = (el, t) => el.tagName === 'IMG' ? el : (t.pk && el.querySelector(`img[data-pk="${CSS.escape(t.pk)}"]`)) || (t.image && el.querySelector(`img[data-img="${CSS.escape(t.image)}"]`))
+    || [...el.querySelectorAll('img')].find(i => (i.dataset.full || i.getAttribute('src')) === t.image_src) || el.querySelector('img');
   const picName = x => x && x.dataset.pic ? P.media.title(x.dataset.pic, x.alt) : (x && x.alt) || '';
   // one picture line and one code Copy for every document reader: Questions, Reference plans and the Copy library,
   // and Pages & links documents call these, so a picture or a command reads and works the same in each (r12 audit15 reference #4, #5)
@@ -674,10 +683,10 @@
     for (const x of el.querySelectorAll('[data-pic]:not([data-pbar])')) {
       if (x.closest('.qzoom')) continue;
       x.dataset.pbar = '1';
-      const dgm = x.tagName === 'FIGURE', src = dgm ? 'dgm:' + x.dataset.dgm : x.dataset.full || x.getAttribute('src'), z = zoomOf(src);
+      const dgm = x.tagName === 'FIGURE', src = dgm ? 'dgm:' + x.dataset.dgm : x.dataset.full || x.getAttribute('src'), z = zoomOf(x.dataset.pk, src);
       const at = x.parentElement.classList.contains('qpinwrap') ? x.parentElement : x;
       const old = at.nextElementSibling; if (old && old.matches('a.aa-full')) old.remove();
-      const ctl = M.ctl(z, dgm ? '#' : src, ` data-zfull="${esc(src)}" data-zcap="${esc(dgm ? `Picture ${x.dataset.pic} · Diagram` : picName(x))}"${x.dataset.img ? ` data-zid="${esc(x.dataset.img)}"` : ''}${dgm ? ` data-zdgm="${esc(x.dataset.dgm)}"` : ''}`);
+      const ctl = M.ctl(z, dgm ? '#' : src, ` data-zfull="${esc(src)}" data-pk="${esc(x.dataset.pk || '')}" data-zcap="${esc(dgm ? `Picture ${x.dataset.pic} · Diagram` : picName(x))}"${x.dataset.img ? ` data-zid="${esc(x.dataset.img)}"` : ''}${dgm ? ` data-zdgm="${esc(x.dataset.dgm)}"` : ''}`);
       const lab = M.label(x.dataset.pic, x.dataset.img && 'IMG ' + x.dataset.img);
       const fig = !dgm && x.closest('figure'), fc = fig && fig.querySelectorAll('img').length === 1 && fig.querySelector(':scope > figcaption');
       // a caption under the picture takes the line; a compare cell's label above it does not
@@ -712,11 +721,12 @@
       if (S.zoom && S.zoom.dgm === name) draw(true);
     } catch { host.innerHTML = `<span class="qmissing">${ic('warn')} This diagram could not be drawn</span>`; }
   }
-  const zoomAt = (a, z) => ({src: a.dataset.zfull, cap: a.dataset.zcap || '', img: a.dataset.zid, dgm: a.dataset.zdgm, anchor: (a.closest('[data-anchor-id]') || {}).dataset?.anchorId, z});
+  const zoomAt = (a, z) => ({src: a.dataset.zfull, pk: a.dataset.pk, cap: a.dataset.zcap || '', img: a.dataset.zid, dgm: a.dataset.zdgm, anchor: (a.closest('[data-anchor-id]') || {}).dataset?.anchorId, z});
   function zoomView() {
     if (!S.zoom) return '';
-    const {src, cap, z, img, dgm} = S.zoom;
-    const ns = dgm ? [] : D.notes.map((n, i) => [n, i + 1]).filter(([n]) => !n.closed && (n.target || {}).tag === 'img' && (n.target.image_src === src || (img && n.target.image === img)));
+    const {src, cap, z, pk, dgm} = S.zoom;
+    const at = n => { const el = root.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`), i = el && noteImg(el, n.target); return i && i.dataset.pk; };  // the picture its pin is on
+    const ns = dgm ? [] : D.notes.map((n, i) => [n, i + 1]).filter(([n]) => !n.closed && (n.target || {}).tag === 'img' && n.target.offset && (n.target.pk || at(n)) === pk);
     return `<div class="qzoom" role="dialog" aria-label="${dgm ? 'Full-screen diagram' : 'Full-size picture'}"><div class="qzbar"><b class="small">${esc(cut(cap, 60))}</b><span class="qzm">${[25, 50, 75, 100].map(x => `<button data-zoomto="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width${dgm ? '' : ' · tap a spot to write a note'} · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>Close</button></div>
       ${dgm ? `<div class="qzpic qzdgm" style="width:${z}vw">${DGM[dgm] || '<span class="small mut">Drawing the diagram…</span>'}</div>`
       : `<div class="qzpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap)}" data-zimg>${ns.map(([n, no]) => pinB(n, no, n.target.offset)).join('')}</div>`}
@@ -1168,7 +1178,7 @@
     if (t.classList.contains('qsheet') && e.target !== t) return;  // a click inside the Send panel, not on its backdrop
     if (t.tagName === 'A') {  // links inside the document: "#d:q38833" jumps to the card, never to another tab
       const h = t.getAttribute('href') || '';
-      if (t.dataset.zfull) { e.preventDefault(); S.zoom = zoomAt(t, zoomOf(t.dataset.zfull)); return draw(true); }
+      if (t.dataset.zfull) { e.preventDefault(); S.zoom = zoomAt(t, zoomOf(t.dataset.pk, t.dataset.zfull)); return draw(true); }
       if (h.startsWith('#')) {
         e.preventDefault();
         const id = decodeURIComponent(h.slice(1)), qq = D.questions.find(x => x.anchor === id);
@@ -1211,11 +1221,11 @@
     if (ds.ev) { const el = root.querySelector(`[data-anchor-id="${CSS.escape(ds.ev)}"]:not(.qcard)`); if (el) { const p = backPill(el, ds.evq); (el.tagName === 'SECTION' && p ? p : el).scrollIntoView({block: el.tagName === 'SECTION' ? 'start' : 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2000); } return; }
     if (ds.back) { root.querySelectorAll('.qbackrow').forEach(x => x.remove()); const c = document.getElementById('q-' + ds.back); if (c) { c.scrollIntoView({block: 'start', behavior: 'smooth'}); c.classList.add('qlit'); setTimeout(() => c.classList.remove('qlit'), 2000); } return; }
     if (ds.indoc) { S.open.add(ds.indoc); return jumpTo(ds.indoc, 'doc'); }
-    if (ds.zoom) { const a = t.closest('.qzm').nextElementSibling, src = a && a.dataset.zfull; if (!src) return; const per = ctx.prefs.get('q:zoomPer', {}); per[src] = +ds.zoom; ctx.prefs.set('q:zoomPer', per); S.zoom = zoomAt(a, +ds.zoom); return draw(true); }
+    if (ds.zoom) { const a = t.closest('.qzm').nextElementSibling, src = a && a.dataset.zfull; if (!src) return; M.setZoom(a.dataset.pk, +ds.zoom); S.zoom = zoomAt(a, +ds.zoom); return draw(true); }
     if (t.hasAttribute('data-codecopy')) return M.onCopy(t);
-    if (ds.zoomto) { S.zoom.z = +ds.zoomto; const per = ctx.prefs.get('q:zoomPer', {}); per[S.zoom.src] = +ds.zoomto; ctx.prefs.set('q:zoomPer', per); return draw(true); }
+    if (ds.zoomto) { S.zoom.z = +ds.zoomto; M.setZoom(S.zoom.pk, +ds.zoomto); return draw(true); }
     if (t.hasAttribute('data-zclose')) { S.zoom = null; return draw(true); }
-    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src}}; S.zoom = null; return openNote(next, true); }
+    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src, pk: S.zoom.pk}}; S.zoom = null; return openNote(next, true); }
     if (t.hasAttribute('data-genopen')) { S.gen = !S.gen; return draw(true).then(() => { const ta = root.querySelector('.qgen textarea'); if (ta) ta.focus(); }); }
     if (t.hasAttribute('data-genclose')) { S.gen = false; return draw(true); }
     if (t.hasAttribute('data-ungen')) { const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
@@ -1270,7 +1280,7 @@
     if (!anchorEl || anchorEl.tagName === 'SECTION' && !img && !(hd && anchorEl.contains(hd))) return;
     const label = cut((img && picName(img)) || (anchorEl.matches('figure.qdgm') ? `Picture ${anchorEl.dataset.pic} · Diagram` : (hd || anchorEl).textContent.replace(/\s*\d+\s+(questions? waiting|of \d+ decided).*$/i, '').trim()) || '', 60);
     let target;
-    if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src')}; }
+    if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src'), pk: img.dataset.pk}; }
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
     if (S.move) return moveNote(S.move, {anchor: anchorEl.dataset.anchorId, label, target});
     return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});

@@ -1,6 +1,7 @@
 """Seventeenth check: a picture is keyed by its document and place, not its file (reference 2, 6), a published plan's
 table draws its pictures (reference 5), and a cell picture leaves short words whole (questions 4)."""
 
+import re
 from pathlib import Path
 
 from test_fix14_frame import grab, node
@@ -56,6 +57,27 @@ def test_published_plan_table_keeps_its_cell_pictures():
     assert "const cellParts = c =>" in p and "cp = rs.map(row => [...row.cells].map(cellParts))" in p
     assert "...cp.flat().some(Boolean) ? [cp] : []" in p  # the same block shape Proto.media.blocks gives a Markdown table
     assert "c.querySelector('img')" in p  # a row with only a picture is kept
+
+
+QDOC = """<article class="aa"><section data-anchor-id="s:a"><h2>A</h2><table><tr data-anchor-id="r:1"><td>Step</td>
+<td><img src="assets/a.png" alt="First copy"> <img src="assets/a.png" alt="Second copy"></td></tr></table>
+<figure data-anchor-id="fig:a"><img src="assets/a.png" alt="Third copy"></figure></section></article>"""
+
+
+def test_questions_keys_each_picture_by_its_place(tmp_path):
+    from test_fix16_media import QS, run
+    out = run(tmp_path, QDOC, """
+ctx.prefs.get = (k, d) => k === 'ref-zoom' ? {'r:1~p2': 25} : k === 'q:zoomPer' ? {'assets/a.png': 50} : d;
+const o2 = document.createElement('div'); o2.innerHTML = doc.body.innerHTML; zoomBars(o2);
+out.dataset.sizes = [...o2.querySelectorAll('.qzm')].map(q => q.querySelector('[aria-pressed="true"]').textContent).join();
+const row = o2.querySelector('[data-anchor-id="r:1"]');
+out.dataset.noteimg = [noteImg(row, {pk: 'r:1~p2', image_src: 'assets/a.png'}), noteImg(row, {image_src: 'assets/a.png'})].map(i => i.dataset.pk).join();
+""")
+    assert re.findall(r'data-zfull="assets/a.png" data-pk="([^"]+)"', out) == ["r:1~p1", "r:1~p2", "fig:a~p1"]
+    assert 'data-zcap="Picture 2 · Second copy"' in out
+    assert 'data-sizes="50%,25%,50%"' in out  # its own size; one picked by file before keys still opens on the others
+    assert 'data-noteimg="r:1~p2,r:1~p1"' in out  # a note saved before keys stays on the first of its file
+    assert "n.target.pk || at(n)) === pk" in QS and "image_src: S.zoom.src, pk: S.zoom.pk" in QS and "M.setZoom(S.zoom.pk, +ds.zoomto)" in QS
 
 
 def test_cell_picture_leaves_short_words_whole():
