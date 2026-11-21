@@ -359,9 +359,14 @@
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
-      remove: async () => {
-        await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', c.prefs.get('draft:lnotes', []).filter(x => x.id !== n.id)); redo();
-        return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }}))],
+      // hidden now, its DELETE goes when Undo is gone, so Undo keeps the very stored note (r12 fix15)
+      remove: () => {
+        const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = LD && LD.notes, ws = c.prefs.get('draft:lnotes', []);
+        mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', ws.filter(x => x.id !== n.id)); redo();
+        return () => { keep(); mine = P.putBack(mine, wm, n.id);
+          if (LD) { LD.notes = P.putBack(LD.notes || [], wd || [], n.id); if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n); }  // a feed read while it was hidden lacks it
+          const l = P.putBack(c.prefs.get('draft:lnotes', []), ws, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line});
+          c.prefs.set('draft:lnotes', l); redo(); }; }}))],
     sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }
