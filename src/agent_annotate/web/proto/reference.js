@@ -4,7 +4,7 @@
 (function () {
   const P = window.Proto;
   const S = {q: '', sec: 'all', kind: '', sel: '', fx: new Set(), rv: {}, marks: true, clf: new Set(), dk: '', dsel: '', open: new Set(),
-    trn: '', tmerge: '', note: '', scroll: false};
+    trn: '', tmerge: '', note: '', scroll: false, reopen: new Map()};  // reopen: finding -> why, in memory only (the prototype sends nothing)
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
   // a task opened from a checklist pill: closing its panel in Running comes back here with the checklist open, as in the mock
   let taskBack = '';
@@ -38,8 +38,8 @@
   function rows() {
     const out = D.plans.map(p => ({id: p.id, t: p.t, m: `${pl(p.revs.length, 'revision', 'revisions')} · changed ${dm(lastTs(p))}`, kind: p.kind, st: stOf(p),
       g: p.kind !== 'plan' ? 'k:' + p.kind : p.id.startsWith('decision-') ? 'k:decision' : 't:' + p.topic, p, stamp: lastTs(p), s: p.topic}));
-    for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`, kind: x.kind, st: stOf(x),
-      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: (x.md || (x.parts ? JSON.stringify(x.parts) : '') || x.note || '').slice(0, 20000)});  // finds words inside them too
+    for (const x of D.extras || []) out.push({id: x.id, t: x.t, m: x.find ? `${dm(x.d)} · ${pl(x.find.items.length, 'finding', 'findings')}` : `from the project folder · ${x.from.split('/').pop()} · changed ${dm(x.d)}`, kind: x.kind, st: stOf(x),
+      g: x.kind === 'plan' ? 't:Plans' : 'k:' + x.kind, x, stamp: x.d, s: (x.md || (x.parts ? JSON.stringify(x.parts) : '') || (x.find ? x.find.conclusion + ' ' + x.find.items.map(f => f.label + ' ' + f.text).join(' ') : '') || x.note || '').slice(0, 20000)});  // finds words inside them too
     for (const f of D.flows) out.push({id: f.id, t: f.t, m: `Windmill · runs ${f.when} · ${pl(nSteps(f.steps), 'step', 'steps')} · ${f.last ? `last run ${dm(f.last.at)}, ${f.last.ok ? 'passed' : 'failed'}` : 'not run yet'}`,
       kind: 'flow', st: 'ref', g: 'k:flow', f, stamp: f.edited, s: f.what + ' ' + JSON.stringify(f.steps.map(x => x.n))});
     out.forEach(r => r.ch = changed(r.id, r.stamp));
@@ -226,7 +226,7 @@
     const R = rows(), F = docs(), q = S.q.toLowerCase();
     const hit = r => !q || (r.t + ' ' + r.m + ' ' + (r.s || '')).toLowerCase().includes(q), dhit = f => !q || (f.n + ' ' + f.sub + ' ' + (D.docs.groups[f.g] || '')).toLowerCase().includes(q);
     const inSt = r => S.sec === 'all' || r.st === S.sec, inK = r => !S.kind || r.kind === S.kind;
-    const shown = R.filter(r => hit(r) && inSt(r) && inK(r)), docsOn = (!S.kind || S.kind === 'doc') && (S.sec === 'all' || S.sec === 'ref');
+    const shown = R.filter(r => hit(r) && inSt(r) && inK(r)), docsOn = F.length > 0 && (!S.kind || S.kind === 'doc') && (S.sec === 'all' || S.sec === 'ref');
     const nd = F.filter(dhit).length;
     const stN = s => R.filter(r => hit(r) && inK(r) && (s === 'all' || r.st === s)).length + ((!S.kind || S.kind === 'doc') && (s === 'all' || s === 'ref') ? nd : 0);
     const kN = k => k === 'doc' ? (S.sec === 'all' || S.sec === 'ref' ? nd : 0) : R.filter(r => hit(r) && inSt(r) && r.kind === k).length;
@@ -234,7 +234,7 @@
     const KO = [...Object.keys(KN), 'decision'], o = g => g[0] === 't' ? (g === 't:Plans' ? 99 : D.topics.indexOf(g.slice(2))) : 100 + KO.indexOf(g.slice(2));
     const gs = [...new Set(shown.map(r => r.g))].sort((a, b) => o(a) - o(b));
     const nch = R.filter(r => r.ch).length + F.filter(f => f.ch).length;
-    const kinds = Object.keys(KN).filter(k => k === 'doc' || R.some(r => r.kind === k));  // FastLane Drive has no app text
+    const kinds = Object.keys(KN).filter(k => k === 'doc' ? F.length : R.some(r => r.kind === k));  // FastLane Drive has no app text; a copy has no project files
     const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find a plan, checklist, design or workflow" aria-label="Find in Reference" value="${esc(S.q)}">
       <span class="rf-chips" role="group" aria-label="State">${['all', 'prop', 'ok', 'ref'].map(s => `<button class="chipb" data-sec="${s}" aria-pressed="${S.sec === s}" title="${s === 'all' ? 'Every item' : esc(SN[s][1])}">${s === 'all' ? 'All' : SN[s][0]} <span class="n">${stN(s)}</span></button>`).join('')}</span>
       <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${kinds.map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k === 'doc' ? 'doc' : k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
@@ -343,7 +343,23 @@
       <span class="small mut">Filed as</span><span class="seg" role="group" aria-label="Filed as">${['prop', 'ok', 'ref'].map(s => `<button data-plansec="${s}" aria-pressed="${st === s}" title="${esc(SN[s][1])}">${SN[s][0]}</button>`).join('')}</span>
       ${topic}<span class="spacer"></span><span class="small mut">${hint}</span></div>`;
   // a project file the mock files under Reference: Markdown as text, sheets as tables, each line and row open to a note
+  // an audit as a findings register, as the mock shows Rebex's etching audit: what was screened, the conclusion, each finding with its proof, Reopen
+  function findView(x) {
+    const b = x.find, k = 'ref:' + x.id, seen = b.items.filter(f => f.state === 'Rebex mark seen').length;
+    const items = b.items.map((f, i) => { const fk = `${x.id}~${i}`, op = (i === 0) !== S.open.has('fd:' + fk), r = S.reopen.get(fk);
+      return `<div class="grp"><div class="rf-fh"><button class="fold" data-fold="fd:${esc(fk)}" aria-expanded="${op}">${esc(f.label)}</button><span class="tag${f.state === 'No Rebex mark' ? ' high' : ''}">${esc(f.state)}</span>${r !== undefined ? `<span class="saved">Reopened</span>${P.inertMark()}<button class="lk small" data-unreopen="${esc(fk)}">Undo</button>` : `<button class="lk small" data-freopen="${esc(fk)}" title="Say it is not settled, with why; the audit's record stays">Reopen</button>`}</div>
+        ${r !== undefined ? `<textarea id="rf-ro-${i}" data-reopen="${esc(fk)}" rows="2" placeholder="Why reopen it?" aria-label="Why reopen ${esc(f.label)}">${esc(r)}</textarea>` : ''}
+        ${op ? `${block(['p', f.text], `${k}~f~${i}`)}${f.src ? `<div class="figs">${block(['img', f.src, 'Proof: ' + f.label], `${k}~f${i}`)}</div>` : ''}
+        <div class="rf-acts small"><span class="grow mut">Proof file: ${esc(f.file)} · fingerprint ${esc(f.sha)} · the original is kept unchanged; this is a copy</span><button class="lk small" data-copy="${esc(f.file)}">Copy path</button></div>` : ''}</div>`; }).join('');
+    return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · audited ${esc(dm(b.when))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
+      <div class="tiles">${b.screened.map(([n, w]) => `<div><b>${n.toLocaleString()}</b><span>${esc(w)} screened</span></div>`).join('')}<div><b>${b.items.length}</b><span>findings, ${seen} with the Rebex mark</span></div></div>
+      <p ${at(k + '~c', 'Conclusion')}>${pin(k + '~c')}<b>Conclusion:</b> ${esc(b.conclusion)}</p>${noteList(k + '~c')}
+      <p class="small"><b>Timeline:</b> audited ${esc(b.when)} · ${b.untouched ? 'no original photo or catalog choice changed' : 'originals changed'}</p>
+      ${items}<details class="ddet"><summary>${pl(b.limits.length, 'limit', 'limits')} of this audit</summary><ul>${b.limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>
+      ${foot(k, stOf(x), '', 'Click a finding, its proof or the conclusion to write a note on it')}`;
+  }
   function extraView(x) {
+    if (x.find) return findView(x);
     const k = 'ref:' + x.id, B = x.img ? [['img', x.img, x.note]] : x.md ? mdBlocks(x.md) : x.parts ? x.parts.flatMap(([t, h, rs]) => [['h', t], ['tbl', '', [h, ...rs], true]]) : [];
     // a designed message shows as the member sees it, sandboxed: no scripts run and its links go nowhere
     const body = x.html ? `<iframe class="rf-embed" sandbox="" srcdoc="${esc(x.html)}" title="${esc(x.t)}"></iframe>` : B.map((b, i) => block(b, `${k}~x~${i}`)).join('') || `<p class="mut">${x.note ? esc(x.note) : 'This file has no text.'}</p>`;
@@ -413,6 +429,13 @@
       ctx.prefs.set('ref-file', {...f, [p.id]: d.plansec}); draw();
       return ctx.inert(`Filed “${cutq(p.t)}” as ${SN[d.plansec][0]}`, () => { const g = filed(); if (was) g[p.id] = was; else delete g[p.id]; ctx.prefs.set('ref-file', g); draw(); });
     }
+    if (d.freopen) {
+      const fk = d.freopen;
+      S.reopen.set(fk, ''); draw();
+      const t = el.querySelector(`[data-reopen="${CSS.escape(fk)}"]`); if (t) t.focus();
+      return ctx.inert('Finding reopened', () => { S.reopen.delete(fk); draw(); });
+    }
+    if (d.unreopen) { const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }); }
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
@@ -510,8 +533,10 @@
       old === 'Unsorted' ? async () => back() : async () => { topics(await ctx.api('api/plan-topics', {move: p.id, topic: old})); p.topic = old; },
       `Moved to “${topic}”`);
   }
-  function onInput(e) { if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); } }
-  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
+  function onInput(e) {
+    if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
+    if (here() && e.target.dataset.reopen) S.reopen.set(e.target.dataset.reopen, e.target.value);
+  }  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
     if (!here() || S.full) return;

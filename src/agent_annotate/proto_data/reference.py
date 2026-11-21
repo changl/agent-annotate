@@ -269,6 +269,39 @@ def extras(root: Path = FLD_DIR) -> list:
     return out
 
 
+# the mock's names for the audits it lists (round9/final/build/build.py); any other audit keeps its folder name
+FIND_TITLES = {"burnt-damascus-etching-audit-2026-10-27": "Etching audit: Burnt Damascus knives"}
+
+
+def findings(meta: dict) -> list:
+    """A copied project's audits (outputs/<audit>/findings.json in its own folder, read only) as findings registers,
+    the way the mock shows Rebex's etching audit: what was screened, the conclusion, each finding with its proof picture."""
+    import base64
+    src = meta.get("proto_source")
+    root = Path(src).parents[1] if src and len(Path(src).parents) > 1 else None  # <project>/reviews/<slug>
+    out = []
+    for fj in sorted(root.glob("outputs/*/findings.json")) if root and root.is_dir() else []:
+        try:
+            j = json.loads(fj.read_text())
+        except (OSError, ValueError):
+            continue
+        items = []
+        for r in j.get("references") or []:
+            pic = root / (r.get("preview") or "")
+            items.append({"label": plain(r.get("label") or "", 120), "text": plain(r.get("finding") or "", 600), "file": hide(r.get("original") or ""),
+                          "sha": (r.get("original_sha256") or "")[:12], "state": "Rebex mark seen" if r.get("rebex_etching_visible") else "No Rebex mark",
+                          "src": "data:image/jpeg;base64," + base64.b64encode(pic.read_bytes()).decode() if pic.is_file() and pic.suffix.lower() in (".jpg", ".jpeg") else ""})
+        when = (j.get("audited_at") or "")[:10]
+        out.append({"id": "find:" + fj.parent.name, "t": FIND_TITLES.get(fj.parent.name, fj.parent.name.replace("-", " ").capitalize()), "kind": "data", "st": "ref",
+                    "from": f"outputs/{fj.parent.name}/findings.json", "d": when, "find": {
+                        "when": when, "conclusion": plain(j.get("conclusion") or "", 600), "limits": [plain(x, 300) for x in j.get("limitations") or []],
+                        "untouched": not j.get("originals_changed") and not j.get("catalog_selections_changed"),
+                        "screened": [[j[k], w] for k, w in (("photoshoot_originals_screened", "photoshoot originals"), ("owner_supplied_originals_screened", "owner originals"),
+                                                            ("burnt_family_manufacturer_sources_screened", "manufacturer pictures")) if isinstance(j.get(k), int)],
+                        "items": items}})
+    return out
+
+
 def build(page_dir: Path) -> dict:
     page_dir = Path(page_dir)
     plans = list_plans(page_dir)
@@ -292,7 +325,13 @@ def build(page_dir: Path) -> dict:
     if cl:
         ids.update(r[4] for r in cl["items"] if r[4])
     beads = board()
-    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows(), "docs": documents(), "extras": extras(),
+    try:
+        meta = json.loads((page_dir / "current.meta.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    fld = not meta.get("proto_copy_of")  # a copy of another project gets its own audits, never FastLane Drive's files and workflows
+    return {"plans": out, "topics": topics, "checklist": cl, "flows": flows() if fld else [], "docs": documents() if fld else {"files": [], "groups": {}},
+            "extras": (extras() if fld else []) + findings(meta),
             "beads": {i: beads[i] for i in sorted(ids) if i in beads}, "notes": notes(page_dir)}
 
 

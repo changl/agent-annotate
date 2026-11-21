@@ -47,6 +47,35 @@ def test_build(page):
     assert "555" not in json.dumps(d) and "a@b.com" not in json.dumps(d)
 
 
+def test_copy_gets_its_findings_register_not_fld_files(page, tmp_path, monkeypatch):
+    """A copy of Rebex lists Rebex's audit as a findings register (the mock's 97-99), and none of FastLane Drive's files."""
+    proj = tmp_path / "rebex"
+    audit = proj / "outputs" / "burnt-damascus-etching-audit-2026-10-27"
+    (proj / "catalog").mkdir(parents=True)
+    audit.mkdir(parents=True)
+    (proj / "catalog" / "a.jpg").write_bytes(b"\xff\xd8jpeg")
+    (audit / "findings.json").write_text(json.dumps({
+        "audited_at": "2026-10-27T16:53:32+00:00", "conclusion": "No mark found; ask a@b.com", "limitations": ["Small knives"],
+        "photoshoot_originals_screened": 259, "owner_supplied_originals_screened": 21, "burnt_family_manufacturer_sources_screened": 109,
+        "originals_changed": False, "catalog_selections_changed": False,
+        "references": [{"label": "Chef", "original": "assets/1.jpg", "preview": "catalog/a.jpg", "finding": "No mark", "rebex_etching_visible": False, "original_sha256": "1ca5579343e04043ee"},
+                       {"label": "Cleaver", "original": "assets/2.jpg", "preview": "catalog/missing.jpg", "finding": "Mark seen", "rebex_etching_visible": True, "original_sha256": "ab"}]}))
+    (page / "current.meta.json").write_text(json.dumps({"proto_copy_of": "rebex", "proto_source": str(proj / "reviews" / "rebex")}))
+    monkeypatch.setattr(reference, "extras", lambda: [{"id": "chapter-owner-list"}])
+    monkeypatch.setattr(reference, "flows", lambda: [{"id": "flow:x"}])
+    d = reference.build(page)
+    assert d["flows"] == [] and d["docs"]["files"] == []
+    [x] = d["extras"]
+    assert x["id"] == "find:burnt-damascus-etching-audit-2026-10-27" and x["t"] == "Etching audit: Burnt Damascus knives" and x["kind"] == "data"
+    f = x["find"]
+    assert f["screened"] == [[259, "photoshoot originals"], [21, "owner originals"], [109, "manufacturer pictures"]] and f["untouched"]
+    assert [i["state"] for i in f["items"]] == ["No Rebex mark", "Rebex mark seen"]
+    assert f["items"][0]["src"].startswith("data:image/jpeg;base64,") and f["items"][1]["src"] == ""  # a missing proof picture is left out
+    assert f["items"][0]["sha"] == "1ca5579343e0" and "a@b.com" not in json.dumps(d)
+    (page / "current.meta.json").write_text("{}")  # the FastLane Drive page itself: its files, no register
+    assert reference.build(page)["extras"] == [{"id": "chapter-owner-list"}]
+
+
 def test_hide_and_state():
     assert reference.hide("mail x.y@z.co or (555) 123-4567") == "mail member@example.com or a phone number"
     assert reference.state_of({"section": "approved", "title": "Draft"}) == "ok"
