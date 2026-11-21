@@ -67,6 +67,8 @@ body.qsheet-open #p-fab{display:none}  /* the floating Send hides while its shee
 .qmissing{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-sm);color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius-field);padding:2px 8px}
 .qdoc [data-anchor-id]:not(section):not(.qcard){cursor:text}
 .qdoc img{cursor:crosshair}
+.evh,tr.evh{background:color-mix(in oklab,var(--color-warning) 28%,transparent);outline:1px solid var(--orange);outline-offset:2px}
+.qcard.evh{outline:2px solid var(--orange)}
 .qlit{outline:2px solid var(--orange);outline-offset:2px;background:color-mix(in oklab,var(--color-warning) 22%,transparent)}
 .qunplaced{border-left:4px solid var(--color-error)}
 

@@ -57,8 +57,21 @@
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
   }
   P.copyWrite = fake;
+  // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02)
+  function carry(old, d) {
+    const all = drafts(), ids = new Set(d.questions.map(q => q.id));
+    let moved = false;
+    for (const q of old.questions) {
+      const nq = !ids.has(q.id) && d.questions.find(x => x.prompt === q.prompt);
+      if (!nq) continue;
+      if (all[q.id] && !all[nq.id]) { all[nq.id] = all[q.id]; delete all[q.id]; moved = true; }
+      if (SIM[q.id] && !SIM[nq.id]) { SIM[nq.id] = SIM[q.id]; delete SIM[q.id]; }
+    }
+    if (moved) ctx.prefs.set('q:drafts', all);
+  }
   function sim(d) {
     if (!d) return d;
+    if (D && D !== d && D.version !== d.version) carry(D, d);
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
     const added = new Set(NOTES.add.map(n => n.id));  // the cached data may have been through here already
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id) && !added.has(n.id)).concat(NOTES.add)
@@ -415,7 +428,15 @@
     if (host) return drawHost();
     const y = scrollY;
     const html = S.view === 'list' ? listView() : null;
-    if (html != null) { root.innerHTML = bar() + html; }
+    if (html != null) {
+      root.innerHTML = bar() + html;
+      // Cards only: a card's evidence takes notes as the document does; the new one opens under its line in that card (audit5 #03)
+      root.querySelectorAll('.qevb').forEach(placeNotes);
+      const evb = S.note && S.note.inq && root.querySelector(`#q-${CSS.escape(S.note.inq)} .qevb`);
+      const el = evb && evb.querySelector(`[data-anchor-id="${CSS.escape(S.note.anchor)}"]`);
+      const after = el && (el.tagName === 'TR' ? el.closest('.wrap') || el.closest('table') : el);
+      if (after) after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', newNoteBox());
+    }
     else {
       root.innerHTML = bar() + `<div class="aa qdoc"></div>`;
       const docEl = root.querySelector('.qdoc');
@@ -612,7 +633,13 @@
     }
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2));
-    if (k.startsWith('n:')) { const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
+    if (k.startsWith('n:')) {
+      // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
+      const n = D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
+      const sec = at && topSecs(DOC).find(s => s.contains(at));
+      if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
+      if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
+      const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
   }
   // a task opens its full record beside Questions, Running's own panel, not in another tab (#27, audit4 04); ↑ ↓ step through the tasks on screen
   function peek(btn) {
@@ -697,15 +724,17 @@
     if (ds.nlink) return copy(location.href.split('#')[0] + '#questions/n-' + ds.nlink, 'Link');
     if (ds.carried) { const [id, st] = ds.carried.split('~'); return carried(id, st); }
     // a note: tap a picture spot, select words, or click a line, row or item of the document
-    if (S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,figcaption,summary')) return;
+    const evb = S.view === 'list' && t.closest('.qevb');  // Cards only: a card's copied evidence takes notes too (audit5 #03)
+    if (evb ? t.closest('.qnote,.qzm,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qbar,.qsend,.qzm,.qdoch,.qtiles,.qrows,figcaption,summary')) return;
     const img = e.target.closest('img');
     const anchorEl = e.target.closest('[data-anchor-id]');
+    if (evb && (!anchorEl || !evb.contains(anchorEl))) return;
     if (!anchorEl || anchorEl.tagName === 'SECTION' && !img) return;
     const label = cut(anchorEl.textContent.trim() || (img && img.alt) || '', 60);
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src')}; }
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
-    return openNote({anchor: anchorEl.dataset.anchorId, label, target});
+    return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});
   }
   // a second note never erases the first: the unfinished one is saved on its own line before the next opens, as the mock keeps it (r12 #02)
   async function openNote(next, scroll) {
@@ -790,6 +819,20 @@
       return draw(true).then(() => { const x = root.querySelector(`[data-anchor-id="${CSS.escape(a)}"]`); if (x) { x.scrollIntoView({block: 'start'}); x.classList.add('qlit'); setTimeout(() => x.classList.remove('qlit'), 2000); } });
     }
   }
+  // a card and its evidence light each other while the pointer is on either, as the mock does (a26, audit5 #06)
+  let evLit = '';
+  function onHover(e) {
+    const c = S.view === 'doc' && e.target.closest('.qcard[data-q]'), q = c && qOf(c.dataset.q);
+    const a = S.view === 'doc' && !c && e.target.closest('[data-anchor-id]:not(section)'), k = q ? 'q:' + q.id : a ? 'a:' + a.dataset.anchorId : '';
+    if (k === evLit && (!k || root.querySelector('.evh'))) return;  // a redraw drops the marks: light them again
+    evLit = k;
+    root.querySelectorAll('.evh').forEach(x => x.classList.remove('evh'));
+    const line = x => x.tagName === 'SECTION' ? x.querySelector(':scope > h2, :scope > h3') : x;  // a section's evidence lights its heading line, not the whole section
+    const lit = q ? q.evidence.flatMap(v => [...root.querySelectorAll(`[data-anchor-id="${CSS.escape(v.anchor)}"]:not(.qcard)`)].map(line).filter(Boolean))
+      : a ? D.questions.filter(x => x.evidence.some(v => v.anchor === a.dataset.anchorId)).map(x => document.getElementById('q-' + x.id)).filter(Boolean) : [];
+    if (a && lit.length) lit.push(a);
+    lit.forEach(x => x.classList.add('evh'));
+  }
   addEventListener('keydown', onKey);
   document.addEventListener('toggle', e => {
     const d = e.target;
@@ -818,7 +861,7 @@
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       if (anchor && anchor.startsWith('q-')) { const id = anchor.slice(2), q = qOf(id); if (q) { S.shut.delete(id); if (isDone(q)) S.open.add(id); S.hl = id; } }
-      el.onclick = onClick; el.oninput = onInput; el.onchange = onChange;
+      el.onclick = onClick; el.oninput = onInput; el.onchange = onChange; el.onmouseover = onHover; evLit = '';
       await draw();
     },
   });

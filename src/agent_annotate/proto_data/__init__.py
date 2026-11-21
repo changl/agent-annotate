@@ -14,9 +14,11 @@ import json
 import re
 import threading
 import urllib.parse
+from pathlib import Path
 
 _AREA = re.compile(r"/proto/data/([a-z][a-z0-9_]{0,40})\.json")
 _FILE = re.compile(r"/proto/([A-Za-z0-9][A-Za-z0-9_.-]{0,80})")
+_COPY_META = re.compile(r"/proto/p/([a-z0-9][a-z0-9-]{0,40})/current\.meta\.json")
 
 MASK = "member@example.com"
 # every address, company mailboxes included; not image names such as icon@2x.png.
@@ -114,7 +116,13 @@ def serve(handler, route_path: str):
             return handler._respond(500, b'{"error":"proto shell.html missing"}')
         return handler._respond(200, html, "text/html; charset=utf-8", cache_control=sync_server._NO_STORE)
     if route_path.startswith("/proto/p/"):  # a read-only copy of another project's page (frame.serve_other)
-        from .frame import serve_other
+        from .frame import _bound, _bound_lock, serve_other
+        if m := _COPY_META.fullmatch(route_path):  # a copy follows its real page: Reload never says "Up to date" while it is behind
+            from .copies import fresh
+            if fresh(Path(handler.artifact_dir).parent / f"proto-{m[1]}"):
+                with _bound_lock:  # the served copy's caches belong to the old folder
+                    for k in [k for k in _bound if k[1] == m[1]]:
+                        _bound.pop(k)
         return serve_other(handler, route_path)
     if match := _AREA.fullmatch(route_path):
         try:
