@@ -602,10 +602,26 @@ def build(page_dir: Path) -> dict:
                 _refresh(page_dir)
                 got = _mem[key]
         return {**got[1], "age": round(time.time() - got[0])}
+    _behind(page_dir, got)
+    return {**got[1], "age": round(time.time() - got[0])}
+
+
+def _behind(page_dir: Path, got) -> None:
     if time.time() - got[0] > TTL:
         with _lock:
-            start = key not in _busy
-            _busy.add(key)
+            start = str(page_dir) not in _busy
+            _busy.add(str(page_dir))
         if start:
             threading.Thread(target=_refresh, args=(page_dir,), daemon=True).start()
-    return {**got[1], "age": round(time.time() - got[0])}
+
+
+def stamp(page_dir: Path):
+    """When the result in memory was built: the same one is sent as the same bytes, not dumped and checked again (1 MB on
+    FastLane Drive; r12 fix12 perf). Its "age" then stays as first sent; the page reads "built". None: build() reads it first."""
+    page_dir = Path(page_dir)
+    with _lock:
+        got = _mem.get(str(page_dir))
+    if got is None:
+        return None
+    _behind(page_dir, got)
+    return got[0]

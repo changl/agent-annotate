@@ -11,8 +11,11 @@ import hashlib
 import html
 import importlib
 import json
+import os
 import re
+import sys
 import threading
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -75,11 +78,21 @@ _done_lock = threading.Lock()
 
 def scrub_json(text: str) -> str:
     """Scrub JSON by its string values and keys, so escapes stay intact; one value per line (ndjson) works too."""
-    if scrub(text, escaped=True) == text:
-        return text  # nothing to hide: the body goes out byte for byte
     key = hashlib.sha256(text.encode("utf-8", "surrogateescape")).digest()
-    if key in _done:
-        return _done[key]
+    if key in _done:  # a body already checked: polls and reloads re-send the same one (r12 fix12 perf)
+        return _done[key] if _done[key] is not None else text
+    if scrub(text, escaped=True) == text:
+        out = None  # nothing to hide: the body goes out byte for byte
+    else:
+        out = _scrubbed(text)
+    with _done_lock:
+        if len(_done) >= 16:
+            _done.pop(next(iter(_done)))
+        _done[key] = out
+    return text if out is None else out
+
+
+def _scrubbed(text: str) -> str:
     try:
         out = json.dumps(_walk(json.loads(text)), ensure_ascii=False, separators=(",", ":"))
     except ValueError:
@@ -88,10 +101,6 @@ def scrub_json(text: str) -> str:
                             for line in text.split("\n"))
         except ValueError:
             out = scrub(text, escaped=True)
-    with _done_lock:
-        if len(_done) >= 8:
-            _done.pop(next(iter(_done)))
-        _done[key] = out
     return out
 
 
@@ -103,6 +112,25 @@ def build(area: str, page_dir) -> dict:
             raise  # a real import error inside an area module must show
         return {}
     return module.build(page_dir)
+
+
+_ready: dict = {}  # (area, page dir) -> (its stamp, the JSON bytes): built when the page changed, not on every read
+
+
+def prepared(area: str, page_dir) -> bytes:
+    """An area's JSON. An area with stamp(page_dir) is built again only when the stamp changes (r12 fix12 perf)."""
+    try:
+        stamp = getattr(importlib.import_module(f"{__name__}.{area}"), "stamp", None)
+    except ModuleNotFoundError:
+        stamp = None
+    key, now = (area, str(page_dir)), stamp(page_dir) if stamp else None
+    hit = _ready.get(key)
+    if now is not None and hit and hit[0] == now:
+        return hit[1]
+    body = json.dumps(build(area, page_dir), ensure_ascii=False).encode()
+    if now is not None:
+        _ready[key] = (now, body)
+    return body
 
 
 def serve(handler, route_path: str):
@@ -122,11 +150,17 @@ def serve(handler, route_path: str):
             fresh(Path(handler.artifact_dir).parent / f"proto-{m[1]}")
         return serve_other(handler, route_path)
     if match := _AREA.fullmatch(route_path):
+        t0 = time.perf_counter()
         try:
-            body = json.dumps(build(match[1], handler.artifact_dir), ensure_ascii=False).encode()
+            body = prepared(match[1], handler.artifact_dir)
         except Exception as exc:  # an area's bug must not take the page down
             return handler._respond(500, json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode())
-        return handler._respond(200, body, "application/json", cache_control="no-store")
+        # the server's own time, so a slow reading on a busy host can be told from slow code (r12 fix12 perf)
+        ms = (time.perf_counter() - t0) * 1000
+        if ms >= 250:  # the access log is off; a slow build is worth a line
+            print(f"{time.strftime('%H:%M:%S')} proto {match[1]}.json took {ms:.0f} ms (load {os.getloadavg()[0]:.0f})", file=sys.stderr, flush=True)
+        return handler._respond(200, body, "application/json", cache_control="no-store",
+                                extra_headers={"Server-Timing": f"build;dur={ms:.1f}"})
     match = _FILE.fullmatch(route_path)
     if not match or match[1].startswith(".") or ".." in match[1] or not (web / match[1]).is_file():
         return handler._respond(404, b"Not found")

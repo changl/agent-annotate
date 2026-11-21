@@ -106,7 +106,7 @@ def test_first_reading_waits_on_questions_alone():
     start = js[js.index("async function start()"):]
     assert start.index("putCounts(await readCounts());") < start.index("firstRead();") and "Promise.race([readCounts()" not in js
     # a stuck read fails at 20 s and the tab offers Try again (audit9 reference)
-    assert "Promise.race([api(`proto/data/${area}.json`), late()])" in js and "data-again>Try again" in js
+    assert "Promise.race([got, late()])" in js and "data-again>Try again" in js
     # a copy that is copying a newer version says so, never "Up to date"; blue Reload follows once it is in
     assert "api('proto/data/copies.json')" in js and 'class="rl2 cp"' in js and "S.copying ? copyingText()" in js
 

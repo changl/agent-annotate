@@ -35,8 +35,19 @@ def _registry() -> Path:
     return Path(os.environ.get("ANNOTATE_PROTO_REGISTRY") or Path.home() / ".claude/annotate-state/state")
 
 
+_url_cache: dict = {}  # registry dir -> (when read, the addresses)
+
+
 def _urls() -> dict[str, str]:
-    """Each live page's address by its folder, read only from the live registry; never a key (fragment and query cut)."""
+    """Each live page's address by its folder, read only from the live registry; never a key (fragment and query cut).
+    Read at most once a minute: a page's address hardly ever moves (r12 fix12 perf)."""
+    key, hit = str(_registry()), _url_cache.get(str(_registry()))
+    if not hit or time.time() - hit[0] >= TTL:
+        hit = _url_cache[key] = (time.time(), _urls_read())
+    return hit[1]
+
+
+def _urls_read() -> dict[str, str]:
     out = {}
     for f in _registry().glob("*.json"):
         try:
@@ -50,12 +61,27 @@ def _urls() -> dict[str, str]:
     return out
 
 
+_metas: dict = {}  # meta file -> (its stamp, the fields read here): FastLane Drive's meta is 3.5 MB, read on every frame read
+KEEP = ("ui", "proto_copy_of", "proto_source", "name", "current", "owner")
+
+
 def _meta(d: Path) -> dict:
+    """The page meta's fields this module reads, and its history's times; parsed again only when the file changes. Read only."""
+    f = d / "current.meta.json"
     try:
-        m = json.loads((d / "current.meta.json").read_text(encoding="utf-8"))
+        st = f.stat()
+        hit = _metas.get(str(f))
+        if hit and hit[0] == (st.st_mtime_ns, st.st_size):
+            return hit[1]
+        m = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return m if isinstance(m, dict) else {}
+    if not isinstance(m, dict):
+        return {}
+    slim = {k: m[k] for k in KEEP if k in m}
+    slim["history"] = [{"ts": h.get("ts")} for h in m.get("history") or [] if isinstance(h, dict)]
+    _metas[str(f)] = ((st.st_mtime_ns, st.st_size), slim)
+    return slim
 
 
 def _copies(page_dir: Path) -> list[dict]:
@@ -92,7 +118,7 @@ def _ts(s) -> float | None:
         return None
 
 
-_rows: dict = {}  # page dir -> (when, its files' stamps, its row): the frame read waits on this at every reload (r12 fix10 slowread)
+_rows: dict = {}  # page dir -> (its files' stamps, its facts): the frame read waits on this at every reload (r12 fix10 slowread)
 
 
 def _stamps(d: Path) -> tuple:
@@ -107,23 +133,26 @@ def _stamps(d: Path) -> tuple:
 
 
 def _page(d: Path, now: float) -> dict:
-    """A page's Home row, read again once its meta, Sends or notes change, or after TTL (its day columns move with the clock)."""
+    """A page's Home row. Its files are read again only once its meta, Sends or notes change; the day columns move with the
+    clock, so they are counted from the kept times on every read (r12 fix12 perf)."""
     stamps, hit = _stamps(d), _rows.get(str(d))
-    if hit and hit[1] == stamps and now - hit[0] <= TTL:
-        return {**hit[2], "owner": _owner(d)}  # whether its session is alive is read every time
-    row = _page_read(d, now)
-    _rows[str(d)] = (now, stamps, row)
-    return dict(row)
+    if not hit or hit[0] != stamps:
+        hit = _rows[str(d)] = (stamps, _page_read(d))
+    vts, ats, waiting = hit[1]
+    vday, aday = [0] * DAYS, [0] * DAYS
+    for ts, days in ((vts, vday), (ats, aday)):
+        for t in ts:
+            if (i := _day(t, now)) is not None:
+                days[i] += 1
+    return {"waiting": waiting, "vday": vday, "aday": aday, "last": max(vts, default=0.0), "owner": _owner(d)}
 
 
-def _page_read(d: Path, now: float) -> dict:
-    vday, aday, last = [0] * DAYS, [0] * DAYS, 0.0
-    # when each version was published: the meta's history, since a copied page's files all carry the copy's time
-    stamps = [t for h in _meta(d).get("history") or [] if isinstance(h, dict) and (t := _ts(h.get("ts")))]
-    for m in stamps or [v.stat().st_mtime for v in (d / "versions").glob("*.html")]:
-        last = max(last, m)
-        if (i := _day(m, now)) is not None:
-            vday[i] += 1
+def _page_read(d: Path) -> tuple:
+    """(when each version was published, when each Send went, questions waiting)."""
+    # the meta's history, since a copied page's files all carry the copy's time
+    vts = [t for h in _meta(d).get("history") or [] if isinstance(h, dict) and (t := _ts(h.get("ts")))]
+    vts = vts or [v.stat().st_mtime for v in (d / "versions").glob("*.html")]
+    ats = []
     rounds = d / "rounds.ndjson"
     if rounds.is_file():
         for line in rounds.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -131,13 +160,13 @@ def _page_read(d: Path, now: float) -> dict:
                 ts = _ts(json.loads(line)["ts"])
             except (ValueError, KeyError, TypeError):
                 continue
-            if ts and (i := _day(ts, now)) is not None:
-                aday[i] += 1
+            if ts:
+                ats.append(ts)
     try:
         waiting = waiting_count(d)
     except Exception:  # a page another agent is mid-write on must not break Home
         waiting = 0
-    return {"waiting": waiting, "vday": vday, "aday": aday, "last": last, "owner": _owner(d)}
+    return vts, ats, waiting
 
 
 def _alive(pid) -> bool | None:
@@ -155,10 +184,7 @@ def _alive(pid) -> bool | None:
 
 def _owner(d: Path) -> dict | None:
     """The agent session that owns the page: what it is, when it claimed the page, and whether it runs now."""
-    try:
-        o = json.loads((d / "current.meta.json").read_text(encoding="utf-8")).get("owner")
-    except (OSError, ValueError):
-        return None
+    o = _meta(d).get("owner")
     if not isinstance(o, dict) or not (o.get("owner_agent") or o.get("owner_session")):
         return None
     t = o.get("target") if isinstance(o.get("target"), dict) else {}
@@ -190,6 +216,27 @@ def _projects(now: float) -> list[dict]:
     return list(out.values())
 
 
+_busy: set = set()
+_busy_lock = threading.Lock()
+
+
+def _behind(root: str) -> None:
+    """One background read of every project's pages at a time; the next frame read shows it."""
+    with _busy_lock:
+        if root in _busy:
+            return
+        _busy.add(root)
+
+    def run():
+        try:
+            now = time.time()
+            _cache[root] = (now, _projects(now))
+        finally:
+            with _busy_lock:
+                _busy.discard(root)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _ago(last: float, now: float) -> float | None:
     return round((now - last) / 3600, 1) if last else None
 
@@ -197,7 +244,7 @@ def _ago(last: float, now: float) -> float | None:
 def build(page_dir: Path) -> dict:
     now = time.time()
     page_dir = Path(page_dir)
-    meta = json.loads((page_dir / "current.meta.json").read_text(encoding="utf-8"))
+    meta = _meta(page_dir)
     try:
         board = json.loads((page_dir / "project.json").read_text(encoding="utf-8")).get("board") or {}
     except (OSError, ValueError):
@@ -208,8 +255,10 @@ def build(page_dir: Path) -> dict:
                 code=proj_of(meta.get("proto_copy_of") or board.get("project") or meta.get("name") or ""), href="",
                 src=meta.get("proto_source"))
     hit = _cache.get(str(_root()))
-    if not hit or now - hit[0] > TTL:
+    if not hit:
         hit = _cache[str(_root())] = (now, _projects(now))
+    elif now - hit[0] > TTL:  # the ~40 other pages are read again behind this answer: it took seconds on a busy host (r12 fix12 perf)
+        _behind(str(_root()))
     real = [dict(p) for p in hit[1]]
     # one row a project: a prototype page stands in for its project's own row (#2, #11)
     rows = [this]

@@ -595,7 +595,44 @@ def pl_(n: int, w: str) -> str:
     return f"{n} {w}" + ("" if n == 1 else "s")
 
 
+_built: dict = {}  # page dir -> (its own files' stamps, when built, the build): 0.25-0.6 s a build, on every open (r12 fix12 perf)
+_again = threading.Lock()
+
+
+def _own(page_dir: Path) -> tuple:
+    from .history import _stamp
+    return tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "project.json", "copy.json")) + tuple(
+        (m.parent.name, _stamp(m)) for m in sorted((page_dir / "plans").glob("*/meta.json")))
+
+
+def _cached(page_dir: Path) -> tuple:
+    """_build, again at once when this page's own files change (a note, a plan revision); the project's files, workflows and
+    audits it also reads are read again behind the answer once it is a minute old, as Pages & links does."""
+    page_dir, now = Path(page_dir), time.time()
+    stamps, hit = _own(page_dir), _built.get(str(page_dir))
+    if not hit or hit[0] != stamps:
+        hit = _built[str(page_dir)] = (stamps, now, _build(page_dir))
+    elif now - hit[1] > 60 and _again.acquire(blocking=False):
+        def again():
+            try:
+                _built[str(page_dir)] = (stamps, time.time(), _build(page_dir))
+            finally:
+                _again.release()
+        threading.Thread(target=again, daemon=True).start()
+    return hit
+
+
 def build(page_dir: Path) -> dict:
+    return _cached(page_dir)[2]
+
+
+def stamp(page_dir: Path) -> tuple:
+    """Which build the next answer is: the same one goes out as the same bytes (proto_data.prepared)."""
+    hit = _cached(page_dir)
+    return hit[0], hit[1]
+
+
+def _build(page_dir: Path) -> dict:
     page_dir = Path(page_dir)
     plans = list_plans(page_dir)
     topics = file_plans(page_dir, plans)

@@ -51,6 +51,8 @@ def _read(ids: set[str]) -> dict | None:
 def _store(page_dir: Path, ids: set[str], got: dict | None) -> None:
     with _board_lock:
         if got is not None:
+            if any(_board["beads"].get(k) != v for k, v in got.items()):
+                _board["n"] = _board.get("n", 0) + 1  # the tasks changed: stamp() reads this
             _board["beads"] = {**_board["beads"], **got}
         _board["asked"] = _board["asked"] | ids
         _board["at"] = time.time()
@@ -195,6 +197,25 @@ def _table_beads(html: str) -> dict:
     return out
 
 
+_named: dict = {}  # page dir -> the task ids its last build named
+
+
+def stamp(page_dir: Path) -> tuple:
+    """What build() reads: when none of it changed, the last answer is sent again as it was (proto_data.prepared, r12 fix12 perf).
+    Earlier versions' files never change once published; the board's minute read still starts behind, as in build()."""
+    page_dir = Path(page_dir)
+    if _named.get(str(page_dir)):
+        _beads(_named[str(page_dir)], page_dir)
+    out = []
+    for f in ("current.meta.json", "comments.json", "rounds.ndjson", CARRIED):
+        try:
+            st = (page_dir / f).stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return (*out, _board.get("n", 0))
+
+
 def build(page_dir: Path) -> dict:
     meta = store.read_meta(page_dir)
     v = meta.get("current")
@@ -259,7 +280,8 @@ def build(page_dir: Path) -> dict:
         })
     qs.sort(key=lambda q: q["n"] or 0)
     closed = sum(1 for c in allc if c.get("decision_request") and c.get("status") == "archived")
-    beads = _beads(ids | set(BEAD.findall(page)), page_dir)
+    _named[str(page_dir)] = ids = ids | set(BEAD.findall(page))
+    beads = _beads(ids, page_dir)
     for q in qs:  # a task the board says is blocked waits on this answer too
         q["blocking"] = q["blocking"] or (beads.get(q["bead"]) or {}).get("state") == "blocked"
     notes_all = [c for c in allc if not c.get("decision_request") and not c.get("parent_id") and _mine(c.get("author"))]

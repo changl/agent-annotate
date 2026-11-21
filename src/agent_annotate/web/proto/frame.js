@@ -65,8 +65,15 @@
   // on a copy, the notes it simulated join each tab's feed (questions.js P.copyData), so a reload keeps them where they were written
   // a read with no answer in 20 s fails, so the tab offers Try again instead of reading for ever (r12 audit9 reference)
   const late = () => new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20000));
-  const data = (area, fresh) => (!fresh && cache[area]) || (cache[area] = Promise.race([api(`proto/data/${area}.json`), late()])
-    .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { delete cache[area]; throw e; }));
+  // pre: a read start() began before the tab scripts loaded; the first data() call takes it over (r12 fix12 perf)
+  const pre = {};
+  const data = (area, fresh) => {
+    if (!fresh && cache[area]) return cache[area];
+    const got = (!fresh && pre[area]) || api(`proto/data/${area}.json`);
+    delete pre[area];
+    return (cache[area] = Promise.race([got, late()])
+      .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { delete cache[area]; throw e; }));
+  };
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
   // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
@@ -390,6 +397,14 @@
     const ver = S.meta && S.loadedV ? `<span class="chip hide-ph verchip" title="The version on screen">Version ${esc(String(S.meta.current || '').replace(/^v/, ''))}${/^v\d+$/.test(hv) && hv !== S.meta.current ? ` · viewing ${esc(hv.slice(1))} (older)` : ''}</span>` : '';
     top.innerHTML = `${mb}${brand}${pt}${dd}${ver}<span class="p-bar" id="p-bar"></span><span class="spacer"></span>${lastSendChip()}${reloadBtn()}${beadsCtl()}${sendBtn('hide-ph')}${who}`;
     drawBar();
+    keepPaint();
+  }
+  // the version and its three counts as last read: the next reload paints them at once, until its own read is in (r12 fix12 perf)
+  let kept = '';
+  function keepPaint() {
+    if (S.settling || !S.loadedV || !S.meta || S.loadedV !== S.meta.current || !sendable()) return;
+    const k = JSON.stringify({v: S.loadedV, n: S.sendN, w: S.qWait, chip: S.chips.questions || null});
+    if (k !== kept) { kept = k; prefs.set('firstPaint', JSON.parse(k)); }
   }
   function drawBar() {
     const el = document.getElementById('p-bar');
@@ -452,7 +467,7 @@
       S.sendN = n;
       if (sendP.changed) sendP.changed();  // an open Send summary lists what the count now holds (r12 fix10 reference 2)
       document.querySelectorAll('#p-top [data-send], #p-layer [data-send]').forEach(b => { b.outerHTML = sendBtn(b.classList.contains('hide-ph') ? 'hide-ph' : ''); });
-      drawFab();
+      drawFab(); keepPaint();
     }, 30);
   }
 
@@ -801,18 +816,25 @@
     new MutationObserver(() => { if (!S.home) restoreFolds(main); }).observe(main, {childList: true, subtree: true});
     addEventListener('scroll', onScroll, {passive: true});
     phoneQ.addEventListener('change', () => { S.menu = ''; drawAll(); });
+    // one round on a busy host, not three: Questions' read and the tab scripts start with the frame's reads (r12 fix12 perf)
+    (pre.questions = api('proto/data/questions.json')).catch(() => {});
+    const scripts = Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
     const [meta, who, fd, proj, board] = await Promise.all([api.meta(), api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null)));
     S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
-    await Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
+    await scripts;
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
     // the version waits for its counts however slow the read: never Version with Send 0 before the restored count (r12 fix11 frame)
     // a failed read resolves at once, and no read waits past 20 s (r12 audit9 frame 2, fix10 slowread)
     S.meta = meta; S.settling = true;
+    // the last reading of this same version paints at once, all three together, while Questions' read finishes (r12 fix12 perf)
+    const was = remember('drafts') && meta && prefs.get('firstPaint', null);
+    if (was && was.v === meta.current) { S.sendN = was.n; S.qWait = was.w; S.chips.questions = was.chip; S.loadedV = was.v; }
     route();
     addEventListener('hashchange', route);
+    if (S.loadedV) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
     drawTop(); drawFab();
