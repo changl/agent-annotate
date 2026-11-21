@@ -308,3 +308,9 @@ def test_copy_library_actions_fit_a_phone():
     """Audit4 finding 7: at 390 each action stays on one line instead of breaking a letter at a time."""
     css = (WEB / "reference.css").read_text()
     assert ".tab-reference .rf-copy td.rf-cact .lk{white-space:nowrap" in css
+
+
+def test_phone_list_state_sits_under_the_title():
+    """Audit14 finding 4: at 390 the plan state goes under the title, as in the mock, not in a third column."""
+    css = (WEB / "reference.css").read_text()
+    assert "@media (max-width:700px){.tab-reference .r8row{grid-template-columns:18px minmax(0,1fr)}.tab-reference .r8row .s,.tab-reference .r8row .m{grid-row:auto;grid-column:2}}" in css

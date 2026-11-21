@@ -205,3 +205,5 @@
   .tab-reference .vlist{max-height:220px;overflow:auto}
 }
 @media (max-width:700px){.tab-reference .tblw td,.tab-reference .tblw th{padding:3px 5px;font-size:var(--fs-sm)}}
+/* phone: the state goes under the title, as in the mock, so the title keeps the row's width */
+@media (max-width:700px){.tab-reference .r8row{grid-template-columns:18px minmax(0,1fr)}.tab-reference .r8row .s,.tab-reference .r8row .m{grid-row:auto;grid-column:2}}
