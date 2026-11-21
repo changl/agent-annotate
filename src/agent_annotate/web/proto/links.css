@@ -56,7 +56,8 @@
 .l-bl{text-align:center;color:var(--muted);overflow-wrap:anywhere;line-height:1.2}
 .l-glab{display:block;padding-left:6px;border:1px solid transparent}
 .l-glab b{position:absolute;left:0;transform:translateY(50%);white-space:nowrap;color:var(--err-text);font-size:var(--fs-sm)}
-.l-glab .l-bt{width:7.5em}
+.l-glab .l-bt{display:block;width:7.5em}
+.l-bt i{font-style:normal}
 .l-notes{margin:4px 0 8px}
 .l-nt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0}
 .l-nt.l-hl{outline:2px solid var(--color-primary);outline-offset:2px;border-radius:4px}

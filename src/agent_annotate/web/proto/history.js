@@ -200,8 +200,10 @@
   const onH = () => !!(HE && HE.el.isConnected && HE.el.querySelector('#h-list'));
   const redrawH = () => { if (onH()) draw(HE.el, HE.ctx); };
   const focusC = el => { const t = el.querySelector('#h-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
-  const litC = el => { const t = S.hl && el.querySelector(`[data-cnote="${CSS.escape(S.hl)}"]`); if (!t) return; S.hl = '';
-    t.scrollIntoView({block: 'center'}); t.classList.add('lit'); setTimeout(() => t.classList.remove('lit'), 2500); };
+  // the note stays lit through a redraw (Questions' feed arriving) for 2.5 s, as Questions' qlit
+  const litC = el => { const id = S.hl, t = id && el.querySelector(`[data-cnote="${CSS.escape(id)}"]`); if (!t || S.hlT === id) return; S.hlT = id;
+    t.scrollIntoView({block: 'center'}); t.classList.add('lit');
+    setTimeout(() => { if (S.hl === id) S.hl = ''; S.hlT = ''; document.querySelectorAll('.h-cnote.lit').forEach(e => e.classList.remove('lit')); }, 2500); };
   const qpv = () => Object.entries(D.versions || {}).filter(([v]) => /^v\d+$/.test(v)).sort((a, b) => +vn(a[0]) - +vn(b[0])).slice(-40);
   const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
@@ -215,7 +217,7 @@
     const n = m => m.items || 0, mx = Math.max(1, ...vs.map(([, m]) => n(m))), X = i => 34 + i * 20, Y = k => 50 - k / mx * 42;
     const pts = vs.map(([v, m], i) => { const on = S.cn === v || cnotes(v).length > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
       return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-label="${esc(t)}. Write a note on it"><title>${esc(t)}</title></circle>`; }).join('');
-    const notes = vs.flatMap(([v]) => cnotes(v).map(x => `<div class="h-cnote" data-cnote="${esc(x.id)}">${icon('note')}<span class="small mut">Version ${esc(vn(v))}</span> ${esc(x.text)}${x.sent ? '' : ' <span class="small h-gws">· goes with Send</span>'}</div>`)).join('');
+    const notes = vs.flatMap(([v]) => cnotes(v).map(x => `<div class="h-cnote${S.hlT === x.id ? ' lit' : ''}" data-cnote="${esc(x.id)}">${icon('note')}<span class="small mut">Version ${esc(vn(v))}</span> ${esc(x.text)}${x.sent ? '' : ' <span class="small h-gws">· goes with Send</span>'}</div>`)).join('');
     const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
