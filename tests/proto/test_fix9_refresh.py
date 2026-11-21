@@ -36,6 +36,7 @@ const store = {{}}; const ctx = {{prefs: {{get: (k, d) => k in store ? store[k] 
 const drafts = () => ctx.prefs.get('q:drafts', {{}});
 let D = {{questions: [{{id: 'old1', prompt: 'Build it?'}}, {{id: 'old3', prompt: 'Gone?'}}]}};
 const SIM = {{old2: {{later: false, p: 'Close it?'}}, note9: {{closed: true}}}}; let saved = 0; const simSave = () => saved++;
+const optLabel = (q, k) => 'choice ' + k;
 {set_draft}
 {carry}
 setDraft('old1', {{pick: 'a', reply: 'short quotes'}});
@@ -45,7 +46,7 @@ setDraft('old3', {{close: null}});
 assert.ok(!('old3' in store['q:drafts']), 'a draft with only its words left is dropped');
 D = null;  // a browser reload: the old version is gone from memory
 carry(D, {{questions: [{{id: 'new1', prompt: 'Build it?'}}, {{id: 'new2', prompt: 'Close it?'}}]}});
-assert.deepStrictEqual(store['q:drafts'], {{new1: {{pick: 'a', reply: 'short quotes', p: 'Build it?'}}}});
+assert.deepStrictEqual(store['q:drafts'], {{new1: {{pick: 'a', reply: 'short quotes', p: 'Build it?', pl: 'choice a'}}}});
 assert.ok(SIM.new2 && !SIM.old2 && SIM.note9 && saved === 1);
 """)
 
@@ -55,7 +56,7 @@ def test_counts_wait_for_the_read_on_its_way(tmp_path):
     load = grab("  let reading = null;", "\n  };")
     node(tmp_path, f"""
 const assert = require('assert');
-let D = {{v: 0}}, stale = true, ctx = null, n = 0;
+let D = {{v: 0}}, stale = true, ctx = null, n = 0; const S = {{}};
 const sim = d => d;
 const c = {{data: () => new Promise(r => setTimeout(() => r({{v: ++n}}), 20))}};
 {load}

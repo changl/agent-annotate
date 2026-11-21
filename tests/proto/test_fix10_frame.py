@@ -47,7 +47,7 @@ def test_counts_paint_with_their_version():
 def test_receipt_chip_and_open_summary():
     """Frame 4 and reference 2: the chip repaints with the receipt; an open summary follows the count."""
     assert "S.sentPaint = true;" in FRAME and "if (S.sentPaint) { S.sentPaint = false; drawTop();" in FRAME
-    assert "if (sendP.changed) sendP.changed();" in FRAME and "changed: async () =>" in Q
+    assert "if (sendP.changed) sendP.changed();" in FRAME and "changed: relist," in Q and "async function relist()" in Q
 
 
 def test_phone_send_undo_and_hint():

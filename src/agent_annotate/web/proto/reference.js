@@ -428,7 +428,7 @@
   const here = () => el && el.isConnected && el.classList.contains('tab-reference');  // #p-main is shared by every tab
   function draw() {
     keepDrafts();  // every change to a draft redraws, on this tab or from Send
-    if (!here()) return;
+    if (!here() || !D) return;  // still reading: render draws once the data is in, with what Send's Remove or Undo changed (r12 audit11 frame 2, reference 3)
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
     const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
     el.innerHTML = `<div class="rf">${list()}${viewer()}${zoomView()}</div>`;

@@ -297,6 +297,7 @@ a.mi{text-decoration:none}
   .pmenu .smb{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}
   .fab{display:inline-flex;align-items:center;gap:8px;position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:9;height:52px;padding:0 20px 0 16px;border:0;border-radius:26px;background:var(--color-primary);color:var(--color-primary-content);font-weight:700;font-size:var(--fs-base);box-shadow:0 4px 14px color-mix(in oklab,#000 30%,transparent);cursor:pointer}
   .fab svg.pi{width:20px;height:20px;stroke-width:1.8}
+  .fab.unk{background:var(--color-base-100);color:inherit;border:1px solid var(--line)}
   .p-toastwrap{bottom:82px}.p-toast{border-radius:var(--radius-field)}  /* the mock's phone toast: above the floating Send */
   .sheet{padding:12px 8px}
   .sheet .box{max-height:calc(100vh - 24px);padding:14px}

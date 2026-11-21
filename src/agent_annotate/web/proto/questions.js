@@ -18,11 +18,12 @@
   const drafts = () => ctx.prefs.get('q:drafts', {});
   const draft = id => drafts()[id] || {};
   function setDraft(id, patch) {
-    const all = drafts(), d = Object.assign({}, all[id], patch), q = D && D.questions.find(x => x.id === id);
-    delete d.p;
+    const all = drafts(), w = Object.assign({}, all[id], patch), d = {...w}, q = D && D.questions.find(x => x.id === id);
+    for (const k of ['p', 'pl', 'n']) delete d[k];
     for (const k of Object.keys(d)) if (d[k] === '' || d[k] == null || d[k] === false) delete d[k];
-    // p: its question's words, so a browser reload onto a version that re-asks it under a new id finds it again (carry)
-    if (Object.keys(d).length) all[id] = {...d, p: q ? q.prompt : (all[id] || {}).p}; else delete all[id];
+    // p: its question's words, so a browser reload onto a version that re-asks it under a new id finds it again (carry);
+    // n and pl: its number and the picked choice's words, so Send names it before the questions are read (r12 audit11 frame 1)
+    if (Object.keys(d).length) all[id] = {...d, p: q ? q.prompt : w.p, n: q ? q.n : w.n, ...(d.pick ? {pl: q ? optLabel(q, d.pick) : w.pl} : {})}; else delete all[id];
     ctx.prefs.set('q:drafts', all);
   }
   async function who() {
@@ -141,7 +142,9 @@
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
   const editText = n => { const e = S.note || ctx.prefs.get('q:newnote', null); return e && e.edit === n.id && e.text != null ? e.text : n.text; };
   const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
-  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
+  // before the questions are read, the answers, Closes and replies count from what was saved (r12 audit11 frame 1)
+  const savedQs = () => Object.keys(drafts()).map(id => ({id, pre: true}));
+  const sendCount = () => { const q = Q(); return (D ? D.questions : savedQs()).reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + (D ? myNotes(q).length : 0) + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -473,19 +476,21 @@
   }
   // every item of the next Send: [group, html, go-to target, remove key] (the mock's sendItems)
   function sendItems() {
-    const it = [];
-    for (const q of D.questions) {
+    const it = [], qs = D ? D.questions : savedQs();
+    // before the questions are read: each named by the number, words and choice saved with its draft (r12 audit11 frame 1)
+    const qn = q => q.pre ? `${draft(q.id).n ? `Q ${esc(draft(q.id).n)} · ` : ''}${esc(draft(q.id).p || 'A question')}` : `Q ${esc(q.n)} · ${esc(q.prompt)}`;
+    for (const q of qs) {
       const d = draft(q.id), w = (d.words || '').trim();
       if (q.closed) continue;
-      if (d.pick) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>${esc(optLabel(q, d.pick))}</b>${w ? ` + “${esc(cut(w, 80))}”` : ''}`, 'q:' + q.id, 'ans:' + q.id]);
-      else if (w) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
-      if (isClosing(q)) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]);
+      if (d.pick) it.push(['Answers', `${qn(q)} → <b>${esc(q.pre ? d.pl || 'your choice' : optLabel(q, d.pick))}</b>${w ? ` + “${esc(cut(w, 80))}”` : ''}`, 'q:' + q.id, 'ans:' + q.id]);
+      else if (w) it.push(['Answers', `${qn(q)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
+      if (isClosing(q)) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]);
     }
-    for (const q of D.questions) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'r:' + q.id, 'reply:' + q.id]);
+    for (const q of qs) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On ${q.pre ? qn(q) : 'Q ' + esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'r:' + q.id, 'reply:' + q.id]);
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
-    const q = Q(), mine = myNotes(q);
+    const q = Q(), mine = D ? myNotes(q) : [];
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    (D ? D.notes : []).forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]); });
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
@@ -493,16 +498,17 @@
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
-    const it = sendItems(), g = {}, un = waitingCount(), lat = D.questions.filter(FILTERS.later).length;
+    const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
+    const ok = n && D, rd = D ? '' : ' title="Reading the questions first: Send and Discard all follow in a moment"';  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
     it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
-      <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : 'Goes to the FastLane Drive agent session.'} Nothing goes until you press Send. ${P.inertMark()}</p>
+      <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : S.copyOf === '' ? 'Goes to the FastLane Drive agent session.' : ''} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
-      <h4>Not in this Send</h4><p class="small">${un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
-      <div class="acts"><button class="btn pri" data-send ${n ? '' : 'disabled'}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${n ? '' : 'disabled'}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
+      <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
+      <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
   // the Send sheet over another tab (r12 fix7 frame 5): closing it leaves him where he was
@@ -518,7 +524,7 @@
   /* ---------- draw ---------- */
   async function draw(keepScroll) {
     if (host) return drawHost();
-    if (!root) return;  // Send was closed over another tab before Questions ever drew: a Remove's re-read has nothing to redraw (r12 audit10 frame 2)
+    if (!root || !D) return;  // Send was closed over another tab before Questions ever drew, or its data is still on its way: render draws it (r12 audit10 frame 2, audit11)
     const y = scrollY;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
     const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
@@ -688,10 +694,12 @@
   /* Send: ⌘↵ once opens the summary, again sends. The posts wait SEND_DELAY ms, with Undo, then go through today's endpoints. */
   function arm() {
     if (S.pending) return;
+    if (!S.armed && !D) return openSheet(ctx, true);  // its tab still reading: the sheet opens over it with what was saved
     if (!S.armed) { S.armed = true; S.sendKey = true; S.gen = false; draw(true).then(() => { const t = root.querySelector('[data-send]'); if (t) t.focus(); }); return; }
     send();
   }
   function send() {
+    if (!D) return ctx.toast('Reading the questions first: Send works in a moment');  // ⌘↵ again before they are read
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     const n = sendCount();
     S.armed = false; S.sendKey = false;
@@ -749,17 +757,22 @@
   }
   async function sendRemove(k) {
     const [kind, id] = [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)];
-    if (kind === 'ans') { const keep = draft(id); setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {pick: keep.pick, words: keep.words}); draw(true); }}); }
-    else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {close: true}); draw(true); }}); }
-    else if (kind === 'reply') { const r = draft(id).reply; setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {reply: r}); draw(true); }}); }
+    // Undo puts back the question's saved words and number too, so Send still names it before the questions are read
+    const keep = draft(id), meta = {p: keep.p, n: keep.n, pl: keep.pl};
+    if (kind === 'ans') { setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {...meta, pick: keep.pick, words: keep.words}); draw(true); }}); }
+    else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
+    else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
     else if (kind === 'newnote') { const n = typingNote(); S.note = null; ctx.prefs.set('q:newnote', null); draw(true); ctx.toast('Note removed', {undo: () => { S.note = n; ctx.prefs.set('q:newnote', n); draw(true); }}); }
     else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
-      const again = () => x.note ? refresh() : draw(true);  // a note is a comment: read the list again once it is gone or back
-      const back = await x.remove(); await again();
+      // a note is a comment: read the list again once it is gone or back; never before the receipt, which a slow read must not hold back (r12 audit11 frame 2)
+      const again = () => (x.note && D ? refresh() : draw(true)).catch(e => { console.warn('send relist', e); return draw(true); });
+      let back;
+      try { back = await x.remove(); } catch (e) { again(); return ctx.toast('Could not remove it: ' + e.message); }
       ctx.toast('Removed from Send', back ? {undo: async () => { await back(); again(); }} : {});
+      again();
     }
   }
   function sendGo(k) {
@@ -875,6 +888,7 @@
     if (t.hasAttribute('data-sendclose')) { S.armed = false; S.sendKey = false; return draw(true); }
     if (t.hasAttribute('data-send')) return send();
     if (t.hasAttribute('data-discard')) return discardAll();
+    if (t.hasAttribute('data-sretry')) return readFor(ctx, true);
     if (ds.sgo) return sendGo(ds.sgo);
     if (ds.srm) return sendRemove(ds.srm);
     if (t.hasAttribute('data-sendundo')) { if (!S.pending || S.pending.going) return; clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
@@ -947,7 +961,7 @@
   function sheetCount() {
     const n = sendCount(), s = (host || root).querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
     $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
-    $('[data-send]').disabled = !n; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n;
+    $('[data-send]').disabled = !n || !D; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n || !D;
     if ($('[data-snone]')) $('[data-snone]').hidden = !!gen().trim();  // General feedback is an item: the empty caption goes (audit6 frame #06)
     const b = root && root.querySelector('.qbsend');
     if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }
@@ -1057,39 +1071,51 @@
   // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)
   let stale = false;
   // one read at a time: a count asked while a read is on its way waits for it, never counting the old version (r12 audit7 running 1)
+  // again (Try again): a read still on its way is dropped and a new one starts, never waiting on the stalled one (r12 audit11 reference 1)
   let reading = null;
-  const load = async c => {
+  const load = async (c, again) => {
     ctx = ctx || c;
+    if (again) reading = null;
     for (;;) {
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
-      if (D && !stale) return;
-      const fresh = !!D; stale = false;
-      reading = c.data('questions', fresh).then(d => { D = sim(d); }).finally(() => { reading = null; });
+      if (D && !stale && !again) return;
+      const fresh = !!D || !!again; stale = false; again = false;
+      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }).finally(() => { if (reading === r) reading = null; });
     }
   };
+  // the Send sheet open before the questions were read: their items join it once they are in, or it says the read failed
+  const readFor = (c, again) => { S.qerr = false; relist(); return load(c, again).then(relist, () => { S.qerr = true; relist(); }); };
+  // the open Send summary lists what the count now holds, unless he is typing in it (r12 fix10 reference 2)
+  async function relist() {
+    const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
+    if (!S.armed || !s || (s.contains(a) && /^(TEXTAREA|INPUT)$/.test(a.tagName))) return;
+    const f = s.contains(a) && a.matches('[data-send]'); await draw(true); const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
+  }
   // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
   async function findCopy(c) { if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => ''); }
   P.send({
-    count: async c => { await load(c); return sendCount(); },
+    count: async (c, again) => { await load(c, again); return sendCount(); },
     wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
-    changed: async () => { const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
-      if (!S.armed || !s || (s.contains(a) && /^(TEXTAREA|INPUT)$/.test(a.tagName))) return;
-      const f = s.contains(a) && a.matches('[data-send]'); await draw(true); const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus(); },
+    changed: relist,
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
-    // key: opened by ⌘↵, which asks for a second press; a second ⌘↵ sends. Off Questions the sheet opens over the tab on screen (r12 fix7 frame 1, 5)
-    open: async (c, key) => {
-      await load(c); await findCopy(c);
-      if (key && S.armed) return arm();
-      S.armed = true; S.sendKey = !!key; S.gen = false;
-      if (onQ()) return draw(true);
-      host = host || document.body.appendChild(Object.assign(document.createElement('div'), {className: 'area-questions tab-questions qhost'}));
-      host.onclick = onClick; host.oninput = onInput;
-      drawHost();
-      const b = key && host.querySelector('[data-send]:not([disabled])'); if (b) b.focus();
-    },
+    open: openSheet,
   });
+  // key: opened by ⌘↵, which asks for a second press; a second ⌘↵ sends. Off Questions the sheet opens over the tab on screen (r12 fix7 frame 1, 5)
+  // it opens at once, listing what was saved; the questions' own items join once read (r12 audit11 frame 1, questions 1)
+  function openSheet(c, key) {
+    ctx = ctx || c;
+    if (key && S.armed) return arm();
+    S.armed = true; S.sendKey = !!key; S.gen = false;
+    if (!D || stale) readFor(c);
+    if (S.copyOf === undefined) findCopy(c).then(relist);
+    if (onQ() && D) return draw(true);
+    host = host || document.body.appendChild(Object.assign(document.createElement('div'), {className: 'area-questions tab-questions qhost'}));
+    host.onclick = onClick; host.oninput = onInput;
+    drawHost();
+    const b = key && host.querySelector('[data-send]:not([disabled])'); if (b) b.focus();
+  }
   // shortcut: exposed for tests in a browser console only
   P.questionsState = () => ({S, D});
 })();

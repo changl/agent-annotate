@@ -19,11 +19,10 @@ def test_every_read_gives_up_at_20_seconds_but_no_write_does():
 
 def test_a_stalled_count_offers_try_again_and_send_never_looks_empty():
     """Frame 1, running 2: a Questions read held on another tab marks the counts stalled; Send reads "…" then "?"."""
-    rc = FRAME[FRAME.index("async function readCounts()"):FRAME.index("const putCounts")]
-    assert "if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); }" in rc
+    rc = FRAME[FRAME.index("async function readCounts(again)"):FRAME.index("const putCounts")]
+    assert "if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); paintSend(); }" in rc
     assert "S.countsIn = true; if (S.stall.delete('counts')) drawStall();" in FRAME
-    btn = FRAME[FRAME.index("function sendBtn("):FRAME.index("function drawTop(")]
-    assert "if (sendable() && !S.countsIn && (!S.warm || S.stall.has('counts')))" in btn and "st ? '?' : '…'" in btn
+    assert "const sendSt = () => !sendable() || S.countsIn || (S.warm && !S.stall.has('counts')) ? '' : S.stall.has('counts') ? '?' : '…';" in FRAME
     assert "data-stallagain" in FRAME and "if (d.stallagain !== undefined) { again(); return; }" in FRAME
     assert "#p-stall button" in FRAME  # the frame's click handler takes the notice's button
     assert "onclick = () => { again(); route(); }" in FRAME  # a tab's own Try again re-reads the frame's stalled reads too
@@ -42,7 +41,7 @@ def test_reload_says_up_to_date_only_once_confirmed():
 def test_remove_then_esc_keeps_its_undo():
     """Frame 2: Questions never drew on this visit, so the Remove's re-read must not draw into nothing."""
     draw = Q[Q.index("async function draw(keepScroll)"):Q.index("function listView()")]
-    assert draw.index("if (host) return drawHost();") < draw.index("if (!root) return;") < draw.index("root.innerHTML")
+    assert draw.index("if (host) return drawHost();") < draw.index("if (!root || !D) return;") < draw.index("root.innerHTML")
 
 
 def test_a_late_redraw_keeps_the_answer_field_focused():

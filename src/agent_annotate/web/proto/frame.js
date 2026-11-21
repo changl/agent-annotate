@@ -74,8 +74,9 @@
     if (!fresh && cache[area]) return cache[area];
     const got = (!fresh && pre[area]) || api(`proto/data/${area}.json`);
     delete pre[area];
-    return (cache[area] = Promise.race([got, late()])
-      .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { delete cache[area]; throw e; }));
+    const p = cache[area] = Promise.race([got, late()])
+      .then(d => COPY && P.copyData ? P.copyData(area, d) : d).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
+    return p;
   };
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
@@ -382,13 +383,19 @@
     return o.alive === false ? `Your Send goes to ${who} · not running now: it waits until the session starts again`
       : o.alive ? `Your Send goes to ${who} · alive now` : `Your Send goes to ${who}${since ? ' · claimed the page ' + since.replace('since ', 'on ') : ''}`;
   }
+  // One Send state for the header, the phone menu and the floating button (r12 audit11 frame 1, questions 1, reference 2, running 1):
+  // '' shows the count; "…" while the counts are read; "?" once that read failed. The last reading of this version (S.warm, fix12 perf) counts meanwhile, until the read stalls.
+  const sendSt = () => !sendable() || S.countsIn || (S.warm && !S.stall.has('counts')) ? '' : S.stall.has('counts') ? '?' : '…';
+  const SENDTIP = {'…': 'Counting what is ready to send… Press to see what you saved.', '?': 'What is ready to send could not be counted: press Try again. Press Send to see what you saved.'};
+  // every Send on screen repaints together, so none keeps an old state
+  function paintSend() {
+    document.querySelectorAll('#p-top [data-send], #p-layer [data-send]').forEach(b => { b.outerHTML = sendBtn(b.classList.contains('hide-ph') ? 'hide-ph' : ''); });
+    drawFab();
+  }
   function sendBtn(cls) {
-    // until the counts are in, Send never looks empty: it reads "…", or "?" once the read gave no answer (r12 audit10 frame 1);
-    // the last reading of this version (S.warm, fix12 perf) shows its count meanwhile, until the read stalls
-    if (sendable() && !S.countsIn && (!S.warm || S.stall.has('counts'))) {
-      const st = S.stall.has('counts'), tip = st ? 'What is ready to send could not be read: press Try again. Your saved answers and notes are kept.' : 'Reading what is ready to send…';
-      return `<button class="btn ${cls || ''}" data-send aria-disabled="true"${st ? '' : ' aria-busy="true"'} aria-label="Send: ${esc(tip)}" title="${esc(tip)}">${I('send')}<span class="bl">Send</span> ${st ? '?' : '…'}</button>`;
-    }
+    // until the counts are in, Send never looks empty: it reads "…", or "?" once the read gave no answer (r12 audit10 frame 1); pressed, it opens with what was saved
+    const st = sendSt();
+    if (st) return `<button class="btn ${cls || ''}" data-send${st === '…' ? ' aria-busy="true"' : ''} aria-label="Send: ${esc(SENDTIP[st])}" title="${esc(SENDTIP[st])}">${I('send')}<span class="bl">Send</span> ${st}</button>`;
     const n = S.sendN, off = !n && cls !== 'hide-ph';  // the desk's Send opens at zero, where General feedback can start (r12 fix7 frame 2); the phone menu's waits for a draft, as in the mock
     return `<button class="btn ${n ? 'pri' : ''} ${cls || ''}" data-send${off ? ' aria-disabled="true"' : ''} aria-label="Send${n ? ': ' + n + ' ready' : ''}" title="${!off ? 'Open the Send summary (⌘↵); ⌘↵ again sends' : 'Nothing is ready to send yet'}">${I('send')}<span class="bl">Send</span>${n ? ' ' + n : ''}</button>`;
   }
@@ -424,9 +431,12 @@
   }
   function drawFab() {
     const f = document.getElementById('p-fab');
-    f.hidden = !(S.sendN && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
-    f.innerHTML = `${I('send')}Send ${S.sendN || ''}`;
-    f.setAttribute('aria-label', `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
+    const st = sendSt();
+    f.hidden = !((S.sendN || st) && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
+    f.innerHTML = `${I('send')}Send ${st || S.sendN || ''}`;
+    f.classList.toggle('unk', !!st);  // not purple until the count is known
+    f.setAttribute('aria-label', st ? 'Send: ' + SENDTIP[st] : `Send: ${pl(S.sendN, 'thing is', 'things are')} ready`);
+    if (st === '…') f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy');
   }
   function drawLayer() {
     const L = document.getElementById('p-layer');
@@ -443,15 +453,17 @@
   // Questions' three counts, read from one load and painted together: Send, the waiting badge and the Questions tab's chip.
   // A reload and a newer version show them with the version they belong to, never one before the others (r12 fix10 frame 1, running 2)
   const chipVal = c => c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
-  async function readCounts() {
+  // again: Try again, which drops a read still on its way and starts a new one (r12 audit11 reference 1)
+  async function readCounts(again) {
     if (!sendable()) return null;
     const qc = byKey.questions.chip;
     try {
-      const [n, w, chip] = await Promise.all([sendP.count(ctx), sendP.waiting ? sendP.waiting(ctx) : null, qc ? qc(ctx) : undefined]);
+      // count starts first, so the waiting count and the chip share its new read
+      const [n, w, chip] = await Promise.all([sendP.count(ctx, again), sendP.waiting ? sendP.waiting(ctx) : null, qc ? qc(ctx) : undefined]);
       return {n: +n || 0, w: w == null ? null : +w || 0, chip};
     } catch (e) {
       console.warn('counts', e);
-      if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); }  // the first counts never came: the tab on screen offers Try again (r12 audit10 frame 1)
+      if (!S.countsIn) { S.stall.set('counts', e.message); drawStall(); paintSend(); }  // the first counts never came: the tab on screen offers Try again (r12 audit10 frame 1)
       return null;
     }
   }
@@ -459,6 +471,7 @@
     if (!c) return;
     S.sendN = c.n; if (c.w != null) S.qWait = c.w; if (c.chip !== undefined) S.chips.questions = chipVal(c.chip);
     S.countsIn = true; if (S.stall.delete('counts')) drawStall();
+    paintSend();
   };
   const hhmm = () => new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   // A first read with no answer: a line above the tab on screen, whichever tab, with Try again (r12 audit10 frame 1, running 2)
@@ -474,13 +487,13 @@
   function again() {
     if (retrying || !S.stall.size) return retrying;
     const v = S.stall.has('version'), c = S.stall.has('counts');
-    S.stall.clear(); drawStall(); drawTop(); drawFab();  // Send reads "…" again while it reads
+    S.stall.clear(); drawStall(); drawTop(); paintSend();  // every Send reads "…" again while it reads
     return retrying = Promise.all([
       v && api.meta().then(m => {
         S.meta = m; S.loadedV = S.loadedV || m.current; S.checked = COPY ? S.checked : hhmm();
         document.title = (m.name || 'This project') + ' · Agent Annotate';
       }, e => { S.stall.set('version', e.message); }),
-      c && readCounts().then(putCounts),
+      c && readCounts(true).then(putCounts),
     ]).finally(() => { retrying = null; drawStall(); drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); });
   }
   let topTimer;
@@ -509,8 +522,7 @@
       if (n === S.sendN || S.settling) return;
       S.sendN = n;
       if (sendP.changed) sendP.changed();  // an open Send summary lists what the count now holds (r12 fix10 reference 2)
-      document.querySelectorAll('#p-top [data-send], #p-layer [data-send]').forEach(b => { b.outerHTML = sendBtn(b.classList.contains('hide-ph') ? 'hide-ph' : ''); });
-      drawFab(); keepPaint();
+      paintSend(); keepPaint();
     }, 30);
   }
 
@@ -682,11 +694,11 @@
     if (d.stallagain !== undefined) { again(); return; }
     if (d.send !== undefined) {
       S.menu = ''; drawAll();
-      if (sendable() && !S.countsIn) return S.stall.has('counts') ? again() : toast('Reading what is ready to send…');
-      if (!sendable() || (!S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');
-      return Promise.resolve().then(() => sendP.open(ctx)).catch(err => toast('Send could not open: ' + err.message));
+      // while the counts are unknown or failed, Send opens at once with what was saved (r12 audit11 frame 1, questions 1)
+      if (!sendable() || (!sendSt() && !S.sendN && !t.classList.contains('hide-ph'))) return toast('Nothing is ready to send yet');
+      return openSend();
     }
-    if (t.id === 'p-fab') { return sendable() && S.sendN && Promise.resolve().then(() => sendP.open(ctx)); }
+    if (t.id === 'p-fab') return openSend();
     if (d.recheck !== undefined) {
       // every tab's counts follow the new version at once: Questions re-reads, then the badges repaint (audit6 running #04, frame #03)
       // the version, Send, the waiting badge and the Questions chip change in one paint, and only then does it say so (r12 fix10 running 2)
@@ -725,6 +737,7 @@
       drawLayer(); return;
     }
   }
+  const openSend = key => sendable() && Promise.resolve().then(() => sendP.open(ctx, key)).catch(err => toast('Send could not open: ' + err.message));
   function onChange(e) {
     const t = e.target, d = t.dataset;
     if (d.fsin !== undefined) { setFs(parseInt(t.value, 10)); drawAll(); return; }
@@ -758,7 +771,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !onQuestions() && !S.home && !S.other && !S.gated && sendable()) {
       e.preventDefault(); e.stopPropagation();  // Questions' own ⌘↵ listens on window: this press is handled once
       if (S.menu || S.sheet) { S.menu = ''; S.sheet = ''; drawAll(); }
-      Promise.resolve().then(() => sendP.open(ctx, true)).catch(err => toast('Send could not open: ' + err.message));
+      openSend(true);
       return;
     }
     if (e.key === 'Enter' && e.target.dataset && e.target.dataset.fsin !== undefined) { e.target.blur(); return; }
