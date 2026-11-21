@@ -92,7 +92,7 @@ S.run.board = {{tasks: [], waiting: [['b-1']], ready: 0}}; S.runErr = true;
 for (const h of [beadsCtl(), beadsCtl(true)]) assert(!/Nothing ready|tasks not closed|0 ready|1 waiting/.test(h) && h.includes('could not be read just now'), h);
 // not read yet, Questions holding the first read back: unknown, no count (r12 audit13 frame 2)
 S.runErr = false; S.run = null; S.boardUrl = 'https://board.example';
-for (const h of [beadsCtl(), beadsCtl(true)]) assert(!/Nothing ready|tasks not closed|0 ready|could not be read/.test(h) && h.includes('has not been read yet') && h.includes('…'), h);
+for (const h of [beadsCtl(), beadsCtl(true)]) assert(!/Nothing ready|tasks not closed|0 ready|could not be read/.test(h) && h.includes('Reading the board') && h.includes('…'), h);
 S.run = {{}};
 S.run.board = {{tasks: [], waiting: [], ready: 0}};
 assert(beadsCtl().includes('Nothing ready') && beadsCtl().includes('0 tasks not closed'));

@@ -347,11 +347,11 @@
     // an unread board has no counts: never "Nothing ready" or "0 tasks", as Tasks (r12 fix14 frame)
     // before its first read the board is unknown, not empty: Questions' read may hold it back (r12 audit13 frame 2)
     const unread = !!(S.runErr || (b && b.error)), unknown = !b && !unread;
-    const noRead = unread ? 'The board could not be read just now.' : 'The board has not been read yet.';
+    const noRead = unread ? 'The board could not be read just now.' : 'Reading the board…';
     if (unread || unknown) {
       const lbl = `Beads: ${noRead} Opens Running${unread ? ' to try again' : ''}`, tag = unread ? 'not read' : '…';
       if (phone) return `<button class="btn" data-go="running/tasks" aria-label="${lbl}">${I('bead')} Beads <span class="badge">${tag}</span></button>`;
-      return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="${lbl}">${I('bead')}<span class="bl">Beads</span>${unknown ? '<span class="badge" title="The board has not been read yet">…</span>' : ''}</button><div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
+      return `<span class="hov hide-ph bdchip"><button class="btn ghost" data-go="running/tasks" aria-label="${lbl}">${I('bead')}<span class="bl">Beads</span>${unknown ? '<span class="badge" title="Reading the board">…</span>' : ''}</button><div class="hpop" role="tooltip"><b>Bead board</b><div class="small mut">${noRead}</div>
       <button class="hp-t" data-go="running/tasks">${unread ? 'Open Running to try again' : 'Open the board under Running'}</button></div></span>`;
     }
     const wait = wyN ? `<button class="btn ghost" data-go="running/waiting" title="${pl(wyN, 'task', 'tasks')} on the bead board wait on you. Opens Running at Waiting" aria-label="${pl(wyN, 'task waits', 'tasks wait')} on you: open Running at Waiting"><span class="badge wait">${wyN} waiting</span></button>` : '';
@@ -961,6 +961,8 @@
     if (!meta) S.stall.set('version', why || 'it came back empty');  // api() gives up on any read at 20 s
     route();
     addEventListener('hashchange', route);
+    // the board comes from the same read as Running's: Beads changes in the same paint as Tasks, not after Questions (r12 audit13 running 4)
+    readRun().then(() => { drawTop(); if (S.menu === 'nav') drawLayer(); });
     if (S.loadedV || S.warm) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
