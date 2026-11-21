@@ -1,7 +1,8 @@
 """Pages & links tab data: this project's pages, archived snapshots, repos and folders, and the People list.
 
-Read-only. The dummy page is a copy of FastLane Drive's page, so the project's other pages come from the
-live page registry (read only) for pages kept under the FastLane Drive folder. Emails are always masked.
+Read-only. Each page shows only its own project's material: the FastLane Drive prototype reads FastLane Drive's
+folder; a copy of another project (meta proto_copy_of / proto_source) reads that project's folder, and never falls
+back to FastLane Drive's. The project's other pages come from the live page registry (read only). Emails are always masked.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from .history import _comments, _plain
 from .reference import FLD_DIR, documents, hide, notes
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
+FLD_SOURCE = PROJECT / "reviews" / "fld-stack-round8"
 REGISTRY = Path.home() / ".claude" / "annotate-state" / "state"  # live page records, read only
 MASK = "member@example.com"
 # documents kept on this page (mock round 9): the usage audit page and the go-live load test's k6 summary
@@ -88,9 +90,21 @@ def _json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _why(name: str, folder: Path) -> str:
+def _home(p: Path) -> str:
+    return "~/" + str(p.relative_to(Path.home())) if p.is_relative_to(Path.home()) else str(p)
+
+
+def _scope(meta: dict) -> tuple[Path | None, Path | None, bool]:
+    """(project folder, live page folder, is FastLane Drive). A copy with no recorded source gets no folder at all."""
+    if not meta.get("proto_copy_of"):
+        return PROJECT, FLD_SOURCE, True
+    src = Path(str(meta.get("proto_source") or ""))
+    return (src.parents[1], src, False) if meta.get("proto_source") and len(src.parents) > 1 else (None, None, False)
+
+
+def _why(name: str, folder: Path, source: Path | None = FLD_SOURCE) -> str:
     """Why a page is its own page, so he can choose between them (mock: 'its own page because it is long')."""
-    if folder.name == "fld-stack-round8":
+    if folder == source:
         return "the live review page this copy was taken from; answers there reach the agents"
     if re.search(r"meeting", name, re.I):
         return "its own page: one meeting's notes, kept apart from the review rounds"
@@ -99,20 +113,42 @@ def _why(name: str, folder: Path) -> str:
     return "its own page, so its rounds stay apart from this one's"
 
 
-def _pages() -> list[dict]:
+def _page(folder: Path, name: str, url: str, why: str) -> dict:
+    hist = _json(folder / "current.meta.json").get("history") or []
+    return {"name": name, "url": url, "why": why, "versions": len(hist), "last": str((hist[-1] if hist else {}).get("ts") or "")[:10]}
+
+
+def _earlier(root: Path | None, modules: list | None) -> list[dict]:
+    """Pages this one replaced, as its own "Earlier pages" links name them ("reviews/<slug> → <tab>"): archived, read-only."""
+    out = []
+    for m in modules or [] if root else []:
+        if not (isinstance(m, dict) and m.get("kind") == "links" and re.match(r"earlier pages", str(m.get("title") or ""), re.I)):
+            continue
+        for it in m.get("items") or []:
+            hit = re.search(r"/reviews/([\w.-]+)/", str((it or {}).get("url") or "")) if isinstance(it, dict) else None
+            if hit and str(it["url"]).startswith("https://"):
+                tab = str(it.get("label") or "").partition("→")[2].strip()
+                p = _page(root / "reviews" / hit.group(1), hit.group(1).replace("-", " ").capitalize(), hide(it["url"]),
+                          f"read-only: its work moved into this page's {tab or 'tabs'}")
+                out.append({"id": hit.group(1), "t": p["name"], "url": p["url"], "why": p["why"], "when": p["last"]})
+    return out
+
+
+def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: bool = True) -> list[dict]:
+    if root is None:
+        return []
     pages = {}
     for rec_file in sorted(REGISTRY.glob("*.json")):
         for slug, rec in (_json(rec_file).get("slugs") or {}).items():
             folder = Path(str((rec or {}).get("slug_dir") or ""))
             url = (rec or {}).get("public_url") or (rec or {}).get("url")
-            if not url or not folder.is_relative_to(PROJECT) or slug in pages:
+            if not url or not folder.is_relative_to(root) or slug in pages:
                 continue
-            meta = _json(folder / "current.meta.json")
-            hist = meta.get("history") or []
-            name = _plain(meta.get("name") or slug, 80)
-            pages[slug] = {"name": name, "url": url, "why": _why(name, folder),
-                           "versions": len(hist), "last": str((hist[-1] if hist else {}).get("ts") or "")[:10]}
+            name = _plain(_json(folder / "current.meta.json").get("name") or slug, 80)
+            pages[slug] = _page(folder, name, url, _why(name, folder, source))
     out = list(pages.values())
+    if not fld:
+        return out
     # the delivery roadmap is long, so the mock lists it as its own page; here it opens as Reference's roadmap item
     try:
         when = datetime.fromtimestamp(ROADMAP.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d")
@@ -142,25 +178,40 @@ def build(page_dir: Path) -> dict:
         p = people.setdefault(name, {"name": name, "email": MASK, "role": "owner", "seen": ""})
         p["seen"] = max(p["seen"], str(c.get("created_at") or "")[:10])
 
+    proj = _json(page_dir / "project.json")
+    root, source, fld = _scope(meta)
+    archived += _earlier(root, proj.get("modules"))
     archived.sort(key=lambda a: a["when"], reverse=True)
-    board = _json(page_dir / "project.json").get("board") or {}
-    folders = [{"name": "fastlane-drive", "what": "the app's code, on the M1 Max", "path": "~/projects/fastlane-drive"},
-               {"name": "reviews/fld-stack-round8", "what": "the live page's record", "path": "~/projects/fastlane-drive/reviews/fld-stack-round8"},
-               {"name": "annotate-proto/reviews/fld-proto", "what": "this prototype copy", "path": "~/" + str(page_dir.relative_to(Path.home())) if page_dir.is_relative_to(Path.home()) else str(page_dir)}]
+    board = proj.get("board") or {}
+    copy = {"name": "annotate-proto/reviews/" + page_dir.name, "what": "this prototype copy", "path": _home(page_dir)}
+    if fld:
+        folders = [{"name": "fastlane-drive", "what": "the app's code, on the M1 Max", "path": "~/projects/fastlane-drive"},
+                   {"name": "reviews/fld-stack-round8", "what": "the live page's record", "path": "~/projects/fastlane-drive/reviews/fld-stack-round8"}, copy]
+    else:  # the project's own git checkouts (one level down) and the live page's record; none when its folder is unknown
+        repos = sorted(d for d in root.iterdir() if (d / ".git").exists()) if root and root.is_dir() else []
+        folders = [{"name": f"{root.name}/{d.name}", "what": "the project's code, on the M1 Max", "path": _home(d)} for d in repos]
+        folders += [{"name": f"reviews/{source.name}", "what": "the live page's record", "path": _home(source)}] if source and source.is_dir() else []
+        folders += [copy] if folders else []
     links = [{"name": board.get("label") or "Beads", "what": "the project's task board", "url": board["url"]}] if board.get("url") else []
-    # the live page's named Admin and Linear links, with their descriptions, as its Documents sidebar shows them
-    for m in _json(page_dir / "project.json").get("modules") or []:
-        for it in (m.get("items") or []) if isinstance(m, dict) and m.get("kind") == "links" else []:
-            if isinstance(it, dict) and str(it.get("url") or "").startswith("https://") and re.search(r"^Admin\b|\bLinear\b", str(it.get("label") or "")):
-                links.append({"name": _plain(it["label"], 90), "what": _plain(it.get("description") or "", 400), "url": hide(it["url"]), "ic": "ext"})
-    # the tester server's address is in no record the prototype reads, so its row says so instead of linking (mock #82)
-    links.append({"name": "Tester server", "what": "its address is not in this project's record yet", "url": ""})
+    # the page's own named links, with their descriptions, as its Documents sidebar shows them; FastLane Drive's Admin and Linear ones
+    seen = set()
+    for m in proj.get("modules") or []:
+        if not (isinstance(m, dict) and m.get("kind") == "links") or re.match(r"earlier pages", str(m.get("title") or ""), re.I):
+            continue
+        for it in m.get("items") or []:
+            url = str((it or {}).get("url") or "") if isinstance(it, dict) else ""
+            if url.startswith("https://") and url not in seen and (not fld or re.search(r"^Admin\b|\bLinear\b", str(it.get("label") or ""))):
+                seen.add(url)
+                links.append({"name": _plain(it.get("label") or url, 90), "what": _plain(it.get("description") or "", 400), "url": hide(url), "ic": "ext"})
+    if fld:  # the tester server's address is in no record the prototype reads, so its row says so instead of linking (mock #82)
+        links.append({"name": "Tester server", "what": "its address is not in this project's record yet", "url": ""})
     hist = meta.get("history") or []
     return {"name": _plain(meta.get("name") or "This page", 80), "current": meta.get("current") or "",
             "current_t": str((hist[-1] if hist else {}).get("ts") or "")[:16].replace("T", " "),
-            "versions": len(hist), "pages": _pages(), "archived": archived,
+            "versions": len(hist), "pages": _pages(root, source, fld), "archived": archived,
             "folders": folders, "links": links, "people": list(people.values()),
-            "kept": kept(), "docs": documents(), "notes": _kept_notes(page_dir)}
+            # kept documents and the folder index are FastLane Drive's files; a copy has none kept on its page
+            "kept": kept() if fld else [], "docs": documents() if fld else {"files": [], "groups": {}}, "notes": _kept_notes(page_dir)}
 
 
 def _kept_notes(page_dir: Path) -> list:

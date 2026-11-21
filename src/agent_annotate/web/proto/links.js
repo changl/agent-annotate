@@ -70,17 +70,19 @@
     const others = D.pages.map(p => pageRow(p.name, `${esc(p.why || 'its own page')} · ${pl(p.versions, 'version', 'versions')}${p.last ? ` · last ${esc(dm(p.last))}` : ''}`, p.ref ? `#reference/${encodeURIComponent(p.ref)}` : p.url,
       p.ref ? `<button class="lk" data-goref="${esc(p.ref)}">${esc(p.name)}</button>` : `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)} ${icon('ext')}</a>`)).join('');
     const ppl = 1 + ctx.prefs.get('people', []).length;
-    const arch = S.arch ? D.archived.map(a => `<div class="l-line l-subrow">${icon('archive')}<span class="l-grow"><button class="lk l-left" data-arch="${esc(a.id)}" aria-expanded="${S.view === a.id}">${esc(a.t)}</button>
+    const arch = S.arch ? D.archived.map(a => a.url ? `<div class="l-line l-subrow">${icon('archive')}<span class="l-grow"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.t)} ${icon('ext')}</a>
+        <span class="small mut l-sub">${esc(a.why)}${a.when ? ` · last ${esc(dm(a.when))}` : ''}</span></span>${copyBtn(a.url, a.t)}</div>` : `<div class="l-line l-subrow">${icon('archive')}<span class="l-grow"><button class="lk l-left" data-arch="${esc(a.id)}" aria-expanded="${S.view === a.id}">${esc(a.t)}</button>
         <span class="small mut l-sub">${esc(a.when)} · read-only, takes no answers</span></span>${copyBtn(`plans/${a.id}/${a.v}.html`, a.t)}</div>${S.view === a.id ? '<div class="l-view" data-view></div>' : ''}`).join('') : '';
     w.innerHTML = `<div class="l-cols"><section><h2 class="l-ph">${icon('pages')} Pages of this project <span class="badge grey">${1 + D.pages.length}</span></h2>${me}${others}
         <div class="l-line">${icon('people')}<span class="l-grow"><button class="lk" data-people>People</button><span class="small mut l-sub">who can open this page · ${pl(ppl, 'person', 'people')}</span></span>${icon('chev')}</div>
-        <div class="l-grp"><button class="l-fold" data-archall aria-expanded="${S.arch}">${icon('chev')}<b>Archived pages</b> <span class="small mut">${pl(D.archived.length, 'snapshot', 'snapshots')}</span></button>${arch}</div>
+        <div class="l-grp"><button class="l-fold" data-archall aria-expanded="${S.arch}">${icon('chev')}<b>Archived pages</b> <span class="small mut">${D.archived.length ? D.archived.some(a => a.url) ? pl(D.archived.length, 'page', 'pages') : pl(D.archived.length, 'snapshot', 'snapshots') : 'none'}</span></button>${arch}</div>
         <div class="l-line">${icon('warn')}<span class="l-grow"><button class="lk l-left" data-bad aria-expanded="${S.view === 'bad'}">${esc(badTitle(D))}</button><span class="small mut l-sub"><span class="l-errt">could not load</span> · an example, to try Retry and Tell the agent</span></span></div>
         ${S.view === 'bad' ? '<div class="l-view" data-view></div>' : ''}</section>
       <section><h2 class="l-ph">${icon('code')} Repos, folders and links</h2>
         ${D.folders.map(f => `<div class="l-line">${icon('code')}<span class="l-grow">${esc(f.name)}<span class="small mut l-sub">${esc(f.what)}</span></span><button class="btn sm" data-copypath="${esc(f.path)}" title="Copy ${esc(f.path)}">${icon(S.copied === f.path ? 'copied' : 'copy')} Copy path</button></div>`).join('')}
         ${D.links.map(l => l.url ? `<div class="l-line">${icon(l.ic || 'bead')}<span class="l-grow"><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)} ${icon('ext')}</a><span class="small mut l-sub">${esc(l.what)}</span></span>${copyBtn(l.url, l.name)}</div>`
-          : `<div class="l-line">${icon('ext')}<span class="l-grow">${esc(l.name)}<span class="small mut l-sub">${esc(l.what)}</span></span></div>`).join('')}</section>
+          : `<div class="l-line">${icon('ext')}<span class="l-grow">${esc(l.name)}<span class="small mut l-sub">${esc(l.what)}</span></span></div>`).join('')}
+        ${D.folders.length || D.links.length ? '' : '<p class="small mut">Repos, folders and links: none recorded for this project yet.</p>'}</section>
       ${docsHtml(ctx, D, copyBtn)}</div>`;
     const host = w.querySelector('[data-view]');
     if (host) {
@@ -120,9 +122,9 @@
   function docsHtml(ctx, D, copyBtn) {
     const {esc, icon} = ctx, kept = D.kept || [], F = ((D.docs || {}).files || []).map((f, i) => ({...f, i})), groups = (D.docs || {}).groups || {};
     const keptRows = kept.map(d => `<div class="l-line"><span class="l-grow"><button class="lk l-left" data-kept="${esc(d.id)}" aria-expanded="${S.kept === d.id}">${icon('doc')} ${esc(d.t)}</button><span class="small mut l-sub">${esc(d.sub)}</span></span>${copyBtn(`#links/kept-${encodeURIComponent(d.id)}`, d.t)}</div>
-      ${S.kept === d.id ? `<div class="l-doc"><div class="l-dbar"><b>${esc(d.t)}</b><span class="small mut">read-only</span><span class="spacer"></span><button class="btn sm" data-kept="${esc(d.id)}">${icon('x')} Close</button></div>
-        ${d.chart ? chartHtml(ctx, D, d) : ''}${blocksHtml(d.blocks || [], esc)}${noteBox(ctx, D, `doc:kept-${d.id}`)}
-        <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button></div></div>` : ''}`).join('');
+      ${S.kept === d.id ? `<div class="l-doc" data-doc="doc:kept-${esc(d.id)}~p" data-docname="${esc(d.t)}"><div class="l-dbar"><b>${esc(d.t)}</b><span class="small mut">read-only · select words to write a note on them</span><span class="spacer"></span><button class="btn sm" data-kept="${esc(d.id)}">${icon('x')} Close</button></div>
+        ${d.chart ? chartHtml(ctx, D, d) : ''}${blocksHtml(d.blocks || [], esc, i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`))}${noteBox(ctx, D, `doc:kept-${d.id}`)}
+        <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button><span class="small mut">Click any line to write a note on it</span></div></div>` : ''}`).join('');
     const q = S.dq.toLowerCase(), hit = f => !q || `${f.n} ${f.sub} ${groups[f.g] || ''}`.toLowerCase().includes(q);
     const sh = F.filter(f => hit(f) && (!S.dk || f.k === S.dk)), kinds = Object.keys(DK).filter(k => F.some(f => f.k === k));
     const gs = Object.keys(groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
@@ -135,9 +137,10 @@
     return `<section class="l-docs" id="docs"><h2 class="l-ph">${icon('doc')} Documents</h2>
       <div class="l-kept"><div class="l-kh"><b>Kept on this page</b> <span class="badge grey">${kept.length}</span></div>${keptRows || '<p class="small mut">None yet</p>'}</div>
       <h3 class="l-ph3">Files in this project's folder</h3>
-      <div class="l-dbar2"><input type="search" id="l-dq" placeholder="Find a document by name or folder" aria-label="Find a document" value="${esc(S.dq)}">
+      ${F.length ? `<div class="l-dbar2"><input type="search" id="l-dq" placeholder="Find a document by name or folder" aria-label="Find a document" value="${esc(S.dq)}">
         <span class="l-chips" role="group" aria-label="Kind"><button class="chipb" data-dk="" aria-pressed="${!S.dk}">All <span class="n">${F.filter(hit).length}</span></button>${kinds.map(k => `<button class="chipb" data-dk="${k}" aria-pressed="${S.dk === k}" title="Only ${DK[k][1]} files">${dic(k)}${DK[k][1]} <span class="n">${F.filter(f => hit(f) && f.k === k).length}</span></button>`).join('')}</span></div>
-      <p class="small mut">${pl(F.length, 'file', 'files')} in this project's folder · Markdown opens here, other kinds in a new tab</p>${list}</section>`;
+      <p class="small mut">${pl(F.length, 'file', 'files')} in this project's folder · Markdown opens here, other kinds in a new tab</p>${list}`
+        : '<p class="small mut">None recorded for this project yet.</p>'}</section>`;
   }
   // a Markdown file opened under its row, as in the mock (docMd): every block takes a note, selected words too, and the whole file one
   const docKey = f => 'doc:' + [f.g, f.sub, f.n].filter(Boolean).join('/');  // the same key Reference uses, so notes show in both
@@ -186,8 +189,9 @@
       const k = b.dataset.nsave, text = (w.querySelector('#l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
       const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = b.closest('[data-docname]');
+      const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
       try {
-        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: d ? `${d.t}${i !== undefined && d.chart ? ', ' + d.chart.pts[+i][0] : ''}` : file ? file.dataset.docname : 'Pages & links', text, target});
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', text, target});
         mine.push({id: c.id, a: k, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         S.note = ''; S.tgt = null; draw(w, ctx, D); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});

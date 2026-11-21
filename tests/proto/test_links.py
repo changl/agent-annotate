@@ -69,5 +69,50 @@ def test_kept_documents_mask_and_chart(tmp_path, monkeypatch):
 def test_each_page_says_why_it_is_its_own():
     from pathlib import Path
     assert "meeting" in links._why("FLD admin team meeting, Nov 11", Path("/x/admin-meeting"))
-    assert "taken from" in links._why("FLD-B02", Path("/x/fld-stack-round8"))
+    assert "taken from" in links._why("FLD-B02", links.FLD_SOURCE)
+    assert "taken from" in links._why("Rebex", Path("/x/rebex"), Path("/x/rebex"))
     assert "long" in links._why("Delivery roadmap", Path("/x/roadmap"))
+
+
+def test_a_copy_shows_only_its_own_project(tmp_path, monkeypatch):
+    """Audit 3 finding 1: Rebex's and Agent Annotate's copies listed FastLane Drive's pages, folders and documents."""
+    fld, rbx, registry = tmp_path / "fld", tmp_path / "rebex", tmp_path / "state"
+    for p in (fld / "reviews" / "live", rbx / "reviews" / "rebex", rbx / "reviews" / "old", rbx / "repo" / ".git", rbx / "assets", registry):
+        p.mkdir(parents=True)
+    (rbx / "reviews" / "rebex" / "current.meta.json").write_text(json.dumps({"name": "Rebex decisions", "history": [{"version": "v1"}]}))
+    (registry / "r.json").write_text(json.dumps({"slugs": {
+        "live": {"slug_dir": str(fld / "reviews" / "live"), "url": "https://x/live/"},
+        "rebex": {"slug_dir": str(rbx / "reviews" / "rebex"), "url": "https://x/rebex/"}}}))
+    monkeypatch.setattr(links, "PROJECT", fld)
+    monkeypatch.setattr(links, "REGISTRY", registry)
+    boom = lambda *a: (_ for _ in ()).throw(AssertionError("FastLane Drive's files read for a copy"))
+    monkeypatch.setattr(links, "kept", boom)
+    monkeypatch.setattr(links, "documents", boom)
+    page = tmp_path / "proto-rebex"
+    page.mkdir()
+    (page / "current.meta.json").write_text(json.dumps({"name": "Rebex", "proto_copy_of": "rebex", "proto_source": str(rbx / "reviews" / "rebex")}))
+    (page / "project.json").write_text(json.dumps({"modules": [
+        {"kind": "links", "title": "Links", "items": [{"label": "Staging storefront", "url": "https://shop/"}, {"label": "Same shop", "url": "https://shop/"}]},
+        {"kind": "links", "title": "Earlier pages (read-only)", "items": [{"label": "reviews/old → Library", "url": "https://x/reviews/old/?archived=1"}]}]}))
+
+    d = links.build(page)
+    assert [(p["name"], p["why"].split(";")[0]) for p in d["pages"]] == [("Rebex decisions", "the live review page this copy was taken from")]
+    # the pages it replaced are archived links, read-only
+    assert [(a["t"], a["url"], a["why"]) for a in d["archived"]] == [("Old", "https://x/reviews/old/?archived=1", "read-only: its work moved into this page's Library")]
+    assert [f["name"] for f in d["folders"]] == ["rebex/repo", "reviews/rebex", "annotate-proto/reviews/proto-rebex"]
+    assert [l["name"] for l in d["links"]] == ["Staging storefront"]  # its own links, once each; no Tester server
+    assert d["kept"] == [] and d["docs"]["files"] == [] and "fld" not in json.dumps(d)
+
+    # a copy whose source is unknown shows nothing rather than FastLane Drive's
+    (page / "current.meta.json").write_text(json.dumps({"name": "Leadory", "proto_copy_of": "leadory"}))
+    (page / "project.json").write_text("{}")
+    d = links.build(page)
+    assert d["pages"] == [] and d["folders"] == [] and d["links"] == []
+
+
+def test_kept_document_lines_take_notes():
+    """Audit 3 finding 4: a paragraph of a kept document (the Usage audit) opens the note composer, like a Markdown file's."""
+    s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()
+    assert 'data-doc="doc:kept-${esc(d.id)}~p"' in s  # the click handler keys a line note as data-doc + '~' + line
+    assert "blocksHtml(d.blocks || [], esc, i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`))" in s
+    assert "/^\\d+$/.test(i || '')" in s  # only ~<n> names a chart bar; a line note never indexes the chart
