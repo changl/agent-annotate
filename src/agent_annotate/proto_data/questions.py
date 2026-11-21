@@ -208,7 +208,8 @@ def build(page_dir: Path) -> dict:
              "addressed": sum(1 for c in notes_all if c.get("status") in ("addressed_by_agent", "resolved_in_version", "user_confirmed")),
              "sends": _count_lines(page_dir / "rounds.ndjson")}
     return {"version": v, "questions": qs, "notes": notes, "closed": closed, "beads": beads,
-            "done": len(rows), "tiles": tiles, "since": _since(page_dir, meta, v), "carried": _carried(page_dir, notes_all, v, page)}
+            "done": len(rows), "tiles": tiles, "since": _since(page_dir, meta, v), "carried": _carried(page_dir, notes_all, v, page),
+            "pics": carried_pictures(page_dir)}
 
 
 def _count_lines(f: Path) -> int:
@@ -245,3 +246,45 @@ def _page_text(page_dir: Path, v) -> str:
         return (page_dir / "versions" / f"{v}.html").read_text(encoding="utf-8", errors="replace")
     except (OSError, TypeError):
         return ""
+
+
+# Pictures the agent named in a table cell: today's page leaves `![](../x.png)` as text and never copies the file.
+LOOSE = re.compile(r"!\[[^\]]*\]\(((?:\.\./)+[^)\s]+\.(?:png|jpe?g|gif|webp))\)", re.I)
+CARRIED = "assets/carried"
+# shortcut: FastLane Drive's run folders only; take the agent's source folder from the page when other projects use this UI
+PICTURE_ROOTS = [r for r in os.environ.get("ANNOTATE_PROTO_PICTURE_ROOTS", os.pathsep.join([
+    "/Users/changlee/projects/FastLane Drive/planning/operations/orchestration",
+    "/Volumes/fattie/projects/FastLane Drive/planning/operations/orchestration"])).split(os.pathsep) if r]
+
+
+def carried_pictures(page_dir: Path) -> list:
+    """The loose pictures copied into this copy, by path without the leading ../ (what the Questions tab shows)."""
+    base = page_dir / CARRIED
+    return sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
+
+
+def carry_pictures(page_dir: Path, roots=None) -> dict:
+    """Copy each loose picture any version names into assets/carried/<path without ../>; read-only on the sources."""
+    import glob
+    import shutil
+    tails = {re.sub(r"^(?:\.\./)+", "", m) for f in (page_dir / "versions").glob("v*.html")
+             for m in LOOSE.findall(f.read_text(encoding="utf-8", errors="replace"))}
+    out = {}
+    for tail in sorted(tails):
+        dest = (page_dir / CARRIED / tail).resolve()
+        if not dest.is_relative_to((page_dir / CARRIED).resolve()):
+            continue
+        found = next((Path(p) for r in (roots or PICTURE_ROOTS) for p in sorted(glob.glob(os.path.join(glob.escape(r), "*", glob.escape(tail))))
+                      if Path(p).is_file()), None)
+        if found:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(found, dest)
+        out[tail] = str(found) if found else None
+    return out
+
+
+if __name__ == "__main__":  # copy.sh: python3 -m agent_annotate.proto_data.questions <page dir>
+    import sys
+    got = carry_pictures(Path(sys.argv[1]))
+    print(f"carried {sum(1 for v in got.values() if v)} of {len(got)} loose pictures",
+          *[f"  not found: {t}" for t, v in got.items() if not v], sep="\n")

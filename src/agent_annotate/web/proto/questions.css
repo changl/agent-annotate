@@ -163,12 +163,19 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 .qevb.aa{padding:4px 0}
 .qevb table{width:100%}
 .qevb img{max-width:100%;height:auto}
+/* a table of pictures (drawing beside build): a label column that never splits a word, then equal picture columns */
+table.qpics{table-layout:fixed;width:100%}
+.qpics th:first-child{width:8em}
+.qpics td:first-child{overflow-wrap:normal}
+.qpics td img{display:block;width:100%;height:auto}
 
 /* phone: icons only on the card, choices one per row */
 @media (max-width:600px){
   .ibt,.hide-ph{display:none}.ph-only{display:inline}
   .ib.ibw{width:30px;padding:0}
   .qbar{top:44px}  /* the phone has no tab strip: under the 44 px header, no blank band (#28) */
+  .qchips{display:contents}  /* chips flow on beside the view icons, as the mock's first line (r12 #03) */
+  .qlist{padding-top:0}
   .qcard{scroll-margin-top:150px}
   .qcard{padding:8px 10px 6px}
   .qopts{grid-template-columns:minmax(0,1fr)}

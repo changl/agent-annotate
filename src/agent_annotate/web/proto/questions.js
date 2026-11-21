@@ -140,6 +140,8 @@
     for (const n of hits) {
       const h = esc(n.nodeValue).replace(/(!?)\[([^\]]*)\]\(([^)\s]+)\)/g, (m, bang, t, href) => {
         if (/^(?!https?:)[a-z][\w+.-]*:/i.test(href)) return m;  // only page, relative and web links
+        const kept = bang && href.startsWith('../') && 'assets/carried/' + href.replace(/^(\.\.\/)+/, '');  // copied in by copy.sh (r12 #01)
+        if (kept && (D.pics || []).includes(kept.slice(15))) return `<img src="${kept}" alt="${t || esc(kept.split('/').slice(-3).join('/'))}" loading="eager">`;
         if (bang) return /^(\.\.\/|\/|https?:)/i.test(href) ? `<span class="qmissing" title="${href}">${ic('warn')} Picture not on this page: ${esc(href.split('/').slice(-3).join('/'))}</span>` : `<img src="${href}" alt="${t}">`;
         return `<a href="${href}"${href.startsWith('#') ? '' : ' target="_blank" rel="noopener"'}>${t}</a>`;
       });
@@ -156,6 +158,7 @@
       if (!document.querySelector(`link[data-qdoc]`)) document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: l.getAttribute('href')})).dataset.qdoc = '1';
     doc.querySelectorAll('script,style').forEach(n => n.remove());
     unmark(doc);
+    for (const img of doc.querySelectorAll('td img')) img.closest('table').classList.add('qpics');  // a picture table: equal picture columns (r12 #01, #04)
     const aa = doc.querySelector('.aa') || doc.body;
     // no address shows on the prototype, company mailboxes included (same rule as proto_data/questions.py); picture names like x@2x.png stay
     loadDoc.v = v; loadDoc.html = aa.innerHTML.replace(/[\w.+-]+@[a-z][\w-]*(?:\.[\w-]+)*\.(?!png\b|jpe?g\b|gif\b|webp\b|svg\b)[a-z]{2,}\b/gi, 'member@example.com');
@@ -607,7 +610,7 @@
     if (ds.zoom) { const a = t.closest('.qzm').nextElementSibling, src = a && a.dataset.zfull; if (!src) return; const per = ctx.prefs.get('q:zoomPer', {}); per[src] = +ds.zoom; ctx.prefs.set('q:zoomPer', per); const img = t.closest('figure') && t.closest('figure').querySelector('img'); S.zoom = {src, cap: img ? img.alt : '', img: img && img.dataset.img, anchor: (t.closest('[data-anchor-id]') || {}).dataset?.anchorId, z: +ds.zoom}; return draw(true); }
     if (ds.zoomto) { S.zoom.z = +ds.zoomto; const per = ctx.prefs.get('q:zoomPer', {}); per[S.zoom.src] = +ds.zoomto; ctx.prefs.set('q:zoomPer', per); return draw(true); }
     if (t.hasAttribute('data-zclose')) { S.zoom = null; return draw(true); }
-    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(); S.note = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src}}; S.zoom = null; return draw(true).then(() => { const ta = root.querySelector('[data-newnote] textarea'); if (ta) { ta.scrollIntoView({block: 'center'}); ta.focus({preventScroll: true}); } }); }
+    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src}}; S.zoom = null; return openNote(next, true); }
     if (t.hasAttribute('data-genopen')) { S.gen = !S.gen; return draw(true).then(() => { const ta = root.querySelector('.qgen textarea'); if (ta) ta.focus(); }); }
     if (t.hasAttribute('data-genclose')) { S.gen = false; return draw(true); }
     if (t.hasAttribute('data-ungen')) { const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
@@ -620,8 +623,8 @@
     if (t.hasAttribute('data-sendundo')) { clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
     if (t.hasAttribute('data-nadd')) return addNote(root.querySelector('[data-newnote] textarea').value);
     if (t.hasAttribute('data-ncancel')) { S.note = null; ctx.prefs.set('q:newnote', null); return draw(true); }
-    if (ds.nedit) { S.note = {edit: ds.nedit}; return draw(true); }
-    if (ds.nfix) { const n = D.notes.find(x => x.id === ds.nfix); if (!n) return; S.note = {anchor: n.anchor, label: n.label, target: n.target || {schema: 1, tag: 'p'}, text: n.text, fixOf: n.id}; ctx.prefs.set('q:newnote', S.note); return draw(true).then(() => { const ta = root.querySelector('[data-newnote] textarea'); if (ta) ta.focus({preventScroll: true}); }); }
+    if (ds.nedit) return openNote({edit: ds.nedit});
+    if (ds.nfix) { const n = D.notes.find(x => x.id === ds.nfix); if (!n) return; return openNote({anchor: n.anchor, label: n.label, target: n.target || {schema: 1, tag: 'p'}, text: n.text, fixOf: n.id}); }
     if (ds.nsave) return saveNote(ds.nsave, t.closest('.qnote').querySelector('textarea').value);
     if (ds.ndel) return delNote(ds.ndel);
     if (ds.ncopy) return copy((D.notes.find(x => x.id === ds.ncopy) || {}).text || '', 'Note');
@@ -636,15 +639,26 @@
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src')}; }
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
-    S.note = {anchor: anchorEl.dataset.anchorId, label, target};
-    ctx.prefs.set('q:newnote', S.note);
-    draw(true).then(() => { const ta = root.querySelector('[data-newnote] textarea'); if (ta) ta.focus({preventScroll: true}); });
+    return openNote({anchor: anchorEl.dataset.anchorId, label, target});
+  }
+  // a second note never erases the first: the unfinished one is saved on its own line before the next opens, as the mock keeps it (r12 #02)
+  async function openNote(next, scroll) {
+    const was = S.note, ta = was && root.querySelector(was.edit ? `[data-note="${CSS.escape(was.edit)}"] textarea` : '[data-newnote] textarea');
+    const focus = () => { const nt = root.querySelector('[data-newnote] textarea'); if (nt) { if (scroll) nt.scrollIntoView({block: 'center'}); nt.focus({preventScroll: true}); } };
+    if (was && !was.edit && !was.fixOf && !next.edit && was.anchor === next.anchor && !(next.target || {}).offset) return focus();  // the same line again: keep typing
+    const text = ta ? ta.value : '';
+    if (was && was.edit && text.trim() && text !== (D.notes.find(x => x.id === was.edit) || {}).text) await saveNote(was.edit, text);
+    else if (was && !was.edit && text.trim()) await addNote(text);
+    S.note = next;
+    if (!next.edit) ctx.prefs.set('q:newnote', next);
+    await draw(true);
+    focus();
   }
   async function saveNote(id, text) {
     S.note = null;
     if (!text.trim()) return delNote(id);
     await call(`api/comments/${encodeURIComponent(id)}`, {text}, 'PUT');
-    refresh();
+    return refresh();
   }
   function onInput(e) {
     const t = e.target, ds = t.dataset;

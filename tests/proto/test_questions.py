@@ -74,5 +74,29 @@ def test_task_blocking_topic_and_page_counts(tmp_path, monkeypatch):
     assert [(c["id"], c["changed"]) for c in d["carried"]] == [("n9", False)]
 
 
+def test_carry_loose_table_pictures(tmp_path):
+    """Round 12 second pass #01: a picture the agent named in a table cell is copied in from its run folder,
+    and the data lists it so the card shows it instead of a "not on this page" chip."""
+    page, run = tmp_path / "page", tmp_path / "roots" / "run_1"
+    (page / "versions").mkdir(parents=True)
+    (page / "versions" / "v2.html").write_text(
+        "<td>![](../../../reports/b5/pictures/drawn/a.png)</td><td>![](../../../reports/b5/pictures/built/a.png)</td>"
+        "<td>![](../../../reports/../../escape.png)</td>")
+    (run / "reports/b5/pictures/drawn").mkdir(parents=True)
+    (run / "reports/b5/pictures/drawn/a.png").write_bytes(b"png")
+    got = questions.carry_pictures(page, [str(tmp_path / "roots")])
+    assert got["reports/b5/pictures/drawn/a.png"] and got["reports/b5/pictures/built/a.png"] is None
+    assert (page / "assets/carried/reports/b5/pictures/drawn/a.png").read_bytes() == b"png"
+    assert not (tmp_path / "escape.png").exists() and "reports/../../escape.png" not in got  # never writes outside the copy
+    assert questions.carried_pictures(page) == ["reports/b5/pictures/drawn/a.png"]
+
+
+def test_second_note_keeps_the_first():
+    """Round 12 second pass #02: opening another note saves the unfinished one first (no JS runner here)."""
+    s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
+    assert "else if (was && !was.edit && text.trim()) await addNote(text);" in s
+    assert "S.note = {anchor: anchorEl.dataset.anchorId" not in s  # every opener goes through openNote
+
+
 def test_mask_covers_company_and_keeps_images():
     assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"
