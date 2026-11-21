@@ -154,10 +154,12 @@
   }
   function chartHtml(ctx, D, d) {
     const {esc} = ctx, c = d.chart, max = Math.max(c.gate || 0, ...c.pts.map(p => p[1])) || 1;
-    return `<figure class="l-chart"><figcaption class="small"><b>${esc(c.t)}</b> · click a bar to write a note on it</figcaption>
-      <div class="l-bars" role="list">${c.pts.map(([lab, v], i) => { const k = `doc:kept-${d.id}~${i}`, n = notesAt(D, k).length;
-        return `<button class="l-bar${v > c.gate ? ' over' : ''}" role="listitem" data-bnote="${esc(k)}" aria-pressed="${S.note === k}" title="${esc(lab)}: ${v.toLocaleString()} ms${v > c.gate ? `, over the ${c.gate.toLocaleString()} ms gate` : ''}. Click to write a note on it"><span class="l-bl">${esc(lab)}</span><span class="l-bt"><i style="width:${(v / max * 100).toFixed(1)}%"></i>${c.gate ? `<s style="left:${(c.gate / max * 100).toFixed(1)}%" aria-hidden="true"></s>` : ''}</span><span class="l-bv">${v.toLocaleString()} ms${n ? ` · ${ctx.icon('note')}${n}` : ''}</span></button>`; }).join('')}</div>
-      <p class="small mut">The line marks the ${c.gate.toLocaleString()} ms gate · ${esc(c.axis)}</p></figure>
+    // the mock's barChart: one column per measure in one row, the gate a horizontal dashed line labelled at its end (audit9 reference 3)
+    const g = c.gate ? `<s style="bottom:${(c.gate / max * 100).toFixed(1)}%" aria-hidden="true"></s>` : '';
+    return `<figure class="l-chart"><figcaption class="small"><b>${esc(c.t)}</b> <span class="mut">· ${c.pts.length} measures · click a bar to write a note on it</span></figcaption>
+      <div class="l-bars" role="list" style="--n:${c.pts.length}">${c.pts.map(([lab, v], i) => { const k = `doc:kept-${d.id}~${i}`, n = notesAt(D, k).length;
+        return `<button class="l-bar${n || S.note === k ? ' on' : ''}" role="listitem" data-bnote="${esc(k)}" aria-pressed="${S.note === k}" title="${esc(lab)}: ${v.toLocaleString()} ms${c.gate && v > c.gate ? `, over the ${c.gate.toLocaleString()} ms limit` : ''}. Click to write a note on it"><span class="l-bt"><i style="height:${(v / max * 100).toFixed(1)}%"><span class="l-bv">${v.toLocaleString()} ms${n ? ` ${ctx.icon('note')}${n}` : ''}</span></i>${g}</span><span class="l-bl">${esc(lab)}</span></button>`; }).join('')}${c.gate ? `<span class="l-glab" aria-hidden="true"><span class="l-bt"><b style="bottom:${(c.gate / max * 100).toFixed(1)}%">limit ${c.gate.toLocaleString()} ms</b></span></span>` : ''}</div>
+      <p class="small mut">${esc(c.axis)}</p></figure>
       ${c.pts.map((_, i) => noteBox(ctx, D, `doc:kept-${d.id}~${i}`)).join('')}`;
   }
   // Approve beside Write a note, as in the mock; it goes with the one Send under Reference (r12 fix8, reference 3)

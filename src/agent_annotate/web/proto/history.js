@@ -8,6 +8,7 @@
   const S = {q: '', f: 'all', nv: 20, open: new Set(), wd: false, ref: false, nref: 60, wnOpen: null};
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const vn = v => String(v || '').replace(/^v/, '');
+  const cut = (s, n) => (s = String(s || '').trim()).length > n ? s.slice(0, n - 1) + '…' : s;
   // a Send or a version in the browser's local time, as the header and the real page date it (audit7 running 2)
   const when = (iso, day) => { const t = new Date(iso); return iso && !isNaN(t) ? t.toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : day || ''; };
   // a Send's delivery state, in the header's words (frame.js DELIV)
@@ -71,10 +72,16 @@
       go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); again(src); return () => { TELL.set(src, t); again(src); }; }})),
       // a note being typed on the chart's point is in Send before Save, as a Pages & links note is (audit8 running 1, 3)
       ...(d => d ? [{key: 'hnn:' + d.v, group: 'Notes', html: `On “${ctx.esc(CLAB(d.v))}”: ${ctx.esc(d.text.trim().length > 140 ? d.text.trim().slice(0, 139) + '…' : d.text.trim())}`,
-        go: () => { S.cn = d.v; S.q = ''; if (HE && HE.el.querySelector('#h-list')) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
+        go: () => { S.cn = d.v; S.q = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
         remove: () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
-          return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx))],
-    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); } },
+          return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
+      // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
+      ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(n.text, 140))}`,
+        go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
+        remove: async () => { await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); dropC(n.id); redrawH();
+          return async () => { const c = await ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text}); CN.push({...n, id: c.id}); redrawH(); }; }}))],
+    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
+      savedC(ctx).forEach(n => { n.sent = true; }); },
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
@@ -186,20 +193,29 @@
 
   /* ---------- Questions asked per version, the newest 40 (the mock's chartOf): a compact strip over the list; a point takes a note ---------- */
   // the full chart lives in Analytics; the strip reads the same per-version counts the version rows show
-  let HE = null, QD = null, CN = [];  // HE: the tab on screen; QD: Questions' feed, whose notes hold saved chart notes; CN: saved this visit
+  let HE = null, QD = null, QR = null, CN = [];  // HE: the tab on screen; QD: Questions' feed, whose notes hold saved chart notes; CN: saved this visit
   const CLAB = v => `Questions asked per version, version ${vn(v)}`;
   const typedC = c => { const d = c.prefs.get('draft:hnote', null); return d && (d.text || '').trim() ? d : null; };
-  const redrawH = () => { if (HE && HE.el.querySelector('#h-list')) draw(HE.el, HE.ctx); };
+  // the list on screen; a box left behind by another tab no longer counts, so Go to it switches tabs (audit9 running 1)
+  const onH = () => !!(HE && HE.el.isConnected && HE.el.querySelector('#h-list'));
+  const redrawH = () => { if (onH()) draw(HE.el, HE.ctx); };
   const focusC = el => { const t = el.querySelector('#h-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
+  const litC = el => { const t = S.hl && el.querySelector(`[data-cnote="${CSS.escape(S.hl)}"]`); if (!t) return; S.hl = '';
+    t.scrollIntoView({block: 'center'}); t.classList.add('lit'); setTimeout(() => t.classList.remove('lit'), 2500); };
   const qpv = () => Object.entries(D.versions || {}).filter(([v]) => /^v\d+$/.test(v)).sort((a, b) => +vn(a[0]) - +vn(b[0])).slice(-40);
-  const cnotes = v => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => n.anchor === 'chart:' + v); };
+  const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
+  const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
+  // saved and not yet sent; Questions' feed is read here too, so Send lists them before History is opened
+  const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
+    return allC().filter(n => !n.sent); };
+  const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };
   function strip(ctx) {
     const {esc, icon} = ctx, vs = qpv();
     if (vs.length < 2) return '';
     const n = m => m.items || 0, mx = Math.max(1, ...vs.map(([, m]) => n(m))), X = i => 34 + i * 20, Y = k => 50 - k / mx * 42;
     const pts = vs.map(([v, m], i) => { const on = S.cn === v || cnotes(v).length > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
       return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-label="${esc(t)}. Write a note on it"><title>${esc(t)}</title></circle>`; }).join('');
-    const notes = vs.flatMap(([v]) => cnotes(v).map(x => `<div class="h-cnote">${icon('note')}<span class="small mut">Version ${esc(vn(v))}</span> ${esc(x.text)}</div>`)).join('');
+    const notes = vs.flatMap(([v]) => cnotes(v).map(x => `<div class="h-cnote" data-cnote="${esc(x.id)}">${icon('note')}<span class="small mut">Version ${esc(vn(v))}</span> ${esc(x.text)}${x.sent ? '' : ' <span class="small h-gws">· goes with Send</span>'}</div>`)).join('');
     const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
@@ -226,7 +242,7 @@
     D = await ctx.data('history');
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
     if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
-    ctx.data('questions').then(q => { QD = q; if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) draw(el, ctx); }).catch(() => {});
+    ctx.data('questions').then(q => { QD = q; if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) { draw(el, ctx); litC(el); } }).catch(() => {});
     const {esc, icon} = ctx;
     if (anchor) return openView(el, ctx, anchor);
     HE = {el, ctx};
@@ -252,6 +268,7 @@
     };
     draw(el, ctx);
     if (S.cn && typedC(ctx)) focusC(el);
+    else litC(el);  // Send's Go to it on a saved note; if Questions' feed is still on its way, once it is in
   }
 
   const hay = h => (`${h.n} ${h.q} ${h.a}` + (h.ovr ? ` overruled ${h.ovr[0]} ${h.ovr[1]}` : '')).toLowerCase();

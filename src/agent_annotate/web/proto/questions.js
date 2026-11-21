@@ -102,8 +102,17 @@
     if (moved) ctx.prefs.set('q:drafts', all);
     if (simMoved) simSave();
   }
+  // a task the board read here missed (slow or failed) takes its title and state from Running's own records (audit9 questions 1)
+  const RST = {closed: 'done', 'in progress': 'progress', blocked: 'blocked', deferred: 'none', open: 'waiting'};
+  let RB = null;
+  const runBeads = d => { if (!RB || !d) return; d.beads = d.beads || {};
+    for (const [id, b] of Object.entries(RB)) if (!d.beads[id]) d.beads[id] = {title: b.t || '', status: b.st || '', state: RST[b.st] || 'none'}; };
+  const readRun = () => { if (RB || !ctx) return; RB = {};
+    ctx.data('running').then(r => { RB = ((r || {}).board || {}).beads || {}; if (!D) return; runBeads(D);
+      if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => {}); };
   function sim(d) {
     if (!d) return d;
+    readRun(); runBeads(d);
     simLoad();
     if (!D || (D !== d && D.version !== d.version)) carry(D, d);
     for (const q of d.questions) if (SIM[q.id]) Object.assign(q, SIM[q.id]);
@@ -753,6 +762,10 @@
     const at = {r: 'reply', q: 'answer', c: 'close'}[k[0]] || null;  // "r:" a reply, "q:" an answer, "c:" a Close and its receipt: the card opens at it (audit7 #04)
     if (at) k = 'q:' + k.slice(2);
     if (k.startsWith('ab:')) return goAB(k.slice(3));
+    // a note another tab owns, listed here before that tab claimed it: Go to it opens its own tab, never Questions (audit9 running 1)
+    const on = k.startsWith('n:') && D.notes.find(x => x.id === k.slice(2)), a = (on && on.anchor) || '';
+    const own = /^chart:/.test(a) ? ['history'] : /^ref:/.test(a) ? ['reference', a.slice(4).split('~')[0]] : /^chk:/.test(a) ? ['reference'] : /^doc:/.test(a) ? ['links'] : null;
+    if (own) { host ? drawHost() : draw(true); return ctx.go(...own); }
     const nn = k === 'nn:' && typingNote();  // the note still being typed: its open editor (audit7 #03)
     if (nn) S.note = nn;
     // one typed in a card's evidence in Cards only: the filter that lists the card, the card open (audit8 #02)

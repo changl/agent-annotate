@@ -35,7 +35,9 @@
 .h-cpt:hover,.h-cpt:focus,.h-cpt.on{fill:#d62850;outline:none}
 .h-cax{font-size:10px;fill:currentColor;opacity:.6}
 .h-cnotes{flex:1 1 100%}
-.h-cnote{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:3px 0}
+.h-cnote{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:3px 6px;border:2px solid transparent;border-radius:var(--radius-box);transition:border-color .3s,background .3s}
+.h-cnote.lit{border-color:var(--color-primary);background:color-mix(in srgb,var(--color-primary) 10%,transparent)}  /* Send's Go to it */
+.h-gws{color:var(--ok-text)}
 .h-nbox{border:1px solid var(--color-primary);border-radius:var(--radius-box);padding:8px 10px;margin:4px 0;max-width:720px}
 .h-nbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);color:inherit;padding:6px 8px;margin-top:4px}
 .h-nacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}

@@ -43,14 +43,20 @@
 .l-tw table{border-collapse:collapse;font-size:var(--fs-sm);width:100%}
 .l-tw th,.l-tw td{border:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
 .l-chart{margin:6px 0 10px}
-.l-bars{display:grid;gap:4px;margin:6px 0}
-.l-bar{display:grid;grid-template-columns:90px minmax(0,1fr) 120px;align-items:center;gap:8px;background:none;border:1px solid transparent;border-radius:6px;padding:2px 4px;cursor:pointer;text-align:left;font-size:var(--fs-sm)}
+/* the mock's barChart: six columns in one row, the limit a horizontal dashed line labelled at its end */
+.l-bars{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr)) auto;max-width:900px;margin:6px 0}
+.l-bar{display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:0;background:none;border:1px solid transparent;border-radius:6px;padding:0 4px 2px;cursor:pointer;color:inherit;font-size:var(--fs-sm)}
 .l-bar:hover,.l-bar[aria-pressed=true]{border-color:var(--line);background:color-mix(in oklab,var(--color-base-content) 5%,transparent)}
-.l-bt{position:relative;height:14px;background:color-mix(in oklab,var(--color-base-content) 7%,transparent);border-radius:3px}
-.l-bt i{position:absolute;left:0;top:0;bottom:0;background:var(--color-primary);border-radius:3px}
-.l-bar.over .l-bt i{background:var(--orange)}
-.l-bt s{position:absolute;top:-3px;bottom:-3px;border-left:2px dashed var(--color-base-content)}
-.l-bv{white-space:nowrap;display:inline-flex;align-items:center;gap:3px}
+.l-bt{position:relative;height:140px;margin-top:22px}
+.l-bt i{position:absolute;left:2px;right:2px;bottom:0;background:var(--color-primary);border-radius:2px 2px 0 0}
+.l-bar.on .l-bt i{background:#d62850}  /* a bar with a note, as the mock's chart points */
+.l-bt s{position:absolute;left:-5px;right:-5px;border-top:2px dashed var(--color-error);pointer-events:none}
+.l-bv{position:absolute;bottom:100%;left:-6px;right:-6px;margin-bottom:2px;text-align:center;white-space:nowrap;color:var(--muted);display:inline-flex;justify-content:center;align-items:center;gap:2px}
+.l-bv svg.pi{color:inherit}
+.l-bl{text-align:center;color:var(--muted);overflow-wrap:anywhere;line-height:1.2}
+.l-glab{display:block;padding-left:6px;border:1px solid transparent}
+.l-glab b{position:absolute;left:0;transform:translateY(50%);white-space:nowrap;color:var(--err-text);font-size:var(--fs-sm)}
+.l-glab .l-bt{width:7.5em}
 .l-notes{margin:4px 0 8px}
 .l-nt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0}
 .l-nt.l-hl{outline:2px solid var(--color-primary);outline-offset:2px;border-radius:4px}
@@ -89,5 +95,7 @@
   .l-dbar2 input[type=search]{flex:1 1 100%}
   .l-d9{grid-template-columns:20px minmax(0,1fr) auto;padding-left:0}
   .l-d9 .l-sz,.l-d9 .l-dt{display:none}
-  .l-bar{grid-template-columns:62px minmax(0,1fr) 84px}
+  .l-bar{padding:0 1px 2px}
+  .l-bv{font-size:var(--fs-xs,11px);flex-wrap:wrap;white-space:normal;line-height:1.1}
+  .l-glab .l-bt{width:3.6em}.l-glab b{white-space:normal;line-height:1.1}
 }
