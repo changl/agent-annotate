@@ -145,5 +145,23 @@ def test_seventh_check_fixes_stay():
     assert "'Please file a task on the board for this question and link it on the card.'" in s
 
 
+def test_eighth_check_fixes_stay():
+    """Round 12 audit8 questions 1-5 (no JS runner here; the browser replays are in round12/fix10/questions)."""
+    s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
+    # 1: an edit to a saved note is kept as a draft: typed words stored, shown in the editor and Send, carried by Send
+    assert "S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an edit to a saved note" in s
+    assert "esc(editText(n))" in s and "esc(cut(editText(n), 140))" in s
+    assert s.index("en = ed && ed.edit") < s.rindex("call('api/rounds/submit'")
+    assert "S.note = next;\n    ctx.prefs.set('q:newnote', next);" in s
+    # 2: Go to it beside a note typed in a card's evidence opens the filter that lists the card
+    assert "const nq = nn && nn.inq && qOf(nn.inq);" in s and "reveal(nq)" in s
+    # 3: Cards only gives every open card its fold chevron
+    assert "(done || S.view === 'list') && !inList ? `<button class=\"qfold\"" in s
+    # 4: an evidence jump leaves Back to Q N
+    assert "backPill(el, ds.evq)" in s and "if (ds.back)" in s
+    # 5: a card inside its evidence section shows only the blocks above its own spot
+    assert "spot = el && el.tagName === 'SECTION' && spotOf(el, q)" in s
+
+
 def test_mask_covers_company_and_keeps_images():
     assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"

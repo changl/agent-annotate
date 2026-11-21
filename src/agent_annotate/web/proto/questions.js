@@ -129,6 +129,8 @@
   const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
+  // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
+  const editText = n => { const e = S.note || ctx.prefs.get('q:newnote', null); return e && e.edit === n.id && e.text != null ? e.text : n.text; };
   const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
   const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
 
@@ -195,7 +197,8 @@
     }
     const done = isDone(q), rp = d.replyOpen || (d.reply || '').trim();
     const acts = `${done ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${done ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
-    const title = done && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="Fold this card">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
+    // Cards only: every open card folds to its line by its chevron, a waiting one too (the mock's qline, audit8 #03)
+    const title = (done || S.view === 'list') && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="${S.view === 'list' ? 'Fold this card back to its line' : 'Fold this card'}">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
     const head = `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;
     const cx = q.context ? `<div class="qctx p-primary">${q.context.split('\n').map(p => `<p>${beadText(esc(p))}</p>`).join('')}</div>` : '';
     const th = q.replies.filter(r => !/^(☑ Selected|💬 Answer in words|↻|✓|✗|↺)/.test(r.text)), tOpen = S.open.has('th' + q.id);
@@ -318,7 +321,7 @@
   const KIND = t => t.quote ? `on “${esc(cut(t.quote, 50))}”` : t.tag === 'img' ? 'at this spot' : t.tag === 'tr' ? 'on this row' : /^h\d$/.test(t.tag || '') ? 'on this heading' : 'on this line';
   function noteBox(n, no) {
     const t = n.target || {}, what = KIND(t);
-    if (S.note && S.note.edit === n.id) return `<div class="qnote" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
+    if (S.note && S.note.edit === n.id) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
     const acts = n.sent ? ib('edit', 'Correct it; the fix goes with your next Send', `data-nfix="${n.id}"`) + ib('copy', 'Copy the note text', `data-ncopy="${n.id}"`)
       : ib('edit', 'Edit this note', `data-nedit="${n.id}"`) + ib('undo', 'Undo: remove this note', `data-ndel="${n.id}"`) + ib('copy', 'Copy the note text', `data-ncopy="${n.id}"`) + ib('link', 'Copy a link to this note', `data-nlink="${n.id}"`);
     return `<div class="qnote${n.sent ? ' sent' : ''}" id="n-${n.id}" data-note="${n.id}">${mk(no, n.sent)}<b>Note ${no} ${what}:</b> ${esc(n.text)} <span class="${n.sent ? 'mut' : 'saved'}">· ${n.sent ? 'sent' : 'goes with Send'}</span><span class="nacts">${acts}</span></div>`;
@@ -473,7 +476,7 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q(), mine = myNotes(q);
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]); });
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
@@ -563,16 +566,32 @@
     if (el.tagName === 'TR') { const t = el.closest('table'); return `<table>${t && t.tHead ? t.tHead.outerHTML : ''}<tbody>${el.outerHTML}</tbody></table>`; }
     return el.outerHTML;
   }
+  // a card placed inside its evidence section: the blocks just above its own spot, back to its heading or the cards before,
+  // not the whole shared section (the mock's evx, audit8 #05); null when the card has no place in the section
+  function spotOf(sec, q) {
+    const ph = sec.querySelector(`.card[data-anchor-id="${CSS.escape(q.anchor || '')}"], .cards > #q-${CSS.escape(q.id)}`);
+    if (!ph) return null;
+    const out = [];
+    for (let s = (ph.closest('.cards') || ph).previousElementSibling; s && out.length < 5; s = s.previousElementSibling) {
+      if (s.matches('.cards,.qcard') && !out.length) continue;  // cards in a row share the lines above them
+      if (s.matches('.cards,.qcard,section,details,template,h2')) break;
+      if (s.matches('.qnote,.qsecf,.qsecm,.qtiles,.qdoch')) continue;
+      out.unshift(s);
+      if (/^H[3-6]$/.test(s.tagName)) break;
+    }
+    return out.length ? out.map(x => x.outerHTML).join('') : null;
+  }
   function evidence(q) {
     if (!DOC || !q.evidence.length) return '';
-    const els = [];
+    const els = [], spots = [];
     for (const ev of q.evidence) {
-      const el = DOC.querySelector(`[data-anchor-id="${CSS.escape(ev.anchor)}"]`);
-      if (el && !els.some(x => x.contains(el))) els.push(el);
+      const el = DOC.querySelector(`[data-anchor-id="${CSS.escape(ev.anchor)}"]`), spot = el && el.tagName === 'SECTION' && spotOf(el, q);
+      if (spot) { if (!spots.includes(spot)) spots.push(spot); }
+      else if (el && !els.some(x => x.contains(el))) els.push(el);
     }
-    if (!els.length) return '';
+    if (!els.length && !spots.length) return '';
     const ev = q.evidence[0];
-    const box = document.createElement('div'); box.innerHTML = els.map(evHtml).join('');
+    const box = document.createElement('div'); box.innerHTML = spots.join('') + els.map(evHtml).join('');
     box.querySelectorAll('.qcard,.qnote,.qsecf,.qsecm,.qtiles').forEach(x => x.remove());  // the document's own text only, not this tab's additions
     return `<div class="qev"><div class="small mut">${ic('place')} Its evidence in the document: <button class="lk small" data-indoc="${q.id}">${esc(cut(ev.label || 'open in the document', 50))}</button></div><div class="aa qevb">${box.innerHTML}</div></div>`;
   }
@@ -613,6 +632,7 @@
   }
   async function delNote(id, quiet) {
     const n = D.notes.find(x => x.id === id);
+    if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE');
     await refresh();
     if (!quiet && n) ctx.toast('Note removed', {undo: async () => { await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target}); refresh(); }});
@@ -676,6 +696,8 @@
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
       const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
       if (tn) { await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}); S.note = null; ctx.prefs.set('q:newnote', null); }
+      const ed = S.note || ctx.prefs.get('q:newnote', null), en = ed && ed.edit && D.notes.find(x => x.id === ed.edit);  // a saved note open in its editor goes with its new words
+      if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT'); S.note = null; ctx.prefs.set('q:newnote', null); }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
       for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
@@ -730,6 +752,9 @@
     if (k.startsWith('ab:')) return goAB(k.slice(3));
     const nn = k === 'nn:' && typingNote();  // the note still being typed: its open editor (audit7 #03)
     if (nn) S.note = nn;
+    // one typed in a card's evidence in Cards only: the filter that lists the card, the card open (audit8 #02)
+    const nq = nn && nn.inq && qOf(nn.inq);
+    if (nq) { S.view = 'list'; ctx.prefs.set('q:view', 'list'); reveal(nq); }
     if (k.startsWith('n:') || nn) {
       // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
       const n = nn || D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
@@ -814,7 +839,8 @@
     if (ds.task) return peek(t);
     if (ds.copytext) return copy(ds.copytext, 'Command');
     if (ds.plan) return ctx.go('reference', ds.plan);
-    if (ds.ev) { const el = root.querySelector(`[data-anchor-id="${CSS.escape(ds.ev)}"]:not(.qcard)`); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2000); } return; }
+    if (ds.ev) { const el = root.querySelector(`[data-anchor-id="${CSS.escape(ds.ev)}"]:not(.qcard)`); if (el) { const p = backPill(el, ds.evq); (el.tagName === 'SECTION' && p ? p : el).scrollIntoView({block: el.tagName === 'SECTION' ? 'start' : 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2000); } return; }
+    if (ds.back) { root.querySelectorAll('.qbackrow').forEach(x => x.remove()); const c = document.getElementById('q-' + ds.back); if (c) { c.scrollIntoView({block: 'start', behavior: 'smooth'}); c.classList.add('qlit'); setTimeout(() => c.classList.remove('qlit'), 2000); } return; }
     if (ds.indoc) { S.open.add(ds.indoc); return jumpTo(ds.indoc, 'doc'); }
     if (ds.zoom) { const a = t.closest('.qzm').nextElementSibling, src = a && a.dataset.zfull; if (!src) return; const per = ctx.prefs.get('q:zoomPer', {}); per[src] = +ds.zoom; ctx.prefs.set('q:zoomPer', per); const img = t.closest('figure') && t.closest('figure').querySelector('img'); S.zoom = {src, cap: img ? img.alt : '', img: img && img.dataset.img, anchor: (t.closest('[data-anchor-id]') || {}).dataset?.anchorId, z: +ds.zoom}; return draw(true); }
     if (ds.zoomto) { S.zoom.z = +ds.zoomto; const per = ctx.prefs.get('q:zoomPer', {}); per[S.zoom.src] = +ds.zoomto; ctx.prefs.set('q:zoomPer', per); return draw(true); }
@@ -858,6 +884,14 @@
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
     return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});
   }
+  // an evidence jump leaves "Back to Q N" just above the evidence, one at a time, as today's page does (catalog 32, audit8 #04)
+  function backPill(el, qid) {
+    const q = qOf(qid); if (!q) return;
+    root.querySelectorAll('.qbackrow').forEach(x => x.remove());
+    const at = el.tagName === 'TR' ? el.closest('.wrap') || el.closest('table') : /^(TD|TH|LI)$/.test(el.tagName) ? el.closest('table,ul,ol') || el : el;
+    at.insertAdjacentHTML('beforebegin', `<div class="qbackrow"><button class="qback" data-back="${esc(q.id)}" title="Return to the question card that cited this">${ic('undo')} Back to Q ${esc(q.n)}</button></div>`);
+    return at.previousElementSibling;
+  }
   // a second note never erases the first: the unfinished one is saved on its own line before the next opens, as the mock keeps it (r12 #02)
   async function openNote(next, scroll) {
     const was = S.note, ta = was && root.querySelector(was.edit ? `[data-note="${CSS.escape(was.edit)}"] textarea` : '[data-newnote] textarea');
@@ -867,12 +901,12 @@
     if (was && was.edit && text.trim() && text !== (D.notes.find(x => x.id === was.edit) || {}).text) await saveNote(was.edit, text);
     else if (was && !was.edit && text.trim()) await addNote(text);
     S.note = next;
-    if (!next.edit) ctx.prefs.set('q:newnote', next);
+    ctx.prefs.set('q:newnote', next);
     await draw(true);
     focus();
   }
   async function saveNote(id, text) {
-    S.note = null;
+    S.note = null; ctx.prefs.set('q:newnote', null);
     if (!text.trim()) return delNote(id);
     const was = (D.notes.find(x => x.id === id) || {}).text;
     await call(`api/comments/${encodeURIComponent(id)}`, {text}, 'PUT');
@@ -885,6 +919,7 @@
     else if (ds.replytext) { const was = hasReply(qOf(ds.replytext)); setDraft(ds.replytext, {reply: t.value, replyOpen: true}); if (was !== hasReply(qOf(ds.replytext))) updateBar(); }
     else if (t.hasAttribute('data-general')) { const was = !!gen().trim(); ctx.prefs.set('q:general', t.value); if (was !== !!t.value.trim()) S.armed ? sheetCount() : updateBar(); }
     else if (t.hasAttribute('data-notetext') && t.closest('[data-newnote]') && S.note) { const was = !!typingNote(); S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); if (was !== !!typingNote()) { ctx.refreshChips(); updateBar(); } }  // an unsaved note survives a reload (#08) and counts in Send (audit7 #03)
+    else if (t.hasAttribute('data-notetext') && S.note && S.note.edit && t.closest('.qnote').dataset.note === S.note.edit) { S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an edit to a saved note: kept like a new one (audit8 #01)
   }
   // typing General feedback inside the Send sheet: heading and buttons follow in place, the cursor stays (r12 fix6, questions 02)
   function sheetCount() {
