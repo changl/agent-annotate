@@ -17,6 +17,7 @@ def test_links(tmp_path, monkeypatch):
     monkeypatch.setattr(links, "documents", lambda: {"files": [], "groups": {}})
     monkeypatch.setattr(links, "USAGE_AUDIT", tmp_path / "missing.html")
     monkeypatch.setattr(links, "LOAD_TEST", tmp_path / "missing")
+    monkeypatch.setattr(links, "MEETING", tmp_path / "missing-meeting")
     monkeypatch.setattr(links, "ROADMAP", tmp_path / "05-roadmap.md")
     (tmp_path / "05-roadmap.md").write_text("# Roadmap\n")
 
@@ -59,6 +60,7 @@ def test_kept_documents_mask_and_chart(tmp_path, monkeypatch):
     (lt / "report.md").write_text("intro\n- **API p95** 2000 ms, over the gate\n")
     monkeypatch.setattr(links, "USAGE_AUDIT", ua)
     monkeypatch.setattr(links, "LOAD_TEST", lt)
+    monkeypatch.setattr(links, "MEETING", tmp_path / "missing-meeting")
     ua_doc, lt_doc = links.kept()
     assert ua_doc["blocks"][0] == ["h", "Usage audit"] and ["li", "one"] in ua_doc["blocks"]
     assert "gmail" not in json.dumps(ua_doc) and "x()" not in json.dumps(ua_doc)
@@ -130,5 +132,5 @@ def test_kept_document_lines_take_notes():
     """Audit 3 finding 4: a paragraph of a kept document (the Usage audit) opens the note composer, like a Markdown file's."""
     s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()
     assert 'data-doc="doc:kept-${esc(d.id)}~p"' in s  # the click handler keys a line note as data-doc + '~' + line
-    assert "blocksHtml(d.blocks || [], esc, i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`))" in s
+    assert "const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`)" in s and "blocksHtml(d.blocks || [], ctx.esc, line)" in s
     assert "/^\\d+$/.test(i || '')" in s  # only ~<n> names a chart bar; a line note never indexes the chart

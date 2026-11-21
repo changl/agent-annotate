@@ -44,6 +44,6 @@ def test_history_lists_every_published_version():  # #4: a version with no Send 
     assert "Object.keys(D.versions)" in s and "no answers sent" in s
 
 
-def test_picture_sizes_are_a_share_of_the_column():  # #5: 25% on a phone is a quarter of the column
+def test_picture_sizes_are_a_share_of_the_screen():  # #5, then the fifth check: as in the mock, a size opens the viewer at that share of the screen width
     s = js("history.js")
-    assert "img.style.width = pct ? `${pct}%` : ''" in s and "naturalWidth || img.width) * pct" not in s
+    assert 'class="pp-zpic" style="width:${z}vw"' in s and "naturalWidth || img.width) * pct" not in s

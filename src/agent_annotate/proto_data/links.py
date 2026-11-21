@@ -25,6 +25,25 @@ MASK = "member@example.com"
 USAGE_AUDIT = FLD_DIR / "planning/operations/usage-audit-2026-11-06/page/current.html"
 LOAD_TEST = FLD_DIR / "planning/operations/orchestration/run_d169910aea33/reports/go-live-backend-2"
 ROADMAP = FLD_DIR / "planning/05-roadmap.md"
+# the admin team meeting: kept under Documents with its revisions, as in the mock, not listed as a page (r12 reference 7)
+MEETING = FLD_SOURCE.parent / "fld-admin-meeting"
+
+
+def meeting(folder: Path = MEETING) -> dict | None:
+    """The meeting's published versions as revisions, oldest first, read only; None when its folder is missing."""
+    revs = []
+    for h in _json(folder / "current.meta.json").get("history") or []:
+        v = str((h or {}).get("version") or "") if isinstance(h, dict) else ""
+        try:
+            b = _Blocks()
+            b.feed((folder / "versions" / f"{v}.html").read_text(errors="ignore"))
+        except OSError:
+            continue
+        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b.out[:800]})  # whole versions, so the added and removed counts are true
+    if not revs:
+        return None
+    return {"id": "admin-meeting", "t": "Admin team meeting", "sub": f"the meeting of {datetime.fromisoformat(revs[-1]['ts']).strftime('%-d %b')} · {len(revs)} revisions",
+            "revs": revs, "blocks": revs[-1]["blocks"]}
 
 
 class _Blocks(HTMLParser):
@@ -60,8 +79,9 @@ class _Blocks(HTMLParser):
 
 
 def kept() -> list[dict]:
-    """The usage audit's text and the load test's request times; each is left out when its file is missing."""
-    out = []
+    """The admin meeting, the usage audit's text and the load test's request times; each is left out when its file is missing."""
+    m = meeting(MEETING)
+    out = [m] if m else []
     try:
         b = _Blocks()
         b.feed(USAGE_AUDIT.read_text(errors="ignore"))
@@ -145,7 +165,7 @@ def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: b
         for slug, rec in (_json(rec_file).get("slugs") or {}).items():
             folder = Path(str((rec or {}).get("slug_dir") or ""))
             url = (rec or {}).get("public_url") or (rec or {}).get("url")
-            if not url or not folder.is_relative_to(root) or slug in pages:
+            if not url or not folder.is_relative_to(root) or slug in pages or (fld and folder == MEETING):
                 continue
             name = _plain(_json(folder / "current.meta.json").get("name") or slug, 80)
             pages[slug] = _page(folder, name, url, _why(name, folder, source))

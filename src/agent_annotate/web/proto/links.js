@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const P = window.Proto = window.Proto || {};
-  const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false};
+  const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false};
   let mine = [];  // notes written here this visit, so Undo can take them back
   const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
@@ -30,9 +30,38 @@
     return out;
   }
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
-  const blocksHtml = (bs, esc, line) => bs.map(([k, t], i) => { const a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '';
-    return (k === 'h' ? `<h4${a}>${esc(t)}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${esc(t)}</p>` : k === 'pre' ? `<pre${a}><code>${esc(t)}</code></pre>`
-      : k === 'tbl' ? `<div class="l-tw"${a}><table>${t.map((r, ri) => `<tr>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>` : `<p${a}>${esc(t)}</p>`) + after; }).join('');
+  // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
+  const blockHtml = ([k, t], i, esc, line, tag = '', ins = false) => { const a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
+    return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? `<pre${a}><code>${esc(t)}</code></pre>`
+      : k === 'tbl' ? `<div class="l-tw"${a}><table>${t.map((r, ri) => `<tr>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>` : `<p${a}>${x}${tag}</p>`) + after; };
+  const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
+  // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood
+  // shortcut: no "changed" pairing or word-by-word marks as Reference has; share Reference's alignBlocks when the prototype graduates
+  function align(A, B) {
+    const n = A.length, m = B.length, L = Array.from({length: n + 1}, () => new Array(m + 1).fill(0)), out = [];
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i][1] === B[j][1] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    for (let i = 0, j = 0; i < n || j < m;) {
+      if (i < n && j < m && A[i][1] === B[j][1]) { out.push({k: 'same', b: j++}); i++; }
+      else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) out.push({k: 'add', b: j++});
+      else out.push({k: 'del', a: i++});
+    }
+    return out;
+  }
+  // a kept document with revisions (the admin meeting), as the mock's reader: a revision bar with Show marks, the text, the revision list beside it
+  function revDoc(ctx, D, d, line) {
+    const {esc} = ctx, R = d.revs, n = R.length, last = n - 1, cur = S.rv[d.id] != null ? S.rv[d.id] : last, B = R[cur].blocks;
+    const al = n > 1 ? align(R[last - 1].blocks, R[last].blocks) : [], nk = k => al.filter(x => x.k === k).length, csum = n > 1 ? `${nk('add')} added · ${nk('del')} removed` : '';
+    const tag = w => ` <span class="l-tag">${w} in revision ${n}</span>`, mk = S.marks && cur === last && n > 1;
+    const doc = cur !== last ? blocksHtml(B, esc)  // an earlier revision reads as it was; notes go on the newest
+      : mk ? al.map(x => x.k === 'same' ? blockHtml(B[x.b], x.b, esc, line) : x.k === 'add' ? blockHtml(B[x.b], x.b, esc, line, tag('added'), true)
+        : `<p class="small"><del>${esc(String(R[last - 1].blocks[x.a][1]))}</del>${tag('removed')}</p>`).join('')
+      : blocksHtml(B, esc, line);
+    const bar = n > 1 ? `<div class="l-revbar"><b>Revision ${cur + 1} of ${n}</b>${cur === last ? `<span class="small">${mk ? `${csum}, against revision ${n - 1}: <del>struck</del> paragraphs left, <ins>marked</ins> ones came in` : 'marks hidden'}</span><button class="lk small" data-marks>${mk ? 'Hide marks' : 'Show marks'}</button>`
+      : `<span class="small">an earlier revision, as it read</span><button class="lk small" data-rv="${esc(d.id)}~${last}">Back to the newest</button>`}</div>` : '';
+    const list = n > 1 ? `<nav class="l-vlist" aria-label="Revisions"><h5>${pl(n, 'revision', 'revisions')}</h5>${R.map((r, i) => [r, i]).reverse().map(([r, i]) =>
+      `<button class="l-vrow" data-rv="${esc(d.id)}~${i}" aria-current="${i === cur}"><b>Revision ${i + 1} · ${esc(dm(r.ts))}${i === last ? ' · newest' : ''}</b><span class="small mut">${i === last ? csum : ''}</span></button>`).join('')}</nav>` : '';
+    return `${bar}<div class="l-r8v"><div class="l-rtext">${doc}</div>${list}</div>`;
+  }
   const pl = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
   const ROLE = {view: 'Can view', send: 'Can answer and send'}, ROLEIC = {view: 'eye', send: 'edit'};
   const ROLEHINT = {view: 'Reads the page, its questions, Reference and History', send: 'Also answers, writes notes and presses Send'};
@@ -119,11 +148,13 @@
       <p class="small mut">The line marks the ${c.gate.toLocaleString()} ms gate · ${esc(c.axis)}</p></figure>
       ${c.pts.map((_, i) => noteBox(ctx, D, `doc:kept-${d.id}~${i}`)).join('')}`;
   }
+  const keptBody = (ctx, D, d) => { const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`);
+    return d.revs ? revDoc(ctx, D, d, line) : blocksHtml(d.blocks || [], ctx.esc, line); };
   function docsHtml(ctx, D, copyBtn) {
     const {esc, icon} = ctx, kept = D.kept || [], F = ((D.docs || {}).files || []).map((f, i) => ({...f, i})), groups = (D.docs || {}).groups || {};
     const keptRows = kept.map(d => `<div class="l-line"><span class="l-grow"><button class="lk l-left" data-kept="${esc(d.id)}" aria-expanded="${S.kept === d.id}">${icon('doc')} ${esc(d.t)}</button><span class="small mut l-sub">${esc(d.sub)}</span></span>${copyBtn(`#links/kept-${encodeURIComponent(d.id)}`, d.t)}</div>
       ${S.kept === d.id ? `<div class="l-doc" data-doc="doc:kept-${esc(d.id)}~p" data-docname="${esc(d.t)}"><div class="l-dbar"><b>${esc(d.t)}</b><span class="small mut">read-only · select words to write a note on them</span><span class="spacer"></span><button class="btn sm" data-kept="${esc(d.id)}">${icon('x')} Close</button></div>
-        ${d.chart ? chartHtml(ctx, D, d) : ''}${blocksHtml(d.blocks || [], esc, i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`))}${noteBox(ctx, D, `doc:kept-${d.id}`)}
+        ${d.chart ? chartHtml(ctx, D, d) : ''}${keptBody(ctx, D, d)}${noteBox(ctx, D, `doc:kept-${d.id}`)}
         <div class="l-nacts"><button class="btn sm" data-bnote="doc:kept-${esc(d.id)}">${icon('note')} Write a note</button><span class="small mut">Click any line to write a note on it</span></div></div>` : ''}`).join('');
     const q = S.dq.toLowerCase(), hit = f => !q || `${f.n} ${f.sub} ${groups[f.g] || ''}`.toLowerCase().includes(q);
     const sh = F.filter(f => hit(f) && (!S.dk || f.k === S.dk)), kinds = Object.keys(DK).filter(k => F.some(f => f.k === k));
@@ -175,6 +206,8 @@
     else if (b.hasAttribute('data-people')) ctx.go('links', 'people');
     else if (b.hasAttribute('data-goq')) ctx.go('questions');
     else if (b.dataset.kept) { S.kept = S.kept === b.dataset.kept ? '' : b.dataset.kept; S.note = ''; draw(w, ctx, D); }
+    else if (b.dataset.rv) { const [id, i] = b.dataset.rv.split('~'); S.rv[id] = +i; draw(w, ctx, D); }
+    else if (b.hasAttribute('data-marks')) { S.marks = !S.marks; draw(w, ctx, D); }
     else if (b.dataset.dk !== undefined) { S.dk = b.dataset.dk; draw(w, ctx, D); }
     else if (b.dataset.fold) { S.open.has(b.dataset.fold) ? S.open.delete(b.dataset.fold) : S.open.add(b.dataset.fold); draw(w, ctx, D); }
     else if (b.dataset.dopen) {

@@ -397,7 +397,8 @@
   P.bar({render: bar});
 
   // status changes and task comments "go with your next Send": the one Send lists them under Tasks (r12 fix6, running 1)
-  const redraw = () => { if (EL && EL.isConnected && EL.classList.contains('tab-' + tabNow)) draw(); };
+  // the side panel's host (Questions) has no tab class: redraw it too, so Undo shows the comment in the open panel
+  const redraw = () => { if (EL && EL.isConnected && (tabNow === 'side' || EL.classList.contains('tab-' + tabNow))) draw(); };
   P.queue && P.queue({
     items: ctx => {
       if (!D) { ctx.data('running').then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {}); return []; }

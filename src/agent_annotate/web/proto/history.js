@@ -47,17 +47,19 @@
       // Undo sits beside the done line, as in the mock (#107); nothing is sent in the prototype
       const tell = box.querySelector('[data-tell]'), untell = box.querySelector('[data-untell]');
       const again = () => { if (box.isConnected) fail(why, retried); };
-      if (tell) tell.onclick = () => { TELL.set(o.src, {text: (o.failTitle || 'This version could not load.').replace(/\.$/, '') + '; please republish it.', go: location.hash.slice(1), again}); again(); };
+      LIVE.set(o.src, again);  // the failure on screen now, so Send's Remove and its Undo redraw this one, not a closed one
+      if (tell) tell.onclick = () => { TELL.set(o.src, {text: (o.failTitle || 'This version could not load.').replace(/\.$/, '') + '; please republish it.', go: location.hash.slice(1)}); again(); };
       if (untell) untell.onclick = () => { TELL.delete(o.src); again(); };
     }
     load(false);
   };
   // "Tell the agent" about a page that could not load goes with the one Send, under Replies to the agent (r12 fix6, running 2)
-  const TELL = new Map();
+  const TELL = new Map(), LIVE = new Map();
+  const again = src => { const f = LIVE.get(src); if (f) f(); };
   if (P.queue) P.queue({
     items: ctx => [...TELL].map(([src, t]) => ({key: 'tell:' + src, group: 'Replies to the agent', html: `About the page that could not load: “${ctx.esc(t.text)}”`,
-      go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); t.again(); return () => { TELL.set(src, t); t.again(); }; }})),
-    sent: () => { const l = [...TELL.values()]; TELL.clear(); l.forEach(t => t.again()); },
+      go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); again(src); return () => { TELL.set(src, t); again(src); }; }})),
+    sent: () => { const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); },
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
@@ -65,7 +67,11 @@
     let doc;
     try { doc = f.contentDocument; } catch { return; }
     if (!doc) return;
-    doc.documentElement.dataset.theme = document.documentElement.dataset.theme;
+    const theme = () => { doc.documentElement.dataset.theme = document.documentElement.dataset.theme; };
+    theme();
+    // follows a theme change while it is open; stops once the frame is closed
+    const mo = new MutationObserver(() => f.isConnected ? theme() : mo.disconnect());
+    mo.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
     P.picSizes(doc, ctx);
     const size = () => { f.style.height = Math.max(200, doc.documentElement.scrollHeight) + 'px'; };
     size();
@@ -76,8 +82,12 @@
     const hs = [...doc.querySelectorAll('h2')].filter(h => h.textContent.trim());
     secs.innerHTML = hs.map((h, i) => `<button class="lk h-sec" data-sec="${i}">${ctx.esc(h.textContent.trim())}</button>`).join('') || '<p class="small mut">No sections in this version.</p>';
     secs.onclick = e => { const b = e.target.closest('[data-sec]'); if (!b) return;
-      const top = document.getElementById('p-top');
-      window.scrollTo({top: scrollY + f.getBoundingClientRect().top + hs[+b.dataset.sec].getBoundingClientRect().top - (top ? top.offsetHeight : 0) - 8, behavior: 'smooth'}); };
+      const h = hs[+b.dataset.sec], sec = h.closest('section') || h;
+      // a folded section (unchanged, or all answered) opens first, through the page's own fold button
+      if (!h.getClientRects().length) { const t = sec.querySelector(':scope > .annotate-sfold-bar > .annotate-unchanged-toggle[aria-expanded=false], :scope > .annotate-unchanged-bar > .annotate-unchanged-toggle[aria-expanded=false]'); if (t) t.click(); }
+      requestAnimationFrame(() => { const el = h.getClientRects().length ? h : sec, top = document.getElementById('p-top');
+        size();
+        window.scrollTo({top: scrollY + f.getBoundingClientRect().top + el.getBoundingClientRect().top - (top ? top.offsetHeight : 0) - 8, behavior: 'smooth'}); }); };
   }
 
   /* ---------- each picture remembers its own size (#118): 25 / 50 / 75 / 100 %, kept per picture ---------- */
@@ -90,33 +100,45 @@
       st.textContent = '.pp-size{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:4px 0 10px;font:12px system-ui,sans-serif;color:#666}'
         + '.pp-size button{border:1px solid #bbb;background:transparent;color:inherit;border-radius:6px;padding:1px 7px;cursor:pointer;font:inherit}'
         + '.pp-size button[aria-pressed=true]{background:#222;color:#fff;border-color:#222}'
-        + '[data-theme=dark] .pp-size{color:#aaa}[data-theme=dark] .pp-size button[aria-pressed=true]{background:#eee;color:#111}';
+        + '[data-theme=dark] .pp-size{color:#aaa}[data-theme=dark] .pp-size button[aria-pressed=true]{background:#eee;color:#111}'
+        // one set of controls: the page's own zoom buttons and Full size link open inside the frame, which is as tall as the page,
+        // so its viewer would sit far above the screen; ours open this page's viewer instead (audit5 running 2). Its IMG id stays.
+        + 'img.pp-sized~.aa-img-bar .aa-img-zoom,figure:has(img.pp-sized)>a.aa-full{display:none!important}';
       doc.head.appendChild(st);
     }
-    const all = ctx.prefs.get('picsize', {});
+    // as in the mock: the sizes open the full-size viewer at that share of the screen width and this picture keeps it;
+    // the picture on the page stays as published (#38, #118)
+    const all = ctx.prefs.get('picsize', {}), def = () => ctx.prefs.get('zoomDef', 75);
     const keyOf = img => (img.getAttribute('src') || '').split('?')[0];
+    const zOf = img => all[keyOf(img)] || def();
+    const remember = (img, z) => { if (z === def()) delete all[keyOf(img)]; else all[keyOf(img)] = z; ctx.prefs.set('picsize', all); };
+    const pageFull = img => { const f = img.closest('figure'); return f && f.querySelector(':scope > a.aa-full'); };
+    // the original, not the page's preview: the picture's data-full, else the page's own Full size link
+    const orig = img => { const a = pageFull(img), u = img.dataset.full || (a && a.getAttribute('href')); return u ? new URL(u, doc.baseURI).href : img.currentSrc || img.src; };
     const apply = (img, bar) => {
-      const pct = all[keyOf(img)];
-      img.style.width = pct ? `${pct}%` : '';  // a share of the column, as in the mock: 25% on a 390 px phone is about 98 px (#38)
-      img.style.maxWidth = '100%'; img.style.height = 'auto';
-      bar.querySelectorAll('[data-pct]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.pct === pct)));
-      bar.querySelector('[data-def]').hidden = !pct;
+      const z = zOf(img), own = keyOf(img) in all;
+      bar.querySelectorAll('[data-pct]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.pct === z)));
+      bar.querySelector('[data-full]').dataset.z = z;
+      const d = bar.querySelector('[data-defs]'); d.hidden = !own;
+      if (own) d.firstChild.textContent = `this picture ${z}%, others ${def()}% `;
     };
     const add = img => {
       if (img.dataset.ppSized || !keyOf(img)) return;
-      if ((img.naturalWidth || 0) < 160) return;  // icons and thumbnails keep their size
-      img.dataset.ppSized = '1';
+      if (Math.max(+img.getAttribute('width') || 0, img.naturalWidth || 0) < 160) return;  // icons and thumbnails keep their size; a narrow preview of a big picture does not
+      img.dataset.ppSized = '1'; img.classList.add('pp-sized');
+      img.style.width = '';  // a size kept inline by an earlier prototype
       const bar = doc.createElement('div');
       bar.className = 'pp-size';
-      bar.innerHTML = `<span>This picture:</span>${SIZES.map(s => `<button type="button" data-pct="${s}">${s}%</button>`).join('')}<button type="button" data-def>As published</button><button type="button" data-full title="Open it full size">⤢ Full size</button>`;
+      bar.innerHTML = `<span>Open full size at</span>${SIZES.map(s => `<button type="button" data-pct="${s}" aria-label="Open at ${s}%">${s}%</button>`).join('')}<button type="button" data-full title="Open the original full size">⤢ Full size</button><span data-defs hidden>x<button type="button" data-def>Use the default</button></span>`;
       bar.onclick = e => {
         const b = e.target.closest('button'); if (!b) return;
-        if (b.hasAttribute('data-full')) return P.zoom(img.currentSrc || img.src, img.alt, all[keyOf(img)] || 100, ctx);
-        if (b.dataset.pct) all[keyOf(img)] = +b.dataset.pct; else delete all[keyOf(img)];
-        ctx.prefs.set('picsize', all);
-        apply(img, bar);
+        if (b.hasAttribute('data-def')) { delete all[keyOf(img)]; ctx.prefs.set('picsize', all); return apply(img, bar); }
+        if (b.dataset.pct) { remember(img, +b.dataset.pct); apply(img, bar); }
+        P.zoom(orig(img), img.alt, zOf(img), ctx, z => { remember(img, z); apply(img, bar); });
       };
-      (img.closest('a, .qpinwrap') || img).after(bar);  // outside a note's pin box, so pins keep their spot
+      const pf = pageFull(img);
+      // after the page's own bar and Full size link, which it stands in for; outside a note's pin box, so pins keep their spot
+      (pf || img.closest('a, .qpinwrap') || img).after(bar);
       apply(img, bar);
     };
     root.querySelectorAll('img').forEach(img => {
@@ -126,7 +148,7 @@
   };
 
   /* ---------- full-size viewer (#39): the picture at 25-100% of the screen width, Close or Esc ---------- */
-  P.zoom = function (src, cap, z, ctx) {
+  P.zoom = function (src, cap, z, ctx, onSize) {
     const {esc} = ctx;
     let dlg = document.getElementById('pp-zoom');
     if (dlg) dlg.remove();
@@ -141,7 +163,7 @@
         <div class="pp-zpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || '')}"></div>`;
       dlg.querySelector('[data-zclose]').focus();
     };
-    dlg.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.z) { z = +b.dataset.z; draw(); } else if (b.hasAttribute('data-zclose')) close(); };
+    dlg.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.z) { z = +b.dataset.z; draw(); if (onSize) onSize(z); } else if (b.hasAttribute('data-zclose')) close(); };
     document.addEventListener('keydown', key, true);
     document.body.appendChild(dlg);
     draw();
