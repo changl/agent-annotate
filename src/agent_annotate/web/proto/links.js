@@ -70,6 +70,7 @@
   const abs = u => new URL(u, location.href).href;
 
   async function render(el, ctx, anchor) {
+    S.move = '';  // leaving the tab cancels Move (r12 audit17 reference 4)
     let D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
@@ -136,7 +137,7 @@
     }
     if (S.scroll) { S.scroll = false; const h = w.querySelector('.l-hl'); if (h) h.scrollIntoView({block: 'center'}); }
     // View resolution on this tab: its destination line or bar, outlined by the kit and scrolled to (r12 audit16 frame 2)
-    const m = S.res && /^(.*)~(\d+)$/.exec(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
+    const m = S.res && /^(.*?)~(\d+(?:~r\d+)?)$/.exec(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
     if (rs) { P.notes.lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
   }
   // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed

@@ -845,6 +845,9 @@
   function onKey(e) {
     if (e.key === 'Escape' && (S.menu || S.sheet)) { S.menu = ''; S.sheet = ''; drawAll(); return; }
     if (e.key === 'Escape') {  // an area's own dialog in the page that does not close itself: its dismiss button
+      // a Move still armed, whatever has focus: its pressed button lets it go, through the tab's own handler (r12 audit17 reference 4)
+      const mv = !onQuestions() && document.querySelector('#p-main [data-nmove][aria-pressed="true"]');
+      if (mv) { e.preventDefault(); mv.click(); return; }
       const x = !onQuestions() && !document.body.classList.contains('qsheet-open') && document.querySelector('#p-main [role=dialog] :is([data-esc],[data-sendclose])');
       if (x) { e.preventDefault(); x.click(); }
       return;

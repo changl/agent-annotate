@@ -283,7 +283,7 @@ def test_sent_reopen_keeps_its_status_and_reason():
 def test_go_to_a_checklist_note_opens_the_checklist():
     """Audit5 finding 3: a checklist row's note (chk:N) opens the checklist and highlights the note."""
     s = (WEB / "reference.js").read_text()
-    assert "a.startsWith('chk:') && D && D.checklist ? D.checklist.plan" in s and "go: goRef(n.item || itemOf(n.a), n.id, n.a)" in s
+    assert "a.startsWith('chk:') ? (D && D.checklist ? D.checklist.plan" in s and "go: goRef(n.item || itemOf(n.a), n.id, n.a)" in s
     assert "S.hl === n.id ? ' rf-hl' : ''" in s
 
 
@@ -292,7 +292,7 @@ def test_go_to_reaches_a_folded_copy_line_and_an_older_revision():
     s = (WEB / "reference.js").read_text()
     assert "S.open.add(`cpall:${x.id}:${cpRank(x.copy[+m[3]][2])}`)" in s and "rank = cpRank" in s  # same fold key as the group's Show all
     assert "const i = p.revs.findIndex(r => r[0] === m[2]); if (i >= 0) S.rv[p.id] = i;" in s
-    assert "S.scroll = true; if (D) reach(a); else S.reach = a;" in s and "if (S.reach) { reach(S.reach); S.reach = ''; }" in s
+    assert "S.scroll = true; if (D) reach(a); else S.reach = a;" in s and "reach(S.reach); S.reach = '';" in s
     # a revision read after the jump still scrolls its highlighted note into view once drawn
     assert "S.scroll = !!(S.hl && !h && Object.keys(loading).some(k => !blocks[k]));" in s
 

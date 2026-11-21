@@ -44,11 +44,25 @@
     resolved: n => ['resolved_in_version', 'addressed_by_agent', 'user_confirmed'].includes(stOf(n)),
     // the one draft store for every tab's Re-open: id → the note's record (status, spot, words, tab), so Send lists it
     // from the record alone, before any tab's feed answers (r12 audit16 frame 1)
-    reo: c => c.prefs.get('draft:reopen', {}),
+    // an earlier build kept the status alone (id → status): it becomes a record as the store loads, so Send counts it at once,
+    // and learns its spot and words from the first feed that has the note (r12 audit17 frame 5)
+    reo(c) {
+      const m = c.prefs.get('draft:reopen', {}), old = Object.keys(m).filter(id => typeof m[id] === 'string');
+      if (!old.length) return m;
+      for (const id of old) m[id] = {st: m[id], a: '', tab: '', text: '', on: ''};
+      c.prefs.set('draft:reopen', m);
+      if (c.data) old.forEach(id => NK.find(c, id).then(() => c.refreshTop && c.refreshTop()));  // fill in the spot and words once a read answers
+      return m;
+    },
+    // a record without its spot: its note from whichever feed answers first, kept into the record
+    find: (c, id) => Promise.any(['questions', 'reference', 'links'].map(a => c.data(a).then(d => {
+      const n = ((d || {}).notes || []).find(x => x.id === id); if (!n) throw 0; return n; })))
+      .then(n => { const r = NK.reo(c)[id]; if (!r) return null; const x = {...NK.rec(n), st: r.st || stOf(n)}; NK.put(c, id, x); return x; }, () => null),
     isReo(c, n) {
-      if (!n.sent || n.closed) return false;
+      if (!n.sent) return false;
       const m = NK.reo(c);
-      if (typeof m[n.id] === 'string') { m[n.id] = {...NK.rec(n), st: m[n.id]}; c.prefs.set('draft:reopen', m); }  // a status saved before records
+      if (n.closed) { if (n.id in m) NK.put(c, n.id, null); return false; }  // a Close an earlier build left queued
+      if (m[n.id] && !m[n.id].a) NK.put(c, n.id, {...NK.rec(n), st: m[n.id].st || stOf(n)});
       return n.id in m;
     },
     tabOf: a => /^doc:/.test(a) ? 'links' : /^(ref|chk):/.test(a) ? 'reference' : /^chart:/.test(a) ? 'history' : 'questions',
@@ -72,14 +86,16 @@
     closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
-      const u = `api/comments/${encodeURIComponent(n.id)}`;
+      const u = `api/comments/${encodeURIComponent(n.id)}`, was = how === 'close' ? NK.reo(c)[n.id] : null;
       if (how === 'reopen' || how === 'unreopen') NK.setReo(c, n, how === 'reopen');
       else {
         try { await api(u + (how === 'close' ? '/archive' : '/restore'), {}); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
         n.closed = how === 'close';
+        if (was) NK.put(c, n.id, null);  // Close ends a pending Re-open: nothing goes with Send; its Undo brings it back (r12 audit17 frame 1)
       }
       await redraw(n.id);
-      const back = {close: 'restore', restore: 'close', reopen: 'unreopen', unreopen: 'reopen'}[how], undo = () => NK.set(c, n, back, api, redraw, true);
+      const back = {close: 'restore', restore: 'close', reopen: 'unreopen', unreopen: 'reopen'}[how],
+        undo = async () => { const r = await NK.set(c, n, back, api, redraw, true); if (r && was) { NK.put(c, n.id, was); await redraw(n.id); } return r; };
       if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], {undo});
       return undo;
     },
@@ -87,13 +103,15 @@
     async move(c, id, from, to, api, apply) {
       const put = async (p, again) => {
         await api(`api/comments/${encodeURIComponent(id)}`, {...p, reanchor: {strategy: 'manual-repin', confidence: 1.0, ts: new Date().toISOString()}}, 'PUT');
+        const r = NK.reo(c)[id];  // a re-opened note's Send row and Go to it follow it to its new spot
+        if (r) NK.put(c, id, {...NK.rec({anchor: p.anchor_id, label: p.anchor_label, target: p.target, text: r.text}), st: r.st});
         await apply(p);
         if (again) c.toast('Note moved', {undo: () => put(from, false)});
       };
       try { await put(to, true); } catch (e) { c.toast('Not moved: ' + e.message); await apply(null); }
     },
     // Send's row for a re-opened note: its number, what it is on and its words
-    row: (n, no, on) => `${mk(no)}Re-opened · ${on}: ${esc(cut(n.text, 140))}`,
+    row: (n, no, on) => `${mk(no)}Re-opened · ${on}${n.text ? ': ' + esc(cut(n.text, 140)) : ''}`,
     // every note at one marker, with Go to it on each and + Comment for another (today's pin popover, catalog 25)
     spot: (c, ns, kind, add) => `<div class="qspot" role="dialog" aria-label="Notes at this marker"><div class="qspoth"><b class="small">${pl(ns.length, 'note', 'notes')} ${kind}</b><span class="spacer"></span><button class="btn sm pri" ${add}>${ic('plus')} Comment</button><button class="ib sm" data-spotx title="Close this list" aria-label="Close this list" data-esc>${ic('x')}</button></div>
       <ul class="qhist">${ns.map(([n, no]) => `<li>${mk(no, n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : NK.isReo(c, n) ? 're-opened · goes with Send' : NK.resolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`,
@@ -108,8 +126,9 @@
   // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
-    html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : `On “${esc(cut(r.on || TABN[r.tab] || '', 50))}”`),
-    go: () => { const h = NK.hooks[r.tab]; if (h && h.go) h.go({id, ...r}); else c.go(r.tab); },
+    html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : r.on || r.tab ? `On “${esc(cut(r.on || TABN[r.tab], 50))}”` : 'A note the agent addressed'),
+    // a record not yet told its spot (an earlier build's) finds its note first
+    go: async () => { const x = r.a ? r : (await NK.find(c, id)) || r, h = NK.hooks[x.tab]; if (h && h.go) h.go({id, ...x}); else c.go(x.tab || 'questions'); },
     remove: () => { NK.put(c, id, null); NK.redo(r.tab); return () => { NK.put(c, id, r); NK.redo(r.tab); }; }}))});
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
   // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
@@ -1222,8 +1241,11 @@
     if (t.hasAttribute('data-spotx')) { S.spot = S.pin = null; return draw(true); }
     if (ds.spotadd) {
       const p = ds.spotpin && D.notes.find(n => n.id === ds.spotpin), f = p || D.notes.find(n => n.anchor === ds.spotadd) || {};
+      // in Cards only the editor opens in that card's copied evidence, where the marker was (r12 audit17 questions 1)
+      const card = S.view === 'list' && (t.closest('.qcard[data-q]') || (root.querySelector(`.qevb [data-anchor-id="${CSS.escape(ds.spotadd)}"]`) || t).closest('.qcard[data-q]'));
+      const inq = card ? card.dataset.q : undefined;
       S.spot = S.pin = null; S.zoom = null;  // a pin's + Comment writes at its point, in the document as a tap on the viewer does
-      return openNote({anchor: ds.spotadd, label: f.label || '', target: p ? {...p.target} : {schema: 1, tag: (f.target || {}).tag || 'p'}}, !!p);
+      return openNote({anchor: ds.spotadd, label: f.label || '', target: p ? {...p.target} : {schema: 1, tag: (f.target || {}).tag || 'p'}, inq}, !!p);
     }
     if (ds.spotgo) { S.spot = S.pin = null; S.zoom = null; return draw(true).then(() => litNote(ds.spotgo)); }
     if (ds.nclose) return noteState(ds.nclose, 'close');
@@ -1243,8 +1265,10 @@
     const img = e.target.closest('img');
     const anchorEl = e.target.closest('figure.qdgm') || e.target.closest('[data-anchor-id]');  // a diagram takes its note as a whole
     if (evb && (!anchorEl || !evb.contains(anchorEl))) return;
-    if (!anchorEl || anchorEl.tagName === 'SECTION' && !img) return;
-    const label = cut((img && picName(img)) || (anchorEl.matches('figure.qdgm') ? `Picture ${anchorEl.dataset.pic} · Diagram` : anchorEl.textContent.trim()) || '', 60);
+    // a section takes a note from a click on its own heading, as today's page does (r12 audit17 questions 3)
+    const hd = anchorEl && anchorEl.tagName === 'SECTION' && e.target.closest('h1,h2,h3,h4,h5,h6');
+    if (!anchorEl || anchorEl.tagName === 'SECTION' && !img && !(hd && anchorEl.contains(hd))) return;
+    const label = cut((img && picName(img)) || (anchorEl.matches('figure.qdgm') ? `Picture ${anchorEl.dataset.pic} · Diagram` : (hd || anchorEl).textContent.replace(/\s*\d+\s+(questions? waiting|of \d+ decided).*$/i, '').trim()) || '', 60);
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src')}; }
     else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
@@ -1262,6 +1286,7 @@
   // where the agent addressed it: in this version's document, or the version that resolved it in History (today's View resolution)
   async function goResolution(id) {
     const n = D.notes.find(x => x.id === id); if (!n || !n.ra) return;
+    S.zoom = null; S.spot = null; S.move = null;  // a picture viewer closes first, so the destination is in sight (r12 audit17 reference 3)
     if (n.rv && n.rv !== D.version) return NK.goRes(ctx, n);
     if (S.view !== 'doc') { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }
     openFor(n.ra); await draw(true);
@@ -1336,8 +1361,9 @@
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      const nt = e.target.closest && e.target.closest('.qnote');
-      if (nt) return nt.hasAttribute('data-newnote') ? addNote(nt.querySelector('textarea').value) : saveNote(nt.dataset.note, nt.querySelector('textarea').value);
+      // only a note's own editor saves on ⌘↵; from a saved note's buttons (Copy, Move…) it opens Send (r12 audit17 frame 2)
+      const nt = e.target.tagName === 'TEXTAREA' && e.target.closest('.qnote');
+      if (nt) return nt.hasAttribute('data-newnote') ? addNote(e.target.value) : saveNote(nt.dataset.note, e.target.value);
       return arm();
     }
     // F and A step through waiting questions, 1-9 picks on the highlighted one, C writes words on it (#05)
@@ -1403,7 +1429,7 @@
       return {text: `${n} waiting`, tone: n ? 'red' : 'green', title: pl(n, 'question waits', 'questions wait') + ' for your answer' + (later ? ` · ${later} set aside to answer later` : '')};
     },
     render: async (el, c, anchor) => {
-      ctx = c; root = el;
+      ctx = c; root = el; S.move = null;  // leaving the tab and coming back cancels Move (r12 audit17 reference 4)
       // listening before the reads: Send can open here while they finish, and its Go to it works on the first click (r12 fix14 questions 2)
       el.onclick = onClick; el.oninput = onInput; el.onchange = onChange; el.onmouseover = onHover;
       S.view = S.view || ctx.prefs.get('q:view', 'doc');

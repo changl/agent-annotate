@@ -29,7 +29,7 @@ def test_running_and_links_list_saved_drafts_without_their_data():
 
 def test_go_to_waits_for_reference_data():
     """Reference 1: Go to it pressed before the data is in reaches the copy line once it is."""
-    assert "if (D) reach(a); else S.reach = a;" in REF and "if (S.reach) { reach(S.reach); S.reach = ''; }" in REF
+    assert "if (D) reach(a); else S.reach = a;" in REF and "reach(S.reach); S.reach = '';" in REF
 
 
 def test_counts_paint_with_their_version():

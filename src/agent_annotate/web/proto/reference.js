@@ -554,7 +554,8 @@
     if (d.nopen) return life('restore')(d.nopen);
     if (d.nreopen) return life('reopen')(d.nreopen);
     // a plan note's resolution is a line of that plan: its revision opens there, outlined; any other goes to History
-    if (d.nres) { const n = nt(d.nres); return n && NK().goRes(ctx, n); }
+    // the viewer closes first, so the outlined destination is in sight, as Go to it does (r12 audit17 reference 3)
+    if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.move = S.spot = S.pin = ''; } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
@@ -642,7 +643,8 @@
     if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
     if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
-  }  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
+  }  // closing the viewer cancels Move too, as its prompt says (r12 audit17 reference 4)
+  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; S.move = ''; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
     if (!here() || S.full) return;
@@ -655,7 +657,8 @@
   // copy-library choices, and notes written here (reference 4), which a plan's own version keeps out of Questions' list
   // notes from an earlier visit are listed too, while reference.json says they are unsent (r12 fix7)
   // Go to it: opens the item (a checklist row's note opens the checklist) and, for a note, highlights it; the same hash fires no hashchange, so redraw then
-  const itemOf = a => a.startsWith('chk:') && D && D.checklist ? D.checklist.plan : a.replace(/^ref:/, '').split('~')[0];
+  // a checklist note before reference.json is in: '' (the list), and render opens the checklist once it is read (r12 audit17 frame 4)
+  const itemOf = a => a.startsWith('chk:') ? (D && D.checklist ? D.checklist.plan : '') : a.replace(/^ref:/, '').split('~')[0];
   // a note in a folded copy group or on an older plan revision: open that group or revision first (r12 fix9)
   function reach(a) {
     const m = /^ref:([^~]+)~(.+)~(\d+)$/.exec(a || ''), x = m && xOf(m[1]), p = m && D.plans.find(q => q.id === m[1]);
@@ -705,10 +708,13 @@
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
-      ctx = c; el = main; restoreDrafts();
+      ctx = c; el = main; S.move = ''; restoreDrafts();  // entering the tab never resumes a Move (r12 audit17 reference 4)
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       unsort();
-      if (S.reach) { reach(S.reach); S.reach = ''; }  // Go to it pressed before the data was in (r12 fix10 reference 1)
+      if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
+        if (/^chk:/.test(S.reach) && D.checklist && !anchor) { S.sel = D.checklist.plan; S.scroll = true; history.replaceState(null, '', '#reference/' + encodeURIComponent(S.sel)); }
+        reach(S.reach); S.reach = '';
+      }
       taskBack = '';
       const id = anchor ? decodeURIComponent(anchor) : '';
       if (id && (D.plans.some(p => p.id === id) || D.flows.some(f => f.id === id) || xOf(id))) { S.sel = id; S.scroll = true; markSeen([id]); }
