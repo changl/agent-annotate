@@ -1,6 +1,6 @@
 """Reference tab data: the page's plans by topic, the go-live checklist, Windmill workflows and the project's documents.
 
-Reads the page dir; reads the FastLane Drive board (bd --readonly), its project folder and the round-9 Windmill
+Reads the page dir; reads the page's own project's board (bd --readonly), FastLane Drive's project folder and the round-9 Windmill
 snapshot, all read only. Writes nothing.
 """
 from __future__ import annotations
@@ -17,14 +17,13 @@ from pathlib import Path
 
 from ..categories import is_archive_plan, list_plans
 from ..plan_topics import file_plans
-from . import scrub
+from . import running, scrub
 
-FLD_MAIN = Path("/Users/changlee/projects/FastLane Drive/fld-main")
 FLD_DIR = Path("/Users/changlee/projects/FastLane Drive")
 # shortcut: the round-9 snapshot of `wmill flow get` / `job get` (build/r9_wmflows.py); read Windmill live when the prototype graduates
 WM_FLOWS = Path("/Users/changlee/projects/agent-annotate/shared/agents/uiux-lead-20261116/round9/final/build/wm-flows.json")
 
-BEAD = re.compile(r"\bFLD-[a-z0-9]{3,6}(?:\.\d+)*\b")
+BEAD = re.compile(r"\b(?:FLD|RBX|agent-annotate)-[a-z0-9]{3,6}(?:\.\d+)*\b")  # each copied project's bead ids
 PHONE = re.compile(r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\d)")
 
 
@@ -38,26 +37,31 @@ def plain(s: str, n: int = 200) -> str:
     return t if len(t) <= n else t[:n].rsplit(" ", 1)[0] + "…"
 
 
-_board: dict = {"at": 0.0, "beads": {}}
+_boards: dict = {}  # project tag -> {"at", "beads"}
 _board_lock = threading.Lock()
 
 
-def board() -> dict:
-    """{id: [title, state]} from the FastLane Drive board, read only, cached a minute."""
+def board(code: str = "fld") -> dict:
+    """{id: [title, state]} from this project's own board (Running's lookup: `bd where` in its checkout), read only,
+    cached a minute. A project with no board it can reach gets none: never another project's titles."""
     with _board_lock:  # one read at a time: overlapping requests wait and share it
-        return _board_read()
+        return _board_read(code)
 
 
-def _board_read() -> dict:
-    if time.time() - _board["at"] > 60:
+def _board_read(code: str) -> dict:
+    c = _boards.setdefault(code, {"at": 0.0, "beads": {}})
+    if time.time() - c["at"] > 60:
+        where = running.board_dir(code)
         try:
-            out = subprocess.run(["bd", "-C", str(FLD_MAIN), "--readonly", "list", "--all", "--limit", "0", "--brief", "--flat", "--json"],
+            if where is None:
+                raise ValueError("no board")
+            out = subprocess.run(["bd", "-C", str(where), "--readonly", "list", "--all", "--limit", "0", "--brief", "--flat", "--json"],
                                  capture_output=True, text=True, timeout=20, check=True).stdout
-            _board["beads"] = {b["id"]: [hide(b.get("title") or ""), (b.get("status") or "").replace("_", " ")] for b in json.loads(out)}
+            c["beads"] = {b["id"]: [hide(b.get("title") or ""), (b.get("status") or "").replace("_", " ")] for b in json.loads(out)}
         except (OSError, subprocess.SubprocessError, ValueError):
             pass  # no board: task lines show the id alone
-        _board["at"] = time.time()
-    return _board["beads"]
+        c["at"] = time.time()
+    return c["beads"]
 
 
 def state_of(plan: dict) -> str:
@@ -324,7 +328,7 @@ def build(page_dir: Path) -> dict:
     cl = checklist(page_dir)
     if cl:
         ids.update(r[4] for r in cl["items"] if r[4])
-    beads = board()
+    beads = board(running.project(page_dir))
     try:
         meta = json.loads((page_dir / "current.meta.json").read_text())
     except (OSError, ValueError):

@@ -162,7 +162,7 @@
 
   const untag = t => t.replace(/^[A-Za-z0-9][\w.-]{3,}:\s*/, '');  // a workstream name before the title is a worker's, not his
   /* a task a plan names reads "title · bead id · state", coloured by its state */
-  const beadIn = h => h.replace(/\bFLD-[a-z0-9]{3,6}(?:\.\d+)*\b/g, id => { const b = D.beads[id]; if (!b) return id;
+  const beadIn = h => h.replace(/\b(?:FLD|RBX|agent-annotate)-[a-z0-9]{3,6}(?:\.\d+)*\b/g, id => { const b = D.beads[id]; if (!b) return id;
     const t = untag(b[0]), cut = t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t;
     return `<button class="rf-bd lk st-${BST[b[1]] || 'none'}" data-task="${id}" title="Open its task: ${esc(t)}"><i class="dot"></i>${esc(cut)} · <code>${id}</code> · ${esc(b[1])}</button>`; });
 
@@ -274,7 +274,7 @@
     const kinds = Object.keys(DK).filter(k => F.some(f => f.k === k)), sh = F.filter(f => !S.dk || f.k === S.dk);
     const gs = Object.keys(D.docs.groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
     const dic = k => `<span class="rf-dk k-${k}" title="${DK[k][1]}">${ico(DK[k][0], DK[k][1])}</span>`;
-    const drow = f => `<div class="doc9"${S.dsel === f.id ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="nm" data-dopen="${esc(f.id)}" ${f.md ? `aria-expanded="${S.dsel === f.id}" title="Open it here"` : 'title="Opens in a new tab"'}>${esc(f.n)}${f.md ? '' : ' ↗'} ${f.ch ? chg : ''}${f.sub ? `<span class="sub">${esc(f.sub)}</span>` : ''}</button><span class="sz">${kb(f.kb)}</span><span class="d9t">${esc(dm(f.d))}</span><button class="ib" data-copy="${esc(path(f))}" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${ico('copy')}</button></div>${S.dsel === f.id && f.md ? docView(f) : ''}`;
+    const drow = f => `<div class="doc9"${S.dsel === f.id ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="nm" data-dopen="${esc(f.id)}" ${f.md ? `aria-expanded="${S.dsel === f.id}" title="Open it here"` : 'title="Opens in a new tab"'}>${esc(f.n)}${f.md ? '' : ' ↗'} ${f.ch ? chg : ''}${f.sub ? `<span class="sub">${esc(f.sub)}</span>` : ''}</button><span class="sz">${kb(f.kb)}</span><span class="d9t">${esc(dm(f.d))}</span><button class="ib" data-copy="${esc(path(f))}" data-what="Path" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${ico('copy')}</button></div>${S.dsel === f.id && f.md ? docView(f) : ''}`;
     return `<section class="rf-docs" aria-label="Documents"><div class="r8gh rf-dh">${ico('doc')}<span class="gt">Documents</span><span class="n">${pl(total, 'file', 'files')} in this project's folder · Markdown opens here, other kinds in a new tab</span></div>
       <div class="docbar"><button class="chipb" data-dk="" aria-pressed="${!S.dk}">All <span class="n">${F.length}</span></button>${kinds.map(k => `<button class="chipb" data-dk="${k}" aria-pressed="${S.dk === k}" title="Only ${DK[k][1]} files">${dic(k)}${DK[k][1]} <span class="n">${F.filter(f => f.k === k).length}</span></button>`).join('')}</div>
       ${gs.map(g => { const l = sh.filter(f => f.g === g), key = 'dg:' + g, op = !!S.q || S.open.has(key) || sh.some(f => f.id === S.dsel && f.g === g), all = S.open.has('dga:' + g), nchg = l.filter(f => f.ch).length;
@@ -350,7 +350,7 @@
       return `<div class="grp"><div class="rf-fh"><button class="fold" data-fold="fd:${esc(fk)}" aria-expanded="${op}">${esc(f.label)}</button><span class="tag${f.state === 'No Rebex mark' ? ' high' : ''}">${esc(f.state)}</span>${r !== undefined ? `<span class="saved">Reopened</span>${P.inertMark()}<button class="lk small" data-unreopen="${esc(fk)}">Undo</button>` : `<button class="lk small" data-freopen="${esc(fk)}" title="Say it is not settled, with why; the audit's record stays">Reopen</button>`}</div>
         ${r !== undefined ? `<textarea id="rf-ro-${i}" data-reopen="${esc(fk)}" rows="2" placeholder="Why reopen it?" aria-label="Why reopen ${esc(f.label)}">${esc(r)}</textarea>` : ''}
         ${op ? `${block(['p', f.text], `${k}~f~${i}`)}${f.src ? `<div class="figs">${block(['img', f.src, 'Proof: ' + f.label], `${k}~f${i}`)}</div>` : ''}
-        <div class="rf-acts small"><span class="grow mut">Proof file: ${esc(f.file)} · fingerprint ${esc(f.sha)} · the original is kept unchanged; this is a copy</span><button class="lk small" data-copy="${esc(f.file)}">Copy path</button></div>` : ''}</div>`; }).join('');
+        <div class="rf-acts small"><span class="grow mut">Proof file: ${esc(f.file)} · fingerprint ${esc(f.sha)} · the original is kept unchanged; this is a copy</span><button class="lk small" data-copy="${esc(f.file)}" data-what="Path">Copy path</button></div>` : ''}</div>`; }).join('');
     return `<div class="rf-acts rf-vh">${ico(x.kind)}<b class="rf-vt">${esc(x.t)}</b>${stPill(stOf(x))}<span class="small mut">${esc(x.from)} · audited ${esc(dm(b.when))} · read-only here</span><span class="spacer"></span><button class="ib" data-link="${esc(x.id)}" title="Copy a link to this item" aria-label="Copy a link to this item">${ico('link')}</button></div>
       <div class="tiles">${b.screened.map(([n, w]) => `<div><b>${n.toLocaleString()}</b><span>${esc(w)} screened</span></div>`).join('')}<div><b>${b.items.length}</b><span>findings, ${seen} with the Rebex mark</span></div></div>
       <p ${at(k + '~c', 'Conclusion')}>${pin(k + '~c')}<b>Conclusion:</b> ${esc(b.conclusion)}</p>${noteList(k + '~c')}
@@ -446,7 +446,7 @@
     if (d.clf !== undefined) { if (!d.clf) S.clf.clear(); else S.clf.has(d.clf) ? S.clf.delete(d.clf) : S.clf.add(d.clf); return draw(); }
     if (d.dk !== undefined) { S.dk = d.dk; return draw(); }
     if (d.fold) { S.open.has(d.fold) ? S.open.delete(d.fold) : S.open.add(d.fold); return draw(); }
-    if (d.copy) return copy(d.copy, d.copy.startsWith('~/') ? 'Path' : 'Text');
+    if (d.copy) return copy(d.copy, d.what || (d.copy.startsWith('~/') ? 'Path' : 'Text'));
     if (d.link) return copy(location.origin + location.pathname + '#reference/' + encodeURIComponent(d.link), 'Link');
     if (d.dopen) {
       const f = docs().find(x => x.id === d.dopen);

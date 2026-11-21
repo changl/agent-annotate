@@ -74,7 +74,7 @@ def test_build_serves_the_snapshot_and_refreshes_once_in_the_background(tmp_path
     calls = []
     monkeypatch.setattr(R, "_compute", lambda d: calls.append(d) or {"workers": {}, "built": "now"})
     monkeypatch.setattr(R, "_mem", {})
-    (tmp_path / R.SNAP).write_text(json.dumps({"workers": {}, "built": "earlier", "proj": "other"}))
+    (tmp_path / R.SNAP).write_text(json.dumps({"workers": {}, "built": "earlier", "proj": "other", "v": R.SNAPV}))
     old = time.time() - 600
     os.utime(tmp_path / R.SNAP, (old, old))
     first = R.build(tmp_path)
@@ -141,3 +141,22 @@ def test_a_snapshot_of_another_project_is_not_served(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "_compute", lambda p: {"board": {"tasks": []}, "proj": "rebex", "built": "fresh"})
     monkeypatch.setattr(R, "_mem", {})
     assert R.build(d)["built"] == "fresh"
+    (d / R.SNAP).write_text(json.dumps({"proj": "rebex", "prs": [{"id": "fld-main #1"}], "built": "old"}))  # before pull requests were per project
+    monkeypatch.setattr(R, "_mem", {})
+    assert R.build(d)["built"] == "fresh"
+
+
+def test_jobs_are_tagged_with_their_project():
+    assert [R.job_proj(p) for p in ("f/fld_ops/bill_alerts_schedule", "f/sweep/board_checks", "f/test/qlty_version_check",
+                                    "u/chang/mac_daily_update", "f/rebex/catalog_sync", "f/misc/thing")] == ["fld", "fld", "annotate", "multimac", "rebex", "other"]
+
+
+def test_pull_requests_come_from_the_projects_own_repository(monkeypatch):
+    calls = []
+    monkeypatch.setattr(R, "run_json", lambda argv, timeout=30: calls.append(argv) or [
+        {"number": 7, "title": "T", "repository": {"name": "shopify-rebex"}, "state": "open", "updatedAt": "2026-11-20T00:00:00Z", "url": "u"}])
+    assert R.prs("rebex")[0]["id"] == "shopify-rebex #7" and calls[0][3:5] == ["--repo", "changl/shopify-rebex"]
+    assert R.prs("annotate") and calls[1][3:5] == ["--repo", "changl/agent-annotate"]
+    assert R.prs("fld") and calls[2][3:5] == ["--owner", "Fast-Lane-Drive"]
+    calls.clear()
+    assert R.prs("leadory") == [] and calls == []  # no repository listed: none, never another project's

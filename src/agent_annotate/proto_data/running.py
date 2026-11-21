@@ -32,8 +32,13 @@ ORCA_DB = HOME / "Library/Application Support/Orca/orchestration.db"
 LOAD_TSV = HOME / ".local/share/machine-load/load.tsv"
 PROJECTS = HOME / "projects"
 GH_OWNER = "Fast-Lane-Drive"
+# each project's pull requests, as `gh search prs` arguments: FastLane Drive's apps span its organisation's repositories
+REPOS = {"fld": ["--owner", GH_OWNER], "rebex": ["--repo", "changl/shopify-rebex"], "annotate": ["--repo", "changl/agent-annotate"]}
+# a scheduled job's project by its Windmill folder, as frame.js's JOBP reads it; any other job falls back to its path's words (proj_of)
+JOBP = [(r"^f/(fld_ops|sweep|uat|usage|ops)/", "fld"), (r"^f/test/", "annotate"), (r"^u/[^/]+/mac_daily_update$", "multimac"), (r"^u/[^/]+/windmill_", "windmill")]
 TTL = 60  # seconds a read stays fresh: the page never asks a source more than once a minute
 SNAP = "proto-running.json"
+SNAPV = 2  # a saved snapshot of an older shape (jobs without proj, pull requests not per project) is not served
 MACS = [("M1 Max", None), ("M5 Max", "M5Max"), ("M1 Max 16", "M1Max16")]
 # each project's checkout, by project tag; `bd where` run there finds its own board. A project not listed has none.
 CHECKOUTS = {"fld": FLD_BOARD, "rebex": PROJECTS / "rebex/repo", "annotate": PROJECTS / "agent-annotate/codex"}
@@ -350,8 +355,14 @@ def board(code="fld", where=None):
 
 # ---------------------------------------------------------------- jobs and pull requests
 
+def job_proj(path):
+    """The project a scheduled job belongs to, by its Windmill path, else by the words in its path and name."""
+    return next((c for r, c in JOBP if re.match(r, path or "")), None) or proj_of((path or "").replace("_", " "))
+
+
 def jobs():
-    """Enabled Windmill schedules with their newest 12 runs, failing ones first."""
+    """Every enabled Windmill schedule with its newest 12 runs, failing ones first, each tagged with its project (proj).
+    Home counts every project's jobs from this list, so Running shows only the page's own (running.js filters on proj)."""
     sch = [s for s in run_json(["wmill", "schedule", "list", "--json"]) if s.get("enabled")]
 
     def runs(s):
@@ -365,15 +376,18 @@ def jobs():
     for s, r in zip(sch, rs):
         name = s["path"].rsplit("/", 1)[-1].replace("_schedule", "").replace("_", " ")
         done = [x for x in r if x["ok"] is not None]
-        out.append({"name": name[:1].upper() + name[1:], "path": s["path"], "cron": s.get("schedule"), "tz": s.get("timezone"),
+        out.append({"name": name[:1].upper() + name[1:], "path": s["path"], "proj": job_proj(s["path"]), "cron": s.get("schedule"), "tz": s.get("timezone"),
                     "runs": r, "failing": bool(done and done[0]["ok"] is False),
                     "since": next((x["t"] for x in done if x["ok"] is not False), None) if done and done[0]["ok"] is False else None})
     out.sort(key=lambda j: (not j["failing"], j["name"]))
     return out
 
 
-def prs():
-    rows = run_json(["gh", "search", "prs", "--owner", GH_OWNER, "--sort", "updated", "--limit", "15",
+def prs(code="fld"):
+    """This project's own pull requests, read only; none (never another project's) when it has no repository listed."""
+    if code not in REPOS:
+        return []
+    rows = run_json(["gh", "search", "prs", *REPOS[code], "--sort", "updated", "--limit", "15",
                      "--json", "number,title,repository,state,updatedAt,url,isDraft"], timeout=30)
     rows.sort(key=lambda p: (p["state"] != "open", ""))  # open first, then the newest closed and merged
     return [{"id": f"{p['repository']['name']} #{p['number']}", "title": p["title"][:160], "state": p["state"], "upd": p["updatedAt"][:10],
@@ -542,11 +556,11 @@ def _compute(page_dir: Path) -> dict:
     where = board_dir(code)
     with ThreadPoolExecutor(6) as ex:
         f = {k: ex.submit(safe, fn, None) for k, fn in
-             (("workers", workers), ("board", lambda: board(code, where)), ("jobs", jobs), ("prs", prs), ("load", machine_load),
+             (("workers", workers), ("board", lambda: board(code, where)), ("jobs", jobs), ("prs", lambda: prs(code)), ("load", machine_load),
               ("hours", lambda: hours(code=code)), ("an", lambda: analytics(page_dir, code)))}
         out = {k: v.result() for k, v in f.items()}
     safe(lambda: group_work(out, code, where), {})
-    out.update(proj=code, pname=NAMES.get(code, code), built=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    out.update(v=SNAPV, proj=code, pname=NAMES.get(code, code), built=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     return mask(out)
 
 
@@ -573,8 +587,8 @@ def build(page_dir: Path) -> dict:
     if got is None and (page_dir / SNAP).exists():
         try:
             got = ((page_dir / SNAP).stat().st_mtime, json.loads((page_dir / SNAP).read_text()))
-            if got[1].get("proj") != project(page_dir):
-                raise ValueError("a snapshot from before boards were per project, or of another project")
+            if got[1].get("proj") != project(page_dir) or got[1].get("v") != SNAPV:
+                raise ValueError("a snapshot from before jobs and pull requests were per project, or of another project")
             with _lock:
                 _mem[key] = got
         except (OSError, ValueError):

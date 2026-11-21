@@ -24,7 +24,7 @@ def page(tmp_path, monkeypatch):
     publish_plan_revision(page, "uat-plan", "<p>Draft two FLD-xyz9</p>")
     publish_plan_revision(page, "go-live-checklist", "<table>" + ROW.format("done") + ROW.format("waiting") + "</table>",
                           title="Go-live checklist")
-    monkeypatch.setattr(reference, "board", lambda: {"FLD-abc1": ["Sign in", "open"], "FLD-xyz9": ["UAT", "closed"]})
+    monkeypatch.setattr(reference, "board", lambda code="fld": {"FLD-abc1": ["Sign in", "open"], "FLD-xyz9": ["UAT", "closed"]})
     monkeypatch.setattr(reference, "WM_FLOWS", tmp_path / "missing.json")
     monkeypatch.setattr(reference, "FLD_DIR", tmp_path / "nofld")
     monkeypatch.setattr(reference.documents, "__defaults__", (tmp_path / "nofld",))
@@ -127,3 +127,24 @@ def test_documents(tmp_path):
     files = {f["n"]: f for f in reference.documents(tmp_path)["files"]}
     assert set(files) == {"plan.md", "spec.docx"}
     assert files["plan.md"]["md"] == "ring member@example.com" and files["spec.docx"]["k"] == "word"
+
+
+def test_task_titles_come_from_the_pages_own_board(page, monkeypatch):
+    """A Rebex copy names RBX tasks from Rebex's board only; a project with no board gets no titles, never FastLane Drive's."""
+    asked = []
+    monkeypatch.setattr(reference, "board", lambda code="fld": asked.append(code) or {"RBX-gaw": ["Rebuild sets", "open"]} if code == "rebex" else {})
+    publish_plan_revision(page, "uat-plan", "<p>Draft three RBX-gaw FLD-xyz9</p>")
+    (page / "current.meta.json").write_text(json.dumps({"proto_copy_of": "rebex"}))
+    assert reference.build(page)["beads"] == {"RBX-gaw": ["Rebuild sets", "open"]} and asked == ["rebex"]
+    (page / "current.meta.json").write_text(json.dumps({"proto_copy_of": "leadory"}))
+    assert reference.build(page)["beads"] == {}
+
+
+def test_board_reads_only_the_projects_own_board(monkeypatch):
+    calls = []
+    monkeypatch.setattr(reference, "_boards", {})
+    monkeypatch.setattr(reference.running, "board_dir", lambda code: None if code == "leadory" else f"/boards/{code}")
+    monkeypatch.setattr(reference.subprocess, "run", lambda argv, **k: calls.append(argv) or type("R", (), {"stdout": '[{"id": "RBX-1", "title": "T"}]'})())
+    assert reference.board("rebex") == {"RBX-1": ["T", ""]} and calls[0][:4] == ["bd", "-C", "/boards/rebex", "--readonly"]
+    calls.clear()
+    assert reference.board("leadory") == {} and calls == []

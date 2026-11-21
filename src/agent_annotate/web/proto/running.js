@@ -37,12 +37,14 @@
   function urgent(d) {
     // crashed: failed workers and failing jobs; a worker with no sign of life is blocked, as on its tile
     const ws = mine(d), failed = ws.filter(w => w.s === 'failed').length, stuck = ws.filter(w => w.s === 'stuck').length;
-    const failing = (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.failing).length, wait = ((d.board || {}).waiting || []).length;
+    const failing = myJobs(d).filter(j => j.failing).length, wait = ((d.board || {}).waiting || []).length;
     if (failed + failing) return {text: `${failed + failing} crashed`, tone: 'red', title: [failed && pl(failed, 'worker failed', 'workers failed'), failing && pl(failing, 'scheduled job is failing', 'scheduled jobs are failing')].filter(Boolean).join('; ')};
     if (stuck) return {text: `${stuck} blocked`, tone: 'orange', title: `${pl(stuck, 'worker has', 'workers have')} shown no sign of life for half an hour`};
     if (wait) return {text: `${wait} waiting`, tone: 'blue', title: `${pl(wait, 'task waits', 'tasks wait')} on you`};
     return ws.length ? {text: `${ws.length} running`, tone: 'green'} : null;
   }
+  // running.json lists every project's scheduled jobs (Home counts them all); Running shows the page's own
+  const myJobs = d => (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.proj === PROJ);
   const mine = d => Object.entries(d.workers || {}).filter(([k]) => k !== 'error').flatMap(([m, v]) => (v.workers || []).filter(w => w.proj === PROJ).map(w => ({...w, mac: m})));
 
   /* ------------------------------------------------------------ Running */
@@ -80,7 +82,7 @@
     const tgroup = ([g, label, c]) => { const all = b.tasks.filter(t => t.g === g), o = S.open.has('tg:' + g) !== (g === 'ready' || g === 'blocked'), full = S.open.has('tgall:' + g);
       return `<div class="grp"><button class="fold" data-fold="tg:${g}" aria-expanded="${o}">${ic('chev')} ${esc(label)} <span class="cnt">${c}</span></button>${o ? all.slice(0, full ? all.length : 12).map(tline).join('')
         + (all.length > 12 ? `<p class="small mut"><button class="lk small" data-fold="tgall:${g}" aria-expanded="${full}">${full ? 'Show the first 12' : `Show all ${all.length}`}</button></p>` : '') : ''}</div>`; };
-    const jobs = Array.isArray(d.jobs) ? d.jobs : [], nfail = jobs.filter(j => j.failing).length;
+    const jobs = myJobs(d), nfail = jobs.filter(j => j.failing).length;
     const jrow = j => { const q = S.rerun.get(j.path), when = t => t ? new Date(t).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
       return `<div class="line job"><i class="dot st-${j.failing ? 'failed' : 'done'}" role="img" aria-label="${j.failing ? 'failing' : 'passing'}"></i><span class="grow">${esc(j.name)}${j.failing ? ` <span class="err-t small nw">failing${j.since ? ' since ' + esc(when(j.since)) : ''}</span>` : ''}</span>
         <span class="runs" role="img" aria-label="Last ${j.runs.length} runs, newest first">${j.runs.slice(0, 12).map(r => `<i class="st-${r.ok === false ? 'failed' : r.ok == null ? 'progress' : 'done'}" title="${esc(when(r.t))}: ${r.ok === false ? 'failed' : r.ok == null ? 'running' : 'passed'}"></i>`).join('')}</span>
@@ -92,9 +94,9 @@
       <section class="rsec" id="workers"><h2 class="ph">Workers <span class="cnt">${ws.length}</span> <span class="small mut nb">live on the three Macs</span></h2>${W.error ? `<p class="mut">Orca could not be read just now.</p>` : wsec}</section>
       <div class="rgrid"><section class="rsec" id="tasks"><h2 class="ph">Tasks <span class="cnt">${b.tasks.length}</span> <span class="small mut nb">not closed on the board · ${b.ready || 0} ready</span></h2>
           ${(b.groups || []).map(tgroup).join('')}<p class="small mut">${b.none ? esc(b.none) : `The ${esc(PNAME)} board, read only${b.closed ? `; the ${b.closed.toLocaleString()} closed tasks are not listed` : ''}.`}</p></section>
-        <div><section class="rsec" id="jobs"><h2 class="ph">Scheduled jobs <span class="cnt${nfail ? ' bad' : ''}">${nfail ? nfail + ' failing' : jobs.length}</span></h2>${jobs.map(jrow).join('') || `<p class="mut small">${d.jobs && d.jobs.error ? 'Windmill could not be read just now.' : 'No scheduled jobs.'}</p>`}</section>
+        <div><section class="rsec" id="jobs"><h2 class="ph">Scheduled jobs <span class="cnt${nfail ? ' bad' : ''}">${nfail ? nfail + ' failing' : jobs.length}</span></h2>${jobs.map(jrow).join('') || `<p class="mut small">${d.jobs && d.jobs.error ? 'Windmill could not be read just now.' : `${esc(PNAME)} has no scheduled jobs, so none are listed.`}</p>`}</section>
           <section class="rsec" id="prs"><h2 class="ph"><button class="fold" data-fold="prs" aria-expanded="${po}">${ic('chev')} Pull requests <span class="cnt">${opn ? opn + ' open' : prs.length}</span></button></h2>
-            ${po ? prs.map(p => `<div class="line sub"><span class="grow"><b>${esc(p.id)}</b> · ${esc(cut(p.title, 110))}</span>${stPill(p.state === 'merged' ? 'closed' : p.state === 'open' ? 'in progress' : 'deferred').replace(/>[a-z ]+<\/span>$/, `>${esc(p.draft ? 'draft' : p.state)}</span>`)}<button class="ib" data-copy="${esc(p.url)}" title="Copy the link to ${esc(p.id)}" aria-label="Copy the link to ${esc(p.id)}">${ic('copy')}</button></div>`).join('') || '<p class="small mut">None.</p>' : ''}</section></div></div>
+            ${po ? prs.map(p => `<div class="line sub"><span class="grow"><b>${esc(p.id)}</b> · ${esc(cut(p.title, 110))}</span>${stPill(p.state === 'merged' ? 'closed' : p.state === 'open' ? 'in progress' : 'deferred').replace(/>[a-z ]+<\/span>$/, `>${esc(p.draft ? 'draft' : p.state)}</span>`)}<button class="ib" data-copy="${esc(p.url)}" title="Copy the link to ${esc(p.id)}" aria-label="Copy the link to ${esc(p.id)}">${ic('copy')}</button></div>`).join('') || `<p class="small mut">${d.prs && d.prs.error ? 'GitHub could not be read just now.' : `${esc(PNAME)} has no pull requests this page can read, so none are listed.`}</p>` : ''}</section></div></div>
       <p class="small mut rn-src">Read ${esc(new Date(d.built).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}))}; each source is read at most once a minute.</p>
       ${panel()}`;
   }
@@ -357,7 +359,7 @@
   let BOPEN = false;
   async function bar(el, ctx) {
     const d = own(await ctx.data('running')), ws = mine(d).sort((x, y) => WORDER.indexOf(x.s) - WORDER.indexOf(y.s));
-    const jobs = (Array.isArray(d.jobs) ? d.jobs : []).filter(j => j.failing), c = ws.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
+    const jobs = myJobs(d).filter(j => j.failing), c = ws.reduce((o, w) => (o[w.s] = (o[w.s] || 0) + 1, o), {});
     if (!ws.length && !jobs.length) { el.innerHTML = ''; return; }
     const sq = ws.slice(0, 24).map(w => `<i class="st-${WS[w.s][0]}${w.s === 'stuck' ? ' hatch' : ''}"></i>`).join('');
     const counts = WORDER.filter(s => c[s] && s !== 'done').map(s => `<span class="nw"><i class="dot st-${WS[s][0]}"></i>${c[s]}</span>`).join('');
