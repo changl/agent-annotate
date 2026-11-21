@@ -79,7 +79,7 @@ def test_send_opens_over_any_tab_at_any_count():
 def test_last_send_follows_a_new_send_and_skip_opens_the_phone_menu():
     """r12 fix7 frame 3 and 4."""
     f = _js("frame")
-    assert "queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; }" in f
+    assert "queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; }" in f
     chip = f[f.index("function lastSendChip"):f.index("function settingsBody")]
     assert "if (s && (COPY ||" in chip and "prototype: not sent" in chip and "delivered" not in chip[:chip.index("if (!r && !l)")]
     assert "if (kind === 'tabs' && phoneQ.matches && !S.home) { S.menu = 'nav';" in f and "#p-layer .pm-tab" in f

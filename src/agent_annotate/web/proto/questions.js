@@ -685,6 +685,8 @@
     draw(true);
   }
   async function post(answers, replies, closes, n) {
+    // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
+    S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
       for (const q of answers) {
         const d = draft(q.id), w = (d.words || '').trim();
@@ -704,8 +706,9 @@
       ctx.prefs.set('q:general', '');
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
-      await refresh();
+      document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
       ctx.toast(`Sent ${pl(n, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
+      await refresh();
     } catch (e) {
       S.pending = null; await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
@@ -855,7 +858,7 @@
     if (t.hasAttribute('data-discard')) return discardAll();
     if (ds.sgo) return sendGo(ds.sgo);
     if (ds.srm) return sendRemove(ds.srm);
-    if (t.hasAttribute('data-sendundo')) { clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
+    if (t.hasAttribute('data-sendundo')) { if (!S.pending || S.pending.going) return; clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
     if (t.hasAttribute('data-nadd')) return addNote(root.querySelector('[data-newnote] textarea').value);
     if (t.hasAttribute('data-ncancel')) { S.note = null; ctx.prefs.set('q:newnote', null); return draw(true); }
     if (ds.nedit) return openNote({edit: ds.nedit});

@@ -143,7 +143,8 @@
     refreshChips: () => { drawTabs(); refreshTop(); },
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
-    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
+    // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
+    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -791,11 +792,11 @@
     await Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
-    // shortcut: a Questions read slower than 4 s shows the version without the counts, which follow when it lands
+    // the version waits for its counts however slow the read: never Version with Send 0 before the restored count (r12 fix11 frame)
     S.meta = meta; S.settling = true;
     route();
     addEventListener('hashchange', route);
-    putCounts(await Promise.race([readCounts(), new Promise(r => setTimeout(r, 4000, null))]));
+    putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
     drawTop(); drawFab();
     refreshTop();  // counts, workers, the board and the last Send

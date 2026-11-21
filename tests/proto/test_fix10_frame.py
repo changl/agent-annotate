@@ -36,7 +36,7 @@ def test_counts_paint_with_their_version():
     """Running 2, frame 1: Send, waiting and the Questions chip are read together, and set with the version."""
     start = FRAME[FRAME.index("async function start()"):]
     # the tab paints first (never held for the counts); the version waits for the counts
-    assert start.index("S.meta = meta; S.settling = true;") < start.index("route();") < start.index("putCounts(await Promise.race([readCounts()") < start.index("S.loadedV = meta && meta.current; S.settling = false;")
+    assert start.index("S.meta = meta; S.settling = true;") < start.index("route();") < start.index("putCounts(await readCounts());") < start.index("S.loadedV = meta && meta.current; S.settling = false;")
     assert "const ver = S.meta && S.loadedV ?" in FRAME
     rc = FRAME[FRAME.index("if (S.newer) {"):FRAME.index("checkNewer().then(found")]
     assert "readCounts()]).then(([m, c]) =>" in rc and "putCounts(c);" in rc

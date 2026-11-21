@@ -417,8 +417,9 @@
       // before running.json is in, the saved status changes and comments are listed by their task's id; titles follow (r12 fix10 frame 1)
       if (!D) ctx.data('running').then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {});
       const B = ((D || {}).board || {}).beads || {}, tst = ctx.prefs.get('tst', {}), out = [];
-      const ids = D || !ctx.prefs.keys ? Object.keys(B) : ctx.prefs.keys(/^tcm:/).map(k => k.slice(4));
-      const ttl = id => `${esc(cut(tclean((B[id] || {}).t || id), 60))} <span class="bid">${esc(id)}</span>`;
+      // listed from what was saved, whatever the board read does: a failed read keeps the comment in Send (r12 fix11 running 2)
+      const ids = ctx.prefs.keys(/^tcm:/).map(k => k.slice(4));
+      const ttl = id => `${(B[id] || {}).t ? esc(cut(tclean(B[id].t), 60)) + ' ' : ''}<span class="bid">${esc(id)}</span>`;  // no board: the id alone, once
       // from Running itself the hash is already #running, so no hashchange redraws: open the task here (r12 fix8, running 1)
       const go = id => () => { ctx.prefs.set('task', id); if (location.hash === '#running' && tabNow === 'running' && EL && EL.isConnected) openTask(id); else ctx.go('running'); };
       for (const [id, st] of Object.entries(tst)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, go: go(id),
@@ -427,7 +428,7 @@
         if (c.trim()) out.push({key: k, group: 'Tasks', html: `${ttl(id)} → comment: “${esc(cut(c, 120))}”`, go: go(id), remove: () => { ctx.prefs.set(k, ''); redraw(); return () => { ctx.prefs.set(k, c); redraw(); }; }}); }
       return out;
     },
-    sent: ctx => { ctx.prefs.set('tst', {}); [...Object.keys(((D || {}).board || {}).beads || {}), ...(ctx.prefs.keys ? ctx.prefs.keys(/^tcm:/).map(k => k.slice(4)) : [])].forEach(id => ctx.prefs.set('tcm:' + id, '')); redraw(); },
+    sent: ctx => { ctx.prefs.set('tst', {}); ctx.prefs.keys(/^tcm:/).forEach(k => ctx.prefs.set(k, '')); redraw(); },
   });
   P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});
