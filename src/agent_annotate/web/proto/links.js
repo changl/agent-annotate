@@ -315,7 +315,8 @@
   }
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
-      const d = (KEPT || []).find(x => x.id === id);
+      // the feed the tab or its chip already read names it at once; never the internal id (audit7 reference 5)
+      const d = (KEPT || (LD || {}).kept || (ON ? ON.D.kept : null) || []).find(x => x.id === id);
       return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),

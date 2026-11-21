@@ -3,7 +3,17 @@
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[2] / "src" / "agent_annotate" / "web" / "proto"
-HIST, RUN, LINKS = ((WEB / n).read_text() for n in ("history.js", "running.js", "links.js"))
+HIST, RUN, LINKS, QS = ((WEB / n).read_text() for n in ("history.js", "running.js", "links.js", "questions.js"))
+
+
+def test_questions_leaves_document_notes_to_pages_and_links():
+    """Reference 3: a Load-test bar note is Pages & links' Send entry only, so Remove/Undo leaves no stray Questions entry."""
+    assert "!own.has(x.id) && !/^doc:/.test(x.anchor || '')" in QS
+
+
+def test_first_approval_names_the_kept_document():
+    """Reference 5: the first Send after approving names the document even before Pages & links has drawn."""
+    assert "(KEPT || (LD || {}).kept || (ON ? ON.D.kept : null) || [])" in LINKS
 
 
 def test_history_dates_sends_in_local_time_with_delivery():

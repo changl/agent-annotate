@@ -183,8 +183,8 @@
   let D = null, R = null;
   async function render(el, ctx, anchor) {
     D = await ctx.data('history');
-    // the copy's findings audits and Copy library, from Reference's own data (the top bar's Reference chip has read it already)
-    R = await ctx.data('reference').catch(() => null);
+    // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
+    if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
     const {esc, icon} = ctx;
     if (anchor) return openView(el, ctx, anchor);
     const chips = [['all', 'All', ''], ['q', 'Questions', 'q'], ['ref', 'Reference', 'ref']]

@@ -119,7 +119,8 @@
   // what the other tabs queued for the next Send (frame's P.queue): tasks, replies, Reference changes, their notes
   const Q = () => (ctx && ctx.queued ? ctx.queued() : []);
   // a note another tab lists itself is counted once, under that tab's item
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id)); };
+  // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0); };
 
