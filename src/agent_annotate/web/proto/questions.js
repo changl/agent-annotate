@@ -31,7 +31,7 @@
   const call = async (path, body, method) => ctx.api(path + await who(), body, method);
   const ibw = (k, word, label, attrs) => `<button class="ib ibw" title="${esc(label)}" aria-label="${esc(label)}" ${attrs}>${ic(k)}<span class="ibt">${word}</span></button>`;
   const ib = (k, label, attrs) => `<button class="ib sm" title="${esc(label)}" aria-label="${esc(label)}" ${attrs}>${ic(k)}</button>`;
-  const ASKFILE = 'Please file a task on the board for this question.';
+  const ASKFILE = 'Please file a task on the board for this question and link it on the card.';
   const gen = () => ctx.prefs.get('q:general', '');
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
   // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
@@ -122,7 +122,9 @@
   // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
   const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => !x.sent && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
-  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0); };
+  // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
+  const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
+  const sendCount = () => { if (!D) return 0; const q = Q(); return D.questions.reduce((n, x) => n + (x.closed ? 0 : isDraft(x) + isClosing(x) + hasReply(x)), 0) + myNotes(q).length + q.length + Object.keys(abPicks()).length + (gen().trim() ? 1 : 0) + (typingNote() ? 1 : 0); };
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -197,7 +199,7 @@
     const asked = (d.reply || '').trim() === ASKFILE;
     const ask = asked ? `<span class="saved">${ic('tick')} Asked to file one · goes with Send</span> <button class="lk small" data-askfile="${q.id}">Undo</button>`
       : `<button class="lk small" data-askfile="${q.id}" title="A reply to the agent, sent with your next Send">Ask the agent to file one</button>`;
-    const meta = `<div class="qmeta">${bead ? `<span>${ic('task')} ${taskChip(bead)}</span>` : `<span>${ic('task')} No task on the board yet · ${ask}</span>`}${plan ? `<span>Plan: <button class="lk small" data-plan="${esc(plan.id)}">${esc(cut(plan.t, 40))}</button> · ${esc(PLANST[plan.st] || 'For reference')}</span>` : ''}<button class="dfold" data-fold="hs${q.id}" aria-expanded="${hso}" title="Your earlier answers on the same topic">${ic('hist')} Decided before · ${q.earlier.length}</button>${q.evidence.length && !inList ? `<button class="lk small" data-ev="${esc(q.evidence[0].anchor)}" data-evq="${q.id}">${ic('place')} ${esc(cut(q.evidence[0].label || 'Its evidence', 40))}</button>` : ''}</div>${hso ? `<ul class="qhist">${q.earlier.length ? q.earlier.map(h => `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — ${esc(cut(h.q, 140))} → <b>${esc(cut(h.a, 160))}</b></li>`).join('') : '<li class="mut">Nothing decided on this before.</li>'}</ul>` : ''}`;
+    const meta = `<div class="qmeta">${bead ? `<span>${ic('task')} ${taskChip(bead)}</span>` : `<span>${ic('task')} No task on the board yet · <button class="lk small" data-board title="Open the bead board under Running">Open the board</button> · ${ask}</span>`}${plan ? `<span>Plan: <button class="lk small" data-plan="${esc(plan.id)}">${esc(cut(plan.t, 40))}</button> · ${esc(PLANST[plan.st] || 'For reference')}</span>` : ''}<button class="dfold" data-fold="hs${q.id}" aria-expanded="${hso}" title="Your earlier answers on the same topic">${ic('hist')} Decided before · ${q.earlier.length}</button>${q.evidence.length && !inList ? `<button class="lk small" data-ev="${esc(q.evidence[0].anchor)}" data-evq="${q.id}">${ic('place')} ${esc(cut(q.evidence[0].label || 'Its evidence', 40))}</button>` : ''}</div>${hso ? `<ul class="qhist">${q.earlier.length ? q.earlier.map(h => `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — ${esc(cut(h.q, 140))} → <b>${esc(cut(h.a, 160))}</b></li>`).join('') : '<li class="mut">Nothing decided on this before.</li>'}</ul>` : ''}`;
     const norec = !q.rec ? `<p class="small mut">The agent gave no recommendation${q.options.length ? '' : ' and no choices'}.</p>` : '';
     const an = `${norec}<div class="qopts">${q.options.map((o, i) => `<button class="qopt${o.id === q.rec ? ' rec' : ''}" data-pick="${q.id}" data-opt="${esc(o.id)}" aria-pressed="${d.pick === o.id}">${o.id === q.rec ? '<span class="rl">Recommended</span>' : ''}<b>${i + 1}. ${esc(o.label)}</b>${o.c ? `<span>${esc(o.c)}</span>` : ''}</button>`).join('')}</div>
       <textarea class="qwords" data-words="${q.id}" aria-label="Answer in words" placeholder="${q.options.length ? 'Answer in words. With no choice picked, this is your answer; with one, it goes with it.' : 'Your answer: there are no choices'}">${esc(d.words || '')}</textarea>
@@ -459,12 +461,14 @@
       if (q.closed) continue;
       if (d.pick) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>${esc(optLabel(q, d.pick))}</b>${w ? ` + “${esc(cut(w, 80))}”` : ''}`, 'q:' + q.id, 'ans:' + q.id]);
       else if (w) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
-      if (isClosing(q)) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>Closed: no answer needed</b>`, 'q:' + q.id, 'close:' + q.id]);
+      if (isClosing(q)) it.push(['Answers', `Q ${esc(q.n)} · ${esc(q.prompt)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]);
     }
     for (const q of D.questions) if (!q.closed && hasReply(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(draft(q.id).reply, 120))}”`, 'r:' + q.id, 'reply:' + q.id]);
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q(), mine = myNotes(q);
-    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${(n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
+    D.notes.forEach((n, i) => { if (mine.includes(n)) it.push(['Notes', `${mk(i + 1)}${on(n)}: ${esc(cut(n.text, 140))}`, 'n:' + n.id, 'note:' + n.id]); });
+    const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
     return it;
   }
@@ -622,7 +626,7 @@
   // the part of the card a Send item names: its reply or its answer
   function showAt(id, at) {
     const c = at && document.getElementById('q-' + id);
-    const el = c && (at === 'reply' ? c.querySelector('[data-replytext]') : c.querySelector('.qopt[aria-pressed=true]') || c.querySelector('[data-words]'));
+    const el = c && (at === 'reply' ? c.querySelector('[data-replytext]') : at === 'close' ? c.querySelector('.qstate') : c.querySelector('.qopt[aria-pressed=true]') || c.querySelector('[data-words]'));
     if (el) el.scrollIntoView({block: 'center'});
   }
   async function jumpTo(id, view, at) {
@@ -664,6 +668,8 @@
       }
       for (const q of replies) { await call(`api/comments/${encodeURIComponent(q.id)}/reply`, {text: draft(q.id).reply.trim()}); setDraft(q.id, {reply: null, replyOpen: null}); }
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
+      const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
+      if (tn) { await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}); S.note = null; ctx.prefs.set('q:newnote', null); }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
       for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
@@ -682,12 +688,14 @@
     const keep = drafts(), g = gen(), ab = abPicks(), q = Q(), notes = myNotes(q), total = sendCount();  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
     const all = {};
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
+    const tn = typingNote(); if (tn) { S.note = null; ctx.prefs.set('q:newnote', null); }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
     for (const n of notes) await call(`api/comments/${encodeURIComponent(n.id)}`, undefined, 'DELETE');
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
+      if (tn) { S.note = tn; ctx.prefs.set('q:newnote', tn); }
       await Promise.all(undos.map(u => u()));
       for (const n of notes) await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: D.version, target: n.target});
       refresh();
@@ -699,6 +707,7 @@
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {close: true}); draw(true); }}); }
     else if (kind === 'reply') { const r = draft(id).reply; setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {reply: r}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
+    else if (kind === 'newnote') { const n = typingNote(); S.note = null; ctx.prefs.set('q:newnote', null); draw(true); ctx.toast('Note removed', {undo: () => { S.note = n; ctx.prefs.set('q:newnote', n); draw(true); }}); }
     else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
@@ -710,27 +719,31 @@
   function sendGo(k) {
     S.armed = false; S.sendKey = false;
     if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
-    const at = k[0] === 'r' ? 'reply' : k[0] === 'q' ? 'answer' : null;  // "r:" a reply, "q:" an answer: the card opens at it
+    const at = {r: 'reply', q: 'answer', c: 'close'}[k[0]] || null;  // "r:" a reply, "q:" an answer, "c:" a Close and its receipt: the card opens at it (audit7 #04)
     if (at) k = 'q:' + k.slice(2);
     if (k.startsWith('ab:')) return goAB(k.slice(3));
-    if (k.startsWith('n:')) {
+    const nn = k === 'nn:' && typingNote();  // the note still being typed: its open editor (audit7 #03)
+    if (nn) S.note = nn;
+    if (k.startsWith('n:') || nn) {
       // a note in a folded section (or in Earlier updates): open it first, so the note is on screen (audit5 #04)
-      const n = D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
+      const n = nn || D.notes.find(x => x.id === k.slice(2)), at = n && DOC && DOC.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`);
       const sec = at && topSecs(DOC).find(s => s.contains(at));
       if (sec && !secOpen(sec)) { const o = 'd:' + sec.dataset.anchorId; S.open.has(o) ? S.open.delete(o) : S.open.add(o); }
       if (at && at.closest('details.aa-earlier')) S.open.add('earlier');
-      if (host) { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }  // a note lives in the document
+      if (host && !(nn && nn.inq)) { S.view = 'doc'; ctx.prefs.set('q:view', 'doc'); }  // a note lives in the document
     }
     if (host) {  // opened over another tab: Questions opens at the item
-      drawHost(); S.goAt = at;
+      drawHost(); S.goAt = at; S.goNew = !!nn;
       if (k === 'need') { S.filter = 'need'; S.view = 'list'; ctx.prefs.set('q:view', 'list'); }
-      return ctx.go('questions', k === 'need' ? undefined : (k[0] === 'q' ? 'q-' : 'n-') + k.slice(2));
+      return ctx.go('questions', k === 'need' || nn ? undefined : (k[0] === 'q' ? 'q-' : 'n-') + k.slice(2));
     }
+    if (nn) return (nn.inq || S.view === 'doc' ? draw(true) : switchView('doc')).then(goNew);
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2), null, at);
     if (k.startsWith('n:')) {
       const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
   }
+  const goNew = () => { const el = root && root.querySelector('[data-newnote]'); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
   // a task opens its full record beside Questions, Running's own panel, not in another tab (#27, audit4 04); ↑ ↓ step through the tasks on screen
   function peek(btn) {
     const main = root.parentElement, id = btn.dataset.task;
@@ -781,10 +794,17 @@
     if (ds.unclose) { setDraft(ds.unclose, {close: null}); return draw(true); }
     if (ds.reopen) return reopen(q(ds.reopen));
     if (ds.reply) { const d = draft(ds.reply); setDraft(ds.reply, {replyOpen: !(d.replyOpen || (d.reply || '').trim())}); return draw(true); }
-    if (ds.unreply) { setDraft(ds.unreply, {reply: null, replyOpen: null}); return draw(true); }
+    if (ds.unreply) { setDraft(ds.unreply, {reply: null, replyOpen: null, askWas: null}); return draw(true); }
     if (ds.link) { S.copied = ds.link; setTimeout(() => { S.copied = null; }, 3000); copy(location.href.split('#')[0] + '#questions/q-' + ds.link, 'Link'); return draw(true); }
-    // asking the agent to file a task is a reply: it joins Send, Undo takes it out (#04)
-    if (ds.askfile) { const on = (draft(ds.askfile).reply || '').trim() !== ASKFILE; setDraft(ds.askfile, {reply: on ? ASKFILE : null, replyOpen: null}); draw(true); if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { setDraft(ds.askfile, {reply: null}); draw(true); }}); return; }
+    // asking the agent to file a task is a reply: it joins Send; either Undo takes out only the request and puts back the reply it replaced (#04, audit7 #02)
+    if (ds.askfile) {
+      const id = ds.askfile, d = draft(id), on = (d.reply || '').trim() !== ASKFILE, was = on ? d.reply : d.askWas;
+      setDraft(id, on ? {reply: ASKFILE, askWas: was, replyOpen: null} : {reply: was, askWas: null});
+      draw(true);
+      if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { setDraft(id, {reply: was, askWas: null}); draw(true); }});
+      return;
+    }
+    if (t.hasAttribute('data-board')) return ctx.go('running', 'tasks');
     if (ds.task) return peek(t);
     if (ds.copytext) return copy(ds.copytext, 'Command');
     if (ds.plan) return ctx.go('reference', ds.plan);
@@ -858,7 +878,7 @@
     if (ds.words) { const was = isDraft(qOf(ds.words)); setDraft(ds.words, {words: t.value}); if (was !== isDraft(qOf(ds.words))) { ctx.refreshChips(); updateBar(); } }
     else if (ds.replytext) { const was = hasReply(qOf(ds.replytext)); setDraft(ds.replytext, {reply: t.value, replyOpen: true}); if (was !== hasReply(qOf(ds.replytext))) updateBar(); }
     else if (t.hasAttribute('data-general')) { const was = !!gen().trim(); ctx.prefs.set('q:general', t.value); if (was !== !!t.value.trim()) S.armed ? sheetCount() : updateBar(); }
-    else if (t.hasAttribute('data-notetext') && t.closest('[data-newnote]') && S.note) { S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an unsaved note survives a reload (#08)
+    else if (t.hasAttribute('data-notetext') && t.closest('[data-newnote]') && S.note) { const was = !!typingNote(); S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); if (was !== !!typingNote()) { ctx.refreshChips(); updateBar(); } }  // an unsaved note survives a reload (#08) and counts in Send (audit7 #03)
   }
   // typing General feedback inside the Send sheet: heading and buttons follow in place, the cursor stays (r12 fix6, questions 02)
   function sheetCount() {
@@ -968,6 +988,7 @@
       if (q0 && S.view === 'doc') { const was = [...S.open].join(); reveal(q0); if ([...S.open].join() !== was) await draw(true); }
       if (S.goFig) { const a = S.goFig; S.goFig = null; if (openFor(a)) await draw(true); setTimeout(() => litFig(a), 80); }
       if (q0 && S.goAt) { const a = S.goAt; S.goAt = null; setTimeout(() => showAt(q0.id, a), 80); }  // after the frame's scroll to the card
+      if (S.goNew) { S.goNew = false; setTimeout(goNew, 80); }
     },
   });
   // a note written on another tab (or removed there) is re-read before the next count (r12 audit4 reference #4)

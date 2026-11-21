@@ -129,5 +129,21 @@ def test_third_check_fixes_stay():
     assert "Sent ${pl(n, 'item', 'items')}" in s
 
 
+def test_seventh_check_fixes_stay():
+    """Round 12 audit7 questions 2-6 (no JS runner here)."""
+    s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
+    # 2: asking for a task keeps the reply it replaced, and either Undo puts it back
+    assert "setDraft(id, on ? {reply: ASKFILE, askWas: was, replyOpen: null} : {reply: was, askWas: null});" in s
+    assert "undo: () => { setDraft(id, {reply: was, askWas: null}); draw(true); }" in s
+    # 3: the note still being typed is listed, counted, removable and carried by Send
+    assert "+ (typingNote() ? 1 : 0)" in s and "'nn:', 'newnote:'" in s
+    assert "kind === 'newnote'" in s and s.index("const tn = typingNote();  // the note still open") < s.rindex("call('api/rounds/submit'")
+    # 4: Go to it beside a Close lands on its receipt
+    assert "'c:' + q.id, 'close:' + q.id" in s and "at === 'close' ? c.querySelector('.qstate')" in s
+    # 5 and 6: Open the board beside the request, and the mock's wording
+    assert "data-board title=" in s and "ctx.go('running', 'tasks')" in s
+    assert "'Please file a task on the board for this question and link it on the card.'" in s
+
+
 def test_mask_covers_company_and_keeps_images():
     assert questions._mask("a@b.com support@fastlanedrive.com x@2x.png") == "member@example.com member@example.com x@2x.png"
