@@ -27,6 +27,19 @@
 .h-wnl .small{white-space:nowrap}
 .h-qn{font-size:var(--fs-xs);font-weight:700;color:var(--err-text);background:color-mix(in oklab,var(--color-error) 14%,transparent);border-radius:6px;padding:1px 6px;white-space:nowrap}
 
+/* Questions asked per version: the mock's compact strip over the version list; a point takes a note */
+.h-chart{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;margin:4px 0 8px}
+.h-ctl{min-width:180px}
+.h-chart svg{flex:1;min-width:260px;max-width:820px;max-height:64px;height:auto;display:block}
+.h-cpt{fill:var(--color-primary);cursor:pointer}
+.h-cpt:hover,.h-cpt:focus,.h-cpt.on{fill:#d62850;outline:none}
+.h-cax{font-size:10px;fill:currentColor;opacity:.6}
+.h-cnotes{flex:1 1 100%}
+.h-cnote{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:3px 0}
+.h-nbox{border:1px solid var(--color-primary);border-radius:var(--radius-box);padding:8px 10px;margin:4px 0;max-width:720px}
+.h-nbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);color:inherit;padding:6px 8px;margin-top:4px}
+.h-nacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
+
 /* full-size picture viewer */
 .pp-zoom{position:fixed;inset:0;z-index:60;overflow:auto;background:rgb(0 0 0 / .82);padding:0 0 24px}
 .pp-zbar{position:sticky;top:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
@@ -58,4 +71,5 @@
   .pp-zhint{display:none}
   .hv-view{padding:6px 8px 10px;margin:4px -4px 12px}
   .h-cols{grid-template-columns:minmax(0,1fr)}
+  .h-chart svg{min-width:0;width:100%}
 }

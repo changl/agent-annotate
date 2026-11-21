@@ -65,3 +65,13 @@ def test_overruled_words():
     assert said("Done. Replaced by the newer card.")[0] == "replaced"
     assert said("Nothing changed here.") is None
     assert history.overruled({"replies": [{"author": "me@x.com", "text": "superseded"}]}) is None  # only the agent's words count
+
+
+def test_history_shows_the_questions_per_version_strip():
+    """Audit 8 running 3: the mock's compact strip of the newest 40 versions sits over the list with no search; a point takes a note."""
+    from pathlib import Path
+    s = (Path(history.__file__).resolve().parents[1] / "web/proto/history.js").read_text()
+    assert "let html = q ? '' : strip(ctx);" in s and ".slice(-40)" in s and "Questions asked per version" in s
+    assert "data-cpt=" in s and "anchor_id: 'chart:' + v" in s  # a point opens a note, saved as the usual note
+    assert "'draft:hnote'" in s and "key: 'hnn:' + d.v, group: 'Notes'" in s  # typed, it is a draft in Send
+    assert "e.target.id === 'h-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter'" in s

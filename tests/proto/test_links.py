@@ -134,3 +134,15 @@ def test_kept_document_lines_take_notes():
     assert 'data-doc="doc:kept-${esc(d.id)}~p"' in s  # the click handler keys a line note as data-doc + '~' + line
     assert "const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`)" in s and "blocksHtml(d.blocks || [], ctx.esc, line)" in s
     assert "/^\\d+$/.test(i || '')" in s  # only ~<n> names a chart bar; a line note never indexes the chart
+
+
+def test_a_note_being_typed_is_a_draft_in_send():
+    """Audit 8 running 1 and frame 3: the typed note is a draft (kept by "Unsent answers and notes"), listed in Send before
+    Save, reopened after a reload; ⌘↵ in it saves and never reaches the frame's Send."""
+    s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()
+    frame = (links.Path(links.__file__).resolve().parents[1] / "web/proto/frame.js").read_text()
+    assert "draft:.*" in frame and "'draft:lnote'" in s  # the frame keeps or drops it with the other drafts
+    assert "key: 'lnn:' + d.a, group: 'Notes'" in s and "(typed(c))" in s
+    assert "if (dr && !ka && (!S.note || S.note === dr.a)) { openAt(D, dr.a); S.note = dr.a;" in s
+    assert "(e.metaKey || e.ctrlKey) && e.key === 'Enter'" in s and "e.stopPropagation()" in s
+    assert "ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();" in s  # Save takes it out of the drafts

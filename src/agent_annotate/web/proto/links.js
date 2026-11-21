@@ -84,9 +84,19 @@
     if (anchor === 'people') return people(w, ctx, D);
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
     if (ka && (D.kept || []).some(d => d.id === ka[1])) S.kept = ka[1];
+    const dr = typed(ctx);  // the note he was typing before a reload reopens on its line, words and all (audit8 running 1)
+    if (dr && !ka && (!S.note || S.note === dr.a)) { openAt(D, dr.a); S.note = dr.a; S.tgt = dr.tgt || null; S.hl = ''; }
     draw(w, ctx, D); ON = {w, ctx, D};
     if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
+    else if (dr && S.note === dr.a) { const t = w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } }
     w.onclick = e => click(e, w, ctx, D);
+    w.oninput = e => { if (e.target.id !== 'l-nt' || !S.note) return;
+      const was = !!typed(ctx);
+      ctx.prefs.set('draft:lnote', {a: S.note, tgt: S.tgt, text: e.target.value, ...place(w, D, S.note, e.target)});
+      if (was !== !!typed(ctx)) ctx.refreshTop(); };
+    // ⌘↵ in the note saves it, as the mock and the shortcut help say; it never reaches the frame's Send (audit8 frame 3)
+    w.onkeydown = e => { if (e.target.id === 'l-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation(); const b = w.querySelector('[data-nsave]'); if (b) b.click(); } };
   }
 
   function draw(w, ctx, D) {
@@ -135,11 +145,11 @@
   const notesAt = (D, k) => [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))].filter(n => n.a === k);
   const onWords = (esc, t) => t && t.quote ? ` on “${esc(t.quote.length > 60 ? t.quote.slice(0, 58).trimEnd() + '…' : t.quote)}”` : '';
   function noteBox(ctx, D, k) {
-    const {esc, icon} = ctx, ns = notesAt(D, k);
+    const {esc, icon} = ctx, ns = notesAt(D, k), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '';
     if (!ns.length && S.note !== k) return '';
     return `<div class="l-notes">${ns.map(n => `<div class="l-nt${S.hl === n.id ? ' l-hl' : ''}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`).join('')}
-      ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note"></textarea>
-        <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
+      ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
+        <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
   }
   function chartHtml(ctx, D, d) {
     const {esc} = ctx, c = d.chart, max = Math.max(c.gate || 0, ...c.pts.map(p => p[1])) || 1;
@@ -223,23 +233,25 @@
       S.dsel = S.dsel === i ? -1 : i; draw(w, ctx, D);
     } else if (b.hasAttribute('data-goref')) ctx.go('reference', b.dataset.goref);
     else if (b.dataset.bnote) { S.tgt = null; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
-    else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; draw(w, ctx, D); }
+    else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (w.querySelector('#l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
-      const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = b.closest('[data-docname]');
-      const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
       try {
-        const l = d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links';
-        // the line it is on, so Send names it by its line as the mock does (r12 fix8, running 3)
-        const m = /^(.*)~(\d+)$/.exec(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
-        const line = le ? le.textContent.trim().replace(/\s+/g, ' ') : '';
+        const {l, line} = place(w, D, k, b);
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target});
         mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
-        S.note = ''; S.tgt = null; draw(w, ctx, D); ctx.refreshChips();
+        S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
       } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
     } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
+  }
+  // where a note sits: its label (the document, or its chart bar) and the line it is on, so Send names it by its line (r12 fix8, running 3)
+  function place(w, D, k, el) {
+    const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
+    const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
+    const m = /^(.*)~(\d+)$/.exec(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
+    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', line: le ? le.textContent.trim().replace(/\s+/g, ' ') : ''};
   }
   async function undoNote(id, w, ctx, D) {
     try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); draw(w, ctx, D); ctx.refreshChips(); ctx.toast('Note taken back'); }
@@ -290,12 +302,21 @@
   const redo = () => { if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); };
   // Go to it opens the note's document and lands on the note, outlined, as the mock does (r12 fix8, running 3)
   async function goNote(c, n) {
-    const D = await c.data('links'), kept = (/^doc:kept-([^~]+)/.exec(n.a) || [])[1];
-    if (kept) S.kept = kept;
-    else { const f = ((D.docs || {}).files || []).findIndex(f => n.a === docKey(f) || n.a.startsWith(docKey(f) + '~')); if (f >= 0) S.dsel = f; }
+    openAt(await c.data('links'), n.a);
     S.hl = n.id; S.note = ''; S.scroll = true;
     if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links');  // on screen: the same hash fires no hashchange
   }
+  function openAt(D, a) {  // opens the document a note's anchor is in
+    const kept = (/^doc:kept-([^~]+)/.exec(a) || [])[1];
+    if (kept) S.kept = kept;
+    else { const f = ((D.docs || {}).files || []).findIndex(f => a === docKey(f) || a.startsWith(docKey(f) + '~')); if (f >= 0) S.dsel = f; }
+  }
+  // the note being typed: a draft, in Send before Save and kept across a reload with "Unsent answers and notes" on, as Questions' open note is (audit8 running 1)
+  const typed = c => { const d = c.prefs.get('draft:lnote', null); return d && (d.text || '').trim() ? d : null; };
+  const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';
+    const focus = () => { const t = ON && ON.w.isConnected && ON.w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
+    if (ON && ON.w.isConnected) { draw(ON.w, ON.ctx, ON.D); focus(); } else c.go('links'); };
+  const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
   let KEPT = null;  // kept documents' titles, for Send before Pages & links has opened
   // unsent notes from the feed (after a reload: the server's, or a copy's simulated ones) and from this visit, once each (r12 fix8)
   const unsent = c => {
@@ -320,12 +341,19 @@
       return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
-    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? (n.line.length > 50 ? n.line.slice(0, 49) + '…' : n.line) : n.l || 'Pages & links')}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut(d.line || d.l || 'Pages & links', 50))}”: ${c.esc(cut(d.text.trim(), 140))}`,
+      go: () => goTyped(c, d),
+      remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
+        return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
+    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? cut(n.line, 50) : n.l || 'Pages & links')}”: ${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
       remove: async () => {
         await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); redo();
         return async () => { const b = await c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target}); mine.push({...n, id: b.id}); redo(); }; }}))],
-    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); redo(); },
+    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []);
+      // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
+      if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }
+      redo(); },
   });
   P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();
