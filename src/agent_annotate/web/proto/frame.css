@@ -137,6 +137,10 @@ a.btn{color:inherit;font-weight:400}
 .keys kbd{justify-self:start}
 .prow{display:grid;grid-template-columns:32px minmax(0,1fr) auto 32px;gap:6px 10px;align-items:center;padding:8px 0;border-top:1px solid color-mix(in oklab,var(--line) 60%,transparent)}
 .prow .av{width:30px;height:30px}
+.prow .sub{font-size:.79rem;color:var(--muted)}
+.roleseg .ri8{white-space:nowrap}
+.okline{color:var(--ok-text)}
+.gate .gacts{justify-content:center}
 .addrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 4px}
 .addrow input[type=email]{flex:1 1 220px;width:auto}
 
@@ -290,7 +294,8 @@ a.mi{text-decoration:none}
   .sheet{padding:12px 8px}
   .sheet .box{max-height:calc(100vh - 24px);padding:14px}
   .prow{grid-template-columns:32px minmax(0,1fr) 32px}
-  .prow .seg{grid-column:2/4;justify-self:start}
+  .prow .roleseg{grid-column:2/4;justify-self:start}
+  .prow>:last-child{grid-row:1;grid-column:3}  /* the mock: Remove (or the owner's spacer) beside the name, the role on its own line */
   /* Home on the phone: three short lines per project */
   .htiles{gap:6px}.htile{padding:6px 8px}.htile b{font-size:1.3rem}
   .htab{display:block}

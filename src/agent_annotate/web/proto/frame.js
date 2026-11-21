@@ -289,7 +289,7 @@
 
   /* ---------- the last Send, in the header (catalog 14, 72) ---------- */
   const DELIV = {acknowledged: 'read by the agent', accepted: 'delivered', started: 'agent working on it', pending: 'saved, agent not told yet', queued: 'saved, agent not told yet', active_monitor: 'delivered', uncertain: 'not confirmed yet', superseded: 'not delivered: the page changed agents'};
-  function lastSendChip() {
+  function lastSendChip(cls = 'hide-ph') {
     const r = S.fd && S.fd.lastSend, l = S.deliv;
     if (!r && !l) return '';
     const iso = (l && (l.updated_at || l.created_at)) || r.ts, t = new Date(iso), st = (l && l.state) || r.delivery;
@@ -297,8 +297,8 @@
     const today = t.toDateString() === new Date().toDateString();
     const at = today ? t.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : t.toLocaleDateString([], {day: 'numeric', month: 'short'});
     const word = l && l.delivered ? 'delivered' : DELIV[st] || 'saved';
-    const cls = /^not delivered/.test(word) ? 'err' : /delivered|read|working/.test(word) ? 'ok' : '';
-    return `<span class="chip hide-ph sentchip ${cls}" title="Your last Send, ${esc(t.toLocaleString())}: ${esc(word)}. On this copy nothing reaches an agent.">Sent ${esc(at)} · ${esc(word)}</span>`;
+    const tone = /^not delivered/.test(word) ? 'err' : /delivered|read|working/.test(word) ? 'ok' : '';
+    return `<span class="chip ${cls} sentchip ${tone}" title="Your last Send, ${esc(t.toLocaleString())}: ${esc(word)}. On this copy nothing reaches an agent.">Sent ${esc(at)} · ${esc(word)}</span>`;
   }
   function settingsBody() {
     const fs = prefs.get('fs', 100), theme = themeMode(), rem = {...REM, ...prefs.get('rem', {})}, z = prefs.get('zoomDef', 75);
@@ -392,7 +392,7 @@
   /* ---------- the phone's menu, People and keyboard shortcuts ---------- */
   function navMenu() {
     const tabs = S.home ? '' : `<nav aria-label="Tabs">${TABS.map(t => { const c = chipOf(t.key); return `<button class="pm-tab ${t.tone}${c && c.empty ? ' empty' : ''}" role="tab" data-tab="${t.key}" aria-selected="${S.tab === t.key}">${I(t.icon)}<span class="pl">${esc(t.label)}</span><span data-chip="${t.key}">${chipHtml(c)}</span></button>`; }).join('')}</nav>
-      ${S.other ? '' : `<div class="pm-acts">${sendBtn('') + beadsCtl(true)}</div>`}`;
+      ${S.other ? '' : `<div class="pm-acts">${sendBtn('') + beadsCtl(true) + lastSendChip('')}</div>`}`;
     return `<div class="pmenu" role="dialog" aria-label="Menu">${tabs}<h3>Projects</h3>${projRows()}<button class="mi" data-home${S.home ? ' aria-current="page"' : ''}><span class="nm ri8">${I('home')} All projects</span></button><div class="smb">${settingsBody()}</div></div>`;
   }
   const KEYS = [['F', 'next question'], ['A', 'previous question'], ['1–9', 'pick that choice on the highlighted question'], ['C', 'write words on the highlighted question'],
@@ -406,12 +406,13 @@
     const nr = S.newRole || 'view';
     return `<div class="sheet" data-scrim><div class="box" role="dialog" aria-modal="true" aria-label="People on ${esc(curName())}">
       <h2 class="ph ri8">${I('people')} People on ${esc(curName())} <span class="badge grey">${S.people.length}</span></h2>
-      <p class="small mut">Only you, the owner, can add or remove people and change what they can do.</p>
-      <div role="list">${S.people.map((x, i) => `<div class="prow" role="listitem"><span class="av" aria-hidden="true">${esc(x.n[0])}</span><div class="grow"><b>${esc(x.n)}</b>${x.role === 'owner' ? ' <span class="small mut">(you)</span>' : ''}</div>
-        ${x.role === 'owner' ? `<span class="ri8 small" title="${esc(ROLEHINT.owner)}">${I(ROLEIC.owner)}${ROLE.owner}</span>` : `<span class="seg" role="group" aria-label="What ${esc(x.n)} can do">${['view', 'send'].map(r => `<button data-prole="${i}~${r}" aria-pressed="${x.role === r}" title="${esc(ROLEHINT[r])}">${I(ROLEIC[r])} ${ROLE[r]}</button>`).join('')}</span><button class="icb" data-prm="${i}" title="Remove ${esc(x.n)}" aria-label="Remove ${esc(x.n)}">${I('trash')}</button>`}</div>`).join('')}</div>
+      <p class="small mut">Only you, the owner, can add or remove people and change what they can do. A change applies on their next click: the page checks this list on every visit.</p>
+      <div role="list">${S.people.map((x, i) => `<div class="prow" role="listitem"><span class="av" aria-hidden="true">${esc(x.n[0])}</span><div class="grow"><b>${esc(x.n)}</b>${x.role === 'owner' ? ' <span class="small mut">(you)</span>' : ''}<div class="sub">${x.role === 'owner' ? 'Google sign-in · sees every project' : 'Added · has not opened it yet'}</div></div>
+        ${x.role === 'owner' ? `<span class="roleseg"><span class="ri8 small" title="${esc(ROLEHINT.owner)}">${I(ROLEIC.owner)}${ROLE.owner}</span></span><span></span>` : `<span class="seg roleseg" role="group" aria-label="What ${esc(x.n)} can do">${['view', 'send'].map(r => `<button data-prole="${i}~${r}" aria-pressed="${x.role === r}" title="${esc(ROLEHINT[r])}">${I(ROLEIC[r])} ${ROLE[r]}</button>`).join('')}</span><button class="icb" data-prm="${i}" title="Remove ${esc(x.n)}" aria-label="Remove ${esc(x.n)}">${I('trash')}</button>`}</div>`).join('')}</div>
       <div class="addrow"><input type="email" id="p-newperson" placeholder="Their Google email" aria-label="Their Google email"><span class="seg" role="group" aria-label="What they can do">${['view', 'send'].map(r => `<button data-pnewrole="${r}" aria-pressed="${nr === r}" title="${esc(ROLEHINT[r])}">${I(ROLEIC[r])} ${ROLE[r]}</button>`).join('')}</span><button class="btn pri sm" data-padd>Add</button>${P.inertMark()}</div>
       ${S.pErr ? `<p class="small err-t" role="alert">${esc(S.pErr)}</p>` : ''}
-      <div class="acts"><button class="btn" data-close>Done</button></div></div></div>`;
+      <p class="small mut">${I('eye')} Can view: reads the page, its questions, Reference and History. ${I('edit')} Can answer and send: also answers, writes notes and presses Send.</p>
+      <div class="acts"><button class="btn" data-close>Done</button><button class="lk small" data-denied>See what someone without access sees</button></div></div></div>`;
   }
   const nameOf = v => { const l = v.split('@')[0].replace(/[._-]+/g, ' ').trim(); return l ? l[0].toUpperCase() + l.slice(1) : v; };  // a name, never an address
 
@@ -535,7 +536,9 @@
     }
     const d = t.dataset;
     if (d.skip) { e.preventDefault(); skipTo(d.skip); return; }
-    if (d.signin !== undefined) { signIn(); return; }
+    if (d.signin !== undefined) { signIn(d.signin === 'back'); return; }
+    if (d.denied !== undefined) { denied(false); return; }
+    if (d.gateask !== undefined) { denied(true); return; }
     if (d.scrim !== undefined) { if (t === e.target) { S.sheet = ''; drawLayer(); } return; }
     if (d.menu) { S.menu = S.menu === d.menu ? '' : d.menu; drawAll(); return; }
     if (t.matches('.brand') || d.home !== undefined) { e.preventDefault(); S.menu = ''; if (location.hash === '#home') route(); else location.hash = 'home'; return; }
@@ -563,7 +566,7 @@
       (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject()).then(done, () => toast('Copy did not work here: ' + location.href));
       return;
     }
-    if (d.signout !== undefined) { S.menu = ''; S.sheet = ''; drawAll(); signOut(); return; }
+    if (d.signout !== undefined) { signOut(); return; }
     if (d.setTheme) { prefs.set('theme', d.setTheme); applyTheme(d.setTheme); drawAll(); return; }
     if (d.fs) { setFs(prefs.get('fs', 100) + +d.fs); drawAll(); return; }
     if (d.fsset) { setFs(d.fsset); drawAll(); return; }
@@ -638,7 +641,8 @@
       await wait(() => vis(m.querySelector('.aa.qdoc')) || m.querySelector('[data-view="doc"]'));
       const b = m.querySelector('[data-view="doc"]');
       if (!vis(m.querySelector('.aa.qdoc')) && b) b.click();  // Cards only: back to the document first
-      return focus(await wait(() => [...m.querySelectorAll('.aa.qdoc')].find(vis)) || m);
+      // the document's text, not its empty box: Questions puts back the old scroll once the text is in, so land after that (audit4 frame 1)
+      return focus(await wait(() => [...m.querySelectorAll('.aa.qdoc')].find(x => vis(x) && x.childElementCount)) || m);
     }
     const card = () => [...m.querySelectorAll('.qcard[data-q]')].find(vis);
     await wait(() => m.querySelector('.qcard[data-q]'));
@@ -650,20 +654,31 @@
   }
 
   /* ---------- sign out (#8): the sign-in screen covers the page; signing in comes back to the same place ---------- */
-  function signOut() {
-    S.gated = true;
+  function gate(html) {
+    S.gated = true; S.menu = ''; S.sheet = ''; drawAll();
     document.body.classList.add('p-gated');
     let g = document.getElementById('p-gate');
     if (!g) { g = Object.assign(document.createElement('main'), {id: 'p-gate'}); document.body.appendChild(g); }
-    g.innerHTML = `<div class="gate"><h2 class="ph">Agent Annotate</h2><p>Sign in to see your projects and answer what is waiting.</p><button class="btn pri" data-signin>Sign in with Google</button><p class="small mut">Only people on a project's People list can open its page.</p><p class="small">${P.inertMark()}</p></div>`;
-    g.querySelector('[data-signin]').focus();
+    g.innerHTML = `<div class="gate">${html}<p class="small">${P.inertMark()}</p></div>`;
+    g.querySelector('.btn.pri, .lk').focus();
   }
-  function signIn() {
+  function signOut() {
+    gate(`<h2 class="ph">Agent Annotate</h2><p>Sign in to see your projects and answer what is waiting.</p><button class="btn pri" data-signin>Sign in with Google</button><p class="small mut">Only people on a project's People list can open its page.</p>`);
+  }
+  // People's "See what someone without access sees" (audit4 frame 2): the mock's sample denial screen, with a way back
+  function denied(asked) {
+    const own = myName().split(' ')[0];
+    gate(`<h2 class="ph">This page isn't shared with you yet</h2><p>You're signed in, but not on ${esc(curName())}'s People list.</p>${asked
+      ? `<p class="okline" role="status">${I('check')} Asked. ${esc(own)} sees your request under People; this link opens the page once ${esc(own)} adds you.</p>`
+      : `<div class="acts gacts"><button class="btn pri" data-gateask>Ask ${esc(own)} for access</button><button class="btn" data-signout>Use another Google account</button></div>`}
+      <p class="small mut"><button class="lk small" data-signin="back">Back to the page (you are the owner)</button></p>`);
+  }
+  function signIn(back) {
     S.gated = false;
     document.body.classList.remove('p-gated');
     const g = document.getElementById('p-gate');
     if (g) g.remove();
-    toast('Signed in', {inert: true});
+    if (!back) toast('Signed in', {inert: true});
   }
   // Phone: the top bar slides away as you scroll down and comes back as you scroll up.
   let lastY = 0;

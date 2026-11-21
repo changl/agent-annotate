@@ -219,3 +219,21 @@ def test_second_audit_fixes_stay():
     # fix3: the phone toast takes the screen's width (not half of it), wraps its links whole and sits above the floating Send
     assert ".p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto" in css
     assert "flex-wrap:wrap;row-gap:4px" in css and "text-decoration:underline;white-space:nowrap" in css and ".p-toastwrap{bottom:82px}" in css
+
+
+def test_fourth_check_frame_fixes_stay():
+    js, css, q, run, links = (_src(n) for n in ("frame.js", "frame.css", "questions.js", "running.js", "links.js"))
+    # frame 1: the document skip waits for the loaded text, after Questions has put back its old scroll
+    assert "find(x => vis(x) && x.childElementCount)" in js
+    # frame 2: People opens the sample denial screen, with a way back
+    assert "data-denied>See what someone without access sees" in js and "data-signin=\"back\">Back to the page" in js
+    # frame 3: the phone menu carries the last Send
+    assert "beadsCtl(true) + lastSendChip('')" in js
+    # frame 5: zero waiting still reads "0 waiting", never "N later"
+    assert "text: `${n} waiting`, tone: n ? 'red' : 'green'" in q and " later`, title" not in q
+    # frame 6: Owner keeps its own row on the phone, unwrapped
+    assert '<span class="roleseg"><span class="ri8 small"' in js and ".prow .roleseg{grid-column:2/4" in css and ".roleseg .ri8{white-space:nowrap}" in css
+    # running 3: a role button inside the Add form never submits it
+    assert '<button type="button" ${attr}=' in links
+    # questions 04: a task link opens Running's full panel beside Questions, not an inline preview
+    assert "P.taskPanel(host, ctx, id" in q and "qpeek" not in q and "P.taskPanel = async" in run and "tabNow === 'side' ? panel()" in run

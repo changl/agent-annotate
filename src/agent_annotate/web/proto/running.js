@@ -307,7 +307,13 @@
       if (say) say.textContent = e.target.value.trim() ? 'Saved as you type · goes to the board with your next Send' : 'Goes to the board with your next Send';
       if (rm) rm.hidden = !e.target.value.trim(); };
   }
-  function openTask(id) { S.task = id; CTX.prefs.set('task', id); draw(); const ta = EL.querySelector('.tpanel .tpscroll'); if (ta) ta.scrollTop = 0; }
+  function openTask(id) { S.task = id; if (tabNow !== 'side') CTX.prefs.set('task', id); draw(); const ta = EL.querySelector('.tpanel .tpscroll'); if (ta) ta.scrollTop = 0; }
+  // the same panel beside another tab (Questions' task links, audit4 questions 04); host carries .area-running for the panel's look
+  P.taskPanel = async (host, ctx, id, list) => {
+    CTX = CTX || ctx; D = D || own(await ctx.data('running'));
+    if (!host.isConnected) return;
+    EL = host; tabNow = 'side'; S.list = list; bind(host); openTask(id);
+  };
   addEventListener('keydown', e => {
     if (!EL || !EL.isConnected || !EL.classList.contains('tab-running') || !S.task || e.target.closest('textarea,input')) return;
     const pos = S.list.indexOf(S.task);
@@ -333,7 +339,7 @@
   function draw() {
     if (!EL || !D) return;
     const y = scrollY, ps = EL.querySelector('.tpanel .tpscroll'), py = ps ? ps.scrollTop : 0;
-    EL.innerHTML = tabNow === 'running' ? running() : analytics();
+    EL.innerHTML = tabNow === 'side' ? panel() : tabNow === 'running' ? running() : analytics();
     // the task arrows step through the tasks shown on screen, not the folded groups (#144); one redraw when they differ
     if (tabNow === 'running' && S.task) {
       const l = [...new Set([...EL.querySelectorAll('[data-task]')].filter(x => !x.closest('.tpanel')).map(x => x.dataset.task).filter(x => x && ((D.board || {}).beads || {})[x]))];

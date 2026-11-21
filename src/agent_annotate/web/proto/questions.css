@@ -142,7 +142,6 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 .qtask:hover{border-color:var(--color-primary)}
 .qtask .bid{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap}
 .qtask .mut{white-space:nowrap}
-.qpeek{display:inline-block;margin:2px 0 2px 6px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--excerpt-bg);color:var(--color-base-content)}  /* #27 */
 
 /* notes: on a line, words, a row, or a spot on a picture (#103: icons for their actions) */
 .qnote{border:1px solid var(--color-primary);border-radius:var(--radius-field);padding:6px 8px;margin:6px 0;background:var(--color-base-100);max-width:80ch;font-size:var(--fs-md);display:block}

@@ -453,7 +453,7 @@
     if (!els.length) return '';
     const ev = q.evidence[0];
     const box = document.createElement('div'); box.innerHTML = els.map(evHtml).join('');
-    box.querySelectorAll('.qcard,.qnote,.qsecf,.qsecm,.qtiles,.qpeek').forEach(x => x.remove());  // the document's own text only, not this tab's additions
+    box.querySelectorAll('.qcard,.qnote,.qsecf,.qsecm,.qtiles').forEach(x => x.remove());  // the document's own text only, not this tab's additions
     return `<div class="qev"><div class="small mut">${ic('place')} Its evidence in the document: <button class="lk small" data-indoc="${q.id}">${esc(cut(ev.label || 'open in the document', 50))}</button></div><div class="aa qevb">${box.innerHTML}</div></div>`;
   }
 
@@ -577,12 +577,12 @@
     if (k.startsWith('q:')) return jumpTo(k.slice(2));
     if (k.startsWith('n:')) { const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
   }
-  // a task opens beside the text it sits in, not in another tab (#27)
+  // a task opens its full record beside Questions, Running's own panel, not in another tab (#27, audit4 04); ↑ ↓ step through the tasks on screen
   function peek(btn) {
-    const id = btn.dataset.task, nx = btn.nextElementSibling;
-    if (nx && nx.classList.contains('qpeek')) return nx.remove();
-    const b = (D.beads || {})[id];
-    btn.insertAdjacentHTML('afterend', `<span class="qpeek small" role="note">${b ? `“${esc(b.title)}” · ${esc(b.status.replace('_', ' '))} on the board` : 'Not on the board'} · task ${esc(id)} · <button class="lk small" data-taskrun="${esc(id)}">Open in Running</button> · <button class="lk small" data-copytext="bd show ${esc(id)}">Copy “bd show ${esc(id)}”</button> · <button class="lk small" data-peekclose>Close</button></span>`);
+    const main = root.parentElement, id = btn.dataset.task;
+    if (!P.taskPanel) return ctx.go('running', id);
+    const host = main.querySelector(':scope > .qtaskside') || main.appendChild(Object.assign(document.createElement('div'), {className: 'area-running qtaskside'}));
+    P.taskPanel(host, ctx, id, [...new Set([...root.querySelectorAll('[data-task]')].map(x => x.dataset.task))]);
   }
   async function carried(id, st) {
     const all = ctx.prefs.get('q:carried', {}), c = (D.carried || []).find(x => x.id === id), was = all[id];
@@ -632,8 +632,6 @@
     // asking the agent to file a task is a reply: it joins Send, Undo takes it out (#04)
     if (ds.askfile) { const on = (draft(ds.askfile).reply || '').trim() !== ASKFILE; setDraft(ds.askfile, {reply: on ? ASKFILE : null, replyOpen: null}); draw(true); if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { setDraft(ds.askfile, {reply: null}); draw(true); }}); return; }
     if (ds.task) return peek(t);
-    if (ds.taskrun) return ctx.go('running', ds.taskrun);
-    if (t.hasAttribute('data-peekclose')) return t.closest('.qpeek').remove();
     if (ds.copytext) return copy(ds.copytext, 'Command');
     if (ds.plan) return ctx.go('reference', ds.plan);
     if (ds.ev) { const el = root.querySelector(`[data-anchor-id="${CSS.escape(ds.ev)}"]:not(.qcard)`); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2000); } return; }
@@ -756,8 +754,9 @@
     chip: async c => {
       ctx = ctx || c; D = D || sim(await c.data('questions'));
       const n = waitingCount(), later = D.questions.filter(FILTERS.later).length;
-      if (n) return {text: `${n} waiting`, tone: 'red', title: pl(n, 'question waits', 'questions wait') + ' for your answer'};
-      return later ? {text: `${later} later`, title: pl(later, 'question', 'questions') + ' set aside to answer later'} : null;
+      if (!D.questions.length) return {empty: true};
+      // the mock: always "N waiting", red while any wait, green at zero; set-aside ones only in the tip (audit4 frame 5)
+      return {text: `${n} waiting`, tone: n ? 'red' : 'green', title: pl(n, 'question waits', 'questions wait') + ' for your answer' + (later ? ` · ${later} set aside to answer later` : '')};
     },
     render: async (el, c, anchor) => {
       ctx = c; root = el;

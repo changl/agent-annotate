@@ -209,7 +209,7 @@
     let list = ctx.prefs.get('people', []), role = 'view', err = '';
     const save = l => { list = l; ctx.prefs.set('people', l); ctx.refreshChips(); draw(); };
     const owners = D.people.length ? D.people : [{name: 'You', email: MASK, role: 'owner', seen: ''}];
-    const seg = (cur, attr, label) => `<span class="l-seg" role="group" aria-label="${esc(label)}">${['view', 'send'].map(r => `<button ${attr}="${r}" aria-pressed="${cur === r}" title="${esc(ROLEHINT[r])}">${icon(ROLEIC[r])}${ROLE[r]}</button>`).join('')}</span>`;
+    const seg = (cur, attr, label) => `<span class="l-seg" role="group" aria-label="${esc(label)}">${['view', 'send'].map(r => `<button type="button" ${attr}="${r}" aria-pressed="${cur === r}" title="${esc(ROLEHINT[r])}">${icon(ROLEIC[r])}${ROLE[r]}</button>`).join('')}</span>`;
     function draw() {
       w.innerHTML = `<div class="l-people"><button class="lk small l-back" data-back>${icon('chev')} Pages &amp; links</button>
         <h2 class="l-ph">${icon('people')} People on ${esc(D.name)} <span class="badge grey">${owners.length + list.length}</span></h2>
