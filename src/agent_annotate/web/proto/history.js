@@ -78,8 +78,7 @@
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(n.text, 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
-        remove: async () => { await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); dropC(n.id); redrawH();
-          return async () => { const c = await ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text}); CN.push({...n, id: c.id}); redrawH(); }; }}))],
+        remove: () => takeC(ctx, n)}))],
     sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
       savedC(ctx).forEach(n => { n.sent = true; }); },
   });
@@ -199,11 +198,11 @@
   // the list on screen; a box left behind by another tab no longer counts, so Go to it switches tabs (audit9 running 1)
   const onH = () => !!(HE && HE.el.isConnected && HE.el.querySelector('#h-list'));
   const redrawH = () => { if (onH()) draw(HE.el, HE.ctx); };
-  const focusC = el => { const t = el.querySelector('#h-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
+  const focusC = el => { const t = el.querySelector('#h-nt, #h-et'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
   // the note stays lit through a redraw (Questions' feed arriving) for 2.5 s, as Questions' qlit
   const litC = el => { const id = S.hl, t = id && el.querySelector(`[data-cnote="${CSS.escape(id)}"]`); if (!t || S.hlT === id) return; S.hlT = id;
     t.scrollIntoView({block: 'center'}); t.classList.add('lit');
-    setTimeout(() => { if (S.hl === id) S.hl = ''; S.hlT = ''; document.querySelectorAll('.h-cnote.lit').forEach(e => e.classList.remove('lit')); }, 2500); };
+    setTimeout(() => { if (S.hl === id) S.hl = ''; S.hlT = ''; document.querySelectorAll('[data-cnote].lit').forEach(e => e.classList.remove('lit')); }, 2500); };
   const qpv = () => Object.entries(D.versions || {}).filter(([v]) => /^v\d+$/.test(v)).sort((a, b) => +vn(a[0]) - +vn(b[0])).slice(-40);
   const allC = () => { const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => /^chart:/.test(n.anchor || '')); };
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
@@ -211,13 +210,45 @@
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     return allC().filter(n => !n.sent); };
   const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };
+  // takes a saved note back (its Undo icon, Send's Remove); returns what puts it back
+  async function takeC(ctx, n) {
+    await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
+    return async () => { const c = await ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text}); CN.push({...n, id: c.id, sent: false}); redrawH(); ctx.refreshChips(); };
+  }
+  const setT = (id, t) => [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) x.text = t; });
+  // a saved note on a point, as the mock's noteBox: Edit, Undo, Copy note and Copy note link; Edit opens its own wording (audit10 running 3)
+  function cbox(ctx, x, no, v) {
+    const {esc, icon} = ctx, id = esc(x.id), what = `Note ${no} on version ${esc(vn(v))}`, lit = S.hlT === x.id ? ' lit' : '';
+    const ib = (k, label, attr) => `<button class="ib sm" title="${label}" aria-label="${label}" ${attr}="${id}">${icon(k)}</button>`;
+    const mk = `<span class="qmk${x.sent ? ' sent' : ''}" title="Your note ${no}${x.sent ? ', sent' : ''}">${icon('note')}${no}</span>`;
+    if (S.ce === x.id) return `<div class="qnote h-cnote" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}</b> <span class="small mut">· goes with your next Send</span>
+      <textarea id="h-et" rows="3" aria-label="${what}">${esc(x.text)}</textarea>
+      <div class="h-nacts"><button class="btn sm pri" data-csavee="${id}">Save</button><button class="btn sm" data-ccancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
+    const acts = (x.sent ? '' : ib('edit', 'Edit this note', 'data-cned') + ib('undo', 'Undo: remove this note', 'data-cdel')) + ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
+    return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} <span class="${x.sent ? 'mut' : 'saved'}">· ${x.sent ? 'sent' : 'goes with Send'}</span><span class="nacts">${acts}</span></div>`;
+  }
+  async function editC(el, ctx, id) {
+    const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
+    S.ce = '';
+    if (!n || text === n.text) return draw(el, ctx);
+    if (!text) { const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
+    const was = n.text;
+    try {
+      await ctx.api('api/comments/' + encodeURIComponent(id), {text}, 'PUT'); setT(id, text); draw(el, ctx); ctx.refreshTop();
+      ctx.toast('Note changed · goes with Send', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(id), {text: was}, 'PUT'); setT(id, was); redrawH(); ctx.refreshTop(); }});
+    } catch (er) { S.ce = id; draw(el, ctx); ctx.toast(`The note was not changed: ${er.message}`); }
+  }
+  async function copyC(ctx, text, what) {
+    try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
+  }
   function strip(ctx) {
     const {esc, icon} = ctx, vs = qpv();
     if (vs.length < 2) return '';
     const n = m => m.items || 0, mx = Math.max(1, ...vs.map(([, m]) => n(m))), X = i => 34 + i * 20, Y = k => 50 - k / mx * 42;
     const pts = vs.map(([v, m], i) => { const on = S.cn === v || cnotes(v).length > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
       return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-label="${esc(t)}. Write a note on it"><title>${esc(t)}</title></circle>`; }).join('');
-    const notes = vs.flatMap(([v]) => cnotes(v).map(x => `<div class="h-cnote${S.hlT === x.id ? ' lit' : ''}" data-cnote="${esc(x.id)}">${icon('note')}<span class="small mut">Version ${esc(vn(v))}</span> ${esc(x.text)}${x.sent ? '' : ' <span class="small h-gws">· goes with Send</span>'}</div>`)).join('');
+    const order = allC();
+    const notes = vs.flatMap(([v]) => cnotes(v).map(x => cbox(ctx, x, order.indexOf(x) + 1, v))).join('');
     const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
@@ -246,6 +277,7 @@
     if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
     ctx.data('questions').then(q => { QD = q; if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) { draw(el, ctx); litC(el); } }).catch(() => {});
     const {esc, icon} = ctx;
+    if (/^hn-/.test(anchor || '')) { S.hl = anchor.slice(3); S.hlT = ''; anchor = ''; }  // a copied note link lands on the note
     if (anchor) return openView(el, ctx, anchor);
     HE = {el, ctx};
     const dr = typedC(ctx);  // the note he was typing on a point before a reload reopens, words and all
@@ -266,6 +298,7 @@
     // ⌘↵ in the note saves it, as in the mock; Enter or Space on a point opens its note
     wrap.onkeydown = e => {
       if (e.target.id === 'h-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); saveC(el, ctx); }
+      else if (e.target.id === 'h-et' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); editC(el, ctx, S.ce); }
       else if (e.target.dataset && e.target.dataset.cpt && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', {bubbles: true})); }
     };
     draw(el, ctx);
@@ -336,13 +369,24 @@
     const tag = h.ovr ? `<span class="h-ovr" tabindex="0">⤼ overruled<span class="h-tip" role="tooltip">The agent wrote “${esc(h.ovr[0])}”: ${esc(h.ovr[1])} Your answer stays here as you sent it.</span></span> ` : '';
     return `<li>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b></li>`;
   }
-  function click(e, el, ctx) {
+  async function click(e, el, ctx) {
     const pt = e.target.closest('[data-cpt]');
-    if (pt) { S.cn = S.cn === pt.dataset.cpt ? '' : pt.dataset.cpt; draw(el, ctx); return focusC(el); }
+    if (pt) {  // a marked point opens its saved note to edit, not a blank one (audit10 running 3)
+      const v = pt.dataset.cpt, mine = cnotes(v).filter(n => !n.sent).at(-1);
+      if (mine) { S.cn = ''; S.ce = S.ce === mine.id ? '' : mine.id; }
+      else { S.ce = ''; S.cn = S.cn === v ? '' : v; }
+      draw(el, ctx); return focusC(el);
+    }
     const b = e.target.closest('button');
     if (!b) return;
+    const ds = b.dataset, cn = id => allC().find(x => x.id === id);
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
-    if (b.hasAttribute('data-ccancel')) { S.cn = ''; ctx.prefs.set('draft:hnote', null); return draw(el, ctx); }
+    if (ds.csavee) return editC(el, ctx, ds.csavee);
+    if (ds.cned) { S.cn = ''; S.ce = ds.cned; draw(el, ctx); return focusC(el); }
+    if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n); ctx.toast('Note removed', {undo: back}); } return; }
+    if (ds.ccopy) return copyC(ctx, (cn(ds.ccopy) || {}).text || '', 'Note');
+    if (ds.clink) return copyC(ctx, location.href.split('#')[0] + '#history/hn-' + ds.clink, 'Link to the note');
+    if (b.hasAttribute('data-ccancel')) { if (S.ce) { S.ce = ''; return draw(el, ctx); } S.cn = ''; ctx.prefs.set('draft:hnote', null); return draw(el, ctx); }
     if (b.dataset.fold) { S.open.has(b.dataset.fold) ? S.open.delete(b.dataset.fold) : S.open.add(b.dataset.fold); draw(el, ctx); }
     else if (b.hasAttribute('data-wd')) { S.wd = !S.wd; draw(el, ctx); }
     else if (b.hasAttribute('data-refall')) { S.ref = !S.ref; draw(el, ctx); }

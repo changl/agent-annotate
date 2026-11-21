@@ -76,12 +76,18 @@
     return ok;
   }
   const abs = u => new URL(u, location.href).href;
+  let readAt = Date.now();  // the last fresh read of links.json; the first, at page load, is the chip's
 
   async function render(el, ctx, anchor) {
-    const D = LD = await ctx.data('links');
+    let D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
+    // coming back to the tab reads its list again behind what is on screen, so a link added since shows without a reload (audit10 running 5)
+    if (Date.now() - readAt > 15000) { readAt = Date.now();
+      ctx.data('links', true).then(F => { if (!w.isConnected || JSON.stringify(F) === JSON.stringify(D)) return;
+        D = LD = F; if (ON && ON.w === w) ON.D = F;
+        if (!w.contains(document.activeElement) || !document.activeElement.matches('input, textarea')) draw(w, ctx, D); }).catch(() => {}); }
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
     if (ka && (D.kept || []).some(d => d.id === ka[1])) S.kept = ka[1];
     const dr = typed(ctx);  // the note he was typing before a reload reopens on its line, words and all (audit8 running 1)
@@ -348,11 +354,11 @@
       return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : tl[id] || id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
-    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut(d.line || d.l || 'Pages & links', 50))}”: ${c.esc(cut(d.text.trim(), 140))}`,
+    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
       go: () => goTyped(c, d),
       remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
-    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(n.line ? cut(n.line, 50) : n.l || 'Pages & links')}”: ${c.esc(cut(n.text, 140))}`,
+    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
       remove: async () => {
         await c.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', c.prefs.get('draft:lnotes', []).filter(x => x.id !== n.id)); redo();

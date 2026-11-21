@@ -640,7 +640,7 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       if (D) SNOTES = allNotes().filter(n => !n.sent && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a)}));
-      for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq(n.l || 'Reference'))}”: ${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
+      for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
         go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: async () => {
           await ctx.api('api/comments/' + encodeURIComponent(n.id), undefined, 'DELETE'); mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
           return async () => { const b = await ctx.api('api/comments', {anchor_id: n.a, anchor_label: n.l || 'Reference', text: n.text, target: n.target, ...(D ? noteMeta(n.a) : {})}); mine.push({...n, id: b.id, who: 'You'}); if (!D) SNOTES.push({...n, id: b.id}); keepDrafts(); redo(); }; }});

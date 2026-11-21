@@ -19,7 +19,7 @@ def test_failed_publish_reply_is_a_draft_pref():
 
 def test_document_note_is_named_by_its_line_and_go_to_it_lands_on_it():
     """Finding 3 and reference 1: Send names the line; Go to it opens the document and scrolls to the outlined note."""
-    assert "n.line ? cut(n.line, 50)" in LINKS
+    assert "|| n.line || n.l ||" in LINKS
     assert "go: () => goNote(c, n)" in LINKS
     assert "S.hl === n.id ? ' l-hl' : ''" in LINKS
     assert "h.scrollIntoView({block: 'center'})" in LINKS
