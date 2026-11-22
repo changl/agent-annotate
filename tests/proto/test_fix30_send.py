@@ -49,7 +49,7 @@ def test_nothing_ready_only_when_every_read_is_in():
     """Running 2: Questions' own read counts, held or failed, as Reference's and Pages & links' do."""
     q = (WEB / "questions.js").read_text()
     assert "const allRead = () => !!(oin() && qIn());" in q
-    assert q.count("Nothing ready yet.</p>") == 1 and "(allRead() ? `<p class=\"small mut\" data-snone" in q
+    assert q.count("Nothing ready yet.</p>") == 1 and "(settled() ? `<p class=\"small mut\" data-snone" in q
 
 
 def test_a_failed_read_names_only_itself():

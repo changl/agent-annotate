@@ -42,31 +42,35 @@
   // A read-only copy of another project's page is served under <root>/proto/p/<key>/ (frame.py serve_other)
   const COPY = (base.match(/\/proto\/p\/([a-z0-9-]+)\/$/) || [])[1] || '';
   const ROOT = COPY ? base.slice(0, -`proto/p/${COPY}/`.length) : base;
-  async function api(path, body, method) {
+  // The one request wrapper: every write this tab makes, from any tab's module, passes here. own: a write Send's round makes
+  // itself. Any other note write made once a round is going waits for it, so it goes with the next Send (r12 audit30 frame 1)
+  async function api(path, body, method, own) {
     const write = body !== undefined || !!method;
-    if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
+    const hold = write && !own && sendP && sendP.hold ? sendP.hold(path) : null;
+    if (hold) await hold;
+    if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path, own); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
     const opts = !write ? {cache: 'no-store'}
       : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body), keepalive: method === 'DELETE'};  // a removal finishing as the page closes still lands
     const go = fetch(base + path.replace(/^\//, ''), opts).then(async r => {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-      if (write) wrote(path);
+      if (write) wrote(path, own);
       return data;
     });
-    if (write && sendP && sendP.writing) sendP.writing(path, go);  // a write still on its way counts in Send's round check (r12 audit29 questions 1)
+    if (write && sendP && sendP.writing) sendP.writing(path, go, own);  // a write still on its way counts in Send's round check (r12 audit29 questions 1)
     // every read, the version and metadata too, fails after 20 s so its tab or the frame offers Try again; a write is never cut short (r12 audit10 frame 1)
     return write ? go : Promise.race([go, late()]);
   }
   // a note written on any tab changes the next Send: Questions re-reads its notes, and the Send count follows
-  const wrote = path => { if (sendP && sendP.wrote) sendP.wrote(path); refreshSend(); };
+  const wrote = (path, own) => { if (sendP && sendP.wrote) sendP.wrote(path, own); refreshSend(); };
   // A note removed from Send or its tab leaves the store only once its Undo is gone: Undo keeps the very record, its id, number,
   // time and every field (r12 audit13 frame 4, questions 2). Until then every feed hides it; kept in prefs, a reload hides it too and finishes the removal.
   const TAKEN = new Map(), takenT = {}, TAKE_MS = 10000;  // the Undo toast lasts 9 s
   const keepTaken = () => prefs.set('taken', Object.fromEntries(TAKEN));
-  function finishTake(id) {
+  function finishTake(id, own) {
     const path = TAKEN.get(id); clearTimeout(takenT[id]); delete takenT[id];
     if (!path) return Promise.resolve();
-    return api(path, undefined, 'DELETE').catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
+    return api(path, undefined, 'DELETE', own).catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
       .finally(() => { TAKEN.delete(id); keepTaken(); });
   }
   const take = (id, path) => {
@@ -194,7 +198,7 @@
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
     // take(id, path) -> Undo: the note is hidden now and its DELETE goes when Undo is gone; taken(id); takeNow(): every pending one goes (before a Send)
-    take, taken: id => TAKEN.has(id), takeNow: () => Promise.all([...TAKEN.keys()].map(finishTake)),
+    take, taken: id => TAKEN.has(id), takeNow: () => Promise.all([...TAKEN.keys()].map(id => finishTake(id, true))),  // Send's own: its round waits for them
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
@@ -999,7 +1003,7 @@
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
     await scripts;
-    [...TAKEN.keys()].forEach(finishTake);  // after the scripts: a copy's removal goes to its in-memory store (P.copyWrite)
+    [...TAKEN.keys()].forEach(id => finishTake(id));  // after the scripts: a copy's removal goes to its in-memory store (P.copyWrite)
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
     // the version waits for its counts however slow the read: never Version with Send 0 before the restored count (r12 fix11 frame)

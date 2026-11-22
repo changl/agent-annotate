@@ -45,11 +45,11 @@ RS.reference = RS.links = {{st: 'done'}};
 
 
 def test_send_and_the_round_wait_on_every_read():
-    assert "const ok = sendOn(n)," in Q and "const sendOn = n => !!n && allRead() && !WRITING.size;" in Q  # fix32: one gate; fix33: a write on its way too
+    assert "const ok = sendOn(n)," in Q and "const sendOn = n => !!n && settled();" in Q  # fix32: one gate; fix33: a write on its way too
     s = grab(Q, "  function send() {", "\n  }")
     assert "if (!sendOn(sendCount() || 1))" in s  # fix33: the one gate
     p = grab(Q, "  async function post(", "api/rounds/submit")
-    assert p.index("if (!allRead()") <p.index("await ctx.takeNow()")
+    assert p.index("await ctx.takeNow()") < p.index("if (!settled()")
     r = grab(Q, "  async function relist() {", "\n  }")
     assert "if (stale && !reading && !qerr() && ctx) return readFor(ctx);" in r  # never loops on a failing read
     assert "if (qerr() && !again) throw Error(" in grab(Q, "  const load = async", "\n  };")  # a cold failed read: counts wait for Try again, never re-read

@@ -473,16 +473,19 @@
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
     ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
       go: () => goTyped(c, d),
+      // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
+      save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
+        mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
+        const now = typed(c); if (now && now.a === d.a && now.text === d.text) { if (S.note === d.a) S.note = ''; c.prefs.set('draft:lnote', null); }
+        return r; },
       remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
       go: () => goNote(c, n),
       remove: P.notes.rowRm(n) ? () => takeNote(c, n) : null}))],
-    sent: c => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
-      // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
-      if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }
-      redo(); },
+    // the note he was typing is saved by Send itself (save above); one typed since stays for the next Send (r12 audit30 questions 3)
+    sent: c => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []); redo(); },
   });
   P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

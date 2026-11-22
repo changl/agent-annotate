@@ -49,7 +49,7 @@ def test_send_opens_while_counts_are_unknown():
     sheet = grab(Q, "function openSheet(c, key) {", "\n  }")
     assert "if (!D || stale || qerr()) readFor(c, qerr());" in sheet and "if (onQ() && D) return draw(true);" in sheet
     assert "const savedQs = () => Object.keys(drafts())" in Q
-    assert "if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(`${WRITING.size ? 'Saving your note' : `Reading ${qIn() ? 'the notes on other tabs' : 'the questions'}`} first" in Q  # fix28: and the other tabs' notes; fix31: every Questions read; fix33: the one gate
+    assert "if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(waitMsg()); }" in Q  # fix28: and the other tabs' notes; fix31: every Questions read; fix33: the one gate
     assert "if (t.hasAttribute('data-sretry')) return readFor(ctx, true);" in Q
 
 

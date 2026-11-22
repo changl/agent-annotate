@@ -15,7 +15,7 @@ def test_frame_owns_one_queue_and_repaints_send():
     assert "P.queue = src => { SRC.push(src); refreshSend(); };" in f
     assert "queued, queueSent:" in f
     # writes from any tab tell Questions and repaint Send; clicks and typing do too, so the count follows on every tab
-    assert "if (write) wrote(path);" in f and "wrote(path); return r; }" in f
+    assert "if (write) wrote(path, own);" in f and "wrote(path, own); return r; }" in f
     assert "document.addEventListener('click', refreshSend); document.addEventListener('input', refreshSend);" in f
     assert "#p-top [data-send], #p-layer [data-send]" in f and "drawFab();" in f[f.index("function refreshSend"):]
 
@@ -28,7 +28,7 @@ def test_questions_lists_counts_removes_and_clears_the_queue():
     assert "(await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean)" in s  # Discard all too
     assert "if (ctx.queueSent) ctx.queueSent(got);" in s  # a Send clears every tab's items
     assert "if (k.startsWith('x:'))" in s  # Go to it opens the item's own tab
-    assert "wrote: path =>" in s  # notes written on other tabs reach Questions' list without a visit
+    assert "wrote: (path, own) =>" in s  # notes written on other tabs reach Questions' list without a visit
 
 
 def test_each_tab_queues_its_next_send_items():

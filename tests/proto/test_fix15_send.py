@@ -81,4 +81,4 @@ def test_every_tab_undo_keeps_the_record():
     assert "ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text})" not in HIST
     assert "ctx.prefs.set('draft:hcnotes', l); CN.push" in HIST
     assert "await ctx.takeNow();" in Q  # a Send never carries a note removed with Undo still open
-    assert "[...TAKEN.keys()].forEach(finishTake);" in FRAME and "prefs.get('taken', {})" in FRAME
+    assert "[...TAKEN.keys()].forEach(id => finishTake(id));" in FRAME and "prefs.get('taken', {})" in FRAME

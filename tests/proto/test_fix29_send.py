@@ -55,7 +55,7 @@ def test_open_sheet_reads_and_relists_whatever_opened_it():
     """Questions 1, 2: the sheet starts its own reads on every open path, and relists once they land even while General
     feedback has the focus, keeping the words and the cursor."""
     q = (WEB / "questions.js").read_text()
-    panel = q[q.index("  function sendPanel(n) {"):q.index("  function sendPanel(n) {") + 400]
+    panel = q[q.index("  function sendPanel(n) {"):q.index("  function sendPanel(n) {") + 700]
     assert "if (!oin() && !oerr()) readOthers(ctx);" in panel
     rel = q[q.index("  async function relist() {"):q.index("  // copyOf is the project's key")]
     assert "/^(TEXTAREA|INPUT)$/" not in rel and "if (!S.armed || !s) return;" in rel
@@ -69,7 +69,7 @@ def test_a_failed_read_says_so_with_try_again():
     assert "end = st => { if (RS[a] === t && t.st !== st) { t.st = st; relist(); } };" in q  # fix33: one read state
     assert "could not be read: Send waits for them.</span> <button class=\"lk small\" data-sothersretry>Try again</button>" in q
     assert "if (t.hasAttribute('data-sothersretry')) { readOthers(ctx); return draw(true); }" in q
-    assert "(allRead() ? `<p class=\"small mut\" data-snone" in q  # Nothing ready yet only once the reads are in
+    assert "(settled() ? `<p class=\"small mut\" data-snone" in q  # Nothing ready yet only once the reads are in
     assert "$('[data-send]').disabled = !sendOn(n);" in q and "$('[data-discard]').disabled = !sendOn(n);" in q  # fix32: the redraw's gate
 
 

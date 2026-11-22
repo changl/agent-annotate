@@ -43,12 +43,13 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 def test_round_stops_on_a_typed_note_or_a_write_on_its_way(tmp_path):
     """Running 1, Questions 1: an editor typed into during Undo, or a save still in flight, stops the round; a listed typed
     note's id counts as its own row, so the receipt says what the round carried."""
-    assert "if (write && sendP && sendP.writing) sendP.writing(path, go);" in FRAME
+    assert "if (write && sendP && sendP.writing) sendP.writing(path, go, own);" in FRAME
     post = grab(Q, "  async function post(", "\n  // Discard all")
     deliv = grab(Q, "  const deliverable = ", ";\n")
     node(tmp_path, f"""
 const assert = require('assert');
 let rows = [], round = null, toast = '', posted = 0, tn = null;
+let ROUND = null, stale = false; const settled = () => allRead() && !WRITING.size, Q = () => [], waitMsg = () => "Reading first";
 const WRITING = new Set(), S = {{pending: {{}}}}, D = {{notes: [], version: 'v'}}, NK = {{reo: () => ({{}}), gone: () => {{}}, L: {{}}}};
 const allRead = () => true, sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => '', typingNote = () => tn, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
@@ -85,7 +86,7 @@ def test_a_write_on_its_way_holds_the_sheet_like_a_held_read():
     """A note write of this tab's still on its way: Send, Discard and ⌘↵ off through the one gate, the sheet says it is
     saving, and it relists when the write starts and when it lands."""
     gate = Q[Q.index("  const sendOn = n =>"):Q.index("  function sendPanel(n) {")]
-    assert gate.strip().endswith("const sendOn = n => !!n && allRead() && !WRITING.size;")
+    assert "const sendOn = n => !!n && settled();" in gate and "const settled = () => allRead() && !WRITING.size;" in Q
     assert "${WRITING.size ? '<p class=\"small mut\" aria-busy=\"true\" data-swriting>Saving your note: Send waits for it…</p>' : ''}" in Q
     assert "WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end);" in Q
     node_ok = Q.count("sendOn(")

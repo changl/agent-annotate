@@ -29,6 +29,7 @@ def test_round_stops_on_an_unlisted_note_and_counts_what_it_carried(tmp_path):
     node(tmp_path, f"""
 const assert = require('assert');
 let rows = [], round = null, toast = '', posted = 0;
+let ROUND = null, stale = false; const settled = () => allRead() && !WRITING.size, Q = () => [], waitMsg = () => "Reading first";
 const WRITING = new Set(), S = {{pending: {{}}}}, D = {{notes: [], version: 'v'}}, NK = {{reo: () => ({{}}), gone: () => {{}}, L: {{}}}};
 const allRead = () => true, sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => '', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};

@@ -73,13 +73,18 @@
       // a note being typed on the chart's point is in Send before Save, as a Pages & links note is (audit8 running 1, 3)
       ...(d => d ? [{key: 'hnn:' + d.v, group: 'Notes', html: `On “${ctx.esc(CLAB(d.v))}”: ${ctx.esc(d.text.trim().length > 140 ? d.text.trim().slice(0, 139) + '…' : d.text.trim())}`,
         go: () => { S.cn = d.v; S.q = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
+        // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
+        save: async () => { const r = await ctx.api('api/comments', {anchor_id: 'chart:' + d.v, anchor_label: CLAB(d.v), text: d.text.trim()}, undefined, true);
+          CN.push({id: r.id, anchor: 'chart:' + d.v, label: CLAB(d.v), text: r.text || d.text.trim(), at: r.created_at || new Date().toISOString()});
+          const now = typedC(ctx); if (now && now.v === d.v && now.text === d.text) { if (S.cn === d.v) S.cn = ''; ctx.prefs.set('draft:hnote', null); }
+          return r; },
         remove: () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
           return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
         remove: P.notes.rowRm(n) ? () => takeC(ctx, n) : null}))],
-    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
+    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); redrawH();  // a typed note was saved by Send (save above); one typed since stays
       savedC(ctx).forEach(P.notes.gone); ctx.prefs.set('draft:hcnotes', []); },
   });
 
