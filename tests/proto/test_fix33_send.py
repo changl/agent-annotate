@@ -30,6 +30,9 @@ const tick = () => new Promise(r => setTimeout(r, 0));
     fail(Error('503')); await tick();
     assert.ok(!allRead(), a + ' failed: Send off');
     assert.ok(a === 'questions' ? qerr() : oerr() === (a === 'links' ? 'Pages &amp; links' : 'Reference'), a + ' named');
+    const before = redraws; track(a, Promise.reject(Error('503'))); await tick();
+    assert.strictEqual(redraws, before, a + ': a redraw re-reading a failed feed never loops'); assert.ok(!allRead());
+    retry(a); track(a, new Promise(() => {{}})); await tick(); assert.ok(!allRead() && rs(a) === 'held', a + ' Try again: held');
     track(a, Promise.resolve()); await tick(); assert.ok(allRead(), a + ' Try again: on');
   }}
   track('running', new Promise(() => {{}})); await tick(); assert.ok(allRead(), 'other areas are not Send feeds');

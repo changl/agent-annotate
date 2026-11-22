@@ -66,7 +66,7 @@ def test_a_failed_read_says_so_with_try_again():
     """Frame 1: a failed Reference or Pages & links read leaves Send waiting, says what failed with Try again, never
     "Nothing ready yet"; Try again reads again; typing in the sheet never enables Send before the reads are in."""
     q = (WEB / "questions.js").read_text()
-    assert "const t = RS[a] = {p, st: 'held'}, end = st => { if (RS[a] === t) { t.st = st; relist(); } };" in q  # fix33: one read state
+    assert "end = st => { if (RS[a] === t && t.st !== st) { t.st = st; relist(); } };" in q  # fix33: one read state
     assert "could not be read: Send waits for them.</span> <button class=\"lk small\" data-sothersretry>Try again</button>" in q
     assert "if (t.hasAttribute('data-sothersretry')) { readOthers(ctx); return draw(true); }" in q
     assert "(allRead() ? `<p class=\"small mut\" data-snone" in q  # Nothing ready yet only once the reads are in

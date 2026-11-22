@@ -1047,11 +1047,14 @@
   const rs = a => (RS[a] || {}).st;
   function track(a, p) {
     if (!['questions', 'reference', 'links'].includes(a) || (RS[a] && RS[a].p === p)) return p;
-    const t = RS[a] = {p, st: 'held'}, end = st => { if (RS[a] === t) { t.st = st; relist(); } };
+    // a read a redraw starts on a failed feed (a tab's chip) keeps it failed, and its failure redraws nothing: otherwise
+    // failed, redraw, re-read, failed would loop against a down server. Try again clears the state first (retry)
+    const t = RS[a] = {p, st: rs(a) === 'failed' ? 'failed' : 'held'}, end = st => { if (RS[a] === t && t.st !== st) { t.st = st; relist(); } };
     p.then(() => end('done'), () => end('failed'));
-    Promise.resolve().then(relist);  // held: the open sheet turns Send off now, after the redraw that started the read
+    if (t.st === 'held') Promise.resolve().then(relist);  // held: the open sheet turns Send off now, after the redraw that started the read
     return p;
   }
+  const retry = a => { delete RS[a]; };  // Try again: the next read is held, not failed
   const qerr = () => rs('questions') === 'failed';
   const oin = () => OTHERS.every(([a]) => rs(a) === 'done');
   const oerr = () => OTHERS.filter(([a]) => rs(a) === 'failed').map(x => x[1]).join(' and ') || false;
@@ -1757,7 +1760,7 @@
   let reading = null;
   const load = async (c, again) => {
     ctx = ctx || c;
-    if (again) reading = null;
+    if (again) { reading = null; retry('questions'); }
     for (;;) {
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
       if (D && !stale && !again) return;
@@ -1780,7 +1783,7 @@
   // A failed read leaves Send waiting and the sheet saying so, with Try again, which reads again (r12 audit25 frame 1)
   // oerr() names the reads that failed, and only those (r12 audit26 questions 4). A feed never read, or failed (its cache is gone),
   // is read; one held or done is left alone, so a warm refresh from its tab is what the sheet waits on (r12 audit29 running 2)
-  const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') track(a, c.data(a)).catch(() => {}); });
+  const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') { retry(a); track(a, c.data(a)).catch(() => {}); } });
   // the open Send summary lists what the count now holds, even while he types General feedback in it: the words are saved as
   // he types, and the field gets its focus and cursor back (r12 fix10 reference 2, audit25 questions 2)
   async function relist() {
@@ -1824,5 +1827,5 @@
     const b = key && host.querySelector('[data-send]:not([disabled])'); if (b) b.focus();
   }
   // shortcut: exposed for tests in a browser console only
-  P.questionsState = () => ({S, D});
+  P.questionsState = () => ({S, D, RS});
 })();

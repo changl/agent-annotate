@@ -13,7 +13,7 @@ WEB = Path(__file__).resolve().parents[2] / "src/agent_annotate/web/proto"
 def test_send_waits_for_the_other_tabs_reads():
     q = (WEB / "questions.js").read_text()
     # fix33: the other tabs' reads are in the one read state
-    assert "const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') track(a, c.data(a)).catch(() => {}); });" in q
+    assert "const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') { retry(a); track(a, c.data(a)).catch(() => {}); } });" in q
     assert "readFor(c, qerr());  // opening the sheet tries a failed read again, as before\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
     assert "const ok = sendOn(n)," in q and "const allRead = () => !!(oin() && qIn());" in q
