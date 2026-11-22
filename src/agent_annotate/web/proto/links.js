@@ -44,6 +44,13 @@
     for (let i = 0; i < I.length; i++) { const x = I[i], r = Array.isArray(x) ? x.indexOf(t) : -1; if (x === t || r === 0) return [i, 0]; if (r > 0) return [i, r]; }
     const m = /^(.+)~r(\d+)$/.exec(t), p = m && atLine(d, m[1]);
     return p ? [p[0], +m[2]] : null; };
+  // an earlier revision's lines take only the notes whose anchor the newest lacks: the rest show on the newest
+  const bare = k => String(k).replace(/~p\d+$/, '');  // a picture point's key, as its row's
+  const oldLine = (R, line) => { const has = new Set(R[R.length - 1].ids.flat().map(String)); return i => has.has(bare(i)) ? '' : line(i); };
+  // the revision a kept note opens on: the newest, or the newest earlier one with its anchor (null: the newest)
+  const revOf = (d, a) => { const m = lineKey(bare(a)); if (!d.revs || !m || atLine(d, m[2])) return null;
+    for (let j = d.revs.length - 2; j >= 0; j--) if (d.revs[j].ids && atLine({ids: d.revs[j].ids}, m[2])) return j;
+    return null; };
   // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood
   // shortcut: no "changed" pairing or word-by-word marks as Reference has; share Reference's alignBlocks when the prototype graduates
   function align(A, B) {
@@ -62,7 +69,8 @@
     docK += '~rev' + (cur + 1);  // its pictures' keys name the revision, so each revision's picture keeps its own size (r12 audit18 reference 5)
     const al = n > 1 ? align(R[last - 1].blocks, R[last].blocks) : [], nk = k => al.filter(x => x.k === k).length, csum = n > 1 ? `${nk('add')} added · ${nk('del')} removed` : '';
     const tag = w => ` <span class="l-tag">${w} in revision ${n}</span>`, mk = S.marks && cur === last && n > 1;
-    const doc = cur !== last ? blocksHtml(B, esc)  // an earlier revision reads as it was; notes go on the newest
+    // an earlier revision reads as it was; notes go on the newest, and one whose words left it on its own revision, as 2.32.8
+    const doc = cur !== last ? blocksHtml(B, esc, R[cur].ids && line ? oldLine(R, line) : null, R[cur].ids)
       : mk ? al.map(x => x.k === 'same' ? blockHtml(B[x.b], x.b, esc, line, '', false, d.ids ? d.ids[x.b] : null) : x.k === 'add' ? blockHtml(B[x.b], x.b, esc, line, tag('added'), true, d.ids ? d.ids[x.b] : null)
         : `<p class="small"><del>${esc(blockText(R[last - 1].blocks[x.a]))}</del>${tag('removed')}</p>`).join('')  // a picture or table by its words, not its address
       : blocksHtml(B, esc, line, d.ids);
@@ -414,7 +422,8 @@
     res: n => { S.res = n.ra; S.resGo = true; S.spot = ''; return goNote(P.ctx, {id: '', a: n.ra}); }};
   function openAt(D, a) {  // opens the document a note's anchor is in
     const kept = (/^doc:kept-([^~]+)/.exec(a) || [])[1];
-    if (kept) S.kept = kept;
+    if (kept) { S.kept = kept; const d = (D.kept || []).find(x => x.id === kept), j = d ? revOf(d, a) : null;
+      if (d && d.revs) { if (j == null) delete S.rv[d.id]; else S.rv[d.id] = j; } }
     else { const f = ((D.docs || {}).files || []).findIndex(f => a === docKey(f) || a.startsWith(docKey(f) + '~')); if (f >= 0) S.dsel = f; }
   }
   // the note being typed: a draft, in Send before Save and kept across a reload with "Unsent answers and notes" on, as Questions' open note is (audit8 running 1)

@@ -51,10 +51,14 @@ class Home:
                             j, f = j + 1, f + 1
                             add(k=f"{rk}~p{j}", a=ra, t=str(p[2]), css=f"td:nth-of-type({ci + 1}) > figure:nth-of-type({f}) > img:nth-of-type(1)")
         self.by_key = {u["k"]: u for u in self.units if u["a"]}
+        self.older = []  # the earlier revisions' Homes, newest first: a note whose anchor left the page stays on its own revision
 
     def key_of(self, a, t: dict) -> str:
-        """The reader's key for a 2.32.8 note on anchor `a` with target `t`; the whole document's when its words are gone."""
+        """The reader's key for a 2.32.8 note on anchor `a` with target `t`: on the newest revision that has `a`, as
+        2.32.8 opens it; the whole document's when its words are gone from every revision."""
         at = [u for u in self.units if u["a"] == a]
+        if not at and (o := next((o for o in self.older if any(u["a"] == a for u in o.units)), None)):
+            return o.key_of(a, t)
         pics, rest = [u for u in at if u["css"]], [u for u in at if not u["css"] or u["css"] == "img:nth-of-type(1)"]
         if t.get("tag") == "img" and pics:
             return next((u for u in pics if u["css"] == t.get("css")), pics[0])["k"]
@@ -64,7 +68,7 @@ class Home:
 
     def place(self, k: str, t) -> tuple:
         """(anchor, target) in 2.32.8's shape for a note at reader key `k`, or None when the page has no such place."""
-        u = self.by_key.get(k)
+        u = self.by_key.get(k) or next((o.by_key[k] for o in self.older if k in o.by_key), None)
         if not u:
             return None
         t = dict(t) if isinstance(t, dict) else None
@@ -94,12 +98,14 @@ def homes(page_dir) -> list[Home]:
     root, _, fld = links._scope(meta)
     out = []
     if fld:
-        last = None  # the meeting's notes go on its newest revision (links.meeting)
+        revs = []  # the meeting's revisions (links.meeting); its notes go on the newest that has their anchor
         for h in links._json(links.MEETING / "current.meta.json").get("history") or []:
             f = links.MEETING / "versions" / f"{(h or {}).get('version') if isinstance(h, dict) else ''}.html"
-            last = f if f.is_file() else last
-        if last:
-            out.append(_home(links.MEETING, last, "admin-meeting", "doc:kept-admin-meeting~p", "doc:kept-admin-meeting", False))
+            if f.is_file() and (r := _home(links.MEETING, f, "admin-meeting", "doc:kept-admin-meeting~p", "doc:kept-admin-meeting", False)):
+                revs.append(r)
+        if revs:
+            revs[-1].older = revs[-2::-1]
+            out.append(revs[-1])
         out.append(_home(links.USAGE_AUDIT.parent, links.USAGE_AUDIT, "usage-audit", "doc:kept-usage-audit~p", "doc:kept-usage-audit", False))
     elif root:
         out.append(_home(root / POLICIES, root / POLICIES / "current.html", "policies", "ref:policies~x", "ref:policies", True))
@@ -112,8 +118,8 @@ def _read(folder: Path) -> dict:
 
 
 def signature(page_dir) -> tuple:
-    """Each publication's store and page, so a note 2.32.8 saves there is read at once."""
-    out = []
+    """Each publication's store and page, so a note 2.32.8 saves there is read at once, and whose notes are his own."""
+    out = [("viewer", _viewer["h"])]
     for h in homes(page_dir):
         try:
             s = (h.folder / "comments.json").stat()
@@ -135,35 +141,87 @@ def _items(store: dict):
                     yield part, a, c
 
 
+_viewer = {"h": None}  # the signed-in reviewer's real address, hashed: release notes' ownership is decided on it, before masking
+WHO = ("author", "author_email", "by", "flagged_by")  # the fields that name a reviewer, in a note, its replies and decisions
+_hash = lambda s: hashlib.sha256(("proto-viewer\0" + s.strip().lower()).encode()).hexdigest()
+
+
+def viewer(email) -> None:
+    """sync_server._identity, before it masks: whose release notes are his own. Agents and anonymous reads leave it.
+    shortcut: one reviewer per prototype server (the last signed in); key the merge by reader if two review at once."""
+    if email and not str(email).startswith("agent:"):
+        _viewer["h"] = _hash(str(email))
+
+
+def _who(x):
+    """A release note with each reviewer named as the prototype names him: the signed-in reviewer as the prototype masks
+    him (MASK), so his own note passes the own-note checks for edit and remove as in 2.32.8; another reviewer as his own
+    stable token, never an address, so his drafts are a peer's (no Edit, no Remove, never in this reviewer's Send)."""
+    from . import EMAIL, MASK
+    if isinstance(x, list):
+        return [_who(v) for v in x]
+    if not isinstance(x, dict):
+        return x
+    out = {}
+    for k, v in x.items():
+        if k in WHO and isinstance(v, str) and (m := EMAIL.search(v)):
+            h = _hash(m[0])
+            v = MASK if h == _viewer["h"] else "reviewer-" + h[:12]
+        out[k] = _who(v)
+    return out
+
+
 def merge(page_dir, store: dict) -> dict:
     """The prototype's store with each publication's notes in it, under the readers' keys, read only. The prototype's
     own record of a note (keyed by its id: a new one, or its copy of an edited, closed, re-opened or deleted release
-    note) wins; a deleted one's tombstone hides it and stays out of the merged store."""
+    note) wins; a deleted one's tombstone hides every copy and stays out of the merged store. An own record of a release
+    note held under another anchor (a copy's `copy:policies` mirror of its policies page) is the same note: it joins the
+    release record on the reader's key, and split() puts it back where it was."""
+    from . import scrub_json
     out = {**store, "anchors": {}, "archived": {}}
-    gone, have = [], set()
+    gone, dead = [], {c.get("id") for _, _, c in _items(store) if c.get("status") == "deleted"}
+    rel = {}  # {id: [home, part, anchor, record]} of each release note
+    hs = homes(page_dir)
+    for h in hs:
+        for part, a, c in _items(_read(h.folder)):
+            rel.setdefault(c.get("id"), [h, part, a, c])
+    keys = {u["k"] for h in hs for r in [h, *h.older] for u in r.units} | {h.whole for h in hs}
+    have, mirror = set(), {}  # mirror: {id: [part, anchor, own record]}
     for part, a, c in _items(store):
-        have.add(c.get("id"))
+        i = c.get("id")
         if c.get("status") == "deleted":
             gone.append([a, c])
+        elif i in dead:
+            continue  # removed: the removal wins over the prototype's own copy, whatever happened to it before
+        elif i in rel and a not in keys:
+            mirror[i] = [part, a, c]
         else:
+            have.add(i)
             out[part].setdefault(a, []).append(c)
-    from . import scrub_json
     pub = {}  # {id: [[part, key, print], ...]} of each release note as read (one per reader sharing its folder), so split() can tell an unchanged one
-    for h in homes(page_dir):
+    for h in hs:
         for part, a, c in _items(_read(h.folder)):
-            if c.get("id") in have:
+            i = c.get("id")
+            if i in have or i in dead:
                 continue
-            # addresses masked as the prototype masks the signed-in reviewer (sync_server._identity), so the author's own
-            # release note passes the server's own-note checks for edit and remove, as in 2.32.8; none is stored here
-            c = json.loads(scrub_json(json.dumps(c, ensure_ascii=False)))
+            # no address leaves: the reviewers are named by _who first, then scrubbed as every prototype body is
+            c = json.loads(scrub_json(json.dumps(_who(c), ensure_ascii=False)))
             t = c.get("target") if isinstance(c.get("target"), dict) else {}
             k = h.key_of(c.get("anchor_id") or a, t)
             n = {**c, "anchor_id": k}
             if t.get("selected_quote") and not t.get("quote"):
                 n["target"] = {**t, "quote": t["selected_quote"]}
+            if i in mirror:  # the mirror's fields the release record lacks, and its replies, join it; the release record's own win
+                m = mirror[i][2]
+                ids = {r.get("id") for r in n.get("replies") or [] if isinstance(r, dict)}
+                n = {**m, **n, "replies": [*(n.get("replies") or []), *[r for r in m.get("replies") or [] if not isinstance(r, dict) or r.get("id") not in ids]]}
+                if not n["replies"] and "replies" not in c and "replies" not in m:
+                    del n["replies"]
             out[part].setdefault(k, []).append(n)
-            pub.setdefault(c.get("id"), []).append([part, k, _print(n)])
-    out[KEY] = {"pub": pub, "gone": gone}
+            pub.setdefault(i, []).append([part, k, _print(n)])
+    # the prototype's own copy of a release note: its removal leaves a tombstone (split), so the release record stays hidden
+    shadow = {i: [p, a] for p, a, c in _items(out) if (i := c.get("id")) in rel and i not in pub}
+    out[KEY] = {"pub": pub, "gone": gone, "shadow": shadow, "mirror": mirror}
     return out
 
 
@@ -172,10 +230,11 @@ def split(page_dir, store: dict) -> dict:
     since merge() read it is left out (it is read again from there); an edited, closed, re-opened or moved one is kept
     here under its id, so this copy wins on the next read; a deleted one leaves a tombstone here."""
     meta = store.get(KEY) or {}
-    pub, gone = meta.get("pub") or {}, meta.get("gone") or []
+    pub, gone, shadow, mirror = (meta.get(x) or {} for x in ("pub", "gone", "shadow", "mirror"))
     own = {k: v for k, v in store.items() if k != KEY}
     own["anchors"], own["archived"] = {}, {}
     seen = {}
+    tomb = lambda i, k: own["archived"].setdefault(k, []).append({"id": i, "anchor_id": k, "status": "deleted"})
     for part, k, c in _items(store):
         i = c.get("id")
         seen[i] = seen.get(i, 0) + 1
@@ -184,7 +243,13 @@ def split(page_dir, store: dict) -> dict:
         own[part].setdefault(k, []).append(c)
     for i, copies in pub.items():
         if seen.get(i, 0) < len(copies):  # a copy was removed (two readers can share one publication's folder)
-            own["archived"].setdefault(copies[0][1], []).append({"id": i, "anchor_id": copies[0][1], "status": "deleted"})
+            tomb(i, copies[0][1])
+    for i, (part, k) in shadow.items():
+        if not seen.get(i):  # the prototype's own copy of a release note was removed: the removal wins over the release record
+            tomb(i, k)
+    for i, (part, a, c) in mirror.items():
+        if seen.get(i) or i not in pub:  # a mirror (copy:policies) stays where it was; a removed note's goes with it
+            own[part].setdefault(a, []).append(c)
     for a, c in gone:
         own["archived"].setdefault(a, []).append(c)
     return own

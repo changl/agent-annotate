@@ -1182,7 +1182,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             name = self.local_author_name or name
         if self._is_proto():
             # Prototype page: no real address is stored, logged or returned.
-            from .proto_data import scrub
+            from .proto_data import published, scrub
+            published.viewer(email)  # release notes' ownership is decided on the real address, before it is masked
             email, name = (scrub(email) if email else email), (scrub(name) if name else name)
         return {
             "email": email or None,
@@ -1665,6 +1666,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         extra = ()
         if self._is_proto():
             from .proto_data import published
+            if getattr(self, "headers", None) is not None:
+                self._identity()  # whose release notes are his own, before the merge is read (published.viewer)
             extra = published.signature(self.artifact_dir)
         try:
             stat = self._store_path().stat()

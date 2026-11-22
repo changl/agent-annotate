@@ -41,11 +41,13 @@ def meeting(folder: Path = MEETING) -> dict | None:
             b = html_blocks(t, _kept_src("admin-meeting", folder), i)
         except OSError:
             continue
-        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b})  # whole versions, so the added and removed counts are true
+        # whole versions, so the added and removed counts are true; each with its anchors, so a note whose words left the
+        # newest revision shows on the newest one that has them, as 2.32.8 opens it (published.Home.older)
+        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b, "ids": i})
         html, ids = t, i
     if not revs:
         return None
-    # notes go on the newest revision, so its anchors are the document's
+    # notes go on the newest revision, so its anchors are the document's; one whose anchor it lacks, on its own revision
     # shortcut: an old line number is read against the newest revision, so a note saved before a later revision lands by its words there
     return {"id": "admin-meeting", "t": "Admin team meeting", "sub": f"the meeting of {datetime.fromisoformat(revs[-1]['ts']).strftime('%-d %b')} · {len(revs)} revisions",
             "revs": revs, "blocks": revs[-1]["blocks"], "ids": ids, "was": old_lines(html, revs[-1]["blocks"], ids)}
