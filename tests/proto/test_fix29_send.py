@@ -70,7 +70,7 @@ def test_a_failed_read_says_so_with_try_again():
     assert "could not be read: Send waits for them.</span> <button class=\"lk small\" data-sothersretry>Try again</button>" in q
     assert "if (t.hasAttribute('data-sothersretry')) { S.oerr = false; readOthers(ctx); return draw(true); }" in q
     assert "(allRead() ? `<p class=\"small mut\" data-snone" in q  # Nothing ready yet only once the reads are in
-    assert "$('[data-send]').disabled = !n || !D || !S.oin;" in q and "$('[data-discard]').disabled = !n || !D || !S.oin;" in q
+    assert "$('[data-send]').disabled = !sendOn(n);" in q and "$('[data-discard]').disabled = !sendOn(n);" in q  # fix32: the redraw's gate
 
 
 def test_a_reopen_row_is_the_reopeners():

@@ -15,7 +15,7 @@ def test_send_waits_for_the_other_tabs_reads():
     assert "const readOthers = c => others || (others = Promise.all([['reference', 'Reference'], ['links', 'Pages &amp; links']].map(([a, t]) => c.data(a).then(() => '', () => t)))" in q
     assert "readFor(c);\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
-    assert "const ok = n && allRead()," in q and "const allRead = () => !!(S.oin && qIn());" in q
+    assert "const ok = sendOn(n)," in q and "const allRead = () => !!(S.oin && qIn());" in q
     assert "data-sothers>Reading the notes on Reference and Pages &amp; links…" in q
     assert "if (!allRead()) { relist(); return ctx.toast(" in q
 
@@ -33,7 +33,7 @@ def test_copy_send_records_release_drafts_by_id():
 def test_receipt_counts_the_rounds_ids_on_every_row():
     q = (WEB / "questions.js").read_text()
     assert "notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0)" in q
-    assert "const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) : n;" in q
+    assert "const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
     assert "ctx.queueSent(got);" in q
 
 

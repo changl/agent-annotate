@@ -1039,12 +1039,14 @@
   // listed rows out of date (r12 audit27 questions 1)
   const qIn = () => !!(D && !stale && !reading && !S.qerr);
   const allRead = () => !!(S.oin && qIn());
+  // the one rule for Send and Discard all being on, for the sheet's redraw and for typing in it: never while a read is held or failed (r12 audit28 questions 1)
+  const sendOn = n => !!n && allRead();
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
     if (!S.oin && !S.oerr) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
-    const ok = n && allRead(), rd = ok || !n ? '' : ` title="Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
+    const ok = sendOn(n), rd = ok || !n ? '' : ` title="Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
     it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
@@ -1282,7 +1284,9 @@
   async function post(answers, replies, closes, n, listed) {
     // the server's round takes every unsent note: a note saved or a read started during the countdown is one Send never
     // listed, so nothing goes and the sheet lists it first (r12 audit27 questions 1)
-    if (!allRead()) { S.pending = null; S.armed = true; await draw(true); relist(); return ctx.toast('A note came in while sending: check the list and press Send again. Nothing was sent.'); }
+    // and a note read in during the countdown that the sheet never listed: the server's round would take it too (r12 audit28 running 1)
+    const unlisted = allRead() && sendItems().some(x => !x[4] && x[5] && !listed.notes.includes(x[5]));
+    if (!allRead() || unlisted) { S.pending = null; S.armed = true; await draw(true); relist(); return ctx.toast('A note came in while sending: check the list and press Send again. Nothing was sent.'); }
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
@@ -1295,20 +1299,22 @@
       }
       for (const q of replies) { await call(`api/comments/${encodeURIComponent(q.id)}/reply`, {text: draft(q.id).reply.trim()}); setDraft(q.id, {reply: null, replyOpen: null}); }
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); setDraft(q.id, {close: null}); }
+      // every id this Send listed or wrote: any other id the round carries (a note another client of his saved during the countdown) is counted too
+      const known = new Set([...listed.notes, ...answers, ...replies, ...closes].map(x => x.id || x));
       const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
-      if (tn) { await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}); S.note = null; ctx.prefs.set('q:newnote', null); }
+      if (tn) { known.add((await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}) || {}).id); S.note = null; ctx.prefs.set('q:newnote', null); }
       const ed = S.note || ctx.prefs.get('q:newnote', null), en = ed && ed.edit && D.notes.find(x => x.id === ed.edit);  // a saved note open in its editor goes with its new words
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT'); S.note = null; ctx.prefs.set('q:newnote', null); }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
-      for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
+      for (const [a, p] of Object.entries(abPicks())) { known.add((await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}) || {}).id); setAB(a, null); }
       // a re-opened note goes back to open now, so the round carries it to the agent again
-      for (const id of Object.keys(NK.reo(ctx))) await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
+      for (const id of Object.keys(NK.reo(ctx))) known.add(id) && await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
       const r = await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       // the receipt counts what the server took: a note another client of his sent first is not in this round, and a round
       // with nothing new is a noop (r12 audit23 frame 2). Every listed row on a note the round's ids leave out stays
       // behind (a peer's draft or reply, on any tab), so it is not counted (r12 audit24 questions 1); a copy's round answers its ids too
       const ids = r && Array.isArray(r.comment_ids) ? new Set(r.comment_ids) : null;
-      const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) : n;
+      const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
       ctx.prefs.set('q:general', '');
       D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
@@ -1610,7 +1616,7 @@
   function sheetCount() {
     const n = sendCount(), s = (host || root).querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
     $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
-    $('[data-send]').disabled = !n || !D || !S.oin; $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !n || !D || !S.oin;
+    $('[data-send]').disabled = !sendOn(n); $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !sendOn(n);
     if ($('[data-snone]')) $('[data-snone]').hidden = !!gen().trim();  // General feedback is an item: the empty caption goes (audit6 frame #06)
     const b = root && root.querySelector('.qbsend');
     if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }

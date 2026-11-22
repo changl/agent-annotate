@@ -45,11 +45,11 @@ const allRead = () => !!(S.oin && qIn());
 
 
 def test_send_and_the_round_wait_on_every_read():
-    assert "const ok = n && allRead()," in Q
+    assert "const ok = sendOn(n)," in Q and "const sendOn = n => !!n && allRead();" in Q  # fix32: one gate
     s = grab(Q, "  function send() {", "\n  }")
     assert "if (!allRead())" in s
     p = grab(Q, "  async function post(", "api/rounds/submit")
-    assert p.index("if (!allRead())") < p.index("await ctx.takeNow()")
+    assert p.index("if (!allRead()") <p.index("await ctx.takeNow()")
     r = grab(Q, "  async function relist() {", "\n  }")
     assert "if (stale && !reading && !S.qerr && ctx) return readFor(ctx);" in r  # never loops on a failing read
     assert "if (S.qerr && !again) throw Error(" in grab(Q, "  const load = async", "\n  };")  # a cold failed read: counts wait for Try again, never re-read

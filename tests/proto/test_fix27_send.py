@@ -11,7 +11,7 @@ def test_receipt_counts_what_the_round_took():
     # his listed unsent notes, kept for the receipt; another client's earlier Send leaves them out of this round
     # fix28: every listed row on a note the round's ids leave out is uncounted, on any tab (test_fix28_send)
     assert "const r = await call('api/rounds/submit'" in q
-    assert "const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) : n;" in q
+    assert "const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
     assert "ctx.queueSent(got);" in q and "ctx.queueSent(n);" not in q  # Last Send: none on a noop
     assert "'Nothing new was sent: these items had already gone in an earlier Send'" in q
     # the toolbar's count is redrawn with the receipt, not after the re-read

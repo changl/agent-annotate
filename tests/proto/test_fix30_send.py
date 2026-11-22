@@ -62,7 +62,7 @@ def test_a_failed_read_names_only_itself():
 def test_the_shortcut_callout_only_while_send_is_on():
     """Reference check 2: "Press ⌘↵ again" shows only while Send is enabled (every read in, something to send)."""
     q = (WEB / "questions.js").read_text()
-    assert "${S.sendKey && ok ? `<div class=\"qsendkey\"" in q and "const ok = n && allRead()," in q
+    assert "${S.sendKey && ok ? `<div class=\"qsendkey\"" in q and "const ok = sendOn(n)," in q
 
 
 def test_phone_home_shows_the_page_count():
