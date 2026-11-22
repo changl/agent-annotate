@@ -80,8 +80,8 @@ def test_escape_viewer_close_and_leaving_cancel_move():
     """Reference 4: Escape anywhere, the viewer closing and leaving the tab each cancel Move, on every surface."""
     assert "data-nmove][aria-pressed=\"true\"]" in FRAME
     assert "S.full = null; draw(); }" in REF and "if (!!S.full !== !!S.fWas)" in REF  # fix20: the viewer's open or close ends it
-    assert "NK().slot(S, 'reference'); S.move = '';" in REF
-    assert "render: async (main, c" in REF and "S.move = '';" in L and "S.cmove = '';" in HIST
+    assert "NK().slot(S, 'reference'); restoreDrafts();" in REF  # fix20: a render never clears its own tab's Move
+    assert "render: async (main, c" in REF and "P.notes.slot(S, 'links');  //" in L and "P.notes.slot(S, 'history', 'cmove');  //" in HIST
     assert "if (S.move) { const all = [...w.querySelectorAll('.l-doc [data-lzoom]')]" in L  # the shared viewer ends a Move
     assert "ctx = c; root = el; S.move = null;" in Q
 

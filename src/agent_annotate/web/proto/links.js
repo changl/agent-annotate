@@ -71,7 +71,7 @@
   const abs = u => new URL(u, location.href).href;
 
   async function render(el, ctx, anchor) {
-    P.notes.slot(S, 'links'); S.move = '';  // S.move is the kit's one Move; leaving the tab cancels it (r12 audit17 reference 4)
+    P.notes.slot(S, 'links');  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
     let D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;

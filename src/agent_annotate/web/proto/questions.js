@@ -113,7 +113,10 @@
     // the one armed Move, on any tab ({tab, id}): each tab's S.move (History's S.cmove) reads and sets it, so another Move
     // replaces it; Escape, a picture viewer opening or closing, and leaving the tab end it through endMove (r12 audit18 frame 1, 2)
     mv: null,
-    slot(S, tab, key = 'move') { Object.defineProperty(S, key, {configurable: true, get: () => (NK.mv && NK.mv.tab === tab && NK.mv.id) || '',
+    // a tab calls it on every render: it ends only a Move from another tab, never one armed here, since a render can come
+    // after his click (route() re-renders on a newer version, a retry, a late read) (r12 fix20 follow-up)
+    slot(S, tab, key = 'move') { if (NK.mv && NK.mv.tab !== tab) NK.endMove(false);
+      Object.defineProperty(S, key, {configurable: true, get: () => (NK.mv && NK.mv.tab === tab && NK.mv.id) || '',
       set: id => { if (id) NK.mv = {tab, id}; else if (NK.mv && NK.mv.tab === tab) NK.mv = null; }}); },
     endMove(redraw = true) {
       const w = NK.mv; if (!w) return false;
@@ -138,9 +141,10 @@
     near: (ns, p, pic = n => n.target.image || '') => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && pic(n) === pic(p) && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
   };
   NK.slot(S, 'questions');
-  // Escape and leaving the tab end a Move on every tab
+  // Escape and any navigation (another tab, or another place in this one) end a Move on every tab; the router's own
+  // rewrites use replaceState, which fires no hashchange
   addEventListener('keydown', e => { if (e.key === 'Escape') NK.endMove(); }, true);
-  addEventListener('hashchange', () => { if (NK.mv && location.hash.slice(1).split('/')[0] !== NK.mv.tab) NK.endMove(false); });
+  addEventListener('hashchange', () => { NK.endMove(false); });
   // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,

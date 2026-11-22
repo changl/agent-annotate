@@ -30,10 +30,21 @@ h.cmove = 'c1'; NK.endMove(false); assert.strictEqual(h.cmove, ''); assert.deepS
 """)
 
 
+def test_a_render_never_ends_its_own_tabs_move(tmp_path):
+    """Fix20 follow-up: a tab re-renders after his Move click (route() on a newer version or a retry); its slot() call keeps
+    that Move, and only ends one armed on another tab."""
+    node(tmp_path, DOCSTUB + STUBS + KIT + """
+const r = {}, l = {};
+NK.slot(r, 'reference'); r.move = 'n1';
+NK.slot(r, 'reference'); assert.strictEqual(r.move, 'n1');   // the same tab rendering again keeps it
+NK.slot(l, 'links'); assert.strictEqual(r.move, ''); assert.strictEqual(NK.mv, null);  // another tab's render ends it
+""")
+
+
 def test_every_cancel_path_reaches_endmove():
     """Escape and leaving the tab (kit), the viewer opening or closing on each surface, all through NK.endMove."""
     assert "addEventListener('keydown', e => { if (e.key === 'Escape') NK.endMove(); }, true);" in Q
-    assert "addEventListener('hashchange', () => { if (NK.mv && location.hash.slice(1).split('/')[0] !== NK.mv.tab) NK.endMove(false); });" in Q
+    assert "addEventListener('hashchange', () => { NK.endMove(false); });" in Q
     assert "if (!!S.zoom !== !!S.zWas) { S.zWas = !!S.zoom; NK.endMove(false); }" in Q  # Questions viewer: any open or close
     assert "if (!!S.full !== !!S.fWas) { S.fWas = !!S.full; NK().endMove(false); }" in REF  # Reference viewer
     assert Q.count("NK.endMove();  // opening or closing") == 1 and "v.remove(); NK.endMove();" in Q  # Proto.media.view

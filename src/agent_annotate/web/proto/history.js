@@ -321,7 +321,7 @@
   /* ---------- the tab ---------- */
   let D = null, R = null;
   async function render(el, ctx, anchor) {
-    P.notes.slot(S, 'history', 'cmove'); S.cmove = '';  // S.cmove is the kit's one Move; leaving the tab cancels it (r12 audit17 reference 4)
+    P.notes.slot(S, 'history', 'cmove');  // S.cmove is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
     D = await ctx.data('history');
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
     if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});

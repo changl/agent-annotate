@@ -710,7 +710,7 @@
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
-      ctx = c; el = main; NK().slot(S, 'reference'); S.move = ''; restoreDrafts();  // S.move is the kit's one Move; entering the tab never resumes it (r12 audit17 reference 4)
+      ctx = c; el = main; NK().slot(S, 'reference'); restoreDrafts();  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
