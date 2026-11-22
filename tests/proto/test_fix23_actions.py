@@ -5,7 +5,14 @@ feed (note_thread, and own() for this reader) into the kit, and compared with to
 import json
 
 from agent_annotate.proto_data.questions import _mine, note_thread, own, was_sent
-from test_fix17_notes import KIT, STUBS, node
+from test_fix17_notes import KIT, Q, STUBS, node
+
+
+def test_a_superseded_draw_never_restores_its_old_scroll():
+    # a late draw(true) waiting on its document must not scrollTo(0, y) after a newer draw: that undid his scroll and the Edit tap hit another note
+    d = Q[Q.index("  async function draw(keepScroll) {"):Q.index("  function listView() {")]
+    assert "gen = ++S.drawGen" in d and d.index("if (gen !== S.drawGen) return false;") < d.index("docEl.innerHTML = doc;") < d.index("if (keepScroll) scrollTo(0, y);")
+    assert "draw().then(ok => ok !== false && scrollTo(0, S.vy[v] || 0))" in Q
 
 ME = "you@example.com"
 BASE = {"author": ME, "status": "open", "flagged_for_session": True, "flagged_at": "2026-11-21T10:00:00Z"}

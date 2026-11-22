@@ -7,7 +7,7 @@
   const P = window.Proto;
   const SEND_DELAY = 6000;
   const S = {open: new Set(), shut: new Set(), view: null, filter: 'need', armed: false, sendKey: false, pending: null, note: null, copied: null,
-    hl: null, vy: {}, gen: false, zoom: null, sdef: new Map(), sdefV: null};
+    hl: null, vy: {}, gen: false, zoom: null, sdef: new Map(), sdefV: null, drawGen: 0};
   let D = null, ctx = null, root = null, DOC = null, REF = null;
 
   /* ---------- helpers ---------- */
@@ -993,7 +993,7 @@
     if (!!S.zoom !== !!S.zWas) { S.zWas = !!S.zoom; NK.endMove(false); }
     if (host) return drawHost();
     if (!root || !D) return;  // Send was closed over another tab before Questions ever drew, or its data is still on its way: render draws it (r12 audit10 frame 2, audit11)
-    const y = scrollY;
+    const y = scrollY, gen = ++S.drawGen;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
     const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
     const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd};
@@ -1010,7 +1010,10 @@
     else {
       root.innerHTML = bar() + `<div class="aa qdoc"></div>`;
       const docEl = root.querySelector('.qdoc');
-      docEl.innerHTML = await loadDoc(D.version);
+      const doc = await loadDoc(D.version);
+      // a later draw replaced this one while the document loaded: stop, or its scrollTo(0, y) undoes his scroll and a tap lands on another note (fix23 Edit miss)
+      if (gen !== S.drawGen) return false;
+      docEl.innerHTML = doc;
       DOC = docEl;
       placeCards(docEl, true); placeNotes(docEl); abBars(docEl); wrapTasks(docEl); indexRows(docEl); foldSections(docEl);
       docEl.insertAdjacentHTML('afterbegin', docHead(docEl));
@@ -1167,7 +1170,7 @@
   }
   function switchView(v) {
     S.vy[S.view] = scrollY; S.view = v; ctx.prefs.set('q:view', v);
-    return draw().then(() => scrollTo(0, S.vy[v] || 0));  // each view keeps its own place (#22)
+    return draw().then(ok => ok !== false && scrollTo(0, S.vy[v] || 0));  // each view keeps its own place (#22); a superseded draw leaves it to the later one
   }
 
   /* Send: ⌘↵ once opens the summary, again sends. The posts wait SEND_DELAY ms, with Undo, then go through today's endpoints. */
