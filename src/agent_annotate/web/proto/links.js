@@ -52,7 +52,7 @@
     const tag = w => ` <span class="l-tag">${w} in revision ${n}</span>`, mk = S.marks && cur === last && n > 1;
     const doc = cur !== last ? blocksHtml(B, esc)  // an earlier revision reads as it was; notes go on the newest
       : mk ? al.map(x => x.k === 'same' ? blockHtml(B[x.b], x.b, esc, line) : x.k === 'add' ? blockHtml(B[x.b], x.b, esc, line, tag('added'), true)
-        : `<p class="small"><del>${esc(String(R[last - 1].blocks[x.a][1]))}</del>${tag('removed')}</p>`).join('')
+        : `<p class="small"><del>${esc(blockText(R[last - 1].blocks[x.a]))}</del>${tag('removed')}</p>`).join('')  // a picture or table by its words, not its address
       : blocksHtml(B, esc, line);
     const bar = n > 1 ? `<div class="l-revbar"><b>Revision ${cur + 1} of ${n}</b>${cur === last ? `<span class="small">${mk ? `${csum}, against revision ${n - 1}: <del>struck</del> paragraphs left, <ins>marked</ins> ones came in` : 'marks hidden'}</span><button class="lk small" data-marks>${mk ? 'Hide marks' : 'Show marks'}</button>`
       : `<span class="small">an earlier revision, as it read</span><button class="lk small" data-rv="${esc(d.id)}~${last}">Back to the newest</button>`}</div>` : '';

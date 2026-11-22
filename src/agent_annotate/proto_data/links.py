@@ -17,7 +17,7 @@ import re
 from html.parser import HTMLParser
 
 from .history import _comments, _plain, _stamp
-from .reference import FLD_DIR, copy_library, documents, hide, notes
+from .reference import FLD_DIR, copy_library, documents, hide, notes, sized
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
 FLD_SOURCE = PROJECT / "reviews" / "fld-stack-round8"
@@ -37,47 +37,196 @@ def meeting(folder: Path = MEETING) -> dict | None:
     for h in _json(folder / "current.meta.json").get("history") or []:
         v = str((h or {}).get("version") or "") if isinstance(h, dict) else ""
         try:
-            b = _Blocks()
-            b.feed((folder / "versions" / f"{v}.html").read_text(errors="ignore"))
+            b = html_blocks((folder / "versions" / f"{v}.html").read_text(errors="ignore"), _kept_src("admin-meeting", folder))
         except OSError:
             continue
-        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b.out[:800]})  # whole versions, so the added and removed counts are true
+        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b[:800]})  # whole versions, so the added and removed counts are true
     if not revs:
         return None
     return {"id": "admin-meeting", "t": "Admin team meeting", "sub": f"the meeting of {datetime.fromisoformat(revs[-1]['ts']).strftime('%-d %b')} · {len(revs)} revisions",
             "revs": revs, "blocks": revs[-1]["blocks"]}
 
 
-class _Blocks(HTMLParser):
-    """Headings, paragraphs, list items and table cells of an HTML page, as [kind, text]; scripts and styles skipped."""
-    KEEP = {"h1": "h", "h2": "h", "h3": "h", "h4": "h", "p": "p", "li": "li", "td": "p", "pre": "pre"}
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+_CHROME = {"script", "style", "aside", "nav", "button", "select", "textarea", "input", "noscript", "svg", "head"}  # a <template> stays: it holds "Earlier updates"
+_BLOCK = {"p", "div", "section", "article", "main", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "table", "pre", "figure",
+          "img", "blockquote", "details", "summary", "dl", "dt", "dd", "hr", "header", "footer"}
+
+
+class _Tree(HTMLParser):
+    """Published HTML as nested [tag, attrs, children], text as strings and a <br> as \\x01 (a new line)."""
 
     def __init__(self):
         super().__init__()
-        self.out, self.kind, self.buf, self.skip = [], None, [], 0
+        self.root = ["body", {}, []]
+        self.stack = [self.root]
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style"):
-            self.skip += 1
-        elif tag in self.KEEP:
-            self._flush()
-            self.kind = self.KEEP[tag]
+        if tag == "br":
+            self.stack[-1][2].append("\x01")
+            return
+        e = [tag, {k: v or "" for k, v in attrs}, []]
+        self.stack[-1][2].append(e)
+        if tag not in _VOID:
+            self.stack.append(e)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in _VOID and tag != "br":
+            self.stack.pop()
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style"):
-            self.skip = max(0, self.skip - 1)
-        elif tag in self.KEEP:
-            self._flush()
+        for i in range(len(self.stack) - 1, 0, -1):  # an end tag with no open match is ignored
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                return
 
     def handle_data(self, data):
-        if self.kind and not self.skip:
-            self.buf.append(data)
+        self.stack[-1][2].append(data)
 
-    def _flush(self):
-        t = re.sub(r"\s+", " ", "".join(self.buf)).strip()
-        if self.kind and t:
-            self.out.append([self.kind, hide(t)[:900]])
-        self.kind, self.buf = None, []
+
+def _chrome(e: list) -> bool:  # the page's own controls, as Reference's parse drops them (reference.js CHROME)
+    a = e[1]
+    return e[0] in _CHROME or a.get("id") in ("popover", "legend") or (e[0] == "header" and "hdr" in a.get("class", "").split())
+
+
+def _text(n) -> str:
+    return n if isinstance(n, str) else "" if _chrome(n) else "".join(_text(c) for c in n[2])
+
+
+def _kids(e: list) -> list:
+    return [c for c in e[2] if isinstance(c, list) and not _chrome(c)]
+
+
+def _find(e: list, tags: set) -> list:
+    out = []
+    for c in _kids(e):
+        out += ([c] if c[0] in tags else []) + _find(c, tags)
+    return out
+
+
+def _rows(tb: list) -> list:
+    trs = [r for y in _kids(tb) for r in ([y] if y[0] == "tr" else _kids(y) if y[0] in ("thead", "tbody", "tfoot") else []) if r[0] == "tr"]
+    return [[c for c in _kids(r) if c[0] in ("td", "th")] for r in trs]
+
+
+def _clean(s: str) -> str:
+    return re.sub(r"[\s\x01]+", " ", s).strip()
+
+
+def html_blocks(html: str, pic=None) -> list:
+    """A published page's text as the blocks Proto.media.blocks gives Markdown, so every reader draws it the same:
+    ['h'|'p'|'li', text], ['pre', text with its line breaks], ['img', address, description, its number from 1] and
+    ['tbl', its text, rows, has a header, cells with pictures as ['t', text] and ['img', ...]], as reference.js parse
+    reads a plan revision. `pic(src, attrs)` gives a picture's address or '' (then its description says it was not found)."""
+    t = _Tree()
+    t.feed(html)
+    t.close()
+    body = next(iter(_find(t.root, {"body"})), t.root)
+    out, n = [], 0
+    cut = lambda s, k=900: hide(s)[:k]
+
+    def one(e, cap=""):  # ['img', ...] or, with no file, its description
+        nonlocal n
+        alt = cut(e[1].get("alt") or cap, 300)
+        u = pic(e[1].get("src") or "", e[1]) if pic else ""
+        if not u:
+            return ["t", f"{alt or 'Picture'} (picture not found)"]
+        n += 1
+        return ["img", u, alt, n]
+
+    def parts(c):  # a cell's parts when it holds a picture; its figure captions are its pictures'
+        if not _find(c, {"img"}):
+            return None
+        ps = []
+
+        def each(x):
+            for y in x[2]:
+                if isinstance(y, str):
+                    if s := _clean(y):
+                        ps.append(["t", cut(s)])
+                elif _chrome(y) or y[0] == "figcaption":
+                    continue
+                elif y[0] == "img":
+                    ps.append(one(y))
+                elif _find(y, {"img"}):
+                    each(y)
+                elif s := _clean(_text(y)):
+                    ps.append(["t", cut(s)])
+        each(c)
+        return ps
+
+    def walk(e):
+        for x in _kids(e):
+            tg = x[0]
+            if re.fullmatch(r"h[1-6]", tg):
+                if s := _clean(_text(x)):
+                    out.append(["h", cut(s)])
+            elif tg == "table":
+                rows = [r for r in _rows(x) if any(_clean(_text(c)) or _find(c, {"img"}) for c in r)]
+                r = [[cut(_clean(_text(c))) for c in row] for row in rows]
+                cp = [[parts(c) for c in row] for row in rows]
+                if r:
+                    out.append(["tbl", " ".join(sum(r, [])), r, bool(_find(x, {"th"})), *([cp] if any(p for row in cp for p in row) else [])])
+            elif tg == "pre":
+                out.append(["pre", hide(_text(x).replace("\x01", "\n")).rstrip("\n")[:20000]])
+            elif tg in ("img", "figure"):  # a figure is its pictures, captioned by their description or its caption
+                cap = _clean("".join(_text(c) for c in _kids(x) if c[0] == "figcaption"))
+                for i in [x] if tg == "img" else _find(x, {"img"}):
+                    b = one(i, cap)
+                    out.append(b if b[0] == "img" else ["p", b[1]])
+            elif tg == "li":
+                if s := _clean(_text(["li", {}, [y for y in x[2] if isinstance(y, str) or y[0] not in ("ul", "ol", "table", "pre")]])):
+                    out.append(["li", cut(s)])
+                for y in _kids(x):
+                    if y[0] in ("ul", "ol"):
+                        walk(y)
+            elif any(y[0] in _BLOCK for y in _kids(x)):
+                walk(x)
+            else:
+                for i in _find(x, {"img"}):
+                    b = one(i)
+                    out.append(b if b[0] == "img" else ["p", b[1]])
+                for s in _text(x).split("\x01"):
+                    if s := _clean(s):
+                        out.append(["h" if tg in ("dt", "summary") else "p", cut(s)])
+    walk(body)
+    return out
+
+
+def _kept_dir(doc: str) -> Path | None:  # read at call time: tests and fixtures point MEETING and USAGE_AUDIT elsewhere
+    return {"admin-meeting": MEETING, "usage-audit": USAGE_AUDIT.parent}.get(doc)
+
+
+def kept_picture(folder: Path | None, rel: str) -> Path | None:
+    """A kept document's picture file: under its page's assets/, an image of at most 10 MB as today's release takes, or None."""
+    from ..images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES
+    parts = Path(rel).parts
+    if not folder or len(parts) < 2 or parts[0] != "assets" or any(p.startswith(".") or p == ".." for p in parts):
+        return None
+    p = folder / rel
+    try:
+        ok = p.resolve().is_relative_to(folder.resolve()) and p.suffix.lower() in IMAGE_SUFFIXES and p.is_file() and p.stat().st_size <= MAX_IMAGE_BYTES
+    except OSError:
+        return None
+    return p if ok else None
+
+
+def _kept_src(doc: str, folder: Path):
+    """A kept document's picture addresses: its page's own assets, served at proto/kept/<doc>/ (proto_data.serve), with the
+    published width and height (#wh=, Proto.media.sized) so its space is kept while it loads; a web or data address as written."""
+    import urllib.parse
+
+    def pic(src: str, a: dict) -> str:
+        if src.startswith("data:image/") or re.match(r"^https?://", src):
+            return src
+        rel = urllib.parse.unquote(re.sub(r"^(?:/annotate/reviews/[^/]+/|(?:\.\./)+|\./|/)", "", src.split("#")[0].split("?")[0]))
+        f = kept_picture(folder, rel)
+        if not f:
+            return ""
+        url, w, h = f"proto/kept/{doc}/{urllib.parse.quote(rel)}", a.get("width", ""), a.get("height", "")
+        return f"{url}#wh={w}x{h}" if w.isdigit() and h.isdigit() and int(w) and int(h) else sized(url, f)
+    return pic
 
 
 def kept() -> list[dict]:
@@ -85,10 +234,9 @@ def kept() -> list[dict]:
     m = meeting(MEETING)
     out = [m] if m else []
     try:
-        b = _Blocks()
-        b.feed(USAGE_AUDIT.read_text(errors="ignore"))
-        if b.out:
-            out.append({"id": "usage-audit", "t": "Usage audit", "sub": "the usage audit page of 6 Nov · from FastLane Drive planning", "blocks": b.out[:60]})
+        b = html_blocks(USAGE_AUDIT.read_text(errors="ignore"), _kept_src("usage-audit", USAGE_AUDIT.parent))
+        if b:
+            out.append({"id": "usage-audit", "t": "Usage audit", "sub": "the usage audit page of 6 Nov · from FastLane Drive planning", "blocks": b[:60]})
     except OSError:
         pass
     try:
