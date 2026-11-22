@@ -25,19 +25,21 @@ read = true; sheetCount(); assert.ok(!el['[data-send]'].disabled && !el['[data-d
 
 def test_round_stops_on_an_unlisted_note_and_counts_what_it_carried(tmp_path):
     post = grab(Q, "  async function post(", "\n  // Discard all")
+    deliv = grab(Q, "  const deliverable = ", ";\n") + ";"
     node(tmp_path, f"""
 const assert = require('assert');
 let rows = [], round = null, toast = '', posted = 0;
-const S = {{pending: {{}}}}, D = {{notes: [], version: 'v'}}, NK = {{reo: () => ({{}}), gone: () => {{}}, L: {{}}}};
+const WRITING = new Set(), S = {{pending: {{}}}}, D = {{notes: [], version: 'v'}}, NK = {{reo: () => ({{}}), gone: () => {{}}, L: {{}}}};
 const allRead = () => true, sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => '', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
 const draft = () => ({{reply: 'r'}}), setDraft = () => {{}}, optLabel = () => '';
 const document ={{querySelectorAll: () => []}};
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}}};
 const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return round; }} return {{}}; }};
+{deliv}
 {post}
 (async () => {{
-  const listed = {{all: 1, notes: ['a']}};
+  const listed = {{all: 1, notes: ['a'], keys: new Set(['n:a'])}};
   // same page: a read during the countdown brought in note b, which Send never listed
   rows = [['Notes', '', 'n:a', 'note:a', false, 'a'], ['Notes', '', 'n:b', 'note:b', false, 'b']];
   await post([], [], [], 1, listed);
@@ -52,7 +54,7 @@ const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return ro
   assert.ok(/Sent 2 items:/.test(toast), toast);
   // an answer and a reply on one question are two rows, one id
   rows = []; S.pending = {{}}; round = {{comment_ids: ['q1']}};
-  await post([{{id: 'q1'}}], [{{id: 'q1'}}], [], 2, {{all: 2, notes: []}});
+  await post([{{id: 'q1'}}], [{{id: 'q1'}}], [], 2, {{all: 2, notes: [], keys: new Set()}});
   assert.ok(/Sent 2 items:/.test(toast), toast);
 }})().catch(e => {{ console.error(e); process.exit(1); }});
 """)

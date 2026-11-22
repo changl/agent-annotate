@@ -9,7 +9,7 @@ def test_beads_follows_the_retried_board_in_the_same_paint(tmp_path):
     run = grab(FRAME, "  function putRun", "const readRun = () => data('running').then(() => {}, () => {});")
     node(tmp_path, f"""
 const assert = require('assert');
-const COPY = '', P = {{}}, unTaken = d => d, S = {{}}, started = true, refreshSend = () => {{}};
+const COPY = '', P = {{}}, unTaken = d => d, S = {{}}, started = true, refreshSend = () => {{}}, sendP = null;
 const prefs = {{v: {{}}, get(k, d) {{ return k in this.v ? this.v[k] : d; }}, set(k, v) {{ this.v[k] = v; }}}};
 let answers = [{{board: {{error: 'no'}}}}, {{board: {{ready: 4, tasks: []}}}}], paints = [];
 const api = () => Promise.resolve(answers.shift());

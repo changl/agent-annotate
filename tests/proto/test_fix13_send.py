@@ -47,7 +47,7 @@ def test_send_opens_while_counts_are_unknown():
     assert "if (sendOff(t.classList.contains('hide-ph') ? 'hide-ph' : '')) return toast('Nothing is ready to send yet');\n      return openSend();" in FRAME
     assert "if (t.id === 'p-fab') return openSend();" in FRAME
     sheet = grab(Q, "function openSheet(c, key) {", "\n  }")
-    assert "if (!D || stale) readFor(c);" in sheet and "if (onQ() && D) return draw(true);" in sheet
+    assert "if (!D || stale || qerr()) readFor(c, qerr());" in sheet and "if (onQ() && D) return draw(true);" in sheet
     assert "const savedQs = () => Object.keys(drafts())" in Q
     assert "if (!allRead()) { relist(); return ctx.toast(`Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first" in Q  # fix28: and the other tabs' notes; fix31: every Questions read
     assert "if (t.hasAttribute('data-sretry')) return readFor(ctx, true);" in Q
@@ -58,7 +58,7 @@ def test_try_again_starts_a_fresh_read(tmp_path):
     load = grab(Q, "  let reading = null;", "\n  };")
     node(tmp_path, f"""
 const assert = require('assert');
-let D = null, stale = false, ctx = null, n = 0; const S = {{}}, relist = () => {{}};
+let D = null, stale = false, ctx = null, n = 0; const S = {{}}, relist = () => {{}}, qerr = () => false, track = (a, p) => p;
 const sim = d => d;
 const c = {{data: (a, fresh) => {{ n++; return n === 1 ? new Promise(() => {{}}) : Promise.resolve({{v: n, fresh}}); }}}};
 {load}

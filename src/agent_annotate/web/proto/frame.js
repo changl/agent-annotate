@@ -53,6 +53,7 @@
       if (write) wrote(path);
       return data;
     });
+    if (write && sendP && sendP.writing) sendP.writing(path, go);  // a write still on its way counts in Send's round check (r12 audit29 questions 1)
     // every read, the version and metadata too, fails after 20 s so its tab or the frame offers Try again; a write is never cut short (r12 audit10 frame 1)
     return write ? go : Promise.race([go, late()]);
   }
@@ -97,6 +98,7 @@
       // a copy's read waits for the tab scripts: one landing before questions.js would be cached without the copy's notes (r12 audit22 questions 2)
       .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
     // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
+    if (sendP && sendP.read) sendP.read(area, p);  // every new read, first or background, from any tab: Send's one read state (r12 audit29 running 2)
     p.then(() => refreshSend(), () => {});  // a read landing can change what Send lists or offers Remove on: an open sheet follows it (r12 audit22 reference 3)
     if (area === 'running') { const n = ++runSeq; p.then(r => n === runSeq && putRun(r), () => n === runSeq && putRun(null, true)); }
     return p;

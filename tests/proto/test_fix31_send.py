@@ -20,15 +20,15 @@ def test_every_focus_restore_keeps_the_direction():
 
 def test_a_warm_refresh_in_flight_or_failed_is_unread(tmp_path):
     load = grab(Q, "  let reading = null;", "\n  };")
-    qin = grab(Q, "  const qIn = ", ";\n")
+    state = grab(Q, "  const RS = {}", "  const allRead = () => !!(oin() && qIn());")  # fix33: the one read state
     node(tmp_path, f"""
 const assert = require('assert');
-let D = {{v: 0}}, stale = false, ctx = null, n = 0, fail = false, hang = null, redraws = 0; const S = {{oin: true}};
+let D = {{v: 0}}, stale = false, ctx = null, n = 0, fail = false, hang = null, redraws = 0; const S = {{}};
 const sim = d => d, relist = () => {{ redraws++; }};
 const c = {{data: () => fail ? Promise.reject(Error('503')) : new Promise(r => {{ hang = r; }})}};
 {load}
-{qin}
-const allRead = () => !!(S.oin && qIn());
+{state}
+RS.reference = RS.links = {{st: 'done'}};
 (async () => {{
   assert.ok(allRead(), 'first read in');
   stale = true; assert.ok(!allRead(), 'a note saved since the read');
@@ -36,7 +36,7 @@ const allRead = () => !!(S.oin && qIn());
   hang({{v: 1}}); await p; assert.ok(allRead(), 'refresh in');
   stale = true; fail = true;
   await load(c).catch(() => {{}});
-  assert.ok(S.qerr && !allRead(), 'a failed refresh, from a count, is the sheet\\'s failure');
+  assert.ok(qerr() && !allRead(), 'a failed refresh, from a count, is the sheet\\'s failure');
   const before = n; await load(c); assert.strictEqual(n, before, 'a count never re-reads a failed read');
   fail = false; const q = load(c, true); hang({{v: 2}}); await q;
   assert.ok(allRead() && D.v === 2, 'Try again reads and clears it');
@@ -51,5 +51,5 @@ def test_send_and_the_round_wait_on_every_read():
     p = grab(Q, "  async function post(", "api/rounds/submit")
     assert p.index("if (!allRead()") <p.index("await ctx.takeNow()")
     r = grab(Q, "  async function relist() {", "\n  }")
-    assert "if (stale && !reading && !S.qerr && ctx) return readFor(ctx);" in r  # never loops on a failing read
-    assert "if (S.qerr && !again) throw Error(" in grab(Q, "  const load = async", "\n  };")  # a cold failed read: counts wait for Try again, never re-read
+    assert "if (stale && !reading && !qerr() && ctx) return readFor(ctx);" in r  # never loops on a failing read
+    assert "if (qerr() && !again) throw Error(" in grab(Q, "  const load = async", "\n  };")  # a cold failed read: counts wait for Try again, never re-read

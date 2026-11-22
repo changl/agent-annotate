@@ -1034,17 +1034,36 @@
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
     return it;
   }
+  // the keys of what this client's Send delivers now: each of his rows (a peer's never goes) and General feedback
+  const NOTEW = /^api\/comments(\/[^/]+)?$/, WRITING = new Set();  // this client's note saves, autosaves and edits still on their way
+  const deliverable = () => [...sendItems().filter(x => !x[4]).map(x => x[2]), ...(gen().trim() ? ['gen'] : [])];
   // "Nothing ready yet" only once every read the sheet waits on (Questions, Reference, Pages & links) is in, none failed (r12 audit26 running 2)
   // every Questions read counts, a warm refresh too: a note saved since, a read on its way or a failed one leaves the
   // listed rows out of date (r12 audit27 questions 1)
-  const qIn = () => !!(D && !stale && !reading && !S.qerr);
-  const allRead = () => !!(S.oin && qIn());
+  // The one read state (r12 audit29 running 2): every read of Questions, Reference and Pages & links, first or background, from
+  // any tab, reaches track() through the frame's data() (P.send read) and is held, failed or done here alone. The sheet's notices,
+  // Try again, Nothing ready yet, sendOn and the ⌘↵ callout read only from it; a failed read stays failed until a new read starts
+  const RS = {}, OTHERS = [['reference', 'Reference'], ['links', 'Pages &amp; links']];
+  const rs = a => (RS[a] || {}).st;
+  function track(a, p) {
+    if (!['questions', 'reference', 'links'].includes(a) || (RS[a] && RS[a].p === p)) return p;
+    const t = RS[a] = {p, st: 'held'}, end = st => { if (RS[a] === t) { t.st = st; relist(); } };
+    p.then(() => end('done'), () => end('failed'));
+    Promise.resolve().then(relist);  // held: the open sheet turns Send off now, after the redraw that started the read
+    return p;
+  }
+  const qerr = () => rs('questions') === 'failed';
+  const oin = () => OTHERS.every(([a]) => rs(a) === 'done');
+  const oerr = () => OTHERS.filter(([a]) => rs(a) === 'failed').map(x => x[1]).join(' and ') || false;
+  // reading: load()'s own read, held until D is set from it
+  const qIn = () => !!(D && !stale && !reading && !['held', 'failed'].includes(rs('questions')));
+  const allRead = () => !!(oin() && qIn());
   // the one rule for Send and Discard all being on, for the sheet's redraw and for typing in it: never while a read is held or failed (r12 audit28 questions 1)
   const sendOn = n => !!n && allRead();
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
-    if (!S.oin && !S.oerr) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
+    if (!oin() && !oerr()) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
     const ok = sendOn(n), rd = ok || !n ? '' : ` title="Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
@@ -1054,9 +1073,9 @@
       ${S.sendKey && ok ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (allRead() ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
-      ${S.oin ? '' : S.oerr ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${S.oerr} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
-        : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
-      <h4>Not in this Send</h4><p class="small">${!qIn() ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
+      ${oin() ? '' : oerr() ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${oerr()} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
+        : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on ${OTHERS.filter(([a]) => rs(a) !== 'done').map(x => x[1]).join(' and ')}…</p>`}
+      <h4>Not in this Send</h4><p class="small">${!qIn() ? qerr() ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
@@ -1275,17 +1294,19 @@
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
     // every row on a note, whichever tab lists it (a release draft, a peer's draft or reply): the round's ids say which went
-    const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sendCount();
+    const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sendCount(), keys = new Set(deliverable());
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes}), SEND_DELAY)};
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes, keys}), SEND_DELAY)};
     draw(true);
   }
   async function post(answers, replies, closes, n, listed) {
     // the server's round takes every unsent note: a note saved or a read started during the countdown is one Send never
     // listed, so nothing goes and the sheet lists it first (r12 audit27 questions 1)
-    // and a note read in during the countdown that the sheet never listed: the server's round would take it too (r12 audit28 running 1)
-    const unlisted = allRead() && sendItems().some(x => !x[4] && x[5] && !listed.notes.includes(x[5]));
+    // The one round check (r12 audit28 running 1, audit29 running 1): what this client would deliver now, from every source
+    // (server reads, local saves, the editor still open and autosaving, General feedback), against what the sheet listed
+    // a write still on its way is a note the server may already hold: stop, and its landing relists (r12 audit29 questions 1)
+    const unlisted = WRITING.size || (allRead() && deliverable().some(k => !listed.keys.has(k)));
     if (!allRead() || unlisted) { S.pending = null; S.armed = true; await draw(true); relist(); return ctx.toast('A note came in while sending: check the list and press Send again. Nothing was sent.'); }
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
@@ -1302,11 +1323,14 @@
       // every id this Send listed or wrote: any other id the round carries (a note another client of his saved during the countdown) is counted too
       const known = new Set([...listed.notes, ...answers, ...replies, ...closes].map(x => x.id || x));
       const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
-      if (tn) { known.add((await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}) || {}).id); S.note = null; ctx.prefs.set('q:newnote', null); }
+      // an id Send writes is a listed row only when the sheet listed it: fix32 counted the typed note's id as known though no row
+      // listed it, so it was neither a counted row nor an extra id and the receipt said Sent 1 for a round of 2 (r12 audit29 running 1)
+      const wroteFor = (k, w) => { if (listed.keys.has(k)) known.add((w || {}).id); };
+      if (tn) { wroteFor('nn:', await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target})); S.note = null; ctx.prefs.set('q:newnote', null); }
       const ed = S.note || ctx.prefs.get('q:newnote', null), en = ed && ed.edit && D.notes.find(x => x.id === ed.edit);  // a saved note open in its editor goes with its new words
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT'); S.note = null; ctx.prefs.set('q:newnote', null); }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
-      for (const [a, p] of Object.entries(abPicks())) { known.add((await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}) || {}).id); setAB(a, null); }
+      for (const [a, p] of Object.entries(abPicks())) { wroteFor('ab:' + a, await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}})); setAB(a, null); }
       // a re-opened note goes back to open now, so the round carries it to the agent again
       for (const id of Object.keys(NK.reo(ctx))) known.add(id) && await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
       const r = await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
@@ -1495,9 +1519,9 @@
     if (t.hasAttribute('data-sendopen')) { S.armed = !S.armed; S.sendKey = false; S.gen = false; return draw(true); }
     if (t.hasAttribute('data-sendclose')) { S.armed = false; S.sendKey = false; return draw(true); }
     if (t.hasAttribute('data-send')) return send();
-    if (t.hasAttribute('data-discard')) return discardAll();
+    if (t.hasAttribute('data-discard')) return sendOn(sendCount()) && discardAll();  // the gate holds between a read's start and its redraw too
     if (t.hasAttribute('data-sretry')) return readFor(ctx, true);
-    if (t.hasAttribute('data-sothersretry')) { S.oerr = false; readOthers(ctx); return draw(true); }  // back to reading, then the rows
+    if (t.hasAttribute('data-sothersretry')) { readOthers(ctx); return draw(true); }  // back to reading, then the rows
     if (ds.sgo) return sendGo(ds.sgo);
     if (ds.srm) return sendRemove(ds.srm);
     if (t.hasAttribute('data-sendundo')) { if (!S.pending || S.pending.going) return; clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
@@ -1710,7 +1734,7 @@
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       const fresh = stale; stale = false;
-      D = sim(await c.data('questions', fresh)); S.qerr = false;
+      D = sim(await track('questions', c.data('questions', fresh)));
       await findCopy(c);
       if (host) { host.remove(); host = null; }  // the Send opened over another tab now shows in this bar
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
@@ -1737,34 +1761,33 @@
     for (;;) {
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
       if (D && !stale && !again) return;
-      if (S.qerr && !again) throw Error('The questions could not be read');  // no data and a failed read: a count waits for Try again too
+      if (qerr() && !again) throw Error('The questions could not be read');  // no data and a failed read: a count waits for Try again too
       const fresh = !!D || !!again; stale = false; again = false;
       // whoever asked (a count, the sheet), a failed read is the sheet's failure too, until Try again (load(c, true)); a count
       // never re-reads it, since each redraw asks for counts and a down server would be asked hundreds of times a second
       // the sheet redraws when the read lands or first fails, not on a repeat failure: a redraw asks for counts, and with no
       // data yet a count reads again, so redrawing on every failure would loop against a down server
-      let redraw = true;
-      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { redraw = !S.qerr; S.qerr = true; throw e; })
-        .finally(() => { if (reading === r) { reading = null; if (redraw) relist(); } });
+      let ok = false;
+      const r = reading = track('questions', c.data('questions', fresh)).then(d => { D = sim(d); ok = true; })
+        .finally(() => { if (reading === r) { reading = null; if (ok) relist(); } });  // a failure relists from track(), once
       relist();  // the open sheet waits on this read
     }
   };
   // the Send sheet open before the questions were read: their items join it once they are in, or it says the read failed
-  const readFor = (c, again) => { S.qerr = false; const p = load(c, again).then(relist, () => { S.qerr = true; relist(); }); relist(); return p; };
+  const readFor = (c, again) => { const p = load(c, again).then(relist, relist); relist(); return p; };
   // the same for the notes Reference and Pages & links list (a 2.32.8 Policies or meeting note is in their feeds alone): the
   // sheet says it is reading them and Send waits, then lists them; the tabs' own first reads, never a second (r12 audit24 reference 1)
-  let others = null;
   // A failed read leaves Send waiting and the sheet saying so, with Try again, which reads again (r12 audit25 frame 1)
-  // S.oerr names the reads that failed, and only those (r12 audit26 questions 4)
-  const readOthers = c => others || (others = Promise.all([['reference', 'Reference'], ['links', 'Pages &amp; links']].map(([a, t]) => c.data(a).then(() => '', () => t)))
-    .then(bad => { bad = bad.filter(Boolean); S.oerr = bad.length ? bad.join(' and ') : false; if (S.oerr) others = null; else S.oin = true; relist(); }));
+  // oerr() names the reads that failed, and only those (r12 audit26 questions 4). A feed never read, or failed (its cache is gone),
+  // is read; one held or done is left alone, so a warm refresh from its tab is what the sheet waits on (r12 audit29 running 2)
+  const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') track(a, c.data(a)).catch(() => {}); });
   // the open Send summary lists what the count now holds, even while he types General feedback in it: the words are saved as
   // he types, and the field gets its focus and cursor back (r12 fix10 reference 2, audit25 questions 2)
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
     if (!S.armed || !s) return;
     // a note saved since the last read: the sheet reads it before Send works (load relists); a failed read waits for Try again
-    if (stale && !reading && !S.qerr && ctx) return readFor(ctx);
+    if (stale && !reading && !qerr() && ctx) return readFor(ctx);
     const f = s.contains(a) && a.matches('[data-send]'); await draw(true);  // draw keeps General feedback's focus itself
     const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
   }
@@ -1773,7 +1796,10 @@
   P.send({
     count: async (c, again) => { await load(c, again); return sendCount(); },
     saved: c => { ctx = ctx || c; return sendCount(); },  // what Send lists now, from the saved drafts alone while no read is in (r12 fix14)
-    wrote: path => { if (/^api\/comments(\/[^/]+)?$/.test(path.split('?')[0])) stale = true; },
+    read: track,  // every new read of a feed, from the frame's data(): the one read state
+    // a note write from this client, from any tab, still on its way: the round check stops on it (r12 audit29 questions 1)
+    writing: (path, p) => { if (!NOTEW.test(path.split('?')[0]) || (S.pending && S.pending.going)) return; WRITING.add(p); const end = () => WRITING.delete(p); p.then(end, end); },
+    wrote: path => { if (NOTEW.test(path.split('?')[0])) stale = true; },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
     changed: relist,
@@ -1788,7 +1814,7 @@
     ctx = ctx || c;
     if (key && S.armed) return arm();
     S.armed = true; S.sendKey = !!key; S.gen = false;
-    if (!D || stale) readFor(c);
+    if (!D || stale || qerr()) readFor(c, qerr());  // opening the sheet tries a failed read again, as before
     readOthers(c);
     if (S.copyOf === undefined) findCopy(c).then(relist);
     if (onQ() && D) return draw(true);

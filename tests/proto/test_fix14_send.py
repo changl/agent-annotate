@@ -83,7 +83,7 @@ def test_frame_counts_saved_drafts_until_the_counts_are_in():
 def test_questions_listens_before_its_reads():
     """Questions 2: Send can open on Questions while render still reads; its Go to it must work on the first click."""
     render = grab(Q, "render: async (el, c, anchor) => {", "await draw();")
-    assert render.index("el.onclick = onClick;") < render.index("await c.data('questions'")
+    assert render.index("el.onclick = onClick;") < render.index("await track('questions', c.data('questions'")
 
 
 def test_undo_puts_back_the_saved_plan_record():

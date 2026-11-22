@@ -48,7 +48,7 @@ def test_every_redraw_keeps_general_feedback_focus():
 def test_nothing_ready_only_when_every_read_is_in():
     """Running 2: Questions' own read counts, held or failed, as Reference's and Pages & links' do."""
     q = (WEB / "questions.js").read_text()
-    assert "const allRead = () => !!(S.oin && qIn());" in q
+    assert "const allRead = () => !!(oin() && qIn());" in q
     assert q.count("Nothing ready yet.</p>") == 1 and "(allRead() ? `<p class=\"small mut\" data-snone" in q
 
 
@@ -56,7 +56,7 @@ def test_a_failed_read_names_only_itself():
     """Questions check 4: a Pages & links failure alone says Pages & links, not Reference."""
     q = (WEB / "questions.js").read_text()
     assert "[['reference', 'Reference'], ['links', 'Pages &amp; links']]" in q
-    assert "The notes on ${S.oerr} could not be read" in q
+    assert "The notes on ${oerr()} could not be read" in q
 
 
 def test_the_shortcut_callout_only_while_send_is_on():
