@@ -52,7 +52,9 @@ def test_receipt_chip_and_open_summary():
 
 def test_phone_send_undo_and_hint():
     """Frame 2 and 5: no notice over the countdown; the hint wraps between words, keycaps whole."""
-    assert "body:has(.qsend.sending) .p-toastwrap{display:none}" in FCSS
+    assert "body:has(.qsend.sending [data-sendundo]) .p-toastwrap{display:none}" in FCSS
+    # past the countdown (Undo gone) a notice shows, on a phone above the Sending bar (r12 fix37)
+    assert "body:has(.qsend.sending) .p-toastwrap{display:none}" not in FCSS and "body:has(.qsend.sending) .p-toastwrap{bottom:132px}" in FCSS
     assert "white-space:nowrap;overflow-wrap:normal" in FCSS
     hint = QCSS[QCSS.index(".qsendkey{"):]
     assert "display:flex" not in hint[:hint.index("}")]
