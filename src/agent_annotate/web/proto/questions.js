@@ -1034,6 +1034,8 @@
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
     return it;
   }
+  // "Nothing ready yet" only once every read the sheet waits on (Questions, Reference, Pages & links) is in, none failed (r12 audit26 running 2)
+  const allRead = () => !!(S.oin && D && !S.qerr);
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
@@ -1046,8 +1048,8 @@
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : S.copyOf === '' ? 'Goes to the FastLane Drive agent session.' : ''} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
-      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (S.oin ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
-      ${S.oin ? '' : S.oerr ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on Reference and Pages &amp; links could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
+      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (allRead() ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
+      ${S.oin ? '' : S.oerr ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${S.oerr} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
         : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
       <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
@@ -1056,9 +1058,15 @@
   // the Send sheet over another tab (r12 fix7 frame 5): closing it leaves him where he was
   let host = null;
   const onQ = () => !!root && root.isConnected && root.classList.contains('tab-questions');
+  // any redraw, whatever asked for it (a read landing, a relist, Remove), gives General feedback its focus and cursor back at
+  // once, before the next keystroke can land on the page body (r12 audit26 running 1)
+  const typingIn = () => { const a = document.activeElement, s = a && a.matches('[data-general]') && a.closest('.qsend,.qgen');
+    return s && {sel: (s.classList.contains('qgen') ? '.qgen' : '.qsend') + ' [data-general]', a: a.selectionStart, b: a.selectionEnd}; };
+  const typeOn = k => { const e = k && document.querySelector(k.sel); if (e && e !== document.activeElement) { e.focus({preventScroll: true}); e.setSelectionRange(k.a, k.b); } };
   function drawHost() {
+    const k = typingIn();
     if (!S.armed && !S.pending) { host.remove(); host = null; }
-    else host.innerHTML = sendPanel(sendCount());
+    else { host.innerHTML = sendPanel(sendCount()); typeOn(k); }
     document.body.classList.toggle('qsheet-open', !!(host && S.armed));
     ctx.refreshChips();  // a Remove or Undo over another tab moves the Questions count too
   }
@@ -1072,10 +1080,10 @@
     const y = scrollY, gen = ++S.drawGen;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
     const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
-    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd};
+    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd}, k = typingIn();
     const html = S.view === 'list' ? listView() : null;
     if (html != null) {
-      root.innerHTML = bar() + html;
+      root.innerHTML = bar() + html; typeOn(k);
       // Cards only: a card's evidence takes notes as the document does; the new one opens under its line in that card (audit5 #03)
       root.querySelectorAll('.qevb').forEach(placeNotes);
       const evb = S.note && S.note.inq && root.querySelector(`#q-${CSS.escape(S.note.inq)} .qevb`);
@@ -1084,7 +1092,7 @@
       if (after) after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', newNoteBox());
     }
     else {
-      root.innerHTML = bar() + `<div class="aa qdoc"></div>`;
+      root.innerHTML = bar() + `<div class="aa qdoc"></div>`; typeOn(k);
       const docEl = root.querySelector('.qdoc');
       const doc = await loadDoc(D.version);
       // a later draw replaced this one while the document loaded: stop, or its scrollTo(0, y) undoes his scroll and a tap lands on another note (fix23 Edit miss)
@@ -1726,16 +1734,15 @@
   // sheet says it is reading them and Send waits, then lists them; the tabs' own first reads, never a second (r12 audit24 reference 1)
   let others = null;
   // A failed read leaves Send waiting and the sheet saying so, with Try again, which reads again (r12 audit25 frame 1)
-  const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).then(() => true, () => false)))
-    .then(ok => { S.oerr = ok.includes(false); if (S.oerr) others = null; else S.oin = true; relist(); }));
+  // S.oerr names the reads that failed, and only those (r12 audit26 questions 4)
+  const readOthers = c => others || (others = Promise.all([['reference', 'Reference'], ['links', 'Pages &amp; links']].map(([a, t]) => c.data(a).then(() => '', () => t)))
+    .then(bad => { bad = bad.filter(Boolean); S.oerr = bad.length ? bad.join(' and ') : false; if (S.oerr) others = null; else S.oin = true; relist(); }));
   // the open Send summary lists what the count now holds, even while he types General feedback in it: the words are saved as
   // he types, and the field gets its focus and cursor back (r12 fix10 reference 2, audit25 questions 2)
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
     if (!S.armed || !s) return;
-    const t = s.contains(a) && a.matches('[data-general]') && [a.selectionStart, a.selectionEnd];
-    const f = s.contains(a) && a.matches('[data-send]'); await draw(true);
-    const g = t && document.querySelector('.qsend [data-general]'); if (g) { g.focus(); g.setSelectionRange(...t); }
+    const f = s.contains(a) && a.matches('[data-send]'); await draw(true);  // draw keeps General feedback's focus itself
     const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
   }
   // copyOf is the project's key; its name, as the frame shows it, is the page's meta name

@@ -315,6 +315,8 @@ a.mi{text-decoration:none}
   .hrow>.hc.ac{grid-area:ac}.hrow>.hc.ls{grid-area:ls;justify-content:flex-end;align-self:end}
   .hrow>.hc.ac .spark{width:140px;height:22px}
   .hrow:not(.hh)>.hc.wk .dt{width:9px;height:9px}
-  .wbar,.hpg{display:none}
+  .wbar{display:none}
+  /* the mock's phone Home: the page count beside the name, on the first line; a long name gives way, never wraps (r12 audit26 frame 3) */
+  .hpg{white-space:nowrap;flex:none}.hrow>.hc.nm>.lk,.hrow>.hc.nm>.ro{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ph-only{display:inline!important}  /* areas show theirs only to 600; the phone frame needs them as far as 900 */
 }

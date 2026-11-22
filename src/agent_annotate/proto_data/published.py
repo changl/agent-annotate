@@ -143,7 +143,9 @@ def _items(store: dict):
 
 
 _viewer = {"h": None}  # the signed-in reviewer's real address, hashed: release notes' ownership is decided on it, before masking
-WHO = ("author", "author_email", "by", "flagged_by")  # the fields that name a reviewer, in a note, its replies and decisions
+# the fields that name a reviewer, in a note, its replies and decisions; edited_by is whoever made its last PUT (words,
+# Move, Re-open), so a peer's edit stays the peer's in the feed and the round (r12 audit26 questions 3)
+WHO = ("author", "author_email", "by", "flagged_by", "edited_by", "edited_by_email")
 _hash = lambda s: hashlib.sha256(("proto-viewer\0" + s.strip().lower()).encode()).hexdigest()
 
 
