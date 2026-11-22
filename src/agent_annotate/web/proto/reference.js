@@ -674,7 +674,8 @@
   const itemOf = a => a.startsWith('chk:') ? (D && D.checklist ? D.checklist.plan : '') : a.replace(/^ref:/, '').split('~')[0];
   // a note in a folded copy group or on an older plan revision: open that group or revision first (r12 fix9)
   function reach(a) {
-    const m = /^ref:([^~]+)~(.+)~(\d+)$/.exec(a || ''), x = m && xOf(m[1]), p = m && D.plans.find(q => q.id === m[1]);
+    // a row (~r<n>) or a cell picture's point (~r<n>~p<j>) keeps its revision as a paragraph does (r12 audit22 reference 2)
+    const m = /^ref:([^~]+)~([^~]+)~(\d+)(?:~r\d+(?:~p\d+)?)?$/.exec(a || ''), x = m && xOf(m[1]), p = m && D.plans.find(q => q.id === m[1]);
     if (m && m[2] === 'c' && x && x.copy && x.copy[+m[3]]) { S.cq = ''; S.open.add(`cpall:${x.id}:${cpRank(x.copy[+m[3]][2])}`); }
     else if (p) { const i = p.revs.findIndex(r => r[0] === m[2]); if (i >= 0) S.rv[p.id] = i; if (D.checklist && D.checklist.plan === p.id) S.det = true; }
   }

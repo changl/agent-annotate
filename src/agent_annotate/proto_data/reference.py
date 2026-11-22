@@ -546,14 +546,15 @@ def _clean(s: str) -> str:
     return re.sub(r"[\s\x01]+", " ", s).strip()
 
 
-def html_blocks(html: str, pic=None, ids: list | None = None) -> list:
+def html_blocks(html: str, pic=None, ids: list | None = None, raw: dict | None = None) -> list:
     """A published page's text as the blocks Proto.media.blocks gives Markdown, so every reader draws it the same:
     ['h'|'p'|'li', text], ['pre', text with its line breaks], ['img', address, description, its number from 1] and
     ['tbl', its text, rows, has a header, cells with pictures as ['t', text] and ['img', ...]], as reference.js parse
     reads a plan revision. `pic(src, attrs)` gives a picture's address or '' (then its description says it was not found).
     Whole: no block, row, cell, picture or text is cut, as today's release shows it all.
     `ids` (optional) takes each block's anchor, the published page's own data-anchor-id (or its nearest anchored parent's),
-    as 2.32.8 anchors notes, so a note keeps its words when the reader changes; a table's is [its own, one per row]."""
+    as 2.32.8 anchors notes, so a note keeps its words when the reader changes; a table's is [its own, one per row].
+    `raw` (optional) takes {each anchor in `ids`: the page's own data-anchor-id it came from} (published.py)."""
     t = _Tree()
     t.feed(html)
     t.close()
@@ -562,10 +563,13 @@ def html_blocks(html: str, pic=None, ids: list | None = None) -> list:
     cut = lambda s, k=0: hide(s)
 
     def tok(a):  # unique, with no ~ (the key's separator) and never bare digits (an old reader's line number)
-        a = (a or "top").replace("~", "-")
+        was, a = a, (a or "top").replace("~", "-")
         a = "n" + a if a.isdigit() else a
         seen[a] = seen.get(a, 0) + 1
-        return a if seen[a] == 1 else f"{a}.{seen[a]}"
+        t = a if seen[a] == 1 else f"{a}.{seen[a]}"
+        if raw is not None:
+            raw[t] = was
+        return t
 
     def add(b, a):
         out.append(b)
@@ -907,8 +911,9 @@ _again = threading.Lock()
 
 def _own(page_dir: Path) -> tuple:
     from .history import _stamp
+    from .published import signature
     return tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "project.json", "copy.json")) + tuple(
-        (m.parent.name, _stamp(m)) for m in sorted((page_dir / "plans").glob("*/meta.json")))
+        (m.parent.name, _stamp(m)) for m in sorted((page_dir / "plans").glob("*/meta.json"))) + signature(page_dir)
 
 
 def _cached(page_dir: Path) -> tuple:
@@ -978,7 +983,8 @@ NOTE_ANCHORS = ("ref:", "doc:", "chk:")
 def notes(page_dir: Path) -> list:
     """The notes written in Reference (anchors ref:, doc:, chk:), oldest first, so each shows at its line."""
     from ..categories import _comments
-    out, store = [], _comments(page_dir)
+    from .published import merge
+    out, store = [], merge(page_dir, _comments(page_dir))  # with the published pages' own notes, 2.32.8's included
     # Close (today's archive) moves a note into "archived": it stays at its line, closed, with Re-open (r12 fix17)
     for anchor, items in [kv for part in ("anchors", "archived") for kv in (store.get(part) or {}).items()]:
         if not anchor.startswith(NOTE_ANCHORS):

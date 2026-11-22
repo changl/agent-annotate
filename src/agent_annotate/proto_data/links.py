@@ -169,8 +169,9 @@ _again = threading.Lock()
 
 
 def _stamps(page_dir: Path) -> tuple:
+    from .published import signature  # the kept documents' own stores, so a note 2.32.8 saves there shows at once
     return tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "project.json")) + tuple(
-        _stamp(m) + (m.parent.name,) for m in sorted((page_dir / "plans").glob("archive-*/meta.json")) if _stamp(m))
+        _stamp(m) + (m.parent.name,) for m in sorted((page_dir / "plans").glob("archive-*/meta.json")) if _stamp(m)) + signature(page_dir)
 
 
 def build(page_dir: Path) -> dict:

@@ -1661,11 +1661,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self.artifact_dir / "current.meta.json"
 
     def _store_signature(self):
+        # the prototype's store holds its published pages' notes too (proto_data.published): their stores are in its signature
+        extra = ()
+        if self._is_proto():
+            from .proto_data import published
+            extra = published.signature(self.artifact_dir)
         try:
             stat = self._store_path().stat()
-            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns) + extra
         except FileNotFoundError:
-            return (str(self._store_path()),)
+            return (str(self._store_path()),) + extra
 
     def _v2_load(self, *, read_only=False) -> dict:
         with _locked_store(self.artifact_dir, write=False):
@@ -1673,6 +1678,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             snapshot = type(self)._store_snapshot
             if snapshot is None or snapshot[0] != signature:
                 store = _load_v2_store(self._store_path())
+                if self._is_proto():  # a published page's notes are read from its own store (proto_data.published)
+                    from .proto_data import published
+                    store = published.merge(self.artifact_dir, store)
                 snapshot = (self._store_signature(), store)
                 type(self)._store_snapshot = snapshot
             if not read_only:
@@ -1684,7 +1692,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_save(self, store: dict) -> None:
         from .store import write_bytes as _atomic_bytes
-        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode(), value=store)
+        own = store
+        if self._is_proto():  # a published page's notes go back to its own store, in today's shape (proto_data.published)
+            from .proto_data import published
+            own = published.split(self.artifact_dir, store)
+        _atomic_bytes(self._store_path(), json.dumps(own, ensure_ascii=False, separators=(",", ":")).encode(), value=own)
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
