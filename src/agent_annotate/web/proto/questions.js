@@ -91,13 +91,16 @@
       if (l && l.vis !== VISIT) { delete m[n.id]; if (c) c.prefs.set('draft:nkput', m); }
       if (r && r.vis !== VISIT) { NK.put(c, n.id, null); setTimeout(() => { NK.redo('questions'); if (r.tab && r.tab !== 'questions') NK.redo(r.tab); c.refreshTop && c.refreshTop(); }); } },
     // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
-    out: n => { NK.settle(n); return !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc(); },
-    // a Send took it, with its edit and replies
-    gone: n => { Object.assign(n, {sent: true, edited: false, flagged: true}); (n.replies || []).forEach(r => { r.unsent = false; });
+    // a re-opened one is listed once, as the kit's Re-open row: its status PUT reads as an edit in the feed, never a second row (r12 audit22 running 2)
+    reoQ: n => { const r = P.ctx && NK.reo(P.ctx)[n.id]; return !!r && typeof r === 'object'; },
+    out: n => { NK.settle(n); return !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
+    // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
+    gone: n => { if (!NK.own(n)) return; Object.assign(n, {sent: true, edited: false, flagged: true}); (n.replies || []).forEach(r => { r.unsent = false; });
       if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
     // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
     // rm: whether its row offers Remove (rowRm), as the loaded note decides it, since the row keeps no author or replies
-    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n), by: n.by === true}),
+    // by: his own as the kit decides it (own), so a note written on a copy, which carries no `by`, keeps Remove (r12 audit22 reference 4)
+    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n), by: NK.own(n)}),
     // his own note (today's isMine): the feed marks his own `by: true` for each reader; one written in this visit has no `by`
     own: n => n.by === true || (n.by == null && n.mine !== false),
     // today's canDeleteComment: his own, not flagged for the session (an edit clears it), no replies, no response, no pending round
@@ -203,7 +206,7 @@
     // the notes at a picture pin: on the same picture (by `pic`, the key its pin is drawn under), within a few percent of its point
     near: (ns, p, pic = n => n.target.image || '') => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && pic(n) === pic(p) && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
     // one colour rule for every marker, line or picture: purple while a note on it goes with Send, muted once all are sent (catalog 24)
-    sent: ns => ns.length > 0 && ns.every(n => !NK.out(n) || n.closed),
+    sent: ns => ns.length > 0 && ns.every(n => !NK.out(n) && !NK.reoQ(n) || n.closed),
     // a picture's point markers, numbered, each listing the notes at its point; `tgt` the point a new note is being written at
     pins: (ns, open, tgt) => ns.filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="qpin pinm${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${open === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
       + (tgt && tgt.offset ? `<span class="qpin pinm new" style="left:${tgt.offset.dx * 100}%;top:${tgt.offset.dy * 100}%">+</span>` : ''),
@@ -336,7 +339,7 @@
     // a note's Re-open (status) or Move (anchor): kept like Close, by the note's id
     else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
     else if (path === 'api/rounds/submit' && D) {  // the Send takes every unsent note, and every edit on a sent one
-      for (const n of D.notes) { if (NK.out(n)) NOTES.sent.add(n.id); }
+      for (const n of D.notes) { if (NK.out(n) && NK.own(n)) NOTES.sent.add(n.id); }
       for (const s of Object.values(SIM)) s.edited = false;
     }
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
@@ -997,11 +1000,15 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '']);
+    // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.own(n)]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '']);
+    const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.own(n); };  // the questions feed holds every tab's notes
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', peer(x.note)]);
     return it;
   }
+  // what his round carries, as the receipt counts it: every listed item but another reviewer's note
+  const sentCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
@@ -1224,7 +1231,7 @@
   function send() {
     if (!D) return ctx.toast('Reading the questions first: Send works in a moment');  // ⌘↵ again before they are read
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
-    const n = sendCount();
+    const n = sentCount();
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
     S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n), SEND_DELAY)};
@@ -1253,7 +1260,7 @@
       for (const id of Object.keys(NK.reo(ctx))) await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
-      D.notes.forEach(NK.gone);  // the round took every unsent note: Send reads 0 with the receipt, before the re-read
+      D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       NK.L = {}; ctx.prefs.set('draft:nkput', {});  // and every edit and reply on a sent note, whatever tab holds it
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
@@ -1692,6 +1699,8 @@
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
     changed: relist,
+    // the rows and their Remove: a read that confirms his note moves these, not the count, and the open sheet follows (r12 audit22 reference 3, 4)
+    sig: () => JSON.stringify(sendItems().map(x => [x[2], x[3]])),
     waiting: async c => { await load(c); return waitingCount(); },  // the top bar and Home read this page's waiting from here
     open: openSheet,
   });

@@ -95,6 +95,7 @@
     const p = cache[area] = Promise.race([got, late()])
       .then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
     // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
+    p.then(() => refreshSend(), () => {});  // a read landing can change what Send lists or offers Remove on: an open sheet follows it (r12 audit22 reference 3)
     if (area === 'running') { const n = ++runSeq; p.then(r => n === runSeq && putRun(r), () => n === runSeq && putRun(null, true)); }
     return p;
   };
@@ -580,8 +581,10 @@
       const pre = !S.countsIn && sendP.saved;
       if (S.settling && !pre) return;
       const n = pre ? savedN() : await Promise.resolve().then(() => sendP.count(ctx)).then(x => +x || 0, () => S.sendN);
-      if (pre ? n === S.sendN && S.warm === n > 0 : n === S.sendN || S.settling) return;
-      S.sendN = n; if (pre) S.warm = n > 0;
+      // the rows too: a read that grants Remove leaves the count as it was, and the open sheet must still list it (r12 audit22 reference 3)
+      const sg = sendP.sig ? sendP.sig() : '';
+      if (!pre && S.settling || (pre ? n === S.sendN && S.warm === n > 0 : n === S.sendN) && sg === S.sendSig) return;
+      S.sendSig = sg; S.sendN = n; if (pre) S.warm = n > 0;
       if (sendP.changed) sendP.changed();  // an open Send summary lists what the count now holds (r12 fix10 reference 2)
       paintSend(); keepPaint();
     }, 30);
