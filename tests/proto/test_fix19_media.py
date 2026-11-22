@@ -38,8 +38,10 @@ assert.strictEqual(M.zoom('doc:Audit/Sample.md~0~r1~p2'), 100);
 assert.strictEqual(M.zoom('doc:Audit/Sample.md~0~r1~p1'), 75);  // its neighbour of the same file keeps the default
 const t = blockHtml(M.blocks("{ROW}")[0], 0, esc, i => '');
 assert.ok(t.includes('data-pk="doc:Audit/Sample.md~0~r1~p1"') && t.includes('data-pk="doc:Audit/Sample.md~0~r1~p2"'));
-assert.match(t, /data-zoom="100" data-lzoom data-pk="doc:Audit\\/Sample.md~0~r1~p2" aria-pressed="true"/);
-assert.match(t, /data-zoom="75" data-lzoom data-pk="doc:Audit\\/Sample.md~0~r1~p1" aria-pressed="true"/);
+assert.match(t, /data-zoom="100" data-lzoom data-pk="doc:Audit\\/Sample.md~0~r1~p2" data-nk="[^"]+" aria-pressed="true"/);
+assert.match(t, /data-zoom="75" data-lzoom data-pk="doc:Audit\\/Sample.md~0~r1~p1" data-nk="[^"]+" aria-pressed="true"/);
+docK = 'doc:kept-x~p~rev2';  // a kept revision: its size by the revision, its notes by the place (fix21)
+assert.ok(blockHtml(M.blocks("{ROW}")[0], 0, esc, i => '').includes('data-pk="doc:kept-x~p~rev2~0~r1~p1" data-nk="doc:kept-x~p~0~r1~p1"'));
 """)
     # Pages & links opens Full size at the picture's remembered size, and its viewer remembers the size picked there
     assert "z = +(zb.dataset.zoom || P.media.zoom(k))" in LNK and "P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k)" in LNK

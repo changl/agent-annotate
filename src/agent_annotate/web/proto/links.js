@@ -22,8 +22,9 @@
     // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here,
     // at the size last picked for it, by its key: the document and its place (Proto.media.pk)
     // a picture that takes notes shows its point markers, as Reference's (the notes kit's pins; r12 audit18 reference 3)
-    const pic = (src, alt, n, a = '', place = String(i)) => { const k = docK + '~' + place, pk = esc(k), z = P.media.zoom(k), f = P.media.fig(src, alt, n, z, ` data-lzoom="${z}" data-pk="${pk}"`, ` data-lzoom data-pk="${pk}"`, a);
-      return line && CUR ? f.replace(/<img [^>]*>/, m => `<span class="qpinwrap">${m}${P.notes.pins(notesAt(CUR, k, true), S.pin, S.note === k && !S.full && S.tgt)}</span>`) : f; };
+    // its size is kept per revision (data-pk); its notes, like its line's, by the place alone (data-nk)
+    const pic = (src, alt, n, a = '', place = String(i)) => { const k = docK + '~' + place, nk = k.replace(/~rev\d+(?=~)/, ''), pk = `data-pk="${esc(k)}" data-nk="${esc(nk)}"`, z = P.media.zoom(k), f = P.media.fig(src, alt, n, z, ` data-lzoom="${z}" ${pk}`, ` data-lzoom ${pk}`, a);
+      return line && CUR ? f.replace(/<img [^>]*>/, m => `<span class="qpinwrap">${m}${P.notes.pins(notesAt(CUR, nk, true), S.pin, S.note === nk && !S.full && S.tgt)}</span>`) : f; };
     if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, (p, j) => pic(p[1], p[2], p[3], '', P.media.pk(`${i}~r${ri}`, j)));
       // a row's pictures each keep their own notes, under the row's (Reference's rowPics)
       const rowPics = ri => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => line(P.media.pk(`${i}~r${ri}`, j + 1))).join('');
@@ -234,17 +235,18 @@
       // the viewer takes and shows this picture's point notes through the notes kit, as Reference's does (r12 audit18 reference 3)
       // an earlier revision reads as it was and takes no notes, as inline
       if (!zb.closest('figure').closest('[data-line]')) return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k);
-      if (S.note === k) { S.note = ''; S.tgt = null; }
-      S.full = {k, name: (zb.closest('[data-docname]') || {dataset: {}}).dataset.docname || ''}; S.spot = S.pin = '';
+      const nk = zb.dataset.nk || k;  // its notes by the place; the viewer's size by the revision's key (k)
+      if (S.note === nk) { S.note = ''; S.tgt = null; }
+      S.full = {k: nk, name: (zb.closest('[data-docname]') || {dataset: {}}).dataset.docname || ''}; S.spot = S.pin = '';
       return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k, {
-        pins: () => P.notes.pins(notesAt(D, k, true), S.pin, viewing(k) && S.note === k && S.tgt),
-        list: () => noteBox(ctx, D, k, true),
-        tap: tgt => { S.tgt = tgt; S.note = k; S.spot = S.pin = ''; draw(w, ctx, D); },
+        pins: () => P.notes.pins(notesAt(D, nk, true), S.pin, viewing(nk) && S.note === nk && S.tgt),
+        list: () => noteBox(ctx, D, nk, true),
+        tap: tgt => { S.tgt = tgt; S.note = nk; S.spot = S.pin = ''; draw(w, ctx, D); },
         click: ev => click(ev, w, ctx, D), input: ev => w.oninput(ev),
-        close: () => { S.full = null; if (S.note === k) { S.note = ''; S.tgt = null; } S.spot = S.pin = ''; draw(w, ctx, D); }}); }
+        close: () => { S.full = null; if (S.note === nk) { S.note = ''; S.tgt = null; } S.spot = S.pin = ''; draw(w, ctx, D); }}); }
     const b = e.target.closest('button');
     // a tap on a picture inline: a point note on that picture, by its own key, as in Reference
-    const im = !b && e.target.closest('.l-doc figure img'), pk = im && ((im.closest('figure').querySelector('[data-pk]') || {}).dataset || {}).pk;
+    const im = !b && e.target.closest('.l-doc figure img'), pk = im && ((im.closest('figure').querySelector('[data-nk]') || {}).dataset || {}).nk;
     if (pk && (im.closest('[data-line]'))) { const tgt = P.notes.at(e, im);
       if (S.move) return moveTo(w, ctx, D, pk, im, tgt);
       S.tgt = tgt; S.spot = S.pin = ''; S.note = pk; draw(w, ctx, D);
@@ -295,7 +297,7 @@
     // a marker's list: the kit's spot list, as Questions and Reference (r12 audit16 frame 5)
     else if (b.dataset.spot !== undefined) { S.pin = ''; S.spot = S.spot === b.dataset.spot ? '' : b.dataset.spot; draw(w, ctx, D); }
     else if (b.dataset.pin) { const n = D.notes.concat(mine).find(x => x.id === b.dataset.pin); if (!n) return; const on = S.pin === n.id;
-      S.pin = on ? '' : n.id; S.spot = on ? '' : S.full ? S.full.k : (b.closest('figure').querySelector('[data-pk]') || {dataset: {}}).dataset.pk || n.a; draw(w, ctx, D); }
+      S.pin = on ? '' : n.id; S.spot = on ? '' : S.full ? S.full.k : (b.closest('figure').querySelector('[data-nk]') || {dataset: {}}).dataset.nk || n.a; draw(w, ctx, D); }
     else if (b.hasAttribute('data-spotx')) { S.spot = S.pin = ''; draw(w, ctx, D); }
     else if (b.dataset.spotadd) { const p = b.dataset.spotpin && D.notes.concat(mine).find(x => x.id === b.dataset.spotpin);
       S.spot = S.pin = ''; S.tgt = p ? {...p.target} : null; S.note = b.dataset.spotadd; draw(w, ctx, D); const t = document.getElementById('l-nt'); if (t) t.focus(); }

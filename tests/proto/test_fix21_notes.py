@@ -88,9 +88,12 @@ def test_links_full_size_takes_and_shows_point_notes():
     assert "nk.tap(NK.at(e, im))" in v and "nk.pins()" in v and "nk.list()" in v
     assert "v.querySelector('[data-nsave]')" in v and "e.stopPropagation(); s.click()" in v  # ⌘↵ saves from the viewer's composer, and opens no Send
     assert ".mview .zn{" in QCSS and "background:var(--color-base-100)" in QCSS[QCSS.index(".mview .zn{"):][:200]
-    assert "tap: tgt => { S.tgt = tgt; S.note = k;" in LNK and "pins: () => P.notes.pins(notesAt(D, k, true)" in LNK
+    assert "tap: tgt => { S.tgt = tgt; S.note = nk;" in LNK and "pins: () => P.notes.pins(notesAt(D, nk, true)" in LNK
     assert "const tgt = P.notes.at(e, im);" in LNK and "S.note = pk;" in LNK  # inline: a point on the picture's own key
     assert "if (S.full) P.media.redrawView();" in LNK
+    # a kept revision's picture keeps its size per revision but its notes by place, the key its note line uses
+    assert "nk = k.replace(/~rev\\d+(?=~)/, '')" in LNK and "const nk = zb.dataset.nk || k;" in LNK
+    assert "querySelector('[data-nk]') || {}).dataset || {}).nk" in LNK and "noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`)" in LNK
 
 
 def test_history_waiting_questions_wrap_on_a_phone():
