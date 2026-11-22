@@ -34,6 +34,8 @@ def test_every_tabs_row_has_a_full_words_signature():
     # Questions' own rows: their full words are read when Send is pressed, never when the countdown ends
     send = grab(Q, "  function send() {", "\n  }")
     assert "sig = fullSig()" in send and "sig: fullSig()" not in Q
+    # Reference 3: a reopened finding's round words carry its whole reason, not the listing's cut
+    assert "{say: `Finding “${nm}” → reopened: “${why.trim()}”`}" in TABS["reference.js"]
 
 
 def test_a_late_new_note_becomes_an_open_edit_on_every_editor(tmp_path):
