@@ -134,7 +134,7 @@ def test_seventh_check_fixes_stay():
     s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
     # 2: asking for a task keeps the reply it replaced, and either Undo puts it back
     assert "setDraft(id, on ? {reply: ASKFILE, askWas: was, replyOpen: null} : {reply: was, askWas: null});" in s
-    assert "undo: () => { setDraft(id, {reply: was, askWas: null}); draw(true); }" in s
+    assert "undo: () => { if (P.going('r:' + id)) return; setDraft(id, {reply: was, askWas: null}); draw(true); }" in s
     # 3: the note still being typed is listed, counted, removable and carried by Send
     assert "const tn = typingNote(); if (tn) it.push(['Notes'" in s and "'nn:', 'newnote:'" in s
     assert "kind === 'newnote'" in s and s.index("const tn = typingNote() && {...typingNote()};  // the note still open") < s.rindex("call('api/rounds/submit'")

@@ -268,7 +268,7 @@
     P.notes.eds.set(x.id, x); const typed = P.notes.edText(x.id);
     if (S.ce === x.id || (!S.ce && !S.cn && typed != null && (S.ce = x.id))) return `<div class="qnote h-cnote" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}</b> <span class="small mut">· goes with your next Send</span>
       <textarea id="h-et" rows="3" aria-label="${what}">${esc(typed != null ? typed : x.text)}</textarea>
-      <div class="h-nacts"><button class="btn sm pri" data-csavee="${id}">Save</button><button class="btn sm" data-ccancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
+      <div class="h-nacts"><button class="btn sm pri" data-csavee="${id}">Save</button><button class="btn sm" data-ccancel data-going="ty:edit:${id}">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
     // a sent one carries the notes kit's lifecycle (Re-open, View resolution, Move, Close); a closed one folds with Re-open (r12 audit16 frame 6)
     const K = P.notes, cp = ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
     if (x.closed) return `<div class="qnote small h-cnote sent closed${lit}" id="hn-${id}" data-cnote="${id}">${mk}<span class="saved">${icon('archive')} ${what} closed</span> <span class="mut">${esc(x.text)}</span><span class="nacts">${K.closedActs(x)}</span></div>`;
@@ -311,7 +311,7 @@
     const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
-      <div class="h-nacts"><button class="btn sm pri" data-csave>Save note</button><button class="btn sm" data-ccancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>` : '';
+      <div class="h-nacts"><button class="btn sm pri" data-csave>Save note</button><button class="btn sm" data-ccancel data-going="hnn:${esc(S.cn)}">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>` : '';
     return `<div class="h-chart"><div class="h-ctl small"><b>Questions asked per version</b><br><span class="mut">the newest ${vs.length} versions, versions ${esc(vn(vs[0][0]))} to ${esc(vn(vs.at(-1)[0]))} · most: ${mx}</span></div>
       <svg viewBox="0 0 ${X(vs.length) + 4} 58" role="img" aria-label="Questions asked per version"><polyline fill="none" stroke="currentColor" stroke-opacity=".35" points="${vs.map(([, m], i) => `${X(i)},${Y(n(m)).toFixed(1)}`).join(' ')}"/>${pts}
       <text x="0" y="${Y(mx) + 4}" class="h-cax">${mx}</text><text x="0" y="52" class="h-cax">0</text></svg>${notes || box ? `<div class="h-cnotes">${notes}${box}</div>` : ''}</div>`;

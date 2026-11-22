@@ -43,8 +43,8 @@ if ('FLD-2' in store.tst || store.tstsent['FLD-2'] !== 'blocked') throw new Erro
     assert "function tbase(id, b, c = CTX) { return c.prefs.get('tstsent', {})[id] || (b || {}).st; }" in RUN
     assert "if (!D || st !== tbase(id, B[id], ctx)) out.push(" in RUN
     assert "pend = tst[id] !== base ? tst[id] : undefined" in RUN
-    # a click back to the base keeps the draft while a round is out, so the round's clear decides
-    assert "if (ds.tst === tbase(id, b) && !document.querySelector('.qsend.sending')) delete all[id]" in RUN
+    # a click back to the base keeps the draft only past the round check, so the round's clear decides (fix39: not during Undo)
+    assert "if (ds.tst === tbase(id, b) && !(P.past && P.past())) delete all[id]" in RUN
 
 
 def test_remove_waits_out_an_editors_save():

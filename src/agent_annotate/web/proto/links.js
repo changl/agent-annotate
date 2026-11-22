@@ -198,7 +198,7 @@
       : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? K.sentBody(ctx, n, S.move === n.id, ed(n) ? (S.edt != null ? S.edt : n.text) : null)
         : ed(n) ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`).join('')}
       ${box ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
-        <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
+        <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel data-going="lnn:${esc(k)}">Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
   }
   function chartHtml(ctx, D, d) {
     const {esc} = ctx, c = d.chart, max = Math.max(c.gate || 0, ...c.pts.map(p => p[1])) || 1;

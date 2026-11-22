@@ -319,7 +319,8 @@
       if (ds.copy) { navigator.clipboard && navigator.clipboard.writeText(ds.copy).catch(() => {}); t.innerHTML = ic('tick'); setTimeout(() => { t.innerHTML = ic('copy'); }, 2000); return CTX.toast('Copied'); }
       if (ds.tst) { const all = CTX.prefs.get('tst', {}), id = S.task, b = D.board.beads[id], prev = all[id];
         // kept even when it reads as the board: a round past its check may carry another status, and then this one is the next Send's (r12 audit33 questions 2)
-        if (ds.tst === tbase(id, b) && !document.querySelector('.qsend.sending')) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
+        // only past the check: during Undo the round can still stop, and then a draft equal to its base is no change (r12 audit34 running 3)
+        if (ds.tst === tbase(id, b) && !(P.past && P.past())) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
         return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { if (!prev && P.going('tst:' + id)) return; const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
       // past the round check a status or comment the round carries is not taken back (r12 fix38)
       if (ds.untst) { if (P.going('tst:' + S.task)) return; const a = CTX.prefs.get('tst', {}); delete a[S.task]; CTX.prefs.set('tst', a); return draw(); }

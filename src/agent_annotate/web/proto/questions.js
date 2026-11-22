@@ -169,7 +169,8 @@
       }
       await redraw(n.id);
       const back = {close: 'restore', restore: 'close', reopen: 'unreopen', unreopen: 'reopen'}[how],
-        undo = async () => { const r = await NK.set(c, n, back, api, redraw, true); if (r && was) { NK.put(c, n.id, was); await redraw(n.id); } return r; };
+        undo = async () => { if (how === 'reopen' && P.going && P.going('reo:' + n.id)) return null;  // the round carries the Re-open (r12 audit34 frame 4)
+          const r = await NK.set(c, n, back, api, redraw, true); if (r && was) { NK.put(c, n.id, was); await redraw(n.id); } return r; };
       const can = !(how === 'reopen' && AGENT_ST.includes(prev));
       if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], can ? {undo} : {});
       return can ? undo : async () => null;
@@ -231,7 +232,7 @@
     // and Move and Close too, as today's menu (r12 audit19 questions 6, reference 7): the one list above
     draftActs: (n, moving) => NK.acts(P.ctx, n, moving),
     // the words typed in an open Edit come from the draft store first, so a redraw or a reload shows them (r12 audit31 running 5)
-    editBox: n => { if (!NK.eds.has(n.id)) NK.eds.set(n.id, n); const s = NK.edText(n.id); return `<div class="nkedit" data-nedbox="${esc(n.id)}"><textarea data-nedtext rows="3" aria-label="Edit your note">${esc(s != null ? s : n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nedsave="${esc(n.id)}">Save</button><button class="lk small" data-nedcancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`; },
+    editBox: n => { if (!NK.eds.has(n.id)) NK.eds.set(n.id, n); const s = NK.edText(n.id); return `<div class="nkedit" data-nedbox="${esc(n.id)}"><textarea data-nedtext rows="3" aria-label="Edit your note">${esc(s != null ? s : n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nedsave="${esc(n.id)}">Save</button><button class="lk small" data-nedcancel data-going="ty:edit:${esc(n.id)}">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`; },
     // Save on an edit: today's PUT of its words, so the note keeps its id, number and time and Send lists the new words; with Undo.
     // a sent one (today's edit on a sent note) goes with the next Send again: edited, and re-opened if closed by status.
     // apply(t, p) puts the words (p: every changed field) on the tab's copies and redraws; false when nothing was saved
@@ -321,6 +322,11 @@
     if (box) { const eid = box.dataset.nedbox || box.dataset.cnote, n = NK.eds.get(eid), o = NK.ty()['edit:' + eid];
       // a late edit (NK.late) keeps its row and the posted words, whatever copy of the note the editor was drawn from
       NK.tySet('edit:' + eid, o && o.sent ? {...o, text: t.value} : {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: n ? n.text : '', sent: !!(n && n.sent)}); } }, true);
+  // The one gate for a control that clears a draft (an editor's Cancel, Undo beside a row): the control names its Send row in
+  // data-going, and past the round check a row the round carries is not taken back; the editor and its draft stay, before any
+  // tab's own handler runs. Toast Undos and re-taps call P.going themselves (r12 audit34 running 1, frame 1-5)
+  document.addEventListener('click', e => { const g = e.target.closest && e.target.closest('[data-going]');
+    if (g && P.going(g.dataset.going)) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   // Cancel on an Edit discards its typed words, before the tab's own handler closes it
   document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-nedcancel],[data-ccancel]'), box = b && b.closest('[data-nedbox],[data-cnote]');
     if (box) NK.tySet('edit:' + (box.dataset.nedbox || box.dataset.cnote), null); }, true);
@@ -351,6 +357,7 @@
           if (n && rep) (n.replies = n.replies || []).push({agent: false, who: 'You', text: w, ts: new Date().toISOString(), unsent: true});
           if (n && !rep) Object.assign(n, {text: w, edited: true, flagged: false});
           const now = NK.ty()[k]; if (now && now.text === r.text) { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); }
+          else if (now && !rep) NK.tySet(k, {...now, was: w});  // changed since: its base is the edit this round delivers, so the earlier wording is a change (r12 audit34 running 2)
           return {id: r.id}; },
         remove: () => { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); return () => { NK.tySet(k, r); NK.redo(r.tab); }; }}; });
   // every re-opened note, on any tab, is one Send row listed from its stored record
@@ -604,7 +611,7 @@
     const thread = th.length || typing ? `<div class="small"><b>Thread with the agent</b>${th.length > 2 ? ` · <button class="lk small" data-fold="th${q.id}" aria-expanded="${tOpen}">${tOpen ? 'Hide earlier replies' : pl(th.length - 2, 'earlier reply', 'earlier replies')}</button>` : ''}</div><ul class="qthread">${(tOpen ? th : th.slice(-2)).map(r => `<li class="${r.you ? 'you' : 'agent'}"><span class="who">${r.you ? 'You' : 'Agent'} · ${esc(fmt(r.ts))}${r.you && !r.sent ? ' · not sent' : ''}</span> ${esc(r.text)}</li>`).join('')}${typing}</ul>` : '';
     const bead = beadOf(q), hso = S.open.has('hs' + q.id), plan = planOf(q);
     const asked = (d.reply || '').trim() === ASKFILE;
-    const ask = asked ? `<span class="saved">${ic('tick')} Asked to file one · goes with Send</span> <button class="lk small" data-askfile="${q.id}">Undo</button>`
+    const ask = asked ? `<span class="saved">${ic('tick')} Asked to file one · goes with Send</span> <button class="lk small" data-askfile="${q.id}" data-going="r:${q.id}">Undo</button>`
       : `<button class="lk small" data-askfile="${q.id}" title="A reply to the agent, sent with your next Send">Ask the agent to file one</button>`;
     const meta = `<div class="qmeta">${bead ? `<span>${ic('task')} ${taskChip(bead)}</span>` : `<span>${ic('task')} No task on the board yet · <button class="lk small" data-board title="Open the bead board under Running">Open the board</button> · ${ask}</span>`}${plan ? `<span>Plan: <button class="lk small" data-plan="${esc(plan.id)}">${esc(cut(plan.t, 40))}</button> · ${esc(PLANST[plan.st] || 'For reference')}</span>` : ''}<button class="dfold" data-fold="hs${q.id}" aria-expanded="${hso}" title="Your earlier answers on the same topic">${ic('hist')} Decided before · ${q.earlier.length}</button>${q.evidence.length && !inList ? `<button class="lk small" data-ev="${esc(q.evidence[0].anchor)}" data-evq="${q.id}">${ic('place')} ${esc(cut(q.evidence[0].label || 'Its evidence', 40))}</button>` : ''}</div>${hso ? `<ul class="qhist">${q.earlier.length ? q.earlier.map(h => h.own ? `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — <b>Your earlier pick on this card:</b> ${esc(cut(h.a, 160))} <span class="small mut">· changed since</span></li>` : `<li><span class="mut">${esc(h.t)} · version ${esc(String(h.v).slice(1))}</span> — ${esc(cut(h.q, 140))} → <b>${esc(cut(h.a, 160))}</b></li>`).join('') : '<li class="mut">Nothing decided on this before.</li>'}</ul>` : ''}`;
     const norec = !q.rec ? `<p class="small mut">The agent gave no recommendation${q.options.length ? '' : ' and no choices'}.</p>` : '';
@@ -736,7 +743,7 @@
   // `dlg`: drawn in the picture viewer; while it is open the edit box is there alone, as Reference's (r12 audit20 questions 1)
   function noteBox(n, no, dlg) {
     const t = n.target || {}, what = KIND(t);
-    if (S.note && S.note.edit === n.id && !S.zoom === !dlg) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
+    if (S.note && S.note.edit === n.id && !S.zoom === !dlg) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel data-going="n:${n.id}">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
     const id = esc(n.id), move = S.move === n.id;
     // a closed note folds to one line, its Re-open beside it, as an answered card keeps its Undo (#138)
     if (n.closed) return `<div class="qnote sent closed" id="n-${id}" data-note="${id}">${mkb(no, n)}<span class="saved">${ic('archive')} Note ${no} closed</span> <span class="mut">${esc(cut(n.text, 80))}</span><span class="nacts">${NK.closedActs(n)}</span></div>`;
@@ -754,7 +761,7 @@
   }
   function newNoteBox() {
     const n = S.note, fx = n.fixOf ? ' · fix to a sent note' : '';
-    return `<div class="qnote new" data-newnote>${mk('+')}<b>New note ${KIND(n.target)}</b> <span class="mut small">${fx} · goes with your next Send</span><textarea data-notetext aria-label="Your note" placeholder="Type your note">${esc(n.text || '')}</textarea><div class="acts"><button class="btn sm pri" data-nadd>Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
+    return `<div class="qnote new" data-newnote>${mk('+')}<b>New note ${KIND(n.target)}</b> <span class="mut small">${fx} · goes with your next Send</span><textarea data-notetext aria-label="Your note" placeholder="Type your note">${esc(n.text || '')}</textarea><div class="acts"><button class="btn sm pri" data-nadd>Save</button><button class="lk small" data-ncancel data-going="nn:">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
   }
 
   /* ---------- document navigation: header, jump menu, section folds, tiles, question rows (#12, #19) ---------- */
@@ -1101,6 +1108,7 @@
     if (!CARRY || !GOING || !(GOING.has(key) || GOING.has('x:' + key))) return false;
     ctx.toast('This is already going with Send: it was not taken back'); return true;
   };
+  P.past = () => !!CARRY;  // a round is past its check: it delivers what it listed, whatever is picked now
   // Questions' own rows by their full words (the rows show a preview): answers, replies, closes, picked sides, the note being
   // typed or edited, every note row's words and General feedback. Send's round check compares it with what the sheet listed
   const fullSig = () => JSON.stringify([(D ? D.questions : []).filter(q => !q.closed).map(q => { const d = draft(q.id); return [q.id, d.pick || '', d.words || '', d.reply || '', !!d.close]; }),
@@ -1282,6 +1290,7 @@
   async function refresh() { stale = false; D = sim(await ctx.data('questions', true)); await draw(true); }
   function pick(q, opt) {
     const was = draft(q.id).pick;
+    if (was === opt && P.going('q:' + q.id)) return;  // a re-tap clears the pick: not while the round carries it (r12 audit34 frame 1)
     setDraft(q.id, {pick: was === opt ? null : opt});
     S.hl = q.id;
     draw(true);
@@ -1518,7 +1527,7 @@
     const [kind, id] = [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)];
     // Undo puts back the question's saved words and number too, so Send still names it before the questions are read
     const keep = draft(id), meta = {p: keep.p, n: keep.n, pl: keep.pl};
-    if (P.going({ans: 'q:', close: 'c:', reply: 'r:', ab: 'ab:'}[kind] + id)) return;
+    if (P.going({ans: 'q:', close: 'c:', reply: 'r:', ab: 'ab:', newnote: 'nn:'}[kind] + id)) return;
     if (kind === 'ans') { setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {...meta, pick: keep.pick, words: keep.words}); draw(true); }}); }
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
     else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
@@ -1635,7 +1644,7 @@
       const id = ds.askfile, d = draft(id), on = (d.reply || '').trim() !== ASKFILE, was = on ? d.reply : d.askWas;
       setDraft(id, on ? {reply: ASKFILE, askWas: was, replyOpen: null} : {reply: was, askWas: null});
       draw(true);
-      if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { setDraft(id, {reply: was, askWas: null}); draw(true); }});
+      if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { if (P.going('r:' + id)) return; setDraft(id, {reply: was, askWas: null}); draw(true); }});
       return;
     }
     if (t.hasAttribute('data-board')) return ctx.go('running', 'tasks');
@@ -1656,7 +1665,7 @@
       S.zoom = null; return openNote(next, true); }
     if (t.hasAttribute('data-genopen')) { S.gen = !S.gen; return draw(true).then(() => { const ta = root.querySelector('.qgen textarea'); if (ta) ta.focus(); }); }
     if (t.hasAttribute('data-genclose')) { S.gen = false; return draw(true); }
-    if (t.hasAttribute('data-ungen')) { const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
+    if (t.hasAttribute('data-ungen')) { if (P.going('gen')) return; const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
     if (t.hasAttribute('data-sendopen')) { S.armed = !S.armed; S.sendKey = false; S.gen = false; return draw(true); }
     if (t.hasAttribute('data-sendclose')) { S.armed = false; S.sendKey = false; return draw(true); }
     if (t.hasAttribute('data-send')) return send();
