@@ -457,7 +457,8 @@
     return l;
   }
   // counted from the very rows the Send sheet lists, plus General feedback, so the number and the rows never disagree (r12 audit13 reference 1)
-  const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);
+  // what Send delivers, so the counts before it match the receipt: every listed item but another reviewer's note (lead, r12 fix28)
+  const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);
 
   function stateOf(q) {
     const d = draft(q.id), w = (d.words || '').trim();
@@ -1016,12 +1017,11 @@
     // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
     for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.own(n), n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
-    const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.own(n); };  // the questions feed holds every tab's notes
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', peer(x.note), x.note]);
+    // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
+    const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.own(n); };
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', !!x.peer || peer(x.note), x.note]);
     return it;
   }
-  // what his round carries, as the receipt counts it: every listed item but another reviewer's note
-  const sentCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
@@ -1033,7 +1033,7 @@
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : S.copyOf === '' ? 'Goes to the FastLane Drive agent session.' : ''} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
-      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (S.oin ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
+      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (S.oin ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
       ${S.oin ? '' : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
       <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
@@ -1247,7 +1247,7 @@
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
     // every row on a note, whichever tab lists it (a release draft, a peer's draft or reply): the round's ids say which went
-    const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sentCount();
+    const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sendCount();
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
     S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes}), SEND_DELAY)};
@@ -1710,7 +1710,8 @@
   // the same for the notes Reference and Pages & links list (a 2.32.8 Policies or meeting note is in their feeds alone): the
   // sheet says it is reading them and Send waits, then lists them; the tabs' own first reads, never a second (r12 audit24 reference 1)
   let others = null;
-  const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null))).then(() => { S.oin = true; relist(); }));
+  const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null)))
+    .then(() => { S.oin = true; relist(); }));
   // the open Send summary lists what the count now holds, unless he is typing in it (r12 fix10 reference 2)
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;

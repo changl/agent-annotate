@@ -476,7 +476,7 @@
       remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
-    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
+    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.own(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
       go: () => goNote(c, n),
       remove: P.notes.rowRm(n) ? () => takeNote(c, n) : null}))],
     sent: c => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);

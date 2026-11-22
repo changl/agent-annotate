@@ -705,7 +705,7 @@
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
       if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
-      for (const n of SNOTES) { const w = NK().say(n); it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
+      for (const n of SNOTES) { const w = NK().say(n); it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, peer: !NK().own(n), html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
         go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: !NK().rowRm(n) ? null : async () => {
           // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;

@@ -12,7 +12,7 @@ WEB = Path(__file__).resolve().parents[2] / "src/agent_annotate/web/proto"
 
 def test_send_waits_for_the_other_tabs_reads():
     q = (WEB / "questions.js").read_text()
-    assert "const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null))).then(() => { S.oin = true; relist(); }));" in q
+    assert "const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null)))" in q and ".then(() => { S.oin = true; relist(); }));" in q
     assert "readFor(c);\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
     assert "const ok = n && D && S.oin," in q
@@ -51,3 +51,53 @@ def test_no_move_on_an_earlier_version_note(tmp_path, monkeypatch):
     monkeypatch.setattr(published, "homes", lambda d: [home])
     store = published.merge(tmp_path, {"schema_version": 2, "anchors": {}, "archived": {}})
     assert (store.get(published.KEY) or {}).get("cur", {}).get("x1") == "v2"
+
+
+def test_send_counts_what_it_delivers():
+    """Lead's decision: the head, the toolbar and the sheet's Send count what Send delivers; peers' rows stay listed, marked."""
+    q = (WEB / "questions.js").read_text()
+    assert "const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);" in q
+    assert "sentCount" not in q  # one count, before and after
+    assert "!!x.peer || peer(x.note), x.note]" in q
+    assert "another reviewer’s, not sent" in q
+    for f, s in [("reference.js", "note: n.id, peer: !NK().own(n), html:"), ("links.js", "note: n.id, peer: !P.notes.own(n), html:"),
+                 ("history.js", "note: n.id, peer: !P.notes.own(n), html:")]:
+        assert s in (WEB / f).read_text(), f
+
+
+def _whose(page_dir):
+    return {"viewer": published._viewer["h"]}
+
+
+def test_pooled_build_gets_the_readers_hash_and_caches_per_reader(tmp_path, monkeypatch):
+    """The pooled worker is another process: the reader's hash goes in with the build, never through module state."""
+    import sys
+    import types
+    import agent_annotate.proto_data as P
+    mod = types.ModuleType("agent_annotate.proto_data.whosearea")
+    mod.build, mod.stamp = _whose, (lambda d: 1)
+    monkeypatch.setitem(sys.modules, "agent_annotate.proto_data.whosearea", mod)
+    monkeypatch.setattr(P, "_ready", {})
+    calls = []
+
+    class Fresh:  # a worker with none of the server's module state
+        def submit(self, fn, *a):
+            calls.append(a)
+            was, published._viewer["h"] = published._viewer["h"], None
+            try:
+                out = fn(*a)
+            finally:
+                published._viewer["h"] = was
+            return types.SimpleNamespace(result=lambda timeout=None: out)
+    monkeypatch.setattr(P, "_pool", Fresh())
+    me, peer = published._hash("me@example.test"), published._hash("peer@example.test")
+    assert json.loads(P._pooled("whosearea", tmp_path, me))["viewer"] == me
+    assert json.loads(P._pooled("whosearea", tmp_path, peer))["viewer"] == peer
+    assert json.loads(P._pooled("whosearea", tmp_path, None))["viewer"] is None  # an agent's read: nobody's own
+    assert {k[2] for k in P._ready} == {me, peer, None}  # one cached build per reader
+    assert [a[2] for a in calls] == [me, peer, None]
+    # the server hands each area read this request's hash, taken before the build
+    serve = (Path(P.__file__)).read_text()
+    assert 'who = handler._identity()' in serve and 'getattr(handler, "proto_viewer", None))' in serve
+    assert "self.proto_viewer = published.viewer(email)" in (Path(P.__file__).parents[1] / "sync_server.py").read_text()
+    assert published.viewer("agent:x") is None and published.viewer("me@example.test") == me

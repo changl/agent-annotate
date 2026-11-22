@@ -46,7 +46,7 @@ S.countsIn = true; saved = 2; assert.strictEqual(sendNum(), 2);  // once read to
     assert "if (started) paintSend();" in FRAME  # every tab's change repaints Send in the same task
     assert "Promise.resolve(draw(true)).then(() => x.note && D && refresh())" in Q  # the sheet redraws in that task too
     assert "D.notes.forEach(NK.gone);" in Q  # Send reads 0 with the receipt
-    assert "const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);" in Q
+    assert "const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);" in Q
 
 
 def test_taken_note_stays_until_undo_is_gone(tmp_path):

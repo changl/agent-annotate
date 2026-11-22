@@ -63,7 +63,7 @@ assert.deepStrictEqual(savedC(ctx).map(n => n.text), ['point']);
 
 
 def test_send_count_and_rows_share_the_saved_notes():
-    assert "const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);" in Q  # r12 fix15: counted from the rows
+    assert "const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);" in Q  # r12 fix15: counted from the rows
     items = grab(Q, "function sendItems() {", "\n  }")
     assert "for (const n of notesNow(q))" in items and "n.i" in items
     assert "saved: c => { ctx = ctx || c; return sendCount(); }" in Q

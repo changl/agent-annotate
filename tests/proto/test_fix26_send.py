@@ -45,5 +45,5 @@ def test_open_sheet_follows_rows_and_receipt_counts_his_round():
     # the gate opens when the scripts land, not after start() awaits the frame's own read: no deadlock on a copy
     assert "scripts.then(scriptsDone, scriptsDone);" in f and "scriptsDone();" not in f
     assert "sig: () => JSON.stringify(sendItems().map(x => [x[2], x[3]]))," in q
-    assert "all = rows.length + (gen().trim() ? 1 : 0), n = sentCount();" in q  # fix28 counts on every row; the receipt and the last Send count his round only
+    assert "all = rows.length + (gen().trim() ? 1 : 0), n = sendCount();" in q  # fix28 counts on every row; the count is what Send delivers (lead); the receipt and the last Send count his round only
     assert "!NK.own(n), n.id]);" in q and "peer(x.note), x.note]);" in q

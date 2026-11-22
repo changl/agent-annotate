@@ -146,11 +146,14 @@ WHO = ("author", "author_email", "by", "flagged_by")  # the fields that name a r
 _hash = lambda s: hashlib.sha256(("proto-viewer\0" + s.strip().lower()).encode()).hexdigest()
 
 
-def viewer(email) -> None:
-    """sync_server._identity, before it masks: whose release notes are his own. Agents and anonymous reads leave it.
-    shortcut: one reviewer per prototype server (the last signed in); key the merge by reader if two review at once."""
+def viewer(email):
+    """sync_server._identity, before it masks: whose release notes are his own; his hash, or None for an agent or an
+    anonymous read. Area reads pass it into the build (proto_data.prepared), the pooled worker's too, and cache per reader;
+    other paths read the last reviewer's from this module (agents and anonymous reads leave it)."""
     if email and not str(email).startswith("agent:"):
         _viewer["h"] = _hash(str(email))
+        return _viewer["h"]
+    return None
 
 
 def _who(x):

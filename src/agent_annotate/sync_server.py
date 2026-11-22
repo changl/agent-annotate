@@ -1183,7 +1183,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if self._is_proto():
             # Prototype page: no real address is stored, logged or returned.
             from .proto_data import published, scrub
-            published.viewer(email)  # release notes' ownership is decided on the real address, before it is masked
+            self.proto_viewer = published.viewer(email)  # release notes' ownership is decided on the real address, before it is masked
             email, name = (scrub(email) if email else email), (scrub(name) if name else name)
         return {
             "email": email or None,

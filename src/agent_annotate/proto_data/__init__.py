@@ -145,13 +145,25 @@ def build(area: str, page_dir) -> dict:
 _ready: dict = {}  # (area, page dir) -> (its stamp, the JSON bytes): built when the page changed, not on every read
 
 
-def prepared(area: str, page_dir) -> bytes:
-    """An area's JSON. An area with stamp(page_dir) is built again only when the stamp changes (r12 fix12 perf)."""
+_KEEP = object()
+
+
+def prepared(area: str, page_dir, viewer=_KEEP) -> bytes:
+    """An area's JSON. An area with stamp(page_dir) is built again only when the stamp changes (r12 fix12 perf).
+    `viewer`: the reader's hash (published.viewer), passed in because the pooled worker is another process; whose release
+    notes are his own is built for it, and cached per reader (r12 fix28)."""
+    from . import published
+    if viewer is not _KEEP:
+        was, published._viewer["h"] = published._viewer["h"], viewer
+        try:
+            return prepared(area, page_dir)
+        finally:
+            published._viewer["h"] = was  # the server's own state stays the last reviewer's (other paths read it)
     try:
         stamp = getattr(importlib.import_module(f"{__name__}.{area}"), "stamp", None)
     except ModuleNotFoundError:
         stamp = None
-    key, now = (area, str(page_dir)), stamp(page_dir) if stamp else None
+    key, now = (area, str(page_dir), published._viewer["h"]), stamp(page_dir) if stamp else None
     hit = _ready.get(key)
     if now is not None and hit and hit[0] == now:
         return hit[1]
@@ -177,7 +189,7 @@ def _orphan_guard(parent: int) -> None:
     threading.Thread(target=watch, daemon=True).start()
 
 
-def _pooled(area: str, page_dir) -> bytes:
+def _pooled(area: str, page_dir, viewer=_KEEP) -> bytes:
     global _pool
     from concurrent.futures import ProcessPoolExecutor
     from concurrent.futures.process import BrokenProcessPool
@@ -188,12 +200,12 @@ def _pooled(area: str, page_dir) -> bytes:
                                         initializer=_orphan_guard, initargs=(os.getpid(),))
         pool = _pool
     try:
-        return pool.submit(prepared, area, str(page_dir)).result(timeout=60)
+        return pool.submit(prepared, area, str(page_dir), viewer).result(timeout=60)
     except BrokenProcessPool:  # the worker died: start another next time; this read is built here
         with _pool_lock:
             if _pool is pool:
                 _pool = None
-        return prepared(area, page_dir)
+        return prepared(area, page_dir, viewer)
 
 
 def serve(handler, route_path: str):
@@ -232,9 +244,10 @@ def serve(handler, route_path: str):
     if match := _AREA.fullmatch(route_path):
         t0 = time.perf_counter()
         try:
-            body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir)
+            who = handler._identity()  # first: this read's reader (his hash), before the build decides whose release notes are his
+            body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir, getattr(handler, "proto_viewer", None))
             from .questions import own  # his own notes, for Edit and Remove (r12 audit19)
-            body = own(body, handler._reviewer_authors(handler._identity()["email"] or "anonymous"))
+            body = own(body, handler._reviewer_authors(who["email"] or "anonymous"))
         except Exception as exc:  # an area's bug must not take the page down
             return handler._respond(500, json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode())
         # the server's own time, so a slow reading on a busy host can be told from slow code (r12 fix12 perf)
