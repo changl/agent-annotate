@@ -102,6 +102,40 @@ def test_a_save_never_writes_the_publications_store(tmp_path, monkeypatch):
     assert by_id(h._v2_load())["r"][2]["status"] == "open"
 
 
+def test_the_reviewer_edits_and_removes_their_own_release_note_as_in_2_32_8(tmp_path, monkeypatch):
+    """2.32.8 lets the note's author edit or remove it; the prototype masks the signed-in address, so the release note's
+    author is masked the same way when read, and the change goes to the prototype's own store."""
+    import http.client
+    import threading
+    from agent_annotate.sync_server import ReviewHTTPServer, make_handler
+    page, proto = meeting(tmp_path, monkeypatch)
+    live = page / "comments.json"
+    before, stamp = live.read_bytes(), live.stat().st_mtime_ns
+    httpd = ReviewHTTPServer(("127.0.0.1", 0), make_handler(proto, slug="proto", local_author="reviewer@example.invalid"))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    origin = "http://%s:%d" % httpd.server_address
+    try:
+        def call(method, path, body=None):
+            conn = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+            conn.request(method, path, body=json.dumps(body) if body is not None else None,
+                         headers={"Content-Type": "application/json", "Origin": origin, "Sec-Fetch-Site": "same-origin"})
+            r = conn.getresponse()
+            out = r.status, r.read()
+            conn.close()
+            return out
+        assert call("PUT", "/api/comments/w", {"text": "edited in the prototype"})[0] == 200
+        assert call("DELETE", "/api/comments/p")[0] == 200
+        assert live.read_bytes() == before and live.stat().st_mtime_ns == stamp
+        own = by_id(json.loads((proto / "comments.json").read_text()))
+        assert own["w"][2]["text"] == "edited in the prototype" and own["p"][2]["status"] == "deleted"
+        assert "reviewer@example.invalid" not in (proto / "comments.json").read_text()  # no address stored here
+        got = {n["id"]: n for n in links._build(proto)["notes"]}
+        assert "p" not in got and got["w"]["text"] == "edited in the prototype"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_the_shape_check_export_puts_a_prototype_note_in_2_32_8s_shape(tmp_path, monkeypatch):
     page, proto = meeting(tmp_path, monkeypatch)
     store = pub.merge(proto, {"schema_version": 2, "anchors": {}, "archived": {}})

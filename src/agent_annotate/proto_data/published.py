@@ -147,11 +147,15 @@ def merge(page_dir, store: dict) -> dict:
             gone.append([a, c])
         else:
             out[part].setdefault(a, []).append(c)
+    from . import scrub_json
     pub = {}  # {id: [part, key, print]} of each release note as read, so split() can tell an unchanged one
     for h in homes(page_dir):
         for part, a, c in _items(_read(h.folder)):
             if c.get("id") in have:
                 continue
+            # addresses masked as the prototype masks the signed-in reviewer (sync_server._identity), so the author's own
+            # release note passes the server's own-note checks for edit and remove, as in 2.32.8; none is stored here
+            c = json.loads(scrub_json(json.dumps(c, ensure_ascii=False)))
             t = c.get("target") if isinstance(c.get("target"), dict) else {}
             k = h.key_of(c.get("anchor_id") or a, t)
             n = {**c, "anchor_id": k}
