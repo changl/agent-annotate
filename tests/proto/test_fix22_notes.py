@@ -36,8 +36,12 @@ def test_kit_edit_reply_and_close(tmp_path):
   assert(/Agent response/.test(h) && /2 earlier replies/.test(h) && /data-nreply="t1"/.test(h) && /c<\\/div>/.test(h) && !/>a<\\/div>/.test(h));
   assert(!/data-nreply/.test(NK.thread(c, {...t, closed: true})));
   assert.strictEqual(NK.thread(c, {id: 'q', sent: true}), '');
+  // a reply being typed survives a redraw of its tab, and goes once posted
+  NK.typed.set('t1', 'half typed');
+  assert(/>half typed<\\/textarea>/.test(NK.thread(c, t)));
   c.api = api;
   assert(await NK.reply(c, t, ' more ', () => {}));
+  assert(!NK.typed.has('t1'));
   assert.deepStrictEqual(calls.at(-1), ['api/comments/t1/reply', {text: 'more'}, undefined]);
   assert(t.replies.at(-1).text === 'more' && t.status === 'open');
   // the posted reply goes with Send as today's "Reply" row; the Send takes it

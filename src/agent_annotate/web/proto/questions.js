@@ -179,7 +179,7 @@
       : `${esc(n.text)} ${NK.words(c, n)} ${NK.view(n)}<span class="nacts">${NK.acts(c, n, moving)}</span>${NK.thread(c, n)}`,
     // the agent's response and the replies under a note, the latest shown and older ones behind "n earlier replies"; a
     // reply box with Post reply once the agent has answered and the note is not closed (today's renderCItem, showReply)
-    th: new Map(), earlier: new Set(),
+    th: new Map(), earlier: new Set(), typed: new Map(),  // typed: a reply being written, kept across a redraw of its tab
     thread(c, n) {
       const rs = n.replies || [], k = rs.length - 1, id = esc(n.id);
       if (!n.resp && !rs.length) return '';
@@ -189,13 +189,14 @@
       return `<div class="nkth" data-nth="${id}">${n.resp ? `<div class="nkrep ag"><b class="small">Agent response</b><div>${esc(n.resp)}</div></div>` : ''}`
         + (k > 0 ? `<button class="lk small" data-nearlier="${id}" aria-expanded="${open}">${ic('chev')} ${k} earlier repl${k === 1 ? 'y' : 'ies'}</button>${open ? rs.slice(0, -1).map(one).join('') : ''}` : '')
         + (rs.length ? one(rs[k]) : '')
-        + (box ? `<div class="nkreply"><textarea data-nreplytext rows="2" placeholder="Add a reply…" aria-label="Reply to the agent"></textarea><button class="btn sm" data-nreply="${id}">Post reply</button></div>` : '') + '</div>';
+        + (box ? `<div class="nkreply"><textarea data-nreplytext="${id}" rows="2" placeholder="Add a reply…" aria-label="Reply to the agent">${esc(NK.typed.get(n.id) || '')}</textarea><button class="btn sm" data-nreply="${id}">Post reply</button></div>` : '') + '</div>';
     },
     // Post reply: today's route (POST …/reply); the server re-opens the note and the reply goes with the next Send
     async reply(c, n, text, redraw) {
       const t = String(text || '').trim();
       if (!t) return false;
       try { await c.api(`api/comments/${encodeURIComponent(n.id)}/reply`, {text: t}); } catch (e) { c.toast('Not posted: ' + e.message); return false; }
+      NK.typed.delete(n.id);
       (n.replies = n.replies || []).push({agent: false, who: 'You', text: t, ts: new Date().toISOString(), unsent: true});
       if (stOf(n) && stOf(n) !== 'open') n.status = 'open';
       redraw();
@@ -216,6 +217,7 @@
     b.disabled = true;
     NK.reply(P.ctx, n, ta.value, () => NK.redo(tab)).then(ok => { if (!ok) b.disabled = false; });
   }, true);
+  document.addEventListener('input', e => { const id = e.target.dataset && e.target.dataset.nreplytext; if (id) NK.typed.set(id, e.target.value); }, true);
   NK.slot(S, 'questions');
   // Escape and any navigation (another tab, or another place in this one) end a Move on every tab; the router's own
   // rewrites use replaceState, which fires no hashchange
