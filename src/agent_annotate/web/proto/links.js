@@ -164,6 +164,8 @@
     const {esc, icon} = ctx, ns = notesAt(D, k, dlg), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '', box = S.note === k && viewing(k) === !!dlg;
     if (!ns.length && !box) return '';
     // a sent note carries the lifecycle Questions and Reference use (P.notes: Re-open, View resolution, Move, Close); a closed one folds (r12 fix17)
+    // the edit box only where he sees it: in the viewer while this picture is open there (r12 audit19 reference 5)
+    const ed = n => S.edit === n.id && viewing(k) === !!dlg;
     const K = P.notes, cls = n => `l-nt${S.hl === n.id ? ' l-hl' : ''}${S.move === n.id ? ' moving' : ''}`;
     const spotNo = n => ns.filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;
     // its marker lists every note on the spot, with Go to it and + Comment (the kit's spot list, as Questions and Reference; r12 audit16 frame 5)
@@ -173,8 +175,8 @@
     const list = S.spot === k && viewing(k) === !!dlg && ns.length ? K.spot(ctx, sl.map(n => [n, spotNo(n) || ns.indexOf(n) + 1]), p ? 'at this point' : 'on this spot', `data-spotadd="${esc(k)}"${p ? ` data-spotpin="${esc(p.id)}"` : ''}`) : '';
     // a saved, unsent one: the kit's Edit in place and Remove (r12 audit18 reference 4)
     return `<div class="l-notes">${pin}${list}${ns.map(n => n.closed ? `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('archive')} Note closed <span class="mut">${esc(n.text)}</span> ${K.closedActs(n)}</div>`
-      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? K.sentBody(ctx, n, S.move === n.id, S.edit === n.id ? (S.edt != null ? S.edt : n.text) : null)
-        : S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`).join('')}
+      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? K.sentBody(ctx, n, S.move === n.id, ed(n) ? (S.edt != null ? S.edt : n.text) : null)
+        : ed(n) ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`).join('')}
       ${box ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
   }
@@ -241,7 +243,9 @@
       return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k, {
         pins: () => P.notes.pins(notesAt(D, nk, true), S.pin, viewing(nk) && S.note === nk && S.tgt),
         list: () => noteBox(ctx, D, nk, true),
-        tap: tgt => { S.tgt = tgt; S.note = nk; S.spot = S.pin = ''; draw(w, ctx, D); },
+        // Move armed in the viewer: the tap is its new point on this picture, the kit's re-pin (r12 audit19 running 2, reference 2)
+        tap: tgt => { if (S.move) return moveTo(w, ctx, D, nk, document.querySelector('#p-mview .pic img'), tgt);
+          S.tgt = tgt; S.note = nk; S.spot = S.pin = ''; draw(w, ctx, D); },
         click: ev => click(ev, w, ctx, D), input: ev => w.oninput(ev),
         close: () => { S.full = null; if (S.note === nk) { S.note = ''; S.tgt = null; } S.spot = S.pin = ''; draw(w, ctx, D); }}); }
     const b = e.target.closest('button');

@@ -33,7 +33,7 @@ def node(tmp_path, js):
 
 
 KIT = grab(Q, "  const stOf = ", "\n  };")
-STUBS = """const assert = require('assert'); const P = {};
+STUBS = """const assert = require('assert'); const P = {}; global.document = {getElementById: () => null};
 const esc = s => String(s), ic = k => '', cut = (s, n) => s, pl = (n, a, b) => n + ' ' + (n === 1 ? a : b);
 const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`;
 const store = {}, calls = [], toasts = [];

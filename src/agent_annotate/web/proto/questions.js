@@ -149,13 +149,14 @@
     // after his click (route() re-renders on a newer version, a retry, a late read) (r12 fix20 follow-up)
     slot(S, tab, key = 'move') { if (NK.mv && NK.mv.tab !== tab) NK.endMove(false);
       Object.defineProperty(S, key, {configurable: true, get: () => (NK.mv && NK.mv.tab === tab && NK.mv.id) || '',
-      set: id => { if (id) NK.mv = {tab, id}; else if (NK.mv && NK.mv.tab === tab) NK.mv = null; }}); },
+      // a Move ended by the tab itself (a second Move press, View resolution, its new spot) takes its hint too (r12 audit19 questions 9)
+      set: id => { if (id) NK.mv = {tab, id}; else if (NK.mv && NK.mv.tab === tab) { NK.mv = null; NK.unhint(); } }}); },
+    unhint() { const t = document.getElementById('p-toast'); if (t && /· Esc cancels$/.test(t.textContent)) t.innerHTML = ''; },  // the Move hint no longer applies
     endMove(redraw = true) {
       const w = NK.mv; if (!w) return false;
       NK.mv = null;
       document.querySelectorAll('[data-nmove][aria-pressed="true"]').forEach(b => b.setAttribute('aria-pressed', 'false'));  // before any later Escape handler reads it
-      const t = document.getElementById('p-toast');  // the Move hint no longer applies
-      if (t && /· Esc cancels$/.test(t.textContent)) t.innerHTML = '';
+      NK.unhint();
       if (redraw) NK.redo(w.tab);
       return true;
     },
@@ -166,7 +167,9 @@
       <ul class="qhist">${ns.map(([n, no]) => `<li>${mk(no, n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : NK.isReo(c, n) ? 're-opened · goes with Send' : NK.resolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`,
     // View resolution in another version: History opens it at the resolution, scrolled to and lit, as today's page does (r12 audit15 questions 3)
     // a resolution on a Reference or Pages & links line opens that line there, outlined (the tab's res hook)
-    goRes: (c, n) => { const t = NK.tabOf(n.ra || ''), h = NK.hooks[t]; return t !== 'questions' && h && h.res ? h.res(n) : c.go('history', `${n.rv}~${n.ra}`); },
+    // the shared picture viewer closes first, so the outlined destination is in sight, as Reference's does (r12 audit19 running 3, reference 3)
+    goRes: (c, n) => { if (document.getElementById('p-mview')) P.media.closeView();
+      const t = NK.tabOf(n.ra || ''), h = NK.hooks[t]; return t !== 'questions' && h && h.res ? h.res(n) : c.go('history', `${n.rv}~${n.ra}`); },
     // the resolution's spot, outlined where View resolution lands (History's version reader, a Reference plan line)
     lit: e => { e.style.cssText += ';outline:3px solid #7c3aed;outline-offset:4px;border-radius:4px;background:color-mix(in oklab,#7c3aed 16%,transparent)'; e.setAttribute('data-resolution', ''); },
     // the notes at a picture pin: on the same picture (by `pic`, the key its pin is drawn under), within a few percent of its point
@@ -243,6 +246,9 @@
     NK.reply(P.ctx, n, ta.value, () => NK.redo(tab)).then(ok => { if (!ok) b.disabled = false; });
   }, true);
   document.addEventListener('input', e => { const id = e.target.dataset && e.target.dataset.nreplytext; if (id) NK.typed.set(id, e.target.value); }, true);
+  // Remove or Close on the note being moved ends its Move on every tab, before the tab's own handler (r12 audit19 questions 2)
+  document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-ndel],[data-nundo],[data-nclose]');
+    if (b && NK.mv && NK.mv.id === (b.dataset.ndel || b.dataset.nundo || b.dataset.nclose)) NK.endMove(false); }, true);
   NK.slot(S, 'questions');
   // Escape and any navigation (another tab, or another place in this one) end a Move on every tab; the router's own
   // rewrites use replaceState, which fires no hashchange
@@ -772,12 +778,16 @@
     },
     // a picture with its caption line; `fa` and `za` are the reader's own data for Full size and the size buttons.
     // No "tap a spot" hint: these pictures (Pages & links, Reference table cells) take no spot notes
-    fig: (src, alt, n, z, fa = '', za = '', a = '') => `<figure class="mfig"${a}><img src="${esc(src)}" alt="${esc(alt || 'Picture')}" data-zcap="${esc(M.title(n, alt))}" loading="lazy"><figcaption class="qcap">${M.line(M.label(n), alt ? esc(M.bare(n, alt)) : '', M.ctl(z, src, fa, za), '')}</figcaption></figure>`,
+    fig: (src, alt, n, z, fa = '', za = '', a = '') => `<figure class="mfig"${a}><img src="${esc(src)}"${M.wh(src)} alt="${esc(alt || 'Picture')}" data-zcap="${esc(M.title(n, alt))}" loading="lazy"><figcaption class="qcap">${M.line(M.label(n), alt ? esc(M.bare(n, alt)) : '', M.ctl(z, src, fa, za), '')}</figcaption></figure>`,
     // a table cell: its text through `txt`, or, when it holds pictures (cp from blocks), each picture through `img(part, j)`,
     // j its order in the row from 1, so two pictures of one file in a row stay two pictures (r12 audit17 reference 2)
     cell: (cp, ri, ci, c, txt, img) => { const ps = cp && cp[ri] && cp[ri][ci]; if (!ps) return txt(c);
       let j = cp[ri].slice(0, ci).flat().filter(p => p && p[0] === 'img').length;
       return ps.map(p => p[0] === 'img' ? img(p, ++j) : txt(p[1])).join(' '); },
+    // a picture's size rides on its address (#wh=480x300), from the published HTML's width and height or, for Markdown, the
+    // feed (reference.doc_pictures), so every reader reserves its space before it loads, as today's release (r12 audit19 reference 1)
+    sized: (src, w, h) => src && !/^data:|#/.test(src) && w > 0 && h > 0 ? `${src}#wh=${Math.round(w)}x${Math.round(h)}` : src,
+    wh: src => { const m = /#wh=(\d+)x(\d+)$/.exec(src || ''); return m ? ` width="${m[1]}" height="${m[2]}"` : ''; },
     // one key per picture, from its document and place: a picture on its own line is its block's anchor; one in a table
     // cell is its row's anchor and its order in the row (~p1, ~p2). Every reader keys its title, size and point notes by it
     pk: (place, j) => j ? `${place}~p${j}` : place,
@@ -867,7 +877,8 @@
       if (S.zoom && S.zoom.dgm === name) draw(true);
     } catch { host.innerHTML = `<span class="qmissing">${ic('warn')} This diagram could not be drawn</span>`; }
   }
-  const zoomAt = (a, z) => ({src: a.dataset.zfull, pk: a.dataset.pk, cap: a.dataset.zcap || '', img: a.dataset.zid, dgm: a.dataset.zdgm, anchor: (a.closest('[data-anchor-id]') || {}).dataset?.anchorId, z});
+  const zoomAt = (a, z) => ({src: a.dataset.zfull, pk: a.dataset.pk, cap: a.dataset.zcap || '', img: a.dataset.zid, dgm: a.dataset.zdgm, anchor: (a.closest('[data-anchor-id]') || {}).dataset?.anchorId, z,
+    inq: S.view === 'list' ? ((a.closest('.qcard[data-q]') || {}).dataset || {}).q : undefined});  // Cards only: the card whose evidence it is
   function zoomView() {
     if (!S.zoom) return '';
     const {src, cap, z, pk, dgm} = S.zoom;
@@ -1378,7 +1389,11 @@
     if (t.hasAttribute('data-codecopy')) return M.onCopy(t);
     if (ds.zoomto) { S.zoom.z = +ds.zoomto; M.setZoom(S.zoom.pk, +ds.zoomto); return draw(true); }
     if (t.hasAttribute('data-zclose')) { S.zoom = null; return draw(true); }
-    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src, pk: S.zoom.pk}}; S.zoom = null; return openNote(next, true); }
+    // a tap in the viewer: Move's new point, kept open to show it (r12 audit19 questions 1), else a point note in the document,
+    // in Cards only under the card it was opened from (r12 audit19 questions 3)
+    if (t.hasAttribute('data-zimg') && S.zoom && S.zoom.anchor) { const r = t.getBoundingClientRect(), next = {anchor: S.zoom.anchor, label: cut(S.zoom.cap, 60), target: {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: S.zoom.img || null, image_src: S.zoom.src, pk: S.zoom.pk}, inq: S.zoom.inq};
+      if (S.move) return moveNote(S.move, next);
+      S.zoom = null; return openNote(next, true); }
     if (t.hasAttribute('data-genopen')) { S.gen = !S.gen; return draw(true).then(() => { const ta = root.querySelector('.qgen textarea'); if (ta) ta.focus(); }); }
     if (t.hasAttribute('data-genclose')) { S.gen = false; return draw(true); }
     if (t.hasAttribute('data-ungen')) { const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }

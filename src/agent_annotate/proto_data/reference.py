@@ -195,6 +195,17 @@ def doc_picture(rel: str, root: Path = FLD_DIR) -> Path | None:
     return p if ok else None
 
 
+def sized(url: str, f: Path) -> str:
+    """The picture's size on its address (#wh=WxH, read by Proto.media.wh), as today's release writes width and height,
+    so every reader keeps its space while it loads (r12 audit19 reference 1); unchanged when its size can't be read."""
+    from ..images import image_size
+    try:
+        size = image_size(f.read_bytes())
+    except OSError:
+        size = None
+    return f"{url}#wh={size[0]}x{size[1]}" if size and size[0] > 0 and size[1] > 0 else url
+
+
 def doc_pictures(text: str, md: Path, root: Path = FLD_DIR) -> str:
     """Each picture line's file found as today's release finds it (pagegen.ImageStore: relative to the Markdown file's folder,
     or an absolute path), linked to where the page serves it; a URL or a file not found keeps its description only."""
@@ -209,8 +220,9 @@ def doc_pictures(text: str, md: Path, root: Path = FLD_DIR) -> str:
                 rel = Path(os.path.normpath(p)).relative_to(root).as_posix()
             except ValueError:
                 rel = ""
-            if rel and doc_picture(rel, root):
-                url = DOC_PIC + urllib.parse.quote(rel)
+            f = doc_picture(rel, root) if rel else None
+            if f:
+                url = sized(DOC_PIC + urllib.parse.quote(rel), f)
         return m[1] + url + m[3]
     return _TABLE_LINE.sub(lambda t: _PIC_CELL.sub(one, t[0]), _PIC_LINE.sub(one, text))
 
@@ -526,7 +538,7 @@ def copied(page_dir: Path, meta: dict) -> list:
         for line in act.read_text(errors="ignore").splitlines():
             n += line.startswith("### ")  # one product each
             if m := re.match(r"!\[([^\]]*)\]\((assets/[^)\s]+)\)", line.strip()):
-                bl.append(["img", m.group(2), hide(m.group(1))])  # served from the copy's own assets
+                bl.append(["img", sized(m.group(2), page_dir / m.group(2)), hide(m.group(1))])  # served from the copy's own assets
             elif line.startswith("#"):
                 bl.append(["h", plain(line.lstrip("# "), 200)])
             elif line.strip() and not line.startswith(("```", "---", "title:", "see:", "- ", "#")) and not re.match(r"#\d+ ", line):

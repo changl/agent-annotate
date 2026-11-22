@@ -147,7 +147,8 @@
     // so two copies of one file, or one spot in two versions, keep their own sizes (r12 audit18 frame 3)
     const keyOf = img => { if (!img.getAttribute('src')) return '';
       const a = img.closest('[data-anchor-id]'), j = a === img ? 0 : [...(a || doc).querySelectorAll('img')].indexOf(img) + 1;
-      return doc.location.pathname + '|' + P.media.pk(a ? a.dataset.anchorId : 'pic', j); };
+      // its version is the address's query (content?v=…), so one spot in two versions keeps two sizes (r12 audit19 running 5)
+      return doc.location.pathname + doc.location.search + '|' + P.media.pk(a ? a.dataset.anchorId : 'pic', j); };
     const zOf = img => all[keyOf(img)] || def();
     const remember = (img, z) => { if (z === def()) delete all[keyOf(img)]; else all[keyOf(img)] = z; ctx.prefs.set('picsize', all); };
     const pageFull = img => { const f = img.closest('figure'); return f && f.querySelector(':scope > a.aa-full'); };

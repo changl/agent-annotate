@@ -33,7 +33,7 @@ def node(tmp_path, js):
 
 # the kit plus its one queue source
 KIT = grab(Q, "  const stOf = ", "\n  };") + grab(Q, "  const TABN = ", "}}))});")
-STUBS = """const assert = require('assert'); const src = []; const P = {queue: s => src.push(s)};
+STUBS = """const assert = require('assert'); const src = []; const P = {queue: s => src.push(s)}; global.document = {getElementById: () => null};
 const esc = s => String(s), ic = k => '', cut = (s, n) => s, pl = (n, a, b) => n + ' ' + (n === 1 ? a : b);
 const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`;
 const store = {}, calls = [];

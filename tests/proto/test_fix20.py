@@ -68,7 +68,7 @@ assert.deepStrictEqual(NK.near([old, nu], nu).map(n => n.id), ['o', 'n']);  // b
 def test_read_only_readers_and_revisions_key_pictures_by_place():
     """Frame 3 and Reference 5: no picture size keyed by its file; a kept revision's pictures name the revision."""
     assert "img.getAttribute('src') || '').split('?')[0]" not in HIST
-    assert "doc.location.pathname + '|' + P.media.pk(" in HIST
+    assert "doc.location.pathname + doc.location.search + '|' + P.media.pk(" in HIST  # and its version (r12 fix23)
     assert "q:zoomPer" not in Q and "const zoomOf = k => M.zoom(k);" in Q
     assert "docK += '~rev' + (cur + 1);" in L
 

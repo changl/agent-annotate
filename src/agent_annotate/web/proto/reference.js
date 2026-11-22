@@ -86,12 +86,14 @@
   const spots = k => notesAt(k, true).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm${NK().sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
     + (S.note === k && S.tgt && S.tgt.offset ? `<span class="pinm new" style="left:${S.tgt.offset.dx * 100}%;top:${S.tgt.offset.dy * 100}%">+</span>` : '');
   // one note: his unsent one with Undo; a sent one with the shared lifecycle (Re-open, View resolution, Move, Close); a closed one folded with Re-open (r12 audit15 reference 3)
-  function noteLine(k, n) {
+  // `dlg`: drawn in the picture viewer; while it is open the edit box is there alone, so typing and Save reach the box he sees (r12 audit19 reference 5)
+  function noteLine(k, n, dlg) {
+    const ed = S.edit === n.id && !S.full === !dlg ? n.id : '';
     const K = NK(), hd = `${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}`, cls = `rf-nt${S.hl === n.id ? ' rf-hl' : ''}`;
     if (n.closed) return `<div class="${cls} rf-closed" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('archive')} Note closed</span> <span class="mut">${esc(n.text)}</span><span class="nacts">${K.closedActs(n)}</span></div>`;
     // a saved, unsent one: the kit's Edit in place and Remove, from any visit (r12 audit18 reference 4)
-    if (!n.sent) return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`;
-    return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${K.sentBody(ctx, n, S.move === n.id, S.edit === n.id ? (S.edt != null ? S.edt : n.text) : null)}</div>`;
+    if (!n.sent) return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${ed ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`;
+    return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${K.sentBody(ctx, n, S.move === n.id, ed ? (S.edt != null ? S.edt : n.text) : null)}</div>`;
   }
   // the list a marker opens: on its line, or at a picture pin's point (S.pin)
   function spotList(k, ns) {
@@ -102,7 +104,7 @@
     const ns = notesAt(k, dlg), box = S.note === k && !S.full === !dlg;  // the open picture viewer holds the composer for its picture
     const list = S.spot === k && !S.full === !dlg && ns.length;
     if (!ns.length && !box) return '';
-    return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n)).join('')}
+    return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n, dlg)).join('')}
       ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
@@ -120,7 +122,8 @@
     doc.querySelectorAll(CHROME).forEach(e => e.remove());
     doc.querySelectorAll('br').forEach(b => b.replaceWith('\u0001'));  // a line break starts a new line, as in the mock
     const srcOf = e => { const h = e.getAttribute('data-embedded'), s = (e.getAttribute('src') || '').replace(/^\/annotate\/reviews\/[^/]+\//, '');
-      return h && emb[h] ? pic(h, emb[h]) : s && !s.startsWith('data:') ? new URL(s, location.origin + ctx.base).href : s.startsWith('data:image/') ? s : ''; };
+      const u = h && emb[h] ? pic(h, emb[h]) : s && !s.startsWith('data:') ? new URL(s, location.origin + ctx.base).href : s.startsWith('data:image/') ? s : '';
+      return P.media.sized(u, +e.getAttribute('width'), +e.getAttribute('height')); };  // its published size, so its space is kept while it loads
     const img = e => { const u = srcOf(e); if (u) out.push(['img', u, e.getAttribute('alt') || '']); };
     // a table cell with pictures as the parts Proto.media.blocks gives a Markdown cell: ['t', text] and ['img', src, caption],
     // so a published plan's table draws its pictures as the folder reader does (r12 audit17 reference 5); a figure's caption is its picture's
@@ -233,7 +236,7 @@
       return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za, ` data-pk="${esc(pk)}" ${at(pk, 'Picture: ' + (p[2] || ''))}`).replace(/^<figure[^>]*>/, f => f + pin(pk)); };
     const rowPics = (ri, r) => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => P.media.pk(r, j + 1));
     const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${P.media.cell(b[4], ri, ci, c, esc, cpic(k))}</th>` : `<td>${ci ? '' : pin(rk(ri))}${P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => [ri === 0 && hd ? '' : noteList(rk(ri)), ...rowPics(ri, rk(ri)).map(pk => noteList(pk))].join('')).join('')}`
-      : kind === 'img' ? (n => `<figure ${a} data-pk="${esc(k)}">${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
+      : kind === 'img' ? (n => `<figure ${a} data-pk="${esc(k)}">${pin(k)}<span class="qpinwrap"><img src="${esc(t)}"${P.media.wh(t)} alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
       : kind === 'pre' ? `<div class="rf-code" ${a}>${pin(k)}${P.media.code(t)}${tg}</div>`
       : `<${kind === 'h' ? 'h4' : 'p'} class="${kind === 'li' ? 'li' : ''}" ${a}>${pin(k)}${beadIn(inner || esc(t))}${tg}</${kind === 'h' ? 'h4' : 'p'}>`;
     return body + noteList(k);
