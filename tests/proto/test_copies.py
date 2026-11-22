@@ -4,7 +4,9 @@ import json
 import time
 from pathlib import Path
 
-from agent_annotate.proto_data import copies
+import pytest
+
+from agent_annotate.proto_data import copies, replaced
 
 WEB = Path(copies.__file__).resolve().parents[1] / "web/proto"
 
@@ -17,7 +19,8 @@ def _real(d: Path, version: str, mail: str) -> Path:
     return d
 
 
-def test_copy_follows_its_real_page(tmp_path):
+def test_copy_follows_its_real_page(tmp_path, monkeypatch):
+    monkeypatch.setenv(replaced.ENV, str(tmp_path))  # deletions stay in the sandbox, in the background process too
     real = _real(tmp_path / "real", "v1", "someone@gmail.com")
     root = tmp_path / "root"
     copy = copies.refresh(root, "rebex", "Rebex", real)
@@ -40,7 +43,32 @@ def test_copy_follows_its_real_page(tmp_path):
     assert (copy / "versions" / "v1.html").read_text() == "<p>kept scrubbed v1</p>"  # a published version is reused, not scrubbed again
     assert "someone@gmail.com" not in (copy / "versions" / "v2.html").read_text()
     assert json.loads((real / "current.meta.json").read_text()).get("owner")  # the real page is never written
-    assert any(p.name.startswith("proto-rebex-") for p in (root / "trash").iterdir())  # the old copy went to trash
+    assert not list((root / "trash").iterdir())  # the old copy was deleted, not kept in trash (card #160)
+
+
+def test_rollover_keeps_only_the_newest_copy(tmp_path, monkeypatch):
+    """Card #160: run the rollover twice; one copy remains, trash/ stays empty, and nothing outside the root is deleted."""
+    monkeypatch.setenv(replaced.ENV, str(tmp_path))
+    real = _real(tmp_path / "real", "v1", "someone@gmail.com")
+    root = tmp_path / "root"
+    copies.refresh(root, "rebex", "Rebex", real)
+    _real(real, "v2", "someone@gmail.com")
+    copy = copies.refresh(root, "rebex", "Rebex", real)
+    assert [p.name for p in (root / "reviews").iterdir()] == ["proto-rebex"]
+    assert json.loads((copy / "current.meta.json").read_text())["current"] == "v2"
+    assert not list((root / "trash").iterdir())
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "trash" / "link").symlink_to(outside)
+    for p in (outside, copy, root / "trash" / "link", root / "trash" / ".." / "reviews" / "proto-rebex"):
+        with pytest.raises(ValueError):
+            replaced.delete(root, p)
+    with pytest.raises(ValueError):  # a root outside the prototype folder
+        replaced.delete(tmp_path.parent, tmp_path.parent / "trash" / "x")
+    monkeypatch.setenv(replaced.ENV, "/")
+    with pytest.raises(ValueError):  # ~/projects and /Volumes, whatever the root
+        replaced.delete("/Users/changlee", "/Users/changlee/projects/trash/x")
+    assert outside.is_dir() and copy.is_dir() and real.is_dir()
 
 
 def test_copy_meta_route_starts_the_copy():

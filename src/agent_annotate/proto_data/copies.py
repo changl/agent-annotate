@@ -4,10 +4,11 @@ copy.sh makes them on every restart: python3 -m agent_annotate.proto_data.copies
 The server calls fresh() as it serves a copy's meta (and <copy>/proto/data/copies.json): a newer version on the real page
 is copied in the background, and the frame says so until the copy turns Reload blue. The real page is only read: an APFS clone, then the clone is changed:
 - page.db forgets its bus file first, so nothing the store does while exporting can reach the real bus;
-- page.db goes back to JSON (db_off) and is moved to trash;
+- page.db goes back to JSON (db_off) and its database is deleted (replaced.delete);
 - owner, lease, delivery, workspace and move keys leave the meta; "ui": "proto" and "proto_copy_of": KEY are set;
 - every address is masked and review keys redacted (python3 -m agent_annotate.proto_data), and Rebex's preview store staged.
-The clone is built in trash/ and swapped in with two renames, so the copy being served is never half made.
+The clone is built in trash/ and swapped in with two renames, so the copy being served is never half made;
+then the replaced copy (or a half-made one) is deleted: only the newest copy is kept (card #160).
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import time
 from pathlib import Path
 
 from .. import store
+from .replaced import delete
 
 _lock = threading.Lock()
 
@@ -81,36 +83,43 @@ def _deliveries(d: Path, slug: str, live: Path = LIVE_DELIVERIES) -> None:
 
 
 def refresh(root: Path, key: str, name: str, src: Path) -> Path:
-    """A fresh read-only copy of SRC at ROOT/reviews/proto-KEY; the old copy moves to trash."""
+    """A fresh read-only copy of SRC at ROOT/reviews/proto-KEY; the old copy is deleted."""
     dest = root / "reviews" / f"proto-{key}"
     stamp = time.strftime("%Y%m%dT%H%M%S")
     trash = root / "trash"
     trash.mkdir(parents=True, exist_ok=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = trash / f"proto-{key}-new-{stamp}"
-    subprocess.run(["cp", "-cR", str(src), str(tmp)], check=True)
-    db = tmp / store.DB_NAME
-    if db.exists():
-        conn = sqlite3.connect(db)
-        conn.execute("DELETE FROM meta WHERE key = 'bus_file'")
-        conn.commit()
-        conn.close()
-        kept = store.db_off(tmp)
-        shutil.move(str(kept), str(trash / f"proto-{key}-{kept.name}-{stamp}"))
-    meta_path = tmp / "current.meta.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    for k in ("owner", "lease", "delivery", "workspace_owner", "moved_to"):
-        meta.pop(k, None)
-    meta.update(name=name, ui="proto", proto_copy_of=key, proto_source=str(src))
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    assert "owner" not in json.loads(meta_path.read_text()) and not db.exists()
-    _deliveries(tmp, src.name)
-    _scrub(tmp, dest)
-    from .reference import stage_store
-    stage_store(tmp)  # Rebex's working preview store; nothing for a project without one
-    if dest.exists():
-        shutil.move(str(dest), str(trash / f"proto-{key}-{stamp}"))
-    tmp.rename(dest)
+    try:
+        subprocess.run(["cp", "-cR", str(src), str(tmp)], check=True)
+        db = tmp / store.DB_NAME
+        if db.exists():
+            conn = sqlite3.connect(db)
+            conn.execute("DELETE FROM meta WHERE key = 'bus_file'")
+            conn.commit()
+            conn.close()
+            kept = store.db_off(tmp)
+            old_db = trash / f"proto-{key}-{kept.name}-{stamp}"
+            shutil.move(str(kept), str(old_db))
+            delete(root, old_db)
+        meta_path = tmp / "current.meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        for k in ("owner", "lease", "delivery", "workspace_owner", "moved_to"):
+            meta.pop(k, None)
+        meta.update(name=name, ui="proto", proto_copy_of=key, proto_source=str(src))
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        assert "owner" not in json.loads(meta_path.read_text()) and not db.exists()
+        _deliveries(tmp, src.name)
+        _scrub(tmp, dest)
+        from .reference import stage_store
+        stage_store(tmp)  # Rebex's working preview store; nothing for a project without one
+        old = trash / f"proto-{key}-{stamp}"
+        if dest.exists():
+            shutil.move(str(dest), str(old))
+        tmp.rename(dest)
+        delete(root, old)  # only the newest copy is kept (card #160)
+    finally:
+        delete(root, tmp)  # a half-made copy; nothing once it was swapped in
     return dest
 
 
@@ -147,7 +156,7 @@ def _recopy(at: str, key: str, name: str, src: Path) -> None:
         with _bound_lock:  # the served copy's caches belong to the old folder
             for k in [k for k in _bound if k[1] == key]:
                 _bound.pop(k)
-    except (subprocess.SubprocessError, OSError) as exc:  # the last copy keeps serving; a half-made one stays in trash/
+    except (subprocess.SubprocessError, OSError) as exc:  # the last copy keeps serving; a half-made one is deleted
         print(f"copy of {key} not refreshed: {exc}", file=sys.stderr)
     finally:
         with _lock:
