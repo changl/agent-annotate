@@ -196,7 +196,7 @@
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
-    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
+    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only

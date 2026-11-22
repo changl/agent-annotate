@@ -22,7 +22,7 @@ def test_receipt_counts_what_the_round_took():
 def test_top_count_follows_a_noop_and_go_to_it_waits_for_its_target():
     f = (WEB / "frame.js").read_text()
     q = (WEB / "questions.js").read_text()
-    assert "if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); refreshSend(); }," in f
+    assert "if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); }," in f
     # Go to it on a card or note waits for it (a cold read), then scrolls and outlines it: one path for every Send row
     assert "if (live() && anchor && /^[qn]-/.test(anchor)) goTarget(anchor, live);" in f
     assert "goTo: id => goTarget(id, () => true)," in f
