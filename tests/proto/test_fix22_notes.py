@@ -72,8 +72,40 @@ def test_send_offers_no_remove_on_a_sent_note():
     """Today's Send row for an edited note or a posted reply has no Remove; the server refuses to delete a sent note."""
     from test_fix17_notes import WEB
     ref, links, hist = ((WEB / n).read_text() for n in ("reference.js", "links.js", "history.js"))
-    assert "remove: n.sent ? null :" in ref and "remove: n.sent ? null :" in links and "remove: n.sent ? null :" in hist
-    assert "x.remove ? 'x:' + x.key : ''" in Q and "n.sent ? '' : 'note:' + n.id" in Q and "${rm ? `" in Q
+    assert "remove: NK().kept(n) ? null :" in ref and "remove: P.notes.kept(n) ? null :" in links and "remove: P.notes.kept(n) ? null :" in hist
+    assert "x.remove ? 'x:' + x.key : ''" in Q and "NK.kept(n) ? '' : 'note:' + n.id" in Q and "${rm ? `" in Q
+    # every tab's saved Send row keeps the note's sent state and unsent replies (r12 audit19 frame 1)
+    assert "...NK().state(n)" in ref and links.count("...P.notes.state(n)") == 1 and hist.count("...P.notes.state(n)") == 1 and "v: D.version, at: n.at, ...NK.state(n)" in Q
+
+
+def test_kit_remembers_edits_and_replies_for_every_copy(tmp_path):
+    """r12 audit19 frame 1, 4, running 1: an edit or reply on a sent note reaches Send from any copy of the note a tab holds,
+    and from a saved row with no read in; none offers Remove; a Send clears it."""
+    store = "const kept = {}; P.ctx = {prefs: {get: (k, d) => k in kept ? kept[k] : d, set: (k, v) => { kept[k] = v; }}};"
+    node(tmp_path, FIX_STUBS + KIT.replace("const NK = P.notes = {", store + "\nconst NK = P.notes = {", 1) + """
+(async () => {
+  const shown = {id: 'n1', sent: true, st: 'open', text: 'old', mine: true, resp: 'ok'}, other = {...shown};  // two copies: a tab's first read and a re-read
+  c.api = api;
+  assert(!NK.out(other));
+  assert(await NK.fix(c, shown, 'new words', api, () => {}));
+  assert(NK.out(other) && NK.say(other) === 'new words' && NK.kept(other));
+  assert(await NK.reply(c, shown, 'a reply', () => {}));
+  assert.strictEqual(NK.say(other), 'Reply: a reply');
+  assert.strictEqual(NK.say(shown), 'Reply: a reply');  // the copy that also has it lists it once
+  const saved = {id: 'n1', text: 'old'};  // a saved row from before, with no read in after a reload
+  assert(NK.out(saved) && NK.kept(saved) && NK.say(saved) === 'Reply: a reply');
+  assert.deepStrictEqual(NK.state(shown), {sent: true, edited: false, replies: [{text: 'a reply', unsent: true}]});
+  assert(!NK.kept({id: 'n2', text: 'draft'}));  // an unsent note keeps its Remove
+  NK.gone(other);
+  assert(!NK.out(other) && !NK.kept({id: 'n1'}));
+})().catch(e => { console.error(e); process.exit(1); });
+""")
+
+
+def test_discard_all_counts_only_what_it_discards():
+    """r12 audit19 reference 6: a sent note's edit or reply has no Remove and stays, as today's Discard all; its receipt leaves it out."""
+    body = Q[Q.index("async function discardAll()"):Q.index("async function sendRemove")]
+    assert "total = sendItems().filter(x => x[3]).length + (gen().trim() ? 1 : 0);" in body and "Discarded ${pl(total, 'draft', 'drafts')}" in body
 
 
 def test_questions_uses_the_kit_edit_not_a_new_correction():

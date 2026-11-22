@@ -78,7 +78,7 @@
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
-        remove: n.sent ? null : () => takeC(ctx, n)}))],
+        remove: P.notes.kept(n) ? null : () => takeC(ctx, n)}))],
     sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
       savedC(ctx).forEach(P.notes.gone); ctx.prefs.set('draft:hcnotes', []); },
   });
@@ -233,7 +233,7 @@
     // a saved record the read predates stays: no late or stale read removes its row (r12 audit14 running 1)
     const inQ = new Set((QD.notes || []).map(n => n.id)), l0 = allC().filter(n => P.notes.out(n) && !n.closed);
     const l = [...l0, ...m.filter(r => !inQ.has(r.id) && !l0.some(x => x.id === r.id) && r.at && QD.at && Date.parse(r.at) >= Date.parse(QD.at) && !ctx.taken(r.id))];
-    const s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at}));
+    const s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at, ...P.notes.state(n)}));
     if (JSON.stringify(s) !== JSON.stringify(m)) ctx.prefs.set('draft:hcnotes', s);
     return l; };
   const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };

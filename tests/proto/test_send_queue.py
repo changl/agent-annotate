@@ -89,4 +89,4 @@ def test_discard_all_counts_items_as_send_lists_them():
     """r12 fix7, questions 5: an answer and a reply on one question are two drafts."""
     s = _js("questions")
     body = s[s.index("async function discardAll()"):s.index("async function sendRemove")]
-    assert "total = sendCount()" in body and "Discarded ${pl(total, 'draft', 'drafts')}" in body
+    assert "total = sendItems().filter(x => x[3]).length + (gen().trim() ? 1 : 0);" in body and "Discarded ${pl(total, 'draft', 'drafts')}" in body

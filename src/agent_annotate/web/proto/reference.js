@@ -700,9 +700,9 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
-      if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, say: NK().say(n), sent: !!n.sent, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
-      for (const n of SNOTES) { const w = n.say || n.text; it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
-        go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: n.sent ? null : async () => {
+      if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
+      for (const n of SNOTES) { const w = NK().say(n); it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
+        go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: NK().kept(n) ? null : async () => {
           // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
           mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();

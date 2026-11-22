@@ -414,7 +414,7 @@
     // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
     const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
     const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
-    if (LD) { const s = l.map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line})); if (JSON.stringify(s) !== JSON.stringify(c.prefs.get('draft:lnotes', []))) c.prefs.set('draft:lnotes', s); }
+    if (LD) { const s = l.map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line, ...P.notes.state(n)})); if (JSON.stringify(s) !== JSON.stringify(c.prefs.get('draft:lnotes', []))) c.prefs.set('draft:lnotes', s); }
     return l;
   };
   // the line a note sits on, read back from its document after a reload, so Send still names it by its line (audit7 running 5)
@@ -453,7 +453,7 @@
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
       go: () => goNote(c, n),
-      remove: n.sent ? null : () => takeNote(c, n)}))],
+      remove: P.notes.kept(n) ? null : () => takeNote(c, n)}))],
     sent: c => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }

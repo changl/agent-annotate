@@ -60,6 +60,7 @@ const store = {{'draft:hcnotes': [{{id: 'h1', anchor: 'chart:v2', text: 'pt', at
 const ctx = {{prefs: {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}}, taken: () => false,
   data: () => new Promise(() => {{}}), refreshTop: () => {{}}}};
 let QR = null, CN = [], QD = {{at: '2026-11-21T10:00:00Z', notes: []}};
+const P = {{notes: {{out: n => !n.sent || !!n.edited, state: n => ({{}})}}}};
 const allC = () => {{ const q = (QD && QD.notes) || []; return [...q, ...CN.filter(n => !q.some(x => x.id === n.id))].filter(n => !n.closed && /^chart:/.test(n.anchor || '')); }};
 {fn}
 assert.deepStrictEqual(savedC(ctx).map(n => n.id), ['h1']);  // the earlier, stale read answered: still listed

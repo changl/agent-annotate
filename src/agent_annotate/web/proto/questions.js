@@ -74,13 +74,24 @@
     // P.noteHooks, since the tabs' scripts load in any order
     hooks: P.noteHooks = P.noteHooks || {},
     redo: tab => { const h = NK.hooks[tab]; if (h && h.redo) h.redo(); },
+    // his edits and replies on sent notes since the last Send, by note id ({text, replies}): the one record every tab's Send row
+    // reads, so no copy of the note a tab holds (a first read, a re-read behind it, a saved row) can lose them (r12 audit19 frame 1, 4, running 1)
+    // shortcut: kept until a Send from this page; a Send made elsewhere leaves it until the next one here
+    loc: () => NK.L || (NK.L = (P.ctx && P.ctx.prefs.get('draft:nkput', {})) || {}),
+    put1(id, p) { const m = NK.loc(), o = m[id] || {replies: []}; m[id] = {...o, ...p, replies: [...o.replies, ...(p.replies || [])]}; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); },
     // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
-    out: n => !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent),
+    out: n => !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc(),
     // a Send took it, with its edit and replies
-    gone: n => { Object.assign(n, {sent: true, edited: false}); (n.replies || []).forEach(r => { r.unsent = false; }); },
+    gone: n => { Object.assign(n, {sent: true, edited: false}); (n.replies || []).forEach(r => { r.unsent = false; });
+      if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
+    // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
+    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true}))}),
     // its Send row's words, as today's summary (commentRow): a posted reply as "Reply" with its words, else the note's words.
     // A sent note's row has no Remove: the server refuses to delete a sent note, and today's row offers none
-    say: n => { const r = (n.replies || []).filter(x => x.unsent).map(x => x.text); return r.length ? 'Reply: ' + r.join(' · ') : n.text; },
+    say: n => { const l = NK.loc()[n.id] || {replies: []}, r = [...new Set([...(n.replies || []).filter(x => x.unsent).map(x => x.text), ...l.replies.map(x => x.text)])];
+      return r.length ? 'Reply: ' + r.join(' · ') : l.text != null ? l.text : n.text; },
+    // its row keeps no Remove once sent: from the loaded note, its saved row or his edit or reply on it
+    kept: n => !!n.sent || n.id in NK.loc(),
     // today's edit body (shell.js edit-save): the words, and a closed status re-opens, so the agent reads it again
     body: (n, text) => stOf(n) && stOf(n) !== 'open' ? {text, status: 'open'} : {text},
     // Close stores what today's menu offers for this note (cardMenuItems): Resolve (accept) on a review note, a confirmed or
@@ -169,6 +180,7 @@
       if (!t) { c.toast(n.sent ? 'Write something first' : 'Write something first, or Remove the note'); return false; }
       if (t === was) { await apply(was, {text: was}); return true; }
       const put = async w => { const b = NK.body(n, w); await api(`api/comments/${encodeURIComponent(n.id)}`, b, 'PUT');
+        if (n.sent) NK.put1(n.id, {text: w});
         await apply(w, {...b, ...(n.sent ? {edited: true} : {})}); };
       try { await put(t); } catch (e) { c.toast('Not changed: ' + e.message); return false; }
       c.toast('Note changed · goes with Send', {undo: () => put(was)});
@@ -198,6 +210,7 @@
       try { await c.api(`api/comments/${encodeURIComponent(n.id)}/reply`, {text: t}); } catch (e) { c.toast('Not posted: ' + e.message); return false; }
       NK.typed.delete(n.id);
       (n.replies = n.replies || []).push({agent: false, who: 'You', text: t, ts: new Date().toISOString(), unsent: true});
+      NK.put1(n.id, {replies: [{text: t}]});
       if (stOf(n) && stOf(n) !== 'open') n.status = 'open';
       redraw();
       c.toast('Reply posted · it goes with your next Send');
@@ -376,7 +389,7 @@
   function notesNow(q) {
     const own = new Set(q.map(x => x.note).filter(Boolean));
     if (!D) return savedNotes().filter(n => !own.has(n.id));
-    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at}));
+    const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at, ...NK.state(n)}));
     if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
     return l;
   }
@@ -932,7 +945,7 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, n.sent ? '' : 'note:' + n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.kept(n) ? '' : 'note:' + n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '']);
     return it;
@@ -1187,6 +1200,7 @@
       ctx.prefs.set('q:general', '');
       D.notes.forEach(NK.gone);  // the round took every unsent note: Send reads 0 with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
+      NK.L = {}; ctx.prefs.set('draft:nkput', {});  // and every edit and reply on a sent note, whatever tab holds it
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
@@ -1199,7 +1213,9 @@
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
   async function discardAll() {
-    const keep = drafts(), g = gen(), ab = abPicks(), q = Q(), notes = myNotes(q), total = sendCount();  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
+    const keep = drafts(), g = gen(), ab = abPicks(), q = Q(), notes = myNotes(q),  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
+      // a sent note's edit or reply has no Remove and stays, as today's Discard all (pending verdicts only): not counted (r12 audit19 reference 6)
+      total = sendItems().filter(x => x[3]).length + (gen().trim() ? 1 : 0);
     const all = {};
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
     const tn = typingNote(); if (tn) { S.note = null; ctx.prefs.set('q:newnote', null); }
