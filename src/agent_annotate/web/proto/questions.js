@@ -1732,8 +1732,9 @@
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
       if (D && !stale && !again) return;
       const fresh = !!D || !!again; stale = false; again = false;
-      // whoever asked (a count, the sheet), a failed read is the sheet's failure too, and stays stale so the next read tries again
-      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { S.qerr = true; stale = true; throw e; })
+      // whoever asked (a count, the sheet), a failed read is the sheet's failure too, until Try again (load(c, true)); a count
+      // never re-reads it, since each redraw asks for counts and a down server would be asked hundreds of times a second
+      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { S.qerr = true; throw e; })
         .finally(() => { if (reading === r) { reading = null; relist(); } });
       relist();  // the open sheet waits on this read
     }
