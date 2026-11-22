@@ -74,7 +74,7 @@ def test_send_offers_no_remove_on_a_sent_note():
     ref, links, hist = ((WEB / n).read_text() for n in ("reference.js", "links.js", "history.js"))
     # the kit's rowRm, which is never true once kept (r12 audit20: and only where canDeleteComment allows)
     assert "remove: !NK().rowRm(n) ? null :" in ref and "remove: P.notes.rowRm(n) ? () => takeNote" in links and "remove: P.notes.rowRm(n) ? () => takeC" in hist
-    assert "x.remove ? 'x:' + x.key : ''" in Q and "NK.rowRm(n) ? 'note:' + n.id : ''" in Q and "rowRm: n => !NK.kept(n) &&" in Q and "${rm ? `" in Q
+    assert "x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : ''" in Q and "NK.rowRm(n) && !P.inflight(n.id) ? 'note:' + n.id : ''" in Q and "rowRm: n => !NK.kept(n) &&" in Q and "${rm ? `" in Q
     # every tab's saved Send row keeps the note's sent state and unsent replies (r12 audit19 frame 1)
     assert "...NK().state(n)" in ref and links.count("...P.notes.state(n)") == 1 and hist.count("...P.notes.state(n)") == 1 and "v: D.version, at: n.at, ...NK.state(n)" in Q
 

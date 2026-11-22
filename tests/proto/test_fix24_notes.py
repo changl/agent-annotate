@@ -34,7 +34,7 @@ assert(!NK.rowRm(cases['other-draft'][0]) && NK.rowRm(cases.draft[0]));
 
 def test_every_tab_send_row_and_discard_use_the_rule():
     for f, s in [("history.js", "remove: P.notes.rowRm(n) ? () => takeC(ctx, n) : null"), ("links.js", "remove: P.notes.rowRm(n) ? () => takeNote(c, n) : null"),
-                 ("reference.js", "remove: !NK().rowRm(n) ? null :"), ("questions.js", "NK.rowRm(n) ? 'note:' + n.id : ''")]:
+                 ("reference.js", "remove: !NK().rowRm(n) ? null :"), ("questions.js", "NK.rowRm(n) && !P.inflight(n.id) ? 'note:' + n.id : ''")]:
         assert s in (WEB / f).read_text(), f
     assert "if (NK.rowRm(n)) backs.push(await delNote(n.id, true))" in Q
 

@@ -82,7 +82,7 @@ def test_a_reopen_row_is_the_reopeners():
 
 def test_every_send_row_uses_the_row_owner():
     q = (WEB / "questions.js").read_text()
-    assert "NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n) && !openEd(n), n.id]" in q and "return !!n && !NK.mine(n); };" in q
+    assert "NK.rowRm(n) && !P.inflight(n.id) ? 'note:' + n.id : '', !NK.mine(n) && !openEd(n), n.id]" in q and "return !!n && !NK.mine(n); };" in q
     assert "if (NK.out(n) && NK.mine(n)) ids.add(n.id);" in q  # a copy's simulated round
     for f, s in [("links.js", "peer: !P.notes.mine(n)"), ("history.js", "peer: !P.notes.mine(n)"), ("reference.js", "peer: !NK().mine(n)")]:
         assert s in (WEB / f).read_text(), f

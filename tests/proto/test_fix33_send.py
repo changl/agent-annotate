@@ -89,6 +89,6 @@ def test_a_write_on_its_way_holds_the_sheet_like_a_held_read():
     gate = Q[Q.index("  const sendOn = n =>"):Q.index("  function sendPanel(n) {")]
     assert "const sendOn = n => !!n && settled();" in gate and "const settled = () => allRead() && !WRITING.size;" in Q
     assert "${WRITING.size ? '<p class=\"small mut\" aria-busy=\"true\" data-swriting>Saving your note: Send waits for it…</p>' : ''}" in Q
-    assert "WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end);" in Q
+    assert "WRITING.set(p, path); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end);" in Q
     node_ok = Q.count("sendOn(")
     assert node_ok >= 4  # the sheet's redraw, typing, Discard and ⌘↵ all read the gate

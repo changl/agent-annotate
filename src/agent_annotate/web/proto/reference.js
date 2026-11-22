@@ -669,7 +669,10 @@
   function onInput(e) {
     if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
-    if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
+    if (here() && e.target.dataset.reopen) { const fk = e.target.dataset.reopen, was = S.reopen.get(fk) || '';
+      // emptying a reason the round carries is a take-back: refused, the field keeps it (r12 audit34 reference 2)
+      if (!e.target.value.trim() && was.trim() && P.going('ro:' + fk)) { e.target.value = was; return; }
+      S.reopen.set(fk, e.target.value); keepDrafts(); }
     if (here() && e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
     if (here() && e.target.id === 'rf-nt' && S.note) { const k = S.note, src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
       setR(e.target.value.trim() ? {a: k, l: src ? src.dataset.label : 'Reference', tgt: S.tgt || null, text: e.target.value, m: noteMeta(k), item: S.sel || itemOf(k)} : null); }
@@ -749,7 +752,10 @@
     },
     // what the round carried is cleared; a reopen, Copy library choice or approval made after the round check stays (r12 audit31 reference 3)
     sent: (c, was, done) => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
-      for (const [fk, why] of [...S.reopen]) if (why.trim() && done('ro:' + fk)) { S.rsent.set(fk, [t, why]); S.reopen.delete(fk); }
+      // the timeline records the reason the round delivered, as listed; the draft clears if unchanged or emptied since (r12 audit34 reference 2)
+      if (was) for (const [k, sig] of was) { const m = /^ro:(.+)$/.exec(k), s = m && /→ reopened: “([\s\S]*)”$/.exec(sig || ''); if (s) S.rsent.set(m[1], [t, s[1]]); }
+      for (const [fk, why] of [...S.reopen]) if (why.trim() && done('ro:' + fk)) { if (!was) S.rsent.set(fk, [t, why]); S.reopen.delete(fk); }
+        else if (!why.trim() && was && was.has('ro:' + fk)) S.reopen.delete(fk);
       for (const ck of [...S.cp.keys()]) if (done('cp:' + ck)) S.cp.delete(ck);
       for (const k of [...S.appr]) if (done('ap:' + k)) S.appr.delete(k); if (D) allNotes().forEach(NK().gone); SNOTES = []; keepDrafts(); redo(); },
   });

@@ -1088,19 +1088,22 @@
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
     // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n) && !openEd(n), n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) && !P.inflight(n.id) ? 'note:' + n.id : '', !NK.mine(n) && !openEd(n), n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
     const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.mine(n); };
     // a row that names its owner (every tab's note row, a Re-open) keeps it: the owner is whoever did the row's action
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
     return it;
   }
   // the keys of what this client's Send delivers now: each of his rows (a peer's never goes) and General feedback
   // every write this tab makes to the notes API (save, edit, reply, remove, move, re-open, close, decision, set aside), from
   // the frame's one request wrapper: still on its way, it is in WRITING (r12 audit30 frame 3). ROUND: a round is going; any
   // note write the round did not make itself waits for it, so it goes with the next Send (r12 audit30 frame 1)
-  const NOTEW = /^api\/comments([/?]|$)/, WRITING = new Set();
+  const NOTEW = /^api\/comments([/?]|$)/, WRITING = new Map();  // the write's promise → its path
+  // a write on this note still on its way (an Edit's Save, Post reply, Move, Close…): its row offers no Remove until it lands,
+  // then the relist shows what the store holds (r12 audit34 reference 3)
+  P.inflight = id => [...WRITING.values()].some(p => p === 'api/comments/' + encodeURIComponent(id) || p.startsWith('api/comments/' + encodeURIComponent(id) + '/'));
   let ROUND = null, CARRY = null, GOING = null;
   // a take-back (Approval taken back, Text restored, Reopen taken back, a status or pick undone) of a row the round carries
   // past its check is refused like Remove: draft and control stay as the round delivers them; after the round it is a normal change (r12 fix38)
@@ -1952,7 +1955,7 @@
     read: track,  // every new read of a feed, from the frame's data(): the one read state
     // a note write from this client, from any tab, still on its way: the round check stops on it (r12 audit29 questions 1)
     // own: a write the round makes itself, which it awaits, and whose effect its receipt and re-read cover
-    writing: (path, p, own) => { if (own || !NOTEW.test(path)) return; WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end); },
+    writing: (path, p, own) => { if (own || !NOTEW.test(path)) return; WRITING.set(p, path); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end); },
     wrote: (path, own) => { if (!own && NOTEW.test(path)) stale = true; },
     hold: path => NOTEW.test(path) ? ROUND : null,  // a note write made while a round is going waits for it
     carries: id => !!CARRY && CARRY.has(id),  // the round past its check carries it: Remove says so (r12 audit31 questions 3)

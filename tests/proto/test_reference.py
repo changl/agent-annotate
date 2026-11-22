@@ -276,7 +276,7 @@ def test_edited_copy_shows_its_wording_in_send():
 def test_sent_reopen_keeps_its_status_and_reason():
     """Audit5 finding 2: after Send the finding reads Reopened · sent, and the timeline keeps the reason."""
     s = (WEB / "reference.js").read_text()
-    assert "if (why.trim() && done('ro:' + fk)) { S.rsent.set(fk, [t, why]);" in s
+    assert "if (why.trim() && done('ro:' + fk)) { if (!was) S.rsent.set(fk, [t, why]);" in s
     assert "Reopened · sent ${esc(rs[0])}" in s and "you reopened “${esc(f.label)}” at ${esc(t)}" in s
 
 

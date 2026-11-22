@@ -7,7 +7,7 @@ from test_fix17_notes import KIT, Q, STUBS, node
 def test_reopened_row_has_no_remove_and_discard_leaves_it():
     i = Q.index("if (P.queue) P.queue({items: c => Object.entries(NK.reo(c))")
     assert "remove:" not in Q[i:Q.index("\n  // A read-only copy", i)]
-    assert "x.remove ? 'x:' + x.key : ''" in Q and "sendItems().filter(x => x[3])" in Q and "x.remove && x.remove()" in Q
+    assert "x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : ''" in Q and "sendItems().filter(x => x[3])" in Q and "x.remove && x.remove()" in Q
 
 
 def test_reopen_yields_to_the_store_after_another_send(tmp_path):

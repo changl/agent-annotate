@@ -23,7 +23,7 @@ def test_frame_owns_one_queue_and_repaints_send():
 def test_questions_lists_counts_removes_and_clears_the_queue():
     s = _js("questions")
     assert "const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);" in s  # the count is the sheet's rows: every queued item, each note once
-    assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);" in s
+    assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);" in s
     assert "try { back = await x.remove(); }" in s  # Remove takes it out of its tab, with Undo
     assert "(await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean)" in s  # Discard all too
     assert "if (ctx.queueSent) ctx.queueSent(got, listed.q);" in s  # a Send clears every tab's items
