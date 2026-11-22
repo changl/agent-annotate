@@ -302,7 +302,7 @@
     const b = e.target.closest('[data-nedbox]').querySelector('[data-nedsave]'); e.preventDefault(); e.stopPropagation(); b.click(); } }, true);
   // every re-opened note, on any tab, is one Send row listed from its stored record
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
-  if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
+  if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id, peer: false,  // his own Re-open, on anyone's note: the round takes it as his edit (r12 audit25 questions 3)
     html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : r.on || r.tab ? `On “${esc(cut(r.on || TABN[r.tab], 50))}”` : 'A note the agent addressed'),
     // a record not yet told its spot (an earlier build's) finds its note first
     // no Remove: Re-open stored open at once, so the note is a pending edit the server keeps, which today's summary lists
@@ -1030,12 +1030,14 @@
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
     const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.mine(n); };
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', !!x.peer || peer(x.note), x.note]);
+    // a row that names its owner (every tab's note row, a Re-open) keeps it: the owner is whoever did the row's action
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
     return it;
   }
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
+    if (!S.oin) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
     const ok = n && D && S.oin, rd = ok || !n ? '' : ` title="Reading ${D ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
@@ -1723,11 +1725,15 @@
   let others = null;
   const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null)))
     .then(() => { S.oin = true; relist(); }));
-  // the open Send summary lists what the count now holds, unless he is typing in it (r12 fix10 reference 2)
+  // the open Send summary lists what the count now holds, even while he types General feedback in it: the words are saved as
+  // he types, and the field gets its focus and cursor back (r12 fix10 reference 2, audit25 questions 2)
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
-    if (!S.armed || !s || (s.contains(a) && /^(TEXTAREA|INPUT)$/.test(a.tagName))) return;
-    const f = s.contains(a) && a.matches('[data-send]'); await draw(true); const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
+    if (!S.armed || !s) return;
+    const t = s.contains(a) && a.matches('[data-general]') && [a.selectionStart, a.selectionEnd];
+    const f = s.contains(a) && a.matches('[data-send]'); await draw(true);
+    const g = t && document.querySelector('.qsend [data-general]'); if (g) { g.focus(); g.setSelectionRange(...t); }
+    const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
   }
   // copyOf is the project's key; its name, as the frame shows it, is the page's meta name
   async function findCopy(c) { if (S.copyOf === undefined) S.copyOf = await c.data('frame').then(f => f && f.copyOf ? c.api.meta().then(m => m.name || f.copyOf, () => f.copyOf) : '', () => ''); }

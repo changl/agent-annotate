@@ -58,7 +58,7 @@ def test_send_counts_what_it_delivers():
     q = (WEB / "questions.js").read_text()
     assert "const sendCount = () => sendItems().filter(x => !x[4]).length + (gen().trim() ? 1 : 0);" in q
     assert "sentCount" not in q  # one count, before and after
-    assert "!!x.peer || peer(x.note), x.note]" in q
+    assert "x.peer != null ? !!x.peer : peer(x.note), x.note]" in q
     assert "another reviewer’s, not sent" in q
     for f, s in [("reference.js", "note: n.id, peer: !NK().mine(n), html:"), ("links.js", "note: n.id, peer: !P.notes.mine(n), html:"),
                  ("history.js", "note: n.id, peer: !P.notes.mine(n), html:")]:

@@ -51,6 +51,24 @@ const theirs = feed['peer-reply-on-own-note']; NK.gone(theirs); assert(theirs.re
 """)
 
 
+def test_open_sheet_reads_and_relists_whatever_opened_it():
+    """Questions 1, 2: the sheet starts its own reads on every open path, and relists once they land even while General
+    feedback has the focus, keeping the words and the cursor."""
+    q = (WEB / "questions.js").read_text()
+    panel = q[q.index("  function sendPanel(n) {"):q.index("  function sendPanel(n) {") + 400]
+    assert "if (!S.oin) readOthers(ctx);" in panel
+    rel = q[q.index("  async function relist() {"):q.index("  // copyOf is the project's key")]
+    assert "/^(TEXTAREA|INPUT)$/" not in rel and "if (!S.armed || !s) return;" in rel
+    assert "a.matches('[data-general]') && [a.selectionStart, a.selectionEnd]" in rel and "g.focus(); g.setSelectionRange(...t);" in rel
+
+
+def test_a_reopen_row_is_the_reopeners():
+    """Questions 3: his Re-open on a peer's note is his row; a row naming its owner keeps it."""
+    q = (WEB / "questions.js").read_text()
+    assert "({key: 'reo:' + id, group: 'Notes', note: id, peer: false," in q
+    assert "x.peer != null ? !!x.peer : peer(x.note), x.note]" in q
+
+
 def test_every_send_row_uses_the_row_owner():
     q = (WEB / "questions.js").read_text()
     assert "NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n), n.id]" in q and "return !!n && !NK.mine(n); };" in q
