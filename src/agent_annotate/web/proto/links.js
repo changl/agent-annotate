@@ -14,16 +14,20 @@
   const mdBlocks = t => P.media.blocks(t);  // the one Markdown reader, shared with Reference (Proto.media)
   const rowsOf = b => Array.isArray(b[1]) ? b[1] : b[2];  // a kept document's table is [tbl, rows]; a Markdown one [tbl, text, rows]
   let docK = '';  // the document being drawn, set by its view: its pictures' keys start with it
+  let CUR = null;  // the feed being drawn, for the pictures' markers
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
   // each body row of a table takes its own note (line <i>~r<n>), as in Reference; the header row notes the whole table
   const blockHtml = (b, i, esc, line, tag = '', ins = false) => { const [k, t] = b, a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
     // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here,
     // at the size last picked for it, by its key: the document and its place (Proto.media.pk)
-    const pic = (src, alt, n, a = '', place = String(i)) => { const pk = esc(docK + '~' + place), z = P.media.zoom(docK + '~' + place);
-      return P.media.fig(src, alt, n, z, ` data-lzoom="${z}" data-pk="${pk}"`, ` data-lzoom data-pk="${pk}"`, a); };
+    // a picture that takes notes shows its point markers, as Reference's (the notes kit's pins; r12 audit18 reference 3)
+    const pic = (src, alt, n, a = '', place = String(i)) => { const k = docK + '~' + place, pk = esc(k), z = P.media.zoom(k), f = P.media.fig(src, alt, n, z, ` data-lzoom="${z}" data-pk="${pk}"`, ` data-lzoom data-pk="${pk}"`, a);
+      return line && CUR ? f.replace(/<img [^>]*>/, m => `<span class="qpinwrap">${m}${P.notes.pins(notesAt(CUR, k, true), S.pin, S.note === k && !S.full && S.tgt)}</span>`) : f; };
     if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, (p, j) => pic(p[1], p[2], p[3], '', P.media.pk(`${i}~r${ri}`, j)));
-      return `<div class="l-tw" style="--c:${Math.max(1, ...R.map(r => r.length))}"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) : '').join('') : ''}`; }
+      // a row's pictures each keep their own notes, under the row's (Reference's rowPics)
+      const rowPics = ri => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => line(P.media.pk(`${i}~r${ri}`, j + 1))).join('');
+      return `<div class="l-tw" style="--c:${Math.max(1, ...R.map(r => r.length))}"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) + rowPics(ri) : '').join('') : ''}`; }
     if (k === 'img') return pic(t, b[2], b[3], a).replace(/<\/figure>$/, `${tag}</figure>`) + after;
     return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a) : `<p${a}>${x}${tag}</p>`) + after; };
   const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
@@ -90,18 +94,20 @@
     if (back) { const t = w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } }
     else if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
     w.onclick = e => click(e, w, ctx, D);
-    w.oninput = e => { if (e.target.id !== 'l-nt' || !S.note) return;
+    w.oninput = e => { if (e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
+      if (e.target.id !== 'l-nt' || !S.note) return;
       const was = !!typed(ctx);
       ctx.prefs.set('draft:lnote', {a: S.note, tgt: S.tgt, text: e.target.value, ...place(w, D, S.note, e.target)});
       if (was !== !!typed(ctx)) ctx.refreshTop(); };
     // ⌘↵ in the note saves it, as the mock and the shortcut help say; it never reaches the frame's Send (audit8 frame 3)
     w.onkeydown = e => { if (e.target.id === 'l-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault(); e.stopPropagation(); const b = w.querySelector('[data-nsave]'); if (b) b.click(); }
-      else if (e.key === 'Escape' && S.move) { S.move = ''; draw(w, ctx, D); } };
+      else if (e.key === 'Escape' && (S.move || S.edit)) { S.move = S.edit = ''; S.edt = null; draw(w, ctx, D); } };
   }
 
   function draw(w, ctx, D) {
     const {esc, icon} = ctx;
+    CUR = D;
     const copyBtn = (key, name) => `<button class="ib" data-copylink="${esc(key)}" data-name="${esc(name)}" title="Copy link to ${esc(name)}" aria-label="Copy link to ${esc(name)}">${icon(S.copied === key ? 'copied' : 'link')}</button>`;
     const pageRow = (name, sub, key, open) => `<div class="l-line">${icon('doc')}<span class="l-grow">${open}<span class="small mut l-sub">${sub}</span></span>${copyBtn(key, name)}</div>`;
     // each page says why it is its own page, so he can choose between them (#81); counts follow
@@ -140,25 +146,35 @@
     // View resolution on this tab: its destination line or bar, outlined by the kit and scrolled to (r12 audit16 frame 2)
     const m = S.res && /^(.*?)~(\d+(?:~r\d+)?)$/.exec(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
     if (rs) { P.notes.lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
+    if (S.full) P.media.redrawView();  // the open picture viewer shows the same notes
   }
   // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed
   const badWhen = D => { const [d, t] = String(D.current_t || '').split(' '); return d ? `${dm(d)}${t ? ', ' + t : ''}` : 'today'; };
   const badTitle = D => `${D.name}, the publish of ${badWhen(D).split(',')[0]}`;
 
   /* ---------- Documents (#16): kept on this page, then every file in the project's folder ---------- */
-  const notesAt = (D, k) => [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))].filter(n => n.a === k);
-  const onWords = (esc, t) => t && t.quote ? ` on “${esc(t.quote.length > 60 ? t.quote.slice(0, 58).trimEnd() + '…' : t.quote)}”` : '';
-  function noteBox(ctx, D, k) {
-    const {esc, icon} = ctx, ns = notesAt(D, k), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '';
-    if (!ns.length && S.note !== k) return '';
+  // `old`: a picture's notes also take the point notes saved on its row before pictures had keys (Proto.media.was)
+  const notesAt = (D, k, old) => { const o = old && P.media.was(k);
+    return [...D.notes, ...mine.filter(n => !D.notes.some(x => x.id === n.id))].filter(n => n.a === k || (o && n.a === o && n.target && n.target.offset)); };
+  const onWords = (esc, t, no) => t && t.quote ? ` on “${esc(t.quote.length > 60 ? t.quote.slice(0, 58).trimEnd() + '…' : t.quote)}”` : t && t.offset ? ` at spot ${no || '+'} on the picture` : '';
+  const viewing = k => !!S.full && S.full.k === k;  // this picture is open Full size: its viewer holds its composer
+  // `dlg`: drawn in the picture viewer
+  function noteBox(ctx, D, k, dlg) {
+    const {esc, icon} = ctx, ns = notesAt(D, k, dlg), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '', box = S.note === k && viewing(k) === !!dlg;
+    if (!ns.length && !box) return '';
     // a sent note carries the lifecycle Questions and Reference use (P.notes: Re-open, View resolution, Move, Close); a closed one folds (r12 fix17)
     const K = P.notes, cls = n => `l-nt${S.hl === n.id ? ' l-hl' : ''}${S.move === n.id ? ' moving' : ''}`;
+    const spotNo = n => ns.filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;
     // its marker lists every note on the spot, with Go to it and + Comment (the kit's spot list, as Questions and Reference; r12 audit16 frame 5)
-    const pin = ns.length ? `<button class="qmk qmkb${ns.every(n => n.sent || n.closed) ? ' sent' : ''}" data-spot="${esc(k)}" aria-expanded="${S.spot === k}" title="${pl(ns.length, 'note', 'notes')} here: list them" aria-label="${pl(ns.length, 'note', 'notes')} here: list them">${icon('note')}${ns.length}</button>` : '';
-    const list = S.spot === k && ns.length ? K.spot(ctx, ns.map((n, i) => [n, i + 1]), 'on this spot', `data-spotadd="${esc(k)}"`) : '';
+    // its colour: the kit's one rule, purple while one goes with Send (catalog 24)
+    const pin = ns.length ? `<button class="qmk qmkb${K.sent(ns) ? ' sent' : ''}" data-spot="${esc(k)}" aria-expanded="${S.spot === k && !S.pin}" title="${pl(ns.length, 'note', 'notes')} here: list them" aria-label="${pl(ns.length, 'note', 'notes')} here: list them">${icon('note')}${ns.length}</button>` : '';
+    const p = S.pin && ns.find(n => n.id === S.pin), sl = p ? K.near(ns, p) : ns;  // a point marker lists the notes at its point
+    const list = S.spot === k && viewing(k) === !!dlg && ns.length ? K.spot(ctx, sl.map(n => [n, spotNo(n) || ns.indexOf(n) + 1]), p ? 'at this point' : 'on this spot', `data-spotadd="${esc(k)}"${p ? ` data-spotpin="${esc(p.id)}"` : ''}`) : '';
+    // a saved, unsent one: the kit's Edit in place and Remove (r12 audit18 reference 4)
     return `<div class="l-notes">${pin}${list}${ns.map(n => n.closed ? `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('archive')} Note closed <span class="mut">${esc(n.text)}</span> ${K.closedActs(n)}</div>`
-      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target)}</span> ${esc(n.text)}${mine.includes(n) && !n.sent ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}${n.sent ? ` ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span>` : ''}</div>`).join('')}
-      ${S.note === k ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
+      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? `${esc(n.text)} ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span>`
+        : S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n)}</span>`}</div>`).join('')}
+      ${box ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
   }
   function chartHtml(ctx, D, d) {
@@ -215,8 +231,24 @@
     if (zb) { e.preventDefault(); const im = zb.closest('figure').querySelector('img'), k = zb.dataset.pk, z = +(zb.dataset.zoom || P.media.zoom(k));
       let from = zb;
       if (S.move) { const all = [...w.querySelectorAll('.l-doc [data-lzoom]')], i = all.indexOf(zb); S.move = ''; draw(w, ctx, D); from = w.querySelectorAll('.l-doc [data-lzoom]')[i] || null; }  // the viewer ends a Move, as in Reference (r12 audit17 reference 4)
-      return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k); }
+      // the viewer takes and shows this picture's point notes through the notes kit, as Reference's does (r12 audit18 reference 3)
+      // an earlier revision reads as it was and takes no notes, as inline
+      if (!zb.closest('figure').closest('[data-line]')) return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k);
+      if (S.note === k) { S.note = ''; S.tgt = null; }
+      S.full = {k, name: (zb.closest('[data-docname]') || {dataset: {}}).dataset.docname || ''}; S.spot = S.pin = '';
+      return P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k, {
+        pins: () => P.notes.pins(notesAt(D, k, true), S.pin, viewing(k) && S.note === k && S.tgt),
+        list: () => noteBox(ctx, D, k, true),
+        tap: tgt => { S.tgt = tgt; S.note = k; S.spot = S.pin = ''; draw(w, ctx, D); },
+        click: ev => click(ev, w, ctx, D), input: ev => w.oninput(ev),
+        close: () => { S.full = null; if (S.note === k) { S.note = ''; S.tgt = null; } S.spot = S.pin = ''; draw(w, ctx, D); }}); }
     const b = e.target.closest('button');
+    // a tap on a picture inline: a point note on that picture, by its own key, as in Reference
+    const im = !b && e.target.closest('.l-doc figure img'), pk = im && ((im.closest('figure').querySelector('[data-pk]') || {}).dataset || {}).pk;
+    if (pk && (im.closest('[data-line]'))) { const tgt = P.notes.at(e, im);
+      if (S.move) return moveTo(w, ctx, D, pk, im, tgt);
+      S.tgt = tgt; S.spot = S.pin = ''; S.note = pk; draw(w, ctx, D);
+      const t = w.querySelector('#l-nt'); if (t) t.focus(); return; }
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target
       const sel = getSelection(), q = sel && !sel.isCollapsed ? String(sel).trim() : '';
@@ -261,16 +293,24 @@
     } else if (b.dataset.nmove) { S.move = S.move === b.dataset.nmove ? '' : b.dataset.nmove; draw(w, ctx, D); if (S.move) ctx.toast('Click the bar or line for this note · Esc cancels'); }
     else if (b.dataset.bnote && S.move) moveTo(w, ctx, D, b.dataset.bnote, b, null);  // Move: the next bar or Write a note it is pressed on takes the note
     // a marker's list: the kit's spot list, as Questions and Reference (r12 audit16 frame 5)
-    else if (b.dataset.spot !== undefined) { S.spot = S.spot === b.dataset.spot ? '' : b.dataset.spot; draw(w, ctx, D); }
-    else if (b.hasAttribute('data-spotx')) { S.spot = ''; draw(w, ctx, D); }
-    else if (b.dataset.spotadd) { S.spot = ''; S.tgt = null; S.note = b.dataset.spotadd; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
-    else if (b.dataset.spotgo) { S.spot = ''; S.hl = b.dataset.spotgo; S.scroll = true; draw(w, ctx, D); }
+    else if (b.dataset.spot !== undefined) { S.pin = ''; S.spot = S.spot === b.dataset.spot ? '' : b.dataset.spot; draw(w, ctx, D); }
+    else if (b.dataset.pin) { const n = D.notes.concat(mine).find(x => x.id === b.dataset.pin); if (!n) return; const on = S.pin === n.id;
+      S.pin = on ? '' : n.id; S.spot = on ? '' : S.full ? S.full.k : (b.closest('figure').querySelector('[data-pk]') || {dataset: {}}).dataset.pk || n.a; draw(w, ctx, D); }
+    else if (b.hasAttribute('data-spotx')) { S.spot = S.pin = ''; draw(w, ctx, D); }
+    else if (b.dataset.spotadd) { const p = b.dataset.spotpin && D.notes.concat(mine).find(x => x.id === b.dataset.spotpin);
+      S.spot = S.pin = ''; S.tgt = p ? {...p.target} : null; S.note = b.dataset.spotadd; draw(w, ctx, D); const t = document.getElementById('l-nt'); if (t) t.focus(); }
+    else if (b.dataset.spotgo) { S.spot = S.pin = ''; S.hl = b.dataset.spotgo; S.scroll = true; if (S.full) P.media.closeView(); else draw(w, ctx, D); }
+    // a saved, unsent note: the kit's Edit in place and Remove (r12 audit18 reference 4)
+    else if (b.dataset.nedit) { S.edit = b.dataset.nedit; S.edt = null; draw(w, ctx, D); const t = document.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
+    else if (b.hasAttribute('data-nedcancel')) { S.edit = ''; S.edt = null; draw(w, ctx, D); }
+    else if (b.dataset.nedsave) { const n = D.notes.concat(mine).find(x => x.id === b.dataset.nedsave), t = b.closest('[data-nedbox]').querySelector('textarea'); if (!n) return;
+      P.notes.fix(ctx, n, t.value, ctx.api, x => { D.notes.concat(mine, (LD || {}).notes || []).forEach(y => { if (y.id === n.id) y.text = x; }); S.edit = ''; S.edt = null; S.hl = n.id; draw(w, ctx, D); ctx.refreshTop(); }); }
     // a bar with notes lists them first; + Comment writes another (a blank editor only on a bar with none)
     else if (b.dataset.bnote && b.classList.contains('l-bar') && notesAt(D, b.dataset.bnote).length && S.note !== b.dataset.bnote) { S.note = ''; S.spot = S.spot === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); }
     else if (b.dataset.bnote) { S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
     else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
     else if (b.dataset.nsave) {
-      const k = b.dataset.nsave, text = (w.querySelector('#l-nt').value || '').trim(), target = S.tgt || undefined;
+      const k = b.dataset.nsave, text = (document.getElementById('l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
       try {
         const {l, line} = place(w, D, k, b);
@@ -294,11 +334,13 @@
     const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
     const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
     const m = /^(.*?)~(\d+(?:~r\d+)?)$/.exec(k), le =m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
-    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : 'Pages & links', line: le ? (le.cells ? [...le.cells].map(c => c.textContent).join(' ') : le.textContent).trim().replace(/\s+/g, ' ') : ''};
+    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : S.full && S.full.name ? S.full.name : 'Pages & links', line: le ? (le.cells ? [...le.cells].map(c => c.textContent).join(' ') : le.textContent).trim().replace(/\s+/g, ' ') : ''};
   }
-  async function undoNote(id, w, ctx, D) {
-    try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); draw(w, ctx, D); ctx.refreshChips(); ctx.toast('Note taken back'); }
-    catch (e) { ctx.toast(`Could not take it back: ${e.message}`); }
+  // Remove, as Send's Remove: the stored record stays until Undo is gone, so Undo puts back the very note
+  function undoNote(id, w, ctx, D) {
+    const n = D.notes.concat(mine).find(x => x.id === id); if (!n) return;
+    if (S.edit === id) S.edit = '';
+    ctx.toast('Note removed', {undo: takeNote(ctx, n)}); ctx.refreshTop();
   }
 
   /* ---------- People: two roles; edits change only this copy, kept in this browser ---------- */
@@ -385,6 +427,15 @@
     const f = m && ((LD.docs || {}).files || []).find(f => f.md && docKey(f) === m[1]);
     return f ? blockText(mdBlocks(f.md)[+m[2]], +m[3]) : '';
   }
+  // a saved note taken back, by Send's Remove or its own: hidden now, its DELETE goes when Undo is gone, so Undo keeps the very stored note (r12 fix15)
+  function takeNote(c, n) {
+    const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = LD && LD.notes, ws = c.prefs.get('draft:lnotes', []);
+    mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', ws.filter(x => x.id !== n.id)); redo();
+    return () => { keep(); mine = P.putBack(mine, wm, n.id);
+      if (LD) { LD.notes = P.putBack(LD.notes || [], wd || [], n.id); if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n); }  // a feed read while it was hidden lacks it
+      const l = P.putBack(c.prefs.get('draft:lnotes', []), ws, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line});
+      c.prefs.set('draft:lnotes', l); redo(); };
+  }
   if (P.queue) P.queue({
     items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
       // the feed the tab or its chip already read names it at once; never the internal id (audit7 reference 5)
@@ -400,14 +451,7 @@
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
-      // hidden now, its DELETE goes when Undo is gone, so Undo keeps the very stored note (r12 fix15)
-      remove: () => {
-        const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = LD && LD.notes, ws = c.prefs.get('draft:lnotes', []);
-        mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', ws.filter(x => x.id !== n.id)); redo();
-        return () => { keep(); mine = P.putBack(mine, wm, n.id);
-          if (LD) { LD.notes = P.putBack(LD.notes || [], wd || [], n.id); if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n); }  // a feed read while it was hidden lacks it
-          const l = P.putBack(c.prefs.get('draft:lnotes', []), ws, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line});
-          c.prefs.set('draft:lnotes', l); redo(); }; }}))],
+      remove: () => takeNote(c, n)}))],
     sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }

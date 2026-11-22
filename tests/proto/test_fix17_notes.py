@@ -79,7 +79,7 @@ def test_reference_uses_the_shared_kit_and_lists_its_reopened_notes():
     for attr in ("data-spot=", "data-pin=", "spotadd", "spotgo", "nclose", "nopen", "nreopen", "nres", "nmove"):
         assert attr in REF, attr
     assert "key: 'reo:'" not in REF and "P.noteHooks" in REF
-    assert "<button class=\"rf-pin\" data-spot=" in REF  # the marker is a control, not a span
+    assert "<button class=\"rf-pin${" in REF and "data-spot=" in REF  # the marker is a control, not a span
     # a plan note's resolution opens its plan revision at that line, outlined by the shared lit()
     assert "S.res = n.ra" in REF and "lit(rs)" in REF
 
@@ -120,7 +120,7 @@ def test_carried_note_undo_leaves_no_row():
 
 def test_picture_pin_lists_its_notes():
     """Questions 6: a numbered pin is a button; in the viewer it lists the notes at its point with + Comment at that point."""
-    assert '<button class="qpin" data-pin=' in Q
+    assert '<button class="qpin${NK.sent([n]) ? \' sent\' : \'\'}" data-pin=' in Q
     assert "if (ds.pin) {" in Q and "data-spotpin" in Q and "NK.near(" in Q
     zv = grab(Q, "  function zoomView() {", "\n  }")
     assert "S.spot && S.pin ? spotBox(S.spot)" in zv and "pinB(n, no, n.target.offset)" in zv

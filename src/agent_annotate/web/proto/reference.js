@@ -77,19 +77,20 @@
     return {category: 'plans', doc: 'plan:' + p.id, version: p.revs.some(r => r[0] === v) ? v : p.current};
   }
   // a marker is a control: it lists the notes on its line or, on a picture, at its point, with + Comment (catalog 25, r12 audit15 reference 2)
-  const pin = k => { const n = notesAt(k).length; return n ? `<button class="rf-pin" data-spot="${esc(k)}" aria-expanded="${S.spot === k && !S.pin}" title="${pl(n, 'note', 'notes')} here: list them" aria-label="${pl(n, 'note', 'notes')} here: list them">${ico('note')}${n}</button>` : ''; };
+  const pin = k => { const ns = notesAt(k), n = ns.length; return n ? `<button class="rf-pin${NK().sent(ns) ? ' sent' : ''}" data-spot="${esc(k)}" aria-expanded="${S.spot === k && !S.pin}" title="${pl(n, 'note', 'notes')} here: list them" aria-label="${pl(n, 'note', 'notes')} here: list them">${ico('note')}${n}</button>` : ''; };
   const NK = () => P.notes;
   const cutq = s => s.length > 60 ? s.slice(0, 58).trimEnd() + '…' : s;
   // what a note is on: selected words, a spot on a picture (numbered as its pin), or the whole line
   const onWhat = (t, no) => !t ? '' : t.quote ? ` on “${esc(cutq(t.quote))}”` : t.offset ? ` at spot ${no || '+'} on the picture` : '';
   const spotNo = (k, n) => notesAt(k, true).filter(x => x.target && x.target.offset && !x.closed).indexOf(n) + 1;  // a closed note leaves the picture
-  const spots = k => notesAt(k, true).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
+  const spots = k => notesAt(k, true).filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="pinm${NK().sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${S.pin === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
     + (S.note === k && S.tgt && S.tgt.offset ? `<span class="pinm new" style="left:${S.tgt.offset.dx * 100}%;top:${S.tgt.offset.dy * 100}%">+</span>` : '');
   // one note: his unsent one with Undo; a sent one with the shared lifecycle (Re-open, View resolution, Move, Close); a closed one folded with Re-open (r12 audit15 reference 3)
   function noteLine(k, n) {
     const K = NK(), hd = `${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}`, cls = `rf-nt${S.hl === n.id ? ' rf-hl' : ''}`;
     if (n.closed) return `<div class="${cls} rf-closed" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('archive')} Note closed</span> <span class="mut">${esc(n.text)}</span><span class="nacts">${K.closedActs(n)}</span></div>`;
-    if (!n.sent) return `<div class="${cls}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${esc(n.text)}${mine.some(x => x.id === n.id) ? ` <button class="lk small" data-nundo="${esc(n.id)}">Undo</button>` : ''}</div>`;
+    // a saved, unsent one: the kit's Edit in place and Remove, from any visit (r12 audit18 reference 4)
+    if (!n.sent) return `<div class="${cls}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n)}</span>`}</div>`;
     return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${esc(n.text)} ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span></div>`;
   }
   // the list a marker opens: on its line, or at a picture pin's point (S.pin)
@@ -583,6 +584,10 @@
       return;
     }
     if (d.nundo) return undoNote(d.nundo);
+    if (d.nedit) { S.edit = d.nedit; S.edt = null; draw(); const t = el.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
+    if (d.nedcancel !== undefined) { S.edit = ''; S.edt = null; return draw(); }
+    if (d.nedsave) { const n = nt(d.nedsave), t = el.querySelector('[data-nedtext]'); if (!n || !t) return;
+      return NK().fix(ctx, n, t.value, ctx.api, w => { allNotes().concat(D.notes, mine).forEach(x => { if (x.id === n.id) x.text = w; }); S.edit = ''; S.edt = null; S.hl = n.id; draw(); ctx.refreshTop(); }); }
     if (d.trn !== undefined) { S.trn = d.trn; draw(); const i = document.getElementById('rf-trn'); if (i) { i.focus(); i.select(); } return; }
     if (d.trnsave) return renameTopic(d.trnsave, (document.getElementById('rf-trn').value || '').trim());
     if (d.tmerge) { S.tmerge = S.tmerge === d.tmerge ? '' : d.tmerge; return draw(); }
@@ -593,9 +598,11 @@
     return NK().move(ctx, id, {anchor_id: n.a, anchor_label: n.l, target: n.target || null}, {anchor_id: a, anchor_label: l, target: target || null}, ctx.api,
       p => { if (p) Object.assign(n, {a: p.anchor_id, l: p.anchor_label, target: p.target}); S.hl = p ? id : ''; draw(); });
   }
-  async function undoNote(id) {
-    try { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); draw(); ctx.toast('Note taken back'); }
-    catch (e) { fail(e); }
+  // Remove, as Send's Remove: the record stays in the store until Undo is gone, so Undo puts back the very note
+  function undoNote(id) {
+    const keep = ctx.take(id, 'api/comments/' + encodeURIComponent(id)), wm = mine, wd = D.notes;
+    mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); if (S.edit === id) S.edit = ''; draw(); ctx.refreshTop();
+    ctx.toast('Note removed', {undo: () => { keep(); mine = P.putBack(mine, wm, id); D.notes = P.putBack(D.notes, wd, id); draw(); ctx.refreshTop(); }});
   }
   // Unsorted is not a stored topic: renaming or combining it files each of its plans under the named topic, one move each
   async function unsortedTo(topic, isNew) {
@@ -645,13 +652,14 @@
     if (here() && e.target.id === 'rf-q') { S.q = e.target.value; draw(); }
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
     if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
+    if (here() && e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
   }  // closing the viewer cancels Move too, as its prompt says (r12 audit17 reference 4)
   function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
     if (!here() || S.full) return;
     if (e.target.id === 'rf-trn' && e.key === 'Enter') renameTopic(S.trn, e.target.value.trim());
-    if (e.key === 'Escape' && (S.trn || S.tmerge || S.note || S.move || S.spot)) { S.trn = S.tmerge = S.note = S.move = S.spot = S.pin = ''; draw(); }
+    if (e.key === 'Escape' && (S.trn || S.tmerge || S.note || S.move || S.spot || S.edit)) { S.trn = S.tmerge = S.note = S.move = S.spot = S.pin = S.edit = ''; S.edt = null; draw(); }
     if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
   }
 

@@ -33,6 +33,7 @@
 .h-chart>svg{flex:1;min-width:260px;max-width:820px;max-height:64px;height:auto;display:block}
 .h-cpt{fill:var(--color-primary);cursor:pointer}
 .h-cpt:hover,.h-cpt:focus,.h-cpt.on{fill:#d62850;outline:none}
+.h-cpt.on.sent:not(:hover):not(:focus){fill:var(--faint)}  /* the notes kit's rule: a point whose notes were all sent is muted (catalog 24) */
 .h-cax{font-size:10px;fill:currentColor;opacity:.6}
 /* as in the mock: a note sits beside the strip at desk widths (the mock's notebox, 80ch), under it on a phone */
 .h-cnotes{flex:0 1 600px;min-width:280px}
@@ -76,4 +77,6 @@
   .h-cols{grid-template-columns:minmax(0,1fr)}
   .h-chart>svg{flex:1 1 100%;min-width:0;width:100%}
   .h-cnotes{flex:1 1 100%;min-width:0}
+  /* as the mock: a waiting question keeps the line's width, its version facts under it (r12 audit18 running 2) */
+  .h-wnl li .small{flex:1 1 100%;white-space:normal}
 }

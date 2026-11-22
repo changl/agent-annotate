@@ -294,7 +294,7 @@
     const n = m => m.items || 0, mx = Math.max(1, ...vs.map(([, m]) => n(m))), X = i => 34 + i * 20, Y = k => 50 - k / mx * 42;
     // a marked point is a marker: it lists its notes, with Go to it and + Comment (the notes kit's spot list, r12 audit16 frame 6)
     const pts = vs.map(([v, m], i) => { const k = cnotes(v).length, on = S.cn === v || k > 0, t = `Version ${vn(v)}: ${pl(n(m), 'question', 'questions')}, ${m.open || 0} still open`;
-      return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}" tabindex="0" role="button" aria-expanded="${S.cspot === v}" aria-label="${esc(t)}. ${k ? `${pl(k, 'note', 'notes')}: list them` : 'Write a note on it'}"><title>${esc(t)}</title></circle>`; }).join('');
+      return `<circle data-cpt="${esc(v)}" cx="${X(i)}" cy="${Y(n(m)).toFixed(1)}" r="${on ? 5 : 3.5}" class="h-cpt${on ? ' on' : ''}${S.cn !== v && P.notes.sent(cnotes(v)) ? ' sent' : ''}" tabindex="0" role="button" aria-expanded="${S.cspot === v}" aria-label="${esc(t)}. ${k ? `${pl(k, 'note', 'notes')}: list them` : 'Write a note on it'}"><title>${esc(t)}</title></circle>`; }).join('');
     const order = allC();
     const notes = vs.flatMap(([v]) => [...(S.cspot === v && cnotes(v).length ? [P.notes.spot(ctx, cnotes(v).map(x => [x, order.indexOf(x) + 1]), `on version ${esc(vn(v))}`, `data-spotadd="${esc(v)}"`)] : []),
       ...cnotes(v).map(x => cbox(ctx, x, order.indexOf(x) + 1, v))]).join('');

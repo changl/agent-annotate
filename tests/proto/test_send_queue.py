@@ -43,7 +43,7 @@ def test_each_tab_queues_its_next_send_items():
     assert "Finding “${c.esc(name('ro:' + fk, f.label, 'a finding'))}” → <b>reopened</b>" in ref and "if (!why.trim()) continue;" in ref
     assert "group: 'Notes', note: n.id" in ref and "for (const [ck, s] of S.cp)" in ref
     # running 4: notes on kept documents
-    assert "group: 'Notes', note: n.id" in links and "mine.includes(n) && !n.sent" in links
+    assert "group: 'Notes', note: n.id" in links and "K.draftActs(n)" in links
 
 
 def test_general_feedback_in_the_sheet_updates_its_count():

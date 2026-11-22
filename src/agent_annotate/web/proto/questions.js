@@ -139,12 +139,36 @@
     lit: e => { e.style.cssText += ';outline:3px solid #7c3aed;outline-offset:4px;border-radius:4px;background:color-mix(in oklab,#7c3aed 16%,transparent)'; e.setAttribute('data-resolution', ''); },
     // the notes at a picture pin: on the same picture (by `pic`, the key its pin is drawn under), within a few percent of its point
     near: (ns, p, pic = n => n.target.image || '') => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && pic(n) === pic(p) && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
+    // one colour rule for every marker, line or picture: purple while a note on it goes with Send, muted once all are sent (catalog 24)
+    sent: ns => ns.length > 0 && ns.every(n => n.sent || n.closed),
+    // a picture's point markers, numbered, each listing the notes at its point; `tgt` the point a new note is being written at
+    pins: (ns, open, tgt) => ns.filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="qpin pinm${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${open === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
+      + (tgt && tgt.offset ? `<span class="qpin pinm new" style="left:${tgt.offset.dx * 100}%;top:${tgt.offset.dy * 100}%">+</span>` : ''),
+    // where a tap fell on a picture, as a point note's target
+    at: (e, im) => { const r = im.getBoundingClientRect(); return {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; },
+    // a saved, unsent note: Edit opens its words in place, Remove takes it back, as today's release (r12 audit18 reference 4)
+    draftActs: n => ibw('edit', 'Edit', 'Edit this note', `data-nedit="${esc(n.id)}"`) + ibw('undo', 'Remove', 'Undo: remove this note', `data-nundo="${esc(n.id)}"`),
+    editBox: n => `<div class="nkedit" data-nedbox="${esc(n.id)}"><textarea data-nedtext rows="3" aria-label="Edit your note">${esc(n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nedsave="${esc(n.id)}">Save</button><button class="lk small" data-nedcancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`,
+    // Save on an edit: today's PUT of its words, so the note keeps its id, number and time and Send lists the new words; with Undo.
+    // apply(t) puts the words on the tab's copies and redraws; false when nothing was saved
+    async fix(c, n, text, api, apply) {
+      const was = n.text, t = String(text || '').trim();
+      if (!t) { c.toast('Write something first, or Remove the note'); return false; }
+      if (t === was) { await apply(was); return true; }
+      const put = async w => { await api(`api/comments/${encodeURIComponent(n.id)}`, {text: w}, 'PUT'); await apply(w); };
+      try { await put(t); } catch (e) { c.toast('Not changed: ' + e.message); return false; }
+      c.toast('Note changed · goes with Send', {undo: () => put(was)});
+      return true;
+    },
   };
   NK.slot(S, 'questions');
   // Escape and any navigation (another tab, or another place in this one) end a Move on every tab; the router's own
   // rewrites use replaceState, which fires no hashchange
   addEventListener('keydown', e => { if (e.key === 'Escape') NK.endMove(); }, true);
   addEventListener('hashchange', () => { NK.endMove(false); });
+  // ⌘↵ in an open edit saves it, on any tab
+  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && e.target.matches && e.target.matches('[data-nedtext]')) {
+    const b = e.target.closest('[data-nedbox]').querySelector('[data-nedsave]'); e.preventDefault(); e.stopPropagation(); b.click(); } }, true);
   // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
@@ -488,7 +512,7 @@
     wrap.insertAdjacentHTML('beforeend', pinB(n, no, off));
   }
   // a numbered pin is a control: it lists the notes at its point, with + Comment for another (catalog 25)
-  const pinB = (n, no, off) => `<button class="qpin" data-pin="${esc(n.id)}" style="left:${off.dx * 100}%;top:${off.dy * 100}%" title="The notes at this point" aria-label="Note ${no}: the notes at this point" aria-expanded="${S.pin === n.id}">${no}</button>`;
+  const pinB = (n, no, off) => `<button class="qpin${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${off.dx * 100}%;top:${off.dy * 100}%" title="The notes at this point" aria-label="Note ${no}: the notes at this point" aria-expanded="${S.pin === n.id}">${no}</button>`;
   function markQuote(el, quote) {
     const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n; (n = w.nextNode());) {
@@ -680,22 +704,32 @@
     setZoom: (k, z) => { const p = P.ctx && P.ctx.prefs; if (p && k) p.set('ref-zoom', {...p.get('ref-zoom', {}), [k]: z}); },
     // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width;
     // with its key `k`, the size picked is remembered for that picture and shows pressed on its caption line (r12 audit17 reference 6)
-    view(src, cap, z, from, k) {
-      NK.endMove();  // opening or closing a picture viewer ends a Move, as on every tab (r12 audit18 frame 1, 2)
+    // `nk` (optional): the reader's picture notes, through the notes kit, as Reference's viewer takes them (r12 audit18 reference 3):
+    // pins() its markers, list() its notes and composer, tap(target) a tap on the picture, click(e) any other button, input(e), close()
+    view(src, cap, z, from, k, nk) {
       let v = document.getElementById('p-mview');
+      // opening or closing a picture viewer ends a Move, as on every tab (r12 audit18 frame 1, 2); a redraw of the open one keeps a Move begun in it
+      if (!v) NK.endMove();
       if (!v) {
         v = document.body.appendChild(Object.assign(document.createElement('div'), {id: 'p-mview', className: 'mview'}));
         Object.entries({role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full-size picture'}).forEach(([k, x]) => v.setAttribute(k, x));
-        v.onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.mz) M.view(M._v.src, M._v.cap, +b.dataset.mz, M._v.from, M._v.k); else if (b && b.hasAttribute('data-mclose')) M.closeView(); };
+        v.onclick = e => { const b = e.target.closest('button'), x = M._v, im = !b && e.target.closest('.pic img');
+          if (b && b.dataset.mz) M.view(x.src, x.cap, +b.dataset.mz, x.from, x.k, x.nk); else if (b && b.hasAttribute('data-mclose')) M.closeView();
+          else if (x && x.nk && im) x.nk.tap(NK.at(e, im)); else if (x && x.nk && b) x.nk.click(e); };
+        v.oninput = e => { const x = M._v; if (x && x.nk && x.nk.input) x.nk.input(e); };
         if (!M._esc) document.addEventListener('keydown', M._esc = e => { if (e.key === 'Escape' && document.getElementById('p-mview')) { e.preventDefault(); e.stopPropagation(); M.closeView(); } }, true);
       }
-      M._v = {src, cap, from: from || (M._v && M._v.from), k};
+      M._v = {src, cap, z, from: from || (M._v && M._v.from), k, nk};
       if (k) { M.setZoom(k, z); document.querySelectorAll(`button[data-zoom][data-pk="${CSS.escape(k)}"]`).forEach(x => x.setAttribute('aria-pressed', String(+x.dataset.zoom === z))); }
-      v.innerHTML = `<div class="zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="qzm" role="group" aria-label="Size">${[25, 50, 75, 100].map(x => `<button data-mz="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-mclose>Close</button></div>
-        <div class="pic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || 'Picture')}"></div>`;
-      v.querySelector('[data-mclose]').focus();
+      const top = v.scrollTop;
+      v.innerHTML = `<div class="zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="qzm" role="group" aria-label="Size">${[25, 50, 75, 100].map(x => `<button data-mz="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width${nk ? ' · tap a spot to write a note' : ''} · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-mclose>Close</button></div>
+        <div class="pic${nk ? ' qpinwrap' : ''}" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || 'Picture')}">${nk ? nk.pins() : ''}</div>${nk ? `<div class="zn">${nk.list()}</div>` : ''}`;
+      v.scrollTop = top;
+      const t = v.querySelector('textarea'); (t || v.querySelector('[data-mclose]')).focus({preventScroll: !!t});
     },
-    closeView() { const v = document.getElementById('p-mview'); if (v) v.remove(); NK.endMove(); const f = M._v && M._v.from; M._v = null; if (f && f.isConnected) f.focus(); },
+    // the reader redrew its notes: the open viewer follows
+    redrawView() { const x = M._v; if (x && x.nk && document.getElementById('p-mview')) M.view(x.src, x.cap, x.z, x.from, x.k, x.nk); },
+    closeView() { const v = document.getElementById('p-mview'); if (v) v.remove(); NK.endMove(); const x = M._v, f = x && x.from; M._v = null; if (x && x.nk && x.nk.close) x.nk.close(); if (f && f.isConnected) f.focus(); },
     // a code Copy clicked: the command as written, then "Copied" for 2 seconds
     async onCopy(btn) {
       const p = btn.closest('pre').cloneNode(true); p.querySelectorAll('.qcodecopy').forEach(b => b.remove());

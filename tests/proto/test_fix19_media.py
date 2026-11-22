@@ -43,7 +43,7 @@ assert.match(t, /data-zoom="75" data-lzoom data-pk="doc:Audit\\/Sample.md~0~r1~p
 """)
     # Pages & links opens Full size at the picture's remembered size, and its viewer remembers the size picked there
     assert "z = +(zb.dataset.zoom || P.media.zoom(k))" in LNK and "P.media.view(im.getAttribute('src'), im.dataset.zcap, z, from, k)" in LNK
-    assert "M.view(M._v.src, M._v.cap, +b.dataset.mz, M._v.from, M._v.k)" in MEDIA and "if (k) { M.setZoom(k, z);" in MEDIA
+    assert "M.view(x.src, x.cap, +b.dataset.mz, x.from, x.k, x.nk)" in MEDIA and "if (k) { M.setZoom(k, z);" in MEDIA
 
 
 def test_reference_finds_the_picture_by_its_key_not_its_file():

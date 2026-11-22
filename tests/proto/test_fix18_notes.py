@@ -74,7 +74,7 @@ def test_links_lines_move_list_and_outline_their_resolution():
     """Frame 2, 3, 5: View resolution outlines the destination line; Move then a line moves the note; a spot lists its notes."""
     assert "if (S.move) return moveTo(w, ctx, D, k, ln, tgt)" in L and "function moveTo(" in L
     assert "P.notes.lit(rs)" in L and "S.resGo = true" in L
-    assert "K.spot(ctx, ns.map((n, i) => [n, i + 1])" in L and "b.dataset.spotadd" in L and "b.dataset.spotgo" in L
+    assert "K.spot(ctx, sl.map(n => [n, spotNo(n) || ns.indexOf(n) + 1])" in L and "b.dataset.spotadd" in L and "b.dataset.spotgo" in L
 
 
 def test_history_chart_point_lists_notes_with_the_lifecycle():
