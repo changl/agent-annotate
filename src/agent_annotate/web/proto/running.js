@@ -124,6 +124,9 @@
 
   /* ------------------------------------------------------------ the task panel: review, status and comment */
   const PRI = ['most urgent', 'urgent', 'normal', 'low', 'lowest'];
+  // a task's starting status: what the last round delivered for it, else the board's. A change, a change back included, is measured from it
+  // shortcut: the copy's board never takes the sent status, so a delivered one is kept until the next round; drop it once the board feed follows rounds
+  function tbase(id, b, c = CTX) { return c.prefs.get('tstsent', {})[id] || (b || {}).st; }
   function panel() {
     if (!S.task) return '';
     const id = S.task, b = ((D.board || {}).beads || {})[id], wyx = ((D.board || {}).waiting || []).find(x => x[0] === id);
@@ -136,9 +139,9 @@
     const pills = `<div class="tpills"><span class="tpl" title="State on the board">${dot(b.st)}${esc(b.st)}</span><span class="tpl" title="Owner">${ic('user')}${own}</span>${b.pri != null ? `<span class="tpl pri${esc(b.pri)}" title="Priority ${esc(b.pri)} of 0 to 4">P${esc(b.pri)} · ${PRI[b.pri] || ''}</span>` : ''}</div>`;
     const openOn = b.on.filter(x => x[2] !== 'closed');
     const need = wyx ? wyx[1].charAt(0).toUpperCase() + wyx[1].slice(1) : b.st === 'blocked' && openOn.length ? `Waits on ${pl(openOn.length, 'task', 'tasks')} first: ${tclean(openOn[0][1])}` : b.st === 'in progress' ? 'Being worked on' : cut(scrub(b.desc).split(/(?<=\.)\s/)[0] || 'No description written.', 140);
-    const tst = CTX.prefs.get('tst', {}), pend = tst[id], cur = pend || b.st;
+    const tst = CTX.prefs.get('tst', {}), base = tbase(id, b), pend = tst[id] !== base ? tst[id] : undefined, cur = pend || base;
     const seg = `<div class="tseg" role="radiogroup" aria-label="Status">${['open', 'in progress', 'blocked', 'closed'].map(s => `<button role="radio" aria-checked="${cur === s}" data-tst="${esc(s)}" title="${s === b.st ? 'Its state on the board' : 'Change it to ' + s}">${dot(s)}<span class="l">${s.charAt(0).toUpperCase() + s.slice(1)}</span></button>`).join('')}</div>
-      ${pend ? `<div class="tpend" role="status">${dot(b.st)}${esc(b.st)} → ${dot(pend)}<b>${esc(pend)}</b><span class="mut">· goes to the board with your next Send</span>${P.inertMark()}<button class="lk small" data-untst="1">Undo</button></div>` : ''}`;
+      ${pend ? `<div class="tpend" role="status">${dot(base)}${esc(base)} →${dot(pend)}<b>${esc(pend)}</b><span class="mut">· goes to the board with your next Send</span>${P.inertMark()}<button class="lk small" data-untst="1">Undo</button></div>` : ''}`;
     const chips = (h, xs) => `<div class="small mut tph">${h} <span class="cnt">${xs.length}</span></div>${xs.length ? `<div class="dchips">${xs.map(([x, t, st]) => `<button class="dchip" ${((D.board || {}).beads || {})[x] ? `data-task="${esc(x)}"` : 'disabled'} title="${esc(tclean(t))} · ${esc(x)} · ${esc(st)}">${dot(st)}<span class="t">${esc(cut(tclean(t), 44))}</span><span class="bid">${esc(x)}</span></button>`).join('')}</div>` : '<p class="small mut nothing">nothing</p>'}`;
     const fold = (h, v, n) => { const o = S.open.has('tp:' + h); return `<div class="tfold"><button data-fold="tp:${h}" aria-expanded="${o}">${ic('chev')}${h}${n != null ? ` <span class="cnt">${n}</span>` : ''}${!v && n == null ? ' <span class="small mut nb">none written</span>' : ''}</button>${o ? v || '' : ''}</div>`; };
     const da = S.open.has('tp:descall'), long = (b.desc || '').length > 600;
@@ -315,8 +318,9 @@
       if (ds.unrerun) { S.rerun.delete(ds.unrerun); return draw(); }
       if (ds.copy) { navigator.clipboard && navigator.clipboard.writeText(ds.copy).catch(() => {}); t.innerHTML = ic('tick'); setTimeout(() => { t.innerHTML = ic('copy'); }, 2000); return CTX.toast('Copied'); }
       if (ds.tst) { const all = CTX.prefs.get('tst', {}), id = S.task, b = D.board.beads[id], prev = all[id];
-        if (ds.tst === b.st) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
-        return CTX.inert(`Status ${ds.tst === b.st ? 'back to ' + b.st : 'set to ' + ds.tst}: goes with your next Send`, () => { const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
+        // kept even when it reads as the board: a round past its check may carry another status, and then this one is the next Send's (r12 audit33 questions 2)
+        if (ds.tst === tbase(id, b) && !document.querySelector('.qsend.sending')) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
+        return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
       if (ds.untst) { const a = CTX.prefs.get('tst', {}); delete a[S.task]; CTX.prefs.set('tst', a); return draw(); }
       if (t.hasAttribute('data-untcm')) { const k = 'tcm:' + S.task, old = CTX.prefs.get(k, ''); CTX.prefs.set(k, ''); draw(); return CTX.toast('Comment removed', {undo: () => { CTX.prefs.set(k, old); draw(); }}); }
     };
@@ -443,7 +447,7 @@
       // from Running itself the hash is already #running, so no hashchange redraws: open the task here (r12 fix8, running 1)
       const go = id => () => { ctx.prefs.set('task', id); if (location.hash === '#running' && tabNow === 'running' && EL && EL.isConnected) openTask(id); else ctx.go('running'); };
       // say: the row's words, which Send's round carries to the agent (a task row is no note, so without them a lone one went nowhere: r12 audit30 running 1)
-      for (const [id, st] of Object.entries(tst)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, say: `Task ${id}: set to ${st}`, go: go(id),
+      for (const [id, st] of Object.entries(tst)) if (!D || st !== tbase(id, B[id], ctx)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, say: `Task ${id}: set to ${st}`, go: go(id),
         remove: () => { const a = ctx.prefs.get('tst', {}); delete a[id]; ctx.prefs.set('tst', a); redraw(); return () => { ctx.prefs.set('tst', {...ctx.prefs.get('tst', {}), [id]: st}); redraw(); }; }});
       for (const id of ids) { const k = 'tcm:' + id, c = ctx.prefs.get(k, '');
         if (c.trim()) out.push({key: k, group: 'Tasks', html: `${ttl(id)} → comment: “${esc(cut(c, 120))}”`, say: `Task ${id}, comment: ${c.trim()}`, go: go(id), remove: () => { ctx.prefs.set(k, ''); redraw(); return () => { ctx.prefs.set(k, c); redraw(); }; }}); }
@@ -451,8 +455,11 @@
     };
   // a round clears only the rows it listed, as they read then: a status or comment set after the countdown stays for the next Send (r12 audit30 running 4)
   P.queue && P.queue({items, sent: (ctx, was, done) => {
-    const t = ctx.prefs.get('tst', {}); for (const id of Object.keys(t)) if (done('tst:' + id)) delete t[id];
-    ctx.prefs.set('tst', t); ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); }); redraw(); }});
+    // what the round delivered is each task's base from now on; a status picked after the check, back to the board's included, is a change from it (r12 audit33 questions 2)
+    const t = ctx.prefs.get('tst', {}), sent = ctx.prefs.get('tstsent', {}), B = ((D || {}).board || {}).beads || {};
+    if (was) for (const [k, sig] of was) { const m = /^tst:(.+)$/.exec(k), s = m && /: set to (.+)$/.exec(sig || ''); if (s) sent[m[1]] = s[1]; }  // the row's say, as listed
+    for (const id of Object.keys(t)) if (done('tst:' + id) || t[id] === (sent[id] || (B[id] || {}).st)) delete t[id];
+    ctx.prefs.set('tstsent', sent); ctx.prefs.set('tst', t); ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); }); redraw(); }});
   P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});
   P._running = {urgent, mine, wnm, mdl};  // for tests

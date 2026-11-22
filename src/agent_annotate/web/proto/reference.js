@@ -8,7 +8,7 @@
   let ctx, D, el, mine = [];  // mine: notes written in this visit, so Undo can take them back
   // reopen, rsent, cp and appr go with the next Send: kept in prefs (draft:ref) like every draft, so a reload keeps them while
   // "Unsent answers and notes" is on (r12 fix8); notes come back from the server, or on a copy from its simulation (P.copyData)
-  let kept = false;
+  let kept = false, SAVING = false;  // SAVING: the editor's Save note is out
   function restoreDrafts() {
     if (kept || !ctx) return;
     kept = true;
@@ -589,7 +589,9 @@
       const src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
       try {
         const target = S.tgt || undefined;
-        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)});
+        // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
+        SAVING = true; ctx.refreshTop();
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
         S.note = ''; S.tgt = null; setR(null); draw(); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id)});
@@ -729,7 +731,7 @@
           else if (now && now.a === tr.a) NK().late(r.id, tr.text.trim(), now.text, {a: tr.a, tab: 'reference', on: (tr.tgt && tr.tgt.quote) || tr.l || ''},
             () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) { S.note = ''; S.tgt = null; } S.edit = r.id; S.edt = null; redo(); });
           return r; },
-        remove: () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
+        remove: SAVING ? null : () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
       if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));

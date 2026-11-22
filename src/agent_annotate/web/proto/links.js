@@ -6,7 +6,7 @@
   'use strict';
   const P = window.Proto = window.Proto || {};
   const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false, hl: '', scroll: false};
-  let mine = [];  // notes written here this visit, so Undo can take them back
+  let mine = [], SAVING = false;  // notes written here this visit, so Undo can take them back; SAVING: the editor's Save note is out
   const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
   const fpath = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
@@ -340,7 +340,9 @@
       if (!text) return ctx.toast('Write something first');
       try {
         const {l, line} = place(w, D, k, b);
-        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target});
+        // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
+        SAVING = true; ctx.refreshTop();
+        const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
@@ -482,7 +484,7 @@
         else if (now && now.a === d.a) P.notes.late(r.id, d.text.trim(), now.text, {a: d.a, tab: 'links', on: (d.tgt && d.tgt.quote) || d.line || d.l || ''},
           () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; S.edit = r.id; S.edt = null; redo(); });
         return r; },
-      remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
+      remove: SAVING ? null : () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,

@@ -1446,7 +1446,9 @@
         if (curNote() === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } else if (w && w.id) tnLate = w.id; }
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT', true); if (curNote() === ed.text) { S.note = null; ctx.prefs.set('q:newnote', null); } }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
-      for (const [a, p] of abs) { wroteFor('ab:' + a, await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}, undefined, true)); setAB(a, null); }
+      for (const [a, p] of abs) { wroteFor('ab:' + a, await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}, undefined, true));
+        // cleared only if it still picks the side that went: the other side picked after the check is the next Send's (r12 audit33 questions 1)
+        if ((abPicks()[a] || {}).side === p.side) setAB(a, null); }
       // a re-opened note goes back to open now, so the round carries it to the agent again
       for (const id of reo) known.add(id) && await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT', true);
       // the same words alone on the same version are the server's same round (its id is their fingerprint): it is not submitted

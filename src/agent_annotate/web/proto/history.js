@@ -61,7 +61,7 @@
   };
   // "Tell the agent" about a page that could not load goes with the one Send, under Replies to the agent (r12 fix6, running 2)
   // kept in prefs as a draft, so it survives a reload with "Unsent answers and notes" on, as task drafts do (r12 fix8, running 2)
-  let CX;
+  let CX, SAVING = false;  // SAVING: the chart editor's Save note is out
   const all = () => ({...(CX ? CX.prefs.get('draft:tell', {}) : {})}), put = a => CX && CX.prefs.set('draft:tell', a);
   const TELL = {has: s => s in all(), set: (s, t) => put({...all(), [s]: t}), delete: s => { const a = all(); delete a[s]; put(a); },
     keys: () => Object.keys(all()), clear: () => put({}), [Symbol.iterator]: () => Object.entries(all())[Symbol.iterator]()};
@@ -81,7 +81,7 @@
           else if (now && now.v === d.v) P.notes.late(r.id, d.text.trim(), now.text, {a: 'chart:' + d.v, tab: 'history', on: CLAB(d.v)},
             () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; S.ce = r.id; redrawH(); });
           return r; },
-        remove: () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
+        remove: SAVING ? null : () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
           return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
@@ -320,7 +320,9 @@
     const v = S.cn, text = (el.querySelector('#h-nt').value || '').trim();
     if (!text) return ctx.toast('Write something first');
     try {
-      const c = await ctx.api('api/comments', {anchor_id: 'chart:' + v, anchor_label: CLAB(v), text});
+      // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
+      SAVING = true; ctx.refreshTop();
+      const c = await ctx.api('api/comments', {anchor_id: 'chart:' + v, anchor_label: CLAB(v), text}).finally(() => { SAVING = false; });
       CN.push({id: c.id, anchor: 'chart:' + v, label: CLAB(v), text: c.text || text, at: c.created_at || new Date().toISOString()});
       S.cn = ''; ctx.prefs.set('draft:hnote', null); draw(el, ctx); ctx.refreshChips();
       ctx.toast('Note saved', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== c.id);
