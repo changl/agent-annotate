@@ -121,7 +121,7 @@
       r = [...new Set([...(NK.mine(n) ? u.filter(NK.own) : u).map(x => x.text), ...l.replies.map(x => x.text)])];
       return r.length ? 'Reply: ' + r.join(' · ') : l.text != null ? l.text : n.text; },
     // its row keeps no Remove once sent: from the loaded note, its saved row or his edit or reply on it
-    kept: n => !!n.sent || n.id in NK.loc(),
+    kept: n => !!n.sent || (n.id in NK.loc() && !NK.loc()[n.id].moved),
     // Send's Remove on a note row, on every tab: never once kept, and only where the note's own Remove shows (canDeleteComment),
     // so another reviewer's draft or one the agent replied to lists with no Remove, as today (r12 audit20 questions 2, running 2)
     // A saved row (sent state, no status) offers it only when a read confirmed both his authorship and Remove; an earlier
@@ -177,7 +177,10 @@
     // Move: today's manual re-pin to the spot he clicks next, with Undo (catalog 65); apply(p) shows it (p null: it failed)
     async move(c, id, from, to, api, apply) {
       const put = async (p, again) => {
-        await api(`api/comments/${encodeURIComponent(id)}`, {...p, reanchor: {strategy: 'manual-repin', confidence: 1.0, ts: new Date().toISOString()}}, 'PUT');
+        const w = await api(`api/comments/${encodeURIComponent(id)}`, {...p, reanchor: {strategy: 'manual-repin', confidence: 1.0, ts: new Date().toISOString()}}, 'PUT');
+        // a Move on a sent note is his edit: the server's round now carries it (edited_at), so every tab lists it as his row
+        // from now, the summary, round and receipt agreeing, a held Move landing after a round too (r12 audit31 running 2)
+        if (w && w.flagged_for_session && w.edited_at) NK.put1(id, {moved: true});
         const r = NK.reo(c)[id];  // a re-opened note's Send row and Go to it follow it to its new spot
         if (r) NK.put(c, id, {...NK.rec({anchor: p.anchor_id, label: p.anchor_label, target: p.target, text: r.text}), st: r.st});
         await apply(p);
@@ -450,7 +453,7 @@
   // a note another tab lists itself is counted once, under that tab's item
   // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
   // a sent note he re-opened is the kit's own Send row, listed from the one draft store on every tab (r12 audit16 frame 1)
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => NK.out(x) && !x.closed && !own.has(x.id) && !/^doc:/.test(x.anchor || '')); };
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => NK.out(x) && !x.closed && !own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
@@ -1039,7 +1042,7 @@
   // the frame's one request wrapper: still on its way, it is in WRITING (r12 audit30 frame 3). ROUND: a round is going; any
   // note write the round did not make itself waits for it, so it goes with the next Send (r12 audit30 frame 1)
   const NOTEW = /^api\/comments([/?]|$)/, WRITING = new Set();
-  let ROUND = null;
+  let ROUND = null, CARRY = null;
   // Questions' own rows by their full words (the rows show a preview): answers, replies, closes, picked sides, the note being
   // typed or edited, every note row's words and General feedback. Send's round check compares it with what the sheet listed
   const fullSig = () => JSON.stringify([(D ? D.questions : []).filter(q => !q.closed).map(q => { const d = draft(q.id); return [q.id, d.pick || '', d.words || '', d.reply || '', !!d.close]; }),
@@ -1256,12 +1259,12 @@
   }
   async function delNote(id, quiet) {
     const n = (D ? D.notes : savedNotes()).find(x => x.id === id);
-    if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     // the identity read comes first: the saved record, the count and the sheet's row then leave in one task, never the count alone (r12 audit14 reference 1)
     const as = await who(), was = savedNotes();
-    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));
     // the record stays in the store until Undo is gone, so Undo puts back the very note (r12 audit13 frame 4, questions 2)
-    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${as}`);
+    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${as}`);  // first: a note the round carries stays, every list unchanged
+    ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));
+    if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     if (D) D.notes = D.notes.filter(x => x.id !== id);
     await draw(true);
     const back = async () => { keep(); ctx.prefs.set('draft:qnotes', P.putBack(savedNotes(), was, id)); await (D ? refresh() : draw(true)); };
@@ -1333,18 +1336,26 @@
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     let open; ROUND = new Promise(r => { open = r; });
     // the stop says what happened: a note came in, a write was still saving, or a read was held or failed (r12 audit30 questions 4)
-    const stop = async () => { const why = stale || settled() ? 'A note came in while sending: check the list and press Send again' : waitMsg();
-      S.pending = null; S.armed = true; await draw(true); relist(); ctx.toast(why + '. Nothing was sent.'); };
+    // a row he removed or changed himself during Undo says so; "a note came in" only when one did (r12 audit31 reference 4)
+    const stop = async own => { const why = own ? `You ${own} an item while sending: check the list and press Send again` : stale || settled() ? 'A note came in while sending: check the list and press Send again' : waitMsg();
+      S.pending = null; S.armed = true; if (own === 'removed' && D) await refresh(true); await draw(true); relist(); ctx.toast(why + '. Nothing was sent.'); };
     try {
       if (WRITING.size) return await stop();  // a write already on its way at the deadline: its landing relists (fix33)
-      await ctx.takeNow();  // a note removed with its Undo still open leaves first, so the round never carries it
+      // a note removed with its Undo still open leaves first, so the round never carries it; this tab's copy of it goes too, so
+      // the relist reads the store after the removal, never the removed note under another tab's row (r12 audit31 reference 4)
+      if (D) D.notes = D.notes.filter(n => !ctx.taken(n.id));
+      await ctx.takeNow();
       // The round check, after every tracked write has settled and right before Send's own writes and the submit: no other
       // write of this tab's can start in between (ROUND), so the round carries exactly what this check passed
       // a draft typed on another tab after the countdown is no write: it is neither sent nor cleared, and waits for the next Send
       const typed = new Set(Q().filter(x => x.save).map(x => 'x:' + x.key));
       // a listed row whose words changed during Undo (any tab, full words) stops too: words the sheet never showed never go (r12 audit31 running 1, reference 2)
       const moved = (listed.sig !== undefined && fullSig() !== listed.sig) || Q().some(x => listed.q && listed.q.has(x.key) && ctx.sig(x) !== listed.q.get(x.key));
-      if (!settled() || moved || deliverable().some(k => !listed.keys.has(k) && !typed.has(k))) return await stop();
+      const now = deliverable(), gone = [...listed.keys].some(k => !now.includes(k));
+      if (!settled() || now.some(k => !listed.keys.has(k) && !typed.has(k))) return await stop();
+      if (gone || moved) return await stop(gone ? 'removed' : 'changed');
+      // past the check the round carries his every unsent note: a Remove on one says so and takes nothing (r12 audit31 questions 3)
+      CARRY = new Set([...listed.notes, ...D.notes.filter(n => NK.out(n) && NK.mine(n)).map(n => n.id)]);
       // What the round delivers is fixed here, at the check: every word below is read now, and a draft is cleared after only if it
       // still reads the same, so a change made while the round is out stays for the next Send (r12 audit31 questions 1)
       const tn = typingNote() && {...typingNote()};  // the note still open goes as it reads now, as Send listed it
@@ -1375,7 +1386,9 @@
       }
       for (const q of replies) { await call(`api/comments/${encodeURIComponent(q.id)}/reply`, {text: snap.get(q.id).reply.trim()}, undefined, true); if (same(q.id, ['reply'])) setDraft(q.id, {reply: null, replyOpen: null}); }
       for (const q of closes) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}, undefined, true); setDraft(q.id, {close: null}); }
-      if (tn) { wroteFor('nn:', await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true)); if (curNote() === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } }
+      let tnLate = null;  // the posted note's id when its words changed while the round was out: they become its edit after the round
+      if (tn) { const w = await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true); wroteFor('nn:', w);
+        if (curNote() === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } else if (w && w.id) tnLate = w.id; }
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT', true); if (curNote() === ed.text) { S.note = null; ctx.prefs.set('q:newnote', null); } }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
       for (const [a, p] of abs) { wroteFor('ab:' + a, await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}, undefined, true)); setAB(a, null); }
@@ -1404,12 +1417,18 @@
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
       updateBar();  // the toolbar's Send count follows the store with the top bar's, not after the re-read
       ctx.toast(got ? `Sent ${pl(got, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}` : 'Nothing new was sent: these items had already gone in an earlier Send', {inert: true, hold: 4000});
-      ROUND = null; open();  // the round is in: a write that waited goes now, for the next Send
+      ROUND = null; CARRY = null; open();  // the round is in: a write that waited goes now, for the next Send
+      // a new note's words changed while the round was out: saved now as an edit of the note it posted, never a second note;
+      // the next Send carries the edit. A failed save keeps the words open as that note's edit (r12 audit31 fix35 known limit)
+      if (tnLate) { const e = S.note || ctx.prefs.get('q:newnote', null);
+        if (e && !e.edit && (e.text || '').trim()) {
+          const keep = {...e, edit: tnLate}; S.note = null; ctx.prefs.set('q:newnote', null);
+          try { await call(`api/comments/${encodeURIComponent(tnLate)}`, {text: e.text.trim()}, 'PUT'); } catch (x) { S.note = keep; ctx.prefs.set('q:newnote', keep); ctx.toast('Your newer words were kept: ' + x.message); } } }
       await refresh();
     } catch (e) {
-      S.pending = null; ROUND = null; open(); await refresh();
+      S.pending = null; ROUND = null; CARRY = null; open(); await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
-    } finally { ROUND = null; open(); }
+    } finally { ROUND = null; CARRY = null; open(); }
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
   async function discardAll() {
@@ -1860,6 +1879,7 @@
     writing: (path, p, own) => { if (own || !NOTEW.test(path)) return; WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end); },
     wrote: (path, own) => { if (!own && NOTEW.test(path)) stale = true; },
     hold: path => NOTEW.test(path) ? ROUND : null,  // a note write made while a round is going waits for it
+    carries: id => !!CARRY && CARRY.has(id),  // the round past its check carries it: Remove says so (r12 audit31 questions 3)
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
     changed: relist,

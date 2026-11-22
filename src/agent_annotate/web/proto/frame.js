@@ -74,6 +74,8 @@
       .finally(() => { TAKEN.delete(id); keepTaken(); });
   }
   const take = (id, path) => {
+    // past the round check a note the round carries cannot be taken back: say so and stop the caller before it hides the note or says it was removed (r12 audit31 questions 3)
+    if (sendP && sendP.carries && sendP.carries(id)) { toast('This note is already going with Send: it was not removed'); throw new Error('already going with Send'); }
     TAKEN.set(id, path); keepTaken(); takenT[id] = setTimeout(() => finishTake(id), TAKE_MS);
     return () => { clearTimeout(takenT[id]); delete takenT[id]; TAKEN.delete(id); keepTaken(); };
   };

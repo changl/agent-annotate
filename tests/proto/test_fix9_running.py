@@ -8,7 +8,7 @@ HIST, RUN, LINKS, QS = ((WEB / n).read_text() for n in ("history.js", "running.j
 
 def test_questions_leaves_document_notes_to_pages_and_links():
     """Reference 3: a Load-test bar note is Pages & links' Send entry only, so Remove/Undo leaves no stray Questions entry."""
-    assert "!own.has(x.id) && !/^doc:/.test(x.anchor || '')" in QS
+    assert "!own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')" in QS
 
 
 def test_first_approval_names_the_kept_document():

@@ -69,6 +69,34 @@ assert.deepStrictEqual(got, [true, false, false]);
         assert "was, done) =>" in (WEB / f).read_text(), f
 
 
+def test_remove_on_a_carried_note_says_so_and_takes_nothing(tmp_path):
+    """Questions 3: past the round check, Remove on a note the round carries never hides it, never queues its DELETE."""
+    fn = grab(FRAME, "  const TAKEN = new Map()", "TAKEN.has(n.id))} : d;")
+    node(tmp_path, """
+const assert = require('assert');
+let said = ''; const prefs = {set: () => {}}, toast = t => { said = t; }, api = async () => {}, P = {};
+const sendP = {carries: id => id === 'a'};
+""" + fn + """
+assert.throws(() => take('a', 'api/comments/a')); assert.ok(/already going with Send/.test(said)); assert.ok(!TAKEN.has('a'));
+const u = take('b', 'api/comments/b'); assert.ok(TAKEN.has('b')); u(); assert.ok(!TAKEN.has('b'));
+""")
+    # delNote takes first, so a refused Remove leaves the saved list and the open edit as they were
+    d = grab(Q, "  async function delNote(id, quiet) {", "\n  }")
+    assert d.index("ctx.take(id") < d.index("ctx.prefs.set('draft:qnotes'") < d.index("S.note.edit === id")
+    assert "carries: id => !!CARRY && CARRY.has(id)" in Q and Q.count("ROUND = null; CARRY = null;") == 3
+
+
+def test_own_remove_and_peer_move_on_the_round():
+    """Reference 4: his own Remove during Undo says so and relists from the store; Running 2: a Move on a sent note is his row."""
+    post = grab(Q, "  async function post(", "\n  // Discard all")
+    assert "You ${own} an item while sending" in post and "if (own === 'removed' && D) await refresh(true);" in post
+    assert post.index("D.notes = D.notes.filter(n => !ctx.taken(n.id));") < post.index("await ctx.takeNow();")
+    assert "if (w && w.flagged_for_session && w.edited_at) NK.put1(id, {moved: true});" in Q
+    assert "kept: n => !!n.sent || (n.id in NK.loc() && !NK.loc()[n.id].moved)," in Q
+    # known limit: a new note's words changed while the round was out become its edit, never a second note
+    assert "tnLate = w.id" in post and "await call(`api/comments/${encodeURIComponent(tnLate)}`, {text: e.text.trim()}, 'PUT')" in post
+
+
 def test_a_receipt_stays_readable():
     """Running 6: a plain toast after the receipt waits until it has shown."""
     t = grab(FRAME, "  function toast(msg, opts = {}) {", "\n  }")
