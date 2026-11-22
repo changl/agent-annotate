@@ -119,6 +119,8 @@
       const w = NK.mv; if (!w) return false;
       NK.mv = null;
       document.querySelectorAll('[data-nmove][aria-pressed="true"]').forEach(b => b.setAttribute('aria-pressed', 'false'));  // before any later Escape handler reads it
+      const t = document.getElementById('p-toast');  // the Move hint no longer applies
+      if (t && /· Esc cancels$/.test(t.textContent)) t.innerHTML = '';
       if (redraw) NK.redo(w.tab);
       return true;
     },

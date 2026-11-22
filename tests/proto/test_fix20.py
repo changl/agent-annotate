@@ -6,7 +6,8 @@ a small picture never grows past its own width in a viewer."""
 from test_fix18_notes import HIST, KIT, L, Q, REF, STUBS, WEB, node
 
 QCSS = (WEB / "questions.css").read_text()
-DOCSTUB = "const document = {querySelectorAll: () => []};\n"
+DOCSTUB = ("const toastEl = {textContent: 'Click the new spot for this note in the document · Esc cancels', innerHTML: 'x'};\n"
+           "const document = {querySelectorAll: () => [], getElementById: () => toastEl};\n")
 
 
 def test_one_move_for_every_tab_and_endmove_ends_it(tmp_path):
@@ -21,6 +22,9 @@ q.move = 'n3'; assert.strictEqual(r.move, ''); assert.strictEqual(q.move, 'n3');
 q.move = null; assert.strictEqual(NK.mv, null);
 r.move = 'n4'; q.move = '';  assert.strictEqual(r.move, 'n4');  // clearing one tab never ends another's
 assert.strictEqual(NK.endMove(), true); assert.strictEqual(r.move, ''); assert.deepStrictEqual(drawn, ['reference']);
+assert.strictEqual(toastEl.innerHTML, '');                    // the Move hint goes with it
+toastEl.textContent = 'Note saved'; toastEl.innerHTML = 'x'; r.move = 'n5'; NK.endMove(false);
+assert.strictEqual(toastEl.innerHTML, 'x');                   // any other toast stays
 assert.strictEqual(NK.endMove(), false);                     // nothing armed: no redraw
 h.cmove = 'c1'; NK.endMove(false); assert.strictEqual(h.cmove, ''); assert.deepStrictEqual(drawn, ['reference']);
 """)
