@@ -1054,7 +1054,7 @@
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (allRead() ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
       ${S.oin ? '' : S.oerr ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${S.oerr} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
         : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
-      <h4>Not in this Send</h4><p class="small">${!qIn() ? S.qerr && !reading ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
+      <h4>Not in this Send</h4><p class="small">${!qIn() ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
@@ -1704,7 +1704,7 @@
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       const fresh = stale; stale = false;
-      D = sim(await c.data('questions', fresh));
+      D = sim(await c.data('questions', fresh)); S.qerr = false;
       await findCopy(c);
       if (host) { host.remove(); host = null; }  // the Send opened over another tab now shows in this bar
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
@@ -1731,11 +1731,15 @@
     for (;;) {
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
       if (D && !stale && !again) return;
+      if (S.qerr && !again) throw Error('The questions could not be read');  // no data and a failed read: a count waits for Try again too
       const fresh = !!D || !!again; stale = false; again = false;
       // whoever asked (a count, the sheet), a failed read is the sheet's failure too, until Try again (load(c, true)); a count
       // never re-reads it, since each redraw asks for counts and a down server would be asked hundreds of times a second
-      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { S.qerr = true; throw e; })
-        .finally(() => { if (reading === r) { reading = null; relist(); } });
+      // the sheet redraws when the read lands or first fails, not on a repeat failure: a redraw asks for counts, and with no
+      // data yet a count reads again, so redrawing on every failure would loop against a down server
+      let redraw = true;
+      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { redraw = !S.qerr; S.qerr = true; throw e; })
+        .finally(() => { if (reading === r) { reading = null; if (redraw) relist(); } });
       relist();  // the open sheet waits on this read
     }
   };
