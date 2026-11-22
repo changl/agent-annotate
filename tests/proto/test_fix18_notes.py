@@ -56,8 +56,7 @@ def test_reopen_is_listed_from_the_store_without_any_feed(tmp_path):
   assert.strictEqual(items.length, 1);
   assert.strictEqual(items[0].key, 'reo:l1'); assert(/Ship it/.test(items[0].html) && /Re-opened/.test(items[0].html));
   items[0].go(); assert.strictEqual(seen.go.id, 'l1');
-  const undo = items[0].remove(); assert.strictEqual(src[0].items(c).length, 0); assert.strictEqual(seen.redo, 1);
-  undo(); assert.strictEqual(src[0].items(c).length, 1);
+  assert(!items[0].remove);  // the store holds it open: no Remove, and Discard all leaves it (r12 audit21 frame 1)
   // a status saved before records is upgraded, not dropped
   store['draft:reopen'] = {old: 'resolved_in_version'};
   assert(NK.isReo(c, {id: 'old', sent: true, st: 'resolved_in_version', a: 'ref:plan~v1~2', text: 'y'}));

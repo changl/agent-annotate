@@ -51,7 +51,7 @@
     reo(c) {
       const m = c.prefs.get('draft:reopen', {}), old = Object.keys(m).filter(id => typeof m[id] === 'string');
       if (!old.length) return m;
-      for (const id of old) m[id] = {st: m[id], a: '', tab: '', text: '', on: ''};
+      for (const id of old) m[id] = {st: m[id], a: '', tab: '', text: '', on: '', vis: 'old'};
       c.prefs.set('draft:reopen', m);
       if (c.data) old.forEach(id => NK.find(c, id).then(() => c.refreshTop && c.refreshTop()));  // fill in the spot and words once a read answers
       return m;
@@ -69,7 +69,8 @@
     tabOf: a => /^doc:/.test(a) ? 'links' : /^(ref|chk):/.test(a) ? 'reference' : /^chart:/.test(a) ? 'history' : 'questions',
     rec: n => { const a = n.anchor || n.a || '', t = n.target || {};
       return {st: stOf(n), a, tab: NK.tabOf(a), text: n.text || '', on: t.quote || n.line || n.label || n.l || '', img: t.tag === 'img'}; },
-    put(c, id, r) { const m = NK.reo(c); if (r) m[id] = r; else delete m[id]; c.prefs.set('draft:reopen', m); },
+    // vis: the visit that re-opened it, kept through every rewrite of its record, so settle() can tell an earlier visit's (r12 audit21 frame 2)
+    put(c, id, r) { const m = NK.reo(c); if (r) m[id] = {...r, vis: r.vis || (m[id] && m[id].vis) || VISIT}; else delete m[id]; c.prefs.set('draft:reopen', m); },
     setReo(c, n, on) { NK.put(c, n.id, on ? NK.rec(n) : null); },
     // each tab tells the kit how to show a note and redraw (go(record), redo(), res(note) for a resolution on that tab);
     // P.noteHooks, since the tabs' scripts load in any order
@@ -83,9 +84,12 @@
     loc: () => NK.L || (NK.L = (P.ctx && P.ctx.prefs.get('draft:nkput', {})) || {}),
     put1(id, p) { const m = NK.loc(), o = m[id] || {replies: []}; m[id] = {...o, ...p, replies: [...o.replies, ...(p.replies || [])], vis: VISIT}; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); },
     // a feed's note (it has a status; saved Send rows do not), on a page whose store is real (a copy's feed doesn't hold its replies)
-    settle(n) { const m = NK.loc(), l = m[n.id];
-      if (!l || l.vis === VISIT || stOf(n) === undefined || /\/proto\/p\/[a-z0-9-]+\//.test(location.pathname)) return;
-      if (n.sent && !n.edited && !(n.replies || []).some(r => r.unsent)) { delete m[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); } },
+    // A Re-open from an earlier visit follows the same rule: its status PUT is an edit the store counts until a Send takes it
+    settle(n) { const m = NK.loc(), l = m[n.id], c = P.ctx, r = c && NK.reo(c)[n.id];
+      if ((!l || l.vis === VISIT) && (!r || r.vis === VISIT) || stOf(n) === undefined || /\/proto\/p\/[a-z0-9-]+\//.test(location.pathname)) return;
+      if (!n.sent || n.edited || (n.replies || []).some(x => x.unsent)) return;
+      if (l && l.vis !== VISIT) { delete m[n.id]; if (c) c.prefs.set('draft:nkput', m); }
+      if (r && r.vis !== VISIT) { NK.put(c, n.id, null); setTimeout(() => { NK.redo('questions'); if (r.tab && r.tab !== 'questions') NK.redo(r.tab); c.refreshTop && c.refreshTop(); }); } },
     // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
     out: n => { NK.settle(n); return !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc(); },
     // a Send took it, with its edit and replies
@@ -93,7 +97,7 @@
       if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
     // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
     // rm: whether its row offers Remove (rowRm), as the loaded note decides it, since the row keeps no author or replies
-    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n)}),
+    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n), by: n.by === true}),
     // his own note (today's isMine): the feed marks his own `by: true` for each reader; one written in this visit has no `by`
     own: n => n.by === true || (n.by == null && n.mine !== false),
     // today's canDeleteComment: his own, not flagged for the session (an edit clears it), no replies, no response, no pending round
@@ -106,7 +110,9 @@
     kept: n => !!n.sent || n.id in NK.loc(),
     // Send's Remove on a note row, on every tab: never once kept, and only where the note's own Remove shows (canDeleteComment),
     // so another reviewer's draft or one the agent replied to lists with no Remove, as today (r12 audit20 questions 2, running 2)
-    rowRm: n => !NK.kept(n) && ('rm' in n ? !!n.rm : NK.removable(n)),
+    // A saved row (sent state, no status) offers it only when a read confirmed both his authorship and Remove; an earlier
+    // build's row has neither, so it waits for the read (r12 audit21 running 2, questions 1)
+    rowRm: n => !NK.kept(n) && (stOf(n) === undefined && 'edited' in n ? n.rm === true && n.by === true : NK.removable(n)),
     // today's edit body (shell.js edit-save): the words, and a closed status re-opens, so the agent reads it again
     body: (n, text) => stOf(n) && stOf(n) !== 'open' ? {text, status: 'open'} : {text},
     // Close stores what today's menu offers for this note (cardMenuItems): Resolve (accept) on a review note, a confirmed or
@@ -279,13 +285,14 @@
   // ⌘↵ in an open edit saves it, on any tab
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && e.target.matches && e.target.matches('[data-nedtext]')) {
     const b = e.target.closest('[data-nedbox]').querySelector('[data-nedsave]'); e.preventDefault(); e.stopPropagation(); b.click(); } }, true);
-  // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
+  // every re-opened note, on any tab, is one Send row listed from its stored record
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
     html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : r.on || r.tab ? `On “${esc(cut(r.on || TABN[r.tab], 50))}”` : 'A note the agent addressed'),
     // a record not yet told its spot (an earlier build's) finds its note first
-    go: async () => { const x = r.a ? r : (await NK.find(c, id)) || r, h = NK.hooks[x.tab]; if (h && h.go) h.go({id, ...x}); else c.go(x.tab || 'questions'); },
-    remove: () => { NK.put(c, id, null); NK.redo(r.tab); return () => { NK.put(c, id, r); NK.redo(r.tab); }; }}))});
+    // no Remove: Re-open stored open at once, so the note is a pending edit the server keeps, which today's summary lists
+    // without Remove and Discard all leaves (r12 audit21 frame 1)
+    go: async () => { const x = r.a ? r : (await NK.find(c, id)) || r, h = NK.hooks[x.tab]; if (h && h.go) h.go({id, ...x}); else c.go(x.tab || 'questions'); }}))});
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
   // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
   // "Unsent answers and notes" is on (r12 fix8). Questions shows it through sim(); Reference and Links through P.copyData.
