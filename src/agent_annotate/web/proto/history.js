@@ -80,7 +80,7 @@
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
         remove: () => takeC(ctx, n)}))],
     sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); if (typedC(ctx)) { S.cn = ''; ctx.prefs.set('draft:hnote', null); redrawH(); }
-      savedC(ctx).forEach(n => { n.sent = true; }); ctx.prefs.set('draft:hcnotes', []); },
+      savedC(ctx).forEach(n => { n.sent = true; n.edited = false; }); ctx.prefs.set('draft:hcnotes', []); },
   });
 
   // The frame grows to its content, so the page has one scroll; pictures get their own size control.
@@ -229,9 +229,9 @@
   // kept as saved records too (draft:hcnotes): while that feed is held or failed, Send lists them from what was saved (r12 fix14 running 1)
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     const m = ctx.prefs.get('draft:hcnotes', []);
-    if (!QD) return [...m, ...CN.filter(n => !n.sent && !m.some(x => x.id === n.id))];
+    if (!QD) return [...m, ...CN.filter(n => P.notes.out(n) && !m.some(x => x.id === n.id))];
     // a saved record the read predates stays: no late or stale read removes its row (r12 audit14 running 1)
-    const inQ = new Set((QD.notes || []).map(n => n.id)), l0 = allC().filter(n => !n.sent && !n.closed);
+    const inQ = new Set((QD.notes || []).map(n => n.id)), l0 = allC().filter(n => P.notes.out(n) && !n.closed);
     const l = [...l0, ...m.filter(r => !inQ.has(r.id) && !l0.some(x => x.id === r.id) && r.at && QD.at && Date.parse(r.at) >= Date.parse(QD.at) && !ctx.taken(r.id))];
     const s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at}));
     if (JSON.stringify(s) !== JSON.stringify(m)) ctx.prefs.set('draft:hcnotes', s);
@@ -248,7 +248,6 @@
     return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at});
       ctx.prefs.set('draft:hcnotes', l); CN.push({...n, sent: false}); redrawH(); ctx.refreshChips(); };
   }
-  const setT = (id, t) => [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) x.text = t; });
   // a saved note on a point, as the mock's noteBox: Edit, Undo, Copy note and Copy note link; Edit opens its own wording (audit10 running 3)
   function cbox(ctx, x, no, v) {
     const {esc, icon} = ctx, id = esc(x.id), what = `Note ${no} on version ${esc(vn(v))}`, lit = S.hlT === x.id ? ' lit' : '';
@@ -261,18 +260,16 @@
     const K = P.notes, cp = ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
     if (x.closed) return `<div class="qnote small h-cnote sent closed${lit}" id="hn-${id}" data-cnote="${id}">${mk}<span class="saved">${icon('archive')} ${what} closed</span> <span class="mut">${esc(x.text)}</span><span class="nacts">${K.closedActs(x)}</span></div>`;
     const acts = x.sent ? K.acts(ctx, x, S.cmove === x.id) + cp : ib('edit', 'Edit this note', 'data-cned') + ib('undo', 'Undo: remove this note', 'data-cdel') + cp;
-    return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${S.cmove === x.id ? ' moving' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} ${x.sent ? `${K.words(ctx, x)} ${K.view(x)}` : '<span class="saved">· goes with Send</span>'}<span class="nacts">${acts}</span></div>`;
+    return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${S.cmove === x.id ? ' moving' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} ${x.sent ? `${K.words(ctx, x)} ${K.view(x)}` : '<span class="saved">· goes with Send</span>'}<span class="nacts">${acts}</span>${x.sent ? K.thread(ctx, x) : ''}</div>`;
   }
   async function editC(el, ctx, id) {
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
     S.ce = '';
     if (!n || text === n.text) return draw(el, ctx);
-    if (!text) { const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
-    const was = n.text;
-    try {
-      await ctx.api('api/comments/' + encodeURIComponent(id), {text}, 'PUT'); setT(id, text); draw(el, ctx); ctx.refreshTop();
-      ctx.toast('Note changed · goes with Send', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(id), {text: was}, 'PUT'); setT(id, was); redrawH(); ctx.refreshTop(); }});
-    } catch (er) { S.ce = id; draw(el, ctx); ctx.toast(`The note was not changed: ${er.message}`); }
+    if (!text && !n.sent) { const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
+    // the kit's edit, as on every tab: in place, with Undo; a sent one goes with the next Send again (today's edit on a sent note)
+    const ok = await P.notes.fix(ctx, n, text, ctx.api, (w, p) => { [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) Object.assign(x, p); }); redrawH(); ctx.refreshTop(); });
+    if (!ok) { S.ce = id; draw(el, ctx); }
   }
   // Move: the kit's re-pin to the point he clicks, with Undo
   function moveC(el, ctx, v) {
@@ -457,7 +454,7 @@
     if (ds.nmove) { S.cmove = S.cmove === ds.nmove ? '' : ds.nmove; draw(el, ctx); if (S.cmove) ctx.toast('Click the point for this note · Esc cancels'); return; }
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
     if (ds.csavee) return editC(el, ctx, ds.csavee);
-    if (ds.cned) { S.cn = ''; S.ce = ds.cned; draw(el, ctx); return focusC(el); }
+    if (ds.cned || ds.nedit) { S.cn = ''; S.ce = ds.cned || ds.nedit; draw(el, ctx); return focusC(el); }  // the kit's Edit on a sent one opens the same editor
     if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n); ctx.toast('Note removed', {undo: back}); } return; }
     if (ds.ccopy) return copyC(ctx, (cn(ds.ccopy) || {}).text || '', 'Note');
     if (ds.clink) return copyC(ctx, location.href.split('#')[0] + '#history/hn-' + ds.clink, 'Link to the note');

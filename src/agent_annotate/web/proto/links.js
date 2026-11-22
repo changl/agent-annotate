@@ -173,7 +173,7 @@
     const list = S.spot === k && viewing(k) === !!dlg && ns.length ? K.spot(ctx, sl.map(n => [n, spotNo(n) || ns.indexOf(n) + 1]), p ? 'at this point' : 'on this spot', `data-spotadd="${esc(k)}"${p ? ` data-spotpin="${esc(p.id)}"` : ''}`) : '';
     // a saved, unsent one: the kit's Edit in place and Remove (r12 audit18 reference 4)
     return `<div class="l-notes">${pin}${list}${ns.map(n => n.closed ? `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('archive')} Note closed <span class="mut">${esc(n.text)}</span> ${K.closedActs(n)}</div>`
-      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? `${esc(n.text)} ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span>`
+      : `<div class="${cls(n)}" data-nid="${esc(n.id)}">${icon('note')}<b>${esc(n.who)}</b> <span class="small mut">${esc(dm(n.at))}${onWords(esc, n.target, spotNo(n))}</span> ${n.sent ? K.sentBody(ctx, n, S.move === n.id, S.edit === n.id ? (S.edt != null ? S.edt : n.text) : null)
         : S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n)}</span>`}</div>`).join('')}
       ${box ? `<div class="l-nbox">${S.tgt ? `<div class="small mut">New note${onWords(esc, S.tgt)}</div>` : ''}<textarea id="l-nt" rows="3" placeholder="Write a note for the agent about this" aria-label="Your note">${esc(words)}</textarea>
         <div class="l-nacts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">goes with your next Send · <kbd>⌘↵</kbd> saves</span></div></div>` : ''}</div>`;
@@ -306,7 +306,7 @@
     else if (b.dataset.nedit) { S.edit = b.dataset.nedit; S.edt = null; draw(w, ctx, D); const t = document.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
     else if (b.hasAttribute('data-nedcancel')) { S.edit = ''; S.edt = null; draw(w, ctx, D); }
     else if (b.dataset.nedsave) { const n = D.notes.concat(mine).find(x => x.id === b.dataset.nedsave), t = b.closest('[data-nedbox]').querySelector('textarea'); if (!n) return;
-      P.notes.fix(ctx, n, t.value, ctx.api, x => { D.notes.concat(mine, (LD || {}).notes || []).forEach(y => { if (y.id === n.id) y.text = x; }); S.edit = ''; S.edt = null; S.hl = n.id; draw(w, ctx, D); ctx.refreshTop(); }); }
+      P.notes.fix(ctx, n, t.value, ctx.api, (x, p) => { D.notes.concat(mine, (LD || {}).notes || []).forEach(y => { if (y.id === n.id) Object.assign(y, p); }); S.edit = ''; S.edt = null; S.hl = n.id; draw(w, ctx, D); ctx.refreshTop(); }); }
     // a bar with notes lists them first; + Comment writes another (a blank editor only on a bar with none)
     else if (b.dataset.bnote && b.classList.contains('l-bar') && notesAt(D, b.dataset.bnote).length && S.note !== b.dataset.bnote) { S.note = ''; S.spot = S.spot === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); }
     else if (b.dataset.bnote) { S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
@@ -413,7 +413,7 @@
     if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
     // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
     const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
-    const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => !n.sent && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
+    const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
     if (LD) { const s = l.map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line})); if (JSON.stringify(s) !== JSON.stringify(c.prefs.get('draft:lnotes', []))) c.prefs.set('draft:lnotes', s); }
     return l;
   };
@@ -454,7 +454,7 @@
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(n.text, 140))}`,
       go: () => goNote(c, n),
       remove: () => takeNote(c, n)}))],
-    sent: c => { unsent(c).forEach(n => { n.sent = true; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
+    sent: c => { unsent(c).forEach(n => { n.sent = true; n.edited = false; }); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []);
       // the note he was typing went with this (simulated) Send, as the Tell the agent drafts do: its editor closes
       if (typed(c)) { if (S.note === typed(c).a) S.note = ''; c.prefs.set('draft:lnote', null); }
       redo(); },

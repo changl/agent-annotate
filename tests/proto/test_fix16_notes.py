@@ -36,7 +36,7 @@ def test_questions_keeps_a_saved_note_the_read_predates(tmp_path):
     node(tmp_path, f"""
 const assert = require('assert');
 let saved = [{{id: 'n1', v: 'v3', at: '2026-11-21T10:00:05Z', anchor: 'a', text: 'x'}}, {{id: 'n2', v: 'v2', at: '2026-11-21T10:00:05Z'}}, {{id: 'n3', v: 'v3', at: '2026-11-21T10:00:05Z'}}];
-const savedNotes = () => saved, P = {{ctx: {{taken: id => id === 'n3'}}}};
+const savedNotes = () => saved, P = {{ctx: {{taken: id => id === 'n3'}}, notes: {{out: n => !n.sent || !!n.edited}}}};
 {fn}
 const old = {{version: 'v3', at: '2026-11-21T10:00:00Z', notes: []}};
 keepSaved(old); assert.deepStrictEqual(old.notes.map(n => n.id), ['n1']);  // other version and a taken one stay out
@@ -125,7 +125,7 @@ def test_note_controls_and_marks_are_wired():
     for attr in ("spot", "spotx", "spotadd", "spotgo", "nclose", "nopen", "nreopen", "nres", "nmove", "change"):
         assert f"data-{attr}" in Q
     # fix17: the shared kit (P.notes); a resolved note's Re-open is a draft Send writes as open
-    assert "api(u + (how === 'close' ? '/archive' : '/restore'), {})" in Q and "{status: 'open'}, 'PUT'" in Q
+    assert "api(u + (how === 'close' ? (NK.resolves(n) ? '/accept' : '/archive') : '/restore'), {})" in Q and "{status: 'open'}, 'PUT'" in Q
     assert "strategy: 'manual-repin'" in Q and "if (S.move) return moveNote(" in Q
     assert "'⋯'" not in Q and "…</button>" not in Q  # no ⋯ menu (#139)
     assert "rf-new" in Q and "rf-new" in HIST and "markSeenQ" in Q and "seeV(ctx" in HIST

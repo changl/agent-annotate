@@ -59,7 +59,7 @@ def test_marker_on_edit_back_to_waiting_and_restore():
     s = _js("questions")
     assert "ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {undo: () => later(q, !on)});" in s
     assert "ctx.toast('Restored to waiting', {undo:" in s
-    assert "ctx.toast('Note changed · goes with Send'" in s
+    assert "c.toast('Note changed · goes with Send'" in s
 
 
 def test_send_opens_over_any_tab_at_any_count():

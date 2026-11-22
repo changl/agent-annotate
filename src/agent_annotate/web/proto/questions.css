@@ -200,6 +200,10 @@ button.qpin{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:in
 .qpin.new{background:var(--color-warning);color:#000}
 .mview .pic.qpinwrap{display:block}.mview .pic.qpinwrap img{cursor:crosshair}.mview .zn{max-width:80ch;margin:8px auto 0;padding:8px 12px;background:var(--color-base-100);color:var(--color-base-content);border-radius:var(--radius-box)}.mview .zn:empty{display:none}
 .nkedit{margin:4px 0}.nkedit textarea{width:100%;margin:4px 0}.nkedit .acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* a note's thread: the agent's response, the replies (older ones folded) and Post reply (today's reply-form) */
+.nkth{flex-basis:100%;width:100%;margin:6px 0 2px;padding-left:10px;border-left:2px solid var(--line,#ccc);display:grid;gap:6px}
+.nkrep{font-size:13px;overflow-wrap:anywhere}.nkrep.ag>b:first-child{color:#7c3aed}
+.nkreply{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.nkreply textarea{flex:1 1 220px;min-width:0}
 .qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}
 /* "Back to Q N": left above the evidence by a card's evidence jump (today's annotate-back-pill) */
 .qbackrow{margin:4px 0;scroll-margin-top:140px}

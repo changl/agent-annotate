@@ -59,7 +59,7 @@ def test_reopen_is_its_own_send_row_with_remove_and_undo(tmp_path):
   await NK.set(c, n, 'reopen', api, async () => {}, true); await undo();  // Re-open's Undo takes it back
   assert(!NK.isReo(c, n));
   await NK.set(c, n, 'close', api, async () => {});
-  assert(n.closed && calls.at(-1)[0] === 'api/comments/n1/archive' && !NK.isReo(c, n));
+  assert(n.closed && calls.at(-1)[0] === 'api/comments/n1/accept' && !NK.isReo(c, n));  // a resolved note's Close is today's Resolve (r12 fix22)
   await NK.set(c, n, 'restore', api, async () => {});
   assert(!n.closed && calls.at(-1)[0] === 'api/comments/n1/restore');
   NK.goRes(c, n); assert.deepStrictEqual(calls.at(-1), ['go', 'history', 'v2~s:p2']);
@@ -74,7 +74,7 @@ def test_reopen_is_its_own_send_row_with_remove_and_undo(tmp_path):
 
 def test_reference_uses_the_shared_kit_and_lists_its_reopened_notes():
     """Reference 2, 3: the marker list, note words and actions, Close/Re-open and Move are P.notes, not a copy."""
-    for call in ("NK().spot(", "K.words(ctx, n)", "K.acts(ctx, n,", "K.closedActs(n)", "NK().set(ctx, n, how", "NK().move(ctx,"):
+    for call in ("NK().spot(", "K.sentBody(ctx, n,", "K.closedActs(n)", "NK().set(ctx, n, how", "NK().move(ctx,"):
         assert call in REF, call
     for attr in ("data-spot=", "data-pin=", "spotadd", "spotgo", "nclose", "nopen", "nreopen", "nres", "nmove"):
         assert attr in REF, attr
@@ -130,7 +130,7 @@ def test_picture_pin_lists_its_notes():
 def test_links_notes_use_the_shared_kit():
     """Pages & links: sent notes take the kit's words, View resolution and actions; a re-opened one is its own Send row."""
     L = (WEB / "links.js").read_text()
-    assert "K.words(ctx, n)} ${K.view(n)}" in L and "K.acts(ctx, n, S.move === n.id)" in L
+    assert "K.sentBody(ctx, n, S.move === n.id," in L
     assert "P.notes.set(ctx, n, b.dataset.nclose ? 'close'" in L and "P.notes.goRes(ctx, n)" in L and "P.notes.move(" in L
     assert "lreo:" not in L and "P.noteHooks" in L
 

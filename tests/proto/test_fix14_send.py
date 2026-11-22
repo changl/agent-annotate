@@ -33,7 +33,7 @@ def test_saved_notes_list_before_the_read_and_follow_it(tmp_path):
     fn = grab(Q, "  const savedNotes = ", "\n  }")
     node(tmp_path, f"""
 const assert = require('assert');
-const store = {{}};
+const store = {{}}, P = {{notes: {{out: n => !n.sent || !!n.edited}}}};
 const ctx = {{prefs: {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}}}};
 let D = {{version: 'v9', notes: [{{id: 'a', anchor: 'p1', label: 'L', text: 'line', sent: false}}, {{id: 'b', anchor: 'chart:v3', label: 'C', text: 'point', sent: false}}, {{id: 'c', anchor: 'x', text: 'old', sent: true}}]}};
 const myNotes = q => D.notes.filter(n => !n.sent), isRo = n => false;  // fix17: a re-opened note is saved marked ro
@@ -51,7 +51,7 @@ def test_history_lists_saved_chart_notes_while_questions_is_held(tmp_path):
     fn = grab(HIST, "  const savedC = ctx => {", "return l; };")
     node(tmp_path, f"""
 const assert = require('assert');
-const store = {{}};
+const store = {{}}, P = {{notes: {{out: n => !n.sent || !!n.edited}}}};
 const ctx = {{prefs: {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}}, data: () => new Promise(() => {{}})}};
 let QR = null, QD = {{notes: [{{id: 'c1', anchor: 'chart:v5', label: 'P', text: 'point', sent: false}}]}}, CN = [];
 const allC = () => QD.notes;

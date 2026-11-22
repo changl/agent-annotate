@@ -19,7 +19,7 @@ from pathlib import Path
 from ..categories import is_archive_plan, list_plans
 from ..plan_topics import file_plans
 from . import running, scrub
-from .questions import _mine
+from .questions import _mine, note_thread
 
 FLD_DIR = Path("/Users/changlee/projects/FastLane Drive")
 # shortcut: the round-9 snapshot of `wmill flow get` / `job get` (build/r9_wmflows.py); read Windmill live when the prototype graduates
@@ -728,7 +728,7 @@ def notes(page_dir: Path) -> list:
                         "closed": c.get("status") == "archived", "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"),
                         "target": c.get("target"),  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
                         # a Send flags every open note (sync_server rounds/submit), so an unsent one stays in the next Send after a reload
-                        "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")) or not _mine(c.get("author"))})
+                        "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")) or not _mine(c.get("author")), **note_thread(c)})
     return sorted(out, key=lambda n: n["at"])
 
 

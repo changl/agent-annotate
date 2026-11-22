@@ -91,7 +91,7 @@
     if (n.closed) return `<div class="${cls} rf-closed" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('archive')} Note closed</span> <span class="mut">${esc(n.text)}</span><span class="nacts">${K.closedActs(n)}</span></div>`;
     // a saved, unsent one: the kit's Edit in place and Remove, from any visit (r12 audit18 reference 4)
     if (!n.sent) return `<div class="${cls}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n)}</span>`}</div>`;
-    return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${esc(n.text)} ${K.words(ctx, n)} ${K.view(n)}<span class="nacts">${K.acts(ctx, n, S.move === n.id)}</span></div>`;
+    return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${K.sentBody(ctx, n, S.move === n.id, S.edit === n.id ? (S.edt != null ? S.edt : n.text) : null)}</div>`;
   }
   // the list a marker opens: on its line, or at a picture pin's point (S.pin)
   function spotList(k, ns) {
@@ -587,7 +587,7 @@
     if (d.nedit) { S.edit = d.nedit; S.edt = null; draw(); const t = el.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
     if (d.nedcancel !== undefined) { S.edit = ''; S.edt = null; return draw(); }
     if (d.nedsave) { const n = nt(d.nedsave), t = el.querySelector('[data-nedtext]'); if (!n || !t) return;
-      return NK().fix(ctx, n, t.value, ctx.api, w => { allNotes().concat(D.notes, mine).forEach(x => { if (x.id === n.id) x.text = w; }); S.edit = ''; S.edt = null; S.hl = n.id; draw(); ctx.refreshTop(); }); }
+      return NK().fix(ctx, n, t.value, ctx.api, (w, p) => { allNotes().concat(D.notes, mine).forEach(x => { if (x.id === n.id) Object.assign(x, p); }); S.edit = ''; S.edt = null; S.hl = n.id; draw(); ctx.refreshTop(); }); }
     if (d.trn !== undefined) { S.trn = d.trn; draw(); const i = document.getElementById('rf-trn'); if (i) { i.focus(); i.select(); } return; }
     if (d.trnsave) return renameTopic(d.trnsave, (document.getElementById('rf-trn').value || '').trim());
     if (d.tmerge) { S.tmerge = S.tmerge === d.tmerge ? '' : d.tmerge; return draw(); }
@@ -700,7 +700,7 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
-      if (D) SNOTES = allNotes().filter(n => !n.sent && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
+      if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
       for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
         go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: async () => {
           // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
@@ -713,7 +713,7 @@
     },
     sent: () => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
       for (const [fk, why] of S.reopen) if (why.trim()) S.rsent.set(fk, [t, why]);
-      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; }); SNOTES = []; keepDrafts(); redo(); },
+      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; n.edited = false; }); SNOTES = []; keepDrafts(); redo(); },
   });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },

@@ -36,6 +36,21 @@ def _mask(s):
     return scrub(s) if isinstance(s, str) else s
 
 
+def note_thread(c: dict) -> dict:
+    """A note's fields for today's Edit, Post reply and Resolve (shell.js canEditComment, showReply, cardMenuItems):
+    edited after its last Send (it goes with the next one, as _comment_needs_push counts edited_at), the agent's
+    response and the replies under it."""
+    stamp = lambda v: datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() if v else 0.0
+    sent = bool(c.get("flagged_for_session") or c.get("delivery_id"))
+    try:
+        edited = sent and _mine(c.get("edited_by") or c.get("author")) and stamp(c.get("edited_at")) > stamp(c.get("flagged_at"))
+    except ValueError:
+        edited = False
+    return {"edited": edited, "mine": _mine(c.get("author")), "resp": _mask(c.get("response_text") or ""),
+            "replies": [{"agent": not _mine(r.get("author")), "who": r.get("author_name") or ("Agent" if not _mine(r.get("author")) else "You"),
+                         "text": _mask(r.get("text") or ""), "ts": r.get("ts")} for r in c.get("replies") or [] if isinstance(r, dict)]}
+
+
 def _read(ids: set[str]) -> dict | None:
     """One `bd show` of the named tasks, read only. It takes 2-10 s, so no request waits on it after the first (r12 fix10 slowread)."""
     try:
@@ -245,7 +260,7 @@ def build(page_dir: Path) -> dict:
                 notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
                               "target": c.get("target"), "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")),
                               "at": c.get("created_at"), "status": c.get("status"), "closed": c.get("status") == "archived",
-                              "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id")})
+                              "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"), **note_thread(c)})
             continue
         if not _asked(c, v):
             continue  # withdrawn by the agent
