@@ -203,12 +203,14 @@ def export(page_dir, folder, store: dict) -> dict:
     out = _read(h.folder)
     out = {**out, **{p: {a: list(v) for a, v in (out.get(p) or {}).items()} for p in PARTS}}
     pub = (store.get(KEY) or {}).get("pub") or {}
+    meta = json.loads((h.folder / "current.meta.json").read_text()) if (h.folder / "current.meta.json").is_file() else {}
+    meta["current"] = meta.get("current") or next((x.get("version") for x in reversed(meta.get("history") or []) if isinstance(x, dict)), None)
     for part, k, c in _items(store):
         if c.get("id") in pub or c.get("status") == "deleted" or not (placed := h.place(k, c.get("target"))):
             continue
         for p in PARTS:  # the prototype's copy of a release note replaces it
             out[p] = {a: [x for x in v if x.get("id") != c.get("id")] for a, v in out[p].items()}
-        n = {**c, "anchor_id": placed[0]}
+        n = {**c, "anchor_id": placed[0], **({"version": meta["current"]} if meta.get("current") else {})}  # as 2.32.8 saves on that page
         if placed[1] is not None:
             n["target"] = placed[1]
         out[part].setdefault(placed[0], []).append(n)
