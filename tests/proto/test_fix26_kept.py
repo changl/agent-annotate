@@ -131,6 +131,41 @@ def test_the_reviewer_edits_and_removes_their_own_release_note_as_in_2_32_8(tmp_
         assert "reviewer@example.invalid" not in (proto / "comments.json").read_text()  # no address stored here
         got = {n["id"]: n for n in links._build(proto)["notes"]}
         assert "p" not in got and got["w"]["text"] == "edited in the prototype"
+        assert call("POST", "/api/comments/r/archive", {})[0] == 200
+        served = [(part, c["id"], c.get("text")) for part, _, c in pub._items(json.loads(call("GET", "/comments.json")[1]))]
+        assert sorted(i for _, i, _ in served) == sorted({"w", "r", "c"}), served  # one copy each, the removed one gone
+        assert ("anchors", "w", "edited in the prototype") in served and [p for p, i, _ in served if i == "r"] == ["archived"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_remove_holds_when_two_readers_share_one_publications_folder(tmp_path, monkeypatch):
+    """The auditors' fixture serves the meeting and the usage audit from one folder, so each release note is read twice;
+    removing it still leaves a tombstone and editing it still keeps one copy."""
+    page, proto = meeting(tmp_path, monkeypatch)
+    (page / "current.html").write_text((page / "versions" / "v1.html").read_text())
+    monkeypatch.setattr(links, "USAGE_AUDIT", page / "current.html")
+    store = pub.merge(proto, json.loads((proto / "comments.json").read_text()))
+    assert len(store["_published"]["pub"]["p"]) == 2
+    first = next(v for v in store["anchors"].values() if any(c["id"] == "p" for c in v))
+    first[:] = [c for c in first if c["id"] != "p"]  # as _v2_delete_comment removes the first copy it finds
+    own = pub.split(proto, store)
+    assert [c["status"] for v in own["archived"].values() for c in v if c["id"] == "p"] == ["deleted"]
+    (proto / "comments.json").write_text(json.dumps(own))
+    assert "p" not in {c["id"] for _, _, c in pub._items(pub.merge(proto, own)) if c.get("status") != "deleted"}
+    # an edit through the server keeps one copy in the served store
+    import http.client, threading
+    from agent_annotate.sync_server import ReviewHTTPServer, make_handler
+    httpd = ReviewHTTPServer(("127.0.0.1", 0), make_handler(proto, slug="proto", local_author="reviewer@example.invalid"))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        conn = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+        conn.request("PUT", "/api/comments/w", json.dumps({"text": "edited"}), {"Content-Type": "application/json"})
+        assert conn.getresponse().status == 200
+        conn.request("GET", "/comments.json")
+        served = [c.get("text") for _, _, c in pub._items(json.loads(conn.getresponse().read())) if c["id"] == "w"]
+        assert served == ["edited"], served
     finally:
         httpd.shutdown()
         httpd.server_close()

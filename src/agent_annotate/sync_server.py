@@ -1699,7 +1699,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             own = published.split(self.artifact_dir, store)
             published.guard(path)
         _atomic_bytes(path,json.dumps(own, ensure_ascii=False, separators=(",", ":")).encode(), value=own)
-        type(self)._store_snapshot = (self._store_signature(), store)
+        # a prototype page is merged again on the next read, so its own copy of a release note replaces every copy at once
+        type(self)._store_snapshot = None if own is not store else (self._store_signature(), store)
         type(self)._store_responses.clear()
 
     def _v2_get_store(self, parsed=None):

@@ -148,7 +148,7 @@ def merge(page_dir, store: dict) -> dict:
         else:
             out[part].setdefault(a, []).append(c)
     from . import scrub_json
-    pub = {}  # {id: [part, key, print]} of each release note as read, so split() can tell an unchanged one
+    pub = {}  # {id: [[part, key, print], ...]} of each release note as read (one per reader sharing its folder), so split() can tell an unchanged one
     for h in homes(page_dir):
         for part, a, c in _items(_read(h.folder)):
             if c.get("id") in have:
@@ -162,7 +162,7 @@ def merge(page_dir, store: dict) -> dict:
             if t.get("selected_quote") and not t.get("quote"):
                 n["target"] = {**t, "quote": t["selected_quote"]}
             out[part].setdefault(k, []).append(n)
-            pub[c.get("id")] = [part, k, _print(n)]
+            pub.setdefault(c.get("id"), []).append([part, k, _print(n)])
     out[KEY] = {"pub": pub, "gone": gone}
     return out
 
@@ -175,16 +175,16 @@ def split(page_dir, store: dict) -> dict:
     pub, gone = meta.get("pub") or {}, meta.get("gone") or []
     own = {k: v for k, v in store.items() if k != KEY}
     own["anchors"], own["archived"] = {}, {}
-    seen = set()
+    seen = {}
     for part, k, c in _items(store):
         i = c.get("id")
-        seen.add(i)
-        if pub.get(i) == [part, k, _print(c)]:
+        seen[i] = seen.get(i, 0) + 1
+        if [part, k, _print(c)] in pub.get(i, []):
             continue
         own[part].setdefault(k, []).append(c)
-    for i, (part, k, _) in pub.items():
-        if i not in seen:
-            own["archived"].setdefault(k, []).append({"id": i, "anchor_id": k, "status": "deleted"})
+    for i, copies in pub.items():
+        if seen.get(i, 0) < len(copies):  # a copy was removed (two readers can share one publication's folder)
+            own["archived"].setdefault(copies[0][1], []).append({"id": i, "anchor_id": copies[0][1], "status": "deleted"})
     for a, c in gone:
         own["archived"].setdefault(a, []).append(c)
     return own
