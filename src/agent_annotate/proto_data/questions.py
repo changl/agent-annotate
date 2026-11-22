@@ -36,12 +36,17 @@ def _mask(s):
     return scrub(s) if isinstance(s, str) else s
 
 
+def was_sent(c: dict) -> bool:
+    """A Send took it once. Today's edit clears flagged_for_session (it goes with the next Send) but keeps flagged_at."""
+    return bool(c.get("flagged_for_session") or c.get("delivery_id") or c.get("flagged_at"))
+
+
 def note_thread(c: dict) -> dict:
     """A note's fields for today's Edit, Post reply and Resolve (shell.js canEditComment, showReply, cardMenuItems):
     edited after its last Send (it goes with the next one, as _comment_needs_push counts edited_at), the agent's
     response and the replies under it."""
     stamp = lambda v: datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() if v else 0.0
-    sent = bool(c.get("flagged_for_session") or c.get("delivery_id"))
+    sent = was_sent(c)
     try:
         edited = sent and _mine(c.get("edited_by") or c.get("author")) and stamp(c.get("edited_at")) > stamp(c.get("flagged_at"))
     except ValueError:
@@ -269,7 +274,7 @@ def build(page_dir: Path) -> dict:
             if _mine(c.get("author")):
                 # closed (today's archive) notes come too, for Closed and Re-open; a resolved one names where the agent addressed it
                 notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
-                              "target": c.get("target"), "sent": bool(c.get("flagged_for_session") or c.get("delivery_id")),
+                              "target": c.get("target"), "sent": was_sent(c),
                               "at": c.get("created_at"), "status": c.get("status"), "closed": c.get("status") == "archived",
                               "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"), **note_thread(c)})
             continue

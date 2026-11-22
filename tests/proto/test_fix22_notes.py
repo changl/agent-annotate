@@ -52,6 +52,8 @@ def test_feed_marks_an_edit_after_send():
     sent = {"author": "you@example.com", "flagged_for_session": True, "flagged_at": "2026-11-21T10:00:00Z"}
     assert note_thread({**sent, "edited_at": "2026-11-21T11:00:00Z"})["edited"]
     assert not note_thread({**sent, "edited_at": "2026-11-21T09:00:00Z"})["edited"]
+    # the server's edit clears flagged_for_session and keeps flagged_at: still a sent note, edited
+    assert note_thread({**sent, "flagged_for_session": False, "edited_at": "2026-11-21T11:00:00Z"})["edited"]
     assert not note_thread({**sent, "edited_at": "2026-11-21T11:00:00Z", "edited_by": "agent:x"})["edited"]
     assert not note_thread({"author": "you@example.com", "edited_at": "2026-11-21T11:00:00Z"})["edited"]  # never sent: a draft
     t = note_thread({**sent, "response_text": "ok", "replies": [{"author": "agent:x", "text": "hi"}]})
