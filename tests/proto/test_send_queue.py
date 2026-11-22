@@ -23,9 +23,9 @@ def test_frame_owns_one_queue_and_repaints_send():
 def test_questions_lists_counts_removes_and_clears_the_queue():
     s = _js("questions")
     assert "const sendCount = () => sendItems().length + (gen().trim() ? 1 : 0);" in s  # the count is the sheet's rows: every queued item, each note once
-    assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);" in s
+    assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '']);" in s
     assert "try { back = await x.remove(); }" in s  # Remove takes it out of its tab, with Undo
-    assert "(await Promise.all(q.map(x => x.remove()))).filter(Boolean)" in s  # Discard all too
+    assert "(await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean)" in s  # Discard all too
     assert "if (ctx.queueSent) ctx.queueSent(n);" in s  # a Send clears every tab's items
     assert "if (k.startsWith('x:'))" in s  # Go to it opens the item's own tab
     assert "wrote: path =>" in s  # notes written on other tabs reach Questions' list without a visit

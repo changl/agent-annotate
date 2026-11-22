@@ -10,7 +10,7 @@ def test_saved_history_note_is_historys_send_item():
     """Running 1: a saved chart note is listed by History (so Questions does not), Go to it opens History at it, Remove clears the chart."""
     assert "...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id" in HIST
     assert "S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history')" in HIST
-    assert "remove: () => takeC(ctx, n)" in HIST and "const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));\n    dropC(n.id);" in HIST
+    assert "remove: n.sent ? null : () => takeC(ctx, n)" in HIST and "const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));\n    dropC(n.id);" in HIST
     assert "HE.el.isConnected" in HIST  # a box left behind by another tab is not History on screen
 
 

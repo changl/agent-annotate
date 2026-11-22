@@ -40,6 +40,10 @@ def test_kit_edit_reply_and_close(tmp_path):
   assert(await NK.reply(c, t, ' more ', () => {}));
   assert.deepStrictEqual(calls.at(-1), ['api/comments/t1/reply', {text: 'more'}, undefined]);
   assert(t.replies.at(-1).text === 'more' && t.status === 'open');
+  // the posted reply goes with Send as today's "Reply" row; the Send takes it
+  assert(NK.out(t) && NK.say(t) === 'Reply: more');
+  NK.gone(t);
+  assert(!NK.out(t) && NK.say({...t, text: 'w'}) === 'w');
 })().catch(e => { console.error(e); process.exit(1); });
 """)
 
@@ -51,7 +55,19 @@ def test_feed_marks_an_edit_after_send():
     assert not note_thread({**sent, "edited_at": "2026-11-21T11:00:00Z", "edited_by": "agent:x"})["edited"]
     assert not note_thread({"author": "you@example.com", "edited_at": "2026-11-21T11:00:00Z"})["edited"]  # never sent: a draft
     t = note_thread({**sent, "response_text": "ok", "replies": [{"author": "agent:x", "text": "hi"}]})
-    assert t["resp"] == "ok" and t["replies"][0]["agent"] and t["mine"]
+    assert t["resp"] == "ok" and t["replies"][0]["agent"] and t["mine"] and not t["replies"][0]["unsent"]
+    # his reply goes with the next Send until a Send delivers it (_note_unsent)
+    r = lambda **k: note_thread({**sent, "replies": [{"author": "you@example.com", "text": "x", **k}]})["replies"][0]["unsent"]
+    assert r(sent_at=None) and not r(sent_at="2026-11-21T12:00:00Z")
+    assert r(ts="2026-11-21T11:00:00Z") and not r(ts="2026-11-21T09:00:00Z")
+
+
+def test_send_offers_no_remove_on_a_sent_note():
+    """Today's Send row for an edited note or a posted reply has no Remove; the server refuses to delete a sent note."""
+    from test_fix17_notes import WEB
+    ref, links, hist = ((WEB / n).read_text() for n in ("reference.js", "links.js", "history.js"))
+    assert "remove: n.sent ? null :" in ref and "remove: n.sent ? null :" in links and "remove: n.sent ? null :" in hist
+    assert "x.remove ? 'x:' + x.key : ''" in Q and "n.sent ? '' : 'note:' + n.id" in Q and "${rm ? `" in Q
 
 
 def test_questions_uses_the_kit_edit_not_a_new_correction():

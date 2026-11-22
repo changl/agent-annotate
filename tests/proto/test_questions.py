@@ -150,7 +150,7 @@ def test_eighth_check_fixes_stay():
     s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
     # 1: an edit to a saved note is kept as a draft: typed words stored, shown in the editor and Send, carried by Send
     assert "S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an edit to a saved note" in s
-    assert "esc(editText(n))" in s and "esc(cut(editText(n), 140))" in s
+    assert "esc(editText(n))" in s and "esc(cut(NK.say({...n, text: editText(n)}), 140))" in s
     assert s.index("en = ed && ed.edit") < s.rindex("call('api/rounds/submit'")
     assert "S.note = next;\n    ctx.prefs.set('q:newnote', next);" in s
     # 2: Go to it beside a note typed in a card's evidence opens the filter that lists the card

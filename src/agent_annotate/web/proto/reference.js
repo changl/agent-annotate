@@ -700,20 +700,20 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
-      if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
-      for (const n of SNOTES) it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(n.text.length > 140 ? n.text.slice(0, 139) + '…' : n.text)}`,
-        go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: async () => {
+      if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, say: NK().say(n), sent: !!n.sent, target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
+      for (const n of SNOTES) { const w = n.say || n.text; it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
+        go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: n.sent ? null : async () => {
           // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
           mine = mine.filter(x => x.id !== n.id); if (D) D.notes = D.notes.filter(x => x.id !== n.id); SNOTES = SNOTES.filter(x => x.id !== n.id); keepDrafts(); redo();
-          return async () => { keep(); mine = P.putBack(mine, wm, n.id); if (D && wd) D.notes = P.putBack(D.notes, wd, n.id); SNOTES = P.putBack(SNOTES, ws, n.id); keepDrafts(); redo(); }; }});
+          return async () => { keep(); mine = P.putBack(mine, wm, n.id); if (D && wd) D.notes = P.putBack(D.notes, wd, n.id); SNOTES = P.putBack(SNOTES, ws, n.id); keepDrafts(); redo(); }; }}); }
       // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
       if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },
     sent: () => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
       for (const [fk, why] of S.reopen) if (why.trim()) S.rsent.set(fk, [t, why]);
-      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(n => { n.sent = true; n.edited = false; }); SNOTES = []; keepDrafts(); redo(); },
+      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(NK().gone); SNOTES = []; keepDrafts(); redo(); },
   });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },

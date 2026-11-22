@@ -18,7 +18,7 @@ def test_reference_lists_saved_drafts_without_its_data():
     assert "if (!D) return [];" not in items
     assert "ctx = ctx || c; restoreDrafts();" in items
     assert "LBL = s.lbl || {}; SNOTES = s.notes || [];" in REF and "lbl: LBL, notes: SNOTES" in REF
-    assert "for (const n of SNOTES) it.push(" in items
+    assert "for (const n of SNOTES) { const w = n.say || n.text; it.push(" in items
 
 
 def test_running_and_links_list_saved_drafts_without_their_data():

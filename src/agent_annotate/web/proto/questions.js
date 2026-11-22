@@ -74,8 +74,13 @@
     // P.noteHooks, since the tabs' scripts load in any order
     hooks: P.noteHooks = P.noteHooks || {},
     redo: tab => { const h = NK.hooks[tab]; if (h && h.redo) h.redo(); },
-    // goes with the next Send: never sent, or his edit since (today's needs-push rule counts edited_at; the feed's `edited`)
-    out: n => !n.sent || !!n.edited,
+    // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
+    out: n => !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent),
+    // a Send took it, with its edit and replies
+    gone: n => { Object.assign(n, {sent: true, edited: false}); (n.replies || []).forEach(r => { r.unsent = false; }); },
+    // its Send row's words, as today's summary (commentRow): a posted reply as "Reply" with its words, else the note's words.
+    // A sent note's row has no Remove: the server refuses to delete a sent note, and today's row offers none
+    say: n => { const r = (n.replies || []).filter(x => x.unsent).map(x => x.text); return r.length ? 'Reply: ' + r.join(' · ') : n.text; },
     // today's edit body (shell.js edit-save): the words, and a closed status re-opens, so the agent reads it again
     body: (n, text) => stOf(n) && stOf(n) !== 'open' ? {text, status: 'open'} : {text},
     // Close stores what today's menu offers for this note (cardMenuItems): Resolve (accept) on a review note, a confirmed or
@@ -191,7 +196,7 @@
       const t = String(text || '').trim();
       if (!t) return false;
       try { await c.api(`api/comments/${encodeURIComponent(n.id)}/reply`, {text: t}); } catch (e) { c.toast('Not posted: ' + e.message); return false; }
-      (n.replies = n.replies || []).push({agent: false, who: 'You', text: t, ts: new Date().toISOString()});
+      (n.replies = n.replies || []).push({agent: false, who: 'You', text: t, ts: new Date().toISOString(), unsent: true});
       if (stOf(n) && stOf(n) !== 'open') n.status = 'open';
       redraw();
       c.toast('Reply posted · it goes with your next Send');
@@ -265,10 +270,13 @@
     }
     else if (act === 'reply') { const cur = (D && D.questions.find(x => x.id === nid)) || {}; set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]}); }
     else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); }
-    else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; if (body.status) set({status: body.status}); }
+    else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; set({...(body.status ? {status: body.status} : {}), edited: true}); }  // edited: the feed keeps it only on a sent note
     // a note's Re-open (status) or Move (anchor): kept like Close, by the note's id
     else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
-    else if (path === 'api/rounds/submit' && D) for (const n of D.notes) { if (NK.out(n)) NOTES.sent.add(n.id); }  // the Send takes every unsent note
+    else if (path === 'api/rounds/submit' && D) {  // the Send takes every unsent note, and every edit on a sent one
+      for (const n of D.notes) { if (NK.out(n)) NOTES.sent.add(n.id); }
+      for (const s of Object.values(SIM)) s.edited = false;
+    }
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
   }
   P.copyWrite = fake;
@@ -284,7 +292,7 @@
       .concat(NOTES.add.filter(n => FEED[area].test(n.anchor || '') && !have.has(n.id))
         .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})))
       // a note's Close, Re-open and Move on the copy, as Questions shows them (r12 fix17)
-      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {})}; });
+      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.edited && n.sent ? {edited: true} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {})}; });
     return d;
   };
   // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02),
@@ -922,9 +930,9 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(editText(n), 140))}`, 'n:' + n.id, 'note:' + n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, n.sent ? '' : 'note:' + n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, 'x:' + x.key]);
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '']);
     return it;
   }
   function sendPanel(n) {
@@ -938,7 +946,7 @@
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : S.copyOf === '' ? 'Goes to the FastLane Drive agent session.' : ''} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
-      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button> · <button class="lk small" data-srm="${esc(rm)}">Remove</button></li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
+      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
       <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
@@ -1175,7 +1183,7 @@
       for (const id of Object.keys(NK.reo(ctx))) await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
       await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       ctx.prefs.set('q:general', '');
-      D.notes.forEach(x => { x.sent = true; x.edited = false; });  // the round took every unsent note: Send reads 0 with the receipt, before the re-read
+      D.notes.forEach(NK.gone);  // the round took every unsent note: Send reads 0 with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
@@ -1194,9 +1202,9 @@
     for (const [id, d] of Object.entries(keep)) { const r = Object.assign({}, d); for (const k of ['pick', 'words', 'reply', 'replyOpen', 'close']) delete r[k]; if (Object.keys(r).length) all[id] = r; }
     const tn = typingNote(); if (tn) { S.note = null; ctx.prefs.set('q:newnote', null); }
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
-    const undos = (await Promise.all(q.map(x => x.remove()))).filter(Boolean);  // each tab takes its own back out
+    const undos = (await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean);  // each tab takes its own back out; a sent note's edit or reply stays (the server keeps it)
     // kept until Undo is gone: Undo puts back the very notes (a re-opened one is the kit's queue row, removed above)
-    const backs = []; for (const n of notes) backs.push(await delNote(n.id, true));
+    const backs = []; for (const n of notes) if (!n.sent) backs.push(await delNote(n.id, true));
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);

@@ -46,9 +46,20 @@ def note_thread(c: dict) -> dict:
         edited = sent and _mine(c.get("edited_by") or c.get("author")) and stamp(c.get("edited_at")) > stamp(c.get("flagged_at"))
     except ValueError:
         edited = False
+
+    def unsent(r: dict) -> bool:  # his reply not yet delivered: the server's _note_unsent (sent_at, else after the last Send)
+        if not _mine(r.get("author")):
+            return False
+        if "sent_at" in r:
+            return not r["sent_at"]
+        try:
+            return stamp(r.get("ts")) > stamp(c.get("flagged_at"))
+        except ValueError:
+            return False
     return {"edited": edited, "mine": _mine(c.get("author")), "resp": _mask(c.get("response_text") or ""),
             "replies": [{"agent": not _mine(r.get("author")), "who": r.get("author_name") or ("Agent" if not _mine(r.get("author")) else "You"),
-                         "text": _mask(r.get("text") or ""), "ts": r.get("ts")} for r in c.get("replies") or [] if isinstance(r, dict)]}
+                         "text": _mask(r.get("text") or ""), "ts": r.get("ts"), "unsent": unsent(r)}
+                        for r in c.get("replies") or [] if isinstance(r, dict)]}
 
 
 def _read(ids: set[str]) -> dict | None:

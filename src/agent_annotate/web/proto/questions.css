@@ -202,6 +202,7 @@ button.qpin{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:in
 .nkedit{margin:4px 0}.nkedit textarea{width:100%;margin:4px 0}.nkedit .acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 /* a note's thread: the agent's response, the replies (older ones folded) and Post reply (today's reply-form) */
 .nkth{flex-basis:100%;width:100%;margin:6px 0 2px;padding-left:10px;border-left:2px solid var(--line,#ccc);display:grid;gap:6px}
+.nkth>[data-nearlier]{justify-self:start}
 .nkrep{font-size:13px;overflow-wrap:anywhere}.nkrep.ag>b:first-child{color:#7c3aed}
 .nkreply{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.nkreply textarea{flex:1 1 220px;min-width:0}
 .qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}
