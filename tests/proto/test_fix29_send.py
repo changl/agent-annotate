@@ -56,10 +56,21 @@ def test_open_sheet_reads_and_relists_whatever_opened_it():
     feedback has the focus, keeping the words and the cursor."""
     q = (WEB / "questions.js").read_text()
     panel = q[q.index("  function sendPanel(n) {"):q.index("  function sendPanel(n) {") + 400]
-    assert "if (!S.oin) readOthers(ctx);" in panel
+    assert "if (!S.oin && !S.oerr) readOthers(ctx);" in panel
     rel = q[q.index("  async function relist() {"):q.index("  // copyOf is the project's key")]
     assert "/^(TEXTAREA|INPUT)$/" not in rel and "if (!S.armed || !s) return;" in rel
     assert "a.matches('[data-general]') && [a.selectionStart, a.selectionEnd]" in rel and "g.focus(); g.setSelectionRange(...t);" in rel
+
+
+def test_a_failed_read_says_so_with_try_again():
+    """Frame 1: a failed Reference or Pages & links read leaves Send waiting, says what failed with Try again, never
+    "Nothing ready yet"; Try again reads again; typing in the sheet never enables Send before the reads are in."""
+    q = (WEB / "questions.js").read_text()
+    assert ".then(() => true, () => false)))" in q and "S.oerr = ok.includes(false); if (S.oerr) others = null; else S.oin = true; relist();" in q
+    assert "could not be read: Send waits for them.</span> <button class=\"lk small\" data-sothersretry>Try again</button>" in q
+    assert "if (t.hasAttribute('data-sothersretry')) { S.oerr = false; readOthers(ctx); return draw(true); }" in q
+    assert "(S.oin ? `<p class=\"small mut\" data-snone" in q  # Nothing ready yet only once the reads are in
+    assert "$('[data-send]').disabled = !n || !D || !S.oin;" in q and "$('[data-discard]').disabled = !n || !D || !S.oin;" in q
 
 
 def test_a_reopen_row_is_the_reopeners():

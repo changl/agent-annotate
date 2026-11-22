@@ -12,7 +12,7 @@ WEB = Path(__file__).resolve().parents[2] / "src/agent_annotate/web/proto"
 
 def test_send_waits_for_the_other_tabs_reads():
     q = (WEB / "questions.js").read_text()
-    assert "const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null)))" in q and ".then(() => { S.oin = true; relist(); }));" in q
+    assert "const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).then(() => true, () => false)))" in q
     assert "readFor(c);\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
     assert "const ok = n && D && S.oin," in q
