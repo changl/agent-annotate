@@ -299,7 +299,8 @@
     else if (b.hasAttribute('data-bad')) { S.view = S.view === 'bad' ? '' : 'bad'; draw(w, ctx, D); }
     else if (b.hasAttribute('data-people')) ctx.go('links', 'people');
     else if (b.hasAttribute('data-goq')) ctx.go('questions');
-    else if (b.dataset.kappr) { const id = b.dataset.kappr, a = apprs(ctx); ctx.prefs.set('draft:lappr', a.includes(id) ? a.filter(x => x !== id) : [...a, id]); draw(w, ctx, D); ctx.refreshTop(); }
+    else if (b.dataset.kappr) { const id = b.dataset.kappr, a = apprs(ctx); if (a.includes(id) && P.going('lappr:' + id)) return;  // carried by the round past its check (r12 fix38)
+      ctx.prefs.set('draft:lappr', a.includes(id) ? a.filter(x => x !== id) : [...a, id]); draw(w, ctx, D); ctx.refreshTop(); }
     else if (b.dataset.kept) { S.kept = S.kept === b.dataset.kept ? '' : b.dataset.kept; S.note = ''; draw(w, ctx, D); }
     else if (b.dataset.rv) { const [id, i] = b.dataset.rv.split('~'); S.rv[id] = +i; draw(w, ctx, D); }
     else if (b.hasAttribute('data-marks')) { S.marks = !S.marks; draw(w, ctx, D); }

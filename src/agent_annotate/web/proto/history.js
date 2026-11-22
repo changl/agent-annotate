@@ -55,7 +55,7 @@
       const again = () => { if (box.isConnected) fail(why, retried); };
       LIVE.set(o.src, again);  // the failure on screen now, so Send's Remove and its Undo redraw this one, not a closed one
       if (tell) tell.onclick = () => { TELL.set(o.src, {text: (o.failTitle || 'This version could not load.').replace(/\.$/, '') + '; please republish it.', go: location.hash.slice(1)}); again(); };
-      if (untell) untell.onclick = () => { TELL.delete(o.src); again(); };
+      if (untell) untell.onclick = () => { if (P.going('tell:' + o.src)) return; TELL.delete(o.src); again(); };  // carried by the round past its check (r12 fix38)
     }
     load(false);
   };

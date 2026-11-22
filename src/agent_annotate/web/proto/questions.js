@@ -1094,7 +1094,13 @@
   // the frame's one request wrapper: still on its way, it is in WRITING (r12 audit30 frame 3). ROUND: a round is going; any
   // note write the round did not make itself waits for it, so it goes with the next Send (r12 audit30 frame 1)
   const NOTEW = /^api\/comments([/?]|$)/, WRITING = new Set();
-  let ROUND = null, CARRY = null;
+  let ROUND = null, CARRY = null, GOING = null;
+  // a take-back (Approval taken back, Text restored, Reopen taken back, a status or pick undone) of a row the round carries
+  // past its check is refused like Remove: draft and control stay as the round delivers them; after the round it is a normal change (r12 fix38)
+  P.going = key => {
+    if (!CARRY || !GOING || !(GOING.has(key) || GOING.has('x:' + key))) return false;
+    ctx.toast('This is already going with Send: it was not taken back'); return true;
+  };
   // Questions' own rows by their full words (the rows show a preview): answers, replies, closes, picked sides, the note being
   // typed or edited, every note row's words and General feedback. Send's round check compares it with what the sheet listed
   const fullSig = () => JSON.stringify([(D ? D.questions : []).filter(q => !q.closed).map(q => { const d = draft(q.id); return [q.id, d.pick || '', d.words || '', d.reply || '', !!d.close]; }),
@@ -1287,13 +1293,14 @@
   }
   function close(q) {
     setDraft(q.id, {close: true}); S.open.delete(q.id); draw(true);
-    ctx.toast('Closed: no answer needed · goes with Send', {undo: () => { setDraft(q.id, {close: null}); draw(true); }});
+    ctx.toast('Closed: no answer needed · goes with Send', {undo: () => { if (P.going('c:' + q.id)) return; setDraft(q.id, {close: null}); draw(true); }});
   }
   async function reopen(q) {
     await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}); q.closed = false; S.open.delete(q.id); draw(true);
     ctx.toast('Restored to waiting', {undo: async () => { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); q.closed = true; draw(true); }});
   }
   function undo(q) {
+    if (P.going('q:' + q.id)) return;
     const keep = draft(q.id);
     setDraft(q.id, {pick: null, words: null}); S.open.delete(q.id); draw(true);
     ctx.toast('Answer removed', {undo: () => { setDraft(q.id, {pick: keep.pick, words: keep.words}); draw(true); }});
@@ -1408,7 +1415,7 @@
       if (!settled() || now.some(k => !listed.keys.has(k) && !typed.has(k))) return await stop();
       if (gone || moved) return await stop(gone ? 'removed' : 'changed');
       // past the check the round carries his every unsent note: a Remove on one says so and takes nothing (r12 audit31 questions 3)
-      CARRY = new Set([...listed.notes, ...D.notes.filter(n => NK.out(n) && NK.mine(n)).map(n => n.id)]);
+      GOING = listed.keys; CARRY = new Set([...listed.notes,...D.notes.filter(n => NK.out(n) && NK.mine(n)).map(n => n.id)]);
       // What the round delivers is fixed here, at the check: every word below is read now, and a draft is cleared after only if it
       // still reads the same, so a change made while the round is out stays for the next Send (r12 audit31 questions 1)
       const tn = typingNote() && {...typingNote()};  // the note still open goes as it reads now, as Send listed it
@@ -1511,6 +1518,7 @@
     const [kind, id] = [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)];
     // Undo puts back the question's saved words and number too, so Send still names it before the questions are read
     const keep = draft(id), meta = {p: keep.p, n: keep.n, pl: keep.pl};
+    if (P.going({ans: 'q:', close: 'c:', reply: 'r:', ab: 'ab:'}[kind] + id)) return;
     if (kind === 'ans') { setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {...meta, pick: keep.pick, words: keep.words}); draw(true); }}); }
     else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
     else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
@@ -1519,6 +1527,7 @@
     else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
+      if (!x.note && P.going(k)) return draw(true);  // a task status, approval, reopen, Copy library choice or request the round carries (a note: take() refuses)
       // a note is a comment: read the list again once it is gone or back; never before the receipt, which a slow read must not hold back (r12 audit11 frame 2)
       // the sheet redraws at once, in the paint its Send count moves in (r12 audit13 reference 1); a note's re-read follows
       const again = () => Promise.resolve(draw(true)).then(() => x.note && D && refresh()).catch(e => { console.warn('send relist', e); return draw(true); });
@@ -1616,10 +1625,10 @@
     if (ds.later) return later(q(ds.later), true);
     if (ds.unlater) return later(q(ds.unlater), false);
     if (ds.close) return close(q(ds.close));
-    if (ds.unclose) { setDraft(ds.unclose, {close: null}); return draw(true); }
+    if (ds.unclose) { if (P.going('c:' + ds.unclose)) return; setDraft(ds.unclose, {close: null}); return draw(true); }
     if (ds.reopen) return reopen(q(ds.reopen));
     if (ds.reply) { const d = draft(ds.reply); setDraft(ds.reply, {replyOpen: !(d.replyOpen || (d.reply || '').trim())}); return draw(true); }
-    if (ds.unreply) { setDraft(ds.unreply, {reply: null, replyOpen: null, askWas: null}); return draw(true); }
+    if (ds.unreply) { if (P.going('r:' + ds.unreply)) return; setDraft(ds.unreply, {reply: null, replyOpen: null, askWas: null}); return draw(true); }
     if (ds.link) { S.copied = ds.link; setTimeout(() => { S.copied = null; }, 3000); copy(location.href.split('#')[0] + '#questions/q-' + ds.link, 'Link'); return draw(true); }
     // asking the agent to file a task is a reply: it joins Send; either Undo takes out only the request and puts back the reply it replaced (#04, audit7 #02)
     if (ds.askfile) {
@@ -1685,9 +1694,9 @@
     if (ds.ab) {
       const [a, side] = ds.ab.split('~');
       setAB(a, {side, cap: ds.abcap || a}); draw(true);
-      return ctx.toast('Picked · goes with Send', {undo: () => { setAB(a, null); draw(true); }});
+      return ctx.toast('Picked · goes with Send', {undo: () => { if (P.going('ab:' + a)) return; setAB(a, null); draw(true); }});
     }
-    if (ds.unab) { setAB(ds.unab, null); return draw(true); }
+    if (ds.unab) { if (P.going('ab:' + ds.unab)) return; setAB(ds.unab, null); return draw(true); }
     // a note: tap a picture spot, select words, or click a line, row or item of the document
     const evb = S.view === 'list' && t.closest('.qevb');  // Cards only: a card's copied evidence takes notes too (audit5 #03)
     if (evb ? t.closest('.qnote,.qspot,.qzm,.qcap,figcaption,summary') : S.view !== 'doc' || t.closest('.qcard,.qnote,.qspot,.qbar,.qsend,.qzm,.qcap,.qzoom,.qdoch,.qtiles,.qrows,.abpick,figcaption,summary')) return;

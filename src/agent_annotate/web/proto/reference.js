@@ -524,14 +524,16 @@
       const fk = d.freopen;
       S.reopen.set(fk, ''); draw();
       const t = el.querySelector(`[data-reopen="${CSS.escape(fk)}"]`); if (t) t.focus();
-      return ctx.inert('Finding reopened', () => { S.reopen.delete(fk); draw(); });
+      return ctx.inert('Finding reopened', () => { if (P.going('ro:' + fk)) return; S.reopen.delete(fk); draw(); });
     }
     if (d.appr) {  // approve the whole item: goes with the next Send, kept in memory
-      const k = d.appr, on = !S.appr.has(k), flip = v => { v ? S.appr.add(k) : S.appr.delete(k); draw(); };
+      // past the round check an approval the round carries is not taken back (r12 fix38): taking back, or undoing the approve
+      const k = d.appr, on = !S.appr.has(k), flip = v => { if (!v && P.going('ap:' + k)) return; v ? S.appr.add(k) : S.appr.delete(k); draw(); };
+      if (!on && P.going('ap:' + k)) return;
       flip(on);
       return ctx.inert(on ? 'Approved; goes with your next Send' : 'Approval taken back', () => flip(!on));
     }
-    if (d.unreopen) { const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }); }
+    if (d.unreopen) { if (P.going('ro:' + d.unreopen)) return; const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }); }
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
@@ -546,16 +548,16 @@
     if (d.cpst) {  // Approve, Hold back or Use earlier: kept in memory, the copy sends nothing
       const [ck, st] = d.cpst.split('|'), was = S.cp.get(ck);
       S.cp.set(ck, {st}); draw();
-      return ctx.inert(st === 'ok' ? 'Text approved' : st === 'held' ? 'Text held back' : 'Earlier wording chosen', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
+      return ctx.inert(st === 'ok' ? 'Text approved' : st === 'held' ? 'Text held back' : 'Earlier wording chosen', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
-    if (d.cpundo) { const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }); }
+    if (d.cpundo) { if (P.going('cp:' + d.cpundo)) return; const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }); }
     if (d.cped) { S.cpEd = d.cped; draw(); const t = el.querySelector('.rf-rte'); if (t) t.focus(); return; }
     if (d.cpalt !== undefined) { const t = el.querySelector('.rf-rte'); if (t) { t.textContent = d.cpalt; ctx.prefs.set('draft:rcped', {ck: S.cpEd, html: t.innerHTML}); } return; }  // an earlier wording into the editor
     if (d.rte) { document.execCommand(d.rte.split(':')[0], false, d.rte.split(':')[1] || (d.rte === 'createLink' ? prompt('Link address') || '' : undefined)); return; }
     if (d.cpsave) {
       const ck = d.cpsave, t = el.querySelector('.rf-rte'), was = S.cp.get(ck);
       S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''}); S.cpEd = ''; ctx.prefs.set('draft:rcped', null); draw();
-      return ctx.inert('Edit saved', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
+      return ctx.inert('Edit saved', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
     if (d.cpcancel !== undefined) { S.cpEd = ''; ctx.prefs.set('draft:rcped', null); return draw(); }
     // a marker's list and the note lifecycle: the code Questions uses (P.notes), so every tab behaves the same (r12 audit15 reference 2, 3)

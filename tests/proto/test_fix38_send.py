@@ -56,3 +56,32 @@ def test_remove_waits_out_an_editors_save():
     # Questions closes its editor before its save, so no typed row is listed while it is out
     add = grab(Q, "  async function addNote(text) {", "\n  }")
     assert add.index("ctx.prefs.set('q:newnote', null)") < add.index("await call('api/comments'")
+
+
+def test_a_take_back_of_a_row_the_round_carries_is_refused(tmp_path):
+    """Past the round check a take-back of a listed row is refused and said, like Remove; before the check and after the round it goes."""
+    going = grab(Q, "  P.going = key => {", "\n  };")
+    js = "const toasts = []; const ctx = {toast: m => toasts.push(m)}; const P = {}; let CARRY = null, GOING = null;\n" + going + """
+if (P.going('x:ap:1')) throw new Error('before the check');
+CARRY = new Set(); GOING = new Set(['x:ap:1', 'q:Q1']);
+if (!P.going('ap:1') || !P.going('q:Q1') || P.going('ap:2')) throw new Error('past the check');
+if (toasts.length !== 2 || !/already going with Send/.test(toasts[0])) throw new Error(JSON.stringify(toasts));
+CARRY = null; if (P.going('ap:1')) throw new Error('after the round');
+"""
+    node(tmp_path, js)
+    assert "GOING = listed.keys; CARRY = new Set(" in Q
+    # every take-back control and Remove asks first, on each row kind
+    pins = {
+        "questions.js": ["P.going(\x27c:\x27 + q.id)", "P.going(\x27q:\x27 + q.id)", "P.going(\x27c:\x27 + ds.unclose)", "P.going(\x27r:\x27 + ds.unreply)",
+                         "P.going(\x27ab:\x27 + a)", "P.going(\x27ab:\x27 + ds.unab)", "if (!x.note && P.going(k)) return draw(true);"],
+        "reference.js": ["P.going(\x27ro:\x27 + fk)", "P.going(\x27ro:\x27 + d.unreopen)", "if (!on && P.going(\x27ap:\x27 + k)) return;", "if (!v && P.going(\x27ap:\x27 + k)) return;",
+                         "P.going(\x27cp:\x27 + d.cpundo)"],
+        "links.js": ["if (a.includes(id) && P.going(\x27lappr:\x27 + id)) return;"],
+        "history.js": ["P.going(\x27tell:\x27 + o.src)"],
+        "running.js": ["if (!prev && P.going(\x27tst:\x27 + id)) return;", "P.going(\x27tst:\x27 + S.task)", "P.going(\x27tcm:\x27 + S.task)"],
+    }
+    for f, want in pins.items():
+        src = (WEB / f).read_text()
+        for w in want:
+            assert w in src, (f, w)
+    assert (WEB / "reference.js").read_text().count("if (!was && P.going(\x27cp:\x27 + ck)) return;") == 2

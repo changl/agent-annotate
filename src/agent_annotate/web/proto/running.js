@@ -320,9 +320,10 @@
       if (ds.tst) { const all = CTX.prefs.get('tst', {}), id = S.task, b = D.board.beads[id], prev = all[id];
         // kept even when it reads as the board: a round past its check may carry another status, and then this one is the next Send's (r12 audit33 questions 2)
         if (ds.tst === tbase(id, b) && !document.querySelector('.qsend.sending')) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
-        return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
-      if (ds.untst) { const a = CTX.prefs.get('tst', {}); delete a[S.task]; CTX.prefs.set('tst', a); return draw(); }
-      if (t.hasAttribute('data-untcm')) { const k = 'tcm:' + S.task, old = CTX.prefs.get(k, ''); CTX.prefs.set(k, ''); draw(); return CTX.toast('Comment removed', {undo: () => { CTX.prefs.set(k, old); draw(); }}); }
+        return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { if (!prev && P.going('tst:' + id)) return; const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
+      // past the round check a status or comment the round carries is not taken back (r12 fix38)
+      if (ds.untst) { if (P.going('tst:' + S.task)) return; const a = CTX.prefs.get('tst', {}); delete a[S.task]; CTX.prefs.set('tst', a); return draw(); }
+      if (t.hasAttribute('data-untcm')) { if (P.going('tcm:' + S.task)) return; const k = 'tcm:' + S.task, old = CTX.prefs.get(k, ''); CTX.prefs.set(k, ''); draw(); return CTX.toast('Comment removed', {undo: () => { CTX.prefs.set(k, old); draw(); }}); }
     };
     el.oninput = e => { if (!e.target.matches('[data-tcm]')) return;
       CTX.prefs.set('tcm:' + S.task, e.target.value);
