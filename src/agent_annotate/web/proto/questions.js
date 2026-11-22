@@ -1059,10 +1059,11 @@
   let host = null;
   const onQ = () => !!root && root.isConnected && root.classList.contains('tab-questions');
   // any redraw, whatever asked for it (a read landing, a relist, Remove), gives General feedback its focus and cursor back at
-  // once, before the next keystroke can land on the page body (r12 audit26 running 1)
+  // once, before the next keystroke can land on the page body (r12 audit26 running 1); the selection's direction too, so
+  // Shift-arrows keep moving the same end (r12 audit27 running 1)
   const typingIn = () => { const a = document.activeElement, s = a && a.matches('[data-general]') && a.closest('.qsend,.qgen');
-    return s && {sel: (s.classList.contains('qgen') ? '.qgen' : '.qsend') + ' [data-general]', a: a.selectionStart, b: a.selectionEnd}; };
-  const typeOn = k => { const e = k && document.querySelector(k.sel); if (e && e !== document.activeElement) { e.focus({preventScroll: true}); e.setSelectionRange(k.a, k.b); } };
+    return s && {sel: (s.classList.contains('qgen') ? '.qgen' : '.qsend') + ' [data-general]', a: a.selectionStart, b: a.selectionEnd, d: a.selectionDirection}; };
+  const typeOn = k => { const e = k && document.querySelector(k.sel); if (e && e !== document.activeElement) { e.focus({preventScroll: true}); e.setSelectionRange(k.a, k.b, k.d); } };
   function drawHost() {
     const k = typingIn();
     if (!S.armed && !S.pending) { host.remove(); host = null; }
@@ -1080,7 +1081,7 @@
     const y = scrollY, gen = ++S.drawGen;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
     const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
-    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd}, k = typingIn();
+    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd, d: fa.selectionDirection}, k = typingIn();
     const html = S.view === 'list' ? listView() : null;
     if (html != null) {
       root.innerHTML = bar() + html; typeOn(k);
@@ -1112,7 +1113,7 @@
     if (S.zoom) root.insertAdjacentHTML('beforeend', zoomView());
     document.body.classList.toggle('qsheet-open', !!(S.armed || S.zoom));
     const back = keep && root.querySelector(keep.sel);
-    if (back && (!document.activeElement || document.activeElement === document.body)) { back.focus({preventScroll: true}); back.setSelectionRange(keep.a, keep.b); }
+    if (back && (!document.activeElement || document.activeElement === document.body)) { back.focus({preventScroll: true}); back.setSelectionRange(keep.a, keep.b, keep.d); }
     if (keepScroll) scrollTo(0, y);
     ctx.refreshChips(); if (ctx.refreshTop) ctx.refreshTop();
   }

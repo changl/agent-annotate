@@ -42,7 +42,7 @@ def test_every_redraw_keeps_general_feedback_focus():
     assert d.count("typeOn(k);") == 2 and "k = typingIn();" in d
     h = q[q.index("  function drawHost() {"):q.index("  /* ---------- draw ---------- */")]
     assert "const k = typingIn();" in h and "typeOn(k);" in h
-    assert "e.setSelectionRange(k.a, k.b)" in q
+    assert "e.setSelectionRange(k.a, k.b, k.d)" in q
 
 
 def test_nothing_ready_only_when_every_read_is_in():
