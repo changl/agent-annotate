@@ -53,7 +53,7 @@ def test_edit_and_reply_drafts_are_stored_listed_and_delivered(tmp_path):
 def test_reference_note_and_copy_wording_are_drafts_with_a_send_row():
     # the note being typed: stored as typed, back after reload, and a Send row that Send saves (r12 audit31 reference 1, questions 4)
     assert "ctx.prefs.set('draft:rnote', d)" in REF and "${esc(typedR(k))}</textarea>" in REF
-    assert "if (r && !S.note) { S.note = r.a; S.tgt = r.tgt || null; }" in REF
+    assert "if (r && !S.note) { S.note = r.a; S.tgt = r.tgt || null; if (!S.reach) S.reach = r.a; }" in REF
     row = grab(REF, "      if (tr) it.push({key: 'rnn:'", "\n      // a document's note")
     assert "save: async () =>" in row and "c.api('api/comments'" in row and "undefined, true)" in row
     assert "now.text === tr.text" in row, "cleared only when delivered as listed"

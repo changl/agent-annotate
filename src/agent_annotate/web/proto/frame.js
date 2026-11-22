@@ -75,10 +75,12 @@
   }
   const take = (id, path) => {
     // past the round check a note the round carries cannot be taken back: say so and stop the caller before it hides the note or says it was removed (r12 audit31 questions 3)
-    if (sendP && sendP.carries && sendP.carries(id)) { toast('This note is already going with Send: it was not removed'); throw new Error('already going with Send'); }
+    if (sendP && sendP.carries && sendP.carries(id)) { toast('This note is already going with Send: it was not removed'); throw Object.assign(new Error('already going with Send'), {carried: true}); }
     TAKEN.set(id, path); keepTaken(); takenT[id] = setTimeout(() => finishTake(id), TAKE_MS);
     return () => { clearTimeout(takenT[id]); delete takenT[id]; TAKEN.delete(id); keepTaken(); };
   };
+  // the refusal above: every Remove caller catches it, so it is said once and never an uncaught exception (r12 audit32 running 5)
+  P.carried = e => !!(e && e.carried);
   // a saved-draft list with the removed record id back at its old place, from was (the list before Remove); later changes kept
   P.putBack = (now, was, id) => { const i = was.findIndex(x => x.id === id), l = now.filter(x => x.id !== id); if (i >= 0) l.splice(Math.min(i, l.length), 0, was[i]); return l; };
   const unTaken = d => d && Array.isArray(d.notes) && TAKEN.size ? {...d, notes: d.notes.filter(n => !TAKEN.has(n.id))} : d;
@@ -178,9 +180,9 @@
 
   let toastTimer, wroteAt = 0, heldTo = 0;
   function toast(msg, opts = {}) {
-    // a Send receipt (hold) stays readable: a plain toast after it, such as a held Save landing, waits until it has shown (r12 audit31 running 6)
+    // a Send receipt (hold) stays readable: any toast after it, a held Save landing with its own Undo too, shows once it has (r12 audit31 running 6, audit32 running 3)
     const wait = heldTo - Date.now();
-    if (!opts.undo && !opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }
+    if (!opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }
     if (opts.hold) heldTo = Date.now() + opts.hold;
     const el = document.getElementById('p-toast');
     clearTimeout(toastTimer);

@@ -365,8 +365,9 @@
   // Remove, as Send's Remove: the stored record stays until Undo is gone, so Undo puts back the very note
   function undoNote(id, w, ctx, D) {
     const n = D.notes.concat(mine).find(x => x.id === id); if (!n) return;
+    let undo; try { undo = takeNote(ctx, n); } catch (e) { if (P.carried(e)) return; throw e; }  // past the round check: refused, and said so
     if (S.edit === id) S.edit = '';
-    ctx.toast('Note removed', {undo: takeNote(ctx, n)}); ctx.refreshTop();
+    ctx.toast('Note removed', {undo}); ctx.refreshTop();
   }
 
   /* ---------- People: two roles; edits change only this copy, kept in this browser ---------- */
@@ -471,17 +472,20 @@
       return {key: 'lappr:' + id, group: 'Reference', html: `${c.esc(d ? d.t : tl[id] || id)} → <b>approved</b>`,
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
-    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
+    // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
+    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', say: d.text.trim(), html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
       go: () => goTyped(c, d),
       // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
         mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
         const now = typed(c); if (now && now.a === d.a && now.text === d.text) { if (S.note === d.a) S.note = ''; c.prefs.set('draft:lnote', null); }
+        else if (now && now.a === d.a) P.notes.late(r.id, d.text.trim(), now.text, {a: d.a, tab: 'links', on: (d.tgt && d.tgt.quote) || d.line || d.l || ''},
+          () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; S.edit = r.id; S.edt = null; redo(); });
         return r; },
       remove: () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
-    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
+    ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
       go: () => goNote(c, n),
       remove: P.notes.rowRm(n) ? () => takeNote(c, n) : null}))],
     // the note he was typing is saved by Send itself (save above); one typed since stays for the next Send (r12 audit30 questions 3)

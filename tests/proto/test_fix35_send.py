@@ -94,13 +94,13 @@ def test_own_remove_and_peer_move_on_the_round():
     assert "if (w && w.flagged_for_session && w.edited_at) NK.put1(id, {moved: true});" in Q
     assert "kept: n => !!n.sent || (n.id in NK.loc() && !NK.loc()[n.id].moved)," in Q
     # known limit: a new note's words changed while the round was out become its edit, never a second note
-    assert "tnLate = w.id" in post and "await call(`api/comments/${encodeURIComponent(tnLate)}`, {text: e.text.trim()}, 'PUT')" in post
+    assert "tnLate = w.id" in post and "const keep = {...e, edit: tnLate}; S.note = keep;" in post
 
 
 def test_a_receipt_stays_readable():
     """Running 6: a plain toast after the receipt waits until it has shown."""
     t = grab(FRAME, "  function toast(msg, opts = {}) {", "\n  }")
-    assert "if (!opts.undo && !opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }" in t
+    assert "if (!opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }" in t
     assert "{inert: true, hold: 4000}" in Q
     # frame 2: an open Edit goes only when the sheet listed its row
     assert "listed.keys.has('n:' + ed.edit)" in Q

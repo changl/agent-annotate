@@ -39,7 +39,7 @@ def test_every_redraw_keeps_general_feedback_focus():
     at once, right after the rebuild, before the next keystroke."""
     q = (WEB / "questions.js").read_text()
     d = q[q.index("  async function draw(keepScroll) {"):q.index("  function listView() {")]
-    assert d.count("typeOn(k);") == 2 and "k = typingIn();" in d
+    assert d.count("typeOn(k);") == 2 and "k = typingIn() || HELD;" in d
     h = q[q.index("  function drawHost() {"):q.index("  /* ---------- draw ---------- */")]
     assert "const k = typingIn();" in h and "typeOn(k);" in h
     assert "e.setSelectionRange(k.a, k.b, k.d)" in q

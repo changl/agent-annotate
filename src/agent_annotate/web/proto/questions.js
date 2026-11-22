@@ -262,6 +262,16 @@
     tySet(k, r) { const m = {...NK.ty()}, had = k in m; if (r) m[k] = r; else delete m[k]; if (!P.ctx) { NK.tyM = m; return; }
       P.ctx.prefs.set('draft:nktyped', m); if (had !== !!r && P.ctx.refreshTop) P.ctx.refreshTop(); },
     edText: id => { const r = NK.ty()['edit:' + id]; return r ? r.text : null; },
+    // a new note's words changed while Send's round was out: the round posted it as listed, so the newer words become an open
+    // Edit of that note, a pending row for the next Send, never a second note on the same spot. open() closes the composer and
+    // opens the edit; the focus and selection follow (r12 audit32 running 2, questions 2)
+    late(id, was, text, rec, open) {
+      const a = document.activeElement, kept = a && a.tagName === 'TEXTAREA' && a.value === text ? [a.selectionStart, a.selectionEnd, a.selectionDirection] : null;
+      NK.tySet('edit:' + id, {img: false, ...rec, id, text, was, sent: true});
+      open();
+      const t = kept && document.querySelector(`[data-nedbox="${CSS.escape(id)}"] textarea,[data-cnote="${CSS.escape(id)}"] #h-et`);
+      if (t) { t.focus(); t.setSelectionRange(...kept); }
+    },
     // a reply being written
     typed: {get: id => (NK.ty()['reply:' + id] || {}).text, has: id => 'reply:' + id in NK.ty(), delete: id => NK.tySet('reply:' + id, null),
       set: (id, text) => { const n = NK.th.get(id); NK.tySet('reply:' + id, String(text || '').trim() ? {...(n ? NK.rec(n) : {}), id, text} : null); }},
@@ -308,8 +318,9 @@
   document.addEventListener('input', e => { const t = e.target, id = t.dataset && t.dataset.nreplytext;
     if (id) NK.typed.set(id, t.value);
     const box = t.matches && t.matches('[data-nedtext],#h-et') && t.closest('[data-nedbox],[data-cnote]');
-    if (box) { const eid = box.dataset.nedbox || box.dataset.cnote, n = NK.eds.get(eid);
-      NK.tySet('edit:' + eid, {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: n ? n.text : '', sent: !!(n && n.sent)}); } }, true);
+    if (box) { const eid = box.dataset.nedbox || box.dataset.cnote, n = NK.eds.get(eid), o = NK.ty()['edit:' + eid];
+      // a late edit (NK.late) keeps its row and the posted words, whatever copy of the note the editor was drawn from
+      NK.tySet('edit:' + eid, o && o.sent ? {...o, text: t.value} : {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: n ? n.text : '', sent: !!(n && n.sent)}); } }, true);
   // Cancel on an Edit discards its typed words, before the tab's own handler closes it
   document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-nedcancel],[data-ccancel]'), box = b && b.closest('[data-nedbox],[data-cnote]');
     if (box) NK.tySet('edit:' + (box.dataset.nedbox || box.dataset.cnote), null); }, true);
@@ -343,7 +354,7 @@
           return {id: r.id}; },
         remove: () => { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); return () => { NK.tySet(k, r); NK.redo(r.tab); }; }}; });
   // every re-opened note, on any tab, is one Send row listed from its stored record
-  if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id, peer: false,  // his own Re-open, on anyone's note: the round takes it as his edit (r12 audit25 questions 3)
+  if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id, peer: false, say: 'Re-opened: ' + (r.text || ''),  // his own Re-open, on anyone's note: the round takes it as his edit (r12 audit25 questions 3)
     html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : r.on || r.tab ? `On “${esc(cut(r.on || TABN[r.tab], 50))}”` : 'A note the agent addressed'),
     // a record not yet told its spot (an earlier build's) finds its note first
     // no Remove: Re-open stored open at once, so the note is a pending edit the server keeps, which today's summary lists
@@ -492,7 +503,9 @@
   // a note another tab lists itself is counted once, under that tab's item
   // a document note (doc:) is Pages & links' alone: this tab's feed can still hold one Send removed there, a stray whose Go to it opened Questions (audit7 reference 3)
   // a sent note he re-opened is the kit's own Send row, listed from the one draft store on every tab (r12 audit16 frame 1)
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => NK.out(x) && !x.closed && !own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')); };
+  // a sent note open in its Edit with changed words is listed too, as the mock's open correction (r12 audit32 questions 5)
+  const openEd = x => { const e = S.note || ctx.prefs.get('q:newnote', null); return !!(e && e.edit === x.id && x.sent && (e.text || '').trim() && e.text.trim() !== (x.text || '').trim()); };
+  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => (NK.out(x) || openEd(x)) && !x.closed && !own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
@@ -1068,7 +1081,7 @@
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
     // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n), n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n) && !openEd(n), n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
     const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.mine(n); };
@@ -1141,7 +1154,7 @@
   }
 
   // the Send sheet over another tab (r12 fix7 frame 5): closing it leaves him where he was
-  let host = null;
+  let host = null, HELD = null;  // HELD: General feedback's focus as the overlay left it, for the tab's first draw
   const onQ = () => !!root && root.isConnected && root.classList.contains('tab-questions');
   // any redraw, whatever asked for it (a read landing, a relist, Remove), gives General feedback its focus and cursor back at
   // once, before the next keystroke can land on the page body (r12 audit26 running 1); the selection's direction too, so
@@ -1166,7 +1179,7 @@
     const y = scrollY, gen = ++S.drawGen;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
     const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
-    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd, d: fa.selectionDirection}, k = typingIn();
+    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd, d: fa.selectionDirection}, k = typingIn() || HELD; HELD = null;
     const html = S.view === 'list' ? listView() : null;
     if (html != null) {
       root.innerHTML = bar() + html; typeOn(k);
@@ -1301,7 +1314,7 @@
     // the identity read comes first: the saved record, the count and the sheet's row then leave in one task, never the count alone (r12 audit14 reference 1)
     const as = await who(), was = savedNotes();
     // the record stays in the store until Undo is gone, so Undo puts back the very note (r12 audit13 frame 4, questions 2)
-    const keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${as}`);  // first: a note the round carries stays, every list unchanged
+    let keep; try { keep = ctx.take(id, `api/comments/${encodeURIComponent(id)}${as}`); } catch (e) { if (P.carried(e)) return null; throw e; }  // first: a note the round carries stays, every list unchanged
     ctx.prefs.set('draft:qnotes', was.filter(x => x.id !== id));
     if (S.note && S.note.edit === id) { S.note = null; ctx.prefs.set('q:newnote', null); }
     if (D) D.notes = D.notes.filter(x => x.id !== id);
@@ -1360,8 +1373,9 @@
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
     // the other tabs' rows as listed, by their full words: a change during Undo stops the round, and a round clears only these, unchanged (r12 audit31 running 1)
-    const q = new Map(Q().map(x => [x.key, ctx.sig(x)]));
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes, keys, q, sig: fullSig()}), SEND_DELAY)};
+    // Questions' own rows too, read now as the sheet showed them, never when the countdown ends (r12 audit32 questions 1)
+    const q = new Map(Q().map(x => [x.key, ctx.sig(x)])), sig = fullSig();
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes, keys, q, sig}), SEND_DELAY)};
     draw(true);
   }
   async function post(answers, replies, closes, n, listed) {
@@ -1406,7 +1420,9 @@
       // every listed row that is no note and no typed draft (a task status or comment, a recovery request, an approval, a Copy library
       // choice, a reopened finding) goes in the round's words, so the round stores and delivers it (r12 audit30 running 1, audit31 running 3)
       const words = x => x.say || (x.html || '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-      const says = Q().filter(x => !x.note && !x.save && listed.keys.has('x:' + x.key)).map(words), note = [fb, ...says].filter(Boolean).join('\n\n') || undefined;
+      // a Close has no note to carry: its words go in the round, so a lone Close is a stored round and Sent 1 (r12 audit32 questions 3)
+      const shut = closes.map(q => `Q ${q.n} · ${q.prompt} → Closed: no answer needed`);
+      const says = Q().filter(x => !x.note && !x.save && listed.keys.has('x:' + x.key)).map(words), note = [fb, ...shut, ...says].filter(Boolean).join('\n\n') || undefined;
       const L0 = Object.fromEntries(Object.entries(NK.loc()).map(([id, v]) => [id, JSON.stringify(v)]));
       const curNote = () => { const e = S.note || ctx.prefs.get('q:newnote', null); return e ? e.text : null; };
       // every id this Send listed or wrote: any other id the round carries (a note another client of his saved during the countdown) is counted too
@@ -1457,13 +1473,12 @@
       updateBar();  // the toolbar's Send count follows the store with the top bar's, not after the re-read
       ctx.toast(got ? `Sent ${pl(got, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}` : 'Nothing new was sent: these items had already gone in an earlier Send', {inert: true, hold: 4000});
       ROUND = null; CARRY = null; open();  // the round is in: a write that waited goes now, for the next Send
-      // a new note's words changed while the round was out: saved now as an edit of the note it posted, never a second note;
-      // the next Send carries the edit. A failed save keeps the words open as that note's edit (r12 audit31 fix35 known limit)
+      // a new note's words changed while the round was out: they stay open as an Edit of the note it posted, never a second note,
+      // and that open correction is the next Send's row (openEd), never a silent edit marked sent (r12 audit32 questions 2)
       if (tnLate) { const e = S.note || ctx.prefs.get('q:newnote', null);
-        if (e && !e.edit && (e.text || '').trim()) {
-          const keep = {...e, edit: tnLate}; S.note = null; ctx.prefs.set('q:newnote', null);
-          try { await call(`api/comments/${encodeURIComponent(tnLate)}`, {text: e.text.trim()}, 'PUT'); } catch (x) { S.note = keep; ctx.prefs.set('q:newnote', keep); ctx.toast('Your newer words were kept: ' + x.message); } } }
-      await refresh();
+        if (e && !e.edit && (e.text || '').trim()) { const keep = {...e, edit: tnLate}; S.note = keep; ctx.prefs.set('q:newnote', keep); } }
+      // the round is saved: a failed re-read shows the read's own Try again, never "Send failed" (r12 audit32 questions 4)
+      try { await refresh(); } catch (x) { console.warn('refresh after Send', x); }
     } catch (e) {
       S.pending = null; ROUND = null; CARRY = null; open(); await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
@@ -1506,7 +1521,7 @@
       // the sheet redraws at once, in the paint its Send count moves in (r12 audit13 reference 1); a note's re-read follows
       const again = () => Promise.resolve(draw(true)).then(() => x.note && D && refresh()).catch(e => { console.warn('send relist', e); return draw(true); });
       let back;
-      try { back = await x.remove(); } catch (e) { again(); return ctx.toast('Could not remove it: ' + e.message); }
+      try { back = await x.remove(); } catch (e) { again(); return P.carried(e) ? undefined : ctx.toast('Could not remove it: ' + e.message); }  // the refusal already said so
       ctx.toast('Removed from Send', back ? {undo: async () => { await back(); again(); }} : {});
       again();
     }
@@ -1851,7 +1866,9 @@
       const fresh = stale; stale = false;
       D = sim(await track('questions', c.data('questions', fresh)));
       await findCopy(c);
-      if (host) { host.remove(); host = null; }  // the Send opened over another tab now shows in this bar
+      // the Send opened over another tab now shows in this bar; General feedback's focus, selection and caret move with it, in the
+      // same task as the draw below, so no keystroke lands between (r12 audit32 running 4)
+      if (host) { HELD = typingIn(); host.remove(); host = null; }
       if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       const q0 = anchor && anchor.startsWith('q-') && qOf(anchor.slice(2));

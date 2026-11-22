@@ -40,7 +40,7 @@ def test_each_tab_queues_its_next_send_items():
     assert "group: 'Replies to the agent', html: `About the page that could not load:" in hist
     assert "TELL.set(o.src" in hist and "let told" not in hist
     # reference 4 and 5: notes, reopen reasons and copy-library choices
-    assert "Finding “${c.esc(name('ro:' + fk, f.label, 'a finding'))}” → <b>reopened</b>" in ref and "if (!why.trim()) continue;" in ref
+    assert "Finding “${c.esc(nm)}” → <b>reopened</b>" in ref and "if (!why.trim()) continue;" in ref
     assert "group: 'Notes', note: n.id" in ref and "for (const [ck, s] of S.cp)" in ref
     # running 4: notes on kept documents
     assert "group: 'Notes', note: n.id" in links and "K.draftActs(n, S.move === n.id)" in links

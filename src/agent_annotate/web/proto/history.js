@@ -71,17 +71,20 @@
     items: ctx => [...(CX = ctx, [...TELL]).map(([src, t]) => ({key: 'tell:' + src, group: 'Replies to the agent', html: `About the page that could not load: “${ctx.esc(t.text)}”`,
       go: () => { location.hash = t.go; }, remove: () => { TELL.delete(src); again(src); return () => { TELL.set(src, t); again(src); }; }})),
       // a note being typed on the chart's point is in Send before Save, as a Pages & links note is (audit8 running 1, 3)
-      ...(d => d ? [{key: 'hnn:' + d.v, group: 'Notes', html: `On “${ctx.esc(CLAB(d.v))}”: ${ctx.esc(d.text.trim().length > 140 ? d.text.trim().slice(0, 139) + '…' : d.text.trim())}`,
+      // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
+      ...(d => d ? [{key: 'hnn:' + d.v, group: 'Notes', say: d.text.trim(), html: `On “${ctx.esc(CLAB(d.v))}”: ${ctx.esc(d.text.trim().length > 140 ? d.text.trim().slice(0, 139) + '…' : d.text.trim())}`,
         go: () => { S.cn = d.v; S.q = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
         // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
         save: async () => { const r = await ctx.api('api/comments', {anchor_id: 'chart:' + d.v, anchor_label: CLAB(d.v), text: d.text.trim()}, undefined, true);
           CN.push({id: r.id, anchor: 'chart:' + d.v, label: CLAB(d.v), text: r.text || d.text.trim(), at: r.created_at || new Date().toISOString()});
           const now = typedC(ctx); if (now && now.v === d.v && now.text === d.text) { if (S.cn === d.v) S.cn = ''; ctx.prefs.set('draft:hnote', null); }
+          else if (now && now.v === d.v) P.notes.late(r.id, d.text.trim(), now.text, {a: 'chart:' + d.v, tab: 'history', on: CLAB(d.v)},
+            () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; S.ce = r.id; redrawH(); });
           return r; },
         remove: () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
           return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
-      ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
+      ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
         remove: P.notes.rowRm(n) ? () => takeC(ctx, n) : null}))],
     // a request made after the round check stays for the next Send (r12 audit31 running 4)
@@ -246,10 +249,11 @@
   const dropC = id => { CN = CN.filter(x => x.id !== id); if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); };
   // takes a saved note back (its Undo icon, Send's Remove); returns what puts it back
   async function takeC(ctx, n) {
+    // the record stays in the store until Undo is gone: Undo puts back the very note, its saved version too (r12 audit13 questions 2, running 2)
+    // first: past the round check it is refused before anything is hidden (r12 audit32 running 5)
+    const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));
     const was = ctx.prefs.get('draft:hcnotes', []);
     ctx.prefs.set('draft:hcnotes', was.filter(x => x.id !== n.id));  // Send's count follows at once
-    // the record stays in the store until Undo is gone: Undo puts back the very note, its saved version too (r12 audit13 questions 2, running 2)
-    const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id));
     dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
     // its saved record goes back too, so every later first Send lists it before Questions answers (r12 audit13 running 2)
     return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at});
@@ -275,7 +279,7 @@
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
     S.ce = '';
     if (!n || (text === n.text && !n.sent)) { P.notes.tySet('edit:' + id, null); return draw(el, ctx); }  // the same words on a sent one still record an edit, as today
-    if (!text && !n.sent) { P.notes.tySet('edit:' + id, null); const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
+    if (!text && !n.sent) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (!back) { S.ce = id; return draw(el, ctx); } P.notes.tySet('edit:' + id, null); return ctx.toast('Note removed', {undo: back}); }
     // the kit's edit, as on every tab: in place, with Undo; a sent one goes with the next Send again (today's edit on a sent note)
     const ok = await P.notes.fix(ctx, n, text, ctx.api, (w, p) => { [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) Object.assign(x, p); }); redrawH(); ctx.refreshTop(); });
     if (!ok) { S.ce = id; draw(el, ctx); }
@@ -464,7 +468,7 @@
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
     if (ds.csavee) return editC(el, ctx, ds.csavee);
     if (ds.cned || ds.nedit) { S.cn = ''; S.ce = ds.cned || ds.nedit; draw(el, ctx); return focusC(el); }  // the kit's Edit on a sent one opens the same editor
-    if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n); ctx.toast('Note removed', {undo: back}); } return; }
+    if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (back) ctx.toast('Note removed', {undo: back}); } return; }
     if (ds.ccopy) return copyC(ctx, (cn(ds.ccopy) || {}).text || '', 'Note');
     if (ds.clink) return copyC(ctx, location.href.split('#')[0] + '#history/hn-' + ds.clink, 'Link to the note');
     if (b.hasAttribute('data-ccancel')) { if (S.ce) { S.ce = ''; return draw(el, ctx); } S.cn = ''; ctx.prefs.set('draft:hnote', null); return draw(el, ctx); }

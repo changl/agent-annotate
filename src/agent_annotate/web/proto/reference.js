@@ -16,7 +16,8 @@
     if (s) { S.reopen = new Map(s.reopen || []); S.rsent = new Map(s.rsent || []); S.cp = new Map(s.cp || []); S.appr = new Set(s.appr || []); LBL = s.lbl || {}; SNOTES = s.notes || []; }
     // the note and the Copy library wording left open before a reload open again with their words (r12 audit31 reference 1)
     const r = rnote(), ce = ctx.prefs.get('draft:rcped', null);
-    if (r && !S.note) { S.note = r.a; S.tgt = r.tgt || null; }
+    // on an earlier plan revision too: render reaches its revision, so the editor opens there again (r12 audit32 running 6)
+    if (r && !S.note) { S.note = r.a; S.tgt = r.tgt || null; if (!S.reach) S.reach = r.a; }
     if (ce && ce.ck && !S.cpEd) S.cpEd = ce.ck;
   }
   const cpTyped = ck => { const d = ctx && ctx.prefs.get('draft:rcped', null); return d && d.ck === ck ? rich(d.html || '') : null; };
@@ -612,7 +613,8 @@
   }
   // Remove, as Send's Remove: the record stays in the store until Undo is gone, so Undo puts back the very note
   function undoNote(id) {
-    const keep = ctx.take(id, 'api/comments/' + encodeURIComponent(id)), wm = mine, wd = D.notes;
+    let keep; try { keep = ctx.take(id, 'api/comments/' + encodeURIComponent(id)); } catch (e) { if (P.carried(e)) return; throw e; }  // refused past the round check (r12 audit32 running 5)
+    const wm = mine, wd = D.notes;
     mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); if (S.edit === id) S.edit = ''; draw(); ctx.refreshTop();
     ctx.toast('Note removed', {undo: () => { keep(); mine = P.putBack(mine, wm, id); D.notes = P.putBack(D.notes, wd, id); draw(); ctx.refreshTop(); }});
   }
@@ -699,7 +701,7 @@
   // the notes kit's hooks: Send's Go to it on a re-opened note, a redraw, and a resolution on a plan line, opened there and outlined
   (P.noteHooks = P.noteHooks || {}).reference = {go: r => goRef(itemOf(r.a), r.id, r.a)(), redo, unedit: id => { if (S.edit === id) { S.edit = ''; S.edt = null; } },
     res: n => { S.res = n.ra; S.resGo = true; return goRef(itemOf(n.ra), '', n.ra)(); }};
-  const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
+  const out = (key, group, html, id, take, put, x) => ({key, group, html, ...x, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
     items: c => {
       ctx = ctx || c; restoreDrafts();  // listed from what was saved, before reference.json is in (r12 fix10 frame 1)
@@ -707,7 +709,8 @@
       const name = (k, fresh, none) => fresh ? (LBL[k] = fresh) : LBL[k] || none;  // with the data: its name, kept for the next reload
       for (const [fk, why] of S.reopen) { if (!why.trim()) continue;
         const [id, i] = fk.split('~'), f = (((xOf(id) || {}).find || {}).items || [])[+i] || {};
-        it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(name('ro:' + fk, f.label, 'a finding'))}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why))); }
+        const nm = name('ro:' + fk, f.label, 'a finding');  // say: the full why, for the round check and the round's words (r12 audit32 running 1)
+        it.push(out('ro:' + fk, 'Reference', `Finding “${c.esc(nm)}” → <b>reopened</b>: “${c.esc(cutq(why))}”`, id, () => S.reopen.delete(fk), () => S.reopen.set(fk, why), {say: `Finding “${nm}” → reopened: “${why.trim()}”`})); }
       for (const [ck, s] of S.cp) { const m = /^ref:(.+)~c~(\d+)$/.exec(ck), x = m && xOf(m[1]); if (!m || (D && !x)) continue;
         // an edit shows its saved wording with its formatting: s.html is already cleaned to the editor's own tags (rich)
         const what = s.st === 'edit' ? `edited: “<span class="rf-sendrt">${s.html}</span>”` : `<b>${{ok: 'approved', held: 'held back', old: 'earlier wording'}[s.st]}</b>`;
@@ -723,12 +726,14 @@
         save: async () => { const r = await c.api('api/comments', {anchor_id: tr.a, anchor_label: tr.l, text: tr.text.trim(), target: tr.tgt || undefined, ...(tr.m || {})}, undefined, true);
           mine.push({id: r.id, a: tr.a, l: tr.l, text: r.text || tr.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || tr.tgt || undefined});
           const now = rnote(); if (now && now.a === tr.a && now.text === tr.text) { if (S.note === tr.a) { S.note = ''; S.tgt = null; } ctx.prefs.set('draft:rnote', null); }
+          else if (now && now.a === tr.a) NK().late(r.id, tr.text.trim(), now.text, {a: tr.a, tab: 'reference', on: (tr.tgt && tr.tgt.quote) || tr.l || ''},
+            () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) { S.note = ''; S.tgt = null; } S.edit = r.id; S.edt = null; redo(); });
           return r; },
         remove: () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
       if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));
-      for (const n of SNOTES) { const w = NK().say(n); it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, peer: !NK().mine(n), html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
+      for (const n of SNOTES) { const w = NK().say(n); it.push({key: 'rn:' + n.id, group: 'Notes', note: n.id, peer: !NK().mine(n), say: w, html: `On “${c.esc(cutq((n.target && n.target.quote) || n.l || 'Reference'))}”:${c.esc(w.length > 140 ? w.slice(0, 139) + '…' : w)}`,
         go: goRef(n.item || itemOf(n.a), n.id, n.a), remove: !NK().rowRm(n) ? null : async () => {
           // the record stays in the store until Undo is gone, so Undo puts back the very note: id, number, time, revision and all (r12 audit13 frame 4)
           const keep = ctx.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = D && D.notes, ws = SNOTES;
