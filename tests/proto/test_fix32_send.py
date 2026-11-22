@@ -13,14 +13,14 @@ def test_typing_in_the_sheet_uses_the_redraws_gate(tmp_path):
     sc = grab(Q, "  function sheetCount() {", "\n  }")
     node(tmp_path, f"""
 const assert = require('assert');
-const btn = () => ({{disabled: true, innerHTML: '', textContent: ''}}), el = {{'[data-send]': btn(), '[data-discard]': btn(), h2: btn()}};
+const btn = () => ({{disabled: true, innerHTML: '', textContent: ''}}), el = {{'[data-send]': btn(), '[data-discard]': btn(), '[data-shint]': btn(), h2: btn()}};
 const s = {{querySelector: x => el[x] || null}}, host = {{querySelector: () => s}}, root = null, ctx = {{}};
 let read = false; const sendCount = () => 1, sendOn = n => !!n && read, gen = () => 'typed', pl = n => n, ic = () => '', updateBar = () => {{}};
 {sc}
-sheetCount(); assert.ok(el['[data-send]'].disabled && el['[data-discard]'].disabled, 'held or failed read: both stay off');
-read = true; sheetCount(); assert.ok(!el['[data-send]'].disabled && !el['[data-discard]'].disabled, 'read in: both on');
+sheetCount(); assert.ok(el['[data-send]'].disabled && el['[data-discard]'].disabled && el['[data-shint]'].hidden, 'held or failed read: both stay off, no ⌘↵ hint');
+read = true; sheetCount(); assert.ok(!el['[data-send]'].disabled && !el['[data-discard]'].disabled && !el['[data-shint]'].hidden, 'read in: both on');
 """)
-    assert sc.count("sendOn(n)") == 2
+    assert sc.count("sendOn(n)") == 3  # fix33: the ⌘↵ hint too
 
 
 def test_round_stops_on_an_unlisted_note_and_counts_what_it_carried(tmp_path):

@@ -79,3 +79,14 @@ const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return ro
 def test_discard_and_typing_share_the_gate():
     assert "if (t.hasAttribute('data-discard')) return sendOn(sendCount()) && discardAll();" in Q
     assert "const qIn = () => !!(D && !stale && !reading && !['held', 'failed'].includes(rs('questions')));" in Q
+
+
+def test_a_write_on_its_way_holds_the_sheet_like_a_held_read():
+    """A note write of this tab's still on its way: Send, Discard and ⌘↵ off through the one gate, the sheet says it is
+    saving, and it relists when the write starts and when it lands."""
+    gate = Q[Q.index("  const sendOn = n =>"):Q.index("  function sendPanel(n) {")]
+    assert gate.strip().endswith("const sendOn = n => !!n && allRead() && !WRITING.size;")
+    assert "${WRITING.size ? '<p class=\"small mut\" aria-busy=\"true\" data-swriting>Saving your note: Send waits for it…</p>' : ''}" in Q
+    assert "WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end);" in Q
+    node_ok = Q.count("sendOn(")
+    assert node_ok >= 4  # the sheet's redraw, typing, Discard and ⌘↵ all read the gate

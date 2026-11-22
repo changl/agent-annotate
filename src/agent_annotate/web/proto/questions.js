@@ -1062,13 +1062,14 @@
   const qIn = () => !!(D && !stale && !reading && !['held', 'failed'].includes(rs('questions')));
   const allRead = () => !!(oin() && qIn());
   // the one rule for Send and Discard all being on, for the sheet's redraw and for typing in it: never while a read is held or failed (r12 audit28 questions 1)
-  const sendOn = n => !!n && allRead();
+  // a note write of this tab's still on its way leaves the list incomplete: the same as a held read (r12 fix33 send)
+  const sendOn = n => !!n && allRead() && !WRITING.size;
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
     if (!oin() && !oerr()) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
-    const ok = sendOn(n), rd = ok || !n ? '' : ` title="Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
+    const ok = sendOn(n), rd = ok || !n ? '' : ` title="${WRITING.size ? 'Saving your note' : `Reading ${qIn() ? 'the notes on other tabs' : 'the questions'}`} first:Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
     it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
@@ -1078,8 +1079,9 @@
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (allRead() ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
       ${oin() ? '' : oerr() ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${oerr()} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
         : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on ${OTHERS.filter(([a]) => rs(a) !== 'done').map(x => x[1]).join(' and ')}…</p>`}
+      ${WRITING.size ? '<p class="small mut" aria-busy="true" data-swriting>Saving your note: Send waits for it…</p>' : ''}
       <h4>Not in this Send</h4><p class="small">${!qIn() ? qerr() ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
-      <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
+      <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut" data-shint${ok ? '' : ' hidden'}><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
   // the Send sheet over another tab (r12 fix7 frame 5): closing it leaves him where he was
@@ -1293,7 +1295,8 @@
     send();
   }
   function send() {
-    if (!allRead()) { relist(); return ctx.toast(`Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send works in a moment`); }  // ⌘↵ again before they are read
+    // ⌘↵ again before they are read or while a note is saving: the one gate (|| 1: with nothing listed, Send closes the sheet)
+    if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(`${WRITING.size ? 'Saving your note' : `Reading ${qIn() ? 'the notes on other tabs' : 'the questions'}`} first: Send works in a moment`); }
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
     // every row on a note, whichever tab lists it (a release draft, a peer's draft or reply): the round's ids say which went
@@ -1643,7 +1646,7 @@
   function sheetCount() {
     const n = sendCount(), s = (host || root).querySelector('.qsend[role=dialog]'), $ = x => s.querySelector(x); if (!s) return updateBar();
     $('h2').textContent = `Send to the agent · ${pl(n, 'item', 'items')}`;
-    $('[data-send]').disabled = !sendOn(n); $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !sendOn(n);
+    $('[data-send]').disabled = !sendOn(n); $('[data-send]').innerHTML = `${ic('send')} Send ${n} <kbd>⌘↵</kbd>`; $('[data-discard]').disabled = !sendOn(n); $('[data-shint]').hidden = !sendOn(n);
     if ($('[data-snone]')) $('[data-snone]').hidden = !!gen().trim();  // General feedback is an item: the empty caption goes (audit6 frame #06)
     const b = root && root.querySelector('.qbsend');
     if (b) { b.disabled = !n; b.classList.toggle('pri', !!n); b.innerHTML = `${ic('send')} Send${n ? ' ' + n : ''}`; }
@@ -1801,7 +1804,7 @@
     saved: c => { ctx = ctx || c; return sendCount(); },  // what Send lists now, from the saved drafts alone while no read is in (r12 fix14)
     read: track,  // every new read of a feed, from the frame's data(): the one read state
     // a note write from this client, from any tab, still on its way: the round check stops on it (r12 audit29 questions 1)
-    writing: (path, p) => { if (!NOTEW.test(path.split('?')[0]) || (S.pending && S.pending.going)) return; WRITING.add(p); const end = () => WRITING.delete(p); p.then(end, end); },
+    writing: (path, p) => { if (!NOTEW.test(path.split('?')[0]) || (S.pending && S.pending.going)) return; WRITING.add(p); relist(); const end = () => { WRITING.delete(p); relist(); }; p.then(end, end); },
     wrote: path => { if (NOTEW.test(path.split('?')[0])) stale = true; },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)

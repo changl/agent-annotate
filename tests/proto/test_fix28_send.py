@@ -18,7 +18,7 @@ def test_send_waits_for_the_other_tabs_reads():
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
     assert "const ok = sendOn(n)," in q and "const allRead = () => !!(oin() && qIn());" in q
     assert "data-sothers>Reading the notes on ${OTHERS.filter(([a]) => rs(a) !== 'done').map(x => x[1]).join(' and ')}…" in q
-    assert "if (!allRead()) { relist(); return ctx.toast(" in q
+    assert "if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(" in q  # fix33: the one gate
 
 
 def test_copy_send_records_release_drafts_by_id():
