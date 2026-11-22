@@ -7,7 +7,7 @@ from test_fix14_frame import node
 from test_fix17_media import MEDIA, STUB
 from test_fix23_media import png
 
-from agent_annotate.proto_data import links
+from agent_annotate.proto_data import links, reference
 
 LNK = (Path(__file__).resolve().parents[2] / "src" / "agent_annotate" / "web" / "proto" / "links.js").read_text()
 MD = """Intro.
@@ -102,3 +102,19 @@ def test_kept_meeting_revision_carries_its_pictures(tmp_path, monkeypatch):
     assert links._kept_dir("admin-meeting") == page
     # a removed picture or table is named by its words in the revision marks, not its address
     assert "<del>${esc(blockText(R[last - 1].blocks[x.a]))}</del>" in LNK
+
+
+def test_a_copied_projects_policies_page_reads_through_the_same_reader(tmp_path):
+    html, page = published(tmp_path)
+    root = tmp_path / "rebex"
+    (root / "reviews").mkdir(parents=True)
+    page.rename(root / "reviews" / "rebex-policies")
+    (root / "reviews" / "rebex-policies" / "current.html").write_text(html)
+    meta = {"proto_copy_of": "rebex", "proto_source": str(root / "reviews" / "rebex")}
+    (pol,) = [d for d in reference.copied(tmp_path / "copy", meta) if d["id"] == "policies"]
+    assert pol["blocks"] == links.html_blocks(html, reference._kept_src("policies", root / "reviews" / "rebex-policies"))
+    assert [x[0] for x in pol["blocks"] if x[0] in ("img", "tbl", "pre")] == ["img", "tbl", "pre"]
+    assert [p[0] for p in next(x for x in pol["blocks"] if x[0] == "tbl")[4][1][1]] == ["t", "img", "t", "img", "t"]
+    # its pictures are served from that page's assets only; a copy never reaches FastLane Drive's kept documents
+    assert links._kept_dir("policies", meta) == root / "reviews" / "rebex-policies"
+    assert links._kept_dir("admin-meeting", meta) is None and links._kept_dir("policies") is None

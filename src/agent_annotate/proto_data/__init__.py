@@ -222,11 +222,10 @@ def serve(handler, route_path: str):
         if not pic:
             return handler._respond(404, b"Not found")
         return handler._respond(200, pic.read_bytes(), sync_server._mime(pic.suffix.lower()), cache_control="private, max-age=300")
-    if route_path.startswith("/proto/kept/"):  # a picture a kept document shows (links._kept_src)
-        from .links import _json, _kept_dir, _scope, kept_picture
+    if route_path.startswith("/proto/kept/"):  # a picture a kept document or Reference's policies page shows (reference._kept_src)
+        from .links import _json, _kept_dir, kept_picture
         doc, _, rel = route_path[len("/proto/kept/"):].partition("/")
-        fld = _scope(_json(Path(handler.artifact_dir) / "current.meta.json"))[2]
-        pic = fld and kept_picture(_kept_dir(doc), urllib.parse.unquote(rel))
+        pic = kept_picture(_kept_dir(doc, _json(Path(handler.artifact_dir) / "current.meta.json")), urllib.parse.unquote(rel))
         if not pic:
             return handler._respond(404, b"Not found")
         return handler._respond(200, pic.read_bytes(), sync_server._mime(pic.suffix.lower()), cache_control="private, max-age=300")
