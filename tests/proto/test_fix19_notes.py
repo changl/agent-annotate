@@ -61,7 +61,7 @@ def test_cmd_enter_from_a_note_button_opens_send():
 
 def test_resolution_reaches_table_rows_in_links():
     """Frame 3: a resolution key with a row (~1~r2) finds the row's line."""
-    assert L.count(r"/^(.*?)~(\d+(?:~r\d+)?)$/") >= 2
+    assert r"/^(.*?)~(\d+(?:~r\d+)?)$/" in L and L.count("lineKey(") >= 2  # a kept page's line is its anchor (fix25), a file's its number
 
 
 def test_checklist_go_to_it_waits_for_the_data():

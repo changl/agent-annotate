@@ -132,7 +132,7 @@ def test_kept_document_lines_take_notes():
     """Audit 3 finding 4: a paragraph of a kept document (the Usage audit) opens the note composer, like a Markdown file's."""
     s = (links.Path(links.__file__).resolve().parents[1] / "web/proto/links.js").read_text()
     assert 'data-doc="doc:kept-${esc(d.id)}~p"' in s  # the click handler keys a line note as data-doc + '~' + line
-    assert "const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`)" in s and "blocksHtml(d.blocks || [], ctx.esc, line)" in s
+    assert "const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`)" in s and "blocksHtml(d.blocks || [], ctx.esc, line, d.ids)" in s
     assert "/^\\d+$/.test(i || '')" in s  # only ~<n> names a chart bar; a line note never indexes the chart
 
 

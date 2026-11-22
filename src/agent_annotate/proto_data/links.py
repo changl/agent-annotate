@@ -17,7 +17,7 @@ import re
 
 from .history import _comments, _plain, _stamp
 from . import reference
-from .reference import FLD_DIR, _kept_src, copy_library, documents, hide, html_blocks, kept_picture, notes, sized
+from .reference import FLD_DIR, _kept_src, copy_library, documents, hide, html_blocks, kept_picture, notes, old_lines, sized
 
 PROJECT = Path.home() / "projects" / "fastlane-drive"  # where the dummy page was copied from
 FLD_SOURCE = PROJECT / "reviews" / "fld-stack-round8"
@@ -33,18 +33,22 @@ MEETING = FLD_SOURCE.parent / "fld-admin-meeting"
 
 def meeting(folder: Path = MEETING) -> dict | None:
     """The meeting's published versions as revisions, oldest first, read only; None when its folder is missing."""
-    revs = []
+    revs, html, ids = [], "", []
     for h in _json(folder / "current.meta.json").get("history") or []:
         v = str((h or {}).get("version") or "") if isinstance(h, dict) else ""
         try:
-            b = html_blocks((folder / "versions" / f"{v}.html").read_text(errors="ignore"), _kept_src("admin-meeting", folder))
+            t, i = (folder / "versions" / f"{v}.html").read_text(errors="ignore"), []
+            b = html_blocks(t, _kept_src("admin-meeting", folder), i)
         except OSError:
             continue
-        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b[:800]})  # whole versions, so the added and removed counts are true
+        revs.append({"v": v, "ts": str(h.get("ts") or "")[:10], "blocks": b})  # whole versions, so the added and removed counts are true
+        html, ids = t, i
     if not revs:
         return None
+    # notes go on the newest revision, so its anchors are the document's
+    # shortcut: an old line number is read against the newest revision, so a note saved before a later revision lands by its words there
     return {"id": "admin-meeting", "t": "Admin team meeting", "sub": f"the meeting of {datetime.fromisoformat(revs[-1]['ts']).strftime('%-d %b')} · {len(revs)} revisions",
-            "revs": revs, "blocks": revs[-1]["blocks"]}
+            "revs": revs, "blocks": revs[-1]["blocks"], "ids": ids, "was": old_lines(html, revs[-1]["blocks"], ids)}
 
 
 def _kept_dir(doc: str, meta: dict | None = None) -> Path | None:
@@ -61,9 +65,11 @@ def kept() -> list[dict]:
     m = meeting(MEETING)
     out = [m] if m else []
     try:
-        b = html_blocks(USAGE_AUDIT.read_text(errors="ignore"), _kept_src("usage-audit", USAGE_AUDIT.parent))
+        t, ids = USAGE_AUDIT.read_text(errors="ignore"), []
+        b = html_blocks(t, _kept_src("usage-audit", USAGE_AUDIT.parent), ids)
         if b:
-            out.append({"id": "usage-audit", "t": "Usage audit", "sub": "the usage audit page of 6 Nov · from FastLane Drive planning", "blocks": b[:60]})
+            out.append({"id": "usage-audit", "t": "Usage audit", "sub": "the usage audit page of 6 Nov · from FastLane Drive planning", "blocks": b,
+                        "ids": ids, "was": old_lines(t, b, ids)})
     except OSError:
         pass
     try:
@@ -231,17 +237,33 @@ def _build(page_dir: Path) -> dict:
     if fld:  # the tester server's address is in no record the prototype reads, so its row says so instead of linking (mock #82)
         links.append({"name": "Tester server", "what": "its address is not in this project's record yet", "url": ""})
     hist = meta.get("history") or []
+    kd = kept() if fld else []
+    was = {d["id"]: d.pop("was") for d in kd if "was" in d}  # only the published pages: the load test's lines keep their numbers
     return {"name": _plain(meta.get("name") or "This page", 80), "current": meta.get("current") or "",
             "current_t": str((hist[-1] if hist else {}).get("ts") or "")[:16].replace("T", " "),
             "versions": len(hist), "pages": _pages(root, source, fld, page_dir), "archived": archived,
             "folders": folders, "links": links, "people": list(people.values()),
             # kept documents and the folder index are FastLane Drive's files; a copy has none kept on its page
-            "kept": kept() if fld else [], "docs": documents() if fld else {"files": [], "groups": {}}, "notes": _kept_notes(page_dir)}
+            "kept": kd, "docs": documents() if fld else {"files": [], "groups": {}}, "notes": _kept_notes(page_dir, was)}
 
 
-def _kept_notes(page_dir: Path) -> list:
-    """Notes on the kept documents and their chart bars; an unreadable comment store shows none rather than breaking the tab."""
+def moved(a, was: dict):
+    """A kept document's anchor by the twentieth check's line number (doc:kept-<id>~p~<n>) as its words' anchor now
+    (doc:kept-<id>~p~<anchor>); one whose words are gone, the whole document's; any other anchor as it is."""
+    m = re.fullmatch(r"(doc:kept-([^~]+))~p~(\d+)", str(a or ""))
+    if not m or m.group(2) not in was:
+        return a
+    to = was[m.group(2)].get(m.group(3))
+    return f"{m.group(1)}~p~{to}" if to else m.group(1)
+
+
+def _kept_notes(page_dir: Path, was: dict | None = None) -> list:
+    """Notes on the kept documents and their chart bars; an unreadable comment store shows none rather than breaking the tab.
+    A note saved on an old line number shows on the same words now; its store record keeps its anchor until it is moved."""
     try:
-        return [n for n in notes(page_dir) if str(n["a"]).startswith("doc:")]
+        out = [n for n in notes(page_dir) if str(n["a"]).startswith("doc:")]
     except (OSError, ValueError):
         return []
+    for n in out:
+        n["a"], n["ra"] = moved(n["a"], was or {}), moved(n.get("ra"), was or {})
+    return out

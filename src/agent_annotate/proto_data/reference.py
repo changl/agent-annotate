@@ -534,26 +534,43 @@ def _find(e: list, tags: set) -> list:
     return out
 
 
-def _rows(tb: list) -> list:
-    trs = [r for y in _kids(tb) for r in ([y] if y[0] == "tr" else _kids(y) if y[0] in ("thead", "tbody", "tfoot") else []) if r[0] == "tr"]
-    return [[c for c in _kids(r) if c[0] in ("td", "th")] for r in trs]
+def _trs(tb: list) -> list:
+    return [r for y in _kids(tb) for r in ([y] if y[0] == "tr" else _kids(y) if y[0] in ("thead", "tbody", "tfoot") else []) if r[0] == "tr"]
+
+
+def _cells(tr: list) -> list:
+    return [c for c in _kids(tr) if c[0] in ("td", "th")]
 
 
 def _clean(s: str) -> str:
     return re.sub(r"[\s\x01]+", " ", s).strip()
 
 
-def html_blocks(html: str, pic=None) -> list:
+def html_blocks(html: str, pic=None, ids: list | None = None) -> list:
     """A published page's text as the blocks Proto.media.blocks gives Markdown, so every reader draws it the same:
     ['h'|'p'|'li', text], ['pre', text with its line breaks], ['img', address, description, its number from 1] and
     ['tbl', its text, rows, has a header, cells with pictures as ['t', text] and ['img', ...]], as reference.js parse
-    reads a plan revision. `pic(src, attrs)` gives a picture's address or '' (then its description says it was not found)."""
+    reads a plan revision. `pic(src, attrs)` gives a picture's address or '' (then its description says it was not found).
+    Whole: no block, row, cell, picture or text is cut, as today's release shows it all.
+    `ids` (optional) takes each block's anchor, the published page's own data-anchor-id (or its nearest anchored parent's),
+    as 2.32.8 anchors notes, so a note keeps its words when the reader changes; a table's is [its own, one per row]."""
     t = _Tree()
     t.feed(html)
     t.close()
     body = next(iter(_find(t.root, {"body"})), t.root)
-    out, n = [], 0
-    cut = lambda s, k=900: hide(s)[:k]
+    out, n, seen = [], 0, {}
+    cut = lambda s, k=0: hide(s)
+
+    def tok(a):  # unique, with no ~ (the key's separator) and never bare digits (an old reader's line number)
+        a = (a or "top").replace("~", "-")
+        a = "n" + a if a.isdigit() else a
+        seen[a] = seen.get(a, 0) + 1
+        return a if seen[a] == 1 else f"{a}.{seen[a]}"
+
+    def add(b, a):
+        out.append(b)
+        if ids is not None:
+            ids.append(tok(a))
 
     def one(e, cap=""):  # ['img', ...] or, with no file, its description
         nonlocal n
@@ -585,49 +602,111 @@ def html_blocks(html: str, pic=None) -> list:
         each(c)
         return ps
 
-    def walk(e):
+    def walk(e, aid):
         for x in _kids(e):
-            tg = x[0]
+            tg, a = x[0], x[1].get("data-anchor-id") or aid
             if re.fullmatch(r"h[1-6]", tg):
                 if s := _clean(_text(x)):
-                    out.append(["h", cut(s)])
+                    add(["h", cut(s)], a)
             elif tg == "table":
-                rows = [r for r in _rows(x) if any(_clean(_text(c)) or _find(c, {"img"}) for c in r)]
+                trs = [r for r in _trs(x) if any(_clean(_text(c)) or _find(c, {"img"}) for c in _cells(r))]
+                rows = [_cells(r) for r in trs]
                 r = [[cut(_clean(_text(c))) for c in row] for row in rows]
                 cp = [[parts(c) for c in row] for row in rows]
                 if r:
-                    out.append(["tbl", " ".join(sum(r, [])), r, bool(_find(x, {"th"})), *([cp] if any(p for row in cp for p in row) else [])])
+                    add(["tbl", " ".join(sum(r, [])), r, bool(_find(x, {"th"})), *([cp] if any(p for row in cp for p in row) else [])], a)
+                    if ids is not None:  # [the table's (its header row's), then each body row's own; a row with none, by its number]
+                        ids[-1] = [ids[-1]] + [tok(y[1]["data-anchor-id"]) if y[1].get("data-anchor-id") else f"{ids[-1]}~r{i}" for i, y in enumerate(trs) if i]
             elif tg == "pre":
-                out.append(["pre", hide(_text(x).replace("\x01", "\n")).rstrip("\n")[:20000]])
+                add(["pre", hide(_text(x).replace("\x01", "\n")).rstrip("\n")], a)
             elif tg in ("img", "figure"):  # a figure is its pictures, captioned by their description or its caption
                 cap = _clean("".join(_text(c) for c in _kids(x) if c[0] == "figcaption"))
                 for i in [x] if tg == "img" else _find(x, {"img"}):
                     b = one(i, cap)
-                    out.append(b if b[0] == "img" else ["p", b[1]])
+                    add(b if b[0] == "img" else ["p", b[1]], a)
             elif tg == "li":
                 if s := _clean(_text(["li", {}, [y for y in x[2] if isinstance(y, str) or y[0] not in ("ul", "ol", "table", "pre")]])):
-                    out.append(["li", cut(s)])
+                    add(["li", cut(s)], a)
                 for y in _kids(x):
                     if y[0] in ("ul", "ol"):
-                        walk(y)
+                        walk(y, a)
             elif any(y[0] in _BLOCK for y in _kids(x)):
-                walk(x)
+                walk(x, a)
             else:
                 for i in _find(x, {"img"}):
                     b = one(i)
-                    out.append(b if b[0] == "img" else ["p", b[1]])
+                    add(b if b[0] == "img" else ["p", b[1]], a)
                 for s in _text(x).split("\x01"):
                     if s := _clean(s):
-                        out.append(["h" if tg in ("dt", "summary") else "p", cut(s)])
-    walk(body)
+                        add(["h" if tg in ("dt", "summary") else "p", cut(s)], a)
+    walk(body, body[1].get("data-anchor-id"))
+    return out
+
+
+class _Lines(HTMLParser):
+    """The twentieth check's kept-document reader, kept only to read where its notes were: headings, paragraphs, list
+    items, table cells and code as [kind, text], numbered by their order (links.py before 2.32.8's anchors)."""
+    KEEP = {"h1": "h", "h2": "h", "h3": "h", "h4": "h", "p": "p", "li": "li", "td": "p", "pre": "pre"}
+
+    def __init__(self):
+        super().__init__()
+        self.out, self.kind, self.buf, self.skip = [], None, [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.skip += 1
+        elif tag in self.KEEP:
+            self._flush()
+            self.kind = self.KEEP[tag]
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self.skip = max(0, self.skip - 1)
+        elif tag in self.KEEP:
+            self._flush()
+
+    def handle_data(self, data):
+        if self.kind and not self.skip:
+            self.buf.append(data)
+
+    def _flush(self):
+        t = re.sub(r"\s+", " ", "".join(self.buf)).strip()
+        if self.kind and t:
+            self.out.append([self.kind, hide(t)[:900]])
+        self.kind, self.buf = None, []
+
+
+def old_lines(html: str, blocks: list, ids: list) -> dict:
+    """{a line number of the twentieth check's reader: the anchor of the same words now (a table's row for a cell)}, so a
+    note saved on that reader's numbering lands on the words it was written on. Matched in order, by the same words, then
+    the start of them, then words inside; a line with no match is left out (its note stays on the whole document)."""
+    p = _Lines()
+    p.feed(html)
+    p.close()
+    sp = lambda s: re.sub(r"\s+", " ", str(s)).strip()
+    units = []  # (words, anchor) for every block, and every cell of a table under its row's anchor
+    for b, a in zip(blocks, ids):
+        if b[0] == "tbl":
+            units += [(sp(c), a[ri] if ri and ri < len(a) else a[0]) for ri, row in enumerate(b[2]) for c in row]
+        else:
+            units.append((sp(b[2] if b[0] == "img" else b[1]), a))
+    units = [u for u in units if u[0]]
+    tiers = (lambda o, u: o == u, lambda o, u: u.startswith(o), lambda o, u: o.startswith(u) or o in u)
+    out, cur = {}, 0
+    for i, (_, t) in enumerate(p.out):
+        o = sp(t)
+        hit = next((j for f in tiers for j in [*range(cur, len(units)), *range(cur)] if f(o, units[j][0])), None)
+        if hit is not None:
+            out[str(i)], cur = units[hit][1], hit
     return out
 
 
 def kept_picture(folder: Path | None, rel: str) -> Path | None:
-    """A kept document's picture file: under its page's assets/, an image of at most 10 MB as today's release takes, or None."""
+    """A kept document's picture file: under its page's assets/ or attachments/, as today's page serves (sync_server), an
+    image of at most 10 MB as today's release takes, or None."""
     from ..images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES
     parts = Path(rel).parts
-    if not folder or len(parts) < 2 or parts[0] != "assets" or any(p.startswith(".") or p == ".." for p in parts):
+    if not folder or len(parts) < 2 or parts[0] not in ("assets", "attachments") or any(p.startswith(".") or p == ".." for p in parts):
         return None
     p = folder / rel
     try:
@@ -710,7 +789,7 @@ def copied(page_dir: Path, meta: dict) -> list:
         bl, n = [], 0
         for line in act.read_text(errors="ignore").splitlines():
             n += line.startswith("### ")  # one product each
-            if m := re.match(r"!\[([^\]]*)\]\((assets/[^)\s]+)\)", line.strip()):
+            if m := re.match(r"!\[([^\]]*)\]\(((?:assets|attachments)/[^)\s]+)\)", line.strip()):
                 bl.append(["img", sized(m.group(2), page_dir / m.group(2)), hide(m.group(1))])  # served from the copy's own assets
             elif line.startswith("#"):
                 bl.append(["h", plain(line.lstrip("# "), 200)])

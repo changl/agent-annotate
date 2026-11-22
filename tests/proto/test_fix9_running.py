@@ -31,7 +31,7 @@ def test_history_reference_lists_audits_and_copy_library():
 def test_reloaded_note_keeps_its_line():
     """Finding 5: a note read back after a reload takes its line from its document."""
     assert "map(n => Object.assign(n, {line: lineOf(n)}))" in LINKS
-    assert "doc:kept-([^~]+)~p~(\\d+)(?:~r(\\d+))?$" in LINKS  # a table row too (r12 fix18)
+    assert "doc:kept-([^~]+)~p~(.+)$" in LINKS and "atLine(d, m[2])" in LINKS  # by its anchor, a table row too (r12 fix18, fix25)
 
 
 def test_phone_terminal_opens_the_worker_recap():

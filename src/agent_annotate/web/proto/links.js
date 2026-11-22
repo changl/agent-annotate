@@ -18,20 +18,32 @@
   // `line(i)` (optional) gives block i its note attributes and returns what follows it: its notes and composer
   // `tag` (optional): a revision mark after the text; `ins` marks the text itself as new
   // each body row of a table takes its own note (line <i>~r<n>), as in Reference; the header row notes the whole table
-  const blockHtml = (b, i, esc, line, tag = '', ins = false) => { const [k, t] = b, a = line ? ` data-line="${i}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
+  // `id` (optional): the block's anchor from the feed, the published page's own (reference.html_blocks), instead of its number;
+  // a table's is [its own, then each body row's]
+  const blockHtml = (b, i, esc, line, tag = '', ins = false, id = null) => { if (id != null) i = Array.isArray(id) ? id[0] : id;
+    const rk = ri => Array.isArray(id) && id[ri] ? id[ri] : `${i}~r${ri}`;
+    const [k, t] = b, a = line ? ` data-line="${esc(i)}" tabindex="0"` : '', after = line ? line(i) : '', x = ins ? `<ins>${esc(t)}</ins>` : esc(t);
     // a picture, on its own line or in a table cell (its row is the anchor, as today): Proto.media's figure, Full size here,
     // at the size last picked for it, by its key: the document and its place (Proto.media.pk)
     // a picture that takes notes shows its point markers, as Reference's (the notes kit's pins; r12 audit18 reference 3)
     // its size is kept per revision (data-pk); its notes, like its line's, by the place alone (data-nk)
     const pic = (src, alt, n, a = '', place = String(i)) => { const k = docK + '~' + place, nk = k.replace(/~rev\d+(?=~)/, ''), pk = `data-pk="${esc(k)}" data-nk="${esc(nk)}"`, z = P.media.zoom(k), f = P.media.fig(src, alt, n, z, ` data-lzoom="${z}" ${pk}`, ` data-lzoom ${pk}`, a);
       return line && CUR ? f.replace(/<img [^>]*>/, m => `<span class="qpinwrap">${m}${P.notes.pins(notesAt(CUR, nk, true), S.pin, S.note === nk && !S.full && S.tgt)}</span>`) : f; };
-    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${i}~r${ri}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, (p, j) => pic(p[1], p[2], p[3], '', P.media.pk(`${i}~r${ri}`, j)));
+    if (k === 'tbl') { const R = rowsOf(b), ra = ri => line && ri ? ` data-line="${esc(rk(ri))}" tabindex="0"` : '', cell = (ri, ci, c) => P.media.cell(b[4], ri, ci, c, esc, (p, j) => pic(p[1], p[2], p[3], '', P.media.pk(rk(ri), j)));
       // a row's pictures each keep their own notes, under the row's (Reference's rowPics)
-      const rowPics = ri => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => line(P.media.pk(`${i}~r${ri}`, j + 1))).join('');
-      return `<div class="l-tw" style="--c:${Math.max(1, ...R.map(r => r.length))}"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(`${i}~r${ri}`) + rowPics(ri) : '').join('') : ''}`; }
+      const rowPics = ri => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => line(P.media.pk(rk(ri), j + 1))).join('');
+      return `<div class="l-tw" style="--c:${Math.max(1, ...R.map(r => r.length))}"${a}><table>${R.map((r, ri) => `<tr${ra(ri)}>${r.map((c, ci) => ri ? `<td>${cell(ri, ci, c)}</td>` : `<th>${cell(ri, ci, c)}</th>`).join('')}</tr>`).join('')}</table></div>${after}${line ? R.map((_, ri) => ri ? line(rk(ri)) + rowPics(ri) : '').join('') : ''}`; }
     if (k === 'img') return pic(t, b[2], b[3], a).replace(/<\/figure>$/, `${tag}</figure>`) + after;
     return (k === 'h' ? `<h4${a}>${x}${tag}</h4>` : k === 'li' ? `<p class="l-li"${a}>• ${x}${tag}</p>` : k === 'pre' ? P.media.code(t, a) : `<p${a}>${x}${tag}</p>`) + after; };
-  const blocksHtml = (bs, esc, line) => bs.map((b, i) => blockHtml(b, i, esc, line)).join('');
+  const blocksHtml = (bs, esc, line, ids) => bs.map((b, i) => blockHtml(b, i, esc, line, '', false, ids ? ids[i] : null)).join('');
+  // a note's line key split into its document and line (data-doc, data-line): a kept page's line is its anchor; a file's its number
+  const lineKey = k => /^(doc:kept-[^~]+~p)~([^~]+(?:~r\d+)?)$/.exec(k) || /^(.*?)~(\d+(?:~r\d+)?)$/.exec(k);
+  // a kept document's block and row by a line's anchor: [block, row (0 for the whole block)], or null
+  const atLine = (d, t) => { const I = d.ids;
+    if (!I) { const m = /^(\d+)(?:~r(\d+))?$/.exec(t); return m ? [+m[1], +(m[2] || 0)] : null; }  // the load test's lines, by number
+    for (let i = 0; i < I.length; i++) { const x = I[i], r = Array.isArray(x) ? x.indexOf(t) : -1; if (x === t || r === 0) return [i, 0]; if (r > 0) return [i, r]; }
+    const m = /^(.+)~r(\d+)$/.exec(t), p = m && atLine(d, m[1]);
+    return p ? [p[0], +m[2]] : null; };
   // paragraphs paired by their exact text (longest common run): the same, added, or removed where it stood
   // shortcut: no "changed" pairing or word-by-word marks as Reference has; share Reference's alignBlocks when the prototype graduates
   function align(A, B) {
@@ -51,9 +63,9 @@
     const al = n > 1 ? align(R[last - 1].blocks, R[last].blocks) : [], nk = k => al.filter(x => x.k === k).length, csum = n > 1 ? `${nk('add')} added · ${nk('del')} removed` : '';
     const tag = w => ` <span class="l-tag">${w} in revision ${n}</span>`, mk = S.marks && cur === last && n > 1;
     const doc = cur !== last ? blocksHtml(B, esc)  // an earlier revision reads as it was; notes go on the newest
-      : mk ? al.map(x => x.k === 'same' ? blockHtml(B[x.b], x.b, esc, line) : x.k === 'add' ? blockHtml(B[x.b], x.b, esc, line, tag('added'), true)
+      : mk ? al.map(x => x.k === 'same' ? blockHtml(B[x.b], x.b, esc, line, '', false, d.ids ? d.ids[x.b] : null) : x.k === 'add' ? blockHtml(B[x.b], x.b, esc, line, tag('added'), true, d.ids ? d.ids[x.b] : null)
         : `<p class="small"><del>${esc(blockText(R[last - 1].blocks[x.a]))}</del>${tag('removed')}</p>`).join('')  // a picture or table by its words, not its address
-      : blocksHtml(B, esc, line);
+      : blocksHtml(B, esc, line, d.ids);
     const bar = n > 1 ? `<div class="l-revbar"><b>Revision ${cur + 1} of ${n}</b>${cur === last ? `<span class="small">${mk ? `${csum}, against revision ${n - 1}: <del>struck</del> paragraphs left, <ins>marked</ins> ones came in` : 'marks hidden'}</span><button class="lk small" data-marks>${mk ? 'Hide marks' : 'Show marks'}</button>`
       : `<span class="small">an earlier revision, as it read</span><button class="lk small" data-rv="${esc(d.id)}~${last}">Back to the newest</button>`}</div>` : '';
     const list = n > 1 ? `<nav class="l-vlist" aria-label="Revisions"><h5>${pl(n, 'revision', 'revisions')}</h5>${R.map((r, i) => [r, i]).reverse().map(([r, i]) =>
@@ -145,7 +157,7 @@
     }
     if (S.scroll) { S.scroll = false; const h = w.querySelector('.l-hl'); if (h) h.scrollIntoView({block: 'center'}); }
     // View resolution on this tab: its destination line or bar, outlined by the kit and scrolled to (r12 audit16 frame 2)
-    const m = S.res && /^(.*?)~(\d+(?:~r\d+)?)$/.exec(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
+    const m = S.res && lineKey(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
     if (rs) { P.notes.lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
     if (S.full) P.media.redrawView();  // the open picture viewer shows the same notes
   }
@@ -195,7 +207,7 @@
   const apprBtn = (ctx, id) => { const on = apprs(ctx).includes(id);
     return `<button class="btn sm${on ? ' rec' : ''}" data-kappr="${ctx.esc(id)}" aria-pressed="${on}">${on ? '✓ Approved · Undo' : 'Approve'}</button>`; };
   const keptBody = (ctx, D, d) => { const line = i => noteBox(ctx, D, `doc:kept-${d.id}~p~${i}`); docK = `doc:kept-${d.id}~p`;
-    return d.revs ? revDoc(ctx, D, d, line) : blocksHtml(d.blocks || [], ctx.esc, line); };
+    return d.revs ? revDoc(ctx, D, d, line) : blocksHtml(d.blocks || [], ctx.esc, line, d.ids); };
   function docsHtml(ctx, D, copyBtn) {
     const {esc, icon} = ctx, kept = D.kept || [], F = ((D.docs || {}).files || []).map((f, i) => ({...f, i})), groups = (D.docs || {}).groups || {};
     const keptRows = kept.map(d => `<div class="l-line"><span class="l-grow"><button class="lk l-left" data-kept="${esc(d.id)}" aria-expanded="${S.kept === d.id}">${icon('doc')} ${esc(d.t)}</button><span class="small mut l-sub">${esc(d.sub)}</span></span>${copyBtn(`#links/kept-${encodeURIComponent(d.id)}`, d.t)}</div>
@@ -339,7 +351,7 @@
   function place(w, D, k, el) {
     const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
     const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
-    const m = /^(.*?)~(\d+(?:~r\d+)?)$/.exec(k), le =m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${m[2]}"]`);
+    const m = lineKey(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`);
     return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : S.full && S.full.name ? S.full.name : 'Pages & links', line: le ? (le.cells ? [...le.cells].map(c => c.textContent).join(' ') : le.textContent).trim().replace(/\s+/g, ' ') : ''};
   }
   // Remove, as Send's Remove: the stored record stays until Undo is gone, so Undo puts back the very note
@@ -427,8 +439,8 @@
     : (b[0] === 'li' ? '• ' : '') + String(b[1]).replace(/\s+/g, ' ').trim();
   function lineOf(n) {
     if (n.line || !LD) return n.line || '';
-    let m = /^doc:kept-([^~]+)~p~(\d+)(?:~r(\d+))?$/.exec(n.a);  // a kept document's line (~<n> alone is a chart bar, named in its label)
-    if (m) { const d = (LD.kept || []).find(x => x.id === m[1]); return d ? blockText((d.blocks || [])[+m[2]], +m[3]) : ''; }
+    let m = /^doc:kept-([^~]+)~p~(.+)$/.exec(n.a);  // a kept document's line, by its anchor (~<n> alone is a chart bar, named in its label)
+    if (m) { const d = (LD.kept || []).find(x => x.id === m[1]), p = d && atLine(d, m[2]); return p ? blockText((d.blocks || [])[p[0]], p[1]) : ''; }
     m = /^(doc:.+?)~(\d+)(?:~r(\d+))?$/.exec(n.a);  // a line of a Markdown file in the project's folder
     const f = m && ((LD.docs || {}).files || []).find(f => f.md && docKey(f) === m[1]);
     return f ? blockText(mdBlocks(f.md)[+m[2]], +m[3]) : '';
