@@ -717,6 +717,9 @@
           if (b && b.dataset.mz) M.view(x.src, x.cap, +b.dataset.mz, x.from, x.k, x.nk); else if (b && b.hasAttribute('data-mclose')) M.closeView();
           else if (x && x.nk && im) x.nk.tap(NK.at(e, im)); else if (x && x.nk && b) x.nk.click(e); };
         v.oninput = e => { const x = M._v; if (x && x.nk && x.nk.input) x.nk.input(e); };
+        // ⌘↵ in the viewer's composer saves, as on the page
+        v.addEventListener('keydown', e => { if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || !e.target.matches('textarea')) return;
+          const s = v.querySelector('[data-nsave]'); if (s && !e.target.matches('[data-nedtext]')) { e.preventDefault(); s.click(); } });
         if (!M._esc) document.addEventListener('keydown', M._esc = e => { if (e.key === 'Escape' && document.getElementById('p-mview')) { e.preventDefault(); e.stopPropagation(); M.closeView(); } }, true);
       }
       M._v = {src, cap, z, from: from || (M._v && M._v.from), k, nk};

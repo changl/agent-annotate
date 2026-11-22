@@ -198,7 +198,7 @@ button.qpin{pointer-events:auto;border:0;padding:0;cursor:pointer;font-family:in
 /* the notes kit's one marker rule on every tab: purple goes with Send, muted is sent (catalog 24); its in-place edit */
 .qpin.sent,body .pinm.sent,body .rf-pin.sent{background:var(--faint)}
 .qpin.new{background:var(--color-warning);color:#000}
-.mview .pic.qpinwrap{display:block}.mview .pic.qpinwrap img{cursor:crosshair}.mview .zn{max-width:80ch;margin:8px auto 0;padding:0 12px}
+.mview .pic.qpinwrap{display:block}.mview .pic.qpinwrap img{cursor:crosshair}.mview .zn{max-width:80ch;margin:8px auto 0;padding:8px 12px;background:var(--color-base-100);color:var(--color-base-content);border-radius:var(--radius-box)}.mview .zn:empty{display:none}
 .nkedit{margin:4px 0}.nkedit textarea{width:100%;margin:4px 0}.nkedit .acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .qdoc mark{background:color-mix(in oklab,var(--color-primary) 22%,transparent);color:inherit}
 /* "Back to Q N": left above the evidence by a card's evidence jump (today's annotate-back-pill) */
