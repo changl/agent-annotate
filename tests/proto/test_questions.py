@@ -126,7 +126,7 @@ def test_third_check_fixes_stay():
     # frame 03: a copy floats Send like FastLane Drive; Questions' bar Send stays hidden on the phone
     assert "!COPY && S.menu !== 'nav'" not in f and ".qcopy" not in c
     # frame 04: the receipt counts every item it sent
-    assert "Sent ${pl(n, 'item', 'items')}" in s
+    assert "Sent ${pl(got, 'item', 'items')}" in s
 
 
 def test_seventh_check_fixes_stay():

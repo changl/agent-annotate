@@ -188,6 +188,7 @@
     base, api, data, prefs, esc, toast, inert, remember,
     icon: (n, l) => P.icon(n, l),
     go(tab, anchor) { location.hash = tab + (anchor ? '/' + encodeURIComponent(anchor) : ''); },
+    goTo: id => goTarget(id, () => true),
     get phone() { return phoneQ.matches; },
     refreshChips: () => { drawTabs(); refreshTop(); },
     // take(id, path) -> Undo: the note is hidden now and its DELETE goes when Undo is gone; taken(id); takeNow(): every pending one goes (before a Send)
@@ -195,7 +196,7 @@
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
-    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); },
+    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -234,6 +235,24 @@
     while (c && c !== document.body && !/sticky|fixed/.test(getComputedStyle(c).position)) c = c.parentElement;
     if (c && c !== document.body && !c.contains(el) && !el.contains(c)) scrollBy(0, r.top - c.getBoundingClientRect().bottom - 8);
   }
+  // Go to it: its card or note can land after the render (a cold read, a draw a later one replaced): wait for it, then scroll to it
+  // and outline it, again on the node a redraw puts in its place (r12 audit23 questions 1)
+  function goTarget(id, live) {
+    const t0 = Date.now(); let lit = null, at = 0;
+    const tick = () => {
+      const el = live() && document.getElementById(id);
+      if (el && el !== lit) {
+        const r = el.getBoundingClientRect();
+        if (!lit || r.bottom < 0 || r.top > innerHeight) scrollClear(el);
+        if (!lit) at = Date.now();
+        el.classList.add('qlit'); lit = el;
+      }
+      if (lit && Date.now() - at > 2500) { const x = document.getElementById(id); if (x) x.classList.remove('qlit'); return; }
+      if (!live() || !lit && Date.now() - t0 > 20000) return;
+      setTimeout(tick, 100);
+    };
+    tick();
+  }
   function show(key, anchor) {
     const t = byKey[key] || TABS[0];
     S.tab = t.key;
@@ -251,8 +270,8 @@
     const view = el.appendChild(Object.assign(document.createElement('div'), {className: 'p-view area-' + t.area + ' tab-' + t.key}));
     const live = () => view.isConnected;
     Promise.resolve().then(() => t.render(view, ctx, anchor)).then(() => {
-      const target = live() && anchor && document.getElementById(anchor);
-      if (target) scrollClear(target);
+      if (live() && anchor && /^[qn]-/.test(anchor)) goTarget(anchor, live);
+      else { const target = live() && anchor && document.getElementById(anchor); if (target) scrollClear(target); }
     }).catch(e => {
       if (!live()) return;
       view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} could not be read: ${esc(e.message)}</p><button class="btn sm" data-again>Try again</button></div>`;

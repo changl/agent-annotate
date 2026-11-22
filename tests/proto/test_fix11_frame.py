@@ -13,7 +13,7 @@ def test_undo_goes_when_the_countdown_ends():
     post = Q[Q.index("async function post("):Q.index("async function discardAll()")]
     assert post.index("S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());") < post.index("try {")
     ok = post[:post.index("} catch (e) {")]
-    assert ok.index("S.pending = null;") < ok.index(".qsend.sending').forEach(x => x.remove())") < ok.index("ctx.toast(`Sent ") < ok.index("await refresh();")
+    assert ok.index("S.pending = null;") < ok.index(".qsend.sending').forEach(x => x.remove())") < ok.index("ctx.toast(got ? `Sent ") < ok.index("await refresh();")
     assert "if (t.hasAttribute('data-sendundo')) { if (!S.pending || S.pending.going) return;" in Q
     assert "S.sentPaint = true; S.sendN = 0;" in FRAME
 

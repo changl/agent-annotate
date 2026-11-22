@@ -340,6 +340,8 @@
     else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
     else if (path === 'api/rounds/submit' && D) {  // the Send takes every unsent note, and every edit on a sent one
       for (const n of D.notes) { if (NK.out(n) && NK.own(n)) NOTES.sent.add(n.id); }
+      // and every note the copy saved, from its own store: one put back by Discard's Undo may be missing from D.notes (r12 audit23 frame 3)
+      for (const n of NOTES.add) NOTES.sent.add(n.id);
       for (const s of Object.values(SIM)) s.edited = false;
     }
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
@@ -1001,10 +1003,10 @@
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
     // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.own(n)]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.own(n), n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.own(n); };  // the questions feed holds every tab's notes
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', peer(x.note)]);
+    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', peer(x.note), x.note]);
     return it;
   }
   // what his round carries, as the receipt counts it: every listed item but another reviewer's note
@@ -1231,13 +1233,15 @@
   function send() {
     if (!D) return ctx.toast('Reading the questions first: Send works in a moment');  // ⌘↵ again before they are read
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
-    const n = sentCount();
+    // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
+    const listed = new Set(sendItems().filter(x => !x[4] && x[5]).map(x => x[5])),
+      n = sentCount(), mine = D.notes.filter(x => listed.has(x.id) && !x.sent).map(x => x.id);
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n), SEND_DELAY)};
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, mine), SEND_DELAY)};
     draw(true);
   }
-  async function post(answers, replies, closes, n) {
+  async function post(answers, replies, closes, n, mine = []) {
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
@@ -1258,15 +1262,20 @@
       for (const [a, p] of Object.entries(abPicks())) { await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}); setAB(a, null); }
       // a re-opened note goes back to open now, so the round carries it to the agent again
       for (const id of Object.keys(NK.reo(ctx))) await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
-      await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
+      const r = await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
+      // the receipt counts what the server took: a note another client of his sent first is not in this round, and a round
+      // with nothing new is a noop (r12 audit23 frame 2); a copy's simulated round answers neither, so it counts what Send listed
+      const ids = r && Array.isArray(r.comment_ids) ? new Set(r.comment_ids) : null;
+      const got = r && r.delivery === 'noop' ? 0 : Math.max(0, n - (ids ? mine.filter(id => !ids.has(id)).length : 0));
       ctx.prefs.set('q:general', '');
       D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       NK.L = {}; ctx.prefs.set('draft:nkput', {});  // and every edit and reply on a sent note, whatever tab holds it
-      if (ctx.queueSent) ctx.queueSent(n);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
+      if (ctx.queueSent) ctx.queueSent(got);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
-      ctx.toast(`Sent ${pl(n, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}`, {inert: true});
+      updateBar();  // the toolbar's Send count follows the store with the top bar's, not after the re-read
+      ctx.toast(got ? `Sent ${pl(got, 'item', 'items')}: ${S.copyOf ? 'nothing saved in this copy' : 'saved as a round in this copy'}` : 'Nothing new was sent: these items had already gone in an earlier Send', {inert: true});
       await refresh();
     } catch (e) {
       S.pending = null; await refresh();
@@ -1291,6 +1300,7 @@
       if (tn) { S.note = tn; ctx.prefs.set('q:newnote', tn); }
       await Promise.all(undos.map(u => u()));
       for (const b of backs.reverse()) if (b) await b();  // last out, first back: each returns to its own place
+      if (D) await refresh();  // another tab's note put back: the feed every Send count reads has it again (r12 audit23 frame 3)
     }});
   }
   async function sendRemove(k) {
@@ -1346,7 +1356,7 @@
     if (k === 'need') { S.filter = 'need'; return switchView('list'); }
     if (k.startsWith('q:')) return jumpTo(k.slice(2), null, at);
     if (k.startsWith('n:')) {
-      const go = () => { const el = document.getElementById('n-' + k.slice(2)); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } }; return (S.view === 'doc' ? draw(true) : switchView('doc')).then(go); }
+      return (S.view === 'doc' ? draw(true) : switchView('doc')).then(() => ctx.goTo('n-' + k.slice(2))); }  // the frame waits for the note if the draw was replaced
   }
   const goNew = () => { const el = root && root.querySelector('[data-newnote]'); if (el) { el.scrollIntoView({block: 'center'}); el.classList.add('qlit'); setTimeout(() => el.classList.remove('qlit'), 2500); } };
   // a task opens its full record beside Questions, Running's own panel, not in another tab (#27, audit4 04); ↑ ↓ step through the tasks on screen
