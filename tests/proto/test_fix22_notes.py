@@ -95,7 +95,7 @@ def test_kit_remembers_edits_and_replies_for_every_copy(tmp_path):
   assert.strictEqual(NK.say(shown), 'Reply: a reply');  // the copy that also has it lists it once
   const saved = {id: 'n1', text: 'old'};  // a saved row from before, with no read in after a reload
   assert(NK.out(saved) && NK.kept(saved) && NK.say(saved) === 'Reply: a reply');
-  assert.deepStrictEqual(NK.state(shown), {sent: true, edited: false, replies: [{text: 'a reply', unsent: true}], rm: false, by: true});  // his own (mine): r12 audit22 reference 4
+  assert.deepStrictEqual(NK.state(shown), {sent: true, edited: false, ed: {by: true}, replies: [{text: 'a reply', unsent: true, by: true}], rm: false, by: true});  // his own (mine): r12 audit22 reference 4
   assert(!NK.kept({id: 'n2', text: 'draft'}));  // an unsent note keeps its Remove
   NK.gone(other);
   assert(!NK.out(other) && !NK.kept({id: 'n1'}));

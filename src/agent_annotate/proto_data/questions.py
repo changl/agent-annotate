@@ -79,10 +79,13 @@ def note_thread(c: dict) -> dict:
             return False
     # by: who wrote it (author_key); ag: the agent did, so the reply box shows from the start (showReply's agentResponded);
     # flagged and rp: today's canDeleteComment, which an edit re-opens by clearing flagged_for_session
+    # ed.by and each reply's by: who made the edit (any PUT: words, Re-open, Move) and who wrote the reply, since the
+    # server's round takes each by its own author, not the note's (_comment_needs_push) (r12 audit25 running 1)
     return {"edited": edited, "mine": _mine(c.get("author")), "by": author_key(c.get("author")), "ag": str(c.get("author") or "").startswith("agent:"),
+            "ed": {"by": author_key(c.get("edited_by") or c.get("author"))},
             "flagged": bool(c.get("flagged_for_session")), "rp": bool(c.get("round_pending")), "resp": _mask(c.get("response_text") or ""),
             "replies": [{"agent": not _mine(r.get("author")), "who": r.get("author_name") or ("Agent" if not _mine(r.get("author")) else "You"),
-                         "text": _mask(r.get("text") or ""), "ts": r.get("ts"), "unsent": unsent(r)}
+                         "text": _mask(r.get("text") or ""), "ts": r.get("ts"), "unsent": unsent(r), "by": author_key(r.get("author"))}
                         for r in c.get("replies") or [] if isinstance(r, dict)]}
 
 

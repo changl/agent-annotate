@@ -23,7 +23,7 @@ def test_send_waits_for_the_other_tabs_reads():
 def test_copy_send_records_release_drafts_by_id():
     q = (WEB / "questions.js").read_text()
     sub = q[q.index("async function submitSim()"):q.index("P.copyWrite = fake;")]
-    assert "for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.own(n)) ids.add(n.id);" in sub
+    assert "for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.mine(n)) ids.add(n.id);" in sub
     assert "ids.forEach(id => NOTES.sent.add(id));" in sub and "return {ok: true, comment_ids: [...ids]};" in sub
     assert "else if (path === 'api/rounds/submit' && D) return submitSim();" in q
     # the feed brings a sent release note back as sent
@@ -60,8 +60,8 @@ def test_send_counts_what_it_delivers():
     assert "sentCount" not in q  # one count, before and after
     assert "!!x.peer || peer(x.note), x.note]" in q
     assert "another reviewer’s, not sent" in q
-    for f, s in [("reference.js", "note: n.id, peer: !NK().own(n), html:"), ("links.js", "note: n.id, peer: !P.notes.own(n), html:"),
-                 ("history.js", "note: n.id, peer: !P.notes.own(n), html:")]:
+    for f, s in [("reference.js", "note: n.id, peer: !NK().mine(n), html:"), ("links.js", "note: n.id, peer: !P.notes.mine(n), html:"),
+                 ("history.js", "note: n.id, peer: !P.notes.mine(n), html:")]:
         assert s in (WEB / f).read_text(), f
 
 

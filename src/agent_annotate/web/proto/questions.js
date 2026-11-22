@@ -95,19 +95,30 @@
     reoQ: n => { const r = P.ctx && NK.reo(P.ctx)[n.id]; return !!r && typeof r === 'object'; },
     out: n => { NK.settle(n); return !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
     // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
-    gone: n => { if (!NK.own(n)) return; Object.assign(n, {sent: true, edited: false, flagged: true}); (n.replies || []).forEach(r => { r.unsent = false; });
+    // and a peer's reply or edit on it stays pending too (r12 audit25 running 1)
+    gone: n => { if (!NK.mine(n)) return; Object.assign(n, {sent: true, edited: !!n.edited && !NK.own(n.ed || n), flagged: true}); (n.replies || []).forEach(r => { if (NK.own(r)) r.unsent = false; });
       if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
     // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
     // rm: whether its row offers Remove (rowRm), as the loaded note decides it, since the row keeps no author or replies
     // by: his own as the kit decides it (own), so a note written on a copy, which carries no `by`, keeps Remove (r12 audit22 reference 4)
-    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n), by: NK.own(n)}),
+    // ed and each reply's by: whose edit and replies they are, so a saved row's owner is the one mine() gave the loaded note
+    state: n => ({sent: !!n.sent, edited: !!n.edited, ...(n.flagged != null ? {flagged: n.flagged} : {}), ed: {by: NK.own(n.ed || n)},replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true, by: NK.own(r)})), rm: NK.rowRm(n), by: NK.own(n)}),
     // his own note (today's isMine): the feed marks his own `by: true` for each reader; one written in this visit has no `by`
     own: n => n.by === true || (n.by == null && n.mine !== false),
+    // whose Send row it is, as the server's round decides (_comment_needs_push): a never-sent note its author's; on a sent one,
+    // his edit (its editor's, ed), his pending reply (the reply's author), his own edit or reply in this visit, or his note a
+    // words edit un-flagged; never a peer's note a words edit un-flagged. Every tab's row, the counts, the peer label and the
+    // round go by it (r12 audit25 running 1)
+    mine: n => { const me = NK.own(n); if (!n.sent) return me;
+      if (n.flagged === false) return me;
+      return n.id in NK.loc() || (!!n.edited && NK.own(n.ed || n)) || (n.replies || []).some(r => r.unsent && NK.own(r)); },
     // today's canDeleteComment: his own, not flagged for the session (an edit clears it), no replies, no response, no pending round
     removable: n => NK.own(n) && !(n.flagged != null ? n.flagged : n.sent && !n.edited) && !(n.replies || []).length && !n.resp && !n.rp,
     // its Send row's words, as today's summary (commentRow): a posted reply as "Reply" with its words, else the note's words.
     // A sent note's row has no Remove: the server refuses to delete a sent note, and today's row offers none
-    say: n => { const l = NK.loc()[n.id] || {replies: []}, r = [...new Set([...(n.replies || []).filter(x => x.unsent).map(x => x.text), ...l.replies.map(x => x.text)])];
+    // on his row, his own replies alone: a peer's pending one is not in his round
+    say: n => { const l = NK.loc()[n.id] || {replies: []}, u = (n.replies || []).filter(x => x.unsent),
+      r = [...new Set([...(NK.mine(n) ? u.filter(NK.own) : u).map(x => x.text), ...l.replies.map(x => x.text)])];
       return r.length ? 'Reply: ' + r.join(' · ') : l.text != null ? l.text : n.text; },
     // its row keeps no Remove once sent: from the loaded note, its saved row or his edit or reply on it
     kept: n => !!n.sent || n.id in NK.loc(),
@@ -347,7 +358,7 @@
   async function submitSim() {
     const feeds = await Promise.all(['reference', 'links'].map(a => P.ctx.data(a).then(d => (d && d.notes) || [], () => [])));
     const ids = new Set(Object.keys(NK.reo(P.ctx)));
-    for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.own(n)) ids.add(n.id);
+    for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.mine(n)) ids.add(n.id);
     // and every note the copy saved, from its own store: one put back by Discard's Undo may be missing from D.notes (r12 audit23 frame 3)
     for (const n of NOTES.add) if (!NOTES.sent.has(n.id)) ids.add(n.id);
     for (const [id, s] of Object.entries(SIM)) { if (s.edited) ids.add(id); s.edited = false; }
@@ -1015,10 +1026,10 @@
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
     // [4]: another reviewer's note, listed but never in his round (the server sends only his own), so the receipt leaves it out (r12 audit22 frame 2)
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.own(n), n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '', !NK.mine(n), n.id]);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
-    const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.own(n); };
+    const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.mine(n); };
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', !!x.peer || peer(x.note), x.note]);
     return it;
   }
