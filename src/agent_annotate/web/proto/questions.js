@@ -719,7 +719,7 @@
         v.oninput = e => { const x = M._v; if (x && x.nk && x.nk.input) x.nk.input(e); };
         // ⌘↵ in the viewer's composer saves, as on the page
         v.addEventListener('keydown', e => { if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || !e.target.matches('textarea')) return;
-          const s = v.querySelector('[data-nsave]'); if (s && !e.target.matches('[data-nedtext]')) { e.preventDefault(); s.click(); } });
+          const s = v.querySelector('[data-nsave]'); if (s && !e.target.matches('[data-nedtext]')) { e.preventDefault(); e.stopPropagation(); s.click(); } });  // the frame's ⌘↵ (open Send) must not also fire
         if (!M._esc) document.addEventListener('keydown', M._esc = e => { if (e.key === 'Escape' && document.getElementById('p-mview')) { e.preventDefault(); e.stopPropagation(); M.closeView(); } }, true);
       }
       M._v = {src, cap, z, from: from || (M._v && M._v.from), k, nk};

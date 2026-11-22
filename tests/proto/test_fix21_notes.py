@@ -86,7 +86,7 @@ def test_links_full_size_takes_and_shows_point_notes():
     """Reference 3: Full size in Pages & links opens a point composer on a tap and shows saved points; an inline tap keeps its spot."""
     v = grab(Q, "    view(src, cap, z, from, k, nk)", "\n    },")
     assert "nk.tap(NK.at(e, im))" in v and "nk.pins()" in v and "nk.list()" in v
-    assert "v.querySelector('[data-nsave]')" in v  # ⌘↵ saves from the viewer's composer
+    assert "v.querySelector('[data-nsave]')" in v and "e.stopPropagation(); s.click()" in v  # ⌘↵ saves from the viewer's composer, and opens no Send
     assert ".mview .zn{" in QCSS and "background:var(--color-base-100)" in QCSS[QCSS.index(".mview .zn{"):][:200]
     assert "tap: tgt => { S.tgt = tgt; S.note = k;" in LNK and "pins: () => P.notes.pins(notesAt(D, k, true)" in LNK
     assert "const tgt = P.notes.at(e, im);" in LNK and "S.note = pk;" in LNK  # inline: a point on the picture's own key
