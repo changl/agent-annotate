@@ -971,12 +971,13 @@
     // one round on a busy host, not three: Questions' read and the tab scripts start with the frame's reads (r12 fix12 perf)
     (pre.questions = api('proto/data/questions.json')).catch(() => {});
     const scripts = Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
+    scripts.then(scriptsDone, scriptsDone);  // on their own: the frame's read below waits for them on a copy, so start() must not hold them (fix26 deadlock)
     let why = '';
     const [meta, who, fd, proj, board] = await Promise.all([api.meta().catch(e => { why = e.message; return null; }), ...[api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null))]);
     S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
-    await scripts; scriptsDone();
+    await scripts;
     [...TAKEN.keys()].forEach(finishTake);  // after the scripts: a copy's removal goes to its in-memory store (P.copyWrite)
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)

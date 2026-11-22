@@ -41,7 +41,9 @@ def test_open_sheet_follows_rows_and_receipt_counts_his_round():
     assert "p.then(() => refreshSend(), () => {});" in f  # every read landing reaches the open sheet
     assert "&& sg === S.sendSig) return;" in f  # the rows, not only the count
     # a copy's read never caches before questions.js adds the copy's notes (Rebex Go to it after reload)
-    assert "COPY && !P.copyData ? scriptsIn.then(() => d) : d" in f and "await scripts; scriptsDone();" in f
+    assert "COPY && !P.copyData ? scriptsIn.then(() => d) : d" in f
+    # the gate opens when the scripts land, not after start() awaits the frame's own read: no deadlock on a copy
+    assert "scripts.then(scriptsDone, scriptsDone);" in f and "scriptsDone();" not in f
     assert "sig: () => JSON.stringify(sendItems().map(x => [x[2], x[3]]))," in q
     assert "const n = sentCount();" in q  # the receipt and the last Send count his round only
     assert "!NK.own(n)]);" in q and "peer(x.note)]);" in q
