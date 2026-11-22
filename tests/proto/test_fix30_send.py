@@ -48,7 +48,7 @@ def test_every_redraw_keeps_general_feedback_focus():
 def test_nothing_ready_only_when_every_read_is_in():
     """Running 2: Questions' own read counts, held or failed, as Reference's and Pages & links' do."""
     q = (WEB / "questions.js").read_text()
-    assert "const allRead = () => !!(S.oin && D && !S.qerr);" in q
+    assert "const allRead = () => !!(S.oin && qIn());" in q
     assert q.count("Nothing ready yet.</p>") == 1 and "(allRead() ? `<p class=\"small mut\" data-snone" in q
 
 
@@ -62,7 +62,7 @@ def test_a_failed_read_names_only_itself():
 def test_the_shortcut_callout_only_while_send_is_on():
     """Reference check 2: "Press ⌘↵ again" shows only while Send is enabled (every read in, something to send)."""
     q = (WEB / "questions.js").read_text()
-    assert "${S.sendKey && ok ? `<div class=\"qsendkey\"" in q and "const ok = n && D && S.oin," in q
+    assert "${S.sendKey && ok ? `<div class=\"qsendkey\"" in q and "const ok = n && allRead()," in q
 
 
 def test_phone_home_shows_the_page_count():

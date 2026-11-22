@@ -1035,13 +1035,16 @@
     return it;
   }
   // "Nothing ready yet" only once every read the sheet waits on (Questions, Reference, Pages & links) is in, none failed (r12 audit26 running 2)
-  const allRead = () => !!(S.oin && D && !S.qerr);
+  // every Questions read counts, a warm refresh too: a note saved since, a read on its way or a failed one leaves the
+  // listed rows out of date (r12 audit27 questions 1)
+  const qIn = () => !!(D && !stale && !reading && !S.qerr);
+  const allRead = () => !!(S.oin && qIn());
   function sendPanel(n) {
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
     if (!S.oin && !S.oerr) readOthers(ctx);  // whichever button or key opened it, the sheet starts its own reads, once (r12 audit25 questions 1)
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
-    const ok = n && D && S.oin, rd = ok || !n ? '' : ` title="Reading ${D ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
+    const ok = n && allRead(), rd = ok || !n ? '' : ` title="Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
     it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
@@ -1051,7 +1054,7 @@
       ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm, pe]) => `<li${pe ? ' data-speer' : ''}>${h}${pe ? ' <span class="small mut">· another reviewer’s, not sent</span>' : ''} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (allRead() ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
       ${S.oin ? '' : S.oerr ? `<p class="small" role="alert" data-sothers><span class="warn-t">The notes on ${S.oerr} could not be read: Send waits for them.</span> <button class="lk small" data-sothersretry>Try again</button></p>`
         : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
-      <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
+      <h4>Not in this Send</h4><p class="small">${!qIn() ? S.qerr && !reading ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
 
@@ -1262,11 +1265,11 @@
   function arm() {
     if (S.pending) return;
     if (!S.armed && !D) return openSheet(ctx, true);  // its tab still reading: the sheet opens over it with what was saved
-    if (!S.armed) { S.armed = true; S.sendKey = true; S.gen = false; readOthers(ctx); draw(true).then(() => { const t = root.querySelector('[data-send]'); if (t) t.focus(); }); return; }
+    if (!S.armed) { S.armed = true; S.sendKey = true; S.gen = false; readOthers(ctx); draw(true).then(() => { const t = root.querySelector('[data-send]'); if (t) t.focus(); }); if (stale) readFor(ctx); return; }
     send();
   }
   function send() {
-    if (!D || !S.oin) return ctx.toast(`Reading ${D ? 'the notes on other tabs' : 'the questions'} first: Send works in a moment`);  // ⌘↵ again before they are read
+    if (!allRead()) { relist(); return ctx.toast(`Reading ${qIn() ? 'the notes on other tabs' : 'the questions'} first: Send works in a moment`); }  // ⌘↵ again before they are read
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
     // every row on a note, whichever tab lists it (a release draft, a peer's draft or reply): the round's ids say which went
@@ -1277,6 +1280,9 @@
     draw(true);
   }
   async function post(answers, replies, closes, n, listed) {
+    // the server's round takes every unsent note: a note saved or a read started during the countdown is one Send never
+    // listed, so nothing goes and the sheet lists it first (r12 audit27 questions 1)
+    if (!allRead()) { S.pending = null; S.armed = true; await draw(true); relist(); return ctx.toast('A note came in while sending: check the list and press Send again. Nothing was sent.'); }
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
@@ -1726,11 +1732,14 @@
       if (reading) { await reading; continue; }  // marked stale meanwhile: read again
       if (D && !stale && !again) return;
       const fresh = !!D || !!again; stale = false; again = false;
-      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }).finally(() => { if (reading === r) reading = null; });
+      // whoever asked (a count, the sheet), a failed read is the sheet's failure too, and stays stale so the next read tries again
+      const r = reading = c.data('questions', fresh).then(d => { D = sim(d); S.qerr = false; }, e => { S.qerr = true; stale = true; throw e; })
+        .finally(() => { if (reading === r) { reading = null; relist(); } });
+      relist();  // the open sheet waits on this read
     }
   };
   // the Send sheet open before the questions were read: their items join it once they are in, or it says the read failed
-  const readFor = (c, again) => { S.qerr = false; relist(); return load(c, again).then(relist, () => { S.qerr = true; relist(); }); };
+  const readFor = (c, again) => { S.qerr = false; const p = load(c, again).then(relist, () => { S.qerr = true; relist(); }); relist(); return p; };
   // the same for the notes Reference and Pages & links list (a 2.32.8 Policies or meeting note is in their feeds alone): the
   // sheet says it is reading them and Send waits, then lists them; the tabs' own first reads, never a second (r12 audit24 reference 1)
   let others = null;
@@ -1743,6 +1752,8 @@
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
     if (!S.armed || !s) return;
+    // a note saved since the last read: the sheet reads it before Send works (load relists); a failed read waits for Try again
+    if (stale && !reading && !S.qerr && ctx) return readFor(ctx);
     const f = s.contains(a) && a.matches('[data-send]'); await draw(true);  // draw keeps General feedback's focus itself
     const b = f && document.querySelector('.qsend [data-send]'); if (b) b.focus();
   }

@@ -15,9 +15,9 @@ def test_send_waits_for_the_other_tabs_reads():
     assert "const readOthers = c => others || (others = Promise.all([['reference', 'Reference'], ['links', 'Pages &amp; links']].map(([a, t]) => c.data(a).then(() => '', () => t)))" in q
     assert "readFor(c);\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
-    assert "const ok = n && D && S.oin," in q
+    assert "const ok = n && allRead()," in q and "const allRead = () => !!(S.oin && qIn());" in q
     assert "data-sothers>Reading the notes on Reference and Pages &amp; links…" in q
-    assert "if (!D || !S.oin) return ctx.toast(" in q
+    assert "if (!allRead()) { relist(); return ctx.toast(" in q
 
 
 def test_copy_send_records_release_drafts_by_id():
