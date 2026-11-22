@@ -72,8 +72,9 @@ def test_send_offers_no_remove_on_a_sent_note():
     """Today's Send row for an edited note or a posted reply has no Remove; the server refuses to delete a sent note."""
     from test_fix17_notes import WEB
     ref, links, hist = ((WEB / n).read_text() for n in ("reference.js", "links.js", "history.js"))
-    assert "remove: NK().kept(n) ? null :" in ref and "remove: P.notes.kept(n) ? null :" in links and "remove: P.notes.kept(n) ? null :" in hist
-    assert "x.remove ? 'x:' + x.key : ''" in Q and "NK.kept(n) ? '' : 'note:' + n.id" in Q and "${rm ? `" in Q
+    # the kit's rowRm, which is never true once kept (r12 audit20: and only where canDeleteComment allows)
+    assert "remove: !NK().rowRm(n) ? null :" in ref and "remove: P.notes.rowRm(n) ? () => takeNote" in links and "remove: P.notes.rowRm(n) ? () => takeC" in hist
+    assert "x.remove ? 'x:' + x.key : ''" in Q and "NK.rowRm(n) ? 'note:' + n.id : ''" in Q and "rowRm: n => !NK.kept(n) &&" in Q and "${rm ? `" in Q
     # every tab's saved Send row keeps the note's sent state and unsent replies (r12 audit19 frame 1)
     assert "...NK().state(n)" in ref and links.count("...P.notes.state(n)") == 1 and hist.count("...P.notes.state(n)") == 1 and "v: D.version, at: n.at, ...NK.state(n)" in Q
 
@@ -94,7 +95,7 @@ def test_kit_remembers_edits_and_replies_for_every_copy(tmp_path):
   assert.strictEqual(NK.say(shown), 'Reply: a reply');  // the copy that also has it lists it once
   const saved = {id: 'n1', text: 'old'};  // a saved row from before, with no read in after a reload
   assert(NK.out(saved) && NK.kept(saved) && NK.say(saved) === 'Reply: a reply');
-  assert.deepStrictEqual(NK.state(shown), {sent: true, edited: false, replies: [{text: 'a reply', unsent: true}]});
+  assert.deepStrictEqual(NK.state(shown), {sent: true, edited: false, replies: [{text: 'a reply', unsent: true}], rm: false});
   assert(!NK.kept({id: 'n2', text: 'draft'}));  // an unsent note keeps its Remove
   NK.gone(other);
   assert(!NK.out(other) && !NK.kept({id: 'n1'}));

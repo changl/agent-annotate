@@ -53,13 +53,14 @@ def test_reopen_is_its_own_send_row_with_remove_and_undo(tmp_path):
   const undo = await NK.set(c, n, 'reopen', api, async () => {});
   assert(NK.isReo(c, n) && /re-opened · goes with Send/.test(NK.words(c, n)) && !/data-nreopen/.test(NK.acts(c, n)));
   assert(/Re-opened/.test(NK.row(n, 2, 'On “a”')));
-  assert.strictEqual(calls.length, 0);  // nothing reaches the store before Send
-  await NK.set(c, n, 'unreopen', api, async () => {}, true);
-  assert(!NK.isReo(c, n) && /resolved in version 2/.test(NK.words(c, n)));
-  await NK.set(c, n, 'reopen', api, async () => {}, true); await undo();  // Re-open's Undo takes it back
-  assert(!NK.isReo(c, n));
+  // the store says open at once, as today's Re-open (r12 audit20 frame 4); no Undo: only the agent may resolve it again
+  assert.deepStrictEqual(calls.at(-1), ['api/comments/n1', {status: 'open'}, 'PUT']);
+  assert(n.st === 'open' && (await undo()) === null && NK.isReo(c, n));
   await NK.set(c, n, 'close', api, async () => {});
-  assert(n.closed && calls.at(-1)[0] === 'api/comments/n1/accept' && !NK.isReo(c, n));  // a resolved note's Close is today's Resolve (r12 fix22)
+  assert(n.closed && calls.at(-1)[0] === 'api/comments/n1/archive' && !NK.isReo(c, n));  // now open, its Close is today's Archive
+  const r = {id: 'n2', sent: true, st: 'resolved_in_version', text: 'y'};
+  await NK.set(c, r, 'close', api, async () => {});
+  assert(r.closed && calls.at(-1)[0] === 'api/comments/n2/accept');  // a resolved note's Close is today's Resolve (r12 fix22)
   await NK.set(c, n, 'restore', api, async () => {});
   assert(!n.closed && calls.at(-1)[0] === 'api/comments/n1/restore');
   NK.goRes(c, n); assert.deepStrictEqual(calls.at(-1), ['go', 'history', 'v2~s:p2']);

@@ -38,8 +38,10 @@
   const gen = () => ctx.prefs.get('q:general', '');
   /* ---------- one note lifecycle for every tab: Questions, Reference and Pages & links call these (r12 fix17) ---------- */
   // Re-open on a note the agent addressed goes with the next Send as its own row: a draft (id → its status) until Send writes it,
-  // since only the agent may mark a note resolved again, so Remove and Undo never reach the store
+  // (the store says open at once, as today; the row tells the agent with the next Send)
   const stOf = n => n.status !== undefined ? n.status : n.st;
+  const VISIT = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);  // this page load, for the kit's kept edits
+  const AGENT_ST =['addressed_by_agent', 'resolved_in_version'];  // statuses only the agent may set (sync_server's comment PUT)
   const NK = P.notes = {
     resolved: n => ['resolved_in_version', 'addressed_by_agent', 'user_confirmed'].includes(stOf(n)),
     // the one draft store for every tab's Re-open: id → the note's record (status, spot, words, tab), so Send lists it
@@ -59,8 +61,7 @@
       const n = ((d || {}).notes || []).find(x => x.id === id); if (!n) throw 0; return n; })))
       .then(n => { const r = NK.reo(c)[id]; if (!r) return null; const x = {...NK.rec(n), st: r.st || stOf(n)}; NK.put(c, id, x); return x; }, () => null),
     isReo(c, n) {
-      if (!n.sent) return false;
-      const m = NK.reo(c);
+      const m = NK.reo(c);  // sent or not: today's Re-open on a review note doesn't wait for a Send (r12 audit20 questions 3)
       if (n.closed) { if (n.id in m) NK.put(c, n.id, null); return false; }  // a Close an earlier build left queued
       if (m[n.id] && !m[n.id].a) NK.put(c, n.id, {...NK.rec(n), st: m[n.id].st || stOf(n)});
       return n.id in m;
@@ -76,16 +77,23 @@
     redo: tab => { const h = NK.hooks[tab]; if (h && h.redo) h.redo(); },
     // his edits and replies on sent notes since the last Send, by note id ({text, replies}): the one record every tab's Send row
     // reads, so no copy of the note a tab holds (a first read, a re-read behind it, a saved row) can lose them (r12 audit19 frame 1, 4, running 1)
-    // shortcut: kept until a Send from this page; a Send made elsewhere leaves it until the next one here
+    // Each entry names the visit that made it (vis). One from an earlier visit yields to the store: a feed read in this visit that
+    // shows the note sent with no pending edit or reply means a Send took it, here or from another client (r12 audit20 frame 1).
+    // One from this visit stays, since a read begun before his edit can still answer after it
     loc: () => NK.L || (NK.L = (P.ctx && P.ctx.prefs.get('draft:nkput', {})) || {}),
-    put1(id, p) { const m = NK.loc(), o = m[id] || {replies: []}; m[id] = {...o, ...p, replies: [...o.replies, ...(p.replies || [])]}; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); },
+    put1(id, p) { const m = NK.loc(), o = m[id] || {replies: []}; m[id] = {...o, ...p, replies: [...o.replies, ...(p.replies || [])], vis: VISIT}; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); },
+    // a feed's note (it has a status; saved Send rows do not), on a page whose store is real (a copy's feed doesn't hold its replies)
+    settle(n) { const m = NK.loc(), l = m[n.id];
+      if (!l || l.vis === VISIT || stOf(n) === undefined || /\/proto\/p\/[a-z0-9-]+\//.test(location.pathname)) return;
+      if (n.sent && !n.edited && !(n.replies || []).some(r => r.unsent)) { delete m[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', m); } },
     // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
-    out: n => !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc(),
+    out: n => { NK.settle(n); return !n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc(); },
     // a Send took it, with its edit and replies
     gone: n => { Object.assign(n, {sent: true, edited: false, flagged: true}); (n.replies || []).forEach(r => { r.unsent = false; });
       if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
     // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
-    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true}))}),
+    // rm: whether its row offers Remove (rowRm), as the loaded note decides it, since the row keeps no author or replies
+    state: n => ({sent: !!n.sent, edited: !!n.edited, replies: (n.replies || []).filter(r => r.unsent).map(r => ({text: r.text, unsent: true})), rm: NK.rowRm(n)}),
     // his own note (today's isMine): the feed marks his own `by: true` for each reader; one written in this visit has no `by`
     own: n => n.by === true || (n.by == null && n.mine !== false),
     // today's canDeleteComment: his own, not flagged for the session (an edit clears it), no replies, no response, no pending round
@@ -96,6 +104,9 @@
       return r.length ? 'Reply: ' + r.join(' · ') : l.text != null ? l.text : n.text; },
     // its row keeps no Remove once sent: from the loaded note, its saved row or his edit or reply on it
     kept: n => !!n.sent || n.id in NK.loc(),
+    // Send's Remove on a note row, on every tab: never once kept, and only where the note's own Remove shows (canDeleteComment),
+    // so another reviewer's draft or one the agent replied to lists with no Remove, as today (r12 audit20 questions 2, running 2)
+    rowRm: n => !NK.kept(n) && ('rm' in n ? !!n.rm : NK.removable(n)),
     // today's edit body (shell.js edit-save): the words, and a closed status re-opens, so the agent reads it again
     body: (n, text) => stOf(n) && stOf(n) !== 'open' ? {text, status: 'open'} : {text},
     // Close stores what today's menu offers for this note (cardMenuItems): Resolve (accept) on a review note, a confirmed or
@@ -113,14 +124,24 @@
       return (before || '') + (NK.own(n) ? ibw('edit', 'Edit', n.sent ? 'Edit this note; the change goes with your next Send' : 'Edit this note', `data-nedit="${id}"`) : '')
         + (NK.removable(n) ? ibw('undo', 'Remove', 'Undo: remove this note', `data-${del}="${id}"`) : '')
         + ibw('place', moving ? 'Moving' : 'Move', moving ? 'Click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${!!moving}"`)
-        + (n.sent && NK.resolves(n) && !NK.isReo(c, n) ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
+        + (NK.resolves(n) && !NK.isReo(c, n) ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
         + ibw('archive', 'Close', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`); },
     closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
       const u = `api/comments/${encodeURIComponent(n.id)}`, was = how === 'close' ? NK.reo(c)[n.id] : null;
-      if (how === 'reopen' || how === 'unreopen') NK.setReo(c, n, how === 'reopen');
-      else {
+      // Re-open stores open at once, as today's PUT {status: open}, and keeps its Send row, so the agent reads it with the next
+      // Send (r12 audit20 frame 4). Its Undo puts back the status it had; the server lets only the agent set an agent-only one
+      let prev = null;
+      if (how === 'reopen' || how === 'unreopen') {
+        const r = NK.reo(c)[n.id]; prev = how === 'reopen' ? stOf(n) : r && r.st;
+        const to = how === 'reopen' ? 'open' : prev, rec = how === 'reopen' ? NK.rec(n) : null;
+        if (to && to !== stOf(n)) {
+          try { await api(u, {status: to}, 'PUT'); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
+          n['status' in n ? 'status' : 'st'] = to;
+        }
+        NK.put(c, n.id, rec);
+      } else {
         try { await api(u + (how === 'close' ? (NK.resolves(n) ? '/accept' : '/archive') : '/restore'), {}); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
         n.closed = how === 'close';
         if (was) NK.put(c, n.id, null);  // Close ends a pending Re-open: nothing goes with Send; its Undo brings it back (r12 audit17 frame 1)
@@ -128,8 +149,9 @@
       await redraw(n.id);
       const back = {close: 'restore', restore: 'close', reopen: 'unreopen', unreopen: 'reopen'}[how],
         undo = async () => { const r = await NK.set(c, n, back, api, redraw, true); if (r && was) { NK.put(c, n.id, was); await redraw(n.id); } return r; };
-      if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], {undo});
-      return undo;
+      const can = !(how === 'reopen' && AGENT_ST.includes(prev));
+      if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], can ? {undo} : {});
+      return can ? undo : async () => null;
     },
     // Move: today's manual re-pin to the spot he clicks next, with Undo (catalog 65); apply(p) shows it (p null: it failed)
     async move(c, id, from, to, api, apply) {
@@ -621,9 +643,10 @@
   const isResolved = NK.resolved;
   const noteNo = n => D.notes.indexOf(n) + 1;
   const closedNotes = () => D.notes.filter(n => n.closed);  // closed notes sit under Closed with their Re-open (catalog 64)
-  function noteBox(n, no) {
+  // `dlg`: drawn in the picture viewer; while it is open the edit box is there alone, as Reference's (r12 audit20 questions 1)
+  function noteBox(n, no, dlg) {
     const t = n.target || {}, what = KIND(t);
-    if (S.note && S.note.edit === n.id) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
+    if (S.note && S.note.edit === n.id && !S.zoom === !dlg) return `<div class="qnote" id="n-${n.id}" data-note="${n.id}">${mk(no)}<b>Note ${no} ${what}</b><textarea data-notetext aria-label="Note ${no}">${esc(editText(n))}</textarea><div class="acts"><button class="btn sm pri" data-nsave="${n.id}">Save</button><button class="lk small" data-ncancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`;
     const id = esc(n.id), move = S.move === n.id;
     // a closed note folds to one line, its Re-open beside it, as an answered card keeps its Undo (#138)
     if (n.closed) return `<div class="qnote sent closed" id="n-${id}" data-note="${id}">${mkb(no, n)}<span class="saved">${ic('archive')} Note ${no} closed</span> <span class="mut">${esc(cut(n.text, 80))}</span><span class="nacts">${NK.closedActs(n)}</span></div>`;
@@ -886,7 +909,7 @@
     return `<div class="qzoom" role="dialog" aria-label="${dgm ? 'Full-screen diagram' : 'Full-size picture'}"><div class="qzbar"><b class="small">${esc(cut(cap, 60))}</b><span class="qzm">${[25, 50, 75, 100].map(x => `<button data-zoomto="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width${dgm ? '' : ' · tap a spot to write a note'} · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>Close</button></div>
       ${dgm ? `<div class="qzpic qzdgm" style="width:${z}vw">${DGM[dgm] || '<span class="small mut">Drawing the diagram…</span>'}</div>`
       : `<div class="qzpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap)}" data-zimg>${ns.map(([n, no]) => pinB(n, no, n.target.offset)).join('')}</div>`}
-      ${ns.length ? `<div class="qznotes">${S.spot && S.pin ? spotBox(S.spot) : ''}${ns.map(([n, no]) => noteBox(n, no)).join('')}</div>` : ''}</div>`;
+      ${ns.length ? `<div class="qznotes">${S.spot && S.pin ? spotBox(S.spot) : ''}${ns.map(([n, no]) => noteBox(n, no, true)).join('')}</div>` : ''}</div>`;
   }
 
   /* ---------- today and proposed: a comparison picture takes a pick, an answer that goes with Send (the mock's pickAB, audit6 #04) ---------- */
@@ -967,7 +990,7 @@
     for (const [a, p] of Object.entries(abPicks())) it.push(['Answers', `“${esc(cut(p.cap, 80))}” → <b>${p.side === 'current' ? 'keep today\'s' : 'the proposed'}</b>`, 'ab:' + a, 'ab:' + a]);
     const q = Q();
     const on = n => (n.target || {}).quote ? `On “${esc(cut(n.target.quote, 40))}”` : (n.target || {}).tag === 'img' ? 'At a spot on a picture' : `On “${esc(cut(n.label || '', 50))}”`;
-    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.kept(n) ? '' : 'note:' + n.id]);
+    for (const n of notesNow(q)) it.push(['Notes', `${mk(D ? D.notes.indexOf(n) + 1 : n.i)}${on(n)}: ${esc(cut(NK.say({...n, text: editText(n)}), 140))}`, 'n:' + n.id, NK.rowRm(n) ? 'note:' + n.id : '']);
     const tn = typingNote(); if (tn) it.push(['Notes', `${mk('+')}${on(tn)}: ${esc(cut(tn.text, 140))}`, 'nn:', 'newnote:']);
     for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '']);
     return it;
@@ -1247,7 +1270,7 @@
     ctx.prefs.set('q:drafts', all); ctx.prefs.set('q:general', ''); ctx.prefs.set('draft:qab', {}); S.armed = false; S.sendKey = false;
     const undos = (await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean);  // each tab takes its own back out; a sent note's edit or reply stays (the server keeps it)
     // kept until Undo is gone: Undo puts back the very notes (a re-opened one is the kit's queue row, removed above)
-    const backs = []; for (const n of notes) if (!n.sent) backs.push(await delNote(n.id, true));
+    const backs = []; for (const n of notes) if (NK.rowRm(n)) backs.push(await delNote(n.id, true));  // only the ones Send could Remove: the server keeps the rest
     await refresh();
     ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
@@ -1488,7 +1511,8 @@
   // a second note never erases the first: the unfinished one is saved on its own line before the next opens, as the mock keeps it (r12 #02)
   async function openNote(next, scroll) {
     const was = S.note, ta = was && root.querySelector(was.edit ? `[data-note="${CSS.escape(was.edit)}"] textarea` : '[data-newnote] textarea');
-    const focus = () => { const nt = root.querySelector('[data-newnote] textarea'); if (nt) { if (scroll) nt.scrollIntoView({block: 'center'}); nt.focus({preventScroll: true}); } };
+    // an Edit's box takes typing at once too, in the viewer when it is open (r12 audit20 questions 1)
+    const focus = () => { const e = S.note && S.note.edit, nt = root.querySelector(e ? `[data-note="${CSS.escape(e)}"] textarea` : '[data-newnote] textarea'); if (nt) { if (scroll) nt.scrollIntoView({block: 'center'}); nt.focus({preventScroll: true}); nt.setSelectionRange(nt.value.length, nt.value.length); } };
     if (was && !was.edit && !was.fixOf && !next.edit && was.anchor === next.anchor && !(next.target || {}).offset) return focus();  // the same line again: keep typing
     const text = ta ? ta.value : '';
     if (was && was.edit && text.trim() && text !== (D.notes.find(x => x.id === was.edit) || {}).text) await saveNote(was.edit, text);
