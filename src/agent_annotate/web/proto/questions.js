@@ -132,7 +132,8 @@
       const id = esc(n.id);
       return (before || '') + (NK.own(n) ? ibw('edit', 'Edit', n.sent ? 'Edit this note; the change goes with your next Send' : 'Edit this note', `data-nedit="${id}"`) : '')
         + (NK.removable(n) ? ibw('undo', 'Remove', 'Undo: remove this note', `data-${del}="${id}"`) : '')
-        + ibw('place', moving ? 'Moving' : 'Move', moving ? 'Click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${!!moving}"`)
+        // Move only on a note saved on its page's current version, as today's Re-pin (n.old: an earlier one) (r12 audit24 running 1)
+        + (n.old ? '' : ibw('place', moving ? 'Moving' : 'Move', moving ? 'Click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${!!moving}"`))
         + (NK.resolves(n) && !NK.isReo(c, n) ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
         + ibw('archive', 'Close', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`); },
     closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
@@ -338,13 +339,21 @@
     else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; set({...(body.status ? {status: body.status} : {}), edited: true}); }  // edited: the feed keeps it only on a sent note
     // a note's Re-open (status) or Move (anchor): kept like Close, by the note's id
     else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
-    else if (path === 'api/rounds/submit' && D) {  // the Send takes every unsent note, and every edit on a sent one
-      for (const n of D.notes) { if (NK.out(n) && NK.own(n)) NOTES.sent.add(n.id); }
-      // and every note the copy saved, from its own store: one put back by Discard's Undo may be missing from D.notes (r12 audit23 frame 3)
-      for (const n of NOTES.add) NOTES.sent.add(n.id);
-      for (const s of Object.values(SIM)) s.edited = false;
-    }
+    else if (path === 'api/rounds/submit' && D) return submitSim();
     return {ok: true};  // any other write (Reference's plan topics): its tab already changed its own view
+  }
+  // the copy's round, as the server's: it takes his every unsent note and every edit, re-open or reply on a sent one, from
+  // every feed (a release note on Policies is in Reference's alone), never a peer's, and answers their ids (r12 audit24 reference 2)
+  async function submitSim() {
+    const feeds = await Promise.all(['reference', 'links'].map(a => P.ctx.data(a).then(d => (d && d.notes) || [], () => [])));
+    const ids = new Set(Object.keys(NK.reo(P.ctx)));
+    for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.own(n)) ids.add(n.id);
+    // and every note the copy saved, from its own store: one put back by Discard's Undo may be missing from D.notes (r12 audit23 frame 3)
+    for (const n of NOTES.add) if (!NOTES.sent.has(n.id)) ids.add(n.id);
+    for (const [id, s] of Object.entries(SIM)) { if (s.edited) ids.add(id); s.edited = false; }
+    ids.forEach(id => NOTES.sent.add(id));
+    simSave();
+    return {ok: true, comment_ids: [...ids]};
   }
   P.copyWrite = fake;
   // the copy's notes on Reference (ref:, chk:) and Pages & links (doc:), in their feeds' shape, so each tab lists its own after a reload
@@ -355,7 +364,9 @@
     if (area === 'questions') return d && Array.isArray(d.notes) ? simNotes(d) : d;
     if (!FEED[area] || !d || !Array.isArray(d.notes)) return d;
     const have = new Set(d.notes.map(n => n.id));
+    // a release note the copy's Send took is sent by its own id, as the feed brings it back (r12 audit24 reference 2)
     d.notes = d.notes.filter(n => !NOTES.gone.has(n.id)).map(n => n.id in NOTES.text ? {...n, text: NOTES.text[n.id]} : n)
+      .map(n => NOTES.sent.has(n.id) && !n.sent ? {...n, sent: true, flagged: true} : n)
       .concat(NOTES.add.filter(n => FEED[area].test(n.anchor || '') && !have.has(n.id))
         .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})))
       // a note's Close, Re-open and Move on the copy, as Questions shows them (r12 fix17)
@@ -1015,14 +1026,15 @@
     if (S.pending) return `<div class="qsend sending" role="status">${ic('send')} Sending ${pl(S.pending.n, 'item', 'items')}… <button class="lk" data-sendundo>Undo</button> ${P.inertMark()}</div>`;
     if (!S.armed) return '';
     const it = sendItems(), g = {}, un = waitingCount(), lat = D ? D.questions.filter(FILTERS.later).length : 0;
-    const ok = n && D, rd = D ? '' : ' title="Reading the questions first: Send and Discard all follow in a moment"';  // they act on the questions read; listing and Remove do not wait (r12 audit11)
+    const ok = n && D && S.oin, rd = ok || !n ? '' : ` title="Reading ${D ? 'the notes on other tabs' : 'the questions'} first: Send and Discard all follow in a moment"`;  // they act on the questions read; listing and Remove do not wait (r12 audit11)
     const ORD = ['Answers', 'Replies to the agent', 'Notes', 'Reference', 'Tasks'], at = k => (ORD.indexOf(k) + 1 || 99);  // the mock's order, whatever order the tabs loaded in
     it.slice().sort((a, b) => at(a[0]) - at(b[0])).forEach(x => (g[x[0]] = g[x[0]] || []).push(x));
     return `<div class="qsheet" data-sendclose><div class="qsend" role="dialog" aria-label="Send"><h2>Send to the agent · ${pl(n, 'item', 'items')}</h2>
       <p class="small mut">${S.copyOf ? `Would go to the ${esc(S.copyOf)} agent session; this read-only copy only shows the steps.` : S.copyOf === '' ? 'Goes to the FastLane Drive agent session.' : ''} Nothing goes until you press Send. ${P.inertMark()}</p>
       ${S.sendKey && n ? `<div class="qsendkey" role="status">${ic('send')} Press <kbd>⌘↵</kbd> again to send ${pl(n, 'item', 'items')} · <kbd>Esc</kbd> keeps editing</div>` : ''}
       <h4>General feedback · goes first</h4><textarea class="qwords" data-general placeholder="Not tied to one spot (optional)">${esc(gen())}</textarea>
-      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>`}
+      ${Object.entries(g).map(([t, l]) => `<h4>${esc(t)} · ${l.length}</h4><ul class="qhist">${l.map(([, h, go, rm]) => `<li>${h} <button class="lk small" data-sgo="${esc(go)}">Go to it</button>${rm ? ` · <button class="lk small" data-srm="${esc(rm)}">Remove</button>` : ''}</li>`).join('')}</ul>`).join('') || (S.oin ? `<p class="small mut" data-snone${gen().trim() ? ' hidden' : ''}>Nothing ready yet.</p>` : '')}
+      ${S.oin ? '' : `<p class="small mut" aria-busy="true" data-sothers>Reading the notes on Reference and Pages &amp; links…</p>`}
       <h4>Not in this Send</h4><p class="small">${!D ? S.qerr ? `<span class="warn-t">The questions and your notes on them could not be read.</span> <button class="lk small" data-sretry>Try again</button>` : `<span class="mut" aria-busy="true">Reading the questions and your notes on them…</span>` : un || lat ? `${un ? `<span class="warn-t">${pl(un, 'question still waits', 'questions still wait')}</span>; ` : ''}${lat} set aside. They stay for next time. <button class="lk small" data-sgo="need">Open Questions</button>` : 'Every question has an answer.'}</p>
       <div class="acts"><button class="btn pri" data-send ${ok ? '' : 'disabled'}${rd}>${ic('send')} Send ${n} <kbd>⌘↵</kbd></button><button class="btn" data-discard ${ok ? '' : 'disabled'}${rd}>Discard all</button><button class="btn ghost" data-sendclose>Keep editing</button><span class="small mut"><kbd>⌘↵</kbd> sends</span></div></div></div>`;
   }
@@ -1227,21 +1239,21 @@
   function arm() {
     if (S.pending) return;
     if (!S.armed && !D) return openSheet(ctx, true);  // its tab still reading: the sheet opens over it with what was saved
-    if (!S.armed) { S.armed = true; S.sendKey = true; S.gen = false; draw(true).then(() => { const t = root.querySelector('[data-send]'); if (t) t.focus(); }); return; }
+    if (!S.armed) { S.armed = true; S.sendKey = true; S.gen = false; readOthers(ctx); draw(true).then(() => { const t = root.querySelector('[data-send]'); if (t) t.focus(); }); return; }
     send();
   }
   function send() {
-    if (!D) return ctx.toast('Reading the questions first: Send works in a moment');  // ⌘↵ again before they are read
+    if (!D || !S.oin) return ctx.toast(`Reading ${D ? 'the notes on other tabs' : 'the questions'} first: Send works in a moment`);  // ⌘↵ again before they are read
     const answers = D.questions.filter(q => isDraft(q) && !q.closed), replies = D.questions.filter(q => hasReply(q) && !q.closed), closes = D.questions.filter(isClosing);
     // his unsent notes this Send lists ([5]): one the server's round leaves out went first from another client of his
-    const listed = new Set(sendItems().filter(x => !x[4] && x[5]).map(x => x[5])),
-      n = sentCount(), mine = D.notes.filter(x => listed.has(x.id) && !x.sent).map(x => x.id);
+    // every row on a note, whichever tab lists it (a release draft, a peer's draft or reply): the round's ids say which went
+    const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sentCount();
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, mine), SEND_DELAY)};
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes}), SEND_DELAY)};
     draw(true);
   }
-  async function post(answers, replies, closes, n, mine = []) {
+  async function post(answers, replies, closes, n, listed) {
     // past the countdown Undo can no longer stop it: it goes, never visible and broken (r12 fix11 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove());
     try {
@@ -1264,9 +1276,10 @@
       for (const id of Object.keys(NK.reo(ctx))) await call(`api/comments/${encodeURIComponent(id)}`, {status: 'open'}, 'PUT');
       const r = await call('api/rounds/submit', {note: gen().trim() || undefined, version: D.version});
       // the receipt counts what the server took: a note another client of his sent first is not in this round, and a round
-      // with nothing new is a noop (r12 audit23 frame 2); a copy's simulated round answers neither, so it counts what Send listed
+      // with nothing new is a noop (r12 audit23 frame 2). Every listed row on a note the round's ids leave out stays
+      // behind (a peer's draft or reply, on any tab), so it is not counted (r12 audit24 questions 1); a copy's round answers its ids too
       const ids = r && Array.isArray(r.comment_ids) ? new Set(r.comment_ids) : null;
-      const got = r && r.delivery === 'noop' ? 0 : Math.max(0, n - (ids ? mine.filter(id => !ids.has(id)).length : 0));
+      const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) : n;
       ctx.prefs.set('q:general', '');
       D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
@@ -1694,6 +1707,10 @@
   };
   // the Send sheet open before the questions were read: their items join it once they are in, or it says the read failed
   const readFor = (c, again) => { S.qerr = false; relist(); return load(c, again).then(relist, () => { S.qerr = true; relist(); }); };
+  // the same for the notes Reference and Pages & links list (a 2.32.8 Policies or meeting note is in their feeds alone): the
+  // sheet says it is reading them and Send waits, then lists them; the tabs' own first reads, never a second (r12 audit24 reference 1)
+  let others = null;
+  const readOthers = c => others || (others = Promise.all(['reference', 'links'].map(a => c.data(a).catch(() => null))).then(() => { S.oin = true; relist(); }));
   // the open Send summary lists what the count now holds, unless he is typing in it (r12 fix10 reference 2)
   async function relist() {
     const s = document.querySelector('.qsend:not(.sending)'), a = document.activeElement;
@@ -1721,6 +1738,7 @@
     if (key && S.armed) return arm();
     S.armed = true; S.sendKey = !!key; S.gen = false;
     if (!D || stale) readFor(c);
+    readOthers(c);
     if (S.copyOf === undefined) findCopy(c).then(relist);
     if (onQ() && D) return draw(true);
     host = host || document.body.appendChild(Object.assign(document.createElement('div'), {className: 'area-questions tab-questions qhost'}));

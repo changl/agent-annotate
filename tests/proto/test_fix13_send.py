@@ -49,7 +49,7 @@ def test_send_opens_while_counts_are_unknown():
     sheet = grab(Q, "function openSheet(c, key) {", "\n  }")
     assert "if (!D || stale) readFor(c);" in sheet and "if (onQ() && D) return draw(true);" in sheet
     assert "const savedQs = () => Object.keys(drafts())" in Q
-    assert "if (!D) return ctx.toast('Reading the questions first" in Q
+    assert "if (!D || !S.oin) return ctx.toast(`Reading ${D ? 'the notes on other tabs' : 'the questions'} first" in Q  # fix28: and the other tabs' notes
     assert "if (t.hasAttribute('data-sretry')) return readFor(ctx, true);" in Q
 
 

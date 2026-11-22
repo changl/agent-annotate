@@ -983,8 +983,9 @@ NOTE_ANCHORS = ("ref:", "doc:", "chk:")
 def notes(page_dir: Path) -> list:
     """The notes written in Reference (anchors ref:, doc:, chk:), oldest first, so each shows at its line."""
     from ..categories import _comments
-    from .published import merge
+    from .published import KEY, merge
     out, store = [], merge(page_dir, _comments(page_dir))  # with the published pages' own notes, 2.32.8's included
+    cur = (store.get(KEY) or {}).get("cur") or {}  # each release note's publication's current version
     # Close (today's archive) moves a note into "archived": it stays at its line, closed, with Re-open (r12 fix17)
     for anchor, items in [kv for part in ("anchors", "archived") for kv in (store.get(part) or {}).items()]:
         if not anchor.startswith(NOTE_ANCHORS):
@@ -998,7 +999,9 @@ def notes(page_dir: Path) -> list:
                         "closed": c.get("status") == "archived", "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"),
                         "target": c.get("target"),  # selected words ({quote}) or a spot on a picture ({tag: img, offset})
                         # a Send flags every open note (sync_server rounds/submit), so an unsent one stays in the next Send after a reload
-                        "sent": was_sent(c) or not _mine(c.get("author")), **note_thread(c)})
+                        "sent": was_sent(c) or not _mine(c.get("author")), **note_thread(c),
+                        # saved on an earlier version of its publication: today's menu hides Re-pin (shell.js cardMenuItems)
+                        **({"old": True} if c.get("id") in cur and c.get("version") and c.get("version") != cur[c.get("id")] else {})})
     return sorted(out, key=lambda n: n["at"])
 
 

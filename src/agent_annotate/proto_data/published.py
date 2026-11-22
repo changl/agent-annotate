@@ -180,11 +180,14 @@ def merge(page_dir, store: dict) -> dict:
     from . import scrub_json
     out = {**store, "anchors": {}, "archived": {}}
     gone, dead = [], {c.get("id") for _, _, c in _items(store) if c.get("status") == "deleted"}
-    rel = {}  # {id: [home, part, anchor, record]} of each release note
+    rel, cur = {}, {}  # {id: [home, part, anchor, record]} of each release note; cur: {id: its publication's current version}
+    from .links import _json
     hs = homes(page_dir)
     for h in hs:
+        v = _json(h.folder / "current.meta.json").get("current")
         for part, a, c in _items(_read(h.folder)):
             rel.setdefault(c.get("id"), [h, part, a, c])
+            cur.setdefault(c.get("id"), v)
     keys = {u["k"] for h in hs for r in [h, *h.older] for u in r.units} | {h.whole for h in hs}
     have, mirror = set(), {}  # mirror: {id: [part, anchor, own record]}
     for part, a, c in _items(store):
@@ -221,7 +224,7 @@ def merge(page_dir, store: dict) -> dict:
             pub.setdefault(i, []).append([part, k, _print(n)])
     # the prototype's own copy of a release note: its removal leaves a tombstone (split), so the release record stays hidden
     shadow = {i: [p, a] for p, a, c in _items(out) if (i := c.get("id")) in rel and i not in pub}
-    out[KEY] = {"pub": pub, "gone": gone, "shadow": shadow, "mirror": mirror}
+    out[KEY] = {"pub": pub, "gone": gone, "shadow": shadow, "mirror": mirror, "cur": cur}
     return out
 
 
