@@ -25,7 +25,7 @@ def test_a_stalled_count_offers_try_again_and_send_never_looks_empty():
     assert "const sendSt = () => !sendable() || S.countsIn || sendNum() > 0 ? '' : S.stall.has('counts') ? '?' : '…';" in FRAME  # r12 fix15: a saved draft shows its count
     assert "data-stallagain" in FRAME and "if (d.stallagain !== undefined) { again(); return; }" in FRAME
     assert "#p-stall button" in FRAME  # the frame's click handler takes the notice's button
-    assert "onclick = () => { again(); route(); }" in FRAME  # a tab's own Try again re-reads the frame's stalled reads too
+    assert "onclick = () => { reread(); again(); route(); }" in FRAME  # a tab's own Try again re-reads the frame's stalled reads too
 
 
 def test_reload_says_up_to_date_only_once_confirmed():

@@ -87,7 +87,8 @@
     capabilities: () => api('api/capabilities'), delivery: () => api('api/delivery'), categories: () => api('api/categories'),
     seen: () => api('api/seen'), readState: () => api('api/read-state'), copy: () => api('api/copy'),
   });
-  const cache = {};
+  const cache = {}, failed = new Set();
+  const reread = () => { failed.forEach(a => delete cache[a]); failed.clear(); };  // Try again: the failed reads are read afresh
   // on a copy, the notes it simulated join each tab's feed (questions.js P.copyData), so a reload keeps them where they were written
   // a read with no answer in 20 s fails, so the tab offers Try again instead of reading for ever (r12 audit9 reference)
   const late = () => new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20000));
@@ -100,7 +101,10 @@
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
       // a copy's read waits for the tab scripts: one landing before questions.js would be cached without the copy's notes (r12 audit22 questions 2)
-      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
+      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) failed.add(area); throw e; });  // a stalled read failing late never marks the fresh one Try again started
+    // a failed read stays cached, failed: every later data(area) from any tab gets that failure, and only Try again
+    // (reread, or a fresh read) reads again, so a down server is never asked on its own (r12 audit30 questions 4)
+    failed.delete(area);
     // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
     if (sendP && sendP.read) sendP.read(area, p);  // every new read, first or background, from any tab: Send's one read state (r12 audit29 running 2)
     p.then(() => refreshSend(), () => {});  // a read landing can change what Send lists or offers Remove on: an open sheet follows it (r12 audit22 reference 3)
@@ -202,7 +206,7 @@
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
-    queued, queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
+    queued, queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx, was); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only
@@ -281,7 +285,7 @@
     }).catch(e => {
       if (!live()) return;
       view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} could not be read: ${esc(e.message)}</p><button class="btn sm" data-again>Try again</button></div>`;
-      view.querySelector('[data-again]').onclick = () => { again(); route(); };  // a failed read left no cache, so this reads afresh, the frame's stalled reads too
+      view.querySelector('[data-again]').onclick = () => { reread(); again(); route(); };  // the failed reads are dropped, so this reads afresh, the frame's stalled reads too
       console.error(e);
     });
   }
@@ -817,7 +821,7 @@
       if (S.settling) return;
       if (S.newer) {
         const v = S.newer.v; S.settling = true;
-        for (const k in cache) delete cache[k]; if (sendP && sendP.newer) sendP.newer();
+        for (const k in cache) delete cache[k]; failed.clear(); if (sendP && sendP.newer) sendP.newer();
         Promise.all([api.meta().catch(() => null), readCounts()]).then(([m, c]) => {
           if (m) S.meta = m; S.loadedV = (m && m.current) || v; S.newer = null; putCounts(c);
         }).finally(() => { S.settling = false; route(); refreshTop(); toast('Loaded the newer version'); });

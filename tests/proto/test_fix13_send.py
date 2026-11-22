@@ -47,7 +47,7 @@ def test_send_opens_while_counts_are_unknown():
     assert "if (sendOff(t.classList.contains('hide-ph') ? 'hide-ph' : '')) return toast('Nothing is ready to send yet');\n      return openSend();" in FRAME
     assert "if (t.id === 'p-fab') return openSend();" in FRAME
     sheet = grab(Q, "function openSheet(c, key) {", "\n  }")
-    assert "if (!D || stale || qerr()) readFor(c, qerr());" in sheet and "if (onQ() && D) return draw(true);" in sheet
+    assert "if (!D || stale) readFor(c);" in sheet and "if (onQ() && D) return draw(true);" in sheet
     assert "const savedQs = () => Object.keys(drafts())" in Q
     assert "if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(waitMsg()); }" in Q  # fix28: and the other tabs' notes; fix31: every Questions read; fix33: the one gate
     assert "if (t.hasAttribute('data-sretry')) return readFor(ctx, true);" in Q
@@ -72,7 +72,7 @@ const c = {{data: (a, fresh) => {{ n++; return n === 1 ? new Promise(() => {{}})
 }})().catch(e => {{ console.error(e); process.exit(1); }});
 """)
     data = FRAME[FRAME.index("const p = cache[area] = Promise.race"):]
-    assert "if (cache[area] === p) delete cache[area]; throw e;" in data[:400]
+    assert "if (cache[area] === p) failed.add(area); throw e;" in data[:400]
 
 
 def test_remove_and_undo_before_the_tab_has_its_data():

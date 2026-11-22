@@ -1313,7 +1313,8 @@
     const rows = sendItems(), notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0), n = sendCount(), keys = new Set(deliverable());
     S.armed = false; S.sendKey = false;
     if (!n) return draw(true);
-    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes, keys}), SEND_DELAY)};
+    const q = new Map(Q().map(x => [x.key, x.html]));  // the other tabs' rows as listed: a round clears only these, unchanged
+    S.pending = {n, timer: setTimeout(() => post(answers, replies, closes, n, {all, notes, keys, q}), SEND_DELAY)};
     draw(true);
   }
   async function post(answers, replies, closes, n, listed) {
@@ -1334,7 +1335,9 @@
       await ctx.takeNow();  // a note removed with its Undo still open leaves first, so the round never carries it
       // The round check, after every tracked write has settled and right before Send's own writes and the submit: no other
       // write of this tab's can start in between (ROUND), so the round carries exactly what this check passed
-      if (!settled() || deliverable().some(k => !listed.keys.has(k))) return await stop();
+      // a draft typed on another tab after the countdown is no write: it is neither sent nor cleared, and waits for the next Send
+      const typed = new Set(Q().filter(x => x.save).map(x => 'x:' + x.key));
+      if (!settled() || deliverable().some(k => !listed.keys.has(k) && !typed.has(k))) return await stop();
       const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
       const ed = S.note || ctx.prefs.get('q:newnote', null), en = ed && ed.edit && D.notes.find(x => x.id === ed.edit);  // a saved note open in its editor goes with its new words
       const abs = Object.entries(abPicks()), reo = Object.keys(NK.reo(ctx)), note = gen().trim() || undefined;
@@ -1365,12 +1368,13 @@
       // with nothing new is a noop (r12 audit23 frame 2). Every listed row on a note the round's ids leave out stays
       // behind (a peer's draft or reply, on any tab), so it is not counted (r12 audit24 questions 1); a copy's round answers its ids too
       const ids = r && Array.isArray(r.comment_ids) ? new Set(r.comment_ids) : null;
-      const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
+      // a noop round took no note, but a listed row that is no note (a task status or comment) went with this Send (r12 audit30 running 1)
+      const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (note ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
       if ((gen().trim() || undefined) === note) ctx.prefs.set('q:general', '');  // feedback typed after the countdown waits for the next Send
       D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       NK.L = {}; ctx.prefs.set('draft:nkput', {});  // and every edit and reply on a sent note, whatever tab holds it
-      if (ctx.queueSent) ctx.queueSent(got);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
+      if (ctx.queueSent) ctx.queueSent(got, listed.q);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
       updateBar();  // the toolbar's Send count follows the store with the top bar's, not after the re-read
@@ -1549,7 +1553,7 @@
     if (t.hasAttribute('data-send')) return send();
     if (t.hasAttribute('data-discard')) return sendOn(sendCount()) && discardAll();  // the gate holds between a read's start and its redraw too
     if (t.hasAttribute('data-sretry')) return readFor(ctx, true);
-    if (t.hasAttribute('data-sothersretry')) { readOthers(ctx); return draw(true); }  // back to reading, then the rows
+    if (t.hasAttribute('data-sothersretry')) { readOthers(ctx, true); return draw(true); }  // back to reading, then the rows
     if (ds.sgo) return sendGo(ds.sgo);
     if (ds.srm) return sendRemove(ds.srm);
     if (t.hasAttribute('data-sendundo')) { if (!S.pending || S.pending.going) return; clearTimeout(S.pending.timer); S.pending = null; ctx.toast('Send undone: nothing left this page'); return draw(true); }
@@ -1808,7 +1812,8 @@
   // A failed read leaves Send waiting and the sheet saying so, with Try again, which reads again (r12 audit25 frame 1)
   // oerr() names the reads that failed, and only those (r12 audit26 questions 4). A feed never read, or failed (its cache is gone),
   // is read; one held or done is left alone, so a warm refresh from its tab is what the sheet waits on (r12 audit29 running 2)
-  const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') { retry(a); track(a, c.data(a)).catch(() => {}); } });
+  // a failed feed is read again only by Try again (again), afresh: the frame keeps the failure for every other ask (r12 audit30 questions 4)
+  const readOthers = (c, again) => OTHERS.forEach(([a]) => { const f = rs(a) === 'failed'; if (!rs(a) || (again && f)) { retry(a); track(a, c.data(a, f)).catch(() => {}); } });
   // the open Send summary lists what the count now holds, even while he types General feedback in it: the words are saved as
   // he types, and the field gets its focus and cursor back (r12 fix10 reference 2, audit25 questions 2)
   async function relist() {
@@ -1844,7 +1849,7 @@
     ctx = ctx || c;
     if (key && S.armed) return arm();
     S.armed = true; S.sendKey = !!key; S.gen = false;
-    if (!D || stale || qerr()) readFor(c, qerr());  // opening the sheet tries a failed read again, as before
+    if (!D || stale) readFor(c);  // a failed read is not read again on opening: the sheet says so, with Try again (r12 audit30 questions 4)
     readOthers(c);
     if (S.copyOf === undefined) findCopy(c).then(relist);
     if (onQ() && D) return draw(true);

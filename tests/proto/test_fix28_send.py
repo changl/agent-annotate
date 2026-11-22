@@ -13,8 +13,8 @@ WEB = Path(__file__).resolve().parents[2] / "src/agent_annotate/web/proto"
 def test_send_waits_for_the_other_tabs_reads():
     q = (WEB / "questions.js").read_text()
     # fix33: the other tabs' reads are in the one read state
-    assert "const readOthers = c => OTHERS.forEach(([a]) => { if (!rs(a) || rs(a) === 'failed') { retry(a); track(a, c.data(a)).catch(() => {}); } });" in q
-    assert "readFor(c, qerr());  // opening the sheet tries a failed read again, as before\n    readOthers(c);" in q  # the toolbar's Send
+    assert "const readOthers = (c, again) => OTHERS.forEach(([a]) => { const f = rs(a) === 'failed'; if (!rs(a) || (again && f)) { retry(a); track(a, c.data(a, f)).catch(() => {}); } });" in q
+    assert "readFor(c);  // a failed read is not read again on opening: the sheet says so, with Try again (r12 audit30 questions 4)\n    readOthers(c);" in q  # the toolbar's Send
     assert "S.gen = false; readOthers(ctx); draw(true)" in q  # ⌘↵ on Questions
     assert "const ok = sendOn(n)," in q and "const allRead = () => !!(oin() && qIn());" in q
     assert "data-sothers>Reading the notes on ${OTHERS.filter(([a]) => rs(a) !== 'done').map(x => x[1]).join(' and ')}…" in q
@@ -34,8 +34,8 @@ def test_copy_send_records_release_drafts_by_id():
 def test_receipt_counts_the_rounds_ids_on_every_row():
     q = (WEB / "questions.js").read_text()
     assert "notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0)" in q
-    assert "const got = r && r.delivery === 'noop' ? 0 : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
-    assert "ctx.queueSent(got);" in q
+    assert "const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (note ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
+    assert "ctx.queueSent(got, listed.q);" in q
 
 
 def test_no_move_on_an_earlier_version_note(tmp_path, monkeypatch):

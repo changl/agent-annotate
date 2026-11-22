@@ -5,7 +5,7 @@ from test_fix14_frame import FRAME, grab, node
 
 def test_beads_follows_the_retried_board_in_the_same_paint(tmp_path):
     """Frame 1: Try again's fresh read sets the frame's board and repaints Beads before Running draws, with Questions still held."""
-    reads = grab(FRAME, "  const cache = {};", "  let runSeq = 0;\n")
+    reads = grab(FRAME, "  const cache = {}, failed = new Set();", "  let runSeq = 0;\n")
     run = grab(FRAME, "  function putRun", "const readRun = () => data('running').then(() => {}, () => {});")
     node(tmp_path, f"""
 const assert = require('assert');

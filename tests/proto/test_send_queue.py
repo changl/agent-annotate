@@ -26,7 +26,7 @@ def test_questions_lists_counts_removes_and_clears_the_queue():
     assert "for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);" in s
     assert "try { back = await x.remove(); }" in s  # Remove takes it out of its tab, with Undo
     assert "(await Promise.all(q.map(x => x.remove && x.remove()))).filter(Boolean)" in s  # Discard all too
-    assert "if (ctx.queueSent) ctx.queueSent(got);" in s  # a Send clears every tab's items
+    assert "if (ctx.queueSent) ctx.queueSent(got, listed.q);" in s  # a Send clears every tab's items
     assert "if (k.startsWith('x:'))" in s  # Go to it opens the item's own tab
     assert "wrote: (path, own) =>" in s  # notes written on other tabs reach Questions' list without a visit
 
@@ -35,7 +35,7 @@ def test_each_tab_queues_its_next_send_items():
     run, hist, ref, links = _js("running"), _js("history"), _js("reference"), _js("links")
     # running 1: status changes and task comments under Tasks
     assert "key: 'tst:' + id, group: 'Tasks'" in run and "key: k, group: 'Tasks'" in run
-    assert "sent: ctx => { ctx.prefs.set('tst', {});" in run
+    assert "P.queue && P.queue({items, sent: (ctx, was) => {" in run
     # running 2: Tell the agent on a failed publish under Replies to the agent
     assert "group: 'Replies to the agent', html: `About the page that could not load:" in hist
     assert "TELL.set(o.src" in hist and "let told" not in hist
@@ -79,7 +79,7 @@ def test_send_opens_over_any_tab_at_any_count():
 def test_last_send_follows_a_new_send_and_skip_opens_the_phone_menu():
     """r12 fix7 frame 3 and 4."""
     f = _js("frame")
-    assert "queueSent: n => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; }" in f
+    assert "queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; }" in f
     chip = f[f.index("function lastSendChip"):f.index("function settingsBody")]
     assert "if (s && (COPY ||" in chip and "prototype: not sent" in chip and "delivered" not in chip[:chip.index("if (!r && !l)")]
     assert "if (kind === 'tabs' && phoneQ.matches && !S.home) { S.menu = 'nav';" in f and "#p-layer .pm-tab" in f

@@ -113,6 +113,63 @@ const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return {{
 """)
 
 
+def test_a_lone_task_comment_is_sent_and_a_newer_draft_stays(tmp_path):
+    """Running 1, 4: a lone listed task comment is Sent 1 on a noop round; a draft typed after the countdown neither stops
+    the round nor is cleared by it: the round hands the tabs only the rows it listed."""
+    post = grab(Q, "  async function post(", "\n  // Discard all")
+    deliv = grab(Q, "  const deliverable = ", ";\n") + ";"
+    node(tmp_path, f"""
+const assert = require('assert');
+let toast = '', ROUND = null, handed;
+const late = {{key: 'hnn:v2', html: 'typed later', save: async () => {{ throw Error('not listed: never saved'); }}}};
+let rows = [['Tasks', '', 'x:tcm:a', 'x:tcm:a', false, undefined], ['Notes', '', 'x:hnn:v2', 'x:hnn:v2', false, undefined]];
+const WRITING = new Set(), S = {{pending: {{n: 1}}}}, D = {{notes: [], version: 'v'}}, NK = {{reo: () => ({{}}), gone: () => {{}}, L: {{}}}};
+let stale = false; const waitMsg = () => "Reading first";
+const allRead = () => true, settled = () => allRead() && !WRITING.size, Q = () => [{{key: 'tcm:a', html: 'c'}}, late];
+const sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
+const gen = () => '', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
+const draft = () => ({{}}), setDraft = () => {{}}, optLabel = () => '';
+const document = {{querySelectorAll: () => []}};
+const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}, queueSent: (n, was) => {{ handed = was; }}}};
+const call = async p => p === 'api/rounds/submit' ? {{comment_ids: [], delivery: 'noop'}} : {{}};
+{deliv}
+{post}
+(async () => {{
+  const q = new Map([['tcm:a', 'c']]);
+  await post([], [], [], 1, {{all: 1, notes: [], keys: new Set(['x:tcm:a']), q}});
+  assert.ok(/^Sent 1 item:/.test(toast), toast);
+  assert.strictEqual(handed, q, 'only the listed rows go to the tabs');
+}})().catch(e => {{ console.error(e); process.exit(1); }});
+""")
+    run = (WEB / "running.js").read_text()
+    assert "done = k => !was || (was.has(k) && was.get(k) === now.get(k));" in run
+
+
+def test_a_failed_read_waits_for_try_again(tmp_path):
+    """Questions 4: a failed read stays failed for every later ask from any tab; only Try again (reread or fresh) reads again."""
+    reads = grab(FRAME, "  const cache = {}, failed = new Set();", "  let runSeq = 0;\n")
+    node(tmp_path, f"""
+const assert = require('assert');
+const COPY = '', P = {{}}, unTaken = d => d, refreshSend = () => {{}}, sendP = null, putRun = () => {{}};
+let n = 0, down = true;
+const api = () => {{ n++; return down ? Promise.reject(Error('503')) : Promise.resolve({{ok: n}}); }};
+const setTimeout = () => 1;
+{reads}
+(async () => {{
+  await data('questions').catch(() => {{}});
+  for (let i = 0; i < 5; i++) await data('questions').catch(() => {{}});
+  assert.strictEqual(n, 1, 'no automatic re-read');
+  down = false; reread();
+  assert.deepStrictEqual(await data('questions'), {{ok: 2}});
+  down = true; await data('links').catch(() => {{}}); down = false;
+  assert.deepStrictEqual(await data('links', true), {{ok: 4}}, 'a fresh read is Try again too');
+  assert.deepStrictEqual(await data('links'), {{ok: 4}});
+  assert.strictEqual(n, 4);
+}})().catch(e => {{ console.error(e); process.exit(1); }});
+""")
+    assert "if (!D || stale) readFor(c);" in Q and "readOthers(ctx, true)" in Q
+
+
 def test_the_toast_and_the_empty_state_read_the_one_state():
     """Frame 4, 6: after a failed read ⌘↵'s toast points to Try again; "Nothing ready yet" waits for a write."""
     assert "if (!sendOn(sendCount() || 1)) { relist(); return ctx.toast(waitMsg()); }" in Q

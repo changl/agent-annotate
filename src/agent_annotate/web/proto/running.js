@@ -433,8 +433,7 @@
   // status changes and task comments "go with your next Send": the one Send lists them under Tasks (r12 fix6, running 1)
   // the side panel's host (Questions) has no tab class: redraw it too, so Undo shows the comment in the open panel
   const redraw = () => { if (EL && EL.isConnected && (tabNow === 'side' || EL.classList.contains('tab-' + tabNow))) draw(); };
-  P.queue && P.queue({
-    items: ctx => {
+  const items = ctx => {
       // before running.json is in, the saved status changes and comments are listed by their task's id; titles follow (r12 fix10 frame 1)
       if (!D) ctx.data('running').then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {});
       const B = ((D || {}).board || {}).beads || {}, tst = ctx.prefs.get('tst', {}), out = [];
@@ -448,9 +447,12 @@
       for (const id of ids) { const k = 'tcm:' + id, c = ctx.prefs.get(k, '');
         if (c.trim()) out.push({key: k, group: 'Tasks', html: `${ttl(id)} → comment: “${esc(cut(c, 120))}”`, go: go(id), remove: () => { ctx.prefs.set(k, ''); redraw(); return () => { ctx.prefs.set(k, c); redraw(); }; }}); }
       return out;
-    },
-    sent: ctx => { ctx.prefs.set('tst', {}); ctx.prefs.keys(/^tcm:/).forEach(k => ctx.prefs.set(k, '')); redraw(); },
-  });
+    };
+  // a round clears only the rows it listed, as they read then: a status or comment set after the countdown stays for the next Send (r12 audit30 running 4)
+  P.queue && P.queue({items, sent: (ctx, was) => {
+    const now = new Map(items(ctx).map(x => [x.key, x.html])), done = k => !was || (was.has(k) && was.get(k) === now.get(k));
+    const t = ctx.prefs.get('tst', {}); for (const id of Object.keys(t)) if (done('tst:' + id)) delete t[id];
+    ctx.prefs.set('tst', t); ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); }); redraw(); }});
   P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});
   P._running = {urgent, mine, wnm, mdl};  // for tests

@@ -20,10 +20,10 @@ def test_undo_goes_when_the_countdown_ends():
 
 def test_task_comments_list_from_what_was_saved():
     """Running 2: with running.json in but no board, the saved comment ids still come from the drafts."""
-    items = RUN[RUN.index("P.queue && P.queue({"):RUN.index("sent: ctx =>")]
+    items = RUN[RUN.index("  const items = ctx => {"):RUN.index("P.queue && P.queue({items")]
     assert "const ids = ctx.prefs.keys(/^tcm:/).map(k => k.slice(4));" in items
     assert "Object.keys(B)" not in items
-    assert "ctx.prefs.keys(/^tcm:/).forEach(k => ctx.prefs.set(k, ''))" in RUN
+    assert "ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); })" in RUN
 
 
 def test_version_never_paints_before_its_counts():

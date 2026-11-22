@@ -22,7 +22,7 @@ def test_reference_lists_saved_drafts_without_its_data():
 
 
 def test_running_and_links_list_saved_drafts_without_their_data():
-    assert "return []; }" not in RUN[RUN.index("P.queue && P.queue({"):RUN.index("sent: ctx =>")]
+    assert "return []; }" not in RUN[RUN.index("  const items = ctx => {"):RUN.index("P.queue && P.queue({items")]
     assert "ctx.prefs.keys(/^tcm:/)" in RUN and "keys(re) {" in FRAME
     assert "LD ? LD.notes || [] : c.prefs.get('draft:lnotes', [])" in LINKS
 
