@@ -88,12 +88,14 @@
   const late = () => new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20000));
   // pre: a read start() began before the tab scripts loaded; the first data() call takes it over (r12 fix12 perf)
   const pre = {};
+  let scriptsDone; const scriptsIn = new Promise(r => { scriptsDone = r; });
   const data = (area, fresh) => {
     if (!fresh && cache[area]) return cache[area];
     const got = (!fresh && pre[area]) || api(`proto/data/${area}.json`);
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
-      .then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
+      // a copy's read waits for the tab scripts: one landing before questions.js would be cached without the copy's notes (r12 audit22 questions 2)
+      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) delete cache[area]; throw e; });  // a stalled read failing late never drops the fresh one Try again started
     // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
     p.then(() => refreshSend(), () => {});  // a read landing can change what Send lists or offers Remove on: an open sheet follows it (r12 audit22 reference 3)
     if (area === 'running') { const n = ++runSeq; p.then(r => n === runSeq && putRun(r), () => n === runSeq && putRun(null, true)); }
@@ -974,7 +976,7 @@
     S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
-    await scripts;
+    await scripts; scriptsDone();
     [...TAKEN.keys()].forEach(finishTake);  // after the scripts: a copy's removal goes to its in-memory store (P.copyWrite)
     started = true;
     // the tab paints at once; the version shows with the counts: each tab's drafts count from what it saved, not its data (r12 fix10 frame 1, running 2)
