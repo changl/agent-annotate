@@ -83,6 +83,8 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .qzbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:8px 16px;background:var(--color-base-100);border-bottom:1px solid var(--line)}
 .qzpic{position:relative;margin:12px auto;max-width:calc(100vw - 24px)}
 .qzpic img{display:block;width:100%;height:auto;cursor:crosshair}
+/* every viewer: a picture never grows past its own width, at any size (r12 audit18 questions 4); its pins stay on it */
+.qzpic:not(.qzdgm){max-width:fit-content}.qzpic:not(.qzdgm) img{max-width:calc(100vw - 24px)}
 .qznotes{max-width:80ch;margin:0 auto;padding:0 16px}
 /* every picture's caption line, as the mock's: Picture N · caption · 25-100% · ⤢ Full size (audit14 #04, #05) */
 .aa .qcap,.qcap{font-size:var(--fs-sm);color:var(--muted);display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap;margin:4px 0;white-space:normal;overflow:visible;line-height:1.45}
@@ -95,7 +97,7 @@ body.qsheet-open .p-toastwrap{z-index:45}  /* Undo stays clickable over the Send
 .mview{position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.82);overflow:auto;padding:0 16px 16px}
 .mview .zbar{position:sticky;top:0;margin:0 -16px 12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 16px;background:var(--color-base-100);color:var(--color-base-content)}
 .mview .spacer{flex:1}
-.mview .pic{display:block;max-width:100%;margin:0 auto}.mview .pic img{display:block;width:100%;height:auto}
+.mview .pic{display:block;max-width:fit-content;margin:0 auto}.mview .pic img{display:block;width:100%;height:auto}
 pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(--line);background:var(--excerpt-bg);border-radius:var(--radius-field);white-space:pre-wrap;overflow-wrap:anywhere}
 .aa pre.qcodehost{padding-right:84px}
 .qcodecopy{position:absolute;top:6px;right:6px}

@@ -110,6 +110,18 @@
       };
       try { await put(to, true); } catch (e) { c.toast('Not moved: ' + e.message); await apply(null); }
     },
+    // the one armed Move, on any tab ({tab, id}): each tab's S.move (History's S.cmove) reads and sets it, so another Move
+    // replaces it; Escape, a picture viewer opening or closing, and leaving the tab end it through endMove (r12 audit18 frame 1, 2)
+    mv: null,
+    slot(S, tab, key = 'move') { Object.defineProperty(S, key, {configurable: true, get: () => (NK.mv && NK.mv.tab === tab && NK.mv.id) || '',
+      set: id => { if (id) NK.mv = {tab, id}; else if (NK.mv && NK.mv.tab === tab) NK.mv = null; }}); },
+    endMove(redraw = true) {
+      const w = NK.mv; if (!w) return false;
+      NK.mv = null;
+      document.querySelectorAll('[data-nmove][aria-pressed="true"]').forEach(b => b.setAttribute('aria-pressed', 'false'));  // before any later Escape handler reads it
+      if (redraw) NK.redo(w.tab);
+      return true;
+    },
     // Send's row for a re-opened note: its number, what it is on and its words
     row: (n, no, on) => `${mk(no)}Re-opened · ${on}${n.text ? ': ' + esc(cut(n.text, 140)) : ''}`,
     // every note at one marker, with Go to it on each and + Comment for another (today's pin popover, catalog 25)
@@ -120,9 +132,13 @@
     goRes: (c, n) => { const t = NK.tabOf(n.ra || ''), h = NK.hooks[t]; return t !== 'questions' && h && h.res ? h.res(n) : c.go('history', `${n.rv}~${n.ra}`); },
     // the resolution's spot, outlined where View resolution lands (History's version reader, a Reference plan line)
     lit: e => { e.style.cssText += ';outline:3px solid #7c3aed;outline-offset:4px;border-radius:4px;background:color-mix(in oklab,#7c3aed 16%,transparent)'; e.setAttribute('data-resolution', ''); },
-    // the notes at a picture pin: on the same picture, within a few percent of its point
-    near: (ns, p) => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && (n.target.image || '') === (p.target.image || '') && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
+    // the notes at a picture pin: on the same picture (by `pic`, the key its pin is drawn under), within a few percent of its point
+    near: (ns, p, pic = n => n.target.image || '') => { const o = (p.target || {}).offset; return o ? ns.filter(n => { const t = (n.target || {}).offset; return t && pic(n) === pic(p) && Math.hypot(t.dx - o.dx, t.dy - o.dy) < 0.04; }) : [p]; },
   };
+  NK.slot(S, 'questions');
+  // Escape and leaving the tab end a Move on every tab
+  addEventListener('keydown', e => { if (e.key === 'Escape') NK.endMove(); }, true);
+  addEventListener('hashchange', () => { if (NK.mv && location.hash.slice(1).split('/')[0] !== NK.mv.tab) NK.endMove(false); });
   // every re-opened note, on any tab, is one Send row listed from its stored record; Remove puts it back as the agent left it, with Undo
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id,
@@ -499,7 +515,7 @@
   // every note on one spot, opened from its marker, with + Comment for another (today's pin popover, catalog 25);
   // a picture pin (S.pin) lists the notes at its point only, and + Comment writes another there
   function spotBox(a) {
-    const all = D.notes.filter(n => n.anchor === a), p = S.pin && all.find(n => n.id === S.pin), ns = p ? NK.near(all, p) : all, first = ns[0];
+    const all = D.notes.filter(n => n.anchor === a), p = S.pin && all.find(n => n.id === S.pin), ns = p ? NK.near(all, p, pinPk) : all, first = ns[0];
     if (!first) return '';
     return NK.spot(ctx, ns.map(n => [n, noteNo(n)]), p ? 'at this point' : KIND(first.target || {}), p ? `data-spotadd="${esc(a)}" data-spotpin="${esc(p.id)}"` : `data-spotadd="${esc(a)}"`);
   }
@@ -565,7 +581,7 @@
   // every picture and diagram, not only a large one the server previewed (its ⤢ Full size link), gets the mock's
   // caption line: "Picture N · caption · 25-100% · ⤢ Full size" (audit14 #04, #05); every code block gets Copy (#03)
   // a size picked before keys (by file) still opens until this picture's own size is picked
-  const zoomOf = (k, src) => (ctx.prefs.get('ref-zoom', {}))[k] || (ctx.prefs.get('q:zoomPer', {}))[src] || ctx.prefs.get('zoomDef', 75);
+  const zoomOf = k => M.zoom(k);  // by the picture's own key only: a size kept by its file would reach every copy of it (r12 audit18 frame 3)
   // a published diagram (today's <!-- DIAGRAM:name --> and its diagram-spec-name script) becomes one figure (#06)
   function diagrams(doc) {
     for (const r of [doc.body, ...[...doc.querySelectorAll('template')].map(t => t.content)]) {
@@ -591,7 +607,9 @@
   // a point note's picture: its key, or for a note saved before keys its image id, then the first of its file, then the first picture
   const noteImg = (el, t) => el.tagName === 'IMG' ? el : (t.pk && el.querySelector(`img[data-pk="${CSS.escape(t.pk)}"]`)) || (t.image && el.querySelector(`img[data-img="${CSS.escape(t.image)}"]`))
     || [...el.querySelectorAll('img')].find(i => (i.dataset.full || i.getAttribute('src')) === t.image_src) || el.querySelector('img');
-  const picName = x => x && x.dataset.pic ? P.media.title(x.dataset.pic, x.alt) : (x && x.alt) || '';
+  // the key of the picture a point note's pin is drawn on, so the pin's list and the viewer use the pin's own key (r12 audit18 questions 2)
+  const pinPk = n => { const t = n.target || {}, el = root && root.querySelector(`[data-anchor-id="${CSS.escape(n.anchor || '')}"]:not(.qcard)`), i = el && noteImg(el, t); return i ? i.dataset.pk || '' : t.pk || ''; };
+  const picName = x =>x && x.dataset.pic ? P.media.title(x.dataset.pic, x.alt) : (x && x.alt) || '';
   // one picture line and one code Copy for every document reader: Questions, Reference plans and the Copy library,
   // and Pages & links documents call these, so a picture or a command reads and works the same in each (r12 audit15 reference #4, #5)
   const M = P.media = {
@@ -657,6 +675,7 @@
     // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width;
     // with its key `k`, the size picked is remembered for that picture and shows pressed on its caption line (r12 audit17 reference 6)
     view(src, cap, z, from, k) {
+      NK.endMove();  // opening or closing a picture viewer ends a Move, as on every tab (r12 audit18 frame 1, 2)
       let v = document.getElementById('p-mview');
       if (!v) {
         v = document.body.appendChild(Object.assign(document.createElement('div'), {id: 'p-mview', className: 'mview'}));
@@ -670,7 +689,7 @@
         <div class="pic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap || 'Picture')}"></div>`;
       v.querySelector('[data-mclose]').focus();
     },
-    closeView() { const v = document.getElementById('p-mview'); if (v) v.remove(); const f = M._v && M._v.from; M._v = null; if (f && f.isConnected) f.focus(); },
+    closeView() { const v = document.getElementById('p-mview'); if (v) v.remove(); NK.endMove(); const f = M._v && M._v.from; M._v = null; if (f && f.isConnected) f.focus(); },
     // a code Copy clicked: the command as written, then "Copied" for 2 seconds
     async onCopy(btn) {
       const p = btn.closest('pre').cloneNode(true); p.querySelectorAll('.qcodecopy').forEach(b => b.remove());
@@ -683,7 +702,7 @@
     for (const x of el.querySelectorAll('[data-pic]:not([data-pbar])')) {
       if (x.closest('.qzoom')) continue;
       x.dataset.pbar = '1';
-      const dgm = x.tagName === 'FIGURE', src = dgm ? 'dgm:' + x.dataset.dgm : x.dataset.full || x.getAttribute('src'), z = zoomOf(x.dataset.pk, src);
+      const dgm = x.tagName === 'FIGURE', src = dgm ? 'dgm:' + x.dataset.dgm : x.dataset.full || x.getAttribute('src'), z = zoomOf(x.dataset.pk);
       const at = x.parentElement.classList.contains('qpinwrap') ? x.parentElement : x;
       const old = at.nextElementSibling; if (old && old.matches('a.aa-full')) old.remove();
       const ctl = M.ctl(z, dgm ? '#' : src, ` data-zfull="${esc(src)}" data-pk="${esc(x.dataset.pk || '')}" data-zcap="${esc(dgm ? `Picture ${x.dataset.pic} · Diagram` : picName(x))}"${x.dataset.img ? ` data-zid="${esc(x.dataset.img)}"` : ''}${dgm ? ` data-zdgm="${esc(x.dataset.dgm)}"` : ''}`);
@@ -725,8 +744,7 @@
   function zoomView() {
     if (!S.zoom) return '';
     const {src, cap, z, pk, dgm} = S.zoom;
-    const at = n => { const el = root.querySelector(`[data-anchor-id="${CSS.escape(n.anchor)}"]`), i = el && noteImg(el, n.target); return i && i.dataset.pk; };  // the picture its pin is on
-    const ns = dgm ? [] : D.notes.map((n, i) => [n, i + 1]).filter(([n]) => !n.closed && (n.target || {}).tag === 'img' && n.target.offset && (n.target.pk || at(n)) === pk);
+    const ns = dgm ? [] : D.notes.map((n, i) => [n, i + 1]).filter(([n]) => !n.closed && (n.target || {}).tag === 'img' && n.target.offset && pinPk(n) === pk);
     return `<div class="qzoom" role="dialog" aria-label="${dgm ? 'Full-screen diagram' : 'Full-size picture'}"><div class="qzbar"><b class="small">${esc(cut(cap, 60))}</b><span class="qzm">${[25, 50, 75, 100].map(x => `<button data-zoomto="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span><span class="small mut hide-ph">of the screen width${dgm ? '' : ' · tap a spot to write a note'} · <kbd>Esc</kbd> closes</span><span class="spacer"></span><button class="btn sm" data-zclose>Close</button></div>
       ${dgm ? `<div class="qzpic qzdgm" style="width:${z}vw">${DGM[dgm] || '<span class="small mut">Drawing the diagram…</span>'}</div>`
       : `<div class="qzpic" style="width:${z}vw"><img src="${esc(src)}" alt="${esc(cap)}" data-zimg>${ns.map(([n, no]) => pinB(n, no, n.target.offset)).join('')}</div>`}
@@ -844,6 +862,8 @@
 
   /* ---------- draw ---------- */
   async function draw(keepScroll) {
+    // the picture viewer opening or closing, by any path (Full size, a size, Close, a tap, Go to it), ends a Move (r12 audit18 frame 1)
+    if (!!S.zoom !== !!S.zWas) { S.zWas = !!S.zoom; NK.endMove(false); }
     if (host) return drawHost();
     if (!root || !D) return;  // Send was closed over another tab before Questions ever drew, or its data is still on its way: render draws it (r12 audit10 frame 2, audit11)
     const y = scrollY;
@@ -1178,7 +1198,7 @@
     if (t.classList.contains('qsheet') && e.target !== t) return;  // a click inside the Send panel, not on its backdrop
     if (t.tagName === 'A') {  // links inside the document: "#d:q38833" jumps to the card, never to another tab
       const h = t.getAttribute('href') || '';
-      if (t.dataset.zfull) { e.preventDefault(); S.zoom = zoomAt(t, zoomOf(t.dataset.pk, t.dataset.zfull)); return draw(true); }
+      if (t.dataset.zfull) { e.preventDefault(); S.zoom = zoomAt(t, zoomOf(t.dataset.pk)); return draw(true); }
       if (h.startsWith('#')) {
         e.preventDefault();
         const id = decodeURIComponent(h.slice(1)), qq = D.questions.find(x => x.anchor === id);

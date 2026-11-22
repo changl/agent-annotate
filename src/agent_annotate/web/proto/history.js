@@ -143,7 +143,11 @@
     // as in the mock: the sizes open the full-size viewer at that share of the screen width and this picture keeps it;
     // the picture on the page stays as published (#38, #118)
     const all = ctx.prefs.get('picsize', {}), def = () => ctx.prefs.get('zoomDef', 75);
-    const keyOf = img => (img.getAttribute('src') || '').split('?')[0];
+    // each picture by its place, never its file (Proto.media.pk: its anchor and its order there), and its version's address,
+    // so two copies of one file, or one spot in two versions, keep their own sizes (r12 audit18 frame 3)
+    const keyOf = img => { if (!img.getAttribute('src')) return '';
+      const a = img.closest('[data-anchor-id]'), j = a === img ? 0 : [...(a || doc).querySelectorAll('img')].indexOf(img) + 1;
+      return doc.location.pathname + '|' + P.media.pk(a ? a.dataset.anchorId : 'pic', j); };
     const zOf = img => all[keyOf(img)] || def();
     const remember = (img, z) => { if (z === def()) delete all[keyOf(img)]; else all[keyOf(img)] = z; ctx.prefs.set('picsize', all); };
     const pageFull = img => { const f = img.closest('figure'); return f && f.querySelector(':scope > a.aa-full'); };
@@ -189,7 +193,8 @@
     dlg = document.createElement('div');
     dlg.id = 'pp-zoom'; dlg.className = 'pp-zoom'; dlg.setAttribute('role', 'dialog'); dlg.setAttribute('aria-modal', 'true'); dlg.setAttribute('aria-label', 'Full-size picture');
     const back = document.activeElement;
-    const close = () => { dlg.remove(); document.removeEventListener('keydown', key, true); if (back && back.focus) back.focus(); };
+    P.notes.endMove();  // opening or closing a picture viewer ends a Move, as on every tab (r12 audit18 frame 1, 2)
+    const close = () => { dlg.remove(); P.notes.endMove(); document.removeEventListener('keydown', key, true); if (back && back.focus) back.focus(); };
     const key = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     const draw = () => {
       dlg.innerHTML = `<div class="pp-zbar"><b class="small">${esc(cap || 'Picture')}</b><span class="pp-zseg" role="group" aria-label="Size">${SIZES.map(x => `<button class="chipb" data-z="${x}" aria-pressed="${x === z}">${x}%</button>`).join('')}</span>
@@ -316,7 +321,7 @@
   /* ---------- the tab ---------- */
   let D = null, R = null;
   async function render(el, ctx, anchor) {
-    S.cmove = '';  // leaving the tab cancels Move (r12 audit17 reference 4)
+    P.notes.slot(S, 'history', 'cmove'); S.cmove = '';  // S.cmove is the kit's one Move; leaving the tab cancels it (r12 audit17 reference 4)
     D = await ctx.data('history');
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
     if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});

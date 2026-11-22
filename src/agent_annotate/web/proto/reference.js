@@ -226,10 +226,10 @@
     const [kind, t, x, hd] = b, tg = tag || '', a = at(k, kind === 'img' ? 'Picture: ' + x : kind === 'tbl' ? 'Table: ' + x[0].join(' · ') : t);
     // each body row takes its own note (key <table>~r<n>); the header row notes the whole table
     const rk = ri => ri === 0 && hd ? k : `${k}~r${ri}`;
-    // a picture in a table cell: Proto.media's figure, clicked its row takes the note (as today); its own key (row and
-    // order in the row) gives Full size its title, size and point notes, so two of one file in a row stay apart (r12 audit17 #2)
+    // a picture in a table cell: Proto.media's figure; its own key (row and order in the row) gives it its title, size and
+    // point notes, inline and in Full size alike, so two of one file in a row stay apart (r12 audit17 #2, audit18 reference 1)
     const cpic = r => (p, j) => { const pk = P.media.pk(r, j), z = zOf(pk), za = ` data-zk="${esc(pk)}"`;
-      return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za, ` data-pk="${esc(pk)}"`).replace(/^<figure[^>]*>/, f => f + pin(pk)); };
+      return P.media.fig(p[1], p[2], ++picN, z, ` data-zoom="${z}"${za}`, za, ` data-pk="${esc(pk)}" ${at(pk, 'Picture: ' + (p[2] || ''))}`).replace(/^<figure[^>]*>/, f => f + pin(pk)); };
     const rowPics = (ri, r) => Array.from({length: b[4] && b[4][ri] ? b[4][ri].flat().filter(p => p && p[0] === 'img').length : 0}, (_, j) => P.media.pk(r, j + 1));
     const body = kind === 'tbl' ? `<div class="tblw" style="--c:${Math.max(...x.map(r => r.length))}" ${a}>${hd ? '' : pin(k)}<table>${x.map((r, ri) => `<tr ${ri === 0 && hd ? '' : at(rk(ri), 'Row: ' + r.join(' · '))}>${r.map((c, ci) => ri === 0 && hd ? `<th>${ci ? '' : pin(k)}${P.media.cell(b[4], ri, ci, c, esc, cpic(k))}</th>` : `<td>${ci ? '' : pin(rk(ri))}${P.media.cell(b[4], ri, ci, c, s => beadIn(esc(s)), cpic(rk(ri)))}</td>`).join('')}</tr>`).join('')}</table>${tg}</div>${x.map((_, ri) => [ri === 0 && hd ? '' : noteList(rk(ri)), ...rowPics(ri, rk(ri)).map(pk => noteList(pk))].join('')).join('')}`
       : kind === 'img' ? (n => `<figure ${a} data-pk="${esc(k)}">${pin(k)}<span class="qpinwrap"><img src="${esc(t)}" alt="${esc(x || 'Picture')}" data-zcap="${esc(P.media.title(n, x))}" loading="lazy">${spots(k)}</span>${zoomBar(k, t, x, n)}${tg}</figure>`)(++picN)
@@ -447,6 +447,8 @@
   /* ---------- draw and events ---------- */
   const here = () => el && el.isConnected && el.classList.contains('tab-reference');  // #p-main is shared by every tab
   function draw() {
+    // the picture viewer opening or closing, by any path (Full size, a size, Close, Go to it), ends a Move (r12 audit18 frame 2)
+    if (!!S.full !== !!S.fWas) { S.fWas = !!S.full; NK().endMove(false); }
     keepDrafts();  // every change to a draft redraws, on this tab or from Send
     if (!here() || !D) return;  // still reading: render draws once the data is in, with what Send's Remove or Undo changed (r12 audit11 frame 2, reference 3)
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
@@ -555,7 +557,7 @@
     if (d.nreopen) return life('reopen')(d.nreopen);
     // a plan note's resolution is a line of that plan: its revision opens there, outlined; any other goes to History
     // the viewer closes first, so the outlined destination is in sight, as Go to it does (r12 audit17 reference 3)
-    if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.move = S.spot = S.pin = ''; } return n && NK().goRes(ctx, n); }
+    if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
     if (d.ncancel !== undefined) { S.note = ''; return draw(); }
@@ -644,7 +646,7 @@
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
     if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
   }  // closing the viewer cancels Move too, as its prompt says (r12 audit17 reference 4)
-  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; S.move = ''; draw(); }
+  function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
     if (!here() || S.full) return;
@@ -708,7 +710,7 @@
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
-      ctx = c; el = main; S.move = ''; restoreDrafts();  // entering the tab never resumes a Move (r12 audit17 reference 4)
+      ctx = c; el = main; NK().slot(S, 'reference'); S.move = ''; restoreDrafts();  // S.move is the kit's one Move; entering the tab never resumes it (r12 audit17 reference 4)
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist

@@ -75,9 +75,9 @@ out.dataset.noteimg = [noteImg(row, {pk: 'r:1~p2', image_src: 'assets/a.png'}), 
 """)
     assert re.findall(r'data-zfull="assets/a.png" data-pk="([^"]+)"', out) == ["r:1~p1", "r:1~p2", "fig:a~p1"]
     assert 'data-zcap="Picture 2 · Second copy"' in out
-    assert 'data-sizes="50%,25%,50%"' in out  # its own size; one picked by file before keys still opens on the others
+    assert 'data-sizes="75%,25%,75%"' in out  # its own size only; one kept by file no longer reaches every copy (fix20)
     assert 'data-noteimg="r:1~p2,r:1~p1"' in out  # a note saved before keys stays on the first of its file
-    assert "n.target.pk || at(n)) === pk" in QS and "image_src: S.zoom.src, pk: S.zoom.pk" in QS and "M.setZoom(S.zoom.pk, +ds.zoomto)" in QS
+    assert "pinPk(n) === pk" in QS and "image_src: S.zoom.src, pk: S.zoom.pk" in QS and "M.setZoom(S.zoom.pk, +ds.zoomto)" in QS
 
 
 def test_cell_picture_leaves_short_words_whole():

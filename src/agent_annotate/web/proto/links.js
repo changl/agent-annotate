@@ -42,6 +42,7 @@
   // a kept document with revisions (the admin meeting), as the mock's reader: a revision bar with Show marks, the text, the revision list beside it
   function revDoc(ctx, D, d, line) {
     const {esc} = ctx, R = d.revs, n = R.length, last = n - 1, cur = S.rv[d.id] != null ? S.rv[d.id] : last, B = R[cur].blocks;
+    docK += '~rev' + (cur + 1);  // its pictures' keys name the revision, so each revision's picture keeps its own size (r12 audit18 reference 5)
     const al = n > 1 ? align(R[last - 1].blocks, R[last].blocks) : [], nk = k => al.filter(x => x.k === k).length, csum = n > 1 ? `${nk('add')} added · ${nk('del')} removed` : '';
     const tag = w => ` <span class="l-tag">${w} in revision ${n}</span>`, mk = S.marks && cur === last && n > 1;
     const doc = cur !== last ? blocksHtml(B, esc)  // an earlier revision reads as it was; notes go on the newest
@@ -70,7 +71,7 @@
   const abs = u => new URL(u, location.href).href;
 
   async function render(el, ctx, anchor) {
-    S.move = '';  // leaving the tab cancels Move (r12 audit17 reference 4)
+    P.notes.slot(S, 'links'); S.move = '';  // S.move is the kit's one Move; leaving the tab cancels it (r12 audit17 reference 4)
     let D = LD = await ctx.data('links');
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;

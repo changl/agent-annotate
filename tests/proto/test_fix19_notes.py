@@ -72,15 +72,15 @@ def test_checklist_go_to_it_waits_for_the_data():
 
 def test_viewer_closes_for_view_resolution():
     """Reference 3: View resolution inside the picture viewer closes it first, in every viewer."""
-    assert "if (n && S.full) { S.full = null; S.move = S.spot = S.pin = ''; }" in REF
+    assert "if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); }" in REF
     assert "S.zoom = null; S.spot = null; S.move = null;" in Q
 
 
 def test_escape_viewer_close_and_leaving_cancel_move():
     """Reference 4: Escape anywhere, the viewer closing and leaving the tab each cancel Move, on every surface."""
     assert "data-nmove][aria-pressed=\"true\"]" in FRAME
-    assert "S.full = null; S.move = ''; draw();" in REF
-    assert "ctx = c; el = main; S.move = '';" in REF
+    assert "S.full = null; draw(); }" in REF and "if (!!S.full !== !!S.fWas)" in REF  # fix20: the viewer's open or close ends it
+    assert "NK().slot(S, 'reference'); S.move = '';" in REF
     assert "render: async (main, c" in REF and "S.move = '';" in L and "S.cmove = '';" in HIST
     assert "if (S.move) { const all = [...w.querySelectorAll('.l-doc [data-lzoom]')]" in L  # the shared viewer ends a Move
     assert "ctx = c; root = el; S.move = null;" in Q
