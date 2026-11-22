@@ -34,7 +34,7 @@ def test_copy_send_records_release_drafts_by_id():
 def test_receipt_counts_the_rounds_ids_on_every_row():
     q = (WEB / "questions.js").read_text()
     assert "notes = rows.map(x => x[5]).filter(Boolean), all = rows.length + (gen().trim() ? 1 : 0)" in q
-    assert "const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (note ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
+    assert "const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (fb ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;" in q  # fix32: plus what it carried unlisted
     assert "ctx.queueSent(got, listed.q);" in q
 
 

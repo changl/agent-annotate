@@ -442,10 +442,11 @@
       const ttl = id => `${(B[id] || {}).t ? esc(cut(tclean(B[id].t), 60)) + ' ' : ''}<span class="bid">${esc(id)}</span>`;  // no board: the id alone, once
       // from Running itself the hash is already #running, so no hashchange redraws: open the task here (r12 fix8, running 1)
       const go = id => () => { ctx.prefs.set('task', id); if (location.hash === '#running' && tabNow === 'running' && EL && EL.isConnected) openTask(id); else ctx.go('running'); };
-      for (const [id, st] of Object.entries(tst)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, go: go(id),
+      // say: the row's words, which Send's round carries to the agent (a task row is no note, so without them a lone one went nowhere: r12 audit30 running 1)
+      for (const [id, st] of Object.entries(tst)) out.push({key: 'tst:' + id, group: 'Tasks', html: `${ttl(id)} → <b>${esc(st)}</b>`, say: `Task ${id}: set to ${st}`, go: go(id),
         remove: () => { const a = ctx.prefs.get('tst', {}); delete a[id]; ctx.prefs.set('tst', a); redraw(); return () => { ctx.prefs.set('tst', {...ctx.prefs.get('tst', {}), [id]: st}); redraw(); }; }});
       for (const id of ids) { const k = 'tcm:' + id, c = ctx.prefs.get(k, '');
-        if (c.trim()) out.push({key: k, group: 'Tasks', html: `${ttl(id)} → comment: “${esc(cut(c, 120))}”`, go: go(id), remove: () => { ctx.prefs.set(k, ''); redraw(); return () => { ctx.prefs.set(k, c); redraw(); }; }}); }
+        if (c.trim()) out.push({key: k, group: 'Tasks', html: `${ttl(id)} → comment: “${esc(cut(c, 120))}”`, say: `Task ${id}, comment: ${c.trim()}`, go: go(id), remove: () => { ctx.prefs.set(k, ''); redraw(); return () => { ctx.prefs.set(k, c); redraw(); }; }}); }
       return out;
     };
   // a round clears only the rows it listed, as they read then: a status or comment set after the countdown stays for the next Send (r12 audit30 running 4)

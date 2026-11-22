@@ -1340,7 +1340,9 @@
       if (!settled() || deliverable().some(k => !listed.keys.has(k) && !typed.has(k))) return await stop();
       const tn = typingNote();  // the note still open goes as it reads now, as Send listed it
       const ed = S.note || ctx.prefs.get('q:newnote', null), en = ed && ed.edit && D.notes.find(x => x.id === ed.edit);  // a saved note open in its editor goes with its new words
-      const abs = Object.entries(abPicks()), reo = Object.keys(NK.reo(ctx)), note = gen().trim() || undefined;
+      const abs = Object.entries(abPicks()), reo = Object.keys(NK.reo(ctx)), fb = gen().trim() || undefined;
+      // a listed row that is no note (a task status or comment) goes in the round's words, so the round stores and delivers it (r12 audit30 running 1)
+      const says = Q().filter(x => x.say && listed.keys.has('x:' + x.key)).map(x => x.say), note = [fb, ...says].filter(Boolean).join('\n\n') || undefined;
       // every id this Send listed or wrote: any other id the round carries (a note another client of his saved during the countdown) is counted too
       const known = new Set([...listed.notes, ...answers, ...replies, ...closes].map(x => x.id || x));
       // an id Send writes is a listed row only when the sheet listed it: fix32 counted the typed note's id as known though no row
@@ -1369,8 +1371,8 @@
       // behind (a peer's draft or reply, on any tab), so it is not counted (r12 audit24 questions 1); a copy's round answers its ids too
       const ids = r && Array.isArray(r.comment_ids) ? new Set(r.comment_ids) : null;
       // a noop round took no note, but a listed row that is no note (a task status or comment) went with this Send (r12 audit30 running 1)
-      const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (note ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
-      if ((gen().trim() || undefined) === note) ctx.prefs.set('q:general', '');  // feedback typed after the countdown waits for the next Send
+      const got = r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (fb ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
+      if ((gen().trim() || undefined) === fb) ctx.prefs.set('q:general', '');  // feedback typed after the countdown waits for the next Send
       D.notes.forEach(NK.gone);  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       NK.L = {}; ctx.prefs.set('draft:nkput', {});  // and every edit and reply on a sent note, whatever tab holds it
