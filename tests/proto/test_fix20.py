@@ -47,7 +47,8 @@ def test_every_cancel_path_reaches_endmove():
     assert "addEventListener('hashchange', () => { NK.endMove(false); });" in Q
     assert "if (!!S.zoom !== !!S.zWas) { S.zWas = !!S.zoom; NK.endMove(false); }" in Q  # Questions viewer: any open or close
     assert "if (!!S.full !== !!S.fWas) { S.fWas = !!S.full; NK().endMove(false); }" in REF  # Reference viewer
-    assert Q.count("NK.endMove();  // opening or closing") == 1 and "v.remove(); NK.endMove();" in Q  # Proto.media.view
+    # Proto.media.view: opening (not a redraw of the open viewer, which keeps a Move begun in it) and closing
+    assert Q.count("if (!v) NK.endMove();") == 1 and "v.remove(); NK.endMove();" in Q
     assert "P.notes.endMove();  // opening or closing" in HIST and "dlg.remove(); P.notes.endMove();" in HIST  # read-only readers
     assert "P.notes.slot(S, 'links')" in L and "P.notes.slot(S, 'history', 'cmove')" in HIST and "NK().slot(S, 'reference')" in REF
 
