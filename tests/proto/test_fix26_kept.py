@@ -52,31 +52,109 @@ def test_released_notes_show_on_their_places_in_the_kept_reader(tmp_path, monkey
     assert not any(n["sent"] for n in got.values())  # unsent there, so listed in Send
 
 
-def test_a_note_saved_in_the_prototype_lands_in_the_publications_store(tmp_path, monkeypatch):
+def handler(proto):
+    from agent_annotate.sync_server import make_handler
+    H = make_handler(proto, slug="proto")
+    return H.__new__(H)
+
+
+def by_id(store):
+    return {c["id"]: (part, a, c) for part in ("anchors", "archived") for a, v in store[part].items() for c in v}
+
+
+def test_a_save_never_writes_the_publications_store(tmp_path, monkeypatch):
     page, proto = meeting(tmp_path, monkeypatch)
-    before = (page / "comments.json").read_bytes()
-    store = pub.merge(proto, json.loads((proto / "comments.json").read_text()))
-    assert pub.split(proto, store)["anchors"] == {} and (page / "comments.json").read_bytes() == before  # nothing changed: not written
+    live = page / "comments.json"
+    before, stamp = live.read_bytes(), live.stat().st_mtime_ns
+    h = handler(proto)
+    store = h._v2_load()
+    h._v2_save(store)  # nothing changed: the prototype's store stays empty
+    assert json.loads((proto / "comments.json").read_text())["anchors"] == {} and live.read_bytes() == before
+    store = h._v2_load()
     store["anchors"].setdefault(f"{P}~tbl:kept:row:first~p1", []).append(
         {"id": "new", "anchor_id": f"{P}~tbl:kept:row:first~p1", "text": "proto point", "target": {"schema": 1, "tag": "img", "offset": {"dx": .5, "dy": .5}}})
-    store["anchors"].setdefault(f"{P}~s:kept:p1", []).append({"id": "q", "anchor_id": f"{P}~s:kept:p1", "text": "proto words", "target": {"schema": 1, "tag": "p", "quote": "Intro"}})
-    store["anchors"].setdefault("doc:kept-admin-meeting", []).append({"id": "whole", "anchor_id": "doc:kept-admin-meeting", "text": "whole"})
-    # 2.32.8 saves another note meanwhile: it stays
-    s = json.loads((page / "comments.json").read_text())
+    _, _, w = by_id(store)["w"]
+    w["text"] = "edited here"  # edit a release note
+    r = by_id(store)["r"][2]
+    store["anchors"][f"{P}~tbl:kept:row:first"].remove(r)  # archive one
+    store["archived"].setdefault(f"{P}~tbl:kept:row:first", []).append({**r, "status": "archived"})
+    store["anchors"][f"{P}~fig:wide"] = []  # delete one
+    h._v2_save(store)
+    assert live.read_bytes() == before and live.stat().st_mtime_ns == stamp  # never rewritten, not even unchanged
+    own = by_id(json.loads((proto / "comments.json").read_text()))
+    assert set(own) == {"new", "w", "r", "p"} and own["p"][2]["status"] == "deleted" and own["w"][2]["text"] == "edited here"
+    # 2.32.8 saves another note meanwhile; the next read has it, and the prototype's copies win
+    s = json.loads(live.read_text())
     s["anchors"]["s:kept:p1"] = [note("later", "s:kept:p1", "later")]
-    (page / "comments.json").write_text(json.dumps(s))
-    own = pub.split(proto, store)
-    assert list(own["anchors"]) == ["doc:kept-admin-meeting"]  # no anchor for the whole document: it stays here
-    s = json.loads((page / "comments.json").read_text())
-    by = {c["id"]: c for v in s["anchors"].values() for c in v}
-    assert set(by) == {"w", "r", "c", "p", "later", "new", "q"} and by["c"] == RELEASED[2]  # 2.32.8's own unchanged
-    assert by["new"]["anchor_id"] == "tbl:kept:row:first" and by["new"]["target"]["css"] == "td:nth-of-type(2) > figure:nth-of-type(1) > img:nth-of-type(1)"
-    assert by["q"]["anchor_id"] == "s:kept:p1" and by["q"]["target"]["selected_quote"] == "Intro"
-    # a removed note goes from the publication's store too
-    store = pub.merge(proto, own)
-    store["anchors"][f"{P}~s:kept:p1"] = [c for c in store["anchors"][f"{P}~s:kept:p1"] if c["id"] != "q"]
-    pub.split(proto, store)
-    assert "q" not in {c["id"] for v in json.loads((page / "comments.json").read_text())["anchors"].values() for c in v}
+    live.write_text(json.dumps(s))
+    got = {n["id"]: n for n in links._build(proto)["notes"]}
+    assert set(got) == {"w", "r", "c", "later", "new"} and got["w"]["text"] == "edited here" and got["r"]["closed"]
+    assert got["later"]["a"] == f"{P}~s:kept:p1" and got["c"]["a"] == f"{P}~tbl:kept:row:first~p2"
+    store = h._v2_load()
+    assert set(by_id(store)) == {"w", "r", "c", "later", "new"}
+    # re-open the archived one: still the prototype's copy
+    r = by_id(store)["r"][2]
+    store["archived"][f"{P}~tbl:kept:row:first"].remove(r)
+    store["anchors"].setdefault(f"{P}~tbl:kept:row:first", []).append({**r, "status": "open"})
+    s_before, s_stamp = live.read_bytes(), live.stat().st_mtime_ns
+    h._v2_save(store)
+    assert live.read_bytes() == s_before and live.stat().st_mtime_ns == s_stamp
+    assert by_id(h._v2_load())["r"][2]["status"] == "open"
+
+
+def test_the_shape_check_export_puts_a_prototype_note_in_2_32_8s_shape(tmp_path, monkeypatch):
+    page, proto = meeting(tmp_path, monkeypatch)
+    store = pub.merge(proto, {"schema_version": 2, "anchors": {}, "archived": {}})
+    store["anchors"][f"{P}~tbl:kept:row:first~p1"] = [
+        {"id": "new", "anchor_id": f"{P}~tbl:kept:row:first~p1", "text": "proto point", "target": {"schema": 1, "tag": "img", "offset": {"dx": .5, "dy": .5}}}]
+    store["anchors"][f"{P}~s:kept:p1"] = [{"id": "q", "anchor_id": f"{P}~s:kept:p1", "text": "words", "target": {"schema": 1, "tag": "p", "quote": "Intro"}}]
+    before = (page / "comments.json").read_bytes()
+    out = by_id(pub.export(proto, page, store))
+    assert (page / "comments.json").read_bytes() == before
+    assert set(out) == {"w", "r", "c", "p", "new", "q"} and out["c"][2] == RELEASED[2]
+    assert out["new"][1] == "tbl:kept:row:first" and out["new"][2]["target"]["css"] == "td:nth-of-type(2) > figure:nth-of-type(1) > img:nth-of-type(1)"
+    assert out["q"][1] == "s:kept:p1" and out["q"][2]["target"]["selected_quote"] == "Intro"
+
+
+def hosted():
+    """The hosted prototype's page folder (annotate-proto/env.sh: DEST=$ROOT/reviews/$SLUG)."""
+    env = Path("/Users/changlee/annotate-proto/env.sh")
+    if not env.is_file():
+        return None
+    v = dict(re.findall(r"^(?:export )?(ROOT|SLUG|DEST)=(\S+)", env.read_text(), re.M))
+    return Path(v["DEST"].replace("$ROOT", v["ROOT"]).replace("$SLUG", v["SLUG"]))
+
+
+LIVE = [Path.home() / "projects/fastlane-drive/reviews/fld-admin-meeting", Path.home() / "projects/FastLane Drive/planning/operations/usage-audit-2026-11-06/page",
+        Path.home() / "projects/rebex/reviews/rebex-policies"]
+
+
+def test_the_hosted_prototypes_saves_stay_under_its_root(monkeypatch):
+    from agent_annotate.proto_data.replaced import PROTO_ROOT
+    monkeypatch.delenv("ANNOTATE_PROTO_ROOT")
+    dest = hosted()
+    for page in ([dest] if dest else []) + [PROTO_ROOT / "reviews/fld-proto", PROTO_ROOT / "reviews/proto-rebex"]:
+        assert PROTO_ROOT in pub.guard(page / "comments.json").parents
+    for folder in LIVE + [PROTO_ROOT.parent / "projects/agent-annotate/reviews/x", Path("/Volumes/x")]:
+        try:
+            pub.guard(folder / "comments.json")
+        except PermissionError:
+            continue
+        raise AssertionError(f"{folder} was allowed")
+
+
+def test_the_save_hook_refuses_a_page_outside_the_root(tmp_path, monkeypatch):
+    page, proto = meeting(tmp_path, monkeypatch)
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("ANNOTATE_PROTO_ROOT", str(tmp_path / "elsewhere"))
+    h = handler(proto)
+    before = (proto / "comments.json").read_bytes()
+    try:
+        h._v2_save(h._v2_load())
+    except PermissionError:
+        assert (proto / "comments.json").read_bytes() == before
+    else:
+        raise AssertionError("saved outside the prototype's root")
 
 
 def test_policies_notes_by_the_readers_line_numbers(tmp_path):

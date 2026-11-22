@@ -1693,10 +1693,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_save(self, store: dict) -> None:
         from .store import write_bytes as _atomic_bytes
         own = store
-        if self._is_proto():  # a published page's notes go back to its own store, in today's shape (proto_data.published)
+        path = self._store_path()
+        if self._is_proto():  # published pages' notes are read only: the prototype saves its own, under its root (proto_data.published)
             from .proto_data import published
             own = published.split(self.artifact_dir, store)
-        _atomic_bytes(self._store_path(), json.dumps(own, ensure_ascii=False, separators=(",", ":")).encode(), value=own)
+            published.guard(path)
+        _atomic_bytes(path,json.dumps(own, ensure_ascii=False, separators=(",", ":")).encode(), value=own)
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 

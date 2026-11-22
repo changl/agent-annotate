@@ -1,20 +1,24 @@
-"""The prototype's note store for published pages: a note on a kept document (Admin team meeting, Usage audit) or on a
-copy's Reference policies page lives in that publication's own comments.json, in 2.32.8's shape (keyed by the page's
-data-anchor-id; a point on a cell picture is on its row, with the picture's css), so it shows in both whichever saved it.
+"""Published pages' notes in the prototype: a kept document (Admin team meeting, Usage audit) or a copy's Reference
+policies page keeps 2.32.8's notes in its own comments.json (keyed by the page's data-anchor-id; a point on a cell picture
+is on its row, with the picture's css). Those folders are read only: the prototype is a dummy copy.
 
-merge() puts the publication's notes into the prototype's store under the readers' keys; split() takes them back out and
-writes each publication's own, leaving any note 2.32.8 added meanwhile. The server calls both around every store read
-and write (sync_server._v2_load, _v2_save), so Edit, Reply, Close, Remove and Send act on the publication's record.
+merge() reads each publication's notes into the prototype's store under the readers' keys; split() takes them back out
+and never writes them: a new note, and the prototype's copy of an edited, closed, re-opened or deleted release note, stay
+in the prototype's own store, keyed by id, so they win on the next read. The server calls both around every store read
+and write (sync_server._v2_load, _v2_save), and guard() refuses a save outside the prototype's root.
+export() gives a publication's store in 2.32.8's shape with the prototype's notes in it, for a sandbox copy's shape check.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
 from .reference import POLICIES, _kept_src, html_blocks
 
-KEY = "_published"  # the merged store's {publication folder: its note ids when read}; split() drops it
+KEY = "_published"  # the merged store's {pub: release notes as read, gone: tombstones}; split() drops it
 _homes: dict = {}  # (folder, html file, its mtime) -> its Home
 
 
@@ -119,76 +123,93 @@ def signature(page_dir) -> tuple:
     return tuple(out)
 
 
+PARTS = ("anchors", "archived")
+_print = lambda c: hashlib.sha1(json.dumps(c, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _items(store: dict):
+    for part in PARTS:
+        for a, v in (store.get(part) or {}).items():
+            for c in v if isinstance(v, list) else []:
+                if isinstance(c, dict):
+                    yield part, a, c
+
+
 def merge(page_dir, store: dict) -> dict:
-    """The prototype's store with each publication's notes in it, under the readers' keys; its own notes win on an id."""
-    store = {**store, "anchors": {a: list(v) for a, v in (store.get("anchors") or {}).items()},
-             "archived": {a: list(v) for a, v in (store.get("archived") or {}).items()}}
-    have = {c.get("id") for part in ("anchors", "archived") for v in store[part].values() for c in v}
-    known = store[KEY] = {}
+    """The prototype's store with each publication's notes in it, under the readers' keys, read only. The prototype's
+    own record of a note (keyed by its id: a new one, or its copy of an edited, closed, re-opened or deleted release
+    note) wins; a deleted one's tombstone hides it and stays out of the merged store."""
+    out = {**store, "anchors": {}, "archived": {}}
+    gone, have = [], set()
+    for part, a, c in _items(store):
+        have.add(c.get("id"))
+        if c.get("status") == "deleted":
+            gone.append([a, c])
+        else:
+            out[part].setdefault(a, []).append(c)
+    pub = {}  # {id: [part, key, print]} of each release note as read, so split() can tell an unchanged one
     for h in homes(page_dir):
-        ids = known[str(h.folder)] = []
-        pub = _read(h.folder)
-        for part in ("anchors", "archived"):
-            for a, items in (pub.get(part) or {}).items():
-                for c in items:
-                    if not isinstance(c, dict) or c.get("id") in have:
-                        continue
-                    t = c.get("target") if isinstance(c.get("target"), dict) else {}
-                    k = h.key_of(c.get("anchor_id") or a, t)
-                    n = {**c, "anchor_id": k}
-                    if t.get("selected_quote") and not t.get("quote"):
-                        n["target"] = {**t, "quote": t["selected_quote"]}
-                    store[part].setdefault(k, []).append(n)
-                    ids.append(c.get("id"))
-    return store
+        for part, a, c in _items(_read(h.folder)):
+            if c.get("id") in have:
+                continue
+            t = c.get("target") if isinstance(c.get("target"), dict) else {}
+            k = h.key_of(c.get("anchor_id") or a, t)
+            n = {**c, "anchor_id": k}
+            if t.get("selected_quote") and not t.get("quote"):
+                n["target"] = {**t, "quote": t["selected_quote"]}
+            out[part].setdefault(k, []).append(n)
+            pub[c.get("id")] = [part, k, _print(n)]
+    out[KEY] = {"pub": pub, "gone": gone}
+    return out
 
 
 def split(page_dir, store: dict) -> dict:
-    """The prototype's own store from a merged one; each publication's notes are written to its own comments.json, in
-    2.32.8's shape, only when they changed. A note 2.32.8 saved since merge() read it is kept."""
-    from ..store import transaction, write_bytes
-    known = store.get(KEY) or {}
+    """The prototype's own store from a merged one. A publication's store is never written: a release note unchanged
+    since merge() read it is left out (it is read again from there); an edited, closed, re-opened or moved one is kept
+    here under its id, so this copy wins on the next read; a deleted one leaves a tombstone here."""
+    meta = store.get(KEY) or {}
+    pub, gone = meta.get("pub") or {}, meta.get("gone") or []
     own = {k: v for k, v in store.items() if k != KEY}
     own["anchors"], own["archived"] = {}, {}
-    hs = homes(page_dir)
-    mine = {str(h.folder): [] for h in hs}
-    for part in ("anchors", "archived"):
-        for k, items in (store.get(part) or {}).items():
-            for c in items:
-                h = next((h for h in hs if c.get("id") in known.get(str(h.folder), ())), None) or next((h for h in hs if k in h.by_key), None)
-                if h:
-                    mine[str(h.folder)].append((part, k, c))
-                else:
-                    own[part].setdefault(k, []).append(c)
-    for h in hs:
-        with transaction(h.folder):
-            fresh = _read(h.folder)
-            was = {c.get("id"): (part, a, c) for part in ("anchors", "archived") for a, v in (fresh.get(part) or {}).items() for c in v if isinstance(c, dict)}
-            ours = {c.get("id") for _, _, c in mine[str(h.folder)]}
-            out = {"anchors": {}, "archived": {}}
-            for i, (part, a, c) in was.items():  # 2.32.8's own since the read, untouched
-                if i not in ours and i not in known.get(str(h.folder), ()):
-                    out[part].setdefault(a, []).append(c)
-            for part, k, c in mine[str(h.folder)]:
-                old = was.get(c.get("id"))
-                oa = old and (old[2].get("anchor_id") or old[1])
-                ot = old and (old[2].get("target") if isinstance(old[2].get("target"), dict) else {})
-                if old and h.key_of(oa, ot) == k:  # not moved: its own anchor and target, as 2.32.8 saved them
-                    a, t = oa, old[2].get("target")
-                else:  # saved or moved in the prototype: the page's anchor for that place; a place it lacks keeps its old anchor
-                    a, t = h.place(k, c.get("target")) or (oa, c.get("target"))
-                if not a:  # shortcut: a note on a place the page has no anchor for stays in the prototype's store
-                    own[part].setdefault(k, []).append(c)
-                    continue
-                n = {**c, "anchor_id": a}
-                if t is None:
-                    n.pop("target", None)
-                else:
-                    n["target"] = t
-                out[part].setdefault(a, []).append(n)
-            flat = lambda s: sorted(json.dumps([p, a, c], sort_keys=True) for p in ("anchors", "archived") for a, v in (s.get(p) or {}).items() for c in v)
-            if flat(out) == flat(fresh):  # nothing of this page's changed: its file is left as it is
-                continue
-            new = {**fresh, **out}
-            write_bytes(h.folder / "comments.json", json.dumps(new, ensure_ascii=False, separators=(",", ":")).encode(), value=new)
+    seen = set()
+    for part, k, c in _items(store):
+        i = c.get("id")
+        seen.add(i)
+        if pub.get(i) == [part, k, _print(c)]:
+            continue
+        own[part].setdefault(k, []).append(c)
+    for i, (part, k, _) in pub.items():
+        if i not in seen:
+            own["archived"].setdefault(k, []).append({"id": i, "anchor_id": k, "status": "deleted"})
+    for a, c in gone:
+        own["archived"].setdefault(a, []).append(c)
     return own
+
+
+def guard(path) -> Path:
+    """The prototype saves only under its own root (replaced.PROTO_ROOT, or ANNOTATE_PROTO_ROOT in tests and sandboxes):
+    a publication's folder, another project or a live page is refused, in code."""
+    from .replaced import ENV, PROTO_ROOT
+    p, root = Path(path).resolve(), Path(os.environ.get(ENV) or PROTO_ROOT).resolve()
+    if root not in p.parents:
+        raise PermissionError(f"refused: the prototype saves only under {root}, not {path}")
+    return p
+
+
+def export(page_dir, folder, store: dict) -> dict:
+    """The publication at `folder`'s store as 2.32.8 would hold it with the prototype's notes (a merged `store`) in it:
+    for the sandbox shape check only, written into a copy of that folder, never into the folder itself."""
+    h = next(h for h in homes(page_dir) if h.folder == Path(folder))
+    out = _read(h.folder)
+    out = {**out, **{p: {a: list(v) for a, v in (out.get(p) or {}).items()} for p in PARTS}}
+    pub = (store.get(KEY) or {}).get("pub") or {}
+    for part, k, c in _items(store):
+        if c.get("id") in pub or c.get("status") == "deleted" or not (placed := h.place(k, c.get("target"))):
+            continue
+        for p in PARTS:  # the prototype's copy of a release note replaces it
+            out[p] = {a: [x for x in v if x.get("id") != c.get("id")] for a, v in out[p].items()}
+        n = {**c, "anchor_id": placed[0]}
+        if placed[1] is not None:
+            n["target"] = placed[1]
+        out[part].setdefault(placed[0], []).append(n)
+    return out
