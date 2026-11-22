@@ -13,7 +13,8 @@ def test_saved_history_note_has_edit_undo_copy_and_link():
         assert f"'{attr}')" in HIST
     # Edit and Remove come from the notes kit's one list, its Remove on History's own handler (r12 audit19)
     assert "K.acts(ctx, x, S.cmove === x.id, '', 'cdel')" in HIST and "if (ds.cned || ds.nedit)" in HIST
-    assert '<textarea id="h-et" rows="3" aria-label="${what}">${esc(x.text)}</textarea>' in HIST
+    # its own wording, or the words typed before a reload (r12 fix36)
+    assert '<textarea id="h-et" rows="3" aria-label="${what}">${esc(typed != null ? typed : x.text)}</textarea>' in HIST
     assert "P.notes.fix(ctx, n, text, ctx.api," in HIST
     assert "if (cnotes(v).length) { S.cn = ''; S.cspot = S.cspot === v ? '' : v;" in HIST  # a marked point lists its notes (fix18)
     assert "'#history/hn-' + ds.clink" in HIST and "if (/^hn-/.test(anchor || ''))" in HIST

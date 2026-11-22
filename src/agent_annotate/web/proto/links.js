@@ -418,7 +418,7 @@
     if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links');  // on screen: the same hash fires no hashchange
   }
   // the notes kit's hooks: Send's Go to it on a re-opened note, a redraw, and a resolution on a line here, opened and outlined (r12 audit16 frame 1, 2)
-  (P.noteHooks = P.noteHooks || {}).links = {go: r => goNote(P.ctx, {id: r.id, a: r.a}), redo: () => redo(),
+  (P.noteHooks = P.noteHooks || {}).links = {go: r => goNote(P.ctx, {id: r.id, a: r.a}), redo: () => redo(), unedit: id => { if (S.edit === id) { S.edit = ''; S.edt = null; } },
     res: n => { S.res = n.ra; S.resGo = true; S.spot = ''; return goNote(P.ctx, {id: '', a: n.ra}); }};
   function openAt(D, a) {  // opens the document a note's anchor is in
     const kept = (/^doc:kept-([^~]+)/.exec(a) || [])[1];

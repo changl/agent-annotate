@@ -14,7 +14,12 @@
     kept = true;
     const s = ctx.prefs.get('draft:ref', null);
     if (s) { S.reopen = new Map(s.reopen || []); S.rsent = new Map(s.rsent || []); S.cp = new Map(s.cp || []); S.appr = new Set(s.appr || []); LBL = s.lbl || {}; SNOTES = s.notes || []; }
+    // the note and the Copy library wording left open before a reload open again with their words (r12 audit31 reference 1)
+    const r = rnote(), ce = ctx.prefs.get('draft:rcped', null);
+    if (r && !S.note) { S.note = r.a; S.tgt = r.tgt || null; }
+    if (ce && ce.ck && !S.cpEd) S.cpEd = ce.ck;
   }
+  const cpTyped = ck => { const d = ctx && ctx.prefs.get('draft:rcped', null); return d && d.ck === ck ? rich(d.html || '') : null; };
   // what Send names each draft and the unsent notes, saved with the drafts: after a reload Send lists them at once,
   // while reference.json is still on its way or if it fails (r12 fix10 frame 1, reference 2); the feed replaces them once in
   let LBL = {}, SNOTES = [];
@@ -105,10 +110,14 @@
     const list = S.spot === k && !S.full === !dlg && ns.length;
     if (!ns.length && !box) return '';
     return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n, dlg)).join('')}
-      ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note"></textarea>
+      ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note">${esc(typedR(k))}</textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel>Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
   const at = (k, label) => `data-line="${esc(k)}" data-label="${esc(String(label || '').slice(0, 80))}"`;
+  // the note being typed (plan, revision, Markdown, picture point): a draft as it is typed (draft:rnote), in Send before Save and
+  // back after a reload, as a Pages & links note is (r12 audit31 reference 1, questions 4, frame 4)
+  const rnote = () => { const d = ctx && ctx.prefs.get('draft:rnote', null); return d && (d.text || '').trim() ? d : null; };
+  const typedR = k => { const d = ctx && ctx.prefs.get('draft:rnote', null); return d && d.a === k ? d.text || '' : ''; };
 
   /* ---------- a plan revision, read from today's plans/<id>/<v>.html as blocks ---------- */
   const CHROME = 'header.hdr,aside,nav,#popover,#legend,script,style,button,select,textarea,input,noscript,template,svg';
@@ -400,7 +409,7 @@
       if (!n) return '';
       return `<tr><td colspan="3" class="small"><b>${['Needs you', 'Held back', 'Done'][r]}</b> <span class="mut">· ${pl(n, 'line', 'lines')}</span></td></tr>${(all ? rs : rs.slice(0, 20)).map(([[key, y, nd, old, alts], i]) => {
         const ck = ckOf(i), s = S.cp.get(ck), ed = S.cpEd === ck, txt = s && s.st === 'old' ? esc(old) : s && s.st === 'edit' ? s.html : old && old !== y ? wdiff(old, y) : esc(y);
-        return `<tr><td class="rf-ck"><b>${esc(key)}</b><br><span class="tag">${esc(nd)}</span>${alts.length ? ` <span class="small mut">${pl(alts.length, 'other wording', 'other wordings')}, under Edit</span>` : ''}</td><td ${ed ? '' : at(ck, key)}>${ed ? '' : pin(ck)}${txt}${s ? `<span class="cst">${CST[s.st]}</span>${P.inertMark()}` : ''}${ed ? `<div class="rf-acts rf-rtb">${RTE.map(([c, l]) => `<button class="btn sm" data-rte="${c}">${l}</button>`).join('')}</div><div class="rf-rte" contenteditable="true" aria-label="Edit the text of ${esc(key)}">${esc(y)}</div>
+        return `<tr><td class="rf-ck"><b>${esc(key)}</b><br><span class="tag">${esc(nd)}</span>${alts.length ? ` <span class="small mut">${pl(alts.length, 'other wording', 'other wordings')}, under Edit</span>` : ''}</td><td ${ed ? '' : at(ck, key)}>${ed ? '' : pin(ck)}${txt}${s ? `<span class="cst">${CST[s.st]}</span>${P.inertMark()}` : ''}${ed ? `<div class="rf-acts rf-rtb">${RTE.map(([c, l]) => `<button class="btn sm" data-rte="${c}">${l}</button>`).join('')}</div><div class="rf-rte" contenteditable="true" aria-label="Edit the text of ${esc(key)}">${cpTyped(ck) != null ? cpTyped(ck) : esc(y)}</div>
           ${alts.length ? `<div class="small mut">Other wordings: ${alts.map(a => `<button class="lk small" data-cpalt="${esc(a)}" title="Put this wording in the editor">${esc(cutq(a))}</button>`).join(' · ')}</div>` : ''}<div class="rf-acts"><button class="btn sm pri" data-cpsave="${esc(ck)}">Save</button><button class="btn sm" data-cpcancel>Cancel</button></div>` : ''}${noteList(ck)}</td>
           <td class="rf-cact">${s ? `<button class="lk small" data-cpundo="${esc(ck)}">Undo</button>` : ed ? '' : `<button class="lk small" data-cpst="${esc(ck)}|ok">Approve</button> · <button class="lk small" data-cpst="${esc(ck)}|held">Hold back</button> · <button class="lk small" data-cped="${esc(ck)}">Edit</button>${old && old !== y ? ` · <button class="lk small" data-cpst="${esc(ck)}|old">Use earlier</button>` : ''}`}</td></tr>`; }).join('')}${n > 20 && !q ? `<tr><td colspan="3" class="small mut">${all ? `All ${n} shown` : `20 of ${n} shown`} · <button class="lk small" data-fold="${esc(fk)}" aria-expanded="${all}">${all ? 'Show the first 20' : `Show all ${n}`}</button></td></tr>` : ''}`; };
     return `${head(x)}<p class="small mut">Lines that need you come first. Click a piece of text to write a note on it, or select words; approve, hold back, edit, or go back to the earlier wording.</p>
@@ -540,14 +549,14 @@
     }
     if (d.cpundo) { const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }); }
     if (d.cped) { S.cpEd = d.cped; draw(); const t = el.querySelector('.rf-rte'); if (t) t.focus(); return; }
-    if (d.cpalt !== undefined) { const t = el.querySelector('.rf-rte'); if (t) t.textContent = d.cpalt; return; }  // an earlier wording into the editor
+    if (d.cpalt !== undefined) { const t = el.querySelector('.rf-rte'); if (t) { t.textContent = d.cpalt; ctx.prefs.set('draft:rcped', {ck: S.cpEd, html: t.innerHTML}); } return; }  // an earlier wording into the editor
     if (d.rte) { document.execCommand(d.rte.split(':')[0], false, d.rte.split(':')[1] || (d.rte === 'createLink' ? prompt('Link address') || '' : undefined)); return; }
     if (d.cpsave) {
       const ck = d.cpsave, t = el.querySelector('.rf-rte'), was = S.cp.get(ck);
-      S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''}); S.cpEd = ''; draw();
+      S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''}); S.cpEd = ''; ctx.prefs.set('draft:rcped', null); draw();
       return ctx.inert('Edit saved', () => { was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
     }
-    if (d.cpcancel !== undefined) { S.cpEd = ''; return draw(); }
+    if (d.cpcancel !== undefined) { S.cpEd = ''; ctx.prefs.set('draft:rcped', null); return draw(); }
     // a marker's list and the note lifecycle: the code Questions uses (P.notes), so every tab behaves the same (r12 audit15 reference 2, 3)
     const nt = id => allNotes().find(x => x.id === id);
     if (d.spot !== undefined) { S.pin = ''; S.spot = S.spot === d.spot ? '' : d.spot; return draw(); }
@@ -564,7 +573,7 @@
     if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
-    if (d.ncancel !== undefined) { S.note = ''; return draw(); }
+    if (d.ncancel !== undefined) { S.note = ''; setR(null); return draw(); }
     if (d.zoom) {
       const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-pk="${CSS.escape(k)}"] img`);  // the picture by its own key
       P.media.setZoom(k, +d.zoom);
@@ -581,7 +590,7 @@
         const target = S.tgt || undefined;
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)});
         mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
-        S.note = ''; S.tgt = null; draw(); ctx.refreshChips();
+        S.note = ''; S.tgt = null; setR(null); draw(); ctx.refreshChips();
         ctx.toast('Note saved', {undo: () => undoNote(c.id)});
       } catch (er) { fail(er); }
       return;
@@ -589,7 +598,7 @@
     if (d.nundo) return undoNote(d.nundo);
     if (d.nedit) { S.edit = d.nedit; S.edt = null; draw(); const t = el.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
     if (d.nedcancel !== undefined) { S.edit = ''; S.edt = null; return draw(); }
-    if (d.nedsave) { const n = nt(d.nedsave), t = el.querySelector('[data-nedtext]'); if (!n || !t) return;
+    if (d.nedsave) { const n = nt(d.nedsave), t = el.querySelector(`[data-nedbox="${CSS.escape(d.nedsave)}"] [data-nedtext]`); if (!n || !t) return;  // its own box: an Edit kept from before a reload can be open too
       return NK().fix(ctx, n, t.value, ctx.api, (w, p) => { allNotes().concat(D.notes, mine).forEach(x => { if (x.id === n.id) Object.assign(x, p); }); S.edit = ''; S.edt = null; S.hl = n.id; draw(); ctx.refreshTop(); }); }
     if (d.trn !== undefined) { S.trn = d.trn; draw(); const i = document.getElementById('rf-trn'); if (i) { i.focus(); i.select(); } return; }
     if (d.trnsave) return renameTopic(d.trnsave, (document.getElementById('rf-trn').value || '').trim());
@@ -656,7 +665,11 @@
     if (here() && e.target.id === 'rf-cq') { S.cq = e.target.value; draw(); }
     if (here() && e.target.dataset.reopen) { S.reopen.set(e.target.dataset.reopen, e.target.value); keepDrafts(); }
     if (here() && e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
-  }  // closing the viewer cancels Move too, as its prompt says (r12 audit17 reference 4)
+    if (here() && e.target.id === 'rf-nt' && S.note) { const k = S.note, src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
+      setR(e.target.value.trim() ? {a: k, l: src ? src.dataset.label : 'Reference', tgt: S.tgt || null, text: e.target.value, m: noteMeta(k), item: S.sel || itemOf(k)} : null); }
+    if (here() && e.target.matches('.rf-rte') && S.cpEd) ctx.prefs.set('draft:rcped', {ck: S.cpEd, html: e.target.innerHTML});  // Copy library wording as typed
+  }
+  const setR = d => { const was = !!rnote(); ctx.prefs.set('draft:rnote', d); if (was !== !!rnote()) ctx.refreshTop(); };  // closing the viewer cancels Move too, as its prompt says (r12 audit17 reference 4)
   function closeZoom() { if (S.full && S.note === S.full.k) S.note = ''; S.full = null; draw(); }
   function onDocKey(e) { if (here() && S.full && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeZoom(); } }
   function onKey(e) {
@@ -684,7 +697,7 @@
     if (here() && location.hash === '#reference/' + encodeURIComponent(id)) draw(); else ctx.go('reference', id); };
   const redo = () => draw();  // draw keeps the drafts, then redraws only on this tab
   // the notes kit's hooks: Send's Go to it on a re-opened note, a redraw, and a resolution on a plan line, opened there and outlined
-  (P.noteHooks = P.noteHooks || {}).reference = {go: r => goRef(itemOf(r.a), r.id, r.a)(), redo,
+  (P.noteHooks = P.noteHooks || {}).reference = {go: r => goRef(itemOf(r.a), r.id, r.a)(), redo, unedit: id => { if (S.edit === id) { S.edit = ''; S.edt = null; } },
     res: n => { S.res = n.ra; S.resGo = true; return goRef(itemOf(n.ra), '', n.ra)(); }};
   const out = (key, group, html, id, take, put) => ({key, group, html, go: goRef(id), remove: () => { take(); redo(); return () => { put(); redo(); }; }});
   if (Proto.queue) Proto.queue({
@@ -702,6 +715,16 @@
         it.push(out('cp:' + ck, 'Reference', `${c.esc(nm)} → ${what}`, m[1], () => S.cp.delete(ck), () => S.cp.set(ck, s))); }
       for (const k of S.appr) { const id = k.slice(4), x = (D && D.plans.find(p => p.id === id)) || xOf(id);
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
+      // the note being typed, as the mock lists it beside General feedback: Send saves it as its own write before the round goes, and
+      // the editor closes only once saved; one changed since stays (r12 audit31 reference 1), as Pages & links' typed note (audit30 questions 3)
+      const tr = rnote();
+      if (tr) it.push({key: 'rnn:' + tr.a, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
+        go: () => { goRef(tr.item || itemOf(tr.a), '', tr.a)(); S.note = tr.a; S.tgt = tr.tgt || null; redo(); },
+        save: async () => { const r = await c.api('api/comments', {anchor_id: tr.a, anchor_label: tr.l, text: tr.text.trim(), target: tr.tgt || undefined, ...(tr.m || {})}, undefined, true);
+          mine.push({id: r.id, a: tr.a, l: tr.l, text: r.text || tr.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || tr.tgt || undefined});
+          const now = rnote(); if (now && now.a === tr.a && now.text === tr.text) { if (S.note === tr.a) { S.note = ''; S.tgt = null; } ctx.prefs.set('draft:rnote', null); }
+          return r; },
+        remove: () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
       if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));

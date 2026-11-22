@@ -230,7 +230,8 @@
     // a saved, unsent note: Edit opens its words in place, Remove takes it back, as today's release (r12 audit18 reference 4)
     // and Move and Close too, as today's menu (r12 audit19 questions 6, reference 7): the one list above
     draftActs: (n, moving) => NK.acts(P.ctx, n, moving),
-    editBox: n => `<div class="nkedit" data-nedbox="${esc(n.id)}"><textarea data-nedtext rows="3" aria-label="Edit your note">${esc(n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nedsave="${esc(n.id)}">Save</button><button class="lk small" data-nedcancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`,
+    // the words typed in an open Edit come from the draft store first, so a redraw or a reload shows them (r12 audit31 running 5)
+    editBox: n => { if (!NK.eds.has(n.id)) NK.eds.set(n.id, n); const s = NK.edText(n.id); return `<div class="nkedit" data-nedbox="${esc(n.id)}"><textarea data-nedtext rows="3" aria-label="Edit your note">${esc(s != null ? s : n.text)}</textarea><div class="acts"><button class="btn sm pri" data-nedsave="${esc(n.id)}">Save</button><button class="lk small" data-nedcancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>`; },
     // Save on an edit: today's PUT of its words, so the note keeps its id, number and time and Send lists the new words; with Undo.
     // a sent one (today's edit on a sent note) goes with the next Send again: edited, and re-opened if closed by status.
     // apply(t, p) puts the words (p: every changed field) on the tab's copies and redraws; false when nothing was saved
@@ -240,6 +241,7 @@
       // the same words still PUT: today's Save records an edit, so a sent note goes with the next Send (r12 audit19 reference 11).
       // The PUT clears flagged_for_session, so his own with no replies or response can be removed again, as today
       const put = async w => { const b = NK.body(n, w); await api(`api/comments/${encodeURIComponent(n.id)}`, b, 'PUT');
+        NK.tySet('edit:' + n.id, null);  // saved: the typed draft is delivered
         if (n.sent) NK.put1(n.id, {text: w});
         await apply(w, {...b, ...(n.sent ? {edited: true} : {}), flagged: false}); };
       try { await put(t); } catch (e) { c.toast('Not changed: ' + e.message); return false; }
@@ -247,11 +249,22 @@
       return true;
     },
     // a sent note's body on any tab: its words, state, View resolution, actions and thread; the edit box (edit: its words) while Edit is open
-    sentBody: (c, n, moving, edit) => edit != null ? NK.editBox({...n, text: edit})
+    // an Edit left open before a reload opens again from its draft, as 2.32.8's edit: draft reopens the editor
+    sentBody: (c, n, moving, edit) => (NK.eds.set(n.id, n), edit != null || NK.edText(n.id) != null) ? NK.editBox({...n, text: edit != null ? edit : n.text})
       : `${esc(n.text)} ${NK.words(c, n)} ${NK.view(n)}<span class="nacts">${NK.acts(c, n, moving)}</span>${NK.thread(c, n)}`,
     // the agent's response and the replies under a note, the latest shown and older ones behind "n earlier replies"; a
     // reply box with Post reply once the agent has answered and the note is not closed (today's renderCItem, showReply)
-    th: new Map(), earlier: new Set(), typed: new Map(),  // typed: a reply being written, kept across a redraw of its tab
+    th: new Map(), earlier: new Set(), eds: new Map(),  // eds: the note each open Edit was drawn from
+    // every open Edit and Reply on any tab, kept in the draft store as typed (draft:nktyped: edit:<id>, reply:<id> → the note's
+    // record and the words), so a reload brings it back and Send lists and delivers it (r12 audit31 running 5, questions 5, frame 4)
+    tyM: {},  // before the frame's context is in
+    ty: () => P.ctx ? P.ctx.prefs.get('draft:nktyped', {}) || {} : NK.tyM,
+    tySet(k, r) { const m = {...NK.ty()}, had = k in m; if (r) m[k] = r; else delete m[k]; if (!P.ctx) { NK.tyM = m; return; }
+      P.ctx.prefs.set('draft:nktyped', m); if (had !== !!r && P.ctx.refreshTop) P.ctx.refreshTop(); },
+    edText: id => { const r = NK.ty()['edit:' + id]; return r ? r.text : null; },
+    // a reply being written
+    typed: {get: id => (NK.ty()['reply:' + id] || {}).text, has: id => 'reply:' + id in NK.ty(), delete: id => NK.tySet('reply:' + id, null),
+      set: (id, text) => { const n = NK.th.get(id); NK.tySet('reply:' + id, String(text || '').trim() ? {...(n ? NK.rec(n) : {}), id, text} : null); }},
     thread(c, n) {
       const rs = n.replies || [], k = rs.length - 1, id = esc(n.id);
       // a note the agent wrote has its reply box from the start (agentResponded: the agent is its author) (r12 audit19 questions 8)
@@ -291,7 +304,15 @@
     b.disabled = true;
     NK.reply(P.ctx, n, ta.value, () => NK.redo(tab)).then(ok => { if (!ok) b.disabled = false; });
   }, true);
-  document.addEventListener('input', e => { const id = e.target.dataset && e.target.dataset.nreplytext; if (id) NK.typed.set(id, e.target.value); }, true);
+  // every keystroke in a Reply or an Edit, on any tab (History's own chart editor too), goes to the draft store
+  document.addEventListener('input', e => { const t = e.target, id = t.dataset && t.dataset.nreplytext;
+    if (id) NK.typed.set(id, t.value);
+    const box = t.matches && t.matches('[data-nedtext],#h-et') && t.closest('[data-nedbox],[data-cnote]');
+    if (box) { const eid = box.dataset.nedbox || box.dataset.cnote, n = NK.eds.get(eid);
+      NK.tySet('edit:' + eid, {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: n ? n.text : '', sent: !!(n && n.sent)}); } }, true);
+  // Cancel on an Edit discards its typed words, before the tab's own handler closes it
+  document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-nedcancel],[data-ccancel]'), box = b && b.closest('[data-nedbox],[data-cnote]');
+    if (box) NK.tySet('edit:' + (box.dataset.nedbox || box.dataset.cnote), null); }, true);
   // Remove or Close on the note being moved ends its Move on every tab, before the tab's own handler (r12 audit19 questions 2)
   document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-ndel],[data-nundo],[data-nclose]');
     if (b && NK.mv && NK.mv.id === (b.dataset.ndel || b.dataset.nundo || b.dataset.nclose)) NK.endMove(false); }, true);
@@ -303,14 +324,32 @@
   // ⌘↵ in an open edit saves it, on any tab
   document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && e.target.matches && e.target.matches('[data-nedtext]')) {
     const b = e.target.closest('[data-nedbox]').querySelector('[data-nedsave]'); e.preventDefault(); e.stopPropagation(); b.click(); } }, true);
-  // every re-opened note, on any tab, is one Send row listed from its stored record
   const TABN = {questions: 'Questions', reference: 'Reference', links: 'Pages & links', history: 'Questions asked per version'};
+  // an open Reply, and an open Edit on a sent note, from the draft store: one Send row each, which Send delivers as its own write
+  // (2.32.8's Send posts a reply draft too). Its draft clears only once delivered as listed, or on Remove (r12 audit31 running 5, questions 5)
+  // An Edit on a never-sent note is kept the same way but has no row: the note's own row goes, and the editor keeps the words
+  const unedit = r => { const h = NK.hooks[r.tab]; if (h && h.unedit) h.unedit(r.id); NK.redo(r.tab); };
+  P.tyRows = c => Object.entries(NK.ty()).filter(([k, r]) => r && r.id && (r.text || '').trim() && (/^reply:/.test(k) || (r.sent && r.text.trim() !== (r.was || '').trim())))
+    .map(([k, r]) => { const rep = /^reply:/.test(k), w = r.text.trim();
+      return {key: 'ty:' + k, group: 'Notes', say: (rep ? 'Reply: ' : 'Edited: ') + w,
+        html: `${rep ? 'Reply' : 'Edited'} · ${r.img && !r.on ? 'At a spot on a picture' : `On “${esc(cut(r.on || TABN[r.tab] || 'a note', 50))}”`}: ${esc(cut(w, 140))}`,
+        go: () => { const h = NK.hooks[r.tab]; if (h && h.go) h.go(r); else c.go(r.tab || 'questions'); },
+        save: async () => { const u = `api/comments/${encodeURIComponent(r.id)}`;
+          await (rep ? c.api(u + '/reply', {text: w}, undefined, true) : c.api(u, NK.body(r, w), 'PUT', true));
+          const n = (rep ? NK.th : NK.eds).get(r.id);
+          if (n && rep) (n.replies = n.replies || []).push({agent: false, who: 'You', text: w, ts: new Date().toISOString(), unsent: true});
+          if (n && !rep) Object.assign(n, {text: w, edited: true, flagged: false});
+          const now = NK.ty()[k]; if (now && now.text === r.text) { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); }
+          return {id: r.id}; },
+        remove: () => { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); return () => { NK.tySet(k, r); NK.redo(r.tab); }; }}; });
+  // every re-opened note, on any tab, is one Send row listed from its stored record
   if (P.queue) P.queue({items: c => Object.entries(NK.reo(c)).filter(([, r]) => r && typeof r === 'object').map(([id, r]) => ({key: 'reo:' + id, group: 'Notes', note: id, peer: false,  // his own Re-open, on anyone's note: the round takes it as his edit (r12 audit25 questions 3)
     html: NK.row(r, '↻', r.img && !r.on ? 'At a spot on a picture' : r.on || r.tab ? `On “${esc(cut(r.on || TABN[r.tab], 50))}”` : 'A note the agent addressed'),
     // a record not yet told its spot (an earlier build's) finds its note first
     // no Remove: Re-open stored open at once, so the note is a pending edit the server keeps, which today's summary lists
     // without Remove and Discard all leaves (r12 audit21 frame 1)
     go: async () => { const x = r.a ? r : (await NK.find(c, id)) || r, h = NK.hooks[x.tab]; if (h && h.go) h.go({id, ...x}); else c.go(x.tab || 'questions'); }}))});
+  if (P.queue) P.queue({items: P.tyRows});  // the open Edit and Reply rows (above)
   // A read-only copy (frame.json copyOf) takes no writes: the frame hands every write on a copy here (P.copyWrite), for
   // every tab. It stands in for the server, so it is kept like his drafts (prefs draft:copy): a reload keeps it while
   // "Unsent answers and notes" is on (r12 fix8). Questions shows it through sim(); Reference and Links through P.copyData.

@@ -260,8 +260,10 @@
     const {esc, icon} = ctx, id = esc(x.id), what = `Note ${no} on version ${esc(vn(v))}`, lit = S.hlT === x.id ? ' lit' : '';
     const ib = (k, label, attr) => `<button class="ib sm" title="${label}" aria-label="${label}" ${attr}="${id}">${icon(k)}</button>`;
     const mk = `<span class="qmk${x.sent ? ' sent' : ''}" title="Your note ${no}${x.sent ? ', sent' : ''}">${icon('note')}${no}</span>`;
-    if (S.ce === x.id) return `<div class="qnote h-cnote" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}</b> <span class="small mut">· goes with your next Send</span>
-      <textarea id="h-et" rows="3" aria-label="${what}">${esc(x.text)}</textarea>
+    // the typed words come from the kit's draft store; an Edit left open before a reload opens again (r12 audit31 running 5)
+    P.notes.eds.set(x.id, x); const typed = P.notes.edText(x.id);
+    if (S.ce === x.id || (!S.ce && !S.cn && typed != null && (S.ce = x.id))) return `<div class="qnote h-cnote" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}</b> <span class="small mut">· goes with your next Send</span>
+      <textarea id="h-et" rows="3" aria-label="${what}">${esc(typed != null ? typed : x.text)}</textarea>
       <div class="h-nacts"><button class="btn sm pri" data-csavee="${id}">Save</button><button class="btn sm" data-ccancel>Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves · an empty note is dropped</span></div></div>`;
     // a sent one carries the notes kit's lifecycle (Re-open, View resolution, Move, Close); a closed one folds with Re-open (r12 audit16 frame 6)
     const K = P.notes, cp = ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
@@ -272,8 +274,8 @@
   async function editC(el, ctx, id) {
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
     S.ce = '';
-    if (!n || (text === n.text && !n.sent)) return draw(el, ctx);  // the same words on a sent one still record an edit, as today
-    if (!text && !n.sent) { const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
+    if (!n || (text === n.text && !n.sent)) { P.notes.tySet('edit:' + id, null); return draw(el, ctx); }  // the same words on a sent one still record an edit, as today
+    if (!text && !n.sent) { P.notes.tySet('edit:' + id, null); const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
     // the kit's edit, as on every tab: in place, with Undo; a sent one goes with the next Send again (today's edit on a sent note)
     const ok = await P.notes.fix(ctx, n, text, ctx.api, (w, p) => { [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) Object.assign(x, p); }); redrawH(); ctx.refreshTop(); });
     if (!ok) { S.ce = id; draw(el, ctx); }
@@ -287,7 +289,7 @@
         S.hl = p ? x.id : ''; S.hlT = ''; redrawH(); if (p && onH()) litC(HE.el); });
   }
   // the notes kit's hooks: Send's Go to it on a re-opened chart note, and a redraw
-  (P.noteHooks = P.noteHooks || {}).history = {redo: () => redrawH(),
+  (P.noteHooks = P.noteHooks || {}).history = {redo: () => redrawH(), unedit: id => { if (S.ce === id) S.ce = ''; },
     go: r => { S.cn = ''; S.q = ''; S.hl = r.id; S.hlT = ''; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else P.ctx.go('history'); }};
   async function copyC(ctx, text, what) {
     try { await navigator.clipboard.writeText(text); ctx.toast(what + ' copied'); } catch { ctx.toast('Copy failed: your browser blocked it'); }
