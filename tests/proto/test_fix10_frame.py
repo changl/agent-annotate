@@ -14,7 +14,7 @@ QCSS = (WEB / "questions.css").read_text()
 
 def test_reference_lists_saved_drafts_without_its_data():
     """Frame 1, reference 2: a slow or failed reference.json read never holds a saved draft or note out of Send."""
-    items = REF[REF.index("items: c => {"):REF.index("sent: () =>")]
+    items = REF[REF.index("items: c => {"):REF.index("sent: (c, was, done) =>")]
     assert "if (!D) return [];" not in items
     assert "ctx = ctx || c; restoreDrafts();" in items
     assert "LBL = s.lbl || {}; SNOTES = s.notes || [];" in REF and "lbl: LBL, notes: SNOTES" in REF

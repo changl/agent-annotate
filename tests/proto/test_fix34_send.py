@@ -50,6 +50,7 @@ const api = async (p, own) => {{ if (!own && ROUND) await ROUND; log.push(p);
   if (p === 'api/rounds/submit') return new Promise(r => {{ freeRound = () => r({{comment_ids: ['a']}}); }}); return {{id: 'new'}}; }};
 const call = (p, body, method, own) => api(p, own);
 {deliv}
+const fullSig = () => ''; if (typeof D === 'object' && D && !D.questions) D.questions = []; if (typeof NK === 'object' && !NK.loc) NK.loc = () => ({{}}); if (!ctx.sig) ctx.sig = x => x.say || x.html;
 {post}
 const tick = () => new Promise(r => setTimeout(r, 0));
 (async () => {{
@@ -100,6 +101,7 @@ const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{
 let ids = ['L'];
 const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return {{comment_ids: ids}}; }} return {{}}; }};
 {deliv}
+const fullSig = () => ''; if (typeof D === 'object' && D && !D.questions) D.questions = []; if (typeof NK === 'object' && !NK.loc) NK.loc = () => ({{}}); if (!ctx.sig) ctx.sig = x => x.say || x.html;
 {post}
 (async () => {{
   const listed = () => ({{all: 2, notes: [], keys: new Set(['x:lnn:doc:a', 'gen'])}});
@@ -133,6 +135,7 @@ const document = {{querySelectorAll: () => []}};
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}, queueSent: (n, was) => {{ handed = was; }}}};
 const call = async p => p === 'api/rounds/submit' ? {{comment_ids: [], delivery: 'noop'}} : {{}};
 {deliv}
+const fullSig = () => ''; if (typeof D === 'object' && D && !D.questions) D.questions = []; if (typeof NK === 'object' && !NK.loc) NK.loc = () => ({{}}); if (!ctx.sig) ctx.sig = x => x.say || x.html;
 {post}
 (async () => {{
   const q = new Map([['tcm:a', 'c']]);
@@ -141,8 +144,8 @@ const call = async p => p === 'api/rounds/submit' ? {{comment_ids: [], delivery:
   assert.strictEqual(handed, q, 'only the listed rows go to the tabs');
 }})().catch(e => {{ console.error(e); process.exit(1); }});
 """)
-    run = (WEB / "running.js").read_text()
-    assert "done = k => !was || (was.has(k) && was.get(k) === now.get(k));" in run
+    run, fr = (WEB / "running.js").read_text(), (WEB / "frame.js").read_text()
+    assert "sent: (ctx, was, done) =>" in run and "k => !was || (was.has(k) && was.get(k) === now.get(k))" in fr  # fix35: the frame's done, by full words
 
 
 def test_a_failed_read_waits_for_try_again(tmp_path):

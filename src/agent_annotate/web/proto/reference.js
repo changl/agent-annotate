@@ -715,9 +715,11 @@
       if (JSON.stringify([LBL, SNOTES]) !== was) keepDrafts();
       return it;
     },
-    sent: () => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
-      for (const [fk, why] of S.reopen) if (why.trim()) S.rsent.set(fk, [t, why]);
-      S.reopen.clear(); S.cp.clear(); S.appr.clear(); if (D) allNotes().forEach(NK().gone); SNOTES = []; keepDrafts(); redo(); },
+    // what the round carried is cleared; a reopen, Copy library choice or approval made after the round check stays (r12 audit31 reference 3)
+    sent: (c, was, done) => { const t = new Date().toTimeString().slice(0, 5);  // a sent reopen keeps its status and why, in memory as every simulated write
+      for (const [fk, why] of [...S.reopen]) if (why.trim() && done('ro:' + fk)) { S.rsent.set(fk, [t, why]); S.reopen.delete(fk); }
+      for (const ck of [...S.cp.keys()]) if (done('cp:' + ck)) S.cp.delete(ck);
+      for (const k of [...S.appr]) if (done('ap:' + k)) S.appr.delete(k); if (D) allNotes().forEach(NK().gone); SNOTES = []; keepDrafts(); redo(); },
   });
   Proto.tab({key: 'reference',
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },

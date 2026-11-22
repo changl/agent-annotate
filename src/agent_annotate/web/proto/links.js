@@ -485,7 +485,8 @@
       go: () => goNote(c, n),
       remove: P.notes.rowRm(n) ? () => takeNote(c, n) : null}))],
     // the note he was typing is saved by Send itself (save above); one typed since stays for the next Send (r12 audit30 questions 3)
-    sent: c => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', []); c.prefs.set('draft:lnotes', []); redo(); },
+    // an approval made after the round check stays for the next Send (r12 audit31 running 4)
+    sent: (c, was, done) => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', apprs(c).filter(id => !done('lappr:' + id))); c.prefs.set('draft:lnotes', []); redo(); },
   });
   P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

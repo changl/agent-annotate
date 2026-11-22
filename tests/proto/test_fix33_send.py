@@ -58,6 +58,7 @@ const document = {{querySelectorAll: () => []}};
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}}};
 const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return round; }} return p === 'api/comments' ? {{id: 't'}} : {{}}; }};
 {deliv};
+const fullSig = () => ''; if (typeof D === 'object' && D && !D.questions) D.questions = []; if (typeof NK === 'object' && !NK.loc) NK.loc = () => ({{}}); if (!ctx.sig) ctx.sig = x => x.say || x.html;
 {post}
 (async () => {{
   const listed = {{all: 1, notes: ['a'], keys: new Set(['n:a'])}};

@@ -84,7 +84,8 @@
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
         remove: P.notes.rowRm(n) ? () => takeC(ctx, n) : null}))],
-    sent: ctx => { CX = ctx; const l = [...TELL.keys()]; TELL.clear(); l.forEach(again); redrawH();  // a typed note was saved by Send (save above); one typed since stays
+    // a request made after the round check stays for the next Send (r12 audit31 running 4)
+    sent: (ctx, was, done) => { CX = ctx; const l = TELL.keys().filter(s => done('tell:' + s)); l.forEach(s => TELL.delete(s)); l.forEach(again); redrawH();  // a typed note was saved by Send (save above); one typed since stays
       savedC(ctx).forEach(P.notes.gone); ctx.prefs.set('draft:hcnotes', []); },
   });
 

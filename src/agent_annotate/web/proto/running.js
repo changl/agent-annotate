@@ -450,8 +450,7 @@
       return out;
     };
   // a round clears only the rows it listed, as they read then: a status or comment set after the countdown stays for the next Send (r12 audit30 running 4)
-  P.queue && P.queue({items, sent: (ctx, was) => {
-    const now = new Map(items(ctx).map(x => [x.key, x.html])), done = k => !was || (was.has(k) && was.get(k) === now.get(k));
+  P.queue && P.queue({items, sent: (ctx, was, done) => {
     const t = ctx.prefs.get('tst', {}); for (const id of Object.keys(t)) if (done('tst:' + id)) delete t[id];
     ctx.prefs.set('tst', t); ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); }); redraw(); }});
   P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});

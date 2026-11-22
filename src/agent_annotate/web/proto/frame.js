@@ -174,8 +174,12 @@
     prefs.set('folds', f);
   }
 
-  let toastTimer, wroteAt = 0;
+  let toastTimer, wroteAt = 0, heldTo = 0;
   function toast(msg, opts = {}) {
+    // a Send receipt (hold) stays readable: a plain toast after it, such as a held Save landing, waits until it has shown (r12 audit31 running 6)
+    const wait = heldTo - Date.now();
+    if (!opts.undo && !opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }
+    if (opts.hold) heldTo = Date.now() + opts.hold;
     const el = document.getElementById('p-toast');
     clearTimeout(toastTimer);
     if (S.sentPaint) { S.sentPaint = false; drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); }  // the last-Send chip changes with the receipt (r12 fix10 frame 4)
@@ -206,7 +210,10 @@
     refreshTop: () => refreshTop(),
     // n: the items just sent; the header and the phone menu show this round as the last Send (r12 fix7 frame 3), after a reload too (r12 fix8 frame 4)
     // what was queued went: Send reads 0 with the receipt, not after the re-read (r12 fix11 frame 1)
-    queued, queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (s.sent) s.sent(ctx, was); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
+    // sig: a row's full words (say) or, with none, its listing: the round check and the clear compare these, never a shortened preview (r12 audit31 questions 2)
+    sig: x => x.say || x.html,
+    // done(key): the row went with this round as it reads now; a row changed or added after the round check stays (r12 audit31 running 1, 4)
+    queued, queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (!s.sent) return; const now = new Map((s.items(ctx) || []).map(x => [x.key, ctx.sig(x)])); s.sent(ctx, was, k => !was || (was.has(k) && was.get(k) === now.get(k))); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;
   P.frameState = S;  // for tests and screenshots only

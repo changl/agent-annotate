@@ -35,7 +35,7 @@ def test_each_tab_queues_its_next_send_items():
     run, hist, ref, links = _js("running"), _js("history"), _js("reference"), _js("links")
     # running 1: status changes and task comments under Tasks
     assert "key: 'tst:' + id, group: 'Tasks'" in run and "key: k, group: 'Tasks'" in run
-    assert "P.queue && P.queue({items, sent: (ctx, was) => {" in run
+    assert "P.queue && P.queue({items, sent: (ctx, was, done) => {" in run
     # running 2: Tell the agent on a failed publish under Replies to the agent
     assert "group: 'Replies to the agent', html: `About the page that could not load:" in hist
     assert "TELL.set(o.src" in hist and "let told" not in hist

@@ -276,7 +276,7 @@ def test_edited_copy_shows_its_wording_in_send():
 def test_sent_reopen_keeps_its_status_and_reason():
     """Audit5 finding 2: after Send the finding reads Reopened · sent, and the timeline keeps the reason."""
     s = (WEB / "reference.js").read_text()
-    assert "if (why.trim()) S.rsent.set(fk, [t, why]);" in s
+    assert "if (why.trim() && done('ro:' + fk)) { S.rsent.set(fk, [t, why]);" in s
     assert "Reopened · sent ${esc(rs[0])}" in s and "you reopened “${esc(f.label)}” at ${esc(t)}" in s
 
 
@@ -301,7 +301,7 @@ def test_whole_item_approve_joins_send():
     """Audit5 finding 5: Approve beside Write a note adds a Reference approval to Send, with Undo."""
     s = (WEB / "reference.js").read_text()
     assert "data-appr=\"${esc(k)}\"" in s and "'✓ Approved · Undo' : 'Approve'" in s
-    assert "→ <b>approved</b>" in s and "S.appr.clear()" in s
+    assert "→ <b>approved</b>" in s and "if (done('ap:' + k)) S.appr.delete(k)" in s
 
 
 def test_copy_library_actions_fit_a_phone():

@@ -137,7 +137,7 @@ def test_seventh_check_fixes_stay():
     assert "undo: () => { setDraft(id, {reply: was, askWas: null}); draw(true); }" in s
     # 3: the note still being typed is listed, counted, removable and carried by Send
     assert "const tn = typingNote(); if (tn) it.push(['Notes'" in s and "'nn:', 'newnote:'" in s
-    assert "kind === 'newnote'" in s and s.index("const tn = typingNote();  // the note still open") < s.rindex("call('api/rounds/submit'")
+    assert "kind === 'newnote'" in s and s.index("const tn = typingNote() && {...typingNote()};  // the note still open") < s.rindex("call('api/rounds/submit'")
     # 4: Go to it beside a Close lands on its receipt
     assert "'c:' + q.id, 'close:' + q.id" in s and "at === 'close' ? c.querySelector('.qstate')" in s
     # 5 and 6: Open the board beside the request, and the mock's wording
