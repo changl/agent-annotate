@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 from .reference import POLICIES, _kept_src, html_blocks
@@ -119,7 +120,7 @@ def _read(folder: Path) -> dict:
 
 def signature(page_dir) -> tuple:
     """Each publication's store and page, so a note 2.32.8 saves there is read at once, and whose notes are his own."""
-    out = [("viewer", _viewer["h"])]
+    out = [("viewer", reader())]
     for h in homes(page_dir):
         try:
             s = (h.folder / "comments.json").stat()
@@ -156,6 +157,24 @@ def viewer(email):
     return None
 
 
+_here = threading.local()  # the reader of the build on this thread (proto_data.prepared, and the rebuild it starts behind the answer)
+
+
+def reader():
+    """Whose release notes are his own in this thread's build: its reader's hash (None: nobody's), else the last reviewer's."""
+    return getattr(_here, "h", _viewer["h"])
+
+
+def behind(fn) -> None:
+    """fn on a daemon thread, for this thread's reader: a rebuild behind the answer keeps his notes his own (r12 fix29)."""
+    h = reader()
+
+    def run():
+        _here.h = h
+        fn()
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _who(x):
     """A release note with each reviewer named as the prototype names him: the signed-in reviewer as the prototype masks
     him (MASK), so his own note passes the own-note checks for edit and remove as in 2.32.8; another reviewer as his own
@@ -169,7 +188,7 @@ def _who(x):
     for k, v in x.items():
         if k in WHO and isinstance(v, str) and (m := EMAIL.search(v)):
             h = _hash(m[0])
-            v = MASK if h == _viewer["h"] else "reviewer-" + h[:12]
+            v = MASK if h == reader() else "reviewer-" + h[:12]
         out[k] = _who(v)
     return out
 

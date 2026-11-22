@@ -905,7 +905,7 @@ def pl_(n: int, w: str) -> str:
     return f"{n} {w}" + ("" if n == 1 else "s")
 
 
-_built: dict = {}  # page dir -> (its own files' stamps, when built, the build): 0.25-0.6 s a build, on every open (r12 fix12 perf)
+_built: dict = {}  # (page dir, reader) -> (its own files' stamps, when built, the build): 0.25-0.6 s a build, on every open (r12 fix12 perf)
 _again = threading.Lock()
 
 
@@ -919,17 +919,19 @@ def _own(page_dir: Path) -> tuple:
 def _cached(page_dir: Path) -> tuple:
     """_build, again at once when this page's own files change (a note, a plan revision); the project's files, workflows and
     audits it also reads are read again behind the answer once it is a minute old, as Pages & links does."""
+    from .published import behind, reader
     page_dir, now = Path(page_dir), time.time()
-    stamps, hit = _own(page_dir), _built.get(str(page_dir))
+    key = (str(page_dir), reader())  # one build per reader: whose release notes are his own is in it (r12 fix29)
+    stamps, hit = _own(page_dir), _built.get(key)
     if not hit or hit[0] != stamps:
-        hit = _built[str(page_dir)] = (stamps, now, _build(page_dir))
+        hit = _built[key] = (stamps, now, _build(page_dir))
     elif now - hit[1] > 60 and _again.acquire(blocking=False):
         def again():
             try:
-                _built[str(page_dir)] = (stamps, time.time(), _build(page_dir))
+                _built[key] = (stamps, time.time(), _build(page_dir))
             finally:
                 _again.release()
-        threading.Thread(target=again, daemon=True).start()
+        behind(again)
     return hit
 
 

@@ -153,17 +153,20 @@ def prepared(area: str, page_dir, viewer=_KEEP) -> bytes:
     `viewer`: the reader's hash (published.viewer), passed in because the pooled worker is another process; whose release
     notes are his own is built for it, and cached per reader (r12 fix28)."""
     from . import published
-    if viewer is not _KEEP:
-        was, published._viewer["h"] = published._viewer["h"], viewer
+    if viewer is not _KEEP:  # this thread's reader, and the rebuild it starts behind the answer (published.behind): r12 fix29
+        was, published._here.h = getattr(published._here, "h", _KEEP), viewer
         try:
             return prepared(area, page_dir)
         finally:
-            published._viewer["h"] = was  # the server's own state stays the last reviewer's (other paths read it)
+            if was is _KEEP:
+                del published._here.h  # the server's own state stays the last reviewer's (other paths read it)
+            else:
+                published._here.h = was
     try:
         stamp = getattr(importlib.import_module(f"{__name__}.{area}"), "stamp", None)
     except ModuleNotFoundError:
         stamp = None
-    key, now = (area, str(page_dir), published._viewer["h"]), stamp(page_dir) if stamp else None
+    key, now = (area, str(page_dir), published.reader()), stamp(page_dir) if stamp else None
     hit = _ready.get(key)
     if now is not None and hit and hit[0] == now:
         return hit[1]

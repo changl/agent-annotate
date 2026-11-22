@@ -120,7 +120,8 @@ def test_links_read_once_until_the_page_changes(tmp_path, monkeypatch):
     built = []
     monkeypatch.setattr(links, "_build", lambda p: built.append(p) or {"n": len(built)})
     assert links.build(d) == links.build(d) == {"n": 1}  # a repeat read is the last build
-    links._built[str(d)][1] -= 120
+    from agent_annotate.proto_data.published import reader
+    links._built[(str(d), reader())][1] -= 120
     assert links.build(d) == {"n": 1}  # a minute old: answered at once, built again behind
     for _ in range(40):
         if links.build(d) == {"n": 2}:

@@ -66,7 +66,7 @@ def test_send_counts_what_it_delivers():
 
 
 def _whose(page_dir):
-    return {"viewer": published._viewer["h"]}
+    return {"viewer": published.reader()}
 
 
 def test_pooled_build_gets_the_readers_hash_and_caches_per_reader(tmp_path, monkeypatch):

@@ -166,7 +166,7 @@ def _pages(root: Path | None = PROJECT, source: Path | None = FLD_SOURCE, fld: b
     return out
 
 
-_built: dict = {}  # page dir -> [its own files' stamps, when built, the build]: 0.7-5.5 s a build, and every reload asked (r12 fix10 slowread)
+_built: dict = {}  # (page dir, reader) -> [its own files' stamps, when built, the build]: 0.7-5.5 s a build, and every reload asked (r12 fix10 slowread)
 _again = threading.Lock()
 
 
@@ -179,17 +179,19 @@ def _stamps(page_dir: Path) -> tuple:
 def build(page_dir: Path) -> dict:
     """_build, again at once when this page's own files change; the other pages, registry and kept documents it reads
     are read again behind the answer once it is a minute old (up to a minute behind)."""
+    from .published import behind, reader
     page_dir, now = Path(page_dir), time.time()
-    stamps, hit = _stamps(page_dir), _built.get(str(page_dir))
+    key = (str(page_dir), reader())  # one build per reader: whose release notes are his own is in it (r12 fix29)
+    stamps, hit = _stamps(page_dir), _built.get(key)
     if not hit or hit[0] != stamps:
-        hit = _built[str(page_dir)] = [stamps, now, _build(page_dir)]
+        hit = _built[key] = [stamps, now, _build(page_dir)]
     elif now - hit[1] > 60 and _again.acquire(blocking=False):
         def again():
             try:
-                _built[str(page_dir)] = [stamps, time.time(), _build(page_dir)]
+                _built[key] = [stamps, time.time(), _build(page_dir)]
             finally:
                 _again.release()
-        threading.Thread(target=again, daemon=True).start()
+        behind(again)
     return hit[2]
 
 
