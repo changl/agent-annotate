@@ -46,6 +46,7 @@ def test_heavy_areas_build_outside_the_server(tmp_path, monkeypatch):
 
     class H:
         artifact_dir, skill_dir = tmp_path, None
+        _identity, _reviewer_authors = (lambda self: {"email": None}), (lambda self, a: {a})
 
         def _respond(self, code, body, *a, **k):
             got.update(code=code, body=body)

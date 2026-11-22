@@ -80,7 +80,7 @@ def test_links_lines_move_list_and_outline_their_resolution():
 def test_history_chart_point_lists_notes_with_the_lifecycle():
     """Frame 6: a marked point lists its notes; resolved ones get Close, Re-open, Move and View resolution."""
     assert "P.notes.spot(ctx, cnotes(v)" in HIST and "if (S.cmove) return moveC(el, ctx, v)" in HIST
-    assert "K.acts(ctx, x, S.cmove === x.id)" in HIST and "K.closedActs(x)" in HIST
+    assert "K.acts(ctx, x, S.cmove === x.id, '', 'cdel')" in HIST and "K.closedActs(x)" in HIST
     assert "P.notes.set(ctx, x, how, ctx.api" in HIST and "P.notes.goRes(ctx," in HIST
     assert "P.noteHooks" in HIST
 

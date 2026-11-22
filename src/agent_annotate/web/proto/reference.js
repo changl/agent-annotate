@@ -90,7 +90,7 @@
     const K = NK(), hd = `${ico('note')}<b>${esc(n.who)}</b> · ${esc(dm(n.at))}${onWhat(n.target, spotNo(k, n))}`, cls = `rf-nt${S.hl === n.id ? ' rf-hl' : ''}`;
     if (n.closed) return `<div class="${cls} rf-closed" data-nid="${esc(n.id)}"><span class="rf-nw">${ico('archive')} Note closed</span> <span class="mut">${esc(n.text)}</span><span class="nacts">${K.closedActs(n)}</span></div>`;
     // a saved, unsent one: the kit's Edit in place and Remove, from any visit (r12 audit18 reference 4)
-    if (!n.sent) return `<div class="${cls}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n)}</span>`}</div>`;
+    if (!n.sent) return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${S.edit === n.id ? K.editBox({...n, text: S.edt != null ? S.edt : n.text}) : `${esc(n.text)} <span class="saved">· goes with Send</span><span class="nacts">${K.draftActs(n, S.move === n.id)}</span>`}</div>`;
     return `<div class="${cls}${S.move === n.id ? ' moving' : ''}" data-nid="${esc(n.id)}"><span class="rf-nw">${hd}</span> ${K.sentBody(ctx, n, S.move === n.id, S.edit === n.id ? (S.edt != null ? S.edt : n.text) : null)}</div>`;
   }
   // the list a marker opens: on its line, or at a picture pin's point (S.pin)

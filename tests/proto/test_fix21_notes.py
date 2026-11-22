@@ -78,7 +78,7 @@ assert(/class="qpin pinm" data-pin="a"/.test(h) && /class="qpin pinm sent" data-
 def test_every_surface_uses_the_kits_edit():
     """Reference 4: Reference plans, revisions, Copy library and Pages & links all draw the kit's Edit and save through it."""
     for src in (REF, LNK):
-        assert "K.draftActs(n)" in src and "K.editBox(" in src and ("P.notes.fix(" in src or "NK().fix(" in src)
+        assert "K.draftActs(n, S.move === n.id)" in src and "K.editBox(" in src and ("P.notes.fix(" in src or "NK().fix(" in src)
         assert all(a in src for a in ("nedit", "nedcancel", "nedsave"))
 
 

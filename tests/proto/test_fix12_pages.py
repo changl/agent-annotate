@@ -9,8 +9,10 @@ HIST, HCSS, LINKS, REF = ((WEB / n).read_text() for n in ("history.js", "history
 
 def test_saved_history_note_has_edit_undo_copy_and_link():
     """Running 3: the saved note carries the mock's four controls; Edit opens its own wording; a marked point opens it."""
-    for attr in ("data-cned", "data-cdel", "data-ccopy", "data-clink"):
+    for attr in ("data-ccopy", "data-clink"):
         assert f"'{attr}')" in HIST
+    # Edit and Remove come from the notes kit's one list, its Remove on History's own handler (r12 audit19)
+    assert "K.acts(ctx, x, S.cmove === x.id, '', 'cdel')" in HIST and "if (ds.cned || ds.nedit)" in HIST
     assert '<textarea id="h-et" rows="3" aria-label="${what}">${esc(x.text)}</textarea>' in HIST
     assert "P.notes.fix(ctx, n, text, ctx.api," in HIST
     assert "if (cnotes(v).length) { S.cn = ''; S.cspot = S.cspot === v ? '' : v;" in HIST  # a marked point lists its notes (fix18)

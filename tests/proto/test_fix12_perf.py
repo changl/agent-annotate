@@ -108,6 +108,7 @@ def test_area_reads_carry_the_servers_own_time(tmp_path):
 
     class H:
         artifact_dir, skill_dir = d, None
+        _identity, _reviewer_authors = (lambda self: {"email": None}), (lambda self, a: {a})
 
         def _respond(self, code, body, *a, **k):
             got.update(code=code, headers=k.get("extra_headers") or {})

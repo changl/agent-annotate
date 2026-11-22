@@ -226,6 +226,8 @@ def serve(handler, route_path: str):
         t0 = time.perf_counter()
         try:
             body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir)
+            from .questions import own  # his own notes, for Edit and Remove (r12 audit19)
+            body = own(body, handler._reviewer_authors(handler._identity()["email"] or "anonymous"))
         except Exception as exc:  # an area's bug must not take the page down
             return handler._respond(500, json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode())
         # the server's own time, so a slow reading on a busy host can be told from slow code (r12 fix12 perf)

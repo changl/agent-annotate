@@ -5,6 +5,7 @@ Reads the page dir only, plus the FastLane Drive bead board read-only. Saving go
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -36,6 +37,21 @@ def _mask(s):
     return scrub(s) if isinstance(s, str) else s
 
 
+def author_key(author) -> str:
+    """Who wrote a note, as a token: every address is masked on the page, so each read swaps the reader's own tokens
+    for `true` (proto_data.own), and the kit offers Edit and Remove on his own notes alone (shell.js isMine)."""
+    return "u" + hashlib.sha256(("proto-author\0" + str(author or "")).encode()).hexdigest()[:12]
+
+
+def own(body: bytes, authors) -> bytes:
+    """A feed as one reader sees it: his notes' `by` is true. The feed is built once for every reader."""
+    if b'"by": "u' not in body:
+        return body
+    for a in authors:
+        body = body.replace(b'"by": "' + author_key(a).encode() + b'"', b'"by": true')
+    return body
+
+
 def was_sent(c: dict) -> bool:
     """A Send took it once. Today's edit clears flagged_for_session (it goes with the next Send) but keeps flagged_at."""
     return bool(c.get("flagged_for_session") or c.get("delivery_id") or c.get("flagged_at"))
@@ -61,7 +77,10 @@ def note_thread(c: dict) -> dict:
             return stamp(r.get("ts")) > stamp(c.get("flagged_at"))
         except ValueError:
             return False
-    return {"edited": edited, "mine": _mine(c.get("author")), "resp": _mask(c.get("response_text") or ""),
+    # by: who wrote it (author_key); ag: the agent did, so the reply box shows from the start (showReply's agentResponded);
+    # flagged and rp: today's canDeleteComment, which an edit re-opens by clearing flagged_for_session
+    return {"edited": edited, "mine": _mine(c.get("author")), "by": author_key(c.get("author")), "ag": str(c.get("author") or "").startswith("agent:"),
+            "flagged": bool(c.get("flagged_for_session")), "rp": bool(c.get("round_pending")), "resp": _mask(c.get("response_text") or ""),
             "replies": [{"agent": not _mine(r.get("author")), "who": r.get("author_name") or ("Agent" if not _mine(r.get("author")) else "You"),
                          "text": _mask(r.get("text") or ""), "ts": r.get("ts"), "unsent": unsent(r)}
                         for r in c.get("replies") or [] if isinstance(r, dict)]}
@@ -271,12 +290,12 @@ def build(page_dir: Path) -> dict:
             continue
         dr = c.get("decision_request")
         if not dr:
-            if _mine(c.get("author")):
-                # closed (today's archive) notes come too, for Closed and Re-open; a resolved one names where the agent addressed it
-                notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
-                              "target": c.get("target"), "sent": was_sent(c),
-                              "at": c.get("created_at"), "status": c.get("status"), "closed": c.get("status") == "archived",
-                              "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"), **note_thread(c)})
+            # every note, the agent's own and other reviewers' too, as today's page lists them (r12 audit19 questions 8);
+            # closed (today's archive) notes come too, for Closed and Re-open; a resolved one names where the agent addressed it
+            notes.append({"id": c["id"], "anchor": c.get("anchor_id"), "label": c.get("anchor_label"), "text": c.get("text"),
+                          "target": c.get("target"), "sent": was_sent(c) or not _mine(c.get("author")),
+                          "at": c.get("created_at"), "status": c.get("status"), "closed": c.get("status") == "archived",
+                          "rv": c.get("resolved_in_version"), "ra": c.get("resolution_anchor_id"), **note_thread(c)})
             continue
         if not _asked(c, v):
             continue  # withdrawn by the agent

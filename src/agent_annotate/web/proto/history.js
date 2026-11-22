@@ -259,13 +259,13 @@
     // a sent one carries the notes kit's lifecycle (Re-open, View resolution, Move, Close); a closed one folds with Re-open (r12 audit16 frame 6)
     const K = P.notes, cp = ib('copy', 'Copy the note text', 'data-ccopy') + ib('link', 'Copy a link to this note', 'data-clink');
     if (x.closed) return `<div class="qnote small h-cnote sent closed${lit}" id="hn-${id}" data-cnote="${id}">${mk}<span class="saved">${icon('archive')} ${what} closed</span> <span class="mut">${esc(x.text)}</span><span class="nacts">${K.closedActs(x)}</span></div>`;
-    const acts = x.sent ? K.acts(ctx, x, S.cmove === x.id) + cp : ib('edit', 'Edit this note', 'data-cned') + ib('undo', 'Undo: remove this note', 'data-cdel') + cp;
+    const acts = K.acts(ctx, x, S.cmove === x.id, '', 'cdel') + cp;  // the kit's one list, sent or not (r12 audit19)
     return `<div class="qnote small h-cnote${x.sent ? ' sent' : ''}${S.cmove === x.id ? ' moving' : ''}${lit}" id="hn-${id}" data-cnote="${id}">${mk}<b>${what}:</b> ${esc(x.text)} ${x.sent ? `${K.words(ctx, x)} ${K.view(x)}` : '<span class="saved">· goes with Send</span>'}<span class="nacts">${acts}</span>${x.sent ? K.thread(ctx, x) : ''}</div>`;
   }
   async function editC(el, ctx, id) {
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
     S.ce = '';
-    if (!n || text === n.text) return draw(el, ctx);
+    if (!n || (text === n.text && !n.sent)) return draw(el, ctx);  // the same words on a sent one still record an edit, as today
     if (!text && !n.sent) { const back = await takeC(ctx, n); return ctx.toast('Note removed', {undo: back}); }
     // the kit's edit, as on every tab: in place, with Undo; a sent one goes with the next Send again (today's edit on a sent note)
     const ok = await P.notes.fix(ctx, n, text, ctx.api, (w, p) => { [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) Object.assign(x, p); }); redrawH(); ctx.refreshTop(); });
