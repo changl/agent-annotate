@@ -1388,9 +1388,10 @@
   // the new note the held round is posting: Save, ⌘↵ or another spot's click is refused with the composer left as typed, so
   // words typed since become its Edit after the round, never a second note (r12 audit36 frame 1, questions 1)
   const newRefused = n => !!CARRY && !!n && !n.edit && !n.fixOf && n.anchor === CARRY.tn && JSON.stringify(n.target || null) === CARRY.tt && P.going('nn:');
-  async function addNote(text) {
-    if (newRefused(S.note)) return;
-    const n = S.note; S.note = null; ctx.prefs.set('q:newnote', null);
+  // from: the note left as another spot opened (S.note is that spot's composer now)
+  async function addNote(text, from) {
+    const n = from || S.note; if (!n || newRefused(n)) return;
+    if (!from) { S.note = null; ctx.prefs.set('q:newnote', null); }
     if (!text.trim()) return draw(true);
     let c; try { c = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text, version: D.version, target: n.target}); }
     // refused as the very note the round posts: those words go with it. Any other failure: the words stay open
@@ -1511,7 +1512,7 @@
       // click on it is the same note, refused (r12 audit36 frame 1, questions 1)
       const nn = {lnn: a => a, rnn: a => a, hnn: v => 'chart:' + v};
       const mark = b => (CARRY.made = CARRY.made || new Set()).add(made(b));
-      if (tn && listed.keys.has('nn:')) { mark({anchor_id: tn.anchor, text: tn.text, target: tn.target}); CARRY.tn = tn.anchor; CARRY.tt = JSON.stringify(tn.target || null); }
+      if (tn && listed.keys.has('nn:')) { mark({anchor_id: tn.anchor, text: tn.text, target: tn.target}); CARRY.tn = tn.anchor; CARRY.tt = JSON.stringify(tn.target || null); CARRY.tw = tn.text.trim(); }
       for (const x of Q()) { const m = /^(lnn|rnn|hnn):(.*)$/.exec(x.key); if (m && x.save && listed.keys.has('x:' + x.key)) mark({anchor_id: nn[m[1]](m[2]), text: x.say, target: x.tgt}); }
       const ed0 = S.note || ctx.prefs.get('q:newnote', null), ed = ed0 && {...ed0};
       // a saved note open in its editor goes with its new words only when the sheet listed its row (r12 audit31 frame 2)
@@ -1882,11 +1883,16 @@
     const was = S.note, ta = was && root.querySelector(was.edit ? `[data-note="${CSS.escape(was.edit)}"] textarea` : '[data-newnote] textarea');
     // an Edit's box takes typing at once too, in the viewer when it is open (r12 audit20 questions 1)
     const focus = () => { const e = S.note && S.note.edit, nt = root.querySelector(e ? `[data-note="${CSS.escape(e)}"] textarea` : '[data-newnote] textarea'); if (nt) { if (scroll) nt.scrollIntoView({block: 'center'}); nt.focus({preventScroll: true}); nt.setSelectionRange(nt.value.length, nt.value.length); } };
-    if (was && !was.edit && !was.fixOf && !next.edit && was.anchor === next.anchor && !(next.target || {}).offset) return focus();  // the same line again: keep typing
+    // other selected words on the same line are another spot, as a second point on a picture is (r12 audit38 questions)
+    const nt = next.target || {}, wt = (was && was.target) || {}, words = nt.quote && (nt.quote !== wt.quote || nt.at !== wt.at);
+    if (was && !was.edit && !was.fixOf && !next.edit && was.anchor === next.anchor && !nt.offset && !words) return focus();  // the same line again: keep typing
     const text = ta ? ta.value : '';
     // a save refused because the round carries it leaves this editor open, its words as typed: the next spot does not open (r12 audit36)
     if (was && was.edit && text.trim() && text !== (D.notes.find(x => x.id === was.edit) || {}).text) { if (NK.refused(was.edit)) return focus(); await saveNote(was.edit, text); }
-    else if (was && !was.edit && text.trim()) { if (newRefused(was)) return focus(); await addNote(text); }
+    // the note the round posts, untouched since the check, goes with the round: the next spot opens its own composer (r12 audit38 questions)
+    // the next composer opens first: a save that waits for a held round never leaves the last one's box in its place (r12 audit38 questions)
+    else if (was && !was.edit && text.trim()) { if (newRefused(was)) { if (text.trim() !== CARRY.tw) return focus(); }
+      else { S.note = next; ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }
     S.note = next;
     ctx.prefs.set('q:newnote', next);
     await draw(true);

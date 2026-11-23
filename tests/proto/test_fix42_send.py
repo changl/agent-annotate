@@ -26,8 +26,9 @@ def test_b_refusal_leaves_the_screen_as_it_was():
     # every take-back asks P.going before it changes anything
     assert "refused: id => !!P.going" in Q
     assert "if (NK.refused(was.edit)) return focus();" in Q
-    assert "if (newRefused(was)) return focus();" in Q
-    assert "async function addNote(text) {\n    if (newRefused(S.note)) return;" in Q
+    # words typed since the check stay in the round's composer; untouched, the next spot opens (r12 audit38 questions)
+    assert "if (newRefused(was)) { if (text.trim() !== CARRY.tw) return focus(); }" in Q
+    assert "async function addNote(text, from) {\n    const n = from || S.note; if (!n || newRefused(n)) return;" in Q
     # Send it again Undo refuses before the cache changes, and restores on a wrapper refusal
     undo = Q.index("if (NK.refused(cid)) return;")
     assert undo < Q.index("draft:qnotes", undo)

@@ -54,7 +54,7 @@ def test_remove_waits_out_an_editors_save():
         assert f"remove: SAVING ? null : () => {{ {'ctx' if f != 'links.js' else 'c'}.prefs.set('{drop}', null);" in src, f
         assert src.count("SAVING = true;") == 1 and ".finally(() => { SAVING = false; })" in src, f
     # Questions closes its editor before its save, so no typed row is listed while it is out
-    add = grab(Q, "  async function addNote(text) {", "\n  }")
+    add = grab(Q, "  async function addNote(text, from) {", "\n  }")
     assert add.index("ctx.prefs.set('q:newnote', null)") < add.index("await call('api/comments'")
 
 

@@ -94,7 +94,8 @@ def test_carry_loose_table_pictures(tmp_path):
 def test_second_note_keeps_the_first():
     """Round 12 second pass #02: opening another note saves the unfinished one first (no JS runner here)."""
     s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
-    assert "else if (was && !was.edit && text.trim()) { if (newRefused(was)) return focus(); await addNote(text); }" in s
+    # the next composer opens first, then the unfinished one is saved (r12 audit38 questions)
+    assert "else { S.note = next; ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }" in s
     assert "S.note = {anchor: anchorEl.dataset.anchorId" not in s  # every opener goes through openNote
 
 
