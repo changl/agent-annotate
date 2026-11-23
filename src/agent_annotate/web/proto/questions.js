@@ -50,7 +50,8 @@
     texts(el) { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), o = [];
       for (let n; (n = w.nextNode());) if (!n.parentElement.closest('button, textarea, .l-notes, .qnote, .aa-full')) o.push(n); return o; },
     // a line's own words for a label: no marker numbers, zoom buttons or Full size link (r12 audit38 reference 6)
-    lineWords: el => NK.texts(el).map(n => n.nodeValue).join(' ').trim().replace(/\s+/g, ' '),
+    // of a picture's caption line, only its caption: no "Picture N", dots or tap hint, as the reloaded label reads (r12 audit39 frame 1)
+    lineWords: el => NK.texts(el).filter(n => !n.parentElement.closest('.qcap') || n.parentElement.closest('.qcapt')).map(n => n.nodeValue).join(' ').trim().replace(/\s+/g, ' '),
     textAt: el => { const s = getSelection(); if (!s || !s.rangeCount || !el.contains(s.anchorNode)) return undefined;
       const r0 = s.getRangeAt(0); let pos = 0;
       for (const n of NK.texts(el)) { if (n === r0.startContainer) { pos += r0.startOffset; break; } if (r0.comparePoint(n, 0) >= 0) break; pos += n.nodeValue.length; }
@@ -309,6 +310,12 @@
       c.api('api/comments', body).then(saved, e => { if (!P.carried(e)) { back(); c.toast(`The note was not saved: ${e.message}`); } });
       return true;
     },
+    // words the one typed slot cannot hold (a failed Save while another note is typed, a composer opened over typed words): drafts
+    // at their own spots, each in Send and back in its composer, never lost (r12 audit39 running 1). put keeps one already there
+    backs: {all: (c, k) => c.prefs.get(k, []), at: (c, k, a, tgt) => NK.backs.all(c, k).find(x => NK.same(x, a, tgt)),
+      put(c, k, d) { if (!NK.backs.at(c, k, d.a, d.tgt)) { c.prefs.set(k, [...NK.backs.all(c, k), d]); c.refreshTop(); } },
+      drop(c, k, a, tgt, text) { const l = NK.backs.all(c, k), m = l.filter(x => !NK.same(x, a, tgt) || (text != null && x.text.trim() !== text));
+        if (m.length < l.length) { c.prefs.set(k, m); c.refreshTop(); } }},
     // a reply being written
     typed: {get: id => (NK.ty()['reply:' + id] || {}).text, has: id => 'reply:' + id in NK.ty(), delete: id => NK.tySet('reply:' + id, null),
       set: (id, text) => { const n = NK.th.get(id); NK.tySet('reply:' + id, String(text || '').trim() ? {...(n ? NK.rec(n) : {}), id, text} : null); }},
@@ -1529,7 +1536,7 @@
       const nn = {lnn: a => a, rnn: a => a, hnn: v => 'chart:' + v};
       const mark = b => (CARRY.made = CARRY.made || new Set()).add(made(b));
       if (tn && listed.keys.has('nn:')) { mark({anchor_id: tn.anchor, text: tn.text, target: tn.target}); CARRY.tn = tn.anchor; CARRY.tt = JSON.stringify(tn.target || null); CARRY.tw = tn.text.trim(); }
-      for (const x of Q()) { const m = /^(lnn|rnn|hnn):(.*)$/.exec(x.key); if (m && x.save && listed.keys.has('x:' + x.key)) mark({anchor_id: nn[m[1]](m[2]), text: x.say, target: x.tgt}); }
+      for (const x of Q()) { const m = /^(lnn|rnn|hnn):(.*)$/.exec(x.key); if ((m || x.spot) && x.save && listed.keys.has('x:' + x.key)) mark({anchor_id: x.spot || nn[m[1]](m[2]), text: x.say, target: x.tgt}); }
       const ed0 = S.note || ctx.prefs.get('q:newnote', null), ed = ed0 && {...ed0};
       // a saved note open in its editor goes with its new words only when the sheet listed its row (r12 audit31 frame 2)
       const en = ed && ed.edit && listed.keys.has('n:' + ed.edit) && D.notes.find(x => x.id === ed.edit);

@@ -118,7 +118,11 @@
   // the note being typed (plan, revision, Markdown, picture point): a draft as it is typed (draft:rnote), in Send before Save and
   // back after a reload, as a Pages & links note is (r12 audit31 reference 1, questions 4, frame 4)
   const rnote = () => { const d = ctx && ctx.prefs.get('draft:rnote', null); return d && (d.text || '').trim() ? d : null; };
-  const typedR = k => { const d = ctx && ctx.prefs.get('draft:rnote', null); return d && d.a === k ? d.text || '' : ''; };
+  const typedR = k => { const d = ctx && ctx.prefs.get('draft:rnote', null), bk = ctx && S.note === k && NK().backs.at(ctx, BK, k, S.tgt);
+    return d && NK().same(d, k, S.tgt) ? d.text || '' : bk ? bk.text : d && d.a === k ? d.text || '' : ''; };
+  const BK = 'draft:rback';  // the notes kit's drafts kept at their own spots (NK().backs)
+  // a failed save's words: the typed draft again, or with another note typed, a draft at their own spot (r12 audit39 running 1)
+  const putBack = d => { const now = rnote(); if (!now) setR(d); else if (!NK().same(now, d.a, d.tgt)) NK().backs.put(ctx, BK, d); };
 
   /* ---------- a plan revision, read from today's plans/<id>/<v>.html as blocks ---------- */
   const CHROME = 'header.hdr,aside,nav,#popover,#legend,script,style,button,select,textarea,input,noscript,template,svg';
@@ -578,7 +582,7 @@
     if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) return openAt(d.note, null);
-    if (d.ncancel !== undefined) { S.note = ''; setR(null); return draw(); }
+    if (d.ncancel !== undefined) { NK().backs.drop(ctx, BK, S.note, S.tgt); S.note = ''; setR(null); return draw(); }
     if (d.zoom) {
       const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-pk="${CSS.escape(k)}"] img`);  // the picture by its own key
       P.media.setZoom(k, +d.zoom);
@@ -594,15 +598,16 @@
       const target = S.tgt || undefined;
       try {
         // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
-        SAVING = true; ctx.refreshTop();
+        SAVING = {a: k, tgt: target || null, text}; ctx.refreshTop();
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
         // another spot opened while it was out keeps its own composer and draft (r12 fix45 pass 3)
         const now = rnote(); if (!now || NK().same(now, k, target)) setR(null);
+        NK().backs.drop(ctx, BK, k, target, text);
         if (NK().same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }
         draw(); ctx.refreshChips();
         ctx.toast('Note saved', {going: [c.id, 'rn:' + c.id], undo: () => undoNote(c.id)});
-      } catch (er) { if (!rnote()) setR({a: k, l: src ? src.dataset.label : 'Reference', tgt: target || null, text, m: noteMeta(k), item: S.sel || itemOf(k)}); fail(er); }
+      } catch (er) { putBack({a: k, l: src ? src.dataset.label : 'Reference', tgt: target || null, text, m: noteMeta(k), item: S.sel || itemOf(k)}); fail(er); }
       return;
     }
     if (d.nundo) return undoNote(d.nundo);
@@ -620,10 +625,11 @@
   function openAt(k, tgt) {
     const d = rnote();
     if (d && !NK().other(d, k, tgt)) tgt = d.tgt || null;
-    else if (d && SAVING) setR(null);  // its Save is out: that Save stores it (and puts it back if it fails)
+    // its Save is out: that Save stores it (and puts it back if it fails); words typed since that Save stay a draft at its spot
+    else if (d && SAVING && NK().same(d, SAVING.a, SAVING.tgt)) { if (d.text.trim() !== SAVING.text) NK().backs.put(ctx, BK, d); setR(null); }
     else if (d) { const text = d.text.trim();
       if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})},
-        () => { if (!rnote()) setR(d); redo(); },
+        () => { putBack(d); redo(); },
         r => { mine.push({id: r.id, a: d.a, l: d.l, text: r.text || text, who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || d.tgt || undefined});
           redo(); ctx.refreshChips(); ctx.toast('Note saved', {going: [r.id, 'rn:' + r.id], undo: () => undoNote(r.id)}); })) {
         S.tgt = d.tgt || null; const t = document.getElementById('rf-nt'); if (t) t.focus(); return; }
@@ -694,7 +700,9 @@
       if (!e.target.value.trim() && was.trim() && P.going('ro:' + fk)) { e.target.value = was; return; }
       S.reopen.set(fk, e.target.value); keepDrafts(); }
     if (here() && e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
-    if (here() && e.target.id === 'rf-nt' && S.note) { const k = S.note, src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
+    if (here() && e.target.id === 'rf-nt' && S.note) { const k = S.note, src = el.querySelector(`[data-line="${CSS.escape(k)}"]`), was = rnote();
+      if (was && !NK().same(was, k, S.tgt)) NK().backs.put(ctx, BK, was);  // typed words at another spot stay a draft there (r12 audit39 running 1)
+      NK().backs.drop(ctx, BK, k, S.tgt);
       setR(e.target.value.trim() ? {a: k, l: src ? src.dataset.label : 'Reference', tgt: S.tgt || null, text: e.target.value, m: noteMeta(k), item: S.sel || itemOf(k)} : null); }
     if (here() && e.target.matches('.rf-rte') && S.cpEd) ctx.prefs.set('draft:rcped', {ck: S.cpEd, html: e.target.innerHTML});  // Copy library wording as typed
   }
@@ -760,6 +768,14 @@
             () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) { S.note = ''; S.tgt = null; } S.edit = r.id; S.edt = null; redo(); });
           return r; },
         remove: SAVING ? null : () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
+      // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
+      for (const b of NK().backs.all(c, BK)) it.push({key: 'rnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.tgt || undefined, group: 'Notes', say: b.text.trim(),
+        html: `On “${c.esc(cutq((b.tgt && b.tgt.quote) || b.l || 'Reference'))}”:${c.esc(b.text.trim().length > 140 ? b.text.trim().slice(0, 139) + '…' : b.text.trim())}`,
+        go: () => { goRef(b.item || itemOf(b.a), '', b.a)(); S.note = b.a; S.tgt = b.tgt || null; redo(); },
+        save: async () => { const r = await c.api('api/comments', {anchor_id: b.a, anchor_label: b.l, text: b.text.trim(), target: b.tgt || undefined, ...(b.m || {})}, undefined, true);
+          mine.push({id: r.id, a: b.a, l: b.l, text: r.text || b.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || b.tgt || undefined});
+          NK().backs.drop(c, BK, b.a, b.tgt, b.text.trim()); if (NK().same({a: S.note, tgt: S.tgt}, b.a, b.tgt)) { S.note = ''; S.tgt = null; } redo(); return r; },
+        remove: () => { NK().backs.drop(c, BK, b.a, b.tgt); redo(); return () => { NK().backs.put(c, BK, b); redo(); }; }});
       // a document's note (doc:) is Pages & links' own, so it is listed there once (r12 fix8)
       // m: where it was saved (its plan revision, document and category), so Undo puts back the same record before the data is in (r12 fix14 frame 1)
       if (D) SNOTES = allNotes().filter(n => NK().out(n) && !n.closed && !/^doc:/.test(n.a)).map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, ...NK().state(n), target: n.target, item: itemOf(n.a), m: {...noteMeta(n.a), ...(n.v ? {version: n.v} : {})}}));

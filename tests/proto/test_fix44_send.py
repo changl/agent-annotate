@@ -135,7 +135,7 @@ NK.mark({}, 'a'); if (got[0] !== nodes[0]) throw new Error('an older note withou
     # same occurrence and a note on the second one, saved while the round is out, posts
     assert "key: 'rnn:' + tr.a, tgt: tr.tgt || undefined" in REF and "tgt: S.tgt, text: e.target.value" in LINKS
     assert "ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line" in LINKS
-    assert "mark({anchor_id: nn[m[1]](m[2]), text: x.say, target: x.tgt})" in Q
+    assert "mark({anchor_id: x.spot || nn[m[1]](m[2]), text: x.say, target: x.tgt})" in Q
     assert "CARRY.made.has(made(body))" in Q
     node(tmp_path, made + r"""
 const going = new Set([made({anchor_id: 'doc:f.md~3', text: 'n', target: {schema: 1, tag: 'p', quote: 'same', at: 7}})]);

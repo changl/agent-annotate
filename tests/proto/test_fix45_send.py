@@ -42,7 +42,7 @@ def test_same_line_other_words_and_a_held_round_open_their_own_composer():
 def test_a_line_label_leaves_out_picture_controls():
     # reference 6: a table row's label has no zoom buttons or Full size link, as offsets have no marker numbers
     assert "closest('button, textarea, .l-notes, .qnote, .aa-full')" in Q
-    assert "lineWords: el => NK.texts(el).map(n => n.nodeValue).join(' ')" in Q
+    assert "lineWords: el => NK.texts(el)" in Q
     assert "line: le ? P.notes.lineWords(le) : ''" in LINKS
 
 
@@ -65,7 +65,7 @@ def test_another_spot_keeps_the_typed_note():
     assert "if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})}," in REF
     assert "S.tgt = d.tgt || null; const t = document.getElementById('rf-nt')" in REF
     # a Save still out when another spot opens: that Save stores the note once, and closes only its own composer
-    assert "if (SAVING) { ctx.prefs.set('draft:lnote', null); ctx.refreshTop(); return {tgt}; }" in LINKS
+    assert "if (SAVING && P.notes.same(d, SAVING.a, SAVING.tgt)) {" in LINKS
     assert "if (P.notes.same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }" in LINKS
-    assert "else if (d && SAVING) setR(null);" in REF
+    assert "else if (d && SAVING && NK().same(d, SAVING.a, SAVING.tgt))" in REF
     assert "if (NK().same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }" in REF

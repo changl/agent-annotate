@@ -6,7 +6,8 @@
   'use strict';
   const P = window.Proto = window.Proto || {};
   const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false, hl: '', scroll: false};
-  let mine = [], SAVING = false;  // notes written here this visit, so Undo can take them back; SAVING: the editor's Save note is out
+  let mine = [], SAVING = false;  // notes written here this visit, so Undo can take them back; SAVING: the editor's Save note out, {a, tgt, text}
+  const BK = 'draft:lback';  // the notes kit's drafts kept at their own spots (P.notes.backs)
   const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
   const fpath = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
@@ -117,9 +118,10 @@
     w.onclick = e => click(e, w, ctx, D);
     w.oninput = e => { if (e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
       if (e.target.id !== 'l-nt' || !S.note) return;
-      const was = !!typed(ctx);
-      ctx.prefs.set('draft:lnote', {a: S.note, tgt: S.tgt, text: e.target.value, ...place(w, D, S.note, e.target)});
-      if (was !== !!typed(ctx)) ctx.refreshTop(); };
+      const was = typed(ctx);
+      if (was && !P.notes.same(was, S.note, S.tgt)) P.notes.backs.put(ctx, BK, was);  // typed words at another spot stay a draft there (r12 audit39 running 1)
+      ctx.prefs.set('draft:lnote', {a: S.note, tgt: S.tgt, text: e.target.value, ...place(w, D, S.note, e.target)}); P.notes.backs.drop(ctx, BK, S.note, S.tgt);
+      if (!!was !== !!typed(ctx)) ctx.refreshTop(); };
     // ⌘↵ in the note saves it, as the mock and the shortcut help say; it never reaches the frame's Send (audit8 frame 3)
     w.onkeydown = e => { if (e.target.id === 'l-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault(); e.stopPropagation(); const b = w.querySelector('[data-nsave]'); if (b) b.click(); }
@@ -129,6 +131,8 @@
   function draw(w, ctx, D) {
     const {esc, icon} = ctx;
     CUR = D; D.notes.forEach(moved);
+    // the box he types in keeps its focus and caret through a redraw, whatever an earlier save does, as Reference's draw (r12 audit39 running 2)
+    const a = document.activeElement, keep = a && a.id && w.contains(a) ? [a.id, a.selectionStart, a.selectionEnd] : null;
     const copyBtn = (key, name) => `<button class="ib" data-copylink="${esc(key)}" data-name="${esc(name)}" title="Copy link to ${esc(name)}" aria-label="Copy link to ${esc(name)}">${icon(S.copied === key ? 'copied' : 'link')}</button>`;
     const pageRow = (name, sub, key, open) => `<div class="l-line">${icon('doc')}<span class="l-grow">${open}<span class="small mut l-sub">${sub}</span></span>${copyBtn(key, name)}</div>`;
     // each page says why it is its own page, so he can choose between them (#81); counts follow
@@ -171,6 +175,7 @@
     const m = S.res && lineKey(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
     if (rs) { P.notes.lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
     if (S.full) P.media.redrawView();  // the open picture viewer shows the same notes
+    const b = keep && document.getElementById(keep[0]); if (b && b !== document.activeElement) { b.focus({preventScroll: true}); try { b.setSelectionRange(keep[1], keep[2]); } catch {} }
   }
   // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed
   const badWhen = D => { const [d, t] = String(D.current_t || '').split(' '); return d ? `${dm(d)}${t ? ', ' + t : ''}` : 'today'; };
@@ -184,7 +189,8 @@
   const viewing = k => !!S.full && S.full.k === k;  // this picture is open Full size: its viewer holds its composer
   // `dlg`: drawn in the picture viewer
   function noteBox(ctx, D, k, dlg) {
-    const {esc, icon} = ctx, ns = notesAt(D, k, dlg), dr = ctx.prefs.get('draft:lnote', null), words = dr && dr.a === k ? dr.text || '' : '', box = S.note === k && viewing(k) === !!dlg;
+    const {esc, icon} = ctx, ns = notesAt(D, k, dlg), dr = ctx.prefs.get('draft:lnote', null), bk = S.note === k && P.notes.backs.at(ctx, BK, k, S.tgt),
+      words = dr && P.notes.same(dr, k, S.tgt) ? dr.text || '' : bk ? bk.text : dr && dr.a === k ? dr.text || '' : '', box = S.note === k && viewing(k) === !!dlg;
     if (!ns.length && !box) return '';
     // a sent note carries the lifecycle Questions and Reference use (P.notes: Re-open, View resolution, Move, Close); a closed one folds (r12 fix17)
     // the edit box only where he sees it: in the viewer while this picture is open there (r12 audit19 reference 5)
@@ -342,22 +348,23 @@
     // a bar with notes lists them first; + Comment writes another (a blank editor only on a bar with none)
     else if (b.dataset.bnote && b.classList.contains('l-bar') && notesAt(D, b.dataset.bnote).length && S.note !== b.dataset.bnote) { S.note = ''; S.spot = S.spot === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); }
     else if (b.dataset.bnote) { if (S.note !== b.dataset.bnote && !keepTyped(w, ctx, D, b.dataset.bnote, null)) return; S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
-    else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
+    else if (b.hasAttribute('data-ncancel')) { P.notes.backs.drop(ctx, BK, S.note, S.tgt); S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (document.getElementById('l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
       const {l, line} = place(w, D, k, b);
       try {
         // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
-        SAVING = true; ctx.refreshTop();
+        SAVING = {a: k, tgt: target || null, text}; ctx.refreshTop();
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         // another spot opened while it was out keeps its own composer and draft (r12 fix45 pass 3)
         const now = typed(ctx); if (!now || P.notes.same(now, k, target)) ctx.prefs.set('draft:lnote', null);
+        P.notes.backs.drop(ctx, BK, k, target, text);
         if (P.notes.same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }
         draw(w, ctx, D); ctx.refreshChips(); ctx.refreshTop();
         ctx.toast('Note saved', {going: [c.id, 'ln:' + c.id], undo: () => undoNote(c.id, w, ctx, D)});
-      } catch (er) { if (!typed(ctx)) { ctx.prefs.set('draft:lnote', {a: k, tgt: target || null, text, l, line}); ctx.refreshTop(); } ctx.toast(`The note was not saved: ${er.message}`); }
+      } catch (er) { putBack(ctx, {a: k, tgt: target || null, text, l, line}); ctx.toast(`The note was not saved: ${er.message}`); }
     } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
   }
   // another spot while a note is typed: the typed note is kept, by the round or saved as its own note (r12 fix45 pass 3).
@@ -366,10 +373,11 @@
     const d = typed(ctx);
     if (!d) return {tgt};
     if (!P.notes.other(d, k, tgt)) return {tgt: d.tgt || null};
-    if (SAVING) { ctx.prefs.set('draft:lnote', null); ctx.refreshTop(); return {tgt}; }  // its Save is out: that Save stores it (and puts it back if it fails)
+    // its Save is out: that Save stores it (and puts it back if it fails); words typed since that Save stay a draft at its spot
+    if (SAVING && P.notes.same(d, SAVING.a, SAVING.tgt)) { if (d.text.trim() !== SAVING.text) P.notes.backs.put(ctx, BK, d); ctx.prefs.set('draft:lnote', null); ctx.refreshTop(); return {tgt}; }
     const text = d.text.trim();
     if (!P.notes.keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined},
-      () => { if (!typed(ctx)) ctx.prefs.set('draft:lnote', d); redo(); ctx.refreshTop(); },
+      () => { putBack(ctx, d); redo(); },
       r => { mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || text, who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
         redo(); ctx.refreshChips(); ctx.toast('Note saved', {going: [r.id, 'ln:' + r.id], undo: () => undoNote(r.id, w, ctx, D)}); })) return null;
     ctx.prefs.set('draft:lnote', null); ctx.refreshTop();
@@ -467,6 +475,9 @@
   }
   // the note being typed: a draft, in Send before Save and kept across a reload with "Unsent answers and notes" on, as Questions' open note is (audit8 running 1)
   const typed = c => { const d = c.prefs.get('draft:lnote', null); return d && (d.text || '').trim() ? d : null; };
+  // a failed save's words: the typed draft again, or with another note typed, a draft at their own spot (r12 audit39 running 1)
+  const putBack = (c, d) => { const now = typed(c); if (!now) c.prefs.set('draft:lnote', d); else if (!P.notes.same(now, d.a, d.tgt)) P.notes.backs.put(c, BK, d); c.refreshTop(); };
+  const noteHtml = (c, d) => `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`;
   const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';
     const focus = () => { const t = ON && ON.w.isConnected && ON.w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
     if (ON && ON.w.isConnected) { draw(ON.w, ON.ctx, ON.D); focus(); } else c.go('links'); };
@@ -511,7 +522,7 @@
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
     // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
-    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
+    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
       go: () => goTyped(c, d),
       // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
@@ -524,6 +535,13 @@
         return r; },
       remove: SAVING ? null : () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
+    // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
+    ...P.notes.backs.all(c, BK).map(d => ({key: 'lnb:' + d.a + ' ' + JSON.stringify(d.tgt || null), spot: d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
+      go: () => goTyped(c, d),
+      save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
+        mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
+        P.notes.backs.drop(c, BK, d.a, d.tgt, d.text.trim()); if (P.notes.same({a: S.note, tgt: S.tgt}, d.a, d.tgt)) { S.note = ''; S.tgt = null; } redo(); return r; },
+      remove: () => { P.notes.backs.drop(c, BK, d.a, d.tgt); redo(); return () => { P.notes.backs.put(c, BK, d); redo(); }; }})),
     // a sent note he re-opened is the notes kit's own row, from the one draft store (r12 audit16 frame 1)
     ...unsent(c).map(n => ({key: 'ln:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${c.esc(cut((n.target && n.target.quote) || n.line || n.l || 'Pages & links', 50))}”:${c.esc(cut(P.notes.say(n), 140))}`,
       go: () => goNote(c, n),
