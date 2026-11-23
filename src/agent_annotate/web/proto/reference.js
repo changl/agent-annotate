@@ -684,7 +684,8 @@
   function onKey(e) {
     if (!here() || S.full) return;
     if (e.target.id === 'rf-trn' && e.key === 'Enter') renameTopic(S.trn, e.target.value.trim());
-    if (e.key === 'Escape' && (S.trn || S.tmerge || S.note || S.move || S.spot || S.edit)) { S.trn = S.tmerge = S.note = S.move = S.spot = S.pin = S.edit = ''; S.edt = null; draw(); }
+    // the note composer and an Edit stay open on Escape, as the folder's and kept document's do: only Cancel closes them (r12 audit35 reference)
+    if (e.key === 'Escape' && (S.trn || S.tmerge || S.move || S.spot)) { S.trn = S.tmerge = S.move = S.spot = S.pin = ''; draw(); }
     if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
   }
 

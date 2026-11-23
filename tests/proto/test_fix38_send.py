@@ -78,7 +78,7 @@ CARRY = null; if (P.going('ap:1')) throw new Error('after the round');
                          "P.going(\x27cp:\x27 + d.cpundo)"],
         "links.js": ["if (a.includes(id) && P.going(\x27lappr:\x27 + id)) return;"],
         "history.js": ["P.going(\x27tell:\x27 + o.src)"],
-        "running.js": ["if (!prev && P.going(\x27tst:\x27 + id)) return;", "P.going(\x27tst:\x27 + S.task)", "P.going(\x27tcm:\x27 + S.task)"],
+        "running.js": ["draw(); }, \x27tst:\x27 + id); }","P.going(\x27tst:\x27 + S.task)", "P.going(\x27tcm:\x27 + S.task)"],
     }
     for f, want in pins.items():
         src = (WEB / f).read_text()

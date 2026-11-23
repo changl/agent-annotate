@@ -46,6 +46,13 @@
   // itself. Any other note write made once a round is going waits for it, so it goes with the next Send (r12 audit30 frame 1)
   async function api(path, body, method, own) {
     const write = body !== undefined || !!method;
+    // past the round check a write, other than the round's own, that changes a row the round carries never goes: no control can
+    // get round the take-back gate (r12 audit35 running 1-4, frame 1-4)
+    if (write && own && path === 'api/comments' && sendP && sendP.made) sendP.made(body);
+    if (write && !own && sendP && sendP.carriesPath && sendP.carriesPath(path, body)) {
+      toast('This is already going with Send: it was not taken back');
+      return Promise.reject(Object.assign(new Error('already going with Send'), {carried: true}));
+    }
     const hold = write && !own && sendP && sendP.hold ? sendP.hold(path) : null;
     if (hold) await hold;
     if (COPY && write && P.copyWrite) { wroteAt = Date.now(); const r = P.copyWrite(path, body, method); wrote(path, own); return r; }  // a read-only copy writes nothing: questions.js answers it in memory
@@ -191,12 +198,18 @@
     const mark = opts.inert || (COPY && (opts.undo || Date.now() - wroteAt < 3000));
     el.innerHTML = `<div class="p-toast" role="status"><span>${esc(msg)}</span>${mark ? P.inertMark() : ''}${opts.undo ? '<button class="lk" data-undo>Undo</button>' : ''}</div>`;
     const undo = el.querySelector('[data-undo]');
-    if (undo) undo.onclick = () => { el.innerHTML = ''; opts.undo(); };
+    // the one toast Undo gate (r12 audit35 running 1-6): past the round check an Undo of a row the round carries (opts.going: its
+    // keys or note ids) is refused and leaves everything as it is; an Undo naming no row is refused while the round is held.
+    // going set to false only for an Undo that touches no Send row (test_fix40_send lists them)
+    const keys = opts.going === undefined ? [true] : [].concat(opts.going);
+    if (undo) undo.onclick = () => { if (P.going && keys.some(k => P.going(typeof k === 'function' ? k() : k))) return; el.innerHTML = ''; opts.undo(); };
     toastTimer = setTimeout(() => { el.innerHTML = ''; }, opts.undo ? 9000 : 5000);
   }
+  // a refused write already said so: a caller that does not catch it logs nothing (r12 audit35 frame 1)
+  addEventListener('unhandledrejection', e => { if (P.carried(e.reason)) e.preventDefault(); });
   P.inertMark = () => '<span class="p-inert" title="This prototype never reaches an agent, Orca, Windmill or the board">prototype: not sent</span>';
   // An action that would reach a real agent or system: look done, say so, offer Undo, reach nothing.
-  const inert = (msg, undo) => toast(msg, {inert: true, undo: undo || (() => {})});
+  const inert = (msg, undo, going) => toast(msg, {inert: true, undo: undo || (() => {}), going: undo ? going : false});
 
   const phoneQ = matchMedia('(max-width: 900px)');  // up to 900 the frame folds into its menu: the mock's desk header overflows below 1074 (#8)
   const S = {tab: 'questions', home: false, menu: '', sheet: '', meta: null, loadedV: '', newer: null, checked: '',
@@ -217,6 +230,7 @@
     // sig: a row's full words (say) or, with none, its listing: the round check and the clear compare these, never a shortened preview (r12 audit31 questions 2)
     sig: x => x.say || x.html,
     // done(key): the row went with this round as it reads now; a row changed or added after the round check stays (r12 audit31 running 1, 4)
+    queueFailed: () => SRC.forEach(s => { try { if (s.failed) s.failed(ctx); } catch (e) { console.warn('queue failed', e); } }),
     queued, queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (!s.sent) return; const now = new Map((s.items(ctx) || []).map(x => [x.key, ctx.sig(x)])); s.sent(ctx, was, k => !was || (was.has(k) && was.get(k) === now.get(k))); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;

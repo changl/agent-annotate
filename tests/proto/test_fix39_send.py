@@ -43,34 +43,6 @@ def test_every_other_take_back_calls_the_gate():
         assert pin in Q, pin
 
 
-# Every toast or inert Undo that is no take-back: it puts back what a Remove or Discard took, undoes a note write the round
-# already holds back (ROUND), or touches no Send row. Any other Undo must call P.going, or this test fails.
-RESTORES = {
-    "questions.js": ["put(from", "put(was)", "later(q", "await call(`api/comments/${encodeURIComponent(q.id)}/archive`",
-                     "setDraft(q.id, {pick: keep.pick", "delNote(c.id", "ctx.prefs.set('q:drafts', keep)", "setDraft(id, {...meta, pick: keep.pick",
-                     "setDraft(id, {...meta, close: true", "setDraft(id, {...meta, reply: keep.reply", "S.note = n; ctx.prefs.set('q:newnote', n)",
-                     "setAB(id, p)", "await back(); again();", "ctx.prefs.set('q:general', g)"],
-    "reference.js": ["await undo(); draw();", "const g = filed();", "S.reopen.set(fk, t)", "S.cp.set(ck, was); draw(); }); }", "undoNote(c.id)",
-                     "keep(); mine = P.putBack", "setUnsort(ids, true)", "setUnsort([p.id], false)"],
-    "running.js": ["S.rerun.delete(p)", "CTX.prefs.set(k, old)"],
-    "history.js": ["await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE')"],
-    "links.js": ["undoNote(c.id", "save(list.map(", "save(before)"],
-}
-
-
-def test_every_toast_undo_is_gated_or_a_known_restore():
-    """Toast Undos (the Asked-to-file toast included) and inert Undos: each calls P.going, or is listed above."""
-    for f, src in SRC.items():
-        for m in re.finditer(r"undo: (?:async )?\(\) =>|\.inert\(", src):
-            body = src[m.end():m.end() + 260]
-            if m.group(0) == ".inert(":
-                cut = body.split(");")[0]
-                if "() =>" not in cut:
-                    continue  # a notice with no Undo
-                body = body[body.find("() =>"):]
-            if "P.going" in body[:120]:
-                continue
-            assert any(r in body[:120] for r in RESTORES.get(f, [])), (f, src[:m.start()].count("\n") + 1, body[:120])
 
 
 def test_reference_reason_and_in_flight_remove():

@@ -150,6 +150,8 @@
     closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
+      // Close (or taking back a Re-open) on a note the round carries is a take-back: refused, the note stays as it goes (r12 audit35 running 4)
+      if ((how === 'close' || how === 'unreopen') && P.going && [n.id, 'n:' + n.id, 'reo:' + n.id].some(k => P.going(k))) return null;
       const u = `api/comments/${encodeURIComponent(n.id)}`, was = how === 'close' ? NK.reo(c)[n.id] : null;
       // Re-open stores open at once, as today's PUT {status: open}, and keeps its Send row, so the agent reads it with the next
       // Send (r12 audit20 frame 4). Its Undo puts back the status it had; the server lets only the agent set an agent-only one
@@ -172,7 +174,7 @@
         undo = async () => { if (how === 'reopen' && P.going && P.going('reo:' + n.id)) return null;  // the round carries the Re-open (r12 audit34 frame 4)
           const r = await NK.set(c, n, back, api, redraw, true); if (r && was) { NK.put(c, n.id, was); await redraw(n.id); } return r; };
       const can = !(how === 'reopen' && AGENT_ST.includes(prev));
-      if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], can ? {undo} : {});
+      if (!quiet) c.toast({close: 'Note closed: it is under Closed', restore: 'Note re-opened', reopen: 'Note re-opened: it goes with your next Send', unreopen: 'Re-open taken back'}[how], can ? {undo, going: [n.id, 'n:' + n.id, 'reo:' + n.id]} : {});
       return can ? undo : async () => null;
     },
     // Move: today's manual re-pin to the spot he clicks next, with Undo (catalog 65); apply(p) shows it (p null: it failed)
@@ -185,7 +187,7 @@
         const r = NK.reo(c)[id];  // a re-opened note's Send row and Go to it follow it to its new spot
         if (r) NK.put(c, id, {...NK.rec({anchor: p.anchor_id, label: p.anchor_label, target: p.target, text: r.text}), st: r.st});
         await apply(p);
-        if (again) c.toast('Note moved', {undo: () => put(from, false)});
+        if (again) c.toast('Note moved', {going: [id, 'n:' + id, 'reo:' + id], undo: () => put(from, false)});
       };
       try { await put(to, true); } catch (e) { c.toast('Not moved: ' + e.message); await apply(null); }
     },
@@ -246,7 +248,7 @@
         if (n.sent) NK.put1(n.id, {text: w});
         await apply(w, {...b, ...(n.sent ? {edited: true} : {}), flagged: false}); };
       try { await put(t); } catch (e) { c.toast('Not changed: ' + e.message); return false; }
-      c.toast('Note changed · goes with Send', {undo: () => put(was)});
+      c.toast('Note changed · goes with Send', {going: [n.id, 'n:' + n.id, 'ty:edit:' + n.id], undo: () => put(was)});
       return true;
     },
     // a sent note's body on any tab: its words, state, View resolution, actions and thread; the edit box (edit: its words) while Edit is open
@@ -315,6 +317,20 @@
     b.disabled = true;
     NK.reply(P.ctx, n, ta.value, () => NK.redo(tab)).then(ok => { if (!ok) b.disabled = false; });
   }, true);
+  // Emptying a carried editor by typing (select all, Backspace) is a take-back too: past the round check the words come back and
+  // no tab's handler stores the empty draft (r12 audit35 frame 2, reference). The key: the editor's own data-going, its field's
+  // Send row, or the Cancel beside it (data-edkey, not data-going: a click in the field is no take-back)
+  const WAS = new WeakMap();
+  const edKey = t => { const d = t.dataset || {};
+    if (d.edkey) return d.edkey; if (t.matches('[data-general]')) return 'gen'; if (d.words) return 'q:' + d.words; if (d.replytext) return 'r:' + d.replytext;
+    if (d.nreplytext) return 'ty:reply:' + d.nreplytext; const b = t.closest('[data-nedbox],[data-cnote]'); if (b) return 'ty:edit:' + (b.dataset.nedbox || b.dataset.cnote);
+    for (let a = t.parentElement, i = 0; a && a !== document.body && i < 3; a = a.parentElement, i++) { const g = a.querySelector('[data-going]'); if (g) return g.dataset.going; }
+    return null; };
+  document.addEventListener('focusin', e => { if (e.target.matches && e.target.matches('textarea')) WAS.set(e.target, e.target.value); }, true);
+  document.addEventListener('input', e => { const t = e.target; if (!t.matches || !t.matches('textarea')) return;
+    const was = WAS.has(t) ? WAS.get(t) : '', k = !t.value.trim() && was.trim() && P.past() && edKey(t);
+    if (k && P.going(k)) { t.value = was; e.stopImmediatePropagation(); return; }
+    WAS.set(t, t.value); }, true);
   // every keystroke in a Reply or an Edit, on any tab (History's own chart editor too), goes to the draft store
   document.addEventListener('input', e => { const t = e.target, id = t.dataset && t.dataset.nreplytext;
     if (id) NK.typed.set(id, t.value);
@@ -1105,10 +1121,12 @@
   // then the relist shows what the store holds (r12 audit34 reference 3)
   P.inflight = id => [...WRITING.values()].some(p => p === 'api/comments/' + encodeURIComponent(id) || p.startsWith('api/comments/' + encodeURIComponent(id) + '/'));
   let ROUND = null, CARRY = null, GOING = null;
+  const made = b => `${b.anchor_id}|${String(b.text || '').trim()}`;  // a new note the round posts, by spot and words (CARRY.made: per round)
   // a take-back (Approval taken back, Text restored, Reopen taken back, a status or pick undone) of a row the round carries
   // past its check is refused like Remove: draft and control stay as the round delivers them; after the round it is a normal change (r12 fix38)
+  // key: a Send row's key, a note id the round carries, or true (any take-back while the round is held: a toast Undo naming no row)
   P.going = key => {
-    if (!CARRY || !GOING || !(GOING.has(key) || GOING.has('x:' + key))) return false;
+    if (!CARRY || !GOING || key === false || !(key === true || GOING.has(key) || GOING.has('x:' + key) || CARRY.has(key))) return false;
     ctx.toast('This is already going with Send: it was not taken back'); return true;
   };
   P.past = () => !!CARRY;  // a round is past its check: it delivers what it listed, whatever is picked now
@@ -1501,7 +1519,9 @@
       // the round is saved: a failed re-read shows the read's own Try again, never "Send failed" (r12 audit32 questions 4)
       try { await refresh(); } catch (x) { console.warn('refresh after Send', x); }
     } catch (e) {
-      S.pending = null; ROUND = null; CARRY = null; open(); await refresh();
+      S.pending = null; ROUND = null; CARRY = null; open();
+      if (ctx.queueFailed) ctx.queueFailed();  // nothing was delivered: each base stays, and a draft back at it is no change (r12 audit35 running 7)
+      await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
     } finally { ROUND = null; CARRY = null; open(); }
   }
@@ -1668,7 +1688,7 @@
       S.zoom = null; return openNote(next, true); }
     if (t.hasAttribute('data-genopen')) { S.gen = !S.gen; return draw(true).then(() => { const ta = root.querySelector('.qgen textarea'); if (ta) ta.focus(); }); }
     if (t.hasAttribute('data-genclose')) { S.gen = false; return draw(true); }
-    if (t.hasAttribute('data-ungen')) { if (P.going('gen')) return; const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
+    if (t.hasAttribute('data-ungen')) { if (P.going('gen')) return; const g = gen(); ctx.prefs.set('q:general', ''); S.gen = false; draw(true); return ctx.toast('General feedback removed', {going: 'gen', undo: () => { ctx.prefs.set('q:general', g); draw(true); }}); }
     if (t.hasAttribute('data-sendopen')) { S.armed = !S.armed; S.sendKey = false; S.gen = false; return draw(true); }
     if (t.hasAttribute('data-sendclose')) { S.armed = false; S.sendKey = false; return draw(true); }
     if (t.hasAttribute('data-send')) return send();
@@ -1959,6 +1979,16 @@
     wrote: (path, own) => { if (!own && NOTEW.test(path)) stale = true; },
     hold: path => NOTEW.test(path) ? ROUND : null,  // a note write made while a round is going waits for it
     carries: id => !!CARRY && CARRY.has(id),  // the round past its check carries it: Remove says so (r12 audit31 questions 3)
+    // past the check, a write that changes a row the round carries (edit, delete, close, restore, answer later, decision) or writes
+    // it a second time (the reply or new note the round is posting) is refused; a reply on a carried note adds, so it waits (r12 audit35)
+    carriesPath: (path, body) => { if (!CARRY) return false;
+      if (path === 'api/comments') return !!body && !!CARRY.made && CARRY.made.has(made(body));
+      const m = /^api\/comments\/([^/?]+)(?:\/([a-z-]+))?/.exec(path), id = m && decodeURIComponent(m[1]);
+      if (!m) return false;
+      if (m[2] === 'reply') return GOING.has('r:' + id) || GOING.has('x:ty:reply:' + id);
+      return CARRY.has(id) || ['q:', 'r:', 'c:', 'n:', 'reo:', 'x:ty:edit:', 'x:ty:reply:'].some(p => GOING.has(p + id)); },
+    // a new note the round posts (its own write, from any tab): the same words at the same spot again are that note, never a second
+    made: body => { if (CARRY && body) (CARRY.made = CARRY.made || new Set()).add(made(body)); },
     newer: () => { stale = true; DOC = null; },  // the frame loaded a newer version: read the questions again on any tab
     // the count moved while the summary is open (a tab's note just saved): list it too, unless he is typing in it (r12 fix10 reference 2)
     changed: relist,

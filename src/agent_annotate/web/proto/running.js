@@ -154,7 +154,7 @@
         ${fold('Design', b.design && `<div class="tpt">${esc(scrub(b.design))}</div>`)}${fold('Acceptance', b.acc && `<div class="tpt">${esc(scrub(b.acc))}</div>`)}${fold('Notes', b.notes && `<div class="tpt">${esc(scrub(b.notes))}</div>`)}
         ${fold('Comments', b.cm.map(([at, t]) => `<div class="tcm"><span class="small mut">${esc(at)}</span><div class="tpt">${esc(scrub(t))}</div></div>`).join('') || `<p class="small mut">${b.ncm ? pl(b.ncm, 'comment', 'comments') + ' on the board' : 'none yet'}</p>`, b.ncm || b.cm.length)}
         <p class="small mut">${esc(b.type)} · opened ${esc(b.made)} · updated ${esc(b.upd)} · from the ${PNAME} board, read only</p></div>
-      <div class="tcbox"><textarea data-tcm aria-label="Comment on this task" placeholder="Comment on this task">${esc(ctext)}</textarea>
+      <div class="tcbox"><textarea data-tcm data-edkey="tcm:${esc(id)}" aria-label="Comment on this task" placeholder="Comment on this task">${esc(ctext)}</textarea>
         <div class="acts small mut"><span data-tcmsay>${ctext.trim() ? 'Saved as you type · goes to the board with your next Send' : 'Goes to the board with your next Send'}</span>${P.inertMark()}<button class="lk small" data-untcm ${ctext.trim() ? '' : 'hidden'}>Remove</button></div></div></aside>`;
   }
 
@@ -321,10 +321,10 @@
         // kept even when it reads as the board: a round past its check may carry another status, and then this one is the next Send's (r12 audit33 questions 2)
         // only past the check: during Undo the round can still stop, and then a draft equal to its base is no change (r12 audit34 running 3)
         if (ds.tst === tbase(id, b) && !(P.past && P.past())) delete all[id]; else all[id] = ds.tst; CTX.prefs.set('tst', all); draw();
-        return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { if (!prev && P.going('tst:' + id)) return; const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }); }
+        return CTX.inert(`Status ${ds.tst === tbase(id, b) ? 'back to ' + ds.tst : 'set to ' + ds.tst}: goes with your next Send`, () => { const a = CTX.prefs.get('tst', {}); if (prev) a[id] = prev; else delete a[id]; CTX.prefs.set('tst', a); draw(); }, 'tst:' + id); }
       // past the round check a status or comment the round carries is not taken back (r12 fix38)
       if (ds.untst) { if (P.going('tst:' + S.task)) return; const a = CTX.prefs.get('tst', {}); delete a[S.task]; CTX.prefs.set('tst', a); return draw(); }
-      if (t.hasAttribute('data-untcm')) { if (P.going('tcm:' + S.task)) return; const k = 'tcm:' + S.task, old = CTX.prefs.get(k, ''); CTX.prefs.set(k, ''); draw(); return CTX.toast('Comment removed', {undo: () => { CTX.prefs.set(k, old); draw(); }}); }
+      if (t.hasAttribute('data-untcm')) { if (P.going('tcm:' + S.task)) return; const k = 'tcm:' + S.task, old = CTX.prefs.get(k, ''); CTX.prefs.set(k, ''); draw(); return CTX.toast('Comment removed', {going: k, undo: () => { CTX.prefs.set(k, old); draw(); }}); }
     };
     el.oninput = e => { if (!e.target.matches('[data-tcm]')) return;
       CTX.prefs.set('tcm:' + S.task, e.target.value);
@@ -456,6 +456,11 @@
       return out;
     };
   // a round clears only the rows it listed, as they read then: a status or comment set after the countdown stays for the next Send (r12 audit30 running 4)
+  // a round that failed after its check delivered nothing: the base stays the last delivered status, so a pick back at it is no draft (r12 audit35 running 7)
+  const failed = ctx => { const t = ctx.prefs.get('tst', {}), B = ((D || {}).board || {}).beads || {};
+    for (const id of Object.keys(t)) if (t[id] === tbase(id, B[id], ctx)) delete t[id];
+    ctx.prefs.set('tst', t); redraw(); };
+  P.queue && P.queue({items: () => [], failed});
   P.queue && P.queue({items, sent: (ctx, was, done) => {
     // what the round delivered is each task's base from now on; a status picked after the check, back to the board's included, is a change from it (r12 audit33 questions 2)
     const t = ctx.prefs.get('tst', {}), sent = ctx.prefs.get('tstsent', {}), B = ((D || {}).board || {}).beads || {};
