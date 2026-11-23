@@ -76,3 +76,39 @@ has('qr1:c6', '☑ Selected: my own words'); has('qr2:c6', '↺ my words');
     assert "if (listed.keys.has(`qr${j}:${q.id}`)) r.sent = true" in post  # each delivered reply by its own row
     # Go to it on a pending row opens its card
     assert "if (at) k = 'q:' + k.slice(k.indexOf(':') + 1);" in Q
+    # the groups and counts read the same pending list: a pending answer is answered, any pending row is To send (questions 5)
+    assert "|| isClosing(q) || !!pendA(q);" in Q and "hasReply(q) || pending(q)" in Q
+
+
+def test_waiting_leaves_out_his_pending_answer(tmp_path, monkeypatch):
+    page = _page(tmp_path, monkeypatch)
+    # open and unanswered: c1 and c5 (replies alone do not answer); c6 and c8 have his answer pending; c4, c8 set aside; c3, c7 closed
+    assert qd.waiting(page) == 2
+
+
+def test_failed_close_undo_takes_the_close(tmp_path):
+    re_ = grab(Q, "async function reopen(q) {", "\n  function undo(q)")
+    assert "if (shut) setDraft(q.id, {close: null});" in re_ and "if (shut) setDraft(q.id, {close: true});" in re_
+
+
+def test_same_words_twice_in_a_line_are_two_spots(tmp_path):
+    # every reader's text-range target carries where the words start (2.32.8's selected_quote alone could not tell them apart)
+    from test_fix43_send import LINKS
+    from test_fix13_send import REF
+    assert "quote: sel.slice(0, 300), at: NK.at(anchorEl)}" in Q and "quote: q.slice(0, 300), at: NK().at(b)}" in REF
+    assert "quote: q.slice(0, 300), at: P.notes.at(ln)}" in LINKS
+    made, mq = grab(Q, "const made = b => ", ";"), grab(Q, "  function markQuote(el, quote, at) {", "\n  }")
+    node(tmp_path, made + r"""
+const a = made({anchor_id: 'p', text: 'same', target: {quote: 'a', at: 26}}), b = made({anchor_id: 'p', text: 'same', target: {quote: 'a', at: 40}});
+if (a === b) throw new Error('two occurrences are two spots');
+const nodes = [{nodeValue: 'with a picture'}, {nodeValue: ' and a line'}];
+let got;
+global.NodeFilter = {SHOW_TEXT: 4};
+global.document = {createTreeWalker: () => { let i = 0; return {nextNode: () => nodes[i++] || null}; },
+  createRange: () => ({setStart: (n, i) => { got = [n, i]; }, setEnd() {}, surroundContents() {}}), createElement: () => ({})};
+""" + mq + r"""
+markQuote({}, 'a', 19); if (got[0] !== nodes[1] || got[1] !== 5) throw new Error('second occurrence: ' + JSON.stringify(got));
+markQuote({}, 'a', 5); if (got[0] !== nodes[0] || got[1] !== 5) throw new Error('first occurrence');
+markQuote({}, 'a'); if (got[0] !== nodes[0]) throw new Error('an older note without at: the first');
+""")
+    assert "markQuote(el, t.quote, t.at)" in Q

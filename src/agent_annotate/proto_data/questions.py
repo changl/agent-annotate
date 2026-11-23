@@ -203,7 +203,9 @@ def _flags(c) -> dict:
 def waiting(page_dir: Path) -> int:
     """Questions waiting on him: the one count the top bar, the tab, Home and every project row use."""
     v = store.read_meta(page_dir).get("current")
-    return sum(1 for c in _all(page_dir) if _asked(c, v) and not any(_flags(c).values()))
+    # his answer pending in the store (a failed round wrote it) is answered, as Questions' groups count it (r12 audit37 questions 5)
+    pend = lambda c: (d := _decision(c.get("decision"))) and d.get("round_pending") and d["mine"]
+    return sum(1 for c in _all(page_dir) if _asked(c, v) and not any(_flags(c).values()) and not pend(c))
 
 
 STOP = set("the a an to of and or for on in is be it this that with as at by from what who how should do does run".split())

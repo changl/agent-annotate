@@ -503,7 +503,7 @@
     if (b.matches('[data-line]')) {  // a spot on a picture, the selected words, or else the whole line
       const im = e.target.closest('img'), sel = getSelection(), q = String(sel || '').replace(/\s+/g, ' ').trim();
       if (im) { const r = im.getBoundingClientRect(); S.tgt = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; }
-      else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300)} : null;
+      else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300), at: NK().at(b)} : null;  // at: which occurrence (r12 audit37)
       if (S.move) return moveNote(S.move, d.line, b.dataset.label || '', S.tgt);  // Move: this line is its new place
       S.note = d.line; draw(); return;
     }

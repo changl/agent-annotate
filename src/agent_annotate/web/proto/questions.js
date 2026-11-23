@@ -43,6 +43,11 @@
   const VISIT = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);  // this page load, for the kit's kept edits
   const AGENT_ST =['addressed_by_agent', 'resolved_in_version'];  // statuses only the agent may set (sync_server's comment PUT)
   const NK = P.notes = {
+    // a text range's spot is its occurrence too: where the selected words start in the line's text, so the same words twice in
+    // one paragraph are two spots (dedup, highlight, Go to it) in every reader (r12 audit37 running 1, questions 2)
+    at: el => { const s = getSelection(); if (!s || !s.rangeCount || !el.contains(s.anchorNode)) return undefined;
+      const r0 = s.getRangeAt(0), r = document.createRange(); r.setStart(el, 0); r.setEnd(r0.startContainer, r0.startOffset);
+      const lead = String(s).length - String(s).trimStart().length; return r.toString().length + lead; },
     resolved: n => ['resolved_in_version', 'addressed_by_agent', 'user_confirmed'].includes(stOf(n)),
     // the one draft store for every tab's Re-open: id → the note's record (status, spot, words, tab), so Send lists it
     // from the record alone, before any tab's feed answers (r12 audit16 frame 1)
@@ -524,7 +529,9 @@
   const isDraft = q => { const d = draft(q.id); return !!(d.pick || (d.words || '').trim()); };
   const isClosing = q => !q.closed && !isDraft(q) && !!draft(q.id).close;  // Close goes with Send, Undo until then (#23); an answer outranks it, so one card is one decision (r12 audit3 #01)
   const hasReply = q => !!(draft(q.id).reply || '').trim();
-  const isDone = q => q.closed || q.sent || q.later || isDraft(q) || isClosing(q);
+  // his answer pending in the store is answered too, and any pending row is To send: the groups read Send's one pending list (r12 audit37 questions 5)
+  const isDone = q => q.closed || q.sent || q.later || isDraft(q) || isClosing(q) || !!pendA(q);
+  const pending = q => !!pendA(q) || pendR(q).length > 0;
   const isWaiting = q => !isDone(q);
   const cardOpen = q => isDone(q) ? S.open.has(q.id) : !S.shut.has(q.id);
   const waitingCount = () => (D ? D.questions.filter(isWaiting).length : 0);
@@ -720,7 +727,7 @@
       if (t.tag === 'img' && t.offset) {
         const img = noteImg(el, t);
         if (img) pinOn(img, i + 1, t.offset, n);
-      } else if (t.quote) markQuote(el, t.quote);
+      } else if (t.quote) markQuote(el, t.quote, t.at);
       const after = el.tagName === 'TR' ? el.closest('table').closest('.wrap') || el.closest('table') : el;
       after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', noteBox(n, i + 1));
     });
@@ -747,14 +754,18 @@
   }
   // a numbered pin is a control: it lists the notes at its point, with + Comment for another (catalog 25)
   const pinB = (n, no, off) => `<button class="qpin${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${off.dx * 100}%;top:${off.dy * 100}%" title="The notes at this point" aria-label="Note ${no}: the notes at this point" aria-expanded="${S.pin === n.id}">${no}</button>`;
-  function markQuote(el, quote) {
+  // the occurrence the note was written on (target.at, where it starts in the line's text); an older note without it, the first
+  function markQuote(el, quote, at) {
     const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    for (let n; (n = w.nextNode());) {
-      const i = n.nodeValue.indexOf(quote);
-      if (i < 0) continue;
-      const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + quote.length);
-      r.surroundContents(document.createElement('mark')); return;
-    }
+    let best = null, pos = 0;
+    for (let n; (n = w.nextNode()); pos += n.nodeValue.length)
+      for (let i = n.nodeValue.indexOf(quote); i >= 0; i = n.nodeValue.indexOf(quote, i + 1)) {
+        const d = at == null ? pos + i : Math.abs(pos + i - at);
+        if (!best || d < best[2]) best = [n, i, d];
+      }
+    if (!best) return;
+    const r = document.createRange(); r.setStart(best[0], best[1]); r.setEnd(best[0], best[1] + quote.length);
+    r.surroundContents(document.createElement('mark'));
   }
   const mk = (no, sent) => `<span class="qmk${sent ? ' sent' : ''}" title="Your note ${no}${sent ? ', sent' : ''}">${ic('note')}${no}</span>`;
   // a marker in the document is a control: it lists every note on its spot, with + Comment for another (catalog 25)
@@ -1077,7 +1088,7 @@
   const FILTERS = {
     need: q => !q.sent && !q.later && !q.closed,  // an answered card stays at its place in Waiting, with its Undo (#20)
     later: q => q.later && !q.closed && !isDraft(q) && !q.sent,
-    ready: q => isDraft(q) || isClosing(q) || hasReply(q), wait: q => q.sent, arch: q => q.closed || isClosing(q)};
+    ready: q => isDraft(q) || isClosing(q) || hasReply(q) || pending(q), wait: q => q.sent, arch: q => q.closed || isClosing(q)};
   function bar() {
     const cnt = k => D.questions.filter(FILTERS[k]).length + (k === 'arch' ? closedNotes().length : 0), lv = S.view === 'list';
     const decided = D.questions.filter(q => !isWaiting(q) && !q.later).length, all = D.questions.length;
@@ -1354,10 +1365,13 @@
   }
   async function reopen(q) {
     try { await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}); } catch (e) { if (!P.carried(e)) ctx.toast('Not changed: ' + e.message); return; }
-    q.closed = false; S.open.delete(q.id); draw(true);
+    // a Close a failed round archived is still his draft: the Undo takes it too, so the card is back at Waiting with no Send row (r12 audit37 questions 4)
+    const shut = !!draft(q.id).close; if (shut) setDraft(q.id, {close: null});
+    q.closed = false; S.open.delete(q.id); draw(true); ctx.refreshChips(); updateBar();
     // the card as the tab holds it at Undo: a re-read since replaced this object (r12 audit36 questions 7)
     ctx.toast('Restored to waiting', {going: [q.id, 'q:' + q.id, 'c:' + q.id], undo: async () => {
       try { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); } catch (e) { if (!P.carried(e)) ctx.toast('Not changed: ' + e.message); return; }
+      if (shut) setDraft(q.id, {close: true});
       const cur = (D && qOf(q.id)) || q; cur.closed = q.closed = true; await draw(true); ctx.refreshChips(); updateBar(); }});
   }
   function undo(q) {
@@ -1821,7 +1835,7 @@
     const label = cut((img && picName(img)) || (anchorEl.matches('figure.qdgm') ? `Picture ${anchorEl.dataset.pic} · Diagram` : (hd || anchorEl).textContent.replace(/\s*\d+\s+(questions? waiting|of \d+ decided).*$/i, '').trim()) || '', 60);
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src'), pk: img.dataset.pk}; }
-    else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
+    else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300), at: NK.at(anchorEl)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
     if (S.move) return moveNote(S.move, {anchor: anchorEl.dataset.anchorId, label, target});
     return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});
   }

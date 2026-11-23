@@ -278,7 +278,7 @@
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target
       const sel = getSelection(), q = sel && !sel.isCollapsed ? String(sel).trim() : '';
-      const tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300)} : null, k = ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line;
+      const tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300), at: P.notes.at(ln)} : null, k = ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line;
       if (S.move) return moveTo(w, ctx, D, k, ln, tgt);  // Move: this line is its new place, as in Reference (r12 audit16 frame 3)
       S.tgt = tgt; S.spot = '';
       S.note = k; draw(w, ctx, D);
