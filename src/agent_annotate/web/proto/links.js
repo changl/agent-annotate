@@ -356,7 +356,13 @@
     if (!n || (n.a === k && !target)) return draw(w, ctx, D);
     const {l} = place(w, D, k, el);
     return P.notes.move(ctx, n.id, {anchor_id: n.a, anchor_label: n.l, target: n.target || null}, {anchor_id: k, anchor_label: l, target}, ctx.api,
-      p => { if (p) Object.assign(n, {a: p.anchor_id, l: p.anchor_label, target: p.target, line: ''}); S.hl = p ? n.id : ''; draw(w, ctx, D); });
+      p => { if (p) repin(ctx, [n, ...D.notes, ...mine], n.id, {a: p.anchor_id, l: p.anchor_label, target: p.target, line: ''}); S.hl = p ? n.id : ''; draw(w, ctx, D); });
+  }
+  // a Move (or its Undo) lands on every copy of the note: the drawn feed's, a fresher read's (Send's), this visit's and the
+  // saved rows, so Send names its line from its current anchor, a failed round after too (r12 audit37 reference 2)
+  function repin(c, l, id, v) {
+    for (const x of [...l, ...(LD && LD.notes || [])]) if (x.id === id) Object.assign(x, v);
+    const s = c.prefs.get('draft:lnotes', []); if (s.some(x => x.id === id)) c.prefs.set('draft:lnotes', s.map(x => x.id === id ? {...x, ...v} : x));
   }
   // where a note sits: its label (the document, or its chart bar) and the line it is on, so Send names it by its line (r12 fix8, running 3)
   function place(w, D, k, el) {

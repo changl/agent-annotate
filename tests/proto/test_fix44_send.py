@@ -132,3 +132,38 @@ markQuote({}, 'a', 5); if (got[0] !== nodes[0] || got[1] !== 5) throw new Error(
 markQuote({}, 'a'); if (got[0] !== nodes[0]) throw new Error('an older note without at: the first');
 """)
     assert "markQuote(el, t.quote, t.at)" in Q
+    # held round (r12 audit37 reference 1): the typed note's row in Reference and Pages & links (a folder file or a kept
+    # document, one selection path) carries the selection's target, `at` with it, so the round's made-set refuses only the
+    # same occurrence and a note on the second one, saved while the round is out, posts
+    assert "key: 'rnn:' + tr.a, tgt: tr.tgt || undefined" in REF and "tgt: S.tgt, text: e.target.value" in LINKS
+    assert "ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line" in LINKS
+    assert "mark({anchor_id: nn[m[1]](m[2]), text: x.say, target: x.tgt})" in Q
+    assert "CARRY.made.has(made(body))" in Q
+    node(tmp_path, made + r"""
+const going = new Set([made({anchor_id: 'doc:f.md~3', text: 'n', target: {schema: 1, tag: 'p', quote: 'same', at: 7}})]);
+if (!going.has(made({anchor_id: 'doc:f.md~3', text: 'n', target: {schema: 1, tag: 'p', quote: 'same', at: 7}}))) throw new Error('the same spot');
+if (going.has(made({anchor_id: 'doc:f.md~3', text: 'n', target: {schema: 1, tag: 'p', quote: 'same', at: 49}}))) throw new Error('second occurrence refused');
+""")
+
+
+def test_move_label_follows_the_current_anchor(tmp_path):
+    """r12 audit37 reference 2: a Move, its Undo and a failed round after: Send's row names the note's new line in Pages & links."""
+    from test_fix43_send import LINKS
+    from test_fix13_send import REF
+    fn = grab(LINKS, "  function repin(c, l, id, v) {", "\n  }")
+    node(tmp_path, r"""
+const store = {'draft:lnotes': [{id: 'n1', a: 'doc:f.md~3', l: 'f.md', line: 'Paragraph after 2.'}]};
+const c = {prefs: {get: (k, d) => k in store ? store[k] : d, set: (k, v) => { store[k] = v; }}};
+const drawn = {id: 'n1', a: 'doc:f.md~3', line: 'Paragraph after 2.'}, mine = [];
+let LD = {notes: [{id: 'n1', a: 'doc:f.md~3', line: 'Paragraph after 2.'}]};  // a fresher read than the drawn view's: Send's
+""" + fn + r"""
+repin(c, [drawn, ...mine], 'n1', {a: 'doc:f.md~5', l: 'f.md', target: undefined, line: ''});
+for (const x of [drawn, LD.notes[0], store['draft:lnotes'][0]]) if (x.a !== 'doc:f.md~5' || x.line !== '') throw new Error('stale ' + JSON.stringify(x));
+repin(c, [drawn], 'n1', {a: 'doc:f.md~3', l: 'f.md', target: null, line: ''});  // Undo puts it back, on every copy too
+if (LD.notes[0].a !== 'doc:f.md~3' || store['draft:lnotes'][0].a !== 'doc:f.md~3') throw new Error('undo');
+""")
+    # the row's line is read from its anchor when the line is cleared; Move and its Undo go through the same apply
+    assert "repin(ctx, [n, ...D.notes, ...mine], n.id, {a: p.anchor_id, l: p.anchor_label, target: p.target, line: ''})" in LINKS
+    assert "if (n.line || !LD) return n.line || '';" in LINKS and "undo: () => put(from, false)" in Q
+    # Reference and History keep one copy per feed and set the label from the new anchor's own
+    assert "Object.assign(n, {a: p.anchor_id, l: p.anchor_label, target: p.target})" in REF
