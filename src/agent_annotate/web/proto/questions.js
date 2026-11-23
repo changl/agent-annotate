@@ -45,9 +45,21 @@
   const NK = P.notes = {
     // a text range's spot is its occurrence too: where the selected words start in the line's text, so the same words twice in
     // one paragraph are two spots (dedup, highlight, Go to it) in every reader (r12 audit37 running 1, questions 2)
-    at: el => { const s = getSelection(); if (!s || !s.rangeCount || !el.contains(s.anchorNode)) return undefined;
-      const r0 = s.getRangeAt(0), r = document.createRange(); r.setStart(el, 0); r.setEnd(r0.startContainer, r0.startOffset);
-      const lead = String(s).length - String(s).trimStart().length; return r.toString().length + lead; },
+    // textAt and pointAt: distinct names, since a second key of the same name replaces the first (r12 audit38 running 1)
+    // counted over the line's own words: a marker button's number, which comes and goes with its notes, is left out
+    texts(el) { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), o = [];
+      for (let n; (n = w.nextNode());) if (!n.parentElement.closest('button, textarea, .l-notes, .qnote')) o.push(n); return o; },
+    textAt: el => { const s = getSelection(); if (!s || !s.rangeCount || !el.contains(s.anchorNode)) return undefined;
+      const r0 = s.getRangeAt(0); let pos = 0;
+      for (const n of NK.texts(el)) { if (n === r0.startContainer) { pos += r0.startOffset; break; } if (r0.comparePoint(n, 0) >= 0) break; pos += n.nodeValue.length; }
+      return pos + String(s).length - String(s).trimStart().length; },
+    // the saved quote's highlight in every reader: the occurrence at its `at`, or the first for an older note without one (r12 audit38 running 2)
+    mark(el, quote, at) { let best = null, pos = 0;
+      for (const n of NK.texts(el)) { for (let i = n.nodeValue.indexOf(quote); i >= 0; i = n.nodeValue.indexOf(quote, i + 1)) {
+        const d = at == null ? pos + i : Math.abs(pos + i - at); if (!best || d < best[2]) best = [n, i, d]; } pos += n.nodeValue.length; }
+      if (!best) return;
+      const r = document.createRange(); r.setStart(best[0], best[1]); r.setEnd(best[0], best[1] + quote.length);
+      r.surroundContents(document.createElement('mark')); },
     resolved: n => ['resolved_in_version', 'addressed_by_agent', 'user_confirmed'].includes(stOf(n)),
     // the one draft store for every tab's Re-open: id → the note's record (status, spot, words, tab), so Send lists it
     // from the record alone, before any tab's feed answers (r12 audit16 frame 1)
@@ -234,7 +246,7 @@
     pins: (ns, open, tgt) => ns.filter(n => n.target && n.target.offset && !n.closed).map((n, i) => `<button class="qpin pinm${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${n.target.offset.dx * 100}%;top:${n.target.offset.dy * 100}%" aria-expanded="${open === n.id}" title="The notes at this point" aria-label="Note at spot ${i + 1}: the notes at this point">${i + 1}</button>`).join('')
       + (tgt && tgt.offset ? `<span class="qpin pinm new" style="left:${tgt.offset.dx * 100}%;top:${tgt.offset.dy * 100}%">+</span>` : ''),
     // where a tap fell on a picture, as a point note's target
-    at: (e, im) => { const r = im.getBoundingClientRect(); return {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; },
+    pointAt: (e, im) => { const r = im.getBoundingClientRect(); return {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; },
     // a saved, unsent note: Edit opens its words in place, Remove takes it back, as today's release (r12 audit18 reference 4)
     // and Move and Close too, as today's menu (r12 audit19 questions 6, reference 7): the one list above
     draftActs: (n, moving) => NK.acts(P.ctx, n, moving),
@@ -346,7 +358,9 @@
     const box = t.matches && t.matches('[data-nedtext],#h-et') && t.closest('[data-nedbox],[data-cnote]');
     if (box) { const eid = box.dataset.nedbox || box.dataset.cnote, n = NK.eds.get(eid), o = NK.ty()['edit:' + eid];
       // a late edit (NK.late) keeps its row and the posted words, whatever copy of the note the editor was drawn from
-      NK.tySet('edit:' + eid, o && o.sent ? {...o, text: t.value} : {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: n ? n.text : '', sent: !!(n && n.sent)}); } }, true);
+      // its base: the words this visit last wrote (put1) before the editor's copy, which a stale read can hold (r12 audit38 frame 4)
+      const L = NK.loc()[eid], base = L && L.text != null ? L.text : n ? n.text : '';
+      NK.tySet('edit:' + eid, o && o.sent ? {...o, text: t.value} : {...(n ? NK.rec(n) : {}), id: eid, text: t.value, was: base, sent: !!(n && n.sent) || !!L}); } }, true);
   // The one gate for a control that clears a draft (an editor's Cancel, Undo beside a row): the control names its Send row in
   // data-going, and past the round check a row the round carries is not taken back; the editor and its draft stay, before any
   // tab's own handler runs. Toast Undos and re-taps call P.going themselves (r12 audit34 running 1, frame 1-5)
@@ -730,7 +744,7 @@
       if (t.tag === 'img' && t.offset) {
         const img = noteImg(el, t);
         if (img) pinOn(img, i + 1, t.offset, n);
-      } else if (t.quote) markQuote(el, t.quote, t.at);
+      } else if (t.quote) NK.mark(el, t.quote, t.at);
       const after = el.tagName === 'TR' ? el.closest('table').closest('.wrap') || el.closest('table') : el;
       after.insertAdjacentHTML(el.tagName === 'SECTION' ? 'beforeend' : 'afterend', noteBox(n, i + 1));
     });
@@ -757,19 +771,6 @@
   }
   // a numbered pin is a control: it lists the notes at its point, with + Comment for another (catalog 25)
   const pinB = (n, no, off) => `<button class="qpin${NK.sent([n]) ? ' sent' : ''}" data-pin="${esc(n.id)}" style="left:${off.dx * 100}%;top:${off.dy * 100}%" title="The notes at this point" aria-label="Note ${no}: the notes at this point" aria-expanded="${S.pin === n.id}">${no}</button>`;
-  // the occurrence the note was written on (target.at, where it starts in the line's text); an older note without it, the first
-  function markQuote(el, quote, at) {
-    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let best = null, pos = 0;
-    for (let n; (n = w.nextNode()); pos += n.nodeValue.length)
-      for (let i = n.nodeValue.indexOf(quote); i >= 0; i = n.nodeValue.indexOf(quote, i + 1)) {
-        const d = at == null ? pos + i : Math.abs(pos + i - at);
-        if (!best || d < best[2]) best = [n, i, d];
-      }
-    if (!best) return;
-    const r = document.createRange(); r.setStart(best[0], best[1]); r.setEnd(best[0], best[1] + quote.length);
-    r.surroundContents(document.createElement('mark'));
-  }
   const mk = (no, sent) => `<span class="qmk${sent ? ' sent' : ''}" title="Your note ${no}${sent ? ', sent' : ''}">${ic('note')}${no}</span>`;
   // a marker in the document is a control: it lists every note on its spot, with + Comment for another (catalog 25)
   const mkb = (no, n) => `<button class="qmk qmkb${n.sent || n.closed ? ' sent' : ''}" data-spot="${esc(n.anchor)}" aria-expanded="${S.spot === n.anchor}" title="Every note on this spot" aria-label="Note ${no}: every note on this spot">${ic('note')}${no}</button>`;
@@ -967,7 +968,7 @@
         Object.entries({role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full-size picture'}).forEach(([k, x]) => v.setAttribute(k, x));
         v.onclick = e => { const b = e.target.closest('button'), x = M._v, im = !b && e.target.closest('.pic img');
           if (b && b.dataset.mz) M.view(x.src, x.cap, +b.dataset.mz, x.from, x.k, x.nk); else if (b && b.hasAttribute('data-mclose')) M.closeView();
-          else if (x && x.nk && im) x.nk.tap(NK.at(e, im)); else if (x && x.nk && b) x.nk.click(e); };
+          else if (x && x.nk && im) x.nk.tap(NK.pointAt(e, im)); else if (x && x.nk && b) x.nk.click(e); };
         v.oninput = e => { const x = M._v; if (x && x.nk && x.nk.input) x.nk.input(e); };
         // ⌘↵ in the viewer's composer saves, as on the page
         v.addEventListener('keydown', e => { if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || !e.target.matches('textarea')) return;
@@ -1839,7 +1840,7 @@
     const label = cut((img && picName(img)) || (anchorEl.matches('figure.qdgm') ? `Picture ${anchorEl.dataset.pic} · Diagram` : (hd || anchorEl).textContent.replace(/\s*\d+\s+(questions? waiting|of \d+ decided).*$/i, '').trim()) || '', 60);
     let target;
     if (img) { const r = img.getBoundingClientRect(); target = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}, css: 'img:nth-of-type(1)', image: img.dataset.img || null, image_src: img.dataset.full || img.getAttribute('src'), pk: img.dataset.pk}; }
-    else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300), at: NK.at(anchorEl)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
+    else { const sel = String(getSelection() || '').trim(); target = sel && anchorEl.contains(getSelection().anchorNode) ? {schema: 1, tag: anchorEl.tagName.toLowerCase(), quote: sel.slice(0, 300), at: NK.textAt(anchorEl)} : {schema: 1, tag: anchorEl.tagName.toLowerCase()}; }
     if (S.move) return moveNote(S.move, {anchor: anchorEl.dataset.anchorId, label, target});
     return openNote({anchor: anchorEl.dataset.anchorId, label, target, inq: evb ? evb.closest('.qcard[data-q]').dataset.q : undefined});
   }

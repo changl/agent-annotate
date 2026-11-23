@@ -128,7 +128,7 @@
 
   function draw(w, ctx, D) {
     const {esc, icon} = ctx;
-    CUR = D;
+    CUR = D; D.notes.forEach(moved);
     const copyBtn = (key, name) => `<button class="ib" data-copylink="${esc(key)}" data-name="${esc(name)}" title="Copy link to ${esc(name)}" aria-label="Copy link to ${esc(name)}">${icon(S.copied === key ? 'copied' : 'link')}</button>`;
     const pageRow = (name, sub, key, open) => `<div class="l-line">${icon('doc')}<span class="l-grow">${open}<span class="small mut l-sub">${sub}</span></span>${copyBtn(key, name)}</div>`;
     // each page says why it is its own page, so he can choose between them (#81); counts follow
@@ -151,6 +151,9 @@
           : `<div class="l-line">${icon('ext')}<span class="l-grow">${esc(l.name)}<span class="small mut l-sub">${esc(l.what)}</span></span></div>`).join('')}
         ${D.folders.length || D.links.length ? '' : '<p class="small mut">Repos, folders and links: none recorded for this project yet.</p>'}</section>
       ${docsHtml(ctx, D, copyBtn)}</div>`;
+    // each saved quote's words marked in its line, kept document or folder file, as Questions does (r12 audit38 running 2)
+    for (const n of [...D.notes, ...mine.filter(x => !D.notes.some(y => y.id === x.id))]) { const t = n.target || {}, m = !n.closed && t.quote && lineKey(n.a),
+      le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`); if (le) P.notes.mark(le, t.quote, t.at); }
     const host = w.querySelector('[data-view]');
     if (host) {
       const a = D.archived.find(x => x.id === S.view);
@@ -271,14 +274,14 @@
     const b = e.target.closest('button');
     // a tap on a picture inline: a point note on that picture, by its own key, as in Reference
     const im = !b && e.target.closest('.l-doc figure img'), pk = im && ((im.closest('figure').querySelector('[data-nk]') || {}).dataset || {}).nk;
-    if (pk && (im.closest('[data-line]'))) { const tgt = P.notes.at(e, im);
+    if (pk && (im.closest('[data-line]'))) { const tgt = P.notes.pointAt(e, im);
       if (S.move) return moveTo(w, ctx, D, pk, im, tgt);
       S.tgt = tgt; S.spot = S.pin = ''; S.note = pk; draw(w, ctx, D);
       const t = w.querySelector('#l-nt'); if (t) t.focus(); return; }
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
     if (ln) {  // a line of an open Markdown file takes a note; words selected in it become the note's target
       const sel = getSelection(), q = sel && !sel.isCollapsed ? String(sel).trim() : '';
-      const tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300), at: P.notes.at(ln)} : null, k = ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line;
+      const tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300), at: P.notes.textAt(ln)} : null, k = ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line;
       if (S.move) return moveTo(w, ctx, D, k, ln, tgt);  // Move: this line is its new place, as in Reference (r12 audit16 frame 3)
       S.tgt = tgt; S.spot = '';
       S.note = k; draw(w, ctx, D);
@@ -360,7 +363,10 @@
   }
   // a Move (or its Undo) lands on every copy of the note: the drawn feed's, a fresher read's (Send's), this visit's and the
   // saved rows, so Send names its line from its current anchor, a failed round after too (r12 audit37 reference 2)
-  function repin(c, l, id, v) {
+  // MOVED: this visit's last Move of each note, laid over any feed copy read later, since a read begun before the Move's write
+  // can land after it with the old anchor (r12 audit38 frame 2, questions)
+  // shortcut: another client's later Move of the same note loses to this visit's until a reload; fine for one reviewer
+  function repin(c, l, id, v) { MOVED[id] = v;
     for (const x of [...l, ...(LD && LD.notes || [])]) if (x.id === id) Object.assign(x, v);
     const s = c.prefs.get('draft:lnotes', []); if (s.some(x => x.id === id)) c.prefs.set('draft:lnotes', s.map(x => x.id === id ? {...x, ...v} : x));
   }
@@ -419,6 +425,7 @@
   }
 
   // notes on kept documents go with the one Send, under Notes; Go to it opens that document (r12 fix6, running 4)
+  const MOVED = {}, moved = n => { if (MOVED[n.id]) Object.assign(n, MOVED[n.id]); return n; };
   let ON = null, LD = null;  // the Pages & links view on screen, to redraw it when Send takes a note back; LD: its feed
   const redo = () => { if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); };
   // Go to it opens the note's document and lands on the note, outlined, as the mock does (r12 fix8, running 3)
@@ -448,7 +455,7 @@
     if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
     // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
     const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
-    const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
+    const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].map(moved).filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
     if (LD) { const s = l.map(n => ({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line, ...P.notes.state(n)})); if (JSON.stringify(s) !== JSON.stringify(c.prefs.get('draft:lnotes', []))) c.prefs.set('draft:lnotes', s); }
     return l;
   };

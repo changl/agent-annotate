@@ -115,23 +115,21 @@ def test_same_words_twice_in_a_line_are_two_spots(tmp_path):
     # every reader's text-range target carries where the words start (2.32.8's selected_quote alone could not tell them apart)
     from test_fix43_send import LINKS
     from test_fix13_send import REF
-    assert "quote: sel.slice(0, 300), at: NK.at(anchorEl)}" in Q and "quote: q.slice(0, 300), at: NK().at(b)}" in REF
-    assert "quote: q.slice(0, 300), at: P.notes.at(ln)}" in LINKS
-    made, mq = grab(Q, "const made = b => ", ";"), grab(Q, "  function markQuote(el, quote, at) {", "\n  }")
+    assert "quote: sel.slice(0, 300), at: NK.textAt(anchorEl)}" in Q and "quote: q.slice(0, 300), at: NK().textAt(b)}" in REF
+    assert "quote: q.slice(0, 300), at: P.notes.textAt(ln)}" in LINKS
+    made, mq = grab(Q, "const made = b => ", ";"), grab(Q, "    mark(el, quote, at) {", "\n      r.surroundContents(document.createElement('mark')); },")
     node(tmp_path, made + r"""
 const a = made({anchor_id: 'p', text: 'same', target: {quote: 'a', at: 26}}), b = made({anchor_id: 'p', text: 'same', target: {quote: 'a', at: 40}});
 if (a === b) throw new Error('two occurrences are two spots');
 const nodes = [{nodeValue: 'with a picture'}, {nodeValue: ' and a line'}];
 let got;
-global.NodeFilter = {SHOW_TEXT: 4};
-global.document = {createTreeWalker: () => { let i = 0; return {nextNode: () => nodes[i++] || null}; },
-  createRange: () => ({setStart: (n, i) => { got = [n, i]; }, setEnd() {}, surroundContents() {}}), createElement: () => ({})};
-""" + mq + r"""
-markQuote({}, 'a', 19); if (got[0] !== nodes[1] || got[1] !== 5) throw new Error('second occurrence: ' + JSON.stringify(got));
-markQuote({}, 'a', 5); if (got[0] !== nodes[0] || got[1] !== 5) throw new Error('first occurrence');
-markQuote({}, 'a'); if (got[0] !== nodes[0]) throw new Error('an older note without at: the first');
+global.document = {createRange: () => ({setStart: (n, i) => { got = [n, i]; }, setEnd() {}, surroundContents() {}}), createElement: () => ({})};
+const NK = {texts: () => nodes, """ + mq + r"""};
+NK.mark({}, 'a', 19); if (got[0] !== nodes[1] || got[1] !== 5) throw new Error('second occurrence: ' + JSON.stringify(got));
+NK.mark({}, 'a', 5); if (got[0] !== nodes[0] || got[1] !== 5) throw new Error('first occurrence');
+NK.mark({}, 'a'); if (got[0] !== nodes[0]) throw new Error('an older note without at: the first');
 """)
-    assert "markQuote(el, t.quote, t.at)" in Q
+    assert "NK.mark(el, t.quote, t.at)" in Q
     # held round (r12 audit37 reference 1): the typed note's row in Reference and Pages & links (a folder file or a kept
     # document, one selection path) carries the selection's target, `at` with it, so the round's made-set refuses only the
     # same occurrence and a note on the second one, saved while the round is out, posts
@@ -150,7 +148,7 @@ def test_move_label_follows_the_current_anchor(tmp_path):
     """r12 audit37 reference 2: a Move, its Undo and a failed round after: Send's row names the note's new line in Pages & links."""
     from test_fix43_send import LINKS
     from test_fix13_send import REF
-    fn = grab(LINKS, "  function repin(c, l, id, v) {", "\n  }")
+    fn = grab(LINKS, "  function repin(c, l, id, v) {", "\n  }") + "\n" + grab(LINKS, "  const MOVED = {}", "return n; };")
     node(tmp_path, r"""
 const store = {'draft:lnotes': [{id: 'n1', a: 'doc:f.md~3', l: 'f.md', line: 'Paragraph after 2.'}]};
 const c = {prefs: {get: (k, d) => k in store ? store[k] : d, set: (k, v) => { store[k] = v; }}};
@@ -161,7 +159,12 @@ repin(c, [drawn, ...mine], 'n1', {a: 'doc:f.md~5', l: 'f.md', target: undefined,
 for (const x of [drawn, LD.notes[0], store['draft:lnotes'][0]]) if (x.a !== 'doc:f.md~5' || x.line !== '') throw new Error('stale ' + JSON.stringify(x));
 repin(c, [drawn], 'n1', {a: 'doc:f.md~3', l: 'f.md', target: null, line: ''});  // Undo puts it back, on every copy too
 if (LD.notes[0].a !== 'doc:f.md~3' || store['draft:lnotes'][0].a !== 'doc:f.md~3') throw new Error('undo');
+// a read begun before the Move's write lands after it with the old anchor: the visit's Move is laid over it (r12 audit38 frame 2)
+repin(c, [drawn], 'n1', {a: 'doc:f.md~5', l: 'f.md', target: undefined, line: ''});
+LD = {notes: [{id: 'n1', a: 'doc:f.md~3', line: 'Paragraph after 2.'}]};
+const late = moved(LD.notes[0]); if (late.a !== 'doc:f.md~5' || late.line !== '') throw new Error('late read ' + JSON.stringify(late));
 """)
+    assert "].map(moved).filter(n => P.notes.out(n)" in LINKS and "CUR = D; D.notes.forEach(moved);" in LINKS
     # the row's line is read from its anchor when the line is cleared; Move and its Undo go through the same apply
     assert "repin(ctx, [n, ...D.notes, ...mine], n.id, {a: p.anchor_id, l: p.anchor_label, target: p.target, line: ''})" in LINKS
     assert "if (n.line || !LD) return n.line || '';" in LINKS and "undo: () => put(from, false)" in Q

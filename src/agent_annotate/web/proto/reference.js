@@ -468,6 +468,8 @@
     const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
     const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
     el.innerHTML = `<div class="rf">${list()}${viewer()}${zoomView()}</div>`;
+    // each saved quote's words marked in its line, as Questions does (r12 audit38 running 2)
+    for (const n of allNotes()) { const t = n.target || {}, le = !n.closed && t.quote && el.querySelector(`[data-line="${CSS.escape(n.a)}"]`); if (le) NK().mark(le, t.quote, t.at); }
     const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
     if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
@@ -503,7 +505,7 @@
     if (b.matches('[data-line]')) {  // a spot on a picture, the selected words, or else the whole line
       const im = e.target.closest('img'), sel = getSelection(), q = String(sel || '').replace(/\s+/g, ' ').trim();
       if (im) { const r = im.getBoundingClientRect(); S.tgt = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; }
-      else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300), at: NK().at(b)} : null;  // at: which occurrence (r12 audit37)
+      else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300), at: NK().textAt(b)} : null;  // at: which occurrence (r12 audit37)
       if (S.move) return moveNote(S.move, d.line, b.dataset.label || '', S.tgt);  // Move: this line is its new place
       S.note = d.line; draw(); return;
     }
