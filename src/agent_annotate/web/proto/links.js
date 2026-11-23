@@ -375,7 +375,7 @@
     const d = (D.kept || []).find(x => k.startsWith(`doc:kept-${x.id}`)), i = k.split('~')[1], file = el.closest('[data-docname]');
     const bar = d && d.chart && /^\d+$/.test(i || '') ? ', ' + d.chart.pts[+i][0] : '';  // ~<n> is a chart bar; ~p~<n> a line of text
     const m = lineKey(k), le = m && w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`);
-    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : S.full && S.full.name ? S.full.name : 'Pages & links', line: le ? (le.cells ? [...le.cells].map(c => c.textContent).join(' ') : le.textContent).trim().replace(/\s+/g, ' ') : ''};
+    return {l: d ? `${d.t}${bar}` : file ? file.dataset.docname : S.full && S.full.name ? S.full.name : 'Pages & links', line: le ? P.notes.lineWords(le) : ''};
   }
   // Remove, as Send's Remove: the stored record stays until Undo is gone, so Undo puts back the very note
   function undoNote(id, w, ctx, D) {

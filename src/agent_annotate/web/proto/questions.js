@@ -48,7 +48,9 @@
     // textAt and pointAt: distinct names, since a second key of the same name replaces the first (r12 audit38 running 1)
     // counted over the line's own words: a marker button's number, which comes and goes with its notes, is left out
     texts(el) { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), o = [];
-      for (let n; (n = w.nextNode());) if (!n.parentElement.closest('button, textarea, .l-notes, .qnote')) o.push(n); return o; },
+      for (let n; (n = w.nextNode());) if (!n.parentElement.closest('button, textarea, .l-notes, .qnote, .aa-full')) o.push(n); return o; },
+    // a line's own words for a label: no marker numbers, zoom buttons or Full size link (r12 audit38 reference 6)
+    lineWords: el => NK.texts(el).map(n => n.nodeValue).join(' ').trim().replace(/\s+/g, ' '),
     textAt: el => { const s = getSelection(); if (!s || !s.rangeCount || !el.contains(s.anchorNode)) return undefined;
       const r0 = s.getRangeAt(0); let pos = 0;
       for (const n of NK.texts(el)) { if (n === r0.startContainer) { pos += r0.startOffset; break; } if (r0.comparePoint(n, 0) >= 0) break; pos += n.nodeValue.length; }
@@ -649,7 +651,8 @@
       return `<div class="${cls} folded qline" id="q-${q.id}" data-q="${q.id}"><div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="false" title="Open the whole card here, with its evidence">${numChip(q)}<span class="qt">${esc(q.prompt)}</span><span class="small mut qsect hide-ph">${esc(cut(secTitle(q), 40))}</span></button>${marks}<span class="qright">${right}</span></div></div>`;
     }
     const done = isDone(q), rp = d.replyOpen || (d.reply || '').trim();
-    const acts = `${done ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${done ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
+    // no Later while a reply of his waits in the store for Send: the store refuses it (409) (r12 audit38 reference 4)
+    const acts = `${done || pendR(q).length ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${done ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
     // Cards only: every open card folds to its line by its chevron, a waiting one too (the mock's qline, audit8 #03)
     const title = (done || S.view === 'list') && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="${S.view === 'list' ? 'Fold this card back to its line' : 'Fold this card'}">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
     const head = `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;

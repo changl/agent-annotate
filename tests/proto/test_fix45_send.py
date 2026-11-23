@@ -29,3 +29,23 @@ def test_every_text_reader_marks_a_saved_quote():
     assert "NK.mark(el, t.quote, t.at)" in Q
     assert "NK().mark(le, t.quote, t.at)" in REF
     assert "P.notes.mark(le, t.quote, t.at)" in LINKS
+
+
+def test_same_line_other_words_and_a_held_round_open_their_own_composer():
+    # questions: other selected words on the same line are another spot; past a held round's check the note it posts,
+    # untouched since, lets the next spot open; the next composer opens before the last one's save
+    assert "words = nt.quote && (nt.quote !== wt.quote || nt.at !== wt.at)" in Q
+    assert "CARRY.tw = tn.text.trim();" in Q
+    assert "return addNote(text, was);" in Q
+
+
+def test_a_line_label_leaves_out_picture_controls():
+    # reference 6: a table row's label has no zoom buttons or Full size link, as offsets have no marker numbers
+    assert "closest('button, textarea, .l-notes, .qnote, .aa-full')" in Q
+    assert "lineWords: el => NK.texts(el).map(n => n.nodeValue).join(' ')" in Q
+    assert "line: le ? P.notes.lineWords(le) : ''" in LINKS
+
+
+def test_no_later_while_a_reply_waits_for_send():
+    # reference 4: the store refuses Later (409) on a card with a stored reply not yet sent
+    assert "const acts = `${done || pendR(q).length ? '' : ibw('later'," in Q
