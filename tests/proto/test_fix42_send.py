@@ -12,14 +12,14 @@ def test_a_landed_write_stays_in_send_after_reload():
     assert '"round_pending", "via"' in PY
     # a pending decision with no draft is its own Send row, answer or card reply
     assert "q.decision.round_pending && q.decision.mine !== false" in Q
-    assert Q.count("'qp:' + q.id, '', false, q.id]") == 2
+    assert "'qp:' + q.id, '', false, q.id]" in Q and "'qr:' + q.id, '', false, q.id]" in Q
     # a Close archived by a failed round stays a row and goes again without a second archive
     assert "if (q.closed) { if (d.close)" in Q
     assert "(q.closed && !!draft(q.id).close)" in Q
     assert "for (const q of closes) if (!q.closed)" in Q
     # its draft clears only once the round lands
     assert Q.count("for (const q of closes) setDraft(q.id, {close: null});") == 1
-    assert "listed.keys.has('qp:' + q.id)) q.decision.round_pending = false" in Q
+    assert "listed.keys.has('qp:' + q.id)) { q.decision.round_pending = false" in Q
 
 
 def test_b_refusal_leaves_the_screen_as_it_was():

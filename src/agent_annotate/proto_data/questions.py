@@ -57,6 +57,19 @@ def was_sent(c: dict) -> bool:
     return bool(c.get("flagged_for_session") or c.get("delivery_id") or c.get("flagged_at"))
 
 
+def _reply_unsent(c: dict, r: dict) -> bool:
+    """His reply not yet delivered: the server's _note_unsent (sent_at, else after the last Send)."""
+    if not _mine(r.get("author")):
+        return False
+    if "sent_at" in r:
+        return not r["sent_at"]
+    stamp = lambda v: datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() if v else 0.0
+    try:
+        return stamp(r.get("ts")) > stamp(c.get("flagged_at"))
+    except ValueError:
+        return False
+
+
 def note_thread(c: dict) -> dict:
     """A note's fields for today's Edit, Post reply and Resolve (shell.js canEditComment, showReply, cardMenuItems):
     edited after its last Send (it goes with the next one, as _comment_needs_push counts edited_at), the agent's
@@ -68,15 +81,7 @@ def note_thread(c: dict) -> dict:
     except ValueError:
         edited = False
 
-    def unsent(r: dict) -> bool:  # his reply not yet delivered: the server's _note_unsent (sent_at, else after the last Send)
-        if not _mine(r.get("author")):
-            return False
-        if "sent_at" in r:
-            return not r["sent_at"]
-        try:
-            return stamp(r.get("ts")) > stamp(c.get("flagged_at"))
-        except ValueError:
-            return False
+    unsent = lambda r: _reply_unsent(c, r)
     # by: who wrote it (author_key); ag: the agent did, so the reply box shows from the start (showReply's agentResponded);
     # flagged and rp: today's canDeleteComment, which an edit re-opens by clearing flagged_for_session
     # ed.by and each reply's by: who made the edit (any PUT: words, Re-open, Move) and who wrote the reply, since the
@@ -308,7 +313,7 @@ def build(page_dir: Path) -> dict:
         named = BEAD.findall(text)
         ids.update(named)
         replies = [{"you": _mine(r.get("author")), "text": _mask(r.get("text", "")), "ts": r.get("ts"),
-                    "sent": bool(r.get("sent_at")) or not _mine(r.get("author"))} for r in c.get("replies") or []]
+                    "sent": not _reply_unsent(c, r)} for r in c.get("replies") or [] if isinstance(r, dict)]
         sent = f["sent"]
         seen, earlier = set(), []
         w = _words(dr.get("prompt"))

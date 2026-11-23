@@ -562,6 +562,7 @@
     if (w) return `<span class="saved">${ic('tick')} Answered in words · goes with Send</span><button class="lk small" data-undo="${q.id}">Undo</button>`;
     if (isClosing(q)) return `<span class="saved">${ic('archive')} Closed: no answer needed · goes with Send</span><button class="lk small" data-unclose="${q.id}">Undo</button>`;
     if (q.closed) return `<span class="saved">${ic('archive')} Closed: no answer needed</span><button class="lk small" data-reopen="${q.id}">Undo</button>`;
+    const pd = pendA(q); if (pd) return `<span class="saved">${ic('tick')} ${pendW(q, pd)} · goes with Send</span>`;  // in the store, no draft to undo
     // a sent answer shows what he picked, with Change for a new pick; the old one stays under Decided before (catalog 52)
     if (q.sent) { const dc = q.decision || {}, was = (dc.option_id && optLabel(q, dc.option_id)) || (dc.text || '').split('\n')[0];
       return `<span class="saved">${ic('send')} Sent${was ? ': ' + esc(cut(was, 40)) : ''} · ${esc(fmt(dc.ts))}</span>${q.read ? `<span class="qread">${ic('eye')} read by the agent</span>` : '<span class="small mut">not read yet</span>'}<button class="lk small" data-change="${q.id}" title="Pick again: the new answer goes with your next Send; this one stays under Decided before">Change</button>`; }
@@ -1094,6 +1095,13 @@
     const g = gen();
     return `<div class="qgen" role="dialog" aria-label="General feedback"><b>General feedback</b><textarea class="qwords" data-general placeholder="Not tied to one spot; goes first in your next Send">${esc(g)}</textarea><p class="hint">Saved as you type.</p><div class="acts"><button class="btn sm pri" data-genclose>Done</button>${g.trim() ? '<button class="lk small" data-ungen>Remove</button>' : ''}</div></div>`;
   }
+  // The one path for a write a failed round left in the store undelivered: his answer pending there (decision.round_pending) and
+  // his card replies not yet sent (sent_at none; an Ask to file a task is one). Each is his row until a round delivers it, on any
+  // reload and from every reader's Send, and the card says so; a draft typed since is the answer row instead (r12 audit36 frame 4, questions 4)
+  const SYS = /^(☑ Selected|💬 Answer in words|↻|✓|✗|↺)/;  // the decision's own thread line, not a reply
+  const pendA = q => !q.pre && !q.sent && !q.closed && q.decision && q.decision.round_pending && q.decision.mine !== false && q.decision.via !== 'reply' ? q.decision : null;
+  const pendR = q => q.pre || q.closed ? [] : (q.replies || []).filter(r => r.you && !r.sent && !SYS.test(r.text || ''));
+  const pendW = (q, pd) => { const o = pd.option_id && optLabel(q, pd.option_id); return o ? `<b>${esc(o)}</b>` : `in words: “${esc(cut(String(pd.text || ''), 120))}”`; };
   // every item of the next Send: [group, html, go-to target, remove key] (the mock's sendItems)
   function sendItems() {
     const it = [], qs = D ? D.questions : savedQs();
@@ -1105,10 +1113,9 @@
       if (q.closed) { if (d.close) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]); continue; }
       // an answer or card reply a failed round wrote: the store holds it pending, so it is his row until a round delivers it,
       // on any reload; a draft typed since is the row instead (r12 audit36 frame 4, questions 4)
-      const pd = !q.pre && !q.sent && q.decision && q.decision.round_pending && q.decision.mine !== false && !d.pick && !w && !hasReply(q) && !d.close ? q.decision : null;
-      if (pd) { const t = String(pd.text || ''), o = pd.option_id && optLabel(q, pd.option_id);
-        it.push(pd.via === 'reply' ? ['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(t, 120))}”`, 'qp:' + q.id, '', false, q.id]
-          : ['Answers', o ? `${qn(q)} → <b>${esc(o)}</b>` : `${qn(q)} → in words: “${esc(cut(t, 120))}”`, 'qp:' + q.id, '', false, q.id]); }
+      const pd = !d.pick && !w && !d.close && pendA(q), pr = pendR(q);
+      if (pd) it.push(['Answers', `${qn(q)} → ${pendW(q, pd)}`, 'qp:' + q.id, '', false, q.id]);
+      if (pr.length) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(pr.map(r => r.text).join(' · '), 120))}”`, 'qr:' + q.id, '', false, q.id]);
       if (d.pick) it.push(['Answers', `${qn(q)} → <b>${esc(q.pre ? d.pl || 'your choice' : optLabel(q, d.pick))}</b>${w ? ` + “${esc(cut(w, 80))}”` : ''}`, 'q:' + q.id, 'ans:' + q.id]);
       else if (w) it.push(['Answers', `${qn(q)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
       if (isClosing(q)) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]);
@@ -1135,7 +1142,8 @@
   // then the relist shows what the store holds (r12 audit34 reference 3)
   P.inflight = id => [...WRITING.values()].some(p => p === 'api/comments/' + encodeURIComponent(id) || p.startsWith('api/comments/' + encodeURIComponent(id) + '/'));
   let ROUND = null, CARRY = null, GOING = null, WROTEQ = new Set();  // WROTEQ: cards whose answer this round wrote (pending in the store)
-  const made = b => `${b.anchor_id}|${String(b.text || '').trim()}`;  // a new note the round posts, by spot and words (CARRY.made: per round)
+  // the full spot: a picture point's offset, a text range or a paragraph's target, not the picture or block alone (r12 audit36 reference)
+  const made = b => `${b.anchor_id}|${JSON.stringify(b.target || null)}|${String(b.text || '').trim()}`;  // a new note the round posts, by spot and words (CARRY.made: per round)
   // a take-back (Approval taken back, Text restored, Reopen taken back, a status or pick undone) of a row the round carries
   // past its check is refused like Remove: draft and control stay as the round delivers them; after the round it is a normal change (r12 fix38)
   // key: a Send row's key, a note id the round carries, or true (any take-back while the round is held: a toast Undo naming no row)
@@ -1359,7 +1367,7 @@
   }
   // the new note the held round is posting: Save, ⌘↵ or another spot's click is refused with the composer left as typed, so
   // words typed since become its Edit after the round, never a second note (r12 audit36 frame 1, questions 1)
-  const newRefused = n => !!CARRY && !!n && !n.edit && !n.fixOf && n.anchor === CARRY.tn && P.going('nn:');
+  const newRefused = n => !!CARRY && !!n && !n.edit && !n.fixOf && n.anchor === CARRY.tn && JSON.stringify(n.target || null) === CARRY.tt && P.going('nn:');
   async function addNote(text) {
     if (newRefused(S.note)) return;
     const n = S.note; S.note = null; ctx.prefs.set('q:newnote', null);
@@ -1453,6 +1461,7 @@
     // note write of this tab's the round does not make itself waits for the round (ROUND), so none can join it (r12 audit30 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove()); WROTEQ = new Set();
     let open; ROUND = new Promise(r => { open = r; });
+    const abW = [];  // [picture, pick, note id] this round posted: a failed round takes each note back (r12 audit36 questions 5)
     // the stop says what happened: a note came in, a write was still saving, or a read was held or failed (r12 audit30 questions 4)
     // a row he removed or changed himself during Undo says so; "a note came in" only when one did (r12 audit31 reference 4)
     const stop = async own => { const why = own ? `You ${own} an item while sending: check the list and press Send again` : stale || settled() ? 'A note came in while sending: check the list and press Send again' : waitMsg();
@@ -1481,8 +1490,8 @@
       // click on it is the same note, refused (r12 audit36 frame 1, questions 1)
       const nn = {lnn: a => a, rnn: a => a, hnn: v => 'chart:' + v};
       const mark = b => (CARRY.made = CARRY.made || new Set()).add(made(b));
-      if (tn && listed.keys.has('nn:')) { mark({anchor_id: tn.anchor, text: tn.text}); CARRY.tn = tn.anchor; }
-      for (const x of Q()) { const m = /^(lnn|rnn|hnn):(.*)$/.exec(x.key); if (m && x.save && listed.keys.has('x:' + x.key)) mark({anchor_id: nn[m[1]](m[2]), text: x.say}); }
+      if (tn && listed.keys.has('nn:')) { mark({anchor_id: tn.anchor, text: tn.text, target: tn.target}); CARRY.tn = tn.anchor; CARRY.tt = JSON.stringify(tn.target || null); }
+      for (const x of Q()) { const m = /^(lnn|rnn|hnn):(.*)$/.exec(x.key); if (m && x.save && listed.keys.has('x:' + x.key)) mark({anchor_id: nn[m[1]](m[2]), text: x.say, target: x.tgt}); }
       const ed0 = S.note || ctx.prefs.get('q:newnote', null), ed = ed0 && {...ed0};
       // a saved note open in its editor goes with its new words only when the sheet listed its row (r12 audit31 frame 2)
       const en = ed && ed.edit && listed.keys.has('n:' + ed.edit) && D.notes.find(x => x.id === ed.edit);
@@ -1515,10 +1524,12 @@
       for (const q of closes) if (!q.closed) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}, undefined, true); q.closed = true; }  // its draft clears once the round is in
       let tnLate = null;  // the posted note's id when its words changed while the round was out: they become its edit after the round
       if (tn) { const w = await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true); wroteFor('nn:', w);
-        if (curNote() === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } else if (w && w.id) tnLate = w.id; }
+        const e = S.note || ctx.prefs.get('q:newnote', null), here = !!e && !e.edit && e.anchor === tn.anchor && JSON.stringify(e.target || null) === JSON.stringify(tn.target || null);  // another spot's composer is another note
+        if (here && e.text === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } else if (here && w && w.id) tnLate = w.id; }
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT', true); if (curNote() === ed.text) { S.note = null; ctx.prefs.set('q:newnote', null); } }
       // a picked side has no endpoint of its own: it goes as a note on the picture, which this round carries
-      for (const [a, p] of abs) { wroteFor('ab:' + a, await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}, undefined, true));
+      for (const [a, p] of abs) { const w = await call('api/comments', {anchor_id: a, anchor_label: cut(p.cap, 60), text: p.side === 'current' ? 'Picked today\'s: keep it as it is' : 'Picked the proposed', version: D.version, target: {schema: 1, tag: 'figure'}}, undefined, true);
+        wroteFor('ab:' + a, w); if (w && w.id) abW.push([a, p, w.id]);
         // cleared only if it still picks the side that went: the other side picked after the check is the next Send's (r12 audit33 questions 1)
         if ((abPicks()[a] || {}).side === p.side) setAB(a, null); }
       // a re-opened note goes back to open now, so the round carries it to the agent again
@@ -1538,7 +1549,8 @@
       if ((gen().trim() || undefined) === fb) ctx.prefs.set('q:general', '');  // feedback typed after the countdown waits for the next Send
       // delivered now, not at its write: a Close's draft and a pending answer's row end here, never when the archive or POST landed (r12 audit36)
       for (const q of closes) setDraft(q.id, {close: null});
-      for (const q of D.questions) if (q.decision && q.decision.round_pending && listed.keys.has('qp:' + q.id)) q.decision.round_pending = false;
+      for (const q of D.questions) { if (q.decision && listed.keys.has('qp:' + q.id)) { q.decision.round_pending = false; q.sent = true; }
+        if (listed.keys.has('qr:' + q.id)) (q.replies || []).forEach(r => { if (r.you) r.sent = true; }); }
       const L1 = Object.entries(NK.loc()).filter(([id, v]) => JSON.stringify(v) !== L0[id]);  // an edit or reply changed after the check
       D.notes.forEach(n => { if (!L1.some(([id]) => id === n.id)) NK.gone(n); });  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
@@ -1560,6 +1572,10 @@
       try { await refresh(); } catch (x) { console.warn('refresh after Send', x); }
     } catch (e) {
       S.pending = null; ROUND = null; CARRY = null; open();
+      // a picked side is a draft, not a note: the note the round posted for it goes, and the pick is the draft again unless one
+      // made since replaced it; qFailed then drops a pick back at its delivered side, so nothing is left behind
+      for (const [a, p, id] of abW) { try { await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE'); } catch (x) { console.warn('pick note back', x); }
+        if (!abPicks()[a]) setAB(a, p); }
       if (typeof qFailed === 'function') qFailed();
       if (ctx.queueFailed) ctx.queueFailed();  // nothing was delivered: each base stays, and a draft back at it is no change (r12 audit35 running 7)
       await refresh();

@@ -476,12 +476,14 @@
         go: () => { S.kept = id; S.hl = ''; if (ON && ON.w.isConnected) draw(ON.w, ON.ctx, ON.D); else c.go('links', 'kept-' + id); },
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
     // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
-    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', say: d.text.trim(), html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
+    ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`,
       go: () => goTyped(c, d),
       // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
         mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
-        const now = typed(c); if (now && now.a === d.a && now.text === d.text) { if (S.note === d.a) S.note = ''; c.prefs.set('draft:lnote', null); }
+        // the same spot is the full target too: a second point on the same picture is another note, whose draft stays (r12 audit36 reference)
+        const now0 = typed(c), now = now0 && JSON.stringify(now0.tgt || null) === JSON.stringify(d.tgt || null) ? now0 : null;
+        if (now && now.a === d.a && now.text === d.text) { if (S.note === d.a) S.note = ''; c.prefs.set('draft:lnote', null); }
         else if (now && now.a === d.a) P.notes.late(r.id, d.text.trim(), now.text, {a: d.a, tab: 'links', on: (d.tgt && d.tgt.quote) || d.line || d.l || ''},
           () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; S.edit = r.id; S.edt = null; redo(); });
         return r; },

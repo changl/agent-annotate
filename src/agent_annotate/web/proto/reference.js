@@ -729,11 +729,13 @@
       // the note being typed, as the mock lists it beside General feedback: Send saves it as its own write before the round goes, and
       // the editor closes only once saved; one changed since stays (r12 audit31 reference 1), as Pages & links' typed note (audit30 questions 3)
       const tr = rnote();
-      if (tr) it.push({key: 'rnn:' + tr.a, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
+      if (tr) it.push({key: 'rnn:' + tr.a, tgt: tr.tgt || undefined, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
         go: () => { goRef(tr.item || itemOf(tr.a), '', tr.a)(); S.note = tr.a; S.tgt = tr.tgt || null; redo(); },
         save: async () => { const r = await c.api('api/comments', {anchor_id: tr.a, anchor_label: tr.l, text: tr.text.trim(), target: tr.tgt || undefined, ...(tr.m || {})}, undefined, true);
           mine.push({id: r.id, a: tr.a, l: tr.l, text: r.text || tr.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || tr.tgt || undefined});
-          const now = rnote(); if (now && now.a === tr.a && now.text === tr.text) { if (S.note === tr.a) { S.note = ''; S.tgt = null; } ctx.prefs.set('draft:rnote', null); }
+          // the same spot is the full target too: a second point on the same picture is another note, whose draft stays (r12 audit36 reference)
+          const now0 = rnote(), now = now0 && JSON.stringify(now0.tgt || null) === JSON.stringify(tr.tgt || null) ? now0 : null;
+          if (now && now.a === tr.a && now.text === tr.text) { if (S.note === tr.a) { S.note = ''; S.tgt = null; } ctx.prefs.set('draft:rnote', null); }
           else if (now && now.a === tr.a) NK().late(r.id, tr.text.trim(), now.text, {a: tr.a, tab: 'reference', on: (tr.tgt && tr.tgt.quote) || tr.l || ''},
             () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) { S.note = ''; S.tgt = null; } S.edit = r.id; S.edt = null; redo(); });
           return r; },
