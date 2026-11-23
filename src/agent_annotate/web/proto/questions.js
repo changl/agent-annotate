@@ -630,7 +630,7 @@
     const title = (done || S.view === 'list') && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="${S.view === 'list' ? 'Fold this card back to its line' : 'Fold this card'}">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
     const head = `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;
     const cx = q.context ? `<div class="qctx p-primary">${q.context.split('\n').map(p => `<p>${beadText(esc(p))}</p>`).join('')}</div>` : '';
-    const th = q.replies.filter(r => !/^(☑ Selected|💬 Answer in words|↻|✓|✗|↺)/.test(r.text)), tOpen = S.open.has('th' + q.id);
+    const th = q.replies.filter(r => !r.dec), tOpen = S.open.has('th' + q.id);
     const typing = (d.reply || '').trim() ? `<li class="you"><span class="who">You · goes with Send</span> ${esc(d.reply)}</li>` : '';
     const thread = th.length || typing ? `<div class="small"><b>Thread with the agent</b>${th.length > 2 ? ` · <button class="lk small" data-fold="th${q.id}" aria-expanded="${tOpen}">${tOpen ? 'Hide earlier replies' : pl(th.length - 2, 'earlier reply', 'earlier replies')}</button>` : ''}</div><ul class="qthread">${(tOpen ? th : th.slice(-2)).map(r => `<li class="${r.you ? 'you' : 'agent'}"><span class="who">${r.you ? 'You' : 'Agent'} · ${esc(fmt(r.ts))}${r.you && !r.sent ? ' · not sent' : ''}</span> ${esc(r.text)}</li>`).join('')}${typing}</ul>` : '';
     const bead = beadOf(q), hso = S.open.has('hs' + q.id), plan = planOf(q);
@@ -1098,9 +1098,10 @@
   // The one path for a write a failed round left in the store undelivered: his answer pending there (decision.round_pending) and
   // his card replies not yet sent (sent_at none; an Ask to file a task is one). Each is his row until a round delivers it, on any
   // reload and from every reader's Send, and the card says so; a draft typed since is the answer row instead (r12 audit36 frame 4, questions 4)
-  const SYS = /^(☑ Selected|💬 Answer in words|↻|✓|✗|↺)/;  // the decision's own thread line, not a reply
-  const pendA = q => !q.pre && !q.sent && !q.closed && q.decision && q.decision.round_pending && q.decision.mine !== false && q.decision.via !== 'reply' ? q.decision : null;
-  const pendR = q => q.pre || q.closed ? [] : (q.replies || []).filter(r => r.you && !r.sent && !SYS.test(r.text || ''));
+  // By the store alone, on an open, answered, set-aside or closed card: a reply is pending by sent_at and author, never by its
+  // words (r.dec: the decision's own thread line), and each is its own row by its index in the thread (r12 audit37 frame 1-3)
+  const pendA = q => !q.pre && !q.sent && q.decision && q.decision.round_pending && q.decision.mine !== false && q.decision.via !== 'reply' ? q.decision : null;
+  const pendR = q => q.pre ? [] : (q.replies || []).map((r, j) => [r, j]).filter(([r]) => r.you && !r.sent && !r.dec);
   const pendW = (q, pd) => { const o = pd.option_id && optLabel(q, pd.option_id); return o ? `<b>${esc(o)}</b>` : `in words: “${esc(cut(String(pd.text || ''), 120))}”`; };
   // every item of the next Send: [group, html, go-to target, remove key] (the mock's sendItems)
   function sendItems() {
@@ -1110,12 +1111,12 @@
     for (const q of qs) {
       const d = draft(q.id), w = (d.words || '').trim();
       // a Close whose archive landed in a round that failed: the card is closed in the store, its words still go (r12 audit36 frame 5)
-      if (q.closed) { if (d.close) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]); continue; }
       // an answer or card reply a failed round wrote: the store holds it pending, so it is his row until a round delivers it,
-      // on any reload; a draft typed since is the row instead (r12 audit36 frame 4, questions 4)
-      const pd = !d.pick && !w && !d.close && pendA(q), pr = pendR(q);
+      // on any reload; a draft typed since is the row instead (r12 audit36 frame 4, questions 4); a closed card's too (r12 audit37 frame 1)
+      const pd = !d.pick && !w && pendA(q);
       if (pd) it.push(['Answers', `${qn(q)} → ${pendW(q, pd)}`, 'qp:' + q.id, '', false, q.id]);
-      if (pr.length) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(pr.map(r => r.text).join(' · '), 120))}”`, 'qr:' + q.id, '', false, q.id]);
+      for (const [r, j] of pendR(q)) it.push(['Replies to the agent', `On Q ${esc(q.n)}: “${esc(cut(r.text, 120))}”`, `qr${j}:${q.id}`, '', false, q.id]);
+      if (q.closed) { if (d.close) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]); continue; }
       if (d.pick) it.push(['Answers', `${qn(q)} → <b>${esc(q.pre ? d.pl || 'your choice' : optLabel(q, d.pick))}</b>${w ? ` + “${esc(cut(w, 80))}”` : ''}`, 'q:' + q.id, 'ans:' + q.id]);
       else if (w) it.push(['Answers', `${qn(q)} → in words: “${esc(cut(w, 120))}”`, 'q:' + q.id, 'ans:' + q.id]);
       if (isClosing(q)) it.push(['Answers', `${qn(q)} → <b>Closed: no answer needed</b>`, 'c:' + q.id, 'close:' + q.id]);
@@ -1461,6 +1462,7 @@
     // note write of this tab's the round does not make itself waits for the round (ROUND), so none can join it (r12 audit30 frame 1)
     S.pending.going = true; document.querySelectorAll('[data-sendundo]').forEach(b => b.remove()); WROTEQ = new Set();
     let open; ROUND = new Promise(r => { open = r; });
+    let shut2 = [];  // closed cards this round opens to deliver their pending rows (r12 audit37 frame 1)
     const abW = [];  // [picture, pick, note id] this round posted: a failed round takes each note back (r12 audit36 questions 5)
     // the stop says what happened: a note came in, a write was still saving, or a read was held or failed (r12 audit30 questions 4)
     // a row he removed or changed himself during Undo says so; "a note came in" only when one did (r12 audit31 reference 4)
@@ -1521,7 +1523,11 @@
         if (same(q.id, ['pick', 'words'])) setDraft(q.id, {pick: null, words: null});
       }
       for (const q of replies) { await call(`api/comments/${encodeURIComponent(q.id)}/reply`, {text: snap.get(q.id).reply.trim()}, undefined, true); if (same(q.id, ['reply'])) setDraft(q.id, {reply: null, replyOpen: null}); }
-      for (const q of closes) if (!q.closed) { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}, undefined, true); q.closed = true; }  // its draft clears once the round is in
+      // the server's round skips an archived card, so a Close archives only after the round is in, and a card a failed round
+      // closed with his reply or answer still pending is opened for the round and closed again after it (r12 audit37 frame 1)
+      const pendOn = q => [...listed.keys].some(k => k === 'qp:' + q.id || (/^qr\d+:/.test(k) && k.slice(k.indexOf(':') + 1) === q.id));
+      shut2 = D.questions.filter(q => q.closed && pendOn(q));
+      for (const q of shut2) { await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}, undefined, true); q.closed = false; }
       let tnLate = null;  // the posted note's id when its words changed while the round was out: they become its edit after the round
       if (tn) { const w = await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true); wroteFor('nn:', w);
         const e = S.note || ctx.prefs.get('q:newnote', null), here = !!e && !e.edit && e.anchor === tn.anchor && JSON.stringify(e.target || null) === JSON.stringify(tn.target || null);  // another spot's composer is another note
@@ -1548,9 +1554,11 @@
       const got = again ? 0 : r && r.delivery === 'noop' ? Math.max(0, listed.all - listed.notes.length - answers.length - replies.length - closes.length - (fb ? 1 : 0)) : ids ? Math.max(0, listed.all - listed.notes.filter(id => !ids.has(id)).length) + [...ids].filter(id => !known.has(id)).length : n;
       if ((gen().trim() || undefined) === fb) ctx.prefs.set('q:general', '');  // feedback typed after the countdown waits for the next Send
       // delivered now, not at its write: a Close's draft and a pending answer's row end here, never when the archive or POST landed (r12 audit36)
-      for (const q of closes) setDraft(q.id, {close: null});
+      for (const q of new Set([...closes, ...shut2])) if (!q.closed) {
+        try { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}, undefined, true); q.closed = true; } catch (x) { console.warn('close after Send', x); } }
+      for (const q of closes) if (q.closed) setDraft(q.id, {close: null});  // one the archive missed is still his Close for the next Send
       for (const q of D.questions) { if (q.decision && listed.keys.has('qp:' + q.id)) { q.decision.round_pending = false; q.sent = true; }
-        if (listed.keys.has('qr:' + q.id)) (q.replies || []).forEach(r => { if (r.you) r.sent = true; }); }
+        (q.replies || []).forEach((r, j) => { if (listed.keys.has(`qr${j}:${q.id}`)) r.sent = true; }); }
       const L1 = Object.entries(NK.loc()).filter(([id, v]) => JSON.stringify(v) !== L0[id]);  // an edit or reply changed after the check
       D.notes.forEach(n => { if (!L1.some(([id]) => id === n.id)) NK.gone(n); });  // the round took his every unsent note: Send reads what is left with the receipt, before the re-read
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
@@ -1576,6 +1584,8 @@
       // made since replaced it; qFailed then drops a pick back at its delivered side, so nothing is left behind
       for (const [a, p, id] of abW) { try { await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE'); } catch (x) { console.warn('pick note back', x); }
         if (!abPicks()[a]) setAB(a, p); }
+      // a card opened for the round is closed again, as it was: its pending rows stay his next Send's
+      for (const q of shut2) if (!q.closed) { try { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}, undefined, true); q.closed = true; } catch (x) { console.warn('close back', x); } }
       if (typeof qFailed === 'function') qFailed();
       if (ctx.queueFailed) ctx.queueFailed();  // nothing was delivered: each base stays, and a draft back at it is no change (r12 audit35 running 7)
       await refresh();
@@ -1639,7 +1649,7 @@
     S.armed = false; S.sendKey = false;
     if (k.startsWith('x:')) { const x = Q().find(i => i.key === k.slice(2)); draw(true); if (x) x.go(); return; }
     const at = {r: 'reply', q: 'answer', c: 'close'}[k[0]] || null;  // "r:" a reply, "q:" an answer, "c:" a Close and its receipt: the card opens at it (audit7 #04)
-    if (at) k = 'q:' + k.slice(2);
+    if (at) k = 'q:' + k.slice(k.indexOf(':') + 1);  // "qp:" and "qrN:" (a pending answer or reply) open their card too
     if (k.startsWith('ab:')) return goAB(k.slice(3));
     // a note another tab owns, listed here before that tab claimed it: Go to it opens its own tab, never Questions (audit9 running 1)
     const on = k.startsWith('n:') && (D ? D.notes : savedNotes()).find(x => x.id === k.slice(2)), a = (on && on.anchor) || '';

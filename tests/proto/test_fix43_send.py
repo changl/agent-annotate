@@ -23,13 +23,13 @@ KINDS = {
 
 
 def test_every_kind_stays_in_send_after_a_failed_round(tmp_path):
-    pend = grab(Q, "const SYS = ", "in words: “${esc(cut(String(pd.text || ''), 120))}”`; };")
+    pend = grab(Q, "const pendA = ", "in words: “${esc(cut(String(pd.text || ''), 120))}”`; };")
     js = """
 const esc = s => String(s), cut = (s, n) => String(s).slice(0, n), optLabel = (q, id) => (q.options.find(o => o.id === id) || {}).label;
 """ + pend + r"""
 const base = {n: 11, options: [{id: 'approve', label: 'Approve'}], replies: [], sent: false, closed: false};
 const pick = {...base, decision: {verdict: 'select', option_id: 'approve', text: 'Approve', round_pending: true, mine: true},
-  replies: [{you: true, sent: false, text: '☑ Selected: Approve'}]};
+  replies: [{you: true, sent: false, dec: true, text: '☑ Selected: Approve'}]};
 const words = {...base, decision: {verdict: 'comment', text: 'Run it first', round_pending: true, mine: true}};
 const reply = {...base, decision: {verdict: 'comment', text: 'Why?', via: 'reply', round_pending: true, mine: true}, replies: [{you: true, sent: false, text: 'Why?'}]};
 const file = {...base, sent: true, decision: {verdict: 'select', option_id: 'approve'}, replies: [{you: true, sent: false, text: 'Please file a task'}]};
@@ -42,17 +42,17 @@ ok(!pendA(reply) && pendR(reply).length === 1, 'a card reply that answered the c
 ok(!pendA(file) && pendR(file).length === 1, 'an Ask to file on an answered card is a reply row');
 ok(!pendA(sent) && !pendR(sent).length, 'delivered: no row');
 ok(!pendA(peer), "a peer's pending answer is not his row");
-ok(!pendA({...pick, closed: true}) && !pendR({...reply, closed: true}).length, 'a closed card has its Close row instead');
+ok(pendA({...pick, closed: true}) && pendR({...reply, closed: true}).length === 1, 'a closed card keeps its pending rows (r12 audit37 frame 1)');
 """
     node(tmp_path, js)
     items = grab(Q, "function sendItems() {", "\n    return it;")
-    assert "pendA(q)" in items and "pendR(q)" in items and "'qr:' + q.id" in items
+    assert "pendA(q)" in items and "pendR(q)" in items and "`qr${j}:${q.id}`" in items
     # Close keeps its draft through a failed round, and its row reads the draft on a closed card
     assert "if (q.closed) { if (d.close)" in items
     # the store kinds without a write before submit: their drafts clear only on a delivered round
     post = grab(Q, "async function post(", "\n  // Discard all")
     went, fail = post[post.index("api/rounds/submit"):post.index("} catch (e) {")], post[post.index("} catch (e) {"):]
-    for k in ("ctx.prefs.set('draft:reopen', {})", "NK.L = Object.fromEntries(L1)", "for (const q of closes) setDraft(q.id, {close: null});"):
+    for k in ("ctx.prefs.set('draft:reopen', {})", "NK.L = Object.fromEntries(L1)", "for (const q of closes) if (q.closed) setDraft(q.id, {close: null});"):
         assert k in went, k
     assert "draft:reopen" not in fail and "draft:nkput" not in fail and "setDraft" not in fail
     # every reader's Send count and sheet are Questions' one list

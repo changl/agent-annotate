@@ -312,7 +312,12 @@ def build(page_dir: Path) -> dict:
         text = json.dumps(dr, ensure_ascii=False)
         named = BEAD.findall(text)
         ids.update(named)
+        # dec: the decision route's own thread line, written at one of the card's decisions (same ts and author) in that
+        # route's form; a reply he typed is never told by its opening characters (r12 audit37 frame 2)
+        from ..sync_server import _GENERATED_REPLY
+        made = {(h.get("ts"), h.get("by")) for h in [c.get("decision"), *(c.get("decision_history") or [])] if isinstance(h, dict)}
         replies = [{"you": _mine(r.get("author")), "text": _mask(r.get("text", "")), "ts": r.get("ts"),
+                    "dec": (r.get("ts"), r.get("author")) in made and bool(_GENERATED_REPLY.match(str(r.get("text", "")))),
                     "sent": not _reply_unsent(c, r)} for r in c.get("replies") or [] if isinstance(r, dict)]
         sent = f["sent"]
         seen, earlier = set(), []
