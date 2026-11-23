@@ -70,7 +70,7 @@ assert.deepStrictEqual(savedC(ctx), []);  // a read after it that lacks it: remo
 QD = {{at: '2026-11-21T10:00:09Z', notes: [{{id: 'h2', anchor: 'chart:v1', text: 'x', closed: true}}]}};
 assert.deepStrictEqual(savedC(ctx), []);  // a closed note is not sent
 """)
-    assert "at: c.created_at || new Date().toISOString()" in HIST
+    assert "at: r.created_at || new Date().toISOString()" in HIST
 
 
 def _page(tmp_path, monkeypatch):

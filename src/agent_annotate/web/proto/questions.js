@@ -316,6 +316,22 @@
       put(c, k, d) { if (!NK.backs.at(c, k, d.a, d.tgt)) { c.prefs.set(k, [...NK.backs.all(c, k), d]); c.refreshTop(); } },
       drop(c, k, a, tgt, text) { const l = NK.backs.all(c, k), m = l.filter(x => !NK.same(x, a, tgt) || (text != null && x.text.trim() !== text));
         if (m.length < l.length) { c.prefs.set(k, m); c.refreshTop(); } }},
+    // The second-spot rule, one for every reader (r12 audit40): spots are {a, tgt}; now: the one typed slot's words, if any; open:
+    // the composer on screen. A failed Save, or a write a failed Send carried, comes back to the typed slot only when nothing else
+    // is typed there and no other spot's composer is open; else it is a draft at its own spot (backs), listed in Send
+    failed(c, k, d, now, open, set) { if (now) { if (!NK.same(now, d.a, d.tgt)) NK.backs.put(c, k, d); }
+      else if (!open || NK.same(open, d.a, d.tgt)) set(d); else NK.backs.put(c, k, d);
+      c.refreshTop(); },
+    // Cancel drops only the draft at its own spot: words typed at another spot stay (r12 audit40 frame)
+    cancel(c, k, open, now, clear) { NK.backs.drop(c, k, open.a, open.tgt); if (!now || NK.same(now, open.a, open.tgt)) clear(); },
+    // a redraw (an earlier note's Save landing) never blurs the box he types in: hold(w) before, its result after (r12 audit40 running 4)
+    hold(w) { const a = document.activeElement; if (!w || !a || !/^(TEXTAREA|INPUT)$/.test(a.tagName) || !w.contains(a)) return null;
+      const at = (e, k) => `[${k}="${CSS.escape(e.getAttribute(k))}"]`, box = a.closest('[data-newnote],[data-note],[data-nedbox]');
+      const sel = a.id ? '#' + CSS.escape(a.id) : a.dataset.words != null ? at(a, 'data-words') : a.dataset.replytext != null ? at(a, 'data-replytext')
+        : box ? (box.hasAttribute('data-newnote') ? '[data-newnote]' : box.hasAttribute('data-note') ? at(box, 'data-note') : at(box, 'data-nedbox')) + ' textarea' : null;
+      const r = [a.selectionStart, a.selectionEnd, a.selectionDirection];
+      return () => { const b = sel && w.querySelector(sel), f = document.activeElement;
+        if (b && b !== f && (!f || f === document.body)) { b.focus({preventScroll: true}); try { b.setSelectionRange(...r); } catch {} } }; },
     // a reply being written
     typed: {get: id => (NK.ty()['reply:' + id] || {}).text, has: id => 'reply:' + id in NK.ty(), delete: id => NK.tySet('reply:' + id, null),
       set: (id, text) => { const n = NK.th.get(id); NK.tySet('reply:' + id, String(text || '').trim() ? {...(n ? NK.rec(n) : {}), id, text} : null); }},
@@ -585,6 +601,23 @@
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
   const editText = n => { const e = S.note || ctx.prefs.get('q:newnote', null); return e && e.edit === n.id && e.text != null ? e.text : n.text; };
   const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
+  // the kit's second-spot rule here: the composer (S.note) is the one typed slot; words it cannot hold are drafts at their own
+  // spots (draft:qback), each a Send row, back in its composer when that spot opens (r12 audit40 running 3, questions)
+  const QB = 'draft:qback', qSpot = n => ({...n, a: n.anchor, tgt: n.target || null}), qNote = ({a, tgt, ...n}) => n;
+  const qBack = n => NK.failed(ctx, QB, qSpot(n), typingNote() && qSpot(typingNote()), S.note && (S.note.edit ? {a: null} : qSpot(S.note)),
+    () => { S.note = qNote(qSpot(n)); ctx.prefs.set('q:newnote', S.note); });
+  // a spot opening takes its kept draft's words into its composer
+  const fromBack = n => { const b = !n.edit && NK.backs.at(ctx, QB, n.anchor, n.target); if (!b) return n; NK.backs.drop(ctx, QB, b.a, b.tgt); return {...n, text: b.text}; };
+  if (P.queue) P.queue({items: c => NK.backs.all(c, QB).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
+    html: `On “${esc(cut((b.target && b.target.quote) || b.label || 'Questions', 50))}”: ${esc(cut(b.text.trim(), 140))}`,
+    // Go to it: the composer he was typing in stays a draft at its own spot; shortcut: an open Edit of a saved note is replaced, as the 'nn:' row's Go to it does
+    go: () => { const now = typingNote(); if (now && NK.other(qSpot(now), b.a, b.tgt)) NK.backs.put(c, QB, qSpot(now));
+      NK.backs.drop(c, QB, b.a, b.tgt); S.note = qNote(b); c.prefs.set('q:newnote', S.note); return sendGo('nn:'); },
+    save: async () => { const t = b.text.trim(), r = await call('api/comments', {anchor_id: b.anchor, anchor_label: b.label, text: t, version: D && D.version, target: b.target}, undefined, true);
+      if (D && r && r.id && !D.notes.some(x => x.id === r.id)) D.notes.push({id: r.id, anchor: b.anchor, label: b.label, text: r.text || t, target: b.target, sent: false, at: r.created_at || new Date().toISOString()});
+      NK.backs.drop(c, QB, b.a, b.tgt, t); return r; },
+    put: () => qBack(qNote(b)),
+    remove: () => { NK.backs.drop(c, QB, b.a, b.tgt); draw(true); return () => { NK.backs.put(c, QB, b); draw(true); }; }}))});
   // before the questions are read, the answers, Closes and replies count from what was saved (r12 audit11 frame 1)
   const savedQs = () => Object.keys(drafts()).map(id => ({id, pre: true}));
   // his unsent notes (line, paragraph, chart point) as last read, so Send lists and counts each from its saved record while the questions are still on their way (r12 fix14 questions 1, running 1)
@@ -1275,8 +1308,8 @@
     if (!root || !D) return;  // Send was closed over another tab before Questions ever drew, or its data is still on its way: render draws it (r12 audit10 frame 2, audit11)
     const y = scrollY, gen = ++S.drawGen;
     // a late redraw (its document or Reference arriving) keeps the answer or reply he is in, as C left it (r12 audit10 frame 3)
-    const fa = document.activeElement, fk = fa && root.contains(fa) && ['words', 'replytext'].find(k => fa.dataset[k] != null);
-    const keep = fk && {sel: `[data-${fk}="${CSS.escape(fa.dataset[fk])}"]`, a: fa.selectionStart, b: fa.selectionEnd, d: fa.selectionDirection}, k = typingIn() || HELD; HELD = null;
+    // and the note composer he types in, as an earlier note's Save lands (the kit's hold; a draw a later one replaced passes it on)
+    const keep = (!typingIn() && NK.hold(root)) || S.keep, k = typingIn() || HELD; HELD = null; S.keep = keep;
     const html = S.view === 'list' ? listView() : null;
     if (html != null) {
       root.innerHTML = bar() + html; typeOn(k);
@@ -1307,8 +1340,7 @@
     zoomBars(root);
     if (S.zoom) root.insertAdjacentHTML('beforeend', zoomView());
     document.body.classList.toggle('qsheet-open', !!(S.armed || S.zoom));
-    const back = keep && root.querySelector(keep.sel);
-    if (back && (!document.activeElement || document.activeElement === document.body)) { back.focus({preventScroll: true}); back.setSelectionRange(keep.a, keep.b, keep.d); }
+    S.keep = null; if (keep) keep();
     if (keepScroll) scrollTo(0, y);
     ctx.refreshChips(); if (ctx.refreshTop) ctx.refreshTop();
   }
@@ -1418,7 +1450,8 @@
     if (!text.trim()) return draw(true);
     let c; try { c = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text, version: D.version, target: n.target}); }
     // refused as the very note the round posts: those words go with it. Any other failure: the words stay open
-    catch (e) { if (!P.carried(e) && !S.note) { S.note = n; ctx.prefs.set('q:newnote', n); } await draw(true); if (!P.carried(e)) ctx.toast('Not saved: ' + e.message); return; }
+    // with another spot open or typed, the failed words are a draft at their own spot (the kit's second-spot rule, r12 audit40 running 3)
+    catch (e) { if (!P.carried(e)) qBack({...n, text}); await draw(true); if (!P.carried(e)) ctx.toast('Not saved: ' + e.message); return; }
     // listed at once from its stored record: Send, its count and the document never wait on the re-read (r12 audit14 questions 1)
     if (c && c.id && !D.notes.some(x => x.id === c.id)) D.notes.push({id: c.id, anchor: n.anchor, label: n.label, text: c.text || text, target: n.target, sent: false, at: c.created_at || new Date().toISOString()});
     notesNow(Q());
@@ -1507,6 +1540,8 @@
     let open; ROUND = new Promise(r => { open = r; });
     let shut2 = [];  // closed cards this round opens to deliver their pending rows (r12 audit37 frame 1)
     const abW = [];  // [picture, pick, note id] this round posted: a failed round takes each note back (r12 audit36 questions 5)
+    // the typed notes the round carries and has not written yet: a failed round puts each back at its own spot (r12 audit40 questions)
+    let left = [], tnLeft = null;
     // the stop says what happened: a note came in, a write was still saving, or a read was held or failed (r12 audit30 questions 4)
     // a row he removed or changed himself during Undo says so; "a note came in" only when one did (r12 audit31 reference 4)
     const stop = async own => { const why = own ? `You ${own} an item while sending: check the list and press Send again` : stale || settled() ? 'A note came in while sending: check the list and press Send again' : waitMsg();
@@ -1557,7 +1592,8 @@
       // Its id joins the listed notes too, so a row the round leaves out is not counted (r12 audit30 questions 3)
       const wroteFor = (k, w) => { if (listed.keys.has(k) && w && w.id) { known.add(w.id); listed.notes.push(w.id); } };
       // another tab's note still being typed, listed: saved first, as Send's own write; a failed save stops here with the words kept
-      for (const x of Q().filter(x => x.save && listed.keys.has('x:' + x.key))) { const w = await x.save(); wroteFor('x:' + x.key, w);
+      left = Q().filter(x => x.save && listed.keys.has('x:' + x.key)); tnLeft = tn;
+      for (const x of [...left]) { const w = await x.save(); wroteFor('x:' + x.key, w); left = left.filter(y => y !== x);
         if (w && w.id && w.id in NK.loc()) L0[w.id] = JSON.stringify(NK.loc()[w.id]); }  // its kit record is this round's own write, never a change after the check
       for (const q of answers) {
         const d = snap.get(q.id), w = (d.words || '').trim();
@@ -1572,7 +1608,7 @@
       shut2 = D.questions.filter(q => q.closed && pendOn(q));
       for (const q of shut2) { await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}, undefined, true); q.closed = false; }
       let tnLate = null;  // the posted note's id when its words changed while the round was out: they become its edit after the round
-      if (tn) { const w = await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true); wroteFor('nn:', w);
+      if (tn) { const w = await call('api/comments', {anchor_id: tn.anchor, anchor_label: tn.label, text: tn.text.trim(), version: D.version, target: tn.target}, undefined, true); wroteFor('nn:', w); tnLeft = null;
         const e = S.note || ctx.prefs.get('q:newnote', null), here = !!e && !e.edit && e.anchor === tn.anchor && JSON.stringify(e.target || null) === JSON.stringify(tn.target || null);  // another spot's composer is another note
         if (here && e.text === tn.text) { S.note = null; ctx.prefs.set('q:newnote', null); } else if (here && w && w.id) tnLate = w.id; }
       if (en) { if ((ed.text || '').trim() && ed.text !== en.text) await call(`api/comments/${encodeURIComponent(en.id)}`, {text: ed.text}, 'PUT', true); if (curNote() === ed.text) { S.note = null; ctx.prefs.set('q:newnote', null); } }
@@ -1623,6 +1659,9 @@
       try { await refresh(); } catch (x) { console.warn('refresh after Send', x); }
     } catch (e) {
       S.pending = null; ROUND = null; CARRY = null; open();
+      // a typed note the round carried and never wrote is a draft again: its slot, or with another spot typed or open, its own spot
+      for (const x of left) if (x.put) x.put();
+      if (tnLeft) qBack(tnLeft);
       // a picked side is a draft, not a note: the note the round posted for it goes, and the pick is the draft again unless one
       // made since replaced it; qFailed then drops a pick back at its delivered side, so nothing is left behind
       for (const [a, p, id] of abW) { try { await call(`api/comments/${encodeURIComponent(id)}`, undefined, 'DELETE'); } catch (x) { console.warn('pick note back', x); }
@@ -1915,8 +1954,8 @@
     // the note the round posts, untouched since the check, goes with the round: the next spot opens its own composer (r12 audit38 questions)
     // the next composer opens first: a save that waits for a held round never leaves the last one's box in its place (r12 audit38 questions)
     else if (was && !was.edit && text.trim()) { if (newRefused(was)) { if (text.trim() !== CARRY.tw) return focus(); }
-      else { S.note = next; ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }
-    S.note = next;
+      else { S.note = next = fromBack(next); ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }
+    S.note = next = fromBack(next);
     ctx.prefs.set('q:newnote', next);
     await draw(true);
     focus();

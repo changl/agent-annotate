@@ -132,7 +132,7 @@
     const {esc, icon} = ctx;
     CUR = D; D.notes.forEach(moved);
     // the box he types in keeps its focus and caret through a redraw, whatever an earlier save does, as Reference's draw (r12 audit39 running 2)
-    const a = document.activeElement, keep = a && a.id && w.contains(a) ? [a.id, a.selectionStart, a.selectionEnd] : null;
+    const keep = P.notes.hold(w);
     const copyBtn = (key, name) => `<button class="ib" data-copylink="${esc(key)}" data-name="${esc(name)}" title="Copy link to ${esc(name)}" aria-label="Copy link to ${esc(name)}">${icon(S.copied === key ? 'copied' : 'link')}</button>`;
     const pageRow = (name, sub, key, open) => `<div class="l-line">${icon('doc')}<span class="l-grow">${open}<span class="small mut l-sub">${sub}</span></span>${copyBtn(key, name)}</div>`;
     // each page says why it is its own page, so he can choose between them (#81); counts follow
@@ -175,7 +175,7 @@
     const m = S.res && lineKey(S.res), rs = m && (w.querySelector(`[data-doc="${CSS.escape(m[1])}"] [data-line="${CSS.escape(m[2])}"]`) || w.querySelector(`[data-bnote="${CSS.escape(S.res)}"]`));
     if (rs) { P.notes.lit(rs); if (S.resGo) { S.resGo = false; rs.scrollIntoView({block: 'center'}); } }
     if (S.full) P.media.redrawView();  // the open picture viewer shows the same notes
-    const b = keep && document.getElementById(keep[0]); if (b && b !== document.activeElement) { b.focus({preventScroll: true}); try { b.setSelectionRange(keep[1], keep[2]); } catch {} }
+    if (keep) keep();
   }
   // the failed publish is named by its date, as in the mock (#87); it is an example: no publish of this page failed
   const badWhen = D => { const [d, t] = String(D.current_t || '').split(' '); return d ? `${dm(d)}${t ? ', ' + t : ''}` : 'today'; };
@@ -348,7 +348,7 @@
     // a bar with notes lists them first; + Comment writes another (a blank editor only on a bar with none)
     else if (b.dataset.bnote && b.classList.contains('l-bar') && notesAt(D, b.dataset.bnote).length && S.note !== b.dataset.bnote) { S.note = ''; S.spot = S.spot === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); }
     else if (b.dataset.bnote) { if (S.note !== b.dataset.bnote && !keepTyped(w, ctx, D, b.dataset.bnote, null)) return; S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
-    else if (b.hasAttribute('data-ncancel')) { P.notes.backs.drop(ctx, BK, S.note, S.tgt); S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
+    else if (b.hasAttribute('data-ncancel')) { P.notes.cancel(ctx, BK, {a: S.note, tgt: S.tgt}, typed(ctx), () => ctx.prefs.set('draft:lnote', null)); S.note = ''; S.tgt = null; draw(w, ctx, D); }
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (document.getElementById('l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
@@ -475,8 +475,8 @@
   }
   // the note being typed: a draft, in Send before Save and kept across a reload with "Unsent answers and notes" on, as Questions' open note is (audit8 running 1)
   const typed = c => { const d = c.prefs.get('draft:lnote', null); return d && (d.text || '').trim() ? d : null; };
-  // a failed save's words: the typed draft again, or with another note typed, a draft at their own spot (r12 audit39 running 1)
-  const putBack = (c, d) => { const now = typed(c); if (!now) c.prefs.set('draft:lnote', d); else if (!P.notes.same(now, d.a, d.tgt)) P.notes.backs.put(c, BK, d); c.refreshTop(); };
+  // a failed save's words: the kit's second-spot rule (the typed draft again, or with another spot typed or open, a draft at their own spot)
+  const putBack = (c, d) => P.notes.failed(c, BK, d, typed(c), S.note ? {a: S.note, tgt: S.tgt} : null, x => c.prefs.set('draft:lnote', x));
   const noteHtml = (c, d) => `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`;
   const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';
     const focus = () => { const t = ON && ON.w.isConnected && ON.w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } };
@@ -523,7 +523,7 @@
         remove: () => { c.prefs.set('draft:lappr', apprs(c).filter(x => x !== id)); redo(); return () => { c.prefs.set('draft:lappr', [...apprs(c), id]); redo(); }; }}; }),
     // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
     ...(d => d ? [{key: 'lnn:' + d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
-      go: () => goTyped(c, d),
+      go: () => goTyped(c, d), put: () => putBack(c, d),  // put: a failed Send carried it unwritten (r12 audit40 questions)
       // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
         mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
@@ -537,7 +537,7 @@
         return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
     // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
     ...P.notes.backs.all(c, BK).map(d => ({key: 'lnb:' + d.a + ' ' + JSON.stringify(d.tgt || null), spot: d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
-      go: () => goTyped(c, d),
+      go: () => goTyped(c, d), put: () => putBack(c, d),
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
         mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
         P.notes.backs.drop(c, BK, d.a, d.tgt, d.text.trim()); if (P.notes.same({a: S.note, tgt: S.tgt}, d.a, d.tgt)) { S.note = ''; S.tgt = null; } redo(); return r; },

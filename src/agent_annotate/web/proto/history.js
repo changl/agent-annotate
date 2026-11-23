@@ -74,6 +74,7 @@
       // say: its full words, so the round check sees a change past the listing's 140 (r12 audit32 running 1)
       ...(d => d ? [{key: 'hnn:' + d.v, group: 'Notes', say: d.text.trim(), html: `On “${ctx.esc(CLAB(d.v))}”: ${ctx.esc(d.text.trim().length > 140 ? d.text.trim().slice(0, 139) + '…' : d.text.trim())}`,
         go: () => { S.cn = d.v; S.q = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
+        put: () => { putC(ctx, d); redrawH(); },  // a failed Send carried it unwritten (r12 audit40 questions)
         // Send saves the listed draft as its own write before the round goes; the editor closes only once it is saved (r12 audit30 questions 3)
         save: async () => { const r = await ctx.api('api/comments', {anchor_id: 'chart:' + d.v, anchor_label: CLAB(d.v), text: d.text.trim()}, undefined, true);
           CN.push({id: r.id, anchor: 'chart:' + d.v, label: CLAB(d.v), text: r.text || d.text.trim(), at: r.created_at || new Date().toISOString()});
@@ -83,6 +84,13 @@
           return r; },
         remove: SAVING ? null : () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
           return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
+      // a draft kept at its own point: Go to it opens its composer with its words; Send saves it before the round (r12 audit40 running 1-2)
+      ...P.notes.backs.all(ctx, HB).map(b => ({key: 'hnb:' + b.a, spot: 'chart:' + b.a, group: 'Notes', say: b.text.trim(), html: `On “${ctx.esc(CLAB(b.a))}”: ${ctx.esc(cut(b.text.trim(), 140))}`,
+        go: () => { S.cn = b.a; S.q = ''; S.cspot = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
+        put: () => { putC(ctx, b); redrawH(); },
+        save: async () => { const t = b.text.trim(), r = await ctx.api('api/comments', {anchor_id: 'chart:' + b.a, anchor_label: CLAB(b.a), text: t}, undefined, true);
+          savedNote(ctx, b.a, r, t); P.notes.backs.drop(ctx, HB, b.a, null, t); if (S.cn === b.a) S.cn = ''; redrawH(); return r; },
+        remove: () => { P.notes.backs.drop(ctx, HB, b.a, null); redrawH(); return () => { P.notes.backs.put(ctx, HB, b); redrawH(); }; }})),
       // a saved note on a point is History's own: Go to it shows it on the chart, Remove takes it off the chart too (audit9 running 1)
       ...savedC(ctx).map(n => ({key: 'hcn:' + n.id, group: 'Notes', note: n.id, peer: !P.notes.mine(n), say: P.notes.say(n), html: `On “${ctx.esc(n.label || 'Questions asked per version')}”: ${ctx.esc(cut(P.notes.say(n), 140))}`,
         go: () => { S.cn = ''; S.q = ''; S.hl = n.id; if (onH()) { draw(HE.el, HE.ctx); litC(HE.el); } else ctx.go('history'); },
@@ -222,7 +230,25 @@
   // the full chart lives in Analytics; the strip reads the same per-version counts the version rows show
   let HE = null, QD = null, QR = null, CN = [];  // HE: the tab on screen; QD: Questions' feed, whose notes hold saved chart notes; CN: saved this visit
   const CLAB = v => `Questions asked per version, version ${vn(v)}`;
-  const typedC = c => { const d = c.prefs.get('draft:hnote', null); return d && (d.text || '').trim() ? d : null; };
+  // the typed note on a point, as the kit's spot {a, tgt} (a: its version)
+  const typedC = c => { const d = c.prefs.get('draft:hnote', null); return d && (d.text || '').trim() ? {...d, a: d.v, tgt: null} : null; };
+  // the kit's second-spot rule (r12 audit40 running 1-2): words the one typed slot cannot hold are drafts at their own points (draft:hback)
+  const HB = 'draft:hback', setC = (c, d) => c.prefs.set('draft:hnote', d && {v: d.a || d.v, text: d.text});
+  const putC = (c, d) => P.notes.failed(c, HB, {...d, a: d.a || d.v, tgt: null}, typedC(c), S.cn ? {a: S.cn, tgt: null} : null, x => setC(c, x));
+  const savedNote = (_c, v, r, text) => { CN.push({id: r.id, anchor: 'chart:' + v, label: CLAB(v), text: r.text || text, at: r.created_at || new Date().toISOString()}); };
+  // another point while a note is typed: the typed note is kept, saved as its own note (after a held round) or carried by the round
+  // past its check, as on every reader (the kit's keep); false: words typed since the check stay in their composer
+  function keepC(ctx, v) {
+    const d = typedC(ctx); if (!d || d.v === v) return true;
+    const text = d.text.trim();
+    // its Save is out: that Save stores it (and puts it back if it fails); words typed since that Save stay a draft at its point
+    if (SAVING && SAVING.a === d.v) { if (text !== SAVING.text) P.notes.backs.put(ctx, HB, d); }
+    else if (!P.notes.keep(ctx, {anchor_id: 'chart:' + d.v, anchor_label: CLAB(d.v), text}, () => { putC(ctx, d); redrawH(); },
+      r => { savedNote(ctx, d.v, r, text); redrawH(); ctx.refreshChips(); ctx.toast('Note saved', {going: [r.id, 'hcn:' + r.id], undo: () => undoC(ctx, r.id)}); })) return false;
+    setC(ctx, null); ctx.refreshTop(); return true;
+  }
+  const undoC = async (ctx, id) => { await ctx.api('api/comments/' + encodeURIComponent(id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== id);
+    if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== id); redrawH(); ctx.refreshChips(); };
   // the list on screen; a box left behind by another tab no longer counts, so Go to it switches tabs (audit9 running 1)
   const onH = () => !!(HE && HE.el.isConnected && HE.el.querySelector('#h-list'));
   const redrawH = () => { if (onH()) draw(HE.el, HE.ctx); };
@@ -308,7 +334,7 @@
     const order = allC();
     const notes = vs.flatMap(([v]) => [...(S.cspot === v && cnotes(v).length ? [P.notes.spot(ctx, cnotes(v).map(x => [x, order.indexOf(x) + 1]), `on version ${esc(vn(v))}`, `data-spotadd="${esc(v)}"`)] : []),
       ...cnotes(v).map(x => cbox(ctx, x, order.indexOf(x) + 1, v))]).join('');
-    const dr = ctx.prefs.get('draft:hnote', null), m = S.cn && (D.versions[S.cn] || {});
+    const d0 = ctx.prefs.get('draft:hnote', null), bk = S.cn && P.notes.backs.at(ctx, HB, S.cn, null), dr = d0 && d0.v === S.cn ? d0 : bk ? {v: S.cn, text: bk.text} : null, m = S.cn && (D.versions[S.cn] || {});
     const box = S.cn ? `<div class="h-nbox"><div class="small mut">New note on version ${esc(vn(S.cn))}: ${pl(n(m), 'question', 'questions')} asked · goes with your next Send</div>
       <textarea id="h-nt" rows="3" placeholder="Write a note for the agent about this version" aria-label="Your note">${esc(dr && dr.v === S.cn ? dr.text : '')}</textarea>
       <div class="h-nacts"><button class="btn sm pri" data-csave>Save note</button><button class="btn sm" data-ccancel data-going="hnn:${esc(S.cn)}">Cancel</button><span class="small mut"><kbd>⌘↵</kbd> saves</span></div></div>` : '';
@@ -321,13 +347,16 @@
     if (!text) return ctx.toast('Write something first');
     try {
       // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
-      SAVING = true; ctx.refreshTop();
+      SAVING = {a: v, text}; ctx.refreshTop();
       const c = await ctx.api('api/comments', {anchor_id: 'chart:' + v, anchor_label: CLAB(v), text}).finally(() => { SAVING = false; });
-      CN.push({id: c.id, anchor: 'chart:' + v, label: CLAB(v), text: c.text || text, at: c.created_at || new Date().toISOString()});
-      S.cn = ''; ctx.prefs.set('draft:hnote', null); draw(el, ctx); ctx.refreshChips();
-      ctx.toast('Note saved', {going: [c.id, 'hcn:' + c.id], undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== c.id);
-        if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== c.id); redrawH(); ctx.refreshChips(); }});
-    } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
+      savedNote(ctx, v, c, text);
+      // another point opened while it was out keeps its own composer and draft (the kit's second-spot rule, r12 audit40 running 1)
+      const now = typedC(ctx); if (!now || now.v === v) setC(ctx, null);
+      P.notes.backs.drop(ctx, HB, v, null, text);
+      if (S.cn === v) S.cn = '';
+      redrawH(); ctx.refreshChips(); ctx.refreshTop();
+      ctx.toast('Note saved', {going: [c.id, 'hcn:' + c.id], undo: () => undoC(ctx, c.id)});
+    } catch (er) { putC(ctx, {a: v, text}); redrawH(); ctx.toast(`The note was not saved: ${er.message}`); }
   }
 
   /* ---------- the tab ---------- */
@@ -356,7 +385,10 @@
     const wrap = el.querySelector('.h-wrap');
     wrap.onclick = e => click(e, el, ctx);
     wrap.oninput = e => { if (e.target.id !== 'h-nt' || !S.cn) return;
-      const was = !!typedC(ctx); ctx.prefs.set('draft:hnote', {v: S.cn, text: e.target.value}); if (was !== !!typedC(ctx)) ctx.refreshTop(); };
+      const was = typedC(ctx);
+      if (was && was.v !== S.cn) P.notes.backs.put(ctx, HB, was);  // typed words at another point stay a draft there (r12 audit40 running 2)
+      ctx.prefs.set('draft:hnote', {v: S.cn, text: e.target.value}); P.notes.backs.drop(ctx, HB, S.cn, null);
+      if (!!was !== !!typedC(ctx)) ctx.refreshTop(); };
     // ⌘↵ in the note saves it, as in the mock; Enter or Space on a point opens its note
     wrap.onkeydown = e => {
       if (e.target.id === 'h-nt' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); saveC(el, ctx); }
@@ -426,7 +458,9 @@
       html += S.f === 'ref' ? (rb + rows + more || '<p class="mut">No Reference changes match.</p>')
         : revs.length || rb ? `<div class="h-grp"><button class="h-fold" data-refall aria-expanded="${op}">${icon('chev')}<b>Reference changes</b> <span class="small mut">${[revs.length && `${pl(all.length, 'revision', 'revisions')} of ${pl(D.plans.length, 'plan', 'plans')}`, ex.length && pl(ex.length, 'audit or library', 'audits and libraries')].filter(Boolean).join(' · ')}</span></button>${op ? rb + rows + more : ''}</div>` : '';
     }
+    const keep = P.notes.hold(box);  // an earlier note's Save landing never blurs the composer he types in (r12 audit40 running 1)
     box.innerHTML = html;
+    if (keep) keep();
   }
   function li(h, ctx, ro) {
     const {esc} = ctx;
@@ -448,6 +482,7 @@
       if (S.cmove) return moveC(el, ctx, v);
       S.ce = '';
       if (cnotes(v).length) { S.cn = ''; S.cspot = S.cspot === v ? '' : v; return draw(el, ctx); }
+      if (S.cn !== v && !keepC(ctx, v)) return focusC(el);  // another point never drops the typed note (r12 audit40 running 2)
       S.cspot = ''; S.cn = S.cn === v ? '' : v;
       draw(el, ctx); return focusC(el);
     }
@@ -459,7 +494,7 @@
     if (ds.hchange) return ctx.go('questions', 'q-' + ds.hchange);
     // the marker list and a sent note's lifecycle: the notes kit, as on every tab
     if (ds.spotx !== undefined) { S.cspot = ''; return draw(el, ctx); }
-    if (ds.spotadd) { S.cspot = ''; S.ce = ''; S.cn = ds.spotadd; draw(el, ctx); return focusC(el); }
+    if (ds.spotadd) { if (!keepC(ctx, ds.spotadd)) return focusC(el); S.cspot = ''; S.ce = ''; S.cn = ds.spotadd; draw(el, ctx); return focusC(el); }
     if (ds.spotgo) { S.cspot = ''; S.hl = ds.spotgo; S.hlT = ''; draw(el, ctx); return litC(el); }
     const life = how => { const x = cn(ds.nclose || ds.nopen || ds.nreopen); return x && P.notes.set(ctx, x, how, ctx.api, async id => { S.cspot = ''; S.hl = id; S.hlT = ''; draw(el, ctx); litC(el); ctx.refreshChips(); }); };
     if (ds.nclose) return life('close');
@@ -473,7 +508,8 @@
     if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (back) ctx.toast('Note removed', {going: [n.id, 'hcn:' + n.id], undo: back}); } return; }
     if (ds.ccopy) return copyC(ctx, (cn(ds.ccopy) || {}).text || '', 'Note');
     if (ds.clink) return copyC(ctx, location.href.split('#')[0] + '#history/hn-' + ds.clink, 'Link to the note');
-    if (b.hasAttribute('data-ccancel')) { if (S.ce) { S.ce = ''; return draw(el, ctx); } S.cn = ''; ctx.prefs.set('draft:hnote', null); return draw(el, ctx); }
+    if (b.hasAttribute('data-ccancel')) { if (S.ce) { S.ce = ''; return draw(el, ctx); }
+      if (S.cn) P.notes.cancel(ctx, HB, {a: S.cn, tgt: null}, typedC(ctx), () => setC(ctx, null)); S.cn = ''; ctx.refreshTop(); return draw(el, ctx); }  // only its own point's draft
     if (b.dataset.fold) { S.open.has(b.dataset.fold) ? S.open.delete(b.dataset.fold) : S.open.add(b.dataset.fold); draw(el, ctx); }
     else if (b.hasAttribute('data-wd')) { S.wd = !S.wd; draw(el, ctx); }
     else if (b.hasAttribute('data-refall')) { S.ref = !S.ref; draw(el, ctx); }

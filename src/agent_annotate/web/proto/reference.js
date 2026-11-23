@@ -122,7 +122,7 @@
     return d && NK().same(d, k, S.tgt) ? d.text || '' : bk ? bk.text : d && d.a === k ? d.text || '' : ''; };
   const BK = 'draft:rback';  // the notes kit's drafts kept at their own spots (NK().backs)
   // a failed save's words: the typed draft again, or with another note typed, a draft at their own spot (r12 audit39 running 1)
-  const putBack = d => { const now = rnote(); if (!now) setR(d); else if (!NK().same(now, d.a, d.tgt)) NK().backs.put(ctx, BK, d); };
+  const putBack = d => NK().failed(ctx, BK, d, rnote(), S.note ? {a: S.note, tgt: S.tgt} : null, setR);  // the kit's second-spot rule (r12 audit40)
 
   /* ---------- a plan revision, read from today's plans/<id>/<v>.html as blocks ---------- */
   const CHROME = 'header.hdr,aside,nav,#popover,#legend,script,style,button,select,textarea,input,noscript,template,svg';
@@ -582,7 +582,7 @@
     if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
     if (d.note) return openAt(d.note, null);
-    if (d.ncancel !== undefined) { NK().backs.drop(ctx, BK, S.note, S.tgt); S.note = ''; setR(null); return draw(); }
+    if (d.ncancel !== undefined) { NK().cancel(ctx, BK, {a: S.note, tgt: S.tgt}, rnote(), () => setR(null)); S.note = ''; return draw(); }
     if (d.zoom) {
       const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-pk="${CSS.escape(k)}"] img`);  // the picture by its own key
       P.media.setZoom(k, +d.zoom);
@@ -758,7 +758,7 @@
       // the editor closes only once saved; one changed since stays (r12 audit31 reference 1), as Pages & links' typed note (audit30 questions 3)
       const tr = rnote();
       if (tr) it.push({key: 'rnn:' + tr.a, tgt: tr.tgt || undefined, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
-        go: () => { goRef(tr.item || itemOf(tr.a), '', tr.a)(); S.note = tr.a; S.tgt = tr.tgt || null; redo(); },
+        put: () => putBack(tr), go: () => { goRef(tr.item || itemOf(tr.a), '', tr.a)(); S.note = tr.a; S.tgt = tr.tgt || null; redo(); },
         save: async () => { const r = await c.api('api/comments', {anchor_id: tr.a, anchor_label: tr.l, text: tr.text.trim(), target: tr.tgt || undefined, ...(tr.m || {})}, undefined, true);
           mine.push({id: r.id, a: tr.a, l: tr.l, text: r.text || tr.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || tr.tgt || undefined});
           // the same spot is the full target too: a second point on the same picture is another note, whose draft stays (r12 audit36 reference)
@@ -771,7 +771,7 @@
       // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
       for (const b of NK().backs.all(c, BK)) it.push({key: 'rnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.tgt || undefined, group: 'Notes', say: b.text.trim(),
         html: `On “${c.esc(cutq((b.tgt && b.tgt.quote) || b.l || 'Reference'))}”:${c.esc(b.text.trim().length > 140 ? b.text.trim().slice(0, 139) + '…' : b.text.trim())}`,
-        go: () => { goRef(b.item || itemOf(b.a), '', b.a)(); S.note = b.a; S.tgt = b.tgt || null; redo(); },
+        put: () => putBack(b), go: () => { goRef(b.item || itemOf(b.a), '', b.a)(); S.note = b.a; S.tgt = b.tgt || null; redo(); },
         save: async () => { const r = await c.api('api/comments', {anchor_id: b.a, anchor_label: b.l, text: b.text.trim(), target: b.tgt || undefined, ...(b.m || {})}, undefined, true);
           mine.push({id: r.id, a: b.a, l: b.l, text: r.text || b.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || b.tgt || undefined});
           NK().backs.drop(c, BK, b.a, b.tgt, b.text.trim()); if (NK().same({a: S.note, tgt: S.tgt}, b.a, b.tgt)) { S.note = ''; S.tgt = null; } redo(); return r; },

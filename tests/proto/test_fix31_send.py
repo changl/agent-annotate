@@ -12,7 +12,7 @@ Q = (WEB / "questions.js").read_text()
 
 
 def test_every_focus_restore_keeps_the_direction():
-    assert "d: a.selectionDirection}" in Q and "d: fa.selectionDirection}" in Q
+    assert "d: a.selectionDirection}" in Q and "const r = [a.selectionStart, a.selectionEnd, a.selectionDirection];" in Q
     # every caret restore after a rebuild that reads a saved range passes its direction
     saved = re.findall(r"\.setSelectionRange\((\w+)\.a, \1\.b(.*?)\)", Q)
     assert saved and all(rest == f", {v}.d" for v, rest in saved)

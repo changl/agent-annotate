@@ -95,7 +95,7 @@ def test_second_note_keeps_the_first():
     """Round 12 second pass #02: opening another note saves the unfinished one first (no JS runner here)."""
     s = (questions.Path(questions.__file__).resolve().parents[1] / "web/proto/questions.js").read_text()
     # the next composer opens first, then the unfinished one is saved (r12 audit38 questions)
-    assert "else { S.note = next; ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }" in s
+    assert "else { S.note = next = fromBack(next); ctx.prefs.set('q:newnote', next); await draw(true); focus(); return addNote(text, was); } }" in s
     assert "S.note = {anchor: anchorEl.dataset.anchorId" not in s  # every opener goes through openNote
 
 
@@ -153,7 +153,7 @@ def test_eighth_check_fixes_stay():
     assert "S.note.text = t.value; ctx.prefs.set('q:newnote', S.note); }  // an edit to a saved note" in s
     assert "esc(editText(n))" in s and "esc(cut(NK.say({...n, text: editText(n)}), 140))" in s
     assert s.index("en = ed && ed.edit") < s.rindex("call('api/rounds/submit'")
-    assert "S.note = next;\n    ctx.prefs.set('q:newnote', next);" in s
+    assert "S.note = next = fromBack(next);\n    ctx.prefs.set('q:newnote', next);" in s
     # 2: Go to it beside a note typed in a card's evidence opens the filter that lists the card
     assert "const nq = nn && nn.inq && qOf(nn.inq);" in s and "reveal(nq)" in s
     # 3: Cards only gives every open card its fold chevron

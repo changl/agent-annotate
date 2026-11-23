@@ -47,5 +47,5 @@ def test_remove_then_esc_keeps_its_undo():
 def test_a_late_redraw_keeps_the_answer_field_focused():
     """Frame 3: C focuses the answer; a document or Reference read that redraws afterwards gives it back."""
     draw = Q[Q.index("async function draw(keepScroll)"):Q.index("function listView()")]
-    assert "['words', 'replytext'].find(k => fa.dataset[k] != null)" in draw
-    assert "if (back && (!document.activeElement || document.activeElement === document.body))" in draw
+    assert "const keep = (!typingIn() && NK.hold(root)) || S.keep" in draw and "a.dataset.words != null" in Q and "a.dataset.replytext != null" in Q
+    assert "S.keep = null; if (keep) keep();" in draw and "if (b && b !== f && (!f || f === document.body))" in Q
